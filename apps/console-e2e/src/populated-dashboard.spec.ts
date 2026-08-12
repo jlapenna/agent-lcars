@@ -70,7 +70,7 @@ test.describe('populated dashboard', () => {
     // Deploy-wait-only work remains on the Bridge overview.
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { name: /Waiting on Next Deploy/ }),
+      page.getByRole('heading', { name: 'Parked Work' }),
     ).toBeVisible();
   });
 
@@ -180,31 +180,6 @@ test.describe('populated dashboard', () => {
     await expect(editor).toBeHidden();
     await expect(detail.getByText(updatedTitle)).toBeVisible();
 
-    // The Bridge intentionally excludes decision work like #9001; its
-    // deploy-wait tier still renders the same shared ItemOverflowMenu. Edit
-    // that surface's own issue through the same production path.
-    await page.goto('/');
-    await page.getByRole('button', { name: 'More actions for #9004' }).click();
-    await page.getByRole('menuitem', { name: 'Edit issue' }).click();
-    const bridgeEditor = page.getByRole('dialog', { name: 'Edit #9004' });
-    await expect(bridgeEditor.getByLabel('Title')).toHaveValue(
-      'Verify the session-cost budget alert after the next deploy',
-    );
-    await expect(bridgeEditor.getByLabel('Body')).toHaveValue(
-      'Parked until the alert ships to production.',
-    );
-    await bridgeEditor
-      .getByLabel('Title')
-      .fill('Verify the deployed session-cost alert');
-    await bridgeEditor
-      .getByLabel('Body')
-      .fill('Run the production verification after deploy.');
-    await bridgeEditor.getByRole('button', { name: 'Save changes' }).click();
-    await expect(page.getByText('#9004 updated')).toBeVisible();
-    await expect(
-      page.getByText('Verify the deployed session-cost alert'),
-    ).toBeVisible();
-
     // The canonical task detail is a separate route backed by a direct
     // issue lookup rather than the open-item board, but it exposes the same
     // mutation menu and persisted content too.
@@ -250,30 +225,29 @@ test.describe('populated dashboard', () => {
       `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}`,
     );
     await expect(duplicateGroup).toBeVisible();
-    await expect(duplicateGroup.getByTestId('live-run-issue-link')).toHaveCount(
-      2,
-    );
+    await expect(duplicateGroup.getByTestId('current-run-row')).toHaveCount(2);
+    await expect(duplicateGroup).not.toContainText('[dispatch:');
     const duplicateAlert = page.getByTestId(
       `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}-duplicate`,
     );
     await expect(duplicateAlert).toBeVisible();
     await expect(duplicateAlert).toContainText('2 claude');
 
-    // Finished runs live behind a collapsed <details> — which is itself
-    // why these badges had never been looked at.
-    const recent = page.getByTestId('recent-runs');
-    await recent.locator('summary').click();
+    // The five latest outcomes are visible immediately, without expanding
+    // a remembered disclosure.
+    const recent = page.getByTestId('latest-outcomes');
+    await expect(recent).toBeVisible();
 
     // success / failed / timeout: the three data colors #40 calls out as
     // never having been seen.
     await expect(recent.getByText('success').first()).toBeVisible();
     await expect(recent.getByText('failed').first()).toBeVisible();
     await expect(recent.getByText('timeout').first()).toBeVisible();
-    // And the non-claude pipeline tag.
-    await expect(recent.getByText('opencode').first()).toBeVisible();
+    // Pipeline source tags stay on the deeper Agents evidence view.
+    await expect(recent.getByText('opencode', { exact: true })).toHaveCount(0);
   });
 
-  test('the attempt-history link reaches the canonical task page with the ledger-backed anomaly (#306)', async ({
+  test('the primary Open task action reaches the canonical task page with the ledger-backed anomaly (#306)', async ({
     page,
   }) => {
     await page.goto('/');
@@ -281,11 +255,11 @@ test.describe('populated dashboard', () => {
     const duplicateGroup = page.getByTestId(
       `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}`,
     );
-    await duplicateGroup
-      .getByTestId(
-        `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}-history`,
-      )
-      .click();
+    const primaryAction = duplicateGroup
+      .getByTestId('current-run-primary-action')
+      .first();
+    await expect(primaryAction).toHaveText('Open task');
+    await primaryAction.click();
 
     await expect(page).toHaveURL(
       new RegExp(
@@ -645,11 +619,7 @@ test.describe('populated page captures', () => {
       // ConsoleHeader's doc comment) — each page gets its own readiness
       // marker rather than one shared nav assertion.
       for (const [name, path, ready] of [
-        [
-          'deck',
-          '/',
-          '.console-header[data-current="deck"]:not([data-streaming-fallback])',
-        ],
+        ['deck', '/', '[data-testid="current-work"]'],
         [
           'inbox',
           '/inbox',
@@ -687,6 +657,12 @@ test.describe('populated page captures', () => {
   test('captures the phone list and detail flow', async ({
     page,
   }, testInfo) => {
+    const browserErrors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') browserErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => browserErrors.push(error.message));
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await expect(
@@ -694,6 +670,24 @@ test.describe('populated page captures', () => {
         .locator('.console-header[data-current="deck"]')
         .getByRole('link', { name: 'Bridge' }),
     ).toBeVisible();
+    await expect(page.getByTestId('deck-inbox-summary')).toBeVisible();
+    await expect(page.getByTestId('current-work')).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    const decisionAction = await page
+      .getByTestId('deck-inbox-summary')
+      .getByRole('link')
+      .boundingBox();
+    const taskAction = await page
+      .getByRole('link', { name: 'Open task' })
+      .first()
+      .boundingBox();
+    expect(decisionAction?.height).toBeGreaterThanOrEqual(44);
+    expect(taskAction?.height).toBeGreaterThanOrEqual(44);
+    expect(browserErrors).toEqual([]);
     const deckCapture = testInfo.outputPath('deck-mobile.png');
     await page.screenshot({ path: deckCapture });
     await testInfo.attach('deck-mobile.png', {

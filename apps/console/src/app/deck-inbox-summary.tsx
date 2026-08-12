@@ -25,22 +25,18 @@ export function DeckInboxSummary({
 }) {
   return (
     <Group
-      gap="xs"
-      align="baseline"
-      wrap="nowrap"
+      gap="md"
+      align="center"
+      wrap="wrap"
       className="deck-inbox-summary"
       data-testid="deck-inbox-summary"
       data-empty={count === 0 ? '' : undefined}
     >
-      <Text component="span" fw={700} size="lg" ff="monospace">
-        {count.toString().padStart(2, '0')}
+      <Text component="span" fw={700} className="deck-inbox-summary__count">
+        {count}
       </Text>
-      <Text component="span" size="sm" style={{ flex: 1, minWidth: 0 }}>
-        {count === 0
-          ? 'decisions waiting — the Inbox is clear'
-          : count === 1
-            ? 'item needs your decision'
-            : 'items need your decision'}
+      <Text component="span" fw={600} className="deck-inbox-summary__label">
+        {count === 0 ? 'No decisions waiting' : 'Decisions waiting'}
       </Text>
       {/* Deliberately avoids the word "Inbox": Playwright role-name
           matching is substring-based, and the e2e suite addresses the nav
@@ -51,10 +47,12 @@ export function DeckInboxSummary({
         component={Link}
         href={inboxHref}
         size="sm"
-        fw={600}
-        style={{ flexShrink: 0 }}
+        fw={700}
+        className="deck-inbox-summary__action"
       >
-        Open the queue →
+        {count === 0
+          ? 'Review queue'
+          : `Open ${count} decision${count === 1 ? '' : 's'}`}
       </Anchor>
     </Group>
   );

@@ -1,22 +1,16 @@
-import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import { mostRecentSessionForItem } from '../lib/claimed-idle';
-import type { CliSession } from '../lib/cli-sessions';
-import { agentFleetLogin, consoleRepositoryUrl } from '../lib/deployment';
+import { consoleRepositoryUrl } from '../lib/deployment';
 import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
+import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
-import { CompactItemRow } from './compact-item-row';
 import { repoScopedConsoleHrefs } from './console-hrefs';
-import { ItemOverflowMenu } from './item-overflow-menu';
-import { PersistedDetails } from './persisted-details';
 import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
-import { RelativeTime } from './relative-time';
 import { SectionHeading } from './section-heading';
 import { SignOutButton } from './sign-out-button';
-import { TakeoverCommand } from './takeover-command';
 
 export type { BoardCard } from './board-card';
 
@@ -57,111 +51,51 @@ export function DecisionInbox({
 
 export function BridgeSections({
   waitingOnDeploy,
-  rest,
-  cliSessions = [],
 }: {
   waitingOnDeploy: BoardCard[];
-  rest: BoardCard[];
-  /** Joined against fleet-claimed rest items (see the `claimed` check
-   * below) so "Everything Else" can point at whatever session last worked
-   * an item, the same signal the /agents page's Claimed but Idle section
-   * already surfaces (#624 - the flat list gave no hint which idle items
-   * the fleet already owns vs. untouched backlog). */
-  cliSessions?: CliSession[];
 }) {
-  return (
-    <Stack gap="xl" mb="xl">
-      {waitingOnDeploy.length === 0 && rest.length === 0 && (
-        <Text c="dimmed" size="sm" data-testid="deck-sections-empty">
-          No parked work — nothing waiting on a deploy and no idle agent items.
-        </Text>
-      )}
-      {waitingOnDeploy.length > 0 && (
-        <div>
-          <SectionHeading
-            title="Waiting on Next Deploy"
-            count={waitingOnDeploy.length}
-            description="Verified and closed automatically after the affected app’s next deploy."
-          />
-          <Stack gap={6}>
-            {waitingOnDeploy.map(({ item }) => (
-              <CompactItemRow
-                key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-                item={item}
-                hint={
-                  <>
-                    updated{' '}
-                    <RelativeTime iso={item.updatedAt} variant="compact" />
-                  </>
-                }
-                action={<ItemOverflowMenu item={item} />}
-              />
-            ))}
-          </Stack>
-        </div>
-      )}
+  if (waitingOnDeploy.length === 0) return null;
 
-      {rest.length > 0 && (
-        <PersistedDetails
-          data-testid="everything-else"
-          storageKey="deck:everything-else"
-          summary={
-            <>
-              <Title order={3} size="h4" component="span">
-                Everything Else ({rest.length})
-              </Title>
-              <Text c="dimmed" size="sm" component="span">
-                {' '}
-                — open agent items with nothing to do
+  return (
+    <section className="parked-work" data-testid="parked-work">
+      <SectionHeading
+        title="Parked Work"
+        count={waitingOnDeploy.length}
+        description="Waiting for the next deploy before verification can continue."
+      />
+      <Stack gap={0} mb="xl">
+        {waitingOnDeploy.map(({ item }) => (
+          <div
+            className="operations-row"
+            key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
+            data-testid={`parked-item-${item.number}`}
+          >
+            <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+              <Badge
+                variant="outline"
+                color="gray"
+                size="xs"
+                style={{ flexShrink: 0 }}
+              >
+                {item.kind === 'pr' ? 'PR' : 'Issue'}
+              </Badge>
+              <RepoBadge repo={item.repo} />
+              <Text size="sm" fw={600} truncate>
+                #{item.number} {item.title}
               </Text>
-            </>
-          }
-        >
-          <Stack gap={6} mt="sm">
-            {rest.map(({ item }) => {
-              const claimed = item.assigneeLogins.includes(agentFleetLogin());
-              const session = claimed
-                ? mostRecentSessionForItem(item, cliSessions)
-                : undefined;
-              return (
-                <Stack
-                  key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-                  gap={4}
-                >
-                  <CompactItemRow
-                    item={item}
-                    hint={
-                      <>
-                        updated{' '}
-                        <RelativeTime iso={item.updatedAt} variant="compact" />
-                        {claimed && ' · claimed by the fleet'}
-                      </>
-                    }
-                    action={
-                      <Group gap={4} wrap="nowrap">
-                        {session && (
-                          <Anchor
-                            href={`/sessions/${session.sessionId}`}
-                            size="xs"
-                            c="dimmed"
-                            data-testid="everything-else-session-link"
-                          >
-                            session
-                          </Anchor>
-                        )}
-                        <ItemOverflowMenu item={item} />
-                      </Group>
-                    }
-                  />
-                  {claimed && item.takeoverCommand && (
-                    <TakeoverCommand command={item.takeoverCommand} />
-                  )}
-                </Stack>
-              );
-            })}
-          </Stack>
-        </PersistedDetails>
-      )}
-    </Stack>
+            </Group>
+            <Anchor
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              size="sm"
+              className="operations-primary-action"
+            >
+              Open {item.kind === 'pr' ? 'PR' : 'issue'} ↗
+            </Anchor>
+          </div>
+        ))}
+      </Stack>
+    </section>
   );
 }

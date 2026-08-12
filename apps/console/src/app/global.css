@@ -2003,14 +2003,55 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 }
 
-/* Bridge's Inbox signpost (deck-inbox-summary.tsx): a quiet chip-row
-   with the LCARS left-accent treatment; the count dims when nothing waits. */
+/* Bridge decision signpost: the count and its one direct action are the first
+   things in the workspace, ahead of operational context. */
 .deck-inbox-summary {
-  padding: 0.65rem 0.9rem;
+  min-height: 5rem;
+  padding: 0.8rem 0.9rem 0.8rem 1rem;
   margin-bottom: var(--mantine-spacing-xl);
   border: 1px solid var(--mantine-color-default-border);
-  border-left: 4px solid var(--mantine-color-blue-6);
+  border-left: 8px solid var(--mantine-color-blue-6);
   border-radius: var(--mantine-radius-md);
+  background: color-mix(in srgb, var(--mantine-color-blue-9) 22%, transparent);
+}
+
+.deck-inbox-summary__count {
+  min-width: 2.4rem;
+  color: var(--mantine-color-blue-4);
+  font-family: var(--font-display), sans-serif;
+  font-size: 2.3rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.deck-inbox-summary__label {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.deck-inbox-summary__action,
+.operations-primary-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.35rem;
+  padding-inline: 0.9rem;
+  color: var(--mantine-color-white);
+  background: var(--mantine-color-blue-7);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.deck-inbox-summary__action:hover,
+.operations-primary-action:hover {
+  color: var(--mantine-color-white);
+  background: var(--mantine-color-blue-6);
+  text-decoration: none;
 }
 
 .deck-inbox-summary[data-empty] {
@@ -2019,6 +2060,95 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
 .deck-inbox-summary[data-empty] .mantine-Text-root {
   color: var(--mantine-color-dimmed);
+}
+
+.deck-inbox-summary[data-empty] .deck-inbox-summary__action {
+  color: var(--mantine-color-blue-4);
+  background: transparent;
+  border: 1px solid var(--mantine-color-blue-7);
+}
+
+/* Action-first Bridge rows: the result or task action has a stable right
+   edge on desktop, then becomes a full-width tap target on phones. */
+.operations-panel__intro {
+  margin-top: -0.35rem;
+}
+
+.operations-section {
+  padding-top: 0.15rem;
+}
+
+.operations-section + .operations-section {
+  padding-top: var(--mantine-spacing-md);
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+
+.operations-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--mantine-spacing-md);
+  align-items: center;
+  padding-block: 0.65rem;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--mantine-color-default-border) 65%, transparent);
+}
+
+.operations-row:last-child {
+  border-bottom: 0;
+}
+
+.operations-row__actions {
+  justify-content: flex-end;
+}
+
+.operations-secondary-action {
+  flex-shrink: 0;
+}
+
+.operations-more-link {
+  align-self: flex-start;
+  margin-top: 0.15rem;
+  font-weight: 600;
+}
+
+.parked-work {
+  padding-inline: 0.5rem;
+}
+
+@media (max-width: 47.99em) {
+  .deck-inbox-summary {
+    gap: 0.65rem;
+    min-height: 0;
+  }
+
+  .deck-inbox-summary__count {
+    min-width: 2rem;
+    font-size: 1.9rem;
+  }
+
+  .deck-inbox-summary__action {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .operations-row {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .operations-row__actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .operations-primary-action {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .operations-secondary-action {
+    min-height: 44px;
+  }
 }
 
 /* Inbox search (queue-workspace.tsx): compact enough to share the header

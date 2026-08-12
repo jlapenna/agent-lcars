@@ -14,7 +14,7 @@ useCliSessionFixtures();
 // default per-PR smoke lane (E2E_GREP is @smoke|@visual, #2599/#2860), not
 // just the run-e2e-labeled full tier.
 test.describe('Agent Activity panel CLI sessions @smoke', () => {
-  test('renders active sessions inline and finished ones behind the collapsed disclosure', async ({
+  test('renders active sessions with direct actions and leaves history to Sessions', async ({
     page,
   }) => {
     await page.goto('/');
@@ -25,59 +25,46 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
     await expect(liveRow.getByTestId('cli-session-liveness')).toHaveText(
       'live',
     );
-    await expect(liveRow).toContainText('e2e-fixture-host-1');
-    await expect(liveRow).toContainText('e2e-agent-lcars-fixture-branch');
-    await expect(liveRow).toContainText('agent-lcars-e2e-fixture');
-    // Model, turn count, and token count are no longer rendered (#3012) -
-    // the row now only carries liveness, title/branch, host, worktree, PR
-    // link, artifacts, and last-active.
+    await expect(liveRow).not.toContainText('e2e-fixture-host-1');
+    await expect(liveRow).not.toContainText('agent-lcars-e2e-fixture');
+    // Bridge rows carry only identity, status, and the action that advances
+    // the operator; detailed evidence remains on the session route.
     await expect(liveRow).not.toContainText('claude-sonnet-5');
     await expect(liveRow).not.toContainText('12 turns');
     await expect(liveRow).not.toContainText('12.2k tokens');
     await expect(
-      liveRow.getByRole('link', { name: `PR #${E2E_FIXTURE_PR_NUMBER} ↗` }),
+      liveRow.getByRole('link', { name: 'Open session' }),
     ).toBeVisible();
+    await expect(
+      liveRow.getByRole('link', { name: `PR #${E2E_FIXTURE_PR_NUMBER} ↗` }),
+    ).toHaveCount(0);
 
     const idleRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.idle);
     await expect(idleRow.getByTestId('cli-session-liveness')).toHaveText(
       'idle',
     );
-    await expect(idleRow).toContainText('e2e-fixture-host-2');
+    await expect(idleRow).not.toContainText('e2e-fixture-host-2');
     await expect(idleRow).not.toContainText('claude-opus-4-8');
     await expect(idleRow).not.toContainText('3 turns');
     // No PR fixture is registered for the idle session's branch — the
     // GitHub fixture route (api/e2e/github/search/issues) legitimately
     // returns no match, so no "PR #" link should render for this row.
     await expect(idleRow.getByRole('link', { name: /PR #/ })).toHaveCount(0);
+    await expect(
+      idleRow.getByRole('link', { name: 'Open session' }),
+    ).toBeVisible();
 
-    // Finished sessions are history, not activity: they render inside the
-    // "Recent CLI sessions" disclosure, collapsed by default...
+    // Finished sessions are history, not Bridge activity, so they are not
+    // rendered in a disclosure at all.
     const endedRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.ended);
     const staleRow = cliSessionRow(page, E2E_CLI_SESSION_IDS.stale);
-    await expect(endedRow).toBeHidden();
-    await expect(staleRow).toBeHidden();
+    await expect(endedRow).toHaveCount(0);
+    await expect(staleRow).toHaveCount(0);
+    await expect(page.getByTestId('recent-sessions')).toHaveCount(0);
 
-    // ...and become visible once expanded.
-    await page.getByTestId('recent-sessions').locator('summary').click();
-    await expect(endedRow.getByTestId('cli-session-liveness')).toHaveText(
-      'ended',
-    );
-    await expect(endedRow).toContainText('e2e-fixture-host-3');
-    await expect(endedRow).not.toContainText('1 turns');
-    await expect(staleRow.getByTestId('cli-session-liveness')).toHaveText(
-      'stale',
-    );
-    await expect(staleRow).toContainText('e2e-fixture-host-4');
-    await expect(staleRow).not.toContainText('2 turns');
-
-    // Liveness badges are distinct per row, not just present somewhere on
-    // the page: assert the full set of rendered labels matches exactly
-    // {live, idle, ended, stale}, one each.
     await expect(page.getByTestId('cli-session-liveness')).toHaveText([
       'live',
       'idle',
-      'ended',
-      'stale',
     ]);
   });
 });

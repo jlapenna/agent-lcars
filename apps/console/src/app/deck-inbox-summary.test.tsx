@@ -13,23 +13,21 @@ function renderSummary(count: number, inboxHref = '/inbox') {
 }
 
 describe('DeckInboxSummary', () => {
-  it('shows the zero-padded count and links into the Inbox', () => {
+  it('leads with the decision count and labels the direct action', () => {
     renderSummary(3, '/inbox?repo=agent%2Flcars');
 
     const tile = screen.getByTestId('deck-inbox-summary');
-    expect(tile.textContent).toContain('03');
-    expect(tile.textContent).toContain('items need your decision');
+    expect(tile.textContent).toContain('3');
+    expect(tile.textContent).toContain('Decisions waiting');
     expect(
-      screen.getByRole('link', { name: 'Open the queue →' }),
+      screen.getByRole('link', { name: 'Open 3 decisions' }),
     ).toHaveAttribute('href', '/inbox?repo=agent%2Flcars');
     expect(tile).not.toHaveAttribute('data-empty');
   });
 
   it('uses singular phrasing for one item', () => {
     renderSummary(1);
-    expect(screen.getByTestId('deck-inbox-summary').textContent).toContain(
-      'item needs your decision',
-    );
+    expect(screen.getByRole('link', { name: 'Open 1 decision' })).toBeTruthy();
   });
 
   it('marks the clear state so the accent dims', () => {
@@ -37,8 +35,8 @@ describe('DeckInboxSummary', () => {
 
     const tile = screen.getByTestId('deck-inbox-summary');
     expect(tile).toHaveAttribute('data-empty');
-    expect(tile.textContent).toContain('the Inbox is clear');
-    expect(screen.getByRole('link', { name: 'Open the queue →' })).toBeTruthy();
+    expect(tile.textContent).toContain('No decisions waiting');
+    expect(screen.getByRole('link', { name: 'Review queue' })).toBeTruthy();
   });
 
   it('avoids landmark/alert roles the Deck e2e contract forbids', () => {
