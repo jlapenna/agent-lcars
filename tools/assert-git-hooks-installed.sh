@@ -9,9 +9,14 @@ if [ "$hooks_path" != ".husky/_" ]; then
   exit 1
 fi
 
-for hook in h pre-commit pre-push; do
-  if [ ! -f ".husky/_/$hook" ]; then
-    echo "ERROR: missing Husky bootstrap .husky/_/$hook. Run pnpm exec husky." >&2
+if [ ! -f .husky/_/h ]; then
+  echo "ERROR: missing Husky bootstrap .husky/_/h. Run pnpm exec husky." >&2
+  exit 1
+fi
+
+for hook in pre-commit pre-push; do
+  if [ ! -x ".husky/_/$hook" ]; then
+    echo "ERROR: missing executable Husky bootstrap .husky/_/$hook. Run pnpm exec husky." >&2
     exit 1
   fi
 done

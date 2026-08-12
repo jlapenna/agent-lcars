@@ -10,7 +10,7 @@
     "format:check": "nx format:check --all",
     "lint": "nx run-many -t lint --all",
     "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
-    "prepare": "if [ -z \"$CI\" ]; then pnpm exec husky; fi",
+    "prepare": "./tools/setup-git-hooks.sh",
     "trajectory:collect": "node tools/trajectory-evaluation/cli.mjs collect",
     "trajectory:compare": "node tools/trajectory-evaluation/cli.mjs compare --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json --variant tools/trajectory-evaluation/variants/issue-523-reliability-v1.json",
     "trajectory:report": "node tools/trajectory-evaluation/cli.mjs report --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
