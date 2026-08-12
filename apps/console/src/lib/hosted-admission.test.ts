@@ -23,6 +23,7 @@ import {
   deliveryTransportId,
   loadTimeline,
   parseHostedAdmissionMode,
+  PermanentAdmissionError,
 } from './hosted-admission';
 
 const repository = 'jlapenna/agent-lcars';
@@ -174,5 +175,93 @@ describe('hosted webhook admission primitives', () => {
     const { normalized } = processHostedControllerEvent.mock.calls[0][0];
     expect(normalized.kind).toBe('control-evidence');
     expect(normalized.evidence.sourceId).toBe(`github-delivery:${deliveryId}`);
+  });
+});
+
+describe('permanent vs. transient admission failure classification', () => {
+  it('wraps a normalizeEvent() failure as PermanentAdmissionError (deterministic given the payload -- e.g. a malformed pull request anchor)', async () => {
+    // normalizeEvent() is a pure function of its arguments (no I/O), so any
+    // exception it raises is deterministic given this exact payload -- every
+    // retry of the same delivery would fail identically. `pull_request`
+    // closed/reopened with a falsy id is one such rule (unrelated to the
+    // #955 ambiguous-timeline fallback, which no longer throws at all).
+    const rejection = admitGitHubWebhook({
+      deliveryId,
+      eventName: 'pull_request',
+      payload: {
+        action: 'closed',
+        repository: { id: repositoryId, full_name: repository },
+        sender: { login: 'github-actions[bot]' },
+        pull_request: {
+          id: 0,
+          number: issueNumber,
+          title: 'Malformed PR anchor',
+          body: '',
+          created_at: eventTime,
+          updated_at: eventTime,
+        },
+      },
+      mode: 'authority',
+    });
+    await expect(rejection).rejects.toBeInstanceOf(PermanentAdmissionError);
+    await expect(rejection).rejects.toThrow(/Malformed pull request anchor/);
+    expect(processHostedControllerEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsupported event name as permanent', async () => {
+    await expect(
+      admitGitHubWebhook({
+        deliveryId,
+        eventName: 'release',
+        payload: statusLabelPayload(),
+        mode: 'authority',
+      }),
+    ).rejects.toBeInstanceOf(PermanentAdmissionError);
+  });
+
+  it('rejects a webhook outside the control-plane boundary as permanent', async () => {
+    await expect(
+      admitGitHubWebhook({
+        deliveryId,
+        eventName: 'issues',
+        payload: {
+          ...statusLabelPayload(),
+          repository: {
+            id: repositoryId,
+            full_name: 'someone-else/other-repo',
+          },
+        },
+        mode: 'authority',
+      }),
+    ).rejects.toBeInstanceOf(PermanentAdmissionError);
+  });
+
+  it('rejects a timeline lookup missing an issue number as permanent', async () => {
+    await expect(
+      loadTimeline('issues', {
+        action: 'labeled',
+        repository: { full_name: 'jlapenna/agent-lcars' },
+      }),
+    ).rejects.toBeInstanceOf(PermanentAdmissionError);
+    expect(paginate).not.toHaveBeenCalled();
+  });
+
+  it('leaves a GitHub API failure during timeline lookup transient (not wrapped)', async () => {
+    const outage = new Error('GitHub API is unavailable');
+    paginate.mockRejectedValueOnce(outage);
+
+    await expect(
+      loadTimeline('issues', {
+        action: 'labeled',
+        repository: { full_name: 'jlapenna/agent-lcars' },
+        issue: {
+          id: 736,
+          number: 736,
+          title: 'Hosted broker',
+          created_at: eventTime,
+          updated_at: eventTime,
+        },
+      }),
+    ).rejects.toBe(outage);
   });
 });
