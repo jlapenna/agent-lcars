@@ -17362,6 +17362,10 @@ async function repairMissingIntentFromLabel(client, loaded, now, runId, maintain
     if (legacySource && legacyGeneration?.pipeline === pipeline && legacyGeneration.mode === mode && Date.parse(legacySource.occurredAt) >= Date.parse(occurredAt)) {
       return;
     }
+    const alreadyDispatched = ledger.generations.some(
+      (generation) => generation.pipeline === pipeline && generation.mode === mode && Date.parse(generation.occurredAt) >= Date.parse(occurredAt)
+    );
+    if (alreadyDispatched) return;
     actor = mostRecent.actor;
     if (!actor || actor.login !== maintainer) return;
     quickTask = quickTaskRequest(issue2, task.repository, pipeline);

@@ -94,6 +94,14 @@ export interface NormalizeContext {
   runId: number;
   now: string;
   actor?: string;
+  /** GitHub's own delivery UUID for this webhook (the `x-github-delivery`
+   *  header, threaded through as `admitGitHubWebhook`'s `deliveryId`) --
+   *  present for every real webhook transport, absent for
+   *  workflow_dispatch/console-originated calls that never carry one.
+   *  `timelineSource()`'s only consumer: it is the fallback identity used
+   *  when the issue/PR timeline can't be correlated to a single event (see
+   *  that function). */
+  deliveryId?: string;
 }
 
 interface WorkflowDispatchInputs {
@@ -337,6 +345,7 @@ function timelineSource(
   timeline: TimelineEvent[],
   eventName: string,
   event: WebhookEvent,
+  deliveryId?: string,
 ): { sourceId: string; occurredAt: string } {
   const action = event.action;
   // Callers only ever reach here once `event.issue ?? event.pull_request`
@@ -362,13 +371,48 @@ function timelineSource(
       Math.abs(occurredAt - targetTime) <= 10_000
     );
   });
-  if (candidates.length !== 1 || !candidates[0].id) {
-    throw new Error(`Ambiguous ${eventName}:${action} timeline event`);
+  const matched =
+    candidates.length === 1 && candidates[0].id ? candidates[0] : undefined;
+  // GitHub's timeline API is only eventually consistent (#955): the same
+  // webhook delivery can see zero, one, or more candidates depending on how
+  // far the timeline has caught up by the time *this* attempt runs, and
+  // Cloud Tasks retries the identical delivery an unbounded number of
+  // times. Deriving sourceId from `matched` would let it flip between
+  // retries of the very same delivery -- first attempt sees nothing yet
+  // (or two colliding candidates) and falls back, a later attempt sees the
+  // timeline catch up to exactly one clean candidate and would otherwise
+  // switch to a *different* sourceId for the identical delivery. Both
+  // consumers of this sourceId dedup on it alone -- `applyAnchorControl`
+  // for closed/reopened has no secondary check at all, and
+  // `repairMissingIntentFromLabel`'s reconciliation-repair path for
+  // labeled/unlabeled only recognizes a matching (pipeline, mode,
+  // occurredAt) generation, not the literal sourceId string (see its own
+  // comment in controller-core.ts) -- so a flip is a silent double
+  // admission, not just a missed optimization (PR #960 review).
+  //
+  // Whenever the caller has a delivery ID, it is therefore the *only*
+  // signal sourceId is derived from -- a pure function of the delivery
+  // itself, never of what this particular attempt's timeline query
+  // happened to return. The matched candidate (when there is exactly one)
+  // still enriches `occurredAt` with the event's own real timestamp, since
+  // that field carries no dedup weight. This deliberately does not stay
+  // stable across a genuine GitHub-UI *redelivery* (a fresh delivery ID
+  // for the same underlying event, distinct from a Cloud Tasks retry of
+  // one delivery) -- an accepted trade-off given the alternative is a
+  // permanent outage.
+  if (deliveryId) {
+    return {
+      sourceId: `github-delivery:${deliveryId}`,
+      occurredAt: matched?.created_at ?? numbered.updated_at,
+    };
   }
-  return {
-    sourceId: `timeline:${candidates[0].id}`,
-    occurredAt: candidates[0].created_at,
-  };
+  if (matched) {
+    return {
+      sourceId: `timeline:${matched.id}`,
+      occurredAt: matched.created_at,
+    };
+  }
+  throw new Error(`Ambiguous ${eventName}:${action} timeline event`);
 }
 
 // Shared by the manual-dispatch workflow_dispatch branch
@@ -785,7 +829,12 @@ function normalizeEvent({
   }
 
   if (['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.action)) {
-    const source = timelineSource(timeline, semanticEventName, event);
+    const source = timelineSource(
+      timeline,
+      semanticEventName,
+      event,
+      context.deliveryId,
+    );
     if (event.action === 'closed' || event.action === 'reopened') {
       return {
         kind: 'anchor-control',

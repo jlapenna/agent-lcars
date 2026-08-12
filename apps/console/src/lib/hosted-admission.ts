@@ -139,6 +139,7 @@ export async function admitGitHubWebhook({
       runId: transportRunId,
       actor: payload.sender?.login,
       now: new Date().toISOString(),
+      deliveryId,
     },
     timeline: await loadTimeline(eventName, payload),
     maintainer: maintainerLogin(),

@@ -136,4 +136,43 @@ describe('hosted webhook admission primitives', () => {
       }),
     ).rejects.toBe(gap);
   });
+
+  // #955: an ambiguous timeline (here, two same-label-same-actor entries
+  // both inside the correlation window) used to throw out of normalizeEvent
+  // and surface as a 500 -- a Cloud Tasks poison pill, since every retry
+  // resubmits the identical webhook and the ambiguity never resolves.
+  // Threading this route's own `deliveryId` through to normalizeEvent's
+  // fallback keeps admission succeeding instead, with a sourceId derived
+  // from the delivery itself.
+  it('admits an ambiguous-timeline delivery using a delivery-derived sourceId instead of throwing (#955)', async () => {
+    paginate.mockResolvedValue([
+      {
+        id: 42,
+        event: 'labeled',
+        label: { name: 'status:needs-human' },
+        actor: { login: 'github-actions[bot]' },
+        created_at: eventTime,
+      },
+      {
+        id: 43,
+        event: 'labeled',
+        label: { name: 'status:needs-human' },
+        actor: { login: 'github-actions[bot]' },
+        created_at: eventTime,
+      },
+    ]);
+
+    const result = await admitGitHubWebhook({
+      deliveryId,
+      eventName: 'issues',
+      payload: statusLabelPayload(),
+      mode: 'authority',
+    });
+
+    expect(result.outcome).toBe('processed');
+    expect(processHostedControllerEvent).toHaveBeenCalledTimes(1);
+    const { normalized } = processHostedControllerEvent.mock.calls[0][0];
+    expect(normalized.kind).toBe('control-evidence');
+    expect(normalized.evidence.sourceId).toBe(`github-delivery:${deliveryId}`);
+  });
 });
