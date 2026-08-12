@@ -462,4 +462,110 @@ describe('ActionItemCard', () => {
       expect(screen.queryByTestId('markdown-stub')).toBeNull();
     });
   });
+
+  // #949: the description preview reuses the same collapsible markdown
+  // component as the last-comment preview above, so it needs its own
+  // independent expand/collapse affordance instead of sharing state with it.
+  describe('description preview', () => {
+    it('renders the issue body through the markdown renderer', () => {
+      renderCard(
+        makeItem({
+          body: '**bold** description with a [link](https://example.com)',
+        }),
+      );
+
+      expect(screen.getByTestId('markdown-stub').textContent).toBe(
+        '**bold** description with a [link](https://example.com)',
+      );
+    });
+
+    it('renders nothing when the item has no description', () => {
+      renderCard(makeItem({ body: '' }));
+
+      expect(screen.queryByTestId('markdown-stub')).toBeNull();
+    });
+
+    it('renders both the description and the last comment independently', () => {
+      const longBody = 'D'.repeat(500);
+      const longComment = 'C'.repeat(500);
+      renderCard(
+        makeItem({
+          body: longBody,
+          lastCommentBody: longComment,
+          lastCommentUrl: 'https://github.com/o/r/issues/1#issuecomment-1',
+        }),
+      );
+
+      const stubs = screen.getAllByTestId('markdown-stub');
+      expect(stubs.map((stub) => stub.textContent)).toEqual([
+        longBody,
+        longComment,
+      ]);
+
+      const [showDescription, showResponse] = screen.getAllByRole('button', {
+        name: /Show full/,
+      });
+      expect(showDescription.textContent).toContain('Show full description');
+      expect(showResponse.textContent).toContain('Show full response');
+
+      // Expanding the description must not also expand the comment - each
+      // preview owns its own collapsed/expanded state.
+      fireEvent.click(showDescription);
+      expect(screen.getByRole('button', { name: /Show less/ })).toBeTruthy();
+      expect(
+        screen.getByRole('button', { name: /Show full response/ }),
+      ).toBeTruthy();
+    });
+
+    // #949 review: with both previews on the card, two "View on GitHub"
+    // links with the same accessible name were indistinguishable to
+    // assistive tech.
+    it('gives the description and comment previews distinct accessible link names', () => {
+      renderCard(
+        makeItem({
+          body: 'Some description text',
+          lastCommentBody: 'Some comment text',
+          lastCommentUrl: 'https://github.com/o/r/issues/1#issuecomment-1',
+        }),
+      );
+
+      expect(
+        screen.getByRole('link', { name: 'View description on GitHub ↗' }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole('link', { name: 'View comment on GitHub ↗' }),
+      ).toBeTruthy();
+    });
+
+    // #949 review: the Inbox detail pane reuses one ActionItemCard instance
+    // across selections instead of remounting it per item (queue-workspace.tsx
+    // renders it at a stable position with no `key`), so an expanded
+    // description must not leak onto the next item selected.
+    it('collapses on selecting a different item, even if the previous one was expanded', () => {
+      const itemA = makeItem({ number: 1, body: 'D'.repeat(500) });
+      const itemB = makeItem({ number: 2, body: 'E'.repeat(500) });
+
+      const { rerender } = render(
+        <MantineProvider>
+          <ActionItemCard item={itemA} variant="workspace" />
+        </MantineProvider>,
+      );
+
+      fireEvent.click(
+        screen.getByRole('button', { name: /Show full description/ }),
+      );
+      expect(screen.getByRole('button', { name: /Show less/ })).toBeTruthy();
+
+      rerender(
+        <MantineProvider>
+          <ActionItemCard item={itemB} variant="workspace" />
+        </MantineProvider>,
+      );
+
+      expect(
+        screen.getByRole('button', { name: /Show full description/ }),
+      ).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /Show less/ })).toBeNull();
+    });
+  });
 });

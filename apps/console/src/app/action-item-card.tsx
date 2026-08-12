@@ -23,6 +23,7 @@ import { type PrimaryAction } from '../lib/primary-action';
 import {
   agentIntegration,
   repoDisplayName,
+  repoItemKey,
   repoKey,
   selectedAgentPipeline,
 } from '../lib/watched-repo';
@@ -86,16 +87,31 @@ function disabledMergeReason(item: {
   return mergeableWarning(item);
 }
 
-function CommentPreview({
+/**
+ * Collapsible markdown preview shared by the issue/PR description and the
+ * latest-comment preview below it (#949) - same truncation threshold,
+ * height, and disclosure affordance for both, just a different expand-button
+ * label so it reads correctly for whichever body it's showing.
+ */
+function ExpandableMarkdown({
   body,
   url,
   expanded,
   onToggle,
+  expandLabel,
+  linkLabel,
 }: {
   body: string;
   url: string;
   expanded: boolean;
   onToggle: () => void;
+  expandLabel: string;
+  /** An item with both a description and a last-comment preview renders two
+   * of these side by side - each needs its own accessible name (and, since
+   * it's plain visible text, its own sighted-reader label too) or the two
+   * "View on GitHub" links become indistinguishable to assistive tech
+   * (#949 review). */
+  linkLabel: string;
 }) {
   const needsTruncation = body.length > TRUNCATION_THRESHOLD;
   const isCollapsed = needsTruncation && !expanded;
@@ -145,7 +161,7 @@ function CommentPreview({
             size="compact-xs"
             onClick={onToggle}
           >
-            {expanded ? '▴ Show less' : '▾ Show full response'}
+            {expanded ? '▴ Show less' : `▾ ${expandLabel}`}
           </Button>
         )}
         <Anchor
@@ -155,7 +171,7 @@ function CommentPreview({
           size="xs"
           c="dimmed"
         >
-          View on GitHub ↗
+          {linkLabel} ↗
         </Anchor>
       </Group>
     </Stack>
@@ -192,6 +208,7 @@ export function ActionItemCard({
   variant?: 'card' | 'workspace';
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [labelsExpanded, setLabelsExpanded] = useState(false);
   const [replyBody, setReplyBody] = useState('');
   // The reply input renders already open when replying IS the task; on
@@ -199,6 +216,23 @@ export function ActionItemCard({
   const [replyOpen, setReplyOpen] = useState(primaryAction?.kind === 'reply');
   const [error, setError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
+
+  // The Inbox detail pane (variant="workspace") reuses one ActionItemCard
+  // instance across selections rather than remounting it per item, so these
+  // disclosure toggles would otherwise leak from whichever item last had
+  // them open onto the next one selected - e.g. expand item A's description,
+  // select item B, and B renders pre-expanded (#949 review). Reset them
+  // synchronously during render whenever the item identity changes: the
+  // React-sanctioned "adjusting state when a prop changes" pattern, which
+  // avoids the extra render pass a useEffect-based reset would cost.
+  const itemKey = repoItemKey(item.repo, item.number);
+  const [priorItemKey, setPriorItemKey] = useState(itemKey);
+  if (itemKey !== priorItemKey) {
+    setPriorItemKey(itemKey);
+    setExpanded(false);
+    setDescriptionExpanded(false);
+    setLabelsExpanded(false);
+  }
 
   // No agent label means a plain human reply. This matters for watched repos
   // such as Homelab that intentionally expose no dispatch integration.
@@ -511,6 +545,17 @@ export function ActionItemCard({
           </Group>
         )}
 
+        {item.body && (
+          <ExpandableMarkdown
+            body={item.body}
+            url={item.url}
+            expanded={descriptionExpanded}
+            onToggle={() => setDescriptionExpanded((prev) => !prev)}
+            expandLabel="Show full description"
+            linkLabel="View description on GitHub"
+          />
+        )}
+
         {item.failingChecks && item.failingChecks.length > 0 && (
           <Text size="xs" c="red">
             Failed:{' '}
@@ -545,11 +590,13 @@ export function ActionItemCard({
         )}
 
         {item.lastCommentBody && item.lastCommentUrl && (
-          <CommentPreview
+          <ExpandableMarkdown
             body={item.lastCommentBody}
             url={item.lastCommentUrl}
             expanded={expanded}
             onToggle={() => setExpanded((prev) => !prev)}
+            expandLabel="Show full response"
+            linkLabel="View comment on GitHub"
           />
         )}
 
