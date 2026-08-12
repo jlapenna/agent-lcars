@@ -52,6 +52,33 @@ b64url() {
   openssl base64 -A | tr -d '\n' | tr '+/' '-_' | tr -d '='
 }
 
+# Retry a curl invocation up to 4 attempts with a short linear backoff,
+# absorbing a transient transport/TLS failure the way
+# actions/create-github-app-token's own internal retry absorbed the
+# identical "self-signed certificate" error one step earlier in the same
+# composite action in jlapenna/agent-lcars#956 - there, that step's retry
+# self-healed in under two seconds, but this script's bare curl calls had
+# none and killed the whole dispatch on the very next handshake. Only
+# retries curl itself failing to complete the request (DNS, connection
+# reset, TLS handshake - a non-zero curl exit); an HTTP-level error
+# response (curl exits 0, having gotten a real response) is not a
+# transport failure and is left to the existing http_status handling
+# below, unretried. Preserves curl's own stderr output and exit code on
+# the final attempt, so a real, persistent failure looks the same as it
+# always has.
+curl_retry() {
+  local attempt status
+  for attempt in 1 2 3; do
+    if curl "$@"; then
+      return 0
+    fi
+    status=$?
+    echo "::warning::curl attempt ${attempt} failed (exit ${status}); retrying in ${attempt}s." >&2
+    sleep "$attempt"
+  done
+  curl "$@"
+}
+
 now_epoch="$(date +%s)"
 header_b64="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
 payload_b64="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' \
@@ -83,7 +110,7 @@ else
   request_body="$(jq -cn --argjson permissions "$permissions_json" '{permissions: $permissions}')"
 fi
 
-http_status="$(curl -sS -o "$response_file" -w '%{http_code}' \
+http_status="$(curl_retry -sS -o "$response_file" -w '%{http_code}' \
   -X POST \
   -H "Authorization: Bearer ${jwt}" \
   -H 'Accept: application/vnd.github+json' \
@@ -104,7 +131,7 @@ granted="$(printf '%s' "$response" | jq -r '.permissions.workflows // "none"')"
 # Best-effort revoke - never let a revoke failure mask (or be confused
 # with) the permission check itself, and never echo the probe token.
 if [ -n "$probe_token" ] && [ "$probe_token" != "null" ]; then
-  curl -sS -o /dev/null -X DELETE \
+  curl_retry -sS -o /dev/null -X DELETE \
     -H "Authorization: Bearer ${probe_token}" \
     -H 'Accept: application/vnd.github+json' \
     -H 'X-GitHub-Api-Version: 2022-11-28' \

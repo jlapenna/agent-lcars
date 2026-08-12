@@ -16,6 +16,24 @@ mkdir -p "$fake_bin"
 cat > "$fake_bin/curl" <<'FAKE_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Simulate the first FAKE_CURL_FAIL_ATTEMPTS *calls to this fake curl*
+# (across every invocation in one script run, mint and revoke alike -
+# tests that need only the mint call to fail keep the count well under
+# the revoke call's own turn) as a transient transport failure - the
+# curl_retry() wrapper's target, and the same failure mode
+# jlapenna/agent-lcars#956 observed for real: curl exiting non-zero
+# before ever producing a response, not an HTTP-level error status.
+count_file="$FAKE_CURL_DIR/curl-call-count"
+count=0
+[ -f "$count_file" ] && count="$(cat "$count_file")"
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [ "$count" -le "${FAKE_CURL_FAIL_ATTEMPTS:-0}" ]; then
+  echo "fake curl: simulated transient transport failure (call ${count})" >&2
+  exit 60
+fi
+
 out="/dev/null"
 auth_header=""
 method="GET"
@@ -41,12 +59,13 @@ chmod +x "$fake_bin/curl"
 export PATH="$fake_bin:$PATH"
 
 run_case() {
-  local name="$1" status="$2" body="$3" requested="$4"
+  local name="$1" status="$2" body="$3" requested="$4" fail_attempts="${5:-0}"
   local case_dir="$test_root/$name"
   mkdir -p "$case_dir"
   export FAKE_CURL_DIR="$case_dir"
   export FAKE_CURL_STATUS="$status"
   export FAKE_CURL_BODY="$body"
+  export FAKE_CURL_FAIL_ATTEMPTS="$fail_attempts"
   export CLIENT_ID=Iv1.testclientid
   export PRIVATE_KEY
   PRIVATE_KEY="$(cat "$test_root/fake-key.pem")"
@@ -136,5 +155,32 @@ sent_body="$(cat "$test_root/narrow-allowlist-excludes-workflows/last-request-bo
 jq -e '.permissions | has("workflows") | not' <<<"$sent_body" >/dev/null
 jq -e '.permissions.issues == "write" and .permissions.metadata == "read"' <<<"$sent_body" >/dev/null
 unset PERMISSION_ISSUES PERMISSION_CONTENTS PERMISSION_PULL_REQUESTS PERMISSION_ACTIONS PERMISSION_METADATA
+
+# curl_retry() (agent-lcars#956): the mint call's first two attempts hit a
+# transient transport failure (the fake curl's simulated non-zero exit, the
+# same shape as the real "self-signed certificate" curl exit 60), and the
+# third succeeds - the script must still complete normally, exactly as if
+# the first two failures never happened.
+run_case transient-then-recovers 201 '{"token":"ghs_fake","permissions":{"workflows":"write","contents":"write"}}' write 2
+test "$status_code" = 0
+grep -q 'has granted' "$test_root/transient-then-recovers/output"
+# Proves the retry loop actually ran rather than the mint call happening to
+# succeed on its own first try: 2 failed mint attempts + 1 successful mint
+# attempt + 1 successful revoke call = 4 fake-curl invocations total.
+test "$(cat "$test_root/transient-then-recovers/curl-call-count")" = 4
+
+# curl_retry() exhausting every attempt must still fail closed with the
+# same non-zero exit curl itself produced (60 here) - not hang, not retry
+# forever, and not silently continue as if the mint had succeeded. This is
+# the "persistent, not transient" case: preserves the original single-curl
+# script's exact failure signature (dies at the transport layer, never
+# reaching the HTTP-status/"Could not mint a probe token" check below it).
+run_case transient-exhausts-retries 201 '{"token":"ghs_fake","permissions":{"workflows":"write"}}' write 99
+test "$status_code" = 60
+! grep -q 'Could not mint a probe token' "$test_root/transient-exhausts-retries/output"
+# 3 warned-and-retried attempts, then a 4th, final, unwrapped attempt that
+# is left to fail loudly - matching curl_retry()'s own attempt budget.
+test "$(grep -c '::warning::curl attempt' "$test_root/transient-exhausts-retries/output")" = 3
+test "$(cat "$test_root/transient-exhausts-retries/curl-call-count")" = 4
 
 echo 'verify-workflows-grant.test.sh: all cases passed'
