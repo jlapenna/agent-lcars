@@ -946,7 +946,7 @@ export function AgentActivityPanel({
       radius="md"
       padding="md"
       mb="xl"
-      className="lcars-panel"
+      className="lcars-panel operations-panel"
       style={lcarsPanelStyle('amber')}
     >
       <Stack gap="md">

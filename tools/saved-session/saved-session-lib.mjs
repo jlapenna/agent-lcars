@@ -129,6 +129,23 @@ export function parseStorageState(serialized) {
   return value;
 }
 
+/** Expiry of the shortest-lived Auth.js session-cookie chunk, in epoch
+ * seconds. Captured browser state can contain unrelated cookies (and Auth.js
+ * can split a large token into numbered chunks), so only the session-token
+ * family participates. Undefined means the browser state has no persistent
+ * Auth.js expiry and therefore cannot provide a rotation warning. */
+export function savedSessionExpiration(storageState) {
+  const expirations = storageState.cookies
+    .filter(
+      (cookie) =>
+        /authjs\.session-token(?:\.\d+)?$/u.test(cookie.name) &&
+        Number.isFinite(cookie.expires) &&
+        cookie.expires > 0,
+    )
+    .map((cookie) => cookie.expires);
+  return expirations.length > 0 ? Math.min(...expirations) : undefined;
+}
+
 async function writePrivateFile(destination, contents) {
   const directory = path.dirname(destination);
   await mkdir(directory, { recursive: true, mode: 0o700 });

@@ -69,7 +69,7 @@ function keepTypedQueryValue(
     }
     if (key === 'source') return value === 'cli' || value === 'issue-agent';
     if (pathname === '/sessions' && key === 'view') {
-      return value === 'by-issue';
+      return value === 'flat' || value === 'by-issue';
     }
   }
   return false;

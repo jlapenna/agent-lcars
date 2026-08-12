@@ -30,7 +30,7 @@ import { ViewToggle } from './view-toggle';
 type SessionsView = 'flat' | 'by-issue';
 
 function parseView(searchParams: { view?: string }): SessionsView {
-  return searchParams.view === 'by-issue' ? 'by-issue' : 'flat';
+  return searchParams.view === 'flat' ? 'flat' : 'by-issue';
 }
 
 /** Serializes the archive query back into a query string, preserving the
@@ -55,7 +55,7 @@ function displayHref(
     params.set('issue', String(query.issueNumber));
   }
   if (query.repo) params.set('repo', repoKey(query.repo));
-  if (view === 'by-issue') params.set('view', 'by-issue');
+  if (path !== '/costs' && view === 'flat') params.set('view', 'flat');
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path || '?';
 }
@@ -159,7 +159,7 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   const sharedArchiveQuery = { ...query, repo: undefined };
   const mobileNavigationHrefs = {
     sessions: displayHref(sharedArchiveQuery, {
-      view: 'flat',
+      view: 'by-issue',
       path: '/sessions',
     }),
     costs: displayHref(sharedArchiveQuery, {

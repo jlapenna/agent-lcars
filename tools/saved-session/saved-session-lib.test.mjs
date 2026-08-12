@@ -11,6 +11,7 @@ import {
   loadStorageState,
   matchesTargetLocation,
   normalizeOrigin,
+  savedSessionExpiration,
   saveStorageState,
   secretNameForRole,
   sessionStatus,
@@ -71,6 +72,22 @@ test('session targets stay on the configured origin', () => {
     () => normalizeOrigin('https://user:secret@console.example'),
     /without credentials/,
   );
+});
+
+test('saved session expiry ignores unrelated and non-persistent cookies', () => {
+  assert.equal(
+    savedSessionExpiration({
+      cookies: [
+        { name: 'analytics', expires: 9999999999 },
+        { name: '__Secure-authjs.session-token.0', expires: 200 },
+        { name: '__Secure-authjs.session-token.1', expires: 190 },
+        { name: 'authjs.callback-url', expires: 180 },
+      ],
+      origins: [],
+    }),
+    190,
+  );
+  assert.equal(savedSessionExpiration(STORAGE_STATE), undefined);
 });
 
 test('destination checks preserve meaningful query and hash state', () => {

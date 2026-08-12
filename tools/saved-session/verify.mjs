@@ -11,6 +11,7 @@ import {
   isStorageBackend,
   loadStorageState,
   normalizeOrigin,
+  savedSessionExpiration,
   secretNameForRole,
   SESSION_ROLES,
   STORAGE_BACKENDS,
@@ -24,6 +25,7 @@ function usage() {
       '[--storage <local|secret>] [--origin <origin>] [--state-file <path>] ' +
       '[--project <gcp-project>] [--secret-name <name>] ' +
       '[--wait-for <selector>] [--click <selector>] [--assert-text <text>] ' +
+      '[--minimum-valid-days <days>] ' +
       '[--screenshot <path>] [--screenshot-mode <viewport|full-page>]',
   );
 }
@@ -53,6 +55,7 @@ async function main() {
       'wait-for': { type: 'string' },
       click: { type: 'string' },
       'assert-text': { type: 'string', multiple: true },
+      'minimum-valid-days': { type: 'string', default: '0' },
       screenshot: { type: 'string' },
       'screenshot-mode': { type: 'string', default: 'full-page' },
       help: { type: 'boolean', short: 'h' },
@@ -67,11 +70,13 @@ async function main() {
     !values.path ||
     !isSessionRole(values.role) ||
     !isStorageBackend(values.storage) ||
-    !['viewport', 'full-page'].includes(values['screenshot-mode'])
+    !['viewport', 'full-page'].includes(values['screenshot-mode']) ||
+    !Number.isFinite(Number(values['minimum-valid-days'])) ||
+    Number(values['minimum-valid-days']) < 0
   ) {
     usage();
     throw new Error(
-      `Path is required; role must be one of ${SESSION_ROLES.join(', ')} and storage must be one of ${STORAGE_BACKENDS.join(', ')}.`,
+      `Path is required; role must be one of ${SESSION_ROLES.join(', ')}, storage must be one of ${STORAGE_BACKENDS.join(', ')}, and minimum-valid-days must be a non-negative number.`,
     );
   }
 
@@ -87,6 +92,26 @@ async function main() {
     project: values.project,
     secretName,
   });
+  const minimumValidDays = Number(values['minimum-valid-days']);
+  if (minimumValidDays > 0) {
+    const expiration = savedSessionExpiration(storageState);
+    if (expiration === undefined) {
+      console.error(
+        `SESSION_EXPIRY_UNKNOWN: ${source} has no persistent Auth.js cookie expiry, so rotation cannot be scheduled safely.`,
+      );
+      return 4;
+    }
+    const minimumExpiration = Date.now() / 1000 + minimumValidDays * 86_400;
+    if (expiration < minimumExpiration) {
+      console.error(
+        `SESSION_EXPIRING: ${source} expires before the required ${minimumValidDays}-day safety window. Re-run the @agent-lcars/console:mint-session target.`,
+      );
+      return 4;
+    }
+    console.log(
+      `PASS: saved session remains valid for at least ${minimumValidDays} more days.`,
+    );
+  }
 
   const browser = await chromium.launch({ headless: true });
 

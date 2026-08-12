@@ -42,25 +42,9 @@ import { RelativeTime } from '../relative-time';
  * media queries via Mantine's visibleFrom/hiddenFrom, not JS).
  */
 
-/** Secondary fields that matter less than identity/status/links on a phone
- * - model, cost-weighted tokens, cost, and (CLI-only) host - folded into one muted
- * meta line rather than each getting card real estate. Host/Run's run link
- * is dropped entirely on the card: the card already links to the session
- * detail page, a more useful mobile-sized jump target than a bare Actions
- * run id. */
-function sessionCardMeta(row: SessionRow): string {
-  return [
-    row.model,
-    `${row.totalTokens.toLocaleString('en-US')} cw tok`,
-    row.totalCostUsd !== undefined ? formatCost(row.totalCostUsd) : undefined,
-    row.source === 'cli' ? row.host : undefined,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join(' · ');
-}
-
 function SessionCard({ row }: { row: SessionRow }) {
-  const meta = sessionCardMeta(row);
+  const latestPr = row.prUrls.at(-1);
+  const earlierPrCount = Math.max(0, row.prUrls.length - 1);
   return (
     <article
       className="session-mobile-row"
@@ -112,40 +96,36 @@ function SessionCard({ row }: { row: SessionRow }) {
                 </Anchor>
               </Group>
             )}
-            {row.prUrls.length > 0 && (
+            {latestPr && (
               <Group gap={4} wrap="wrap">
                 <Text size="xs" c="dimmed">
-                  {row.prUrls.length === 1 ? 'PR' : 'PRs'}
+                  PR
                 </Text>
-                {row.prUrls.map((pr) => (
-                  <Anchor
-                    key={pr.number}
-                    href={pr.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    size="xs"
-                  >
-                    #{pr.number}
-                  </Anchor>
-                ))}
+                <Anchor
+                  href={latestPr.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                >
+                  #{latestPr.number}
+                </Anchor>
+                {earlierPrCount > 0 && (
+                  <Text size="xs" c="dimmed">
+                    +{earlierPrCount} earlier
+                  </Text>
+                )}
               </Group>
             )}
           </Group>
         )}
 
         <Text size="xs" c="dimmed">
-          {row.turns} turn{row.turns === 1 ? '' : 's'} · started{' '}
-          <RelativeTime iso={row.startedAt} /> ·{' '}
+          Last active <RelativeTime iso={row.lastActivityAt} /> · {row.turns}{' '}
+          turn{row.turns === 1 ? '' : 's'} ·{' '}
           {formatDuration(
             sessionDurationSeconds(row.startedAt, row.lastActivityAt),
           )}
         </Text>
-
-        {meta && (
-          <Text size="xs" c="dimmed" data-testid="session-card-meta">
-            {meta}
-          </Text>
-        )}
       </Stack>
     </article>
   );

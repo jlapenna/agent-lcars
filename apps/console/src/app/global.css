@@ -1354,6 +1354,13 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 }
 
 @media (max-width: 47.99em) {
+  /* Mantine renders menus in a body-level portal, outside the workspace
+     that opened them. Size the portal items themselves for touch instead
+     of relying on page-scoped button rules that can never reach them. */
+  .mantine-Menu-item {
+    min-height: 44px;
+  }
+
   .console-page-shell {
     width: 100%;
     max-width: none;
@@ -1792,6 +1799,11 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     font-size: 0.6875rem;
   }
 
+  .queue-detail-reply .mantine-Input-input,
+  .queue-detail-reply .mantine-Button-root {
+    min-height: 44px;
+  }
+
   .queue-mobile-back {
     align-self: stretch;
     min-width: 7.25rem;
@@ -2148,6 +2160,14 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .operations-primary-action {
     flex: 1 1 auto;
     min-height: 44px;
+  }
+
+  .operations-panel a,
+  .operations-more-link,
+  .takeover-command-button {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
   }
 
   .operations-secondary-action {

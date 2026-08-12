@@ -605,7 +605,12 @@ export function ActionItemCard({
         )}
 
         {replyOpen && (
-          <Group gap="sm" wrap="nowrap" mt={4}>
+          <Group
+            gap="sm"
+            wrap="nowrap"
+            mt={4}
+            className={workspace ? 'queue-detail-reply' : undefined}
+          >
             <TextInput
               value={replyBody}
               onChange={(e) => setReplyBody(e.currentTarget.value)}

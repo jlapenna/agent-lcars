@@ -46,6 +46,15 @@ describe('sanitizeQuickTaskSourceRoute', () => {
       '/sessions/session-123',
     );
   });
+
+  it('preserves either explicit session archive view', () => {
+    expect(sanitizeQuickTaskSourceRoute('/sessions?view=flat')).toBe(
+      '/sessions?view=flat',
+    );
+    expect(sanitizeQuickTaskSourceRoute('/sessions?view=by-issue')).toBe(
+      '/sessions?view=by-issue',
+    );
+  });
 });
 
 describe('Quick Task evidence composition', () => {

@@ -52,7 +52,7 @@ function GroupHeading({ group }: { group: IssueSessionGroup }) {
 }
 
 /**
- * The archive's "group by issue" view (#177, `?view=by-issue`) - the flat
+ * The archive's default "group by issue" view (#177) - the flat
  * SessionTable re-sectioned so every session an issue took (across however
  * many resumed/parked/handed-off sessions) reads as one group instead of
  * scattered rows a maintainer has to mentally re-assemble. Reuses

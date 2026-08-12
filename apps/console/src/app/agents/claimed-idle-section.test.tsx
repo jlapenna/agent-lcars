@@ -62,7 +62,7 @@ describe('ClaimedIdleSection', () => {
     ).toBeTruthy();
   });
 
-  it('shows the takeover command when the item has one', () => {
+  it('shows the takeover copy action without exposing the raw command', () => {
     renderSection([
       makeItem({
         number: 5,
@@ -70,13 +70,18 @@ describe('ClaimedIdleSection', () => {
       }),
     ]);
     expect(
-      screen.getByText('~/p/members/tools/claude-agent-session.sh resume x'),
+      screen.getByRole('button', { name: 'Copy takeover command' }),
     ).toBeTruthy();
+    expect(
+      screen.queryByText('~/p/members/tools/claude-agent-session.sh resume x'),
+    ).toBeNull();
   });
 
   it('renders no takeover chip when the item has none', () => {
     renderSection([makeItem({ number: 5 })]);
-    expect(screen.queryByText('Takeover:')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Copy takeover command' }),
+    ).toBeNull();
   });
 
   it('links to the most recent session that worked this item, even if ended/stale', () => {

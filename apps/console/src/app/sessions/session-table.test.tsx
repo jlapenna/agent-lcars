@@ -74,7 +74,7 @@ describe('SessionTable', () => {
     expect(screen.queryByText('#42')).toBeNull();
   });
 
-  it('links every PR number in both views', () => {
+  it('keeps every PR in the desktop table but only the latest on the phone card', () => {
     renderTable([
       makeRow({
         prUrls: [
@@ -85,7 +85,7 @@ describe('SessionTable', () => {
     ]);
     const pr10 = screen.getAllByRole('link', { name: '#10' });
     const pr20 = screen.getAllByRole('link', { name: '#20' });
-    expect(pr10).toHaveLength(2);
+    expect(pr10).toHaveLength(1);
     expect(pr20).toHaveLength(2);
     for (const link of pr10) {
       expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/10');
@@ -93,6 +93,7 @@ describe('SessionTable', () => {
     for (const link of pr20) {
       expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/20');
     }
+    expect(screen.getByText('+1 earlier')).toBeTruthy();
   });
 
   it('shows the host for a CLI session in the table column', () => {
@@ -100,7 +101,7 @@ describe('SessionTable', () => {
     expect(screen.getByText('joes-workstation')).toBeTruthy();
   });
 
-  it('folds the host into the card meta line', () => {
+  it('keeps host metadata in the desktop table and out of the phone card', () => {
     renderTable([
       makeRow({
         sessionId: 'card-host',
@@ -108,9 +109,8 @@ describe('SessionTable', () => {
         host: 'joes-workstation',
       }),
     ]);
-    expect(screen.getByTestId('session-card-meta').textContent).toContain(
-      'joes-workstation',
-    );
+    expect(screen.getAllByText('joes-workstation')).toHaveLength(1);
+    expect(screen.queryByTestId('session-card-meta')).toBeNull();
   });
 
   it('links the run for an issue-agent session in the table only (dropped as card noise)', () => {
@@ -150,9 +150,7 @@ describe('SessionTable', () => {
   it('formats total tokens with thousands separators', () => {
     renderTable([makeRow({ totalTokens: 12345 })]);
     expect(screen.getByText('12,345')).toBeTruthy();
-    expect(screen.getByTestId('session-card-meta').textContent).toContain(
-      '12,345 cw tok',
-    );
+    expect(screen.queryByText(/cw tok/)).toBeNull();
   });
 
   it('renders no agent badge for a claude-code row (the overwhelming default)', () => {
