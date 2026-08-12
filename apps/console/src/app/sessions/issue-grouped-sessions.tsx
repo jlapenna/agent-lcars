@@ -3,8 +3,11 @@ import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
 import type { IssueSessionGroup } from '../../lib/session-issue-groups';
 import { RepoBadge } from '../agent-activity-panel';
+import { MobileHistoryDisclosure } from '../mobile-history-disclosure';
 import { NoIssueSessionGroup } from './no-issue-session-group';
 import { SessionTable } from './session-table';
+
+const MOBILE_INITIAL_ISSUE_GROUP_COUNT = 5;
 
 /** Mirrors ledger-tables.tsx's issueRowKey - the bare issue number collides
  * once two watched repos can each have their own #42. */
@@ -79,16 +82,24 @@ export function IssueGroupedSessions({
   }
 
   return (
-    <Stack
+    <MobileHistoryDisclosure
       gap="xl"
-      data-testid="issue-grouped-sessions"
+      hiddenCount={Math.max(
+        0,
+        groups.length - MOBILE_INITIAL_ISSUE_GROUP_COUNT,
+      )}
+      itemLabel="issue group"
+      testId="issue-grouped-sessions"
       className="sessions-issue-groups"
     >
-      {groups.map((group) => (
+      {groups.map((group, index) => (
         <Stack
           key={groupKey(group)}
           gap="xs"
           data-testid={`issue-group-${groupKey(group)}`}
+          data-mobile-history-extra={
+            index >= MOBILE_INITIAL_ISSUE_GROUP_COUNT || undefined
+          }
         >
           {group.issueNumber === 'no-issue' ? (
             <NoIssueSessionGroup
@@ -104,6 +115,6 @@ export function IssueGroupedSessions({
           )}
         </Stack>
       ))}
-    </Stack>
+    </MobileHistoryDisclosure>
   );
 }

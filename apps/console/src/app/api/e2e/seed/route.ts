@@ -183,6 +183,39 @@ function fixtureIssueAgentSession(): IssueAgentSessionDoc {
   };
 }
 
+/** Archive-only history gives the phone Sessions view enough distinct issue
+ * groups to exercise its progressive disclosure. These docs intentionally
+ * have no runId: they are historical session evidence, not live/recent run
+ * joins, so they cannot change dashboard classifications. */
+function fixtureArchiveIssueSessions(): IssueAgentSessionDoc[] {
+  return Array.from({ length: 9 }, (_, index) => {
+    const issueNumber = 9101 + index;
+    const lastActivityAt = minutesAgo(61 + index);
+    return {
+      sessionId: `e2e-archive-issue-session-${issueNumber}`,
+      source: 'issue-agent',
+      liveness: 'ended',
+      repo: { owner: E2E_FIXTURE_REPO.owner, name: E2E_FIXTURE_REPO.name },
+      issueNumber,
+      startedAt: minutesAgo(66 + index),
+      lastActivityAt,
+      expireAt: expireAtFor(lastActivityAt),
+      turns: 2,
+      toolCallCounts: {},
+      tokens: {
+        inputTokens: 120,
+        outputTokens: 40,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+      model: 'claude-opus-5',
+      permissionMode: 'acceptEdits',
+      title: `E2E archive history for issue #${issueNumber}`,
+      deliverables: { prNumbers: [], commitShas: [] },
+    };
+  });
+}
+
 interface SeedRequest {
   /** `seed` is the original CLI-session-only fixture set; `seed-populated`
    * adds the issue-agent session and switches the GitHub fixture route into
@@ -242,7 +275,11 @@ export async function POST(req: NextRequest) {
     setPopulatedFixtures(populated);
     revalidateDashboardCache();
     const docs = populated
-      ? [...fixtureSessions(), fixtureIssueAgentSession()]
+      ? [
+          ...fixtureSessions(),
+          fixtureIssueAgentSession(),
+          ...fixtureArchiveIssueSessions(),
+        ]
       : fixtureSessions();
     await Promise.all(docs.map((doc) => upsertSession(doc)));
     if (populated) {

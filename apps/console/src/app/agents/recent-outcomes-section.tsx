@@ -5,9 +5,11 @@ import { Stack } from '@mantine/core';
 import type { AgentPipeline, AgentRun } from '../../lib/agent-activity';
 import { FinishedRunRow } from '../agent-activity-panel';
 import { Eyebrow } from '../eyebrow';
+import { MobileHistoryDisclosure } from '../mobile-history-disclosure';
 import { AgentOperationsPanel } from './agent-operations-panel';
 
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
+const MOBILE_INITIAL_OUTCOME_COUNT = 5;
 
 const PIPELINE_TITLES: Record<AgentPipeline, string> = {
   claude: 'claude',
@@ -38,33 +40,61 @@ export function RecentOutcomesSection({
   // activity and exceptions, without hiding any actionable state.
   if (recentRuns.length === 0) return null;
 
+  const initiallyVisibleRunIds = new Set(
+    recentRuns.slice(0, MOBILE_INITIAL_OUTCOME_COUNT).map((run) => run.id),
+  );
+  const hiddenCount = Math.max(
+    0,
+    recentRuns.length - MOBILE_INITIAL_OUTCOME_COUNT,
+  );
+
   return (
     <AgentOperationsPanel
       title="Recent Outcomes"
       className="agents-panel--recent"
       testId="recent-outcomes"
     >
-      {PIPELINES.map((pipeline) => {
-        const runs = recentRuns.filter((run) => run.pipeline === pipeline);
-        if (runs.length === 0) return null;
-        return (
-          <Stack key={pipeline} gap={6}>
-            <Eyebrow>
-              {PIPELINE_TITLES[pipeline]} ({runs.length})
-            </Eyebrow>
-            <Stack gap={6}>
-              {runs.map((run) => (
-                <FinishedRunRow
-                  key={run.id}
-                  run={run}
-                  session={sessionsByRunId[run.id]}
-                  outcome={outcomesByRunId[run.id]}
-                />
-              ))}
+      <MobileHistoryDisclosure
+        hiddenCount={hiddenCount}
+        itemLabel="outcome"
+        gap="sm"
+        testId="recent-outcomes-disclosure"
+      >
+        {PIPELINES.map((pipeline) => {
+          const runs = recentRuns.filter((run) => run.pipeline === pipeline);
+          if (runs.length === 0) return null;
+          const groupStartsHidden = runs.every(
+            (run) => !initiallyVisibleRunIds.has(run.id),
+          );
+          return (
+            <Stack
+              key={pipeline}
+              gap={6}
+              data-mobile-history-extra={groupStartsHidden || undefined}
+            >
+              <Eyebrow>
+                {PIPELINE_TITLES[pipeline]} ({runs.length})
+              </Eyebrow>
+              <Stack gap={6}>
+                {runs.map((run) => (
+                  <div
+                    key={run.id}
+                    data-mobile-history-extra={
+                      !initiallyVisibleRunIds.has(run.id) || undefined
+                    }
+                  >
+                    <FinishedRunRow
+                      run={run}
+                      session={sessionsByRunId[run.id]}
+                      outcome={outcomesByRunId[run.id]}
+                    />
+                  </div>
+                ))}
+              </Stack>
             </Stack>
-          </Stack>
-        );
-      })}
+          );
+        })}
+      </MobileHistoryDisclosure>
     </AgentOperationsPanel>
   );
 }

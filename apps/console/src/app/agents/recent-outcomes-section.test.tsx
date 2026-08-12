@@ -1,6 +1,6 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRun } from '../../lib/agent-activity';
@@ -149,5 +149,52 @@ describe('RecentOutcomesSection', () => {
     expect(within(container).getAllByText(/^(claude|opencode)$/)).toHaveLength(
       2,
     );
+  });
+
+  it('marks outcomes after the newest five for the mobile disclosure', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={Array.from({ length: 7 }, (_, index) =>
+            makeAgentRun({
+              id: index + 1,
+              pipeline: index < 6 ? 'claude' : 'codex',
+            }),
+          )}
+        />
+      </MantineProvider>,
+    );
+
+    const disclosure = screen.getByTestId('recent-outcomes-disclosure');
+    expect(
+      disclosure.querySelectorAll('[data-mobile-history-extra="true"]'),
+    ).toHaveLength(3);
+
+    const toggle = screen.getByRole('button', {
+      name: 'Show 2 older outcomes',
+    });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(disclosure).toHaveAttribute('data-expanded', 'true');
+    expect(toggle).toHaveTextContent('Show fewer outcomes');
+  });
+
+  it('uses a singular label when exactly one older outcome is hidden', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={Array.from({ length: 6 }, (_, index) =>
+            makeAgentRun({ id: index + 1 }),
+          )}
+        />
+      </MantineProvider>,
+    );
+
+    const toggle = screen.getByRole('button', {
+      name: 'Show 1 older outcome',
+    });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveTextContent('Show fewer outcomes');
   });
 });

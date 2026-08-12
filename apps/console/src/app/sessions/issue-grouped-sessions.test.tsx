@@ -203,4 +203,30 @@ describe('IssueGroupedSessions', () => {
       'No issue',
     ]);
   });
+
+  it('marks issue groups after the newest five for the mobile disclosure', () => {
+    renderGroups(
+      Array.from({ length: 10 }, (_, index) => ({
+        issueNumber: index + 1,
+        repo: { owner: 'o', name: 'r' },
+        sessions: [
+          makeRow({ sessionId: `s${index + 1}`, issueNumber: index + 1 }),
+        ],
+      })),
+    );
+
+    const disclosure = screen.getByTestId('issue-grouped-sessions');
+    expect(
+      disclosure.querySelectorAll('[data-mobile-history-extra="true"]'),
+    ).toHaveLength(5);
+
+    const toggle = screen.getByRole('button', {
+      name: 'Show 5 older issue groups',
+    });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(disclosure).toHaveAttribute('data-expanded', 'true');
+    expect(toggle).toHaveTextContent('Show fewer issue groups');
+  });
 });
