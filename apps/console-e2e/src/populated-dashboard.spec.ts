@@ -569,30 +569,189 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
   });
 
-  test('keeps the Bridge compact and navigable on a phone', async ({
+  for (const viewport of [
+    { width: 320, height: 720 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`keeps the action-first Bridge usable at ${viewport.width}px @mobile-deep`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('/');
+
+      const header = page.locator('.console-header[data-current="deck"]');
+      await expect(header).toBeVisible();
+      await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
+      await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
+      await expectMobileBridgeHeader(header);
+      await expect(
+        page.getByRole('region', { name: 'Decision Inbox' }),
+      ).toHaveCount(0);
+      await expect(page.getByTestId('deck-inbox-summary')).toBeVisible();
+      await expect(page.getByTestId('current-work')).toBeVisible();
+      await expect(page.getByTestId('latest-outcomes')).toBeVisible();
+      await expect(page.getByTestId('finished-run-row')).toHaveCount(5);
+
+      const directActions = page.locator(
+        '.deck-inbox-summary__action:visible, .operations-primary-action:visible',
+      );
+      expect(await directActions.count()).toBeGreaterThan(1);
+      const badActions = await directActions.evaluateAll((elements) =>
+        elements
+          .map((element) => {
+            const box = element.getBoundingClientRect();
+            return {
+              label: element.textContent?.trim() ?? element.tagName,
+              width: box.width,
+              height: box.height,
+              left: box.left,
+              right: box.right,
+            };
+          })
+          .filter(
+            ({ width, height, left, right }) =>
+              width < 44 ||
+              height < 44 ||
+              left < -0.5 ||
+              right > window.innerWidth + 0.5,
+          ),
+      );
+      expect(badActions).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+
+      await page.getByRole('button', { name: 'More console options' }).click();
+      await expect(
+        page.getByRole('menu').getByRole('menuitem', { name: 'Inbox' }),
+      ).toBeVisible();
+    });
+  }
+});
+
+test.describe('responsive agent operations', () => {
+  for (const viewport of [
+    { width: 320, height: 720 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`keeps the populated Agents page usable at ${viewport.width}px @agents-mobile`, async ({
+      page,
+    }, testInfo) => {
+      const browserErrors: string[] = [];
+      page.on('console', (message) => {
+        if (message.type() === 'error') browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+
+      await page.setViewportSize(viewport);
+      await page.goto('/agents');
+
+      const workspace = page.getByRole('region', {
+        name: 'Agent operations',
+      });
+      await expect(workspace).toBeVisible();
+      await expect(workspace.getByTestId('fleet-snapshot-bar')).toBeVisible();
+      await expect(
+        workspace.getByTestId('active-agents-section'),
+      ).toBeVisible();
+      await expect(workspace.getByTestId('claimed-idle-section')).toBeVisible();
+      await expect(workspace.getByTestId('recent-outcomes')).toBeVisible();
+
+      const operations = workspace.locator('.agents-workspace__operations');
+      await expect(operations).toHaveCSS('display', 'block');
+      const sections = [
+        workspace.getByTestId('fleet-snapshot-bar'),
+        workspace.getByTestId('active-agents-section'),
+        workspace.getByTestId('claimed-idle-section'),
+        workspace.getByTestId('recent-outcomes'),
+      ];
+      const sectionBounds = await Promise.all(
+        sections.map(async (section) => section.boundingBox()),
+      );
+      expect(
+        sectionBounds.every(
+          (bounds) => (bounds?.width ?? 0) >= viewport.width - 10,
+        ),
+      ).toBe(true);
+      const sectionTops = sectionBounds.map((bounds) => bounds?.y ?? -1);
+      expect(sectionTops).toEqual([...sectionTops].sort((a, b) => a - b));
+
+      const badControls = await page
+        .locator(
+          '.console-header[data-current="agents"] a:visible, .console-header[data-current="agents"] button:visible, .agents-workspace a:visible, .agents-workspace button:visible',
+        )
+        .evaluateAll((elements) =>
+          elements
+            .map((element) => {
+              const box = element.getBoundingClientRect();
+              return {
+                label:
+                  element.getAttribute('aria-label') ??
+                  element.textContent?.trim() ??
+                  element.tagName,
+                width: box.width,
+                height: box.height,
+                left: box.left,
+                right: box.right,
+              };
+            })
+            .filter(
+              ({ width, height, left, right }) =>
+                width < 44 ||
+                height < 44 ||
+                left < -0.5 ||
+                right > window.innerWidth + 0.5,
+            ),
+        );
+      expect(badControls).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      expect(browserErrors).toEqual([]);
+
+      await page.getByRole('button', { name: 'More console options' }).click();
+      await expect(
+        page.getByRole('menu').getByRole('menuitem', { name: 'Sessions' }),
+      ).toBeVisible();
+      await page.keyboard.press('Escape');
+
+      const filename = `agents-populated-${viewport.width}px.png`;
+      const capture = testInfo.outputPath(filename);
+      await page.screenshot({ path: capture, fullPage: true });
+      await testInfo.attach(filename, {
+        path: capture,
+        contentType: 'image/png',
+      });
+    });
+  }
+
+  test('keeps populated agent columns balanced on tablet @agents-mobile', async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/');
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.goto('/agents');
 
-    const header = page.locator('.console-header[data-current="deck"]');
-    await expect(header).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
-    await expectMobileBridgeHeader(header);
-    await expect(
-      page.getByRole('region', { name: 'Decision Inbox' }),
-    ).toHaveCount(0);
+    const workspace = page.getByRole('region', { name: 'Agent operations' });
+    const operations = workspace.locator('.agents-workspace__operations');
+    await expect(operations).toHaveCSS('display', 'grid');
+    const primary = await workspace
+      .locator('.agents-workspace__primary')
+      .boundingBox();
+    const secondary = await workspace
+      .locator('.agents-workspace__secondary')
+      .boundingBox();
+    expect(primary?.width).toBeGreaterThan(400);
+    expect(secondary?.width).toBeGreaterThanOrEqual(320);
+    expect(primary?.x).toBeLessThan(secondary?.x ?? 0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    await page.getByRole('button', { name: 'More console options' }).click();
-    await expect(
-      page.getByRole('menu').getByRole('menuitem', { name: 'Inbox' }),
-    ).toBeVisible();
   });
 });
 

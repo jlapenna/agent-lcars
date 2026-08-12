@@ -1508,7 +1508,11 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     padding: 10px 16px;
   }
 
+  /* Match the desktop selector's specificity. Without `:has(...)` here,
+     the populated workspace keeps its two desktop columns at phone widths
+     and squeezes Active Agents into a ~70px strip. */
   .agents-workspace__operations,
+  .agents-workspace__operations:has(.agents-workspace__secondary),
   .agents-workspace__secondary {
     display: block;
     background: transparent;
