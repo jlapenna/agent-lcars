@@ -1,14 +1,7 @@
 'use client';
 
-import {
-  ActionIcon,
-  Code,
-  CopyButton,
-  Group,
-  Text,
-  Tooltip,
-} from '@mantine/core';
-import { IconCheck, IconLink } from '@tabler/icons-react';
+import { Button, CopyButton } from '@mantine/core';
+import { IconCheck, IconCopy } from '@tabler/icons-react';
 
 /**
  * The copy-to-clipboard takeover command chip, shared between
@@ -20,29 +13,21 @@ import { IconCheck, IconLink } from '@tabler/icons-react';
  */
 export function TakeoverCommand({ command }: { command: string }) {
   return (
-    <Group gap={6} wrap="nowrap">
-      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-        Takeover:
-      </Text>
-      <Code style={{ overflowX: 'auto', whiteSpace: 'nowrap', minWidth: 0 }}>
-        {command}
-      </Code>
-      <CopyButton value={command}>
-        {({ copied, copy }) => (
-          <Tooltip label={copied ? 'Copied' : 'Copy takeover command'}>
-            <ActionIcon
-              variant="subtle"
-              size="sm"
-              color={copied ? 'teal' : 'gray'}
-              onClick={copy}
-              aria-label="Copy takeover command"
-              style={{ flexShrink: 0 }}
-            >
-              {copied ? <IconCheck size={14} /> : <IconLink size={14} />}
-            </ActionIcon>
-          </Tooltip>
-        )}
-      </CopyButton>
-    </Group>
+    <CopyButton value={command} timeout={2_000}>
+      {({ copied, copy }) => (
+        <Button
+          variant="light"
+          size="compact-sm"
+          color={copied ? 'teal' : 'gray'}
+          leftSection={
+            copied ? <IconCheck size={15} /> : <IconCopy size={15} />
+          }
+          onClick={copy}
+          className="takeover-command-button"
+        >
+          {copied ? 'Takeover command copied' : 'Copy takeover command'}
+        </Button>
+      )}
+    </CopyButton>
   );
 }

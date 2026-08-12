@@ -11,7 +11,7 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('/sessions workspace @smoke', () => {
-  test('uses the compact archive hierarchy on desktop', async ({
+  test('uses the task-grouped archive hierarchy on desktop', async ({
     page,
   }, testInfo) => {
     await page.goto('/sessions');
@@ -27,7 +27,7 @@ test.describe('/sessions workspace @smoke', () => {
     await expect(
       workspace.getByRole('navigation', { name: 'Archive view' }),
     ).toBeVisible();
-    await expect(workspace.getByRole('table')).toBeVisible();
+    await expect(page.getByTestId('issue-grouped-sessions')).toBeVisible();
 
     expect(
       await page.evaluate(
@@ -72,22 +72,26 @@ test.describe('/sessions workspace @smoke', () => {
     await page.goto('/sessions');
 
     const workspace = page.getByRole('region', { name: 'Session archive' });
-    await workspace.getByRole('link', { name: 'By issue' }).click();
-    await expect(page).toHaveURL(/view=by-issue/);
     await expect(page.getByTestId('issue-grouped-sessions')).toBeVisible();
 
     await workspace.getByRole('link', { name: 'Flat' }).click();
-    await expect(page).not.toHaveURL(/view=by-issue/);
+    await expect(page).toHaveURL(/view=flat/);
     await expect(
       page.getByTestId(`session-row-${E2E_ISSUE_AGENT_SESSION_ID}`),
     ).toBeVisible();
+
+    await workspace.getByRole('link', { name: 'By issue' }).click();
+    await expect(page).not.toHaveURL(/view=/);
+    await expect(page.getByTestId('issue-grouped-sessions')).toBeVisible();
   });
 
   test('uses one mobile command strip and flat overflow-safe rows', async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/sessions?days=30&source=issue-agent&issue=9005');
+    await page.goto(
+      '/sessions?days=30&source=issue-agent&issue=9005&view=flat',
+    );
 
     const header = page.locator('.console-header[data-current="sessions"]');
     const workspace = page.getByRole('region', { name: 'Session archive' });
@@ -118,6 +122,13 @@ test.describe('/sessions workspace @smoke', () => {
       '/costs?days=30&source=issue-agent&issue=9005',
     );
     await expect(menu.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    const menuItems = menu.getByRole('menuitem');
+    const undersizedMenuItems = await menuItems.evaluateAll((elements) =>
+      elements
+        .map((element) => element.getBoundingClientRect().height)
+        .filter((height) => height < 44),
+    );
+    expect(undersizedMenuItems).toEqual([]);
     await page.keyboard.press('Escape');
 
     const undersizedControls = await page

@@ -170,14 +170,26 @@ describe('toSessionRow', () => {
     );
   });
 
-  it('falls back to "Issue #N" for a titleless issue-agent session, else the sessionId', () => {
+  it('uses useful task context instead of opaque IDs for titleless sessions', () => {
     expect(
       toSessionRow(agentDoc({ title: undefined, issueNumber: 7 }), now).title,
     ).toBe('Issue #7');
     expect(
-      toSessionRow(cliDoc({ title: undefined, sessionId: 'raw-id' }), now)
+      toSessionRow(cliDoc({ title: undefined, branch: 'fix/mobile-ui' }), now)
         .title,
-    ).toBe('raw-id');
+    ).toBe('fix/mobile-ui');
+    expect(
+      toSessionRow(
+        cliDoc({ title: undefined, branch: undefined, host: 'runner-1' }),
+        now,
+      ).title,
+    ).toBe('Session on runner-1');
+    expect(
+      toSessionRow(
+        cliDoc({ title: undefined, branch: undefined, host: undefined }),
+        now,
+      ).title,
+    ).toBe('Untitled CLI session');
   });
 
   it('maps deliverables.prNumbers into PR links', () => {

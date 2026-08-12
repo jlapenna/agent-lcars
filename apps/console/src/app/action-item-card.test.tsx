@@ -327,7 +327,7 @@ describe('ActionItemCard', () => {
     expect(screen.queryByRole('button', { name: 'Unstick' })).toBeNull();
   });
 
-  it('renders the takeover command copy control as an icon button, not text (#2880)', () => {
+  it('makes takeover an explicit copy action without exposing the raw command', () => {
     renderCard(
       makeItem({
         takeoverCommand: 'claude --resume abc123',
@@ -337,7 +337,7 @@ describe('ActionItemCard', () => {
     expect(
       screen.getByRole('button', { name: 'Copy takeover command' }),
     ).toBeTruthy();
-    expect(screen.queryByText('Copy')).toBeNull();
+    expect(screen.queryByText('claude --resume abc123')).toBeNull();
   });
 
   describe('retrigger + reply pipeline routing (#3012)', () => {

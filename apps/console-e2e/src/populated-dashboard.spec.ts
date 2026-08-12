@@ -529,6 +529,13 @@ test.describe('responsive decision inbox', () => {
     ).toHaveCSS('min-height', '44px');
 
     await workspace.getByRole('button', { name: 'Filter and sort' }).click();
+    const filterItems = page.getByRole('menuitem');
+    const undersizedFilterItems = await filterItems.evaluateAll((elements) =>
+      elements
+        .map((element) => element.getBoundingClientRect().height)
+        .filter((height) => height < 44),
+    );
+    expect(undersizedFilterItems).toEqual([]);
     await page.getByRole('menuitem', { name: 'Newest update' }).click();
     await expect(page).toHaveURL(/sort=newest/);
 
@@ -558,6 +565,13 @@ test.describe('responsive decision inbox', () => {
     await expect(workspace.locator('.queue-mobile-detail-identity')).toHaveText(
       `sprinkles / #${E2E_ITEM_NUMBERS.reviewRequested}`,
     );
+    const replyInput = workspace.getByPlaceholder(/Reply/);
+    await expect(replyInput).toBeVisible();
+    expect((await replyInput.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    expect(
+      (await workspace.getByRole('button', { name: 'Reply' }).boundingBox())
+        ?.height,
+    ).toBeGreaterThanOrEqual(44);
     const backLink = workspace.getByRole('link', {
       name: 'Back to Inbox list',
       exact: true,
@@ -593,7 +607,7 @@ test.describe('responsive decision inbox', () => {
       await expect(page.getByTestId('finished-run-row')).toHaveCount(5);
 
       const directActions = page.locator(
-        '.deck-inbox-summary__action:visible, .operations-primary-action:visible',
+        '.deck-inbox-summary__action:visible, .operations-panel a:visible, .operations-panel button:visible',
       );
       expect(await directActions.count()).toBeGreaterThan(1);
       const badActions = await directActions.evaluateAll((elements) =>

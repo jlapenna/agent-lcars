@@ -157,7 +157,10 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     doc.title ??
     (doc.source === 'issue-agent' && doc.issueNumber !== undefined
       ? `Issue #${doc.issueNumber}`
-      : doc.sessionId);
+      : doc.source === 'cli'
+        ? (doc.branch ??
+          (doc.host ? `Session on ${doc.host}` : 'Untitled CLI session'))
+        : 'Untitled session');
   // Falls back to the primary watched repo for docs written before Phase
   // 0's `repo` field existed.
   const repo = doc.repo ?? primaryWatchedRepo();
