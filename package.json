@@ -26,7 +26,7 @@
     "pnpm": "10.34.5"
   },
   "dependencies": {
-    "@google-cloud/firestore": "8.7.1",
+    "@google-cloud/firestore": "9.0.0",
     "@google-cloud/storage": "^7.19.0",
     "@google-cloud/tasks": "^7.0.0",
     "@mantine/core": "^9.0.2",
@@ -40,7 +40,7 @@
     "firebase": "^12.12.0",
     "firebase-admin": "^14.0.0",
     "google-auth-library": "^11.0.0",
-    "google-gax": "6.0.0",
+    "google-gax": "6.0.1",
     "jose": "^6.2.8",
     "next": "~16.3.0",
     "next-auth": "^5.0.0-beta.31",
@@ -68,7 +68,7 @@
     ]
   },
   "devDependencies": {
-    "@eslint-react/eslint-plugin": "5.18.3",
+    "@eslint-react/eslint-plugin": "5.18.4",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
     "@naxodev/gonx": "4.1.1",
