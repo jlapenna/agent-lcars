@@ -23,7 +23,6 @@ import type {
   AgentRun,
   FleetSummary,
 } from '../lib/agent-activity';
-import { RECENT_RUN_LIMIT } from '../lib/agent-activity';
 import {
   displayRunTitle,
   duplicateLivePipelineGroups,
@@ -34,7 +33,6 @@ import {
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
-import { MAX_SESSIONS } from '../lib/cli-sessions';
 import { shareArtifactUrl } from '../lib/deployment';
 import {
   getWatchedRepos,
@@ -47,7 +45,6 @@ import { CancelRunButton } from './cancel-run-button';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
-import { PersistedDetails } from './persisted-details';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { TakeoverCommand } from './takeover-command';
@@ -135,6 +132,18 @@ export interface RunItemRef {
   number: number;
   title: string;
   url: string;
+}
+
+type ActivityRowVariant = 'detail' | 'operations';
+
+function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
+  const issueNumber = item?.number ?? run.issueNumber;
+  if (issueNumber === undefined) return undefined;
+  return `/task/${run.repo.owner}/${run.repo.name}/${issueNumber}`;
+}
+
+function operationsRunTitle(run: AgentRun): string {
+  return displayRunTitle(run).replace(/\s+\[dispatch:[^\]]+\]\s*$/, '');
 }
 
 const PIPELINE_LABELS: Record<AgentPipeline, string> = {
@@ -325,6 +334,7 @@ export function LiveRunRow({
   run,
   item,
   session,
+  variant = 'detail',
 }: {
   run: AgentRun;
   item?: RunItemRef;
@@ -333,8 +343,67 @@ export function LiveRunRow({
    * the wall-clock bar. Undefined renders exactly as before this telemetry
    * existed (PRD user story 16) - no empty chrome, no "unavailable" noise. */
   session?: IssueAgentSessionDoc;
+  variant?: ActivityRowVariant;
 }) {
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
+
+  if (variant === 'operations') {
+    const taskHref = taskHrefForRun(run, item);
+    const actionHref = taskHref ?? run.url;
+    return (
+      <div className="operations-row" data-testid="current-run-row">
+        <Stack gap={5} style={{ minWidth: 0 }}>
+          <Text size="sm" fw={600} truncate>
+            {item ? `#${item.number} ${item.title}` : operationsRunTitle(run)}
+          </Text>
+          <Group gap="xs" wrap="wrap">
+            <Badge
+              variant="filled"
+              color={run.status === 'running' ? 'blue' : 'gray'}
+              size="sm"
+              style={{ flexShrink: 0 }}
+            >
+              {run.status === 'running' ? 'running' : 'queued'}
+            </Badge>
+            <RepoBadge repo={run.repo} />
+            <Text size="xs" c="dimmed">
+              {run.status === 'running'
+                ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m budget used`
+                : `queued for ${formatDuration(run.elapsedSeconds)}`}
+            </Text>
+          </Group>
+          {run.status === 'running' && (
+            <Progress
+              value={Math.min(100, budgetFraction * 100)}
+              color={budgetColor(budgetFraction)}
+              size="sm"
+              aria-label="Run wall-clock budget"
+            />
+          )}
+        </Stack>
+        <Group gap="xs" wrap="nowrap" className="operations-row__actions">
+          <Anchor
+            href={actionHref}
+            target={taskHref ? undefined : '_blank'}
+            rel={taskHref ? undefined : 'noreferrer'}
+            size="sm"
+            className="operations-primary-action"
+            data-testid="current-run-primary-action"
+          >
+            {taskHref ? 'Open task' : 'Inspect run'}
+            {!taskHref && ' ↗'}
+          </Anchor>
+          <CancelRunButton
+            repo={run.repo}
+            runId={run.id}
+            label={run.displayTitle}
+            className="operations-secondary-action"
+          />
+        </Group>
+      </div>
+    );
+  }
+
   return (
     <Stack gap={4}>
       <Anchor
@@ -463,10 +532,12 @@ export function LiveRunGroupList({
   liveRuns,
   itemsByRunId = {},
   sessionsByRunId = {},
+  variant = 'detail',
 }: {
   liveRuns: AgentRun[];
   itemsByRunId?: Record<number, RunItemRef>;
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+  variant?: ActivityRowVariant;
 }) {
   return (
     <Stack gap="xs">
@@ -477,6 +548,7 @@ export function LiveRunGroupList({
             run={run}
             item={itemsByRunId[run.id]}
             session={sessionsByRunId[run.id]}
+            variant={variant}
           />
         ));
         if (group.runs.length === 1) {
@@ -550,13 +622,64 @@ export function FinishedRunRow({
   run,
   session,
   outcome,
+  variant = 'detail',
 }: {
   run: AgentRun;
   session?: IssueAgentSessionDoc;
   outcome?: DispatchOutcomeKind;
+  variant?: ActivityRowVariant;
 }) {
   const classification = classifyAgentRun(run, session);
   const issueUrl = issueUrlForRun(run);
+
+  if (variant === 'operations') {
+    const taskHref = taskHrefForRun(run);
+    const actionHref = taskHref ?? issueUrl ?? run.url;
+    const successful = classification.status === 'succeeded';
+    return (
+      <div
+        className="operations-row"
+        data-testid="finished-run-row"
+        data-status={classification.status}
+      >
+        <Stack gap={5} style={{ minWidth: 0 }}>
+          <Text size="sm" fw={600} truncate>
+            {operationsRunTitle(run)}
+          </Text>
+          <Group gap="xs" wrap="wrap">
+            <Badge
+              variant="light"
+              color={STATUS_COLORS[classification.status]}
+              size="sm"
+              style={{ flexShrink: 0 }}
+              data-testid="recent-run-conclusion"
+            >
+              {STATUS_LABELS[classification.status]}
+            </Badge>
+            {outcome && <DispatchOutcomeBadge outcome={outcome} />}
+            <RepoBadge repo={run.repo} />
+          </Group>
+          {classification.diagnosis && (
+            <Text size="xs" c="orange" data-testid="finished-run-diagnosis">
+              {classification.diagnosis}
+            </Text>
+          )}
+        </Stack>
+        <Anchor
+          href={actionHref}
+          target={taskHref ? undefined : '_blank'}
+          rel={taskHref ? undefined : 'noreferrer'}
+          size="sm"
+          className="operations-primary-action"
+          data-testid="outcome-primary-action"
+        >
+          {successful ? 'View result' : 'Investigate'}
+          {!taskHref && ' ↗'}
+        </Anchor>
+      </div>
+    );
+  }
+
   return (
     <Stack gap={2} data-testid="finished-run-row">
       <Anchor
@@ -646,6 +769,7 @@ export const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
 export function CliSessionRow({
   session,
   takeoverCommand,
+  variant = 'detail',
 }: {
   session: CliSession;
   /**
@@ -656,8 +780,46 @@ export function CliSessionRow({
    * as before.
    */
   takeoverCommand?: string;
+  variant?: ActivityRowVariant;
 }) {
   const { host, artifacts } = session;
+
+  if (variant === 'operations') {
+    return (
+      <div
+        className="operations-row"
+        data-testid={`cli-session-${session.sessionId}`}
+      >
+        <Stack gap={5} style={{ minWidth: 0 }}>
+          <Text size="sm" fw={600} truncate>
+            {session.title ?? session.branch ?? session.sessionId}
+          </Text>
+          <Group gap="xs" wrap="wrap">
+            <Badge
+              variant="filled"
+              color={LIVENESS_COLORS[session.liveness]}
+              size="sm"
+              style={{ flexShrink: 0 }}
+              data-testid="cli-session-liveness"
+            >
+              {LIVENESS_LABELS[session.liveness]}
+            </Badge>
+            <AgentBadge agent={session.agent} />
+            {session.repo && <RepoBadge repo={session.repo} />}
+          </Group>
+        </Stack>
+        <Anchor
+          href={`/sessions/${session.sessionId}`}
+          size="sm"
+          className="operations-primary-action"
+          data-testid="cli-session-link"
+        >
+          Open session
+        </Anchor>
+      </div>
+    );
+  }
+
   return (
     <Stack gap={2} data-testid={`cli-session-${session.sessionId}`}>
       <Anchor
@@ -738,29 +900,18 @@ export function CliSessionRow({
 }
 
 /**
- * "In Flight": everything currently moving without the maintainer - live
- * agent runs (joined to their issue when possible) and live/idle CLI
- * sessions. Finished work (recent runs, ended/stale sessions) is history,
- * not activity, so it lives behind collapsed disclosures; native <details>
- * keeps this a server component.
+ * The Bridge's action-first operational summary. Work that can be acted on
+ * now and the latest meaningful outcomes stay visible; historical CLI
+ * sessions and full-fidelity run evidence live on their dedicated routes.
  */
 export function AgentActivityPanel({
   activity,
   cliSessions = [],
-  recentRunsCapped,
-  cliSessionsCapped,
   itemsByRunId = {},
   sessionsByRunId = {},
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
-  /** Whether the *unfiltered* recent-run fetch hit RECENT_RUN_LIMIT - a
-   * repo filter can narrow the visible list below the cap while older
-   * runs for that repo were still cut by the global slice (Codex review
-   * on #490). Omitted, falls back to a length heuristic. */
-  recentRunsCapped?: boolean;
-  /** Same, for getCliSessions()'s MAX_SESSIONS slice. */
-  cliSessionsCapped?: boolean;
   itemsByRunId?: Record<number, RunItemRef>;
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
@@ -772,9 +923,6 @@ export function AgentActivityPanel({
   const activeSessions = cliSessions.filter(
     (session) => session.liveness === 'live' || session.liveness === 'idle',
   );
-  const finishedSessions = cliSessions.filter(
-    (session) => session.liveness !== 'live' && session.liveness !== 'idle',
-  );
 
   return (
     <Card
@@ -785,85 +933,86 @@ export function AgentActivityPanel({
       className="lcars-panel"
       style={lcarsPanelStyle('amber')}
     >
-      <Stack gap="sm">
+      <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">
-          <Title order={2} size="h4">
-            In Flight
-          </Title>
+          <Title order={2}>Operations</Title>
           <Group gap={6} wrap="wrap" justify="flex-end">
             <FleetChip fleet={fleet} />
           </Group>
         </Group>
+        <Text size="sm" c="dimmed" className="operations-panel__intro">
+          Act on current work and review the latest outcomes.
+        </Text>
 
         <QueueHealthAlert liveRuns={liveRuns} />
 
-        {liveRuns.length === 0 && activeSessions.length === 0 && (
-          <Text size="sm" c="dimmed">
-            No agent runs or CLI sessions in flight.
-          </Text>
-        )}
-
-        {liveRuns.length > 0 && (
-          <LiveRunGroupList
-            liveRuns={liveRuns}
-            itemsByRunId={itemsByRunId}
-            sessionsByRunId={sessionsByRunId}
-          />
-        )}
-
-        {activeSessions.length > 0 && (
-          <>
-            <Eyebrow>CLI sessions</Eyebrow>
-            <Stack gap="xs">
-              {activeSessions.map((session) => (
-                <CliSessionRow key={session.sessionId} session={session} />
-              ))}
+        <section className="operations-section" data-testid="current-work">
+          <Title order={3} size="h4" mb="xs">
+            Current Work
+          </Title>
+          {liveRuns.length === 0 && activeSessions.length === 0 ? (
+            <Text size="sm" c="dimmed">
+              No work is currently in flight.
+            </Text>
+          ) : (
+            <Stack gap="sm">
+              {liveRuns.length > 0 && (
+                <LiveRunGroupList
+                  liveRuns={liveRuns}
+                  itemsByRunId={itemsByRunId}
+                  sessionsByRunId={sessionsByRunId}
+                  variant="operations"
+                />
+              )}
+              {activeSessions.length > 0 && (
+                <Stack gap={0}>
+                  <Eyebrow>CLI sessions</Eyebrow>
+                  {activeSessions.map((session) => (
+                    <CliSessionRow
+                      key={session.sessionId}
+                      session={session}
+                      variant="operations"
+                    />
+                  ))}
+                </Stack>
+              )}
             </Stack>
-          </>
-        )}
+          )}
+        </section>
 
         {recentRuns.length > 0 && (
-          <PersistedDetails
-            data-testid="recent-runs"
-            storageKey="activity:recent-runs"
-            summary={
-              <Eyebrow component="span">
-                {(recentRunsCapped ?? recentRuns.length >= RECENT_RUN_LIMIT)
-                  ? `Recently finished (${recentRuns.length} shown — fetch capped at last ${RECENT_RUN_LIMIT})`
-                  : `Recently finished (${recentRuns.length})`}
-              </Eyebrow>
-            }
-          >
-            <Stack gap={6} mt="xs">
-              {recentRuns.map((run) => (
+          <section className="operations-section" data-testid="latest-outcomes">
+            <Title order={3} size="h4" mb={2}>
+              Latest Outcomes
+            </Title>
+            <Text size="sm" c="dimmed" mb="xs">
+              The five most recent agent results, with failures called out.
+            </Text>
+            <Stack gap={0}>
+              {recentRuns.slice(0, 5).map((run) => (
                 <FinishedRunRow
                   key={run.id}
                   run={run}
                   session={sessionsByRunId[run.id]}
+                  variant="operations"
                 />
               ))}
             </Stack>
-          </PersistedDetails>
+            <Anchor href="/agents" size="sm" className="operations-more-link">
+              View all outcomes →
+            </Anchor>
+          </section>
         )}
 
-        {finishedSessions.length > 0 && (
-          <PersistedDetails
-            data-testid="recent-sessions"
-            storageKey="activity:recent-sessions"
-            summary={
-              <Eyebrow component="span">
-                {(cliSessionsCapped ?? cliSessions.length >= MAX_SESSIONS)
-                  ? `Recent CLI sessions (${finishedSessions.length} shown — list capped, older in Sessions)`
-                  : `Recent CLI sessions (${finishedSessions.length})`}
-              </Eyebrow>
-            }
-          >
-            <Stack gap="xs" mt="xs">
-              {finishedSessions.map((session) => (
-                <CliSessionRow key={session.sessionId} session={session} />
-              ))}
-            </Stack>
-          </PersistedDetails>
+        {recentRuns.length === 0 && (
+          <section className="operations-section">
+            <Title order={3} size="h4" mb="xs">
+              Latest Outcomes
+            </Title>
+            <Text size="sm" c="dimmed">
+              No recent agent outcomes.
+            </Text>
+          </section>
         )}
       </Stack>
     </Card>

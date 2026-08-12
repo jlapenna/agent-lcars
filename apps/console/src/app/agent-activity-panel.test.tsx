@@ -189,12 +189,10 @@ describe('AgentActivityPanel CLI sessions', () => {
   it('renders nothing extra when there are no CLI sessions', () => {
     renderPanel([]);
     expect(screen.queryByText('CLI sessions')).toBeNull();
-    expect(
-      screen.getByText('No agent runs or CLI sessions in flight.'),
-    ).toBeTruthy();
+    expect(screen.getByText('No work is currently in flight.')).toBeTruthy();
   });
 
-  it('renders an active CLI session with host, branch, and liveness', () => {
+  it('renders an active CLI session without host or worktree metadata', () => {
     renderPanel([
       makeCliSession({
         title: 'Merge live CLI sessions into the list',
@@ -207,8 +205,9 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(
       screen.getByText('Merge live CLI sessions into the list'),
     ).toBeTruthy();
-    expect(screen.getByText('joes-workstation')).toBeTruthy();
-    expect(screen.getByText(/feat\/agent-lcars-cli-sessions/)).toBeTruthy();
+    expect(screen.queryByText('joes-workstation')).toBeNull();
+    expect(screen.queryByText(/feat\/agent-lcars-cli-sessions/)).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open session' })).toBeTruthy();
   });
 
   it('omits the model, turn count, and token count texts (#3012)', () => {
@@ -221,7 +220,7 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(screen.queryByText('1.2k tokens')).toBeNull();
   });
 
-  it('links to the joined PR when one exists', () => {
+  it('keeps PR metadata off the Bridge row when one exists', () => {
     renderPanel([
       makeCliSession({
         pr: {
@@ -231,8 +230,8 @@ describe('AgentActivityPanel CLI sessions', () => {
       }),
     ]);
 
-    const link = screen.getByRole('link', { name: /PR #2587/ });
-    expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/2587');
+    expect(screen.queryByRole('link', { name: /PR #2587/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open session' })).toBeTruthy();
   });
 
   it('always links to the session detail page', () => {
@@ -242,7 +241,7 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(link.getAttribute('href')).toBe('/sessions/abc-123');
   });
 
-  it('links to shared artifacts using host + sessionId', () => {
+  it('keeps artifact metadata on the session detail route', () => {
     renderPanel([
       makeCliSession({
         sessionId: 'abc-123',
@@ -251,13 +250,11 @@ describe('AgentActivityPanel CLI sessions', () => {
       }),
     ]);
 
-    const reportLink = screen.getByRole('link', { name: /report\.md/ });
-    expect(reportLink.getAttribute('href')).toBe(
-      'https://share.lan.jlapenna.net/pike/abc-123/report.md',
-    );
-    const chartLink = screen.getByRole('link', { name: /chart\.png/ });
-    expect(chartLink.getAttribute('href')).toBe(
-      'https://share.lan.jlapenna.net/pike/abc-123/chart.png',
+    expect(screen.queryByRole('link', { name: /report\.md/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /chart\.png/ })).toBeNull();
+    expect(screen.getByTestId('cli-session-link')).toHaveAttribute(
+      'href',
+      '/sessions/abc-123',
     );
   });
 
@@ -278,7 +275,7 @@ describe('AgentActivityPanel CLI sessions', () => {
     );
   });
 
-  it('keeps live/idle sessions inline and tucks ended/stale behind a collapsed disclosure', () => {
+  it('shows live/idle sessions and leaves ended/stale history to Sessions', () => {
     renderPanel([
       makeCliSession({ sessionId: 's-live', liveness: 'live' }),
       makeCliSession({ sessionId: 's-idle', liveness: 'idle' }),
@@ -286,18 +283,11 @@ describe('AgentActivityPanel CLI sessions', () => {
       makeCliSession({ sessionId: 's-stale', liveness: 'stale' }),
     ]);
 
-    const disclosure = screen.getByTestId('recent-sessions');
-    expect(disclosure).not.toHaveProperty('open', true);
-    expect(screen.getByText(/Recent CLI sessions \(2\)/)).toBeTruthy();
-
-    // The finished sessions live inside the disclosure...
-    const finished = within(disclosure as HTMLElement);
-    expect(finished.getByTestId('cli-session-s-ended')).toBeTruthy();
-    expect(finished.getByTestId('cli-session-s-stale')).toBeTruthy();
-    // ...and the active ones outside it.
-    expect(finished.queryByTestId('cli-session-s-live')).toBeNull();
     expect(screen.getByTestId('cli-session-s-live')).toBeTruthy();
     expect(screen.getByTestId('cli-session-s-idle')).toBeTruthy();
+    expect(screen.queryByTestId('cli-session-s-ended')).toBeNull();
+    expect(screen.queryByTestId('cli-session-s-stale')).toBeNull();
+    expect(screen.queryByTestId('recent-sessions')).toBeNull();
   });
 
   // A Mantine Badge's label clips with `overflow: hidden`, which resets the
@@ -322,6 +312,20 @@ describe('AgentActivityPanel CLI sessions', () => {
 });
 
 describe('AgentActivityPanel recent runs', () => {
+  it('keeps only five outcomes visible and links to the full Agents history', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      recentRuns: [1, 2, 3, 4, 5, 6].map((id) =>
+        makeAgentRun({ id, displayTitle: `#${id}: Result ${id}` }),
+      ),
+    });
+
+    expect(screen.getAllByTestId('finished-run-row')).toHaveLength(5);
+    expect(
+      screen.getByRole('link', { name: 'View all outcomes →' }),
+    ).toHaveAttribute('href', '/agents');
+  });
+
   it('keeps the recent-run conclusion badge from shrinking away on narrow layouts', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
@@ -332,15 +336,16 @@ describe('AgentActivityPanel recent runs', () => {
     expect(badge.textContent).toBe('success');
   });
 
-  it('links a finished run title to its issue/PR when issueNumber is known (#3012)', () => {
+  it('links a finished result action to the canonical task route', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       recentRuns: [makeAgentRun({ issueNumber: 42 })],
     });
-    const link = screen.getByTestId('recent-run-issue-link');
+    const link = screen.getByTestId('outcome-primary-action');
     expect(link.getAttribute('href')).toBe(
-      'https://github.com/supersprinklesracing/sprinkles/issues/42',
+      '/task/supersprinklesracing/sprinkles/42',
     );
+    expect(link.textContent).toBe('View result');
   });
 
   it('falls back to the run URL when a legacy run has no parsed issueNumber (#3012)', () => {
@@ -348,18 +353,20 @@ describe('AgentActivityPanel recent runs', () => {
       ...EMPTY_ACTIVITY,
       recentRuns: [makeAgentRun({ issueNumber: undefined })],
     });
-    const link = screen.getByTestId('recent-run-issue-link');
+    const link = screen.getByTestId('outcome-primary-action');
     expect(link.getAttribute('href')).toBe(
       'https://github.com/o/r/actions/runs/1',
     );
   });
 
-  it('renames the disclosure to "Recently finished" (#3012)', () => {
+  it('shows the latest outcomes by default with no disclosure', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       recentRuns: [makeAgentRun()],
     });
-    expect(screen.getByText('Recently finished (1)')).toBeTruthy();
+    expect(screen.getByTestId('latest-outcomes')).toBeTruthy();
+    expect(screen.getByText('Latest Outcomes')).toBeTruthy();
+    expect(screen.queryByTestId('recent-runs')).toBeNull();
   });
 
   it('shows a plain "cancelled" badge for a quick cancel, and "timeout" for a near-budget one', () => {
@@ -375,6 +382,9 @@ describe('AgentActivityPanel recent runs', () => {
     });
     expect(screen.getByTestId('recent-run-conclusion').textContent).toBe(
       'cancelled',
+    );
+    expect(screen.getByTestId('outcome-primary-action').textContent).toBe(
+      'Investigate ↗',
     );
   });
 
@@ -466,7 +476,7 @@ describe('AgentActivityPanel recent runs', () => {
     expect(screen.queryByTestId('finished-run-diagnosis')).toBeNull();
   });
 
-  it('links to the session detail page when a session doc is joined', () => {
+  it('uses a joined session for classification without adding a session metadata link', () => {
     renderPanel(
       [],
       {
@@ -475,8 +485,8 @@ describe('AgentActivityPanel recent runs', () => {
       },
       { 14: makeIssueAgentSessionDoc({ sessionId: 'session-runner-14' }) },
     );
-    const link = screen.getByTestId('finished-run-session-link');
-    expect(link.getAttribute('href')).toBe('/sessions/session-runner-14');
+    expect(screen.getByTestId('recent-run-conclusion')).toBeTruthy();
+    expect(screen.queryByTestId('finished-run-session-link')).toBeNull();
   });
 
   it('renders no session link when no session doc is joined', () => {
@@ -500,7 +510,7 @@ describe('AgentActivityPanel live run links (#176)', () => {
     ).toBeTruthy();
   });
 
-  it('links a live run to its joined item when one exists', () => {
+  it('opens a joined live run on its canonical task route', () => {
     renderPanel(
       [],
       {
@@ -516,18 +526,21 @@ describe('AgentActivityPanel live run links (#176)', () => {
         },
       },
     );
-    const link = screen.getByTestId('live-run-issue-link');
-    expect(link.getAttribute('href')).toBe('https://github.com/o/r/issues/42');
+    const link = screen.getByTestId('current-run-primary-action');
+    expect(link.getAttribute('href')).toBe(
+      '/task/supersprinklesracing/sprinkles/42',
+    );
+    expect(link.textContent).toBe('Open task');
   });
 
-  it('falls back to the direct issue link (not the raw run URL) when no item is joined but issueNumber parses', () => {
+  it('opens the canonical task when issueNumber parses without a joined item', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [makeAgentRun({ id: 31, status: 'running', issueNumber: 99 })],
     });
-    const link = screen.getByTestId('live-run-issue-link');
+    const link = screen.getByTestId('current-run-primary-action');
     expect(link.getAttribute('href')).toBe(
-      'https://github.com/supersprinklesracing/sprinkles/issues/99',
+      '/task/supersprinklesracing/sprinkles/99',
     );
   });
 
@@ -538,13 +551,13 @@ describe('AgentActivityPanel live run links (#176)', () => {
         makeAgentRun({ id: 32, status: 'running', issueNumber: undefined }),
       ],
     });
-    const link = screen.getByTestId('live-run-issue-link');
+    const link = screen.getByTestId('current-run-primary-action');
     expect(link.getAttribute('href')).toBe(
       'https://github.com/o/r/actions/runs/1',
     );
   });
 
-  it('links to the session detail page when a session doc is joined to a live run', () => {
+  it('does not add a session metadata link when telemetry is joined to a live run', () => {
     renderPanel(
       [],
       {
@@ -553,8 +566,8 @@ describe('AgentActivityPanel live run links (#176)', () => {
       },
       { 33: makeIssueAgentSessionDoc({ sessionId: 'session-runner-33' }) },
     );
-    const link = screen.getByTestId('live-run-session-link');
-    expect(link.getAttribute('href')).toBe('/sessions/session-runner-33');
+    expect(screen.getByTestId('current-run-primary-action')).toBeTruthy();
+    expect(screen.queryByTestId('live-run-session-link')).toBeNull();
   });
 
   it('renders no session link on a live run when no session doc is joined', () => {
@@ -573,7 +586,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
       liveRuns: [makeAgentRun({ id: 50, status: 'running', issueNumber: 50 })],
     });
     expect(screen.queryByTestId('live-run-group-50')).toBeNull();
-    expect(screen.getByTestId('live-run-issue-link')).toBeTruthy();
+    expect(screen.getByTestId('current-run-row')).toBeTruthy();
   });
 
   it('clusters two live runs sharing the same issue number under one group', () => {
@@ -595,7 +608,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
       ],
     });
     const group = screen.getByTestId('live-run-group-42');
-    expect(within(group).getAllByTestId('live-run-issue-link')).toHaveLength(2);
+    expect(within(group).getAllByTestId('current-run-row')).toHaveLength(2);
     expect(group.textContent).toContain('2 runs');
   });
 
@@ -609,7 +622,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
     });
     expect(screen.queryByTestId('live-run-group-45')).toBeNull();
     expect(screen.queryByTestId('live-run-group-46')).toBeNull();
-    expect(screen.getAllByTestId('live-run-issue-link')).toHaveLength(2);
+    expect(screen.getAllByTestId('current-run-row')).toHaveLength(2);
   });
 
   it('flags two same-pipeline live attempts on one issue as a duplicate, never dropping either (#306)', () => {
@@ -631,7 +644,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
       ],
     });
     const group = screen.getByTestId('live-run-group-70');
-    expect(within(group).getAllByTestId('live-run-issue-link')).toHaveLength(2);
+    expect(within(group).getAllByTestId('current-run-row')).toHaveLength(2);
     const duplicateAlert = screen.getByTestId('live-run-group-70-duplicate');
     expect(duplicateAlert.textContent).toContain('2 claude');
   });
@@ -702,7 +715,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
 });
 
 describe('AgentActivityPanel live run budget gauges', () => {
-  it('shows turns and cost when a live claude run has a joined session', () => {
+  it('keeps the actionable wall-clock budget and omits turn/cost metadata', () => {
     renderPanel(
       [],
       {
@@ -720,13 +733,14 @@ describe('AgentActivityPanel live run budget gauges', () => {
         20: makeIssueAgentSessionDoc({ turns: 42, totalCostUsd: 1.5 }),
       },
     );
-    expect(screen.getByTestId('live-run-turns').textContent).toBe(
-      '42 of 200 turns',
-    );
-    expect(screen.getByTestId('live-run-cost').textContent).toBe('$1.50');
+    expect(
+      screen.getByRole('progressbar', { name: 'Run wall-clock budget' }),
+    ).toBeTruthy();
+    expect(screen.queryByTestId('live-run-turns')).toBeNull();
+    expect(screen.queryByTestId('live-run-cost')).toBeNull();
   });
 
-  it('omits the turn gauge for a live opencode run (no turn cap) but keeps the cost gauge', () => {
+  it('uses the same uncluttered budget row for opencode runs', () => {
     renderPanel(
       [],
       {
@@ -745,7 +759,10 @@ describe('AgentActivityPanel live run budget gauges', () => {
       },
     );
     expect(screen.queryByTestId('live-run-turns')).toBeNull();
-    expect(screen.getByTestId('live-run-cost').textContent).toBe('$0.30');
+    expect(screen.queryByTestId('live-run-cost')).toBeNull();
+    expect(
+      screen.getByRole('progressbar', { name: 'Run wall-clock budget' }),
+    ).toBeTruthy();
   });
 
   it('renders no budget gauge chrome when no session is joined (PRD story 16)', () => {
@@ -758,8 +775,8 @@ describe('AgentActivityPanel live run budget gauges', () => {
   });
 });
 
-describe('AgentActivityPanel pipeline badges', () => {
-  it('tags a claude live run and leaves its title untouched', () => {
+describe('AgentActivityPanel pipeline metadata', () => {
+  it('leaves a claude title intact without showing a source tag', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [
@@ -771,11 +788,11 @@ describe('AgentActivityPanel pipeline badges', () => {
         }),
       ],
     });
-    expect(screen.getByText('claude')).toBeTruthy();
+    expect(screen.queryByText('claude')).toBeNull();
     expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
   });
 
-  it('tags an opencode live run and strips the redundant "opencode " title prefix', () => {
+  it('strips the redundant opencode prefix without showing a source tag', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [
@@ -787,12 +804,28 @@ describe('AgentActivityPanel pipeline badges', () => {
         }),
       ],
     });
-    expect(screen.getByText('opencode')).toBeTruthy();
+    expect(screen.queryByText('opencode')).toBeNull();
     expect(screen.getByText('#43: Fix the other thing')).toBeTruthy();
     expect(screen.queryByText('opencode #43: Fix the other thing')).toBeNull();
   });
 
-  it('tags a recent opencode run row the same way', () => {
+  it('strips the dispatch marker from a Bridge run title', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 4,
+          status: 'running',
+          displayTitle: '#42: Fix the thing [dispatch:g1:intent-abc]',
+        }),
+      ],
+    });
+
+    expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
+    expect(screen.queryByText(/dispatch:g1/)).toBeNull();
+  });
+
+  it('keeps recent opencode results equally quiet', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       recentRuns: [
@@ -803,7 +836,7 @@ describe('AgentActivityPanel pipeline badges', () => {
         }),
       ],
     });
-    expect(screen.getByText('opencode')).toBeTruthy();
+    expect(screen.queryByText('opencode')).toBeNull();
     expect(screen.getByText('#44: Fix a third thing')).toBeTruthy();
   });
 });
