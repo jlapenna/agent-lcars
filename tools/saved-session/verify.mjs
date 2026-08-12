@@ -102,7 +102,7 @@ async function main() {
     const status = verificationStatus(session, role, landed, target);
     if (status === 'expired') {
       console.error(
-        `SESSION_EXPIRED: ${source} no longer authenticates. Re-run the @agent-lcars/console:capture-session Nx target.`,
+        `SESSION_EXPIRED: ${source} no longer authenticates. Re-run the @agent-lcars/console:mint-session or @agent-lcars/console:capture-session Nx target.`,
       );
       return 2;
     }

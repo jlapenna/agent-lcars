@@ -23,7 +23,10 @@ does not weaken them.
   place it in a shared scratch directory.
 - The capture step is deliberately interactive. A human completes GitHub
   sign-in in the headed browser; an agent never types, requests, or handles
-  login credentials.
+  login credentials. The mint step is the non-interactive alternative for a
+  dedicated verification session: it requires maintainer access to the
+  production `AUTH_SECRET`, which the read-only agent identity must never
+  receive.
 - Prefer a dedicated verification identity for any state shared through
   Secret Manager. A personal session should remain in the private local
   backend and only be captured when its owner explicitly chooses to do so.
@@ -75,6 +78,30 @@ version of an existing secret in project `agent-lcars`:
 Use `--project` or `--secret-name` only for an intentionally provisioned
 alternative. Capture needs permission to add a version; reuse needs
 secret-version access. The scripts never create the container or its grants.
+
+## Mint a dedicated verification session
+
+The console uses Auth.js encrypted JWT sessions, so a maintainer can mint a
+dedicated production-verifier session without creating or sharing a personal
+GitHub login. The command reads `AUTH_SECRET` directly from Secret Manager,
+uses Auth.js's own encoder and production cookie name, writes a 30-day admin
+storage state, and never prints either credential:
+
+```bash
+# Inspect locally first (private file backend)
+./tools/nx run @agent-lcars/console:mint-session
+
+# Publish a version for read-only headless agents
+./tools/nx run @agent-lcars/console:mint-session -- --storage secret
+```
+
+Minting is an operator bootstrap/rotation action. It requires access to both
+`AUTH_SECRET` and the destination's `secretVersionAdder` permission. Reuse
+requires only `secretAccessor` on `AGENT_LCARS_ADMIN_STORAGE_STATE`; do not
+grant the agent identity access to `AUTH_SECRET`. The minted subject is
+`agent-lcars-production-verifier`, distinct from the maintainer's GitHub
+identity. Use the interactive capture flow below only when verifying the real
+OAuth login path itself.
 
 ## Capture
 
