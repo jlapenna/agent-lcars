@@ -104,7 +104,7 @@ full wiring instructions to bring a new repo onto this fleet.
 
 ## Getting started
 
-Use Node 24 and pnpm 10 (`packageManager` in `package.json` pins the exact
+Use Node 24 and pnpm 11 (`packageManager` in `package.json` pins the exact
 version). Then:
 
 ```sh
