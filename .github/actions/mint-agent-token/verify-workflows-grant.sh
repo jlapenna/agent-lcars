@@ -66,13 +66,45 @@ b64url() {
 # below, unretried. Preserves curl's own stderr output and exit code on
 # the final attempt, so a real, persistent failure looks the same as it
 # always has.
+#
+# Every call site here uses `-w '%{http_code}'`, and curl writes that
+# format string's output - `000` on a transport failure that never got a
+# response - to stdout BEFORE exiting non-zero (curl(1), -w: "the output
+# is written after a completed transfer", which for a failed transfer is
+# still the %{http_code} placeholder value). Each retried attempt's
+# `curl "$@"` therefore must have its own stdout captured and discarded on
+# failure, not left to fall straight through to this function's own
+# stdout - a failed attempt's stray `000` would otherwise land ahead of a
+# later successful attempt's real status in the caller's captured output
+# (`000201` instead of `201`), corrupting the http_status check below even
+# though the retry itself worked (Codex review on #961, P1).
+#
+# The final, unretried attempt below is deliberately NOT captured the same
+# way: this whole function only runs inside the caller's own
+# `x="$(curl_retry ...)"`, and bash does not apply `set -e` inside a
+# *nested* command substitution unless `inherit_errexit` is on (not set by
+# this script) - so wrapping that last attempt in its own `out="$(curl
+# ...)"` would silence its failure instead of letting it kill the script,
+# exactly the "preserves ... exit code on the final attempt" guarantee
+# this function exists to keep. Left as a bare `curl "$@"`, its stdout
+# passes straight through to this function's own stdout (safe: it is the
+# only attempt whose output can still reach the caller, every earlier one
+# having already been discarded above) and a failure aborts the enclosing
+# substitution with curl's real exit code, unchanged from before P1/P2.
 curl_retry() {
-  local attempt status
+  local attempt status out
   for attempt in 1 2 3; do
-    if curl "$@"; then
+    if out="$(curl "$@")"; then
+      printf '%s' "$out"
       return 0
+    else
+      # Capture $? in the else branch, directly against the failed
+      # `curl` invocation - not on a later line after the `if` has
+      # already completed, whose own status is 0 whenever no branch of
+      # it ran (Codex review on #961, P2), which would always log
+      # "exit 0" here regardless of curl's real failure.
+      status=$?
     fi
-    status=$?
     echo "::warning::curl attempt ${attempt} failed (exit ${status}); retrying in ${attempt}s." >&2
     sleep "$attempt"
   done

@@ -17,13 +17,36 @@ cat > "$fake_bin/curl" <<'FAKE_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
 
+out="/dev/null"
+auth_header=""
+method="GET"
+data=""
+has_w=0
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then out="$arg"; fi
+  if [ "$prev" = "-H" ] && [[ "$arg" == Authorization:* ]]; then auth_header="$arg"; fi
+  if [ "$prev" = "-X" ]; then method="$arg"; fi
+  if [ "$prev" = "-d" ]; then data="$arg"; fi
+  if [ "$prev" = "-w" ]; then has_w=1; fi
+  prev="$arg"
+done
+
 # Simulate the first FAKE_CURL_FAIL_ATTEMPTS *calls to this fake curl*
 # (across every invocation in one script run, mint and revoke alike -
 # tests that need only the mint call to fail keep the count well under
 # the revoke call's own turn) as a transient transport failure - the
 # curl_retry() wrapper's target, and the same failure mode
 # jlapenna/agent-lcars#956 observed for real: curl exiting non-zero
-# before ever producing a response, not an HTTP-level error status.
+# before ever producing a response, not an HTTP-level error status. Real
+# curl still writes its -w format string to stdout even when the transfer
+# itself failed (000 for %{http_code} - curl(1): the format is written
+# "after a completed transfer", which for a connection/TLS failure means
+# the placeholder value, not nothing). Reproduced here so a test exercises
+# curl_retry() actually discarding a failed attempt's stray `000` instead
+# of only exercising a stub that happens not to emit one (Codex review on
+# jlapenna/agent-lcars#961, P1 - a stub without this quirk cannot catch
+# that class of bug).
 count_file="$FAKE_CURL_DIR/curl-call-count"
 count=0
 [ -f "$count_file" ] && count="$(cat "$count_file")"
@@ -31,21 +54,10 @@ count=$((count + 1))
 printf '%s' "$count" > "$count_file"
 if [ "$count" -le "${FAKE_CURL_FAIL_ATTEMPTS:-0}" ]; then
   echo "fake curl: simulated transient transport failure (call ${count})" >&2
+  [ "$has_w" = 1 ] && printf '000'
   exit 60
 fi
 
-out="/dev/null"
-auth_header=""
-method="GET"
-data=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "-o" ]; then out="$arg"; fi
-  if [ "$prev" = "-H" ] && [[ "$arg" == Authorization:* ]]; then auth_header="$arg"; fi
-  if [ "$prev" = "-X" ]; then method="$arg"; fi
-  if [ "$prev" = "-d" ]; then data="$arg"; fi
-  prev="$arg"
-done
 if [ "$method" = "DELETE" ]; then
   printf '%s\n' "$auth_header" > "$FAKE_CURL_DIR/last-delete-authorization-header"
   exit 0
@@ -157,10 +169,19 @@ jq -e '.permissions.issues == "write" and .permissions.metadata == "read"' <<<"$
 unset PERMISSION_ISSUES PERMISSION_CONTENTS PERMISSION_PULL_REQUESTS PERMISSION_ACTIONS PERMISSION_METADATA
 
 # curl_retry() (agent-lcars#956): the mint call's first two attempts hit a
-# transient transport failure (the fake curl's simulated non-zero exit, the
-# same shape as the real "self-signed certificate" curl exit 60), and the
-# third succeeds - the script must still complete normally, exactly as if
-# the first two failures never happened.
+# transient transport failure (the fake curl's simulated non-zero exit,
+# the same shape as the real "self-signed certificate" curl exit 60, and -
+# per the fake curl's own header above - also writing a stray `000` to
+# stdout the way real curl's -w does on a failed transfer), and the third
+# succeeds - the script must still complete normally, exactly as if the
+# first two failures never happened. This is also the regression test for
+# Codex review on #961 (P1): with the pre-fix curl_retry(), the first two
+# attempts' `000`s would land in the captured http_status ahead of the
+# real `201` (`000000201`), the status check below would reject it as a
+# non-201 response, and this case would fail closed with "Could not mint a
+# probe token" instead of reaching "has granted" - the fake curl not
+# emitting `000` on failure at all is exactly why the original PR's tests
+# did not catch this.
 run_case transient-then-recovers 201 '{"token":"ghs_fake","permissions":{"workflows":"write","contents":"write"}}' write 2
 test "$status_code" = 0
 grep -q 'has granted' "$test_root/transient-then-recovers/output"
@@ -168,6 +189,11 @@ grep -q 'has granted' "$test_root/transient-then-recovers/output"
 # succeed on its own first try: 2 failed mint attempts + 1 successful mint
 # attempt + 1 successful revoke call = 4 fake-curl invocations total.
 test "$(cat "$test_root/transient-then-recovers/curl-call-count")" = 4
+# Regression test for Codex review on #961 (P2): the retry warning must
+# report curl's own real exit status (60, this fake curl's simulated
+# transport-failure code), not a stale 0 read from the completed `if`
+# statement's own status when its branch didn't run.
+test "$(grep -c '::warning::curl attempt [0-9]* failed (exit 60)' "$test_root/transient-then-recovers/output")" = 2
 
 # curl_retry() exhausting every attempt must still fail closed with the
 # same non-zero exit curl itself produced (60 here) - not hang, not retry
@@ -179,8 +205,9 @@ run_case transient-exhausts-retries 201 '{"token":"ghs_fake","permissions":{"wor
 test "$status_code" = 60
 ! grep -q 'Could not mint a probe token' "$test_root/transient-exhausts-retries/output"
 # 3 warned-and-retried attempts, then a 4th, final, unwrapped attempt that
-# is left to fail loudly - matching curl_retry()'s own attempt budget.
-test "$(grep -c '::warning::curl attempt' "$test_root/transient-exhausts-retries/output")" = 3
+# is left to fail loudly - matching curl_retry()'s own attempt budget. All
+# three carry curl's real exit status (P2 above), not a stale 0.
+test "$(grep -c '::warning::curl attempt [0-9]* failed (exit 60)' "$test_root/transient-exhausts-retries/output")" = 3
 test "$(cat "$test_root/transient-exhausts-retries/curl-call-count")" = 4
 
 echo 'verify-workflows-grant.test.sh: all cases passed'
