@@ -1,5 +1,19 @@
 {
   "enabledPlugins": {
     "github@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/tools/codex-issue-guardrail.cjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
