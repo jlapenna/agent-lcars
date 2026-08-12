@@ -187,13 +187,13 @@ describe('SessionHeader', () => {
     );
 
     expect(
-      screen.getByText(
-        'tools/claude-agent-session.sh resume-archive gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
-      ),
-    ).toBeTruthy();
-    expect(
       screen.getByRole('button', { name: 'Copy takeover command' }),
     ).toBeTruthy();
+    expect(
+      screen.queryByText(
+        'tools/claude-agent-session.sh resume-archive gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
+      ),
+    ).toBeNull();
   });
 
   it('offers no Claude resume command for an archived Codex session', () => {
