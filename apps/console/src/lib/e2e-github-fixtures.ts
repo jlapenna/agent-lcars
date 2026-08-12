@@ -84,6 +84,8 @@ export const E2E_RUN_IDS = {
    * item's own GitHub state, so it needs both halves to render. */
   silentError: 70007,
   duplicateQueued: 70008,
+  olderSucceeded: 70009,
+  olderFailed: 70010,
 } as const;
 
 const HEAD_SHAS = {
@@ -473,6 +475,29 @@ const FIXTURE_RUNS: FixtureRun[] = [
     createdAt: minutesAgo(150),
     startedAt: minutesAgo(149),
     updatedAt: minutesAgo(140),
+  },
+  // Older completed attempts keep the populated Agents fixture above the
+  // phone disclosure threshold. Bridge still deliberately slices its five
+  // newest outcomes, while /agents can prove the older-evidence reveal.
+  {
+    id: E2E_RUN_IDS.olderSucceeded,
+    workflow: 'claude.yml',
+    status: 'completed',
+    conclusion: 'success',
+    displayTitle: `#${E2E_ITEM_NUMBERS.reviewRequested}: test(console): preserve the review evidence archive`,
+    createdAt: minutesAgo(180),
+    startedAt: minutesAgo(179),
+    updatedAt: minutesAgo(165),
+  },
+  {
+    id: E2E_RUN_IDS.olderFailed,
+    workflow: 'opencode.yml',
+    status: 'completed',
+    conclusion: 'failure',
+    displayTitle: `opencode #${E2E_ITEM_NUMBERS.humanNeeded}: test(console): preserve the failure evidence archive`,
+    createdAt: minutesAgo(195),
+    startedAt: minutesAgo(194),
+    updatedAt: minutesAgo(180),
   },
 ];
 

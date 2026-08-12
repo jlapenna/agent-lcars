@@ -319,6 +319,43 @@ test.describe('populated dashboard', () => {
       header.getByRole('link', { name: `#${E2E_ITEM_NUMBERS.silentError}` }),
     ).toBeVisible();
   });
+
+  test('keeps older issue groups behind one phone disclosure @sessions-mobile-history', async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/sessions');
+
+    const disclosure = page.getByTestId('issue-grouped-sessions');
+    const visibleGroups = disclosure.locator(
+      '[data-testid^="issue-group-"]:visible',
+    );
+    await expect(visibleGroups).toHaveCount(5);
+
+    const toggle = disclosure.getByRole('button', {
+      name: 'Show 6 older issue groups',
+    });
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(disclosure).toHaveAttribute('data-expanded', 'true');
+    await expect(visibleGroups).toHaveCount(11);
+    await disclosure
+      .getByRole('button', { name: 'Show fewer issue groups' })
+      .click();
+    await expect(visibleGroups).toHaveCount(5);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+
+    const capture = testInfo.outputPath('sessions-mobile-history.png');
+    await page.screenshot({ path: capture, fullPage: true });
+    await testInfo.attach('sessions-mobile-history.png', {
+      path: capture,
+      contentType: 'image/png',
+    });
+  });
 });
 
 test.describe('responsive decision inbox', () => {
@@ -672,6 +709,31 @@ test.describe('responsive agent operations', () => {
       ).toBeVisible();
       await expect(workspace.getByTestId('claimed-idle-section')).toBeVisible();
       await expect(workspace.getByTestId('recent-outcomes')).toBeVisible();
+
+      const outcomes = workspace.getByTestId('recent-outcomes');
+      const outcomesDisclosure = outcomes.getByTestId(
+        'recent-outcomes-disclosure',
+      );
+      await expect(
+        outcomes.locator('[data-testid="finished-run-row"]:visible'),
+      ).toHaveCount(5);
+      const olderOutcomes = outcomes.getByRole('button', {
+        name: /Show \d+ older outcomes/,
+      });
+      await expect(olderOutcomes).toBeVisible();
+      await olderOutcomes.click();
+      await expect(outcomesDisclosure).toHaveAttribute('data-expanded', 'true');
+      expect(
+        await outcomes
+          .locator('[data-testid="finished-run-row"]:visible')
+          .count(),
+      ).toBeGreaterThan(5);
+      await outcomes
+        .getByRole('button', { name: 'Show fewer outcomes' })
+        .click();
+      await expect(
+        outcomes.locator('[data-testid="finished-run-row"]:visible'),
+      ).toHaveCount(5);
 
       const operations = workspace.locator('.agents-workspace__operations');
       await expect(operations).toHaveCSS('display', 'block');

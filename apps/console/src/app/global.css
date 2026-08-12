@@ -631,6 +631,13 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   min-width: 0;
 }
 
+/* Mobile history disclosures keep the phone's initial scan focused without
+   weakening desktop archive fidelity. Older server-rendered records remain
+   in the DOM and become visible with one explicit, full-width tap target. */
+.mobile-history-disclosure__toggle {
+  display: none;
+}
+
 /* ---- Costs ledger workspace (#255) ---- */
 
 .costs-utilities--mobile {
@@ -1550,6 +1557,34 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .agents-workspace .mantine-Button-root {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  .mobile-history-disclosure:not([data-expanded])
+    [data-mobile-history-extra='true'] {
+    display: none;
+  }
+
+  .mobile-history-disclosure__toggle {
+    display: inline-flex;
+    width: 100%;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding-inline: 12px;
+    color: var(--mantine-color-cyan-3);
+    font-weight: 600;
+    border: 1px solid var(--mantine-color-default-border);
+    border-radius: var(--mantine-radius-sm);
+    background: color-mix(in srgb, var(--mantine-color-cyan-9) 8%, transparent);
+  }
+
+  .mobile-history-disclosure__toggle:hover {
+    background: color-mix(
+      in srgb,
+      var(--mantine-color-cyan-9) 18%,
+      transparent
+    );
   }
 
   .sessions-workspace {
