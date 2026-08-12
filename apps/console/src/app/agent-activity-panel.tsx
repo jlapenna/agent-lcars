@@ -766,6 +766,15 @@ export const LIVENESS_COLORS: Record<CliSession['liveness'], string> = {
   stale: 'red',
 };
 
+/** A transcript UUID is a routing key, not a useful label on the Bridge. */
+function cliSessionLabel(session: CliSession): string {
+  return (
+    session.title ??
+    session.branch ??
+    (session.host ? `Session on ${session.host}` : 'Untitled CLI session')
+  );
+}
+
 export function CliSessionRow({
   session,
   takeoverCommand,
@@ -783,6 +792,7 @@ export function CliSessionRow({
   variant?: ActivityRowVariant;
 }) {
   const { host, artifacts } = session;
+  const label = cliSessionLabel(session);
 
   if (variant === 'operations') {
     return (
@@ -792,7 +802,7 @@ export function CliSessionRow({
       >
         <Stack gap={5} style={{ minWidth: 0 }}>
           <Text size="sm" fw={600} truncate>
-            {session.title ?? session.branch ?? session.sessionId}
+            {label}
           </Text>
           <Group gap="xs" wrap="wrap">
             <Badge
@@ -832,7 +842,7 @@ export function CliSessionRow({
         className="cli-session-title-link"
         data-testid="cli-session-link"
       >
-        {session.title ?? session.branch ?? session.sessionId}
+        {label}
       </Anchor>
       <Group gap="xs" wrap="nowrap">
         <Badge

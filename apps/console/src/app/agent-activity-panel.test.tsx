@@ -243,6 +243,22 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(link.getAttribute('href')).toBe('/sessions/abc-123');
   });
 
+  it('does not expose an opaque session UUID as a Bridge label', () => {
+    renderPanel([
+      makeCliSession({
+        sessionId: '34e381cd-aaaa-bbbb-cccc-123456789abc',
+        title: undefined,
+        branch: undefined,
+        host: 'pike',
+      }),
+    ]);
+
+    expect(screen.getByText('Session on pike')).toBeTruthy();
+    expect(
+      screen.queryByText('34e381cd-aaaa-bbbb-cccc-123456789abc'),
+    ).toBeNull();
+  });
+
   it('keeps artifact metadata on the session detail route', () => {
     renderPanel([
       makeCliSession({
