@@ -20,8 +20,16 @@ runtime:
   is no `activate_skill` tool.
 - **Codex**: repository skills are catalogued by the local plugin
   marketplace manifest in `.agents/skills/.claude-plugin/marketplace.json`.
-  Trusted Codex sessions load `.codex/hooks.json`, which reinforces the
-  issue-claim and tmux-title guardrails in every worktree.
+  Trusted Codex sessions load `.codex/hooks.json`, and Claude sessions load
+  `.claude/settings.json`; both run the shared issue-workflow hook after Bash
+  commands. When a command uses `gh issue view` or `gh issue edit`, the hook
+  verifies `jclaw-bot` ownership and the issue-specific tmux title.
+
+Local initialization uses `pnpm install`, whose `prepare` lifecycle installs
+and verifies Husky through `tools/setup-git-hooks.sh`. Linked worktrees use
+`tools/setup-worktree.sh`; the primary checkout remains a clean `main`.
+GitHub's active `Protect main` ruleset additionally requires the `Verify`
+check and resolved review threads before merge.
 
 If a skill is not discoverable, read its `SKILL.md` and `references/`
 files directly from `.agents/skills/<name>/`.
