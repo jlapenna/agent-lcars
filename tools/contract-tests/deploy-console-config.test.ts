@@ -9,7 +9,9 @@ describe('console deployment workflow', () => {
       'utf8',
     );
 
-    expect(workflow).toContain('builds?pageSize=100&orderBy=createTime%20desc');
+    expect(workflow).toContain(
+      'builds?pageSize=100&orderBy=create_time%20desc',
+    );
     expect(workflow).toContain(
       'select(.source.archive.userStorageUri == env.SOURCE_URI)',
     );

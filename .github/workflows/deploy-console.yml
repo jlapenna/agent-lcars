@@ -126,7 +126,7 @@ jobs:
 
           BUILDS=$(curl --fail --silent --show-error \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
-            "https://firebaseapphosting.googleapis.com/v1/$BACKEND/builds?pageSize=100&orderBy=createTime%20desc")
+            "https://firebaseapphosting.googleapis.com/v1/$BACKEND/builds?pageSize=100&orderBy=create_time%20desc")
           BUILD=$(jq -r '
             first(
               .builds[]
