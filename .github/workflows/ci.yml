@@ -263,9 +263,57 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # The current lcars-e2e runner image predates committed visual
+      # baselines, so bootstrap the pinned client once for that transition.
+      # After tools/e2e-runner/Dockerfile is published this becomes a cheap
+      # no-op; keeping it makes a stale image recoverable instead of turning
+      # LFS pointers into "Could not decode expected image as PNG" failures.
+      - name: Ensure Git LFS is available
+        shell: bash
+        env:
+          GIT_LFS_VERSION: 3.7.1
+          GIT_LFS_SHA256_AMD64: 1c0b6ee5200ca708c5cebebb18fdeb0e1c98f1af5c1a9cba205a4c0ab5a5ec08
+          GIT_LFS_SHA256_ARM64: 73a9c90eeb4312133a63c3eaee0c38c019ea7bfa0953d174809d25b18588dd8d
+        run: |
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+
+          case "$(uname -m)" in
+            x86_64)
+              lfs_arch=amd64
+              lfs_sha256="$GIT_LFS_SHA256_AMD64"
+              ;;
+            aarch64 | arm64)
+              lfs_arch=arm64
+              lfs_sha256="$GIT_LFS_SHA256_ARM64"
+              ;;
+            *)
+              echo "Unsupported Git LFS architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          lfs_archive="$RUNNER_TEMP/git-lfs.tar.gz"
+          lfs_extract="$RUNNER_TEMP/git-lfs-extract"
+          lfs_bin="$RUNNER_TEMP/git-lfs-bin"
+          mkdir -p "$lfs_extract" "$lfs_bin"
+          curl --fail --location --silent --show-error \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-${lfs_arch}-v${GIT_LFS_VERSION}.tar.gz" \
+            --output "$lfs_archive"
+          echo "${lfs_sha256}  ${lfs_archive}" | sha256sum --check --strict
+          tar --extract --gzip --file "$lfs_archive" --directory "$lfs_extract"
+          install -m 0755 \
+            "$lfs_extract/git-lfs-${GIT_LFS_VERSION}/git-lfs" \
+            "$lfs_bin/git-lfs"
+          echo "$lfs_bin" >> "$GITHUB_PATH"
+          "$lfs_bin/git-lfs" --version
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          lfs: true
 
       # The E2E targets are explicitly cache:false, so tests always run. Its
       # hermetic wrapper admits only this L2 capability pair to let the

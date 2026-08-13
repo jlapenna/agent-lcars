@@ -31,3 +31,16 @@
 [data-screenshot='hide'] {
   visibility: hidden !important;
 }
+
+/* Volatile inline labels must keep a fixed footprint too: visibility alone
+   preserves the changing text width, which can still move line breaks and
+   create a real pixel diff around an otherwise hidden value. */
+[data-screenshot='hide'][data-screenshot-width='duration'] {
+  display: inline-block !important;
+  width: 6ch !important;
+}
+
+[data-screenshot='hide'][data-screenshot-width='relative'] {
+  display: inline-block !important;
+  width: 14ch !important;
+}

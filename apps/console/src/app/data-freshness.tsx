@@ -44,7 +44,13 @@ export function DataFreshness({
       aria-label={`Data as of ${label}`}
     >
       {compact ? 'Updated ' : 'Data as of '}
-      <time dateTime={fetchedAt}>{label}</time>
+      <time
+        dateTime={fetchedAt}
+        data-screenshot="hide"
+        data-screenshot-width="relative"
+      >
+        {label}
+      </time>
     </Text>
   );
 }
