@@ -9,6 +9,9 @@ e2e.log
 *.log
 *.txt
 
+# Vendored font binaries must ship with their upstream OFL notices.
+!apps/console/public/fonts/*-OFL.txt
+
 # compiled output
 dist
 out-tsc
