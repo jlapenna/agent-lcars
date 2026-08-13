@@ -9,7 +9,32 @@ export async function expectDesktopBridgeHeader(header: Locator) {
 
 /** The desktop title rail is one concentric, equal-weight LCARS elbow. */
 export async function expectDesktopLcarsElbow(header: Locator) {
-  await expectConcentricLcarsElbows(header.locator('.lcars-header'), 16);
+  const titleBay = header.locator('.lcars-header');
+  await expectConcentricLcarsElbows(titleBay, 16);
+
+  const layout = await titleBay.evaluate((element) => {
+    const elbow = getComputedStyle(element, '::before');
+    const title = element.querySelector('.lcars-header-title');
+    if (!title) throw new Error('LCARS header title is missing');
+
+    const bayBounds = element.getBoundingClientRect();
+    const titleBounds = title.getBoundingClientRect();
+    const bandWidth = Number.parseFloat(elbow.borderTopWidth);
+
+    return {
+      bandWidth,
+      elbowRight: bayBounds.left + Number.parseFloat(elbow.width),
+      titleTop: titleBounds.top,
+      titleLeft: titleBounds.left,
+      titleRight: titleBounds.right,
+      innerTop: bayBounds.top + bandWidth,
+      innerLeft: bayBounds.left + bandWidth,
+    };
+  });
+
+  expect(layout.titleTop).toBeGreaterThanOrEqual(layout.innerTop);
+  expect(layout.titleLeft).toBeGreaterThan(layout.innerLeft);
+  expect(layout.elbowRight).toBeGreaterThanOrEqual(layout.titleRight);
 }
 
 /** Every supplied surface uses one equal-weight band and concentric radii. */

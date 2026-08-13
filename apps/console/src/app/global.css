@@ -67,10 +67,10 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 /* ---- Page header elbow ----
    The marquee LCARS structural device: one equal-weight band turning through
    a concentric quarter-circle. Building the elbow from the top and left
-   borders of one box keeps its outer and inner radii related; two overlapping
-   rectangles leave a telltale step where the horizontal cap meets the stem.
-   The segmented signal bar below the title reuses the nav rail's own accent
-   colors, previewing the rail before it appears. */
+   borders of one box keeps its outer and inner radii related; on desktop its
+   top arm spans the title bay so the title sits inside the elbow instead of
+   beside it. The segmented signal bar below the title reuses the nav rail's
+   own accent colors, previewing the rail before it appears. */
 
 .lcars-header {
   --lcars-header-accent: var(--mantine-color-orange-6);
@@ -83,7 +83,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 4.25rem;
+  width: 100%;
   box-sizing: border-box;
   border-style: solid;
   border-width: 1rem 0 0 1rem;
