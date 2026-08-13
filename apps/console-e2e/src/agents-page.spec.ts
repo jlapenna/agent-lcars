@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { E2E_CLI_SESSION_IDS, useCliSessionFixtures } from './seed';
 import {
+  expectConcentricLcarsElbows,
   expectDesktopBridgeHeader,
   expectMobileBridgeHeader,
 } from './util/console-layout';
@@ -87,6 +88,10 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toHaveCount(1);
     await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
+    await expectConcentricLcarsElbows(
+      workspace.locator('.lcars-panel:not(.agents-panel)'),
+      8,
+    );
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
     ).toBeVisible();
@@ -151,6 +156,10 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toHaveCount(1);
     await expectMobileBridgeHeader(header);
     await expect(workspace).toBeVisible();
+    await expectConcentricLcarsElbows(
+      workspace.locator('.lcars-panel:not(.agents-panel)'),
+      8,
+    );
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(

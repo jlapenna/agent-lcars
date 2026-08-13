@@ -9,25 +9,39 @@ export async function expectDesktopBridgeHeader(header: Locator) {
 
 /** The desktop title rail is one concentric, equal-weight LCARS elbow. */
 export async function expectDesktopLcarsElbow(header: Locator) {
-  const geometry = await header.locator('.lcars-header').evaluate((element) => {
-    const elbow = getComputedStyle(element, '::before');
-    const pixels = (value: string) => Number.parseFloat(value);
+  await expectConcentricLcarsElbows(header.locator('.lcars-header'), 16);
+}
 
-    return {
-      width: pixels(elbow.width),
-      top: pixels(elbow.borderTopWidth),
-      right: pixels(elbow.borderRightWidth),
-      bottom: pixels(elbow.borderBottomWidth),
-      left: pixels(elbow.borderLeftWidth),
-      outerRadius: pixels(elbow.borderTopLeftRadius),
-    };
-  });
+/** Every supplied surface uses one equal-weight band and concentric radii. */
+export async function expectConcentricLcarsElbows(
+  surfaces: Locator,
+  expectedBandWidth: number,
+) {
+  const geometries = await surfaces.evaluateAll((elements) =>
+    elements.map((element) => {
+      const elbow = getComputedStyle(element, '::before');
+      const pixels = (value: string) => Number.parseFloat(value);
 
-  expect(geometry.top).toBe(geometry.left);
-  expect(geometry.right).toBe(0);
-  expect(geometry.bottom).toBe(0);
-  expect(geometry.outerRadius).toBe(geometry.top * 2);
-  expect(geometry.width).toBeGreaterThan(geometry.outerRadius);
+      return {
+        width: pixels(elbow.width),
+        top: pixels(elbow.borderTopWidth),
+        right: pixels(elbow.borderRightWidth),
+        bottom: pixels(elbow.borderBottomWidth),
+        left: pixels(elbow.borderLeftWidth),
+        outerRadius: pixels(elbow.borderTopLeftRadius),
+      };
+    }),
+  );
+
+  expect(geometries.length).toBeGreaterThan(0);
+  for (const geometry of geometries) {
+    expect(geometry.top).toBe(expectedBandWidth);
+    expect(geometry.left).toBe(expectedBandWidth);
+    expect(geometry.right).toBe(0);
+    expect(geometry.bottom).toBe(0);
+    expect(geometry.outerRadius).toBe(expectedBandWidth * 2);
+    expect(geometry.width).toBeGreaterThan(geometry.outerRadius);
+  }
 }
 
 /** Mobile routes collapse into one 64px command strip. */
