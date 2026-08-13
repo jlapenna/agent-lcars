@@ -768,6 +768,26 @@ func TestHostLoadMetricsFailureFailsOpen(t *testing.T) {
 	}
 }
 
+func TestHostMetricsUsesPerHostTimeout(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer metrics.Close()
+
+	scaler := &Scaler{
+		hostMetricsURLTemplate: metrics.URL + "/%s/metrics",
+		hostMetricsTimeouts:    map[string]time.Duration{"pike": 50 * time.Millisecond},
+	}
+	started := time.Now()
+	_, err := scaler.hostMetrics(context.Background(), "pike")
+	if err == nil {
+		t.Fatal("hostMetrics() unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("hostMetrics() took %v, want configured timeout to stop it promptly", elapsed)
+	}
+}
+
 // seedHostLoad injects an exact hostLoad straight into the fleet's placement
 // cache so a test can drive pickHost's overload-exclusion logic
 // deterministically -- without a real metrics endpoint or the multi-sample,

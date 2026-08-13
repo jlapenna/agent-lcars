@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -111,9 +112,10 @@ type Scaler struct {
 	// an operator asked for an empty fleet; quiescing only closes the window
 	// between cancelling the listeners and writing the checkpoint, so a
 	// placement cannot start after the state it would appear in was recorded.
-	quiescing        atomic.Bool
-	hostLoadPolicy   hostLoadPolicy
-	hostMemoryExempt map[string]bool
+	quiescing           atomic.Bool
+	hostLoadPolicy      hostLoadPolicy
+	hostMetricsTimeouts map[string]time.Duration
+	hostMemoryExempt    map[string]bool
 	// readiness* configure the operator-defined placement gate applied to
 	// hosts that set require_readiness. See hostReady.
 	readinessMetricsURL string
@@ -1609,7 +1611,11 @@ func (a *Scaler) hostReady(ctx context.Context, host string) error {
 // into the same pinned SSH transport as their Docker daemon, avoiding a
 // Windows-side port forward solely for safe placement telemetry.
 func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, hostMetricsTimeout)
+	timeout := hostMetricsTimeout
+	if configured, ok := a.hostMetricsTimeouts[host]; ok {
+		timeout = configured
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	fleet := a.coordinator()
 	if fleet.metricsViaSSH[host] {
@@ -1623,11 +1629,12 @@ func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
 		if !strings.HasPrefix(target, "ssh://") {
 			return nil, fmt.Errorf("host %q has no SSH Docker target", host)
 		}
+		sshTimeoutSeconds := max(1, int(math.Ceil(timeout.Seconds())))
 		cmd := exec.CommandContext(probeCtx, "ssh", "-i", fleetSSHKeyPath,
 			"-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile="+fleetKnownHostsPath,
 			"-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no",
-			"-o", "ConnectTimeout=1", strings.TrimPrefix(target, "ssh://"),
-			"curl -fsS --max-time 1 http://127.0.0.1:9100/metrics")
+			"-o", fmt.Sprintf("ConnectTimeout=%d", sshTimeoutSeconds), strings.TrimPrefix(target, "ssh://"),
+			fmt.Sprintf("curl -fsS --max-time %d http://127.0.0.1:9100/metrics", sshTimeoutSeconds))
 		output, err := cmd.Output()
 		if err != nil {
 			return nil, fmt.Errorf("read metrics over SSH: %w", err)

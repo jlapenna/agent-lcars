@@ -73,6 +73,27 @@ func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
 	}
 }
 
+func TestLoadOrchestratorConfigResolvesPerHostMetricsTimeout(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: local\n      metrics_timeout: 5s", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.HostMetricsTimeouts["janeway"]; got != 5*time.Second {
+		t.Fatalf("metrics timeout = %v, want 5s", got)
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidPerHostMetricsTimeout(t *testing.T) {
+	for _, raw := range []string{"soon", "0s"} {
+		body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: local\n      metrics_timeout: "+raw, 1)
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "metrics_timeout") {
+			t.Fatalf("metrics_timeout %q error = %v, want metrics_timeout complaint", raw, err)
+		}
+	}
+}
+
 func TestLoadOrchestratorConfigResolvesRequireReadiness(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      require_readiness: true", 1)
 	body = strings.Replace(body, "  placement: {}", "  placement:\n    readiness_metrics_url: http://example.invalid/metrics\n    readiness_metric: host_ci_ready\n    readiness_max_age: 5m", 1)
@@ -856,7 +877,7 @@ func TestOrchestratorConfigRejectsBadAllowlistWithoutAnyFileMounts(t *testing.T)
 // was asked about. Assert the whole copied block, not just one field, so the
 // next addition that forgets this line fails here instead of in production.
 func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      require_readiness: true", 1)
+	body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      metrics_timeout: 5s\n      require_readiness: true", 1)
 	body = strings.Replace(body, "  placement: {}", `  placement:
     host_metrics_url_template: http://%s.example.invalid:9100/metrics
     spark_metrics_url: http://spark.example.invalid:8000/metrics
@@ -904,6 +925,9 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 		}
 		if s.hostMetricsURLTemplate != "http://%s.example.invalid:9100/metrics" {
 			t.Errorf("scale set %q: hostMetricsURLTemplate = %q", s.scaleSetName, s.hostMetricsURLTemplate)
+		}
+		if got := s.hostMetricsTimeouts["janeway"]; got != 5*time.Second {
+			t.Errorf("scale set %q: metrics timeout = %v, want 5s", s.scaleSetName, got)
 		}
 	}
 
