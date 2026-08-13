@@ -5,6 +5,11 @@ set -e
 export NX_TUI=false
 export NX_DAEMON=false
 
+# core.hooksPath points at Husky, so Git LFS's generated .git/hooks/pre-push
+# is never invoked on its own. Forward Git's untouched ref stream and remote
+# arguments before any validation command has a chance to read stdin.
+git lfs pre-push "$@"
+
 ./tools/require-feature-worktree.sh
 
 ./tools/check-dependencies.sh
