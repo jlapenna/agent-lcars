@@ -142,7 +142,7 @@ function supersededSecretVersionIds(serializedVersions, replacementName) {
   if (!Array.isArray(versions)) {
     throw new Error('Secret Manager version list was not an array.');
   }
-  secretVersionId(replacementName);
+  const replacementNumber = Number(secretVersionId(replacementName));
 
   return versions.flatMap((version) => {
     if (
@@ -154,10 +154,14 @@ function supersededSecretVersionIds(serializedVersions, replacementName) {
         'Secret Manager version list contained an invalid entry.',
       );
     }
-    if (version.name === replacementName || version.state === 'DESTROYED') {
+    const versionId = secretVersionId(version.name);
+    if (
+      version.state === 'DESTROYED' ||
+      Number(versionId) >= replacementNumber
+    ) {
       return [];
     }
-    return [secretVersionId(version.name)];
+    return [versionId];
   });
 }
 

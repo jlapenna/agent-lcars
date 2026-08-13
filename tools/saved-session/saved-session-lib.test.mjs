@@ -207,6 +207,10 @@ test('secret storage adds a version then destroys every older live version', asy
           state: 'ENABLED',
         },
         {
+          name: 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/13',
+          state: 'ENABLED',
+        },
+        {
           name: 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/11',
           state: 'DISABLED',
         },
