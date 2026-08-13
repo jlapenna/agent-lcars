@@ -151,9 +151,11 @@ elif [ -n "$FAILURE_LOG_SCAN_SCRIPT" ] && [ -f "$FAILURE_LOG_SCAN_SCRIPT" ]; the
 fi
 
 # --- Report failure on the issue: was if: failure() || cancelled() ---------
-# #813: no GH_TOKEN/ISSUE_NUM/MAINTAINER anymore -- report-failure.sh only
-# logs now, it no longer writes GitHub state.
-AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
+# #813: explicitly blank the standalone compatibility tuple. GH_TOKEN is
+# otherwise ambient here for deliverable lookups, but this hosted path must
+# remain log-only while the finalizer/projector owns GitHub state writes.
+GH_TOKEN='' ISSUE_NUM='' MAINTAINER='' \
+  AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
   RUN_ID="$RUN_ID" REASON="$reason" JOB_STATUS="$JOB_STATUS" \
   bash "$trusted_dir/report-failure/report-failure.sh"
 report_status=$?
