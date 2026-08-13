@@ -86,7 +86,7 @@ ARG GO_VERSION=1.26.5
 # wrong -- it would bake an amd64 artifact into the arm64 image.
 FROM --platform=$BUILDPLATFORM node:24-slim AS telemetry-watcher-build
 WORKDIR /repo
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 # CACHE_BUST (build-arg, set to the publishing commit's SHA by the CI
