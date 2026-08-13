@@ -27,7 +27,7 @@ workflows, no separate actions repo, and no Marketplace listing.
 | `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                     |
 | `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                            |
 | `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                  |
-| `report-failure`               | Log this run's own failure (post-agent: run from snapshot) -- see below                         |
+| `report-failure`               | Log failure; optionally park an anchor for standalone consumers (run from snapshot)             |
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                    |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                           |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                          |
@@ -77,16 +77,15 @@ release, and a removed or renamed input or a changed default requires a major
 release. The contract-test manifest diff in review is the "this needs a major
 bump" signal.
 
-`report-failure` (agent-lcars#813) dropped `token`/`issue`/`maintainer`: it no
-longer writes the anchor issue/PR at all (no comment, no
-`status:needs-human`, no assignee) -- it only logs this run's own failure to
-the job's own output. That write moved to the hosted finalizer's completion
-callback and the dispatch-controller projector's one idempotent writer
-(`apps/dispatch-broker/src/modules/projector.ts`'s `projectWorkerFailure`),
-which is not part of this repo's cross-repo Published surface. A consumer
-that supplied those three inputs can drop them; supplying them is now simply
-ignored rather than erroring, matching how a removed action input behaves
-here (see the contract-test manifest).
+`report-failure` keeps LCARS's #813 architecture and a standalone-consumer
+compatibility path. LCARS workers omit `maintainer`, so the action only logs;
+the hosted finalizer's completion callback and dispatch-controller projector
+remain their one idempotent writer. A consumer without that coupled finalizer
+may provide `token`, `issue`, and `maintainer` to post the visible failure,
+add `status:needs-human`, and assign the maintainer directly. When running the
+script from `snapshot-enforcement-scripts`, the equivalent opt-in is the
+`GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only part of
+that tuple fails closed instead of silently losing the report (#4388).
 
 `prepare-agent-dispatch` keeps its richer runtime contract backward-compatible
 for moving-`main` consumers: `token` falls back to the caller's

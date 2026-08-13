@@ -1,12 +1,14 @@
 name: Report failure on the issue
 description: >-
-  Log this run's own failure. Does NOT write the anchor issue/PR directly
-  (#813) -- the hosted finalizer's completion callback reports the comment,
-  status:needs-human, and maintainer assignment through the projector's one
-  idempotent writer instead. Each workflow computes its own `reason` text
-  inline before calling this.
+  Log this run's failure. Standalone consumers may also supply token, issue,
+  and maintainer to post the visible failure and park the anchor; LCARS's
+  hosted-finalizer path leaves them unset and remains projector-only (#813).
 
 inputs:
+  token:
+    description: Optional token for standalone-consumer comment/label/assignee writes.
+    required: false
+    default: ''
   agent:
     description: Agent name used in the log message (e.g. Claude, Codex, OpenCode).
     required: true
@@ -21,15 +23,23 @@ inputs:
   job-status:
     description: The job's status context value (job.status), used to distinguish a timeout cancellation from an ordinary failure.
     required: true
+  issue:
+    description: Optional issue or pull request number for standalone-consumer reporting.
+    required: false
+    default: ''
+  maintainer:
+    description: Optional maintainer login; setting it opts into standalone-consumer parking.
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
-    # #813: this composite used to post the visible failure comment and
-    # apply status:needs-human/the maintainer assignee directly, using this
-    # job's own token. It now only logs -- see report-failure.sh's own
-    # header for why that write moved to the hosted finalizer's completion
-    # callback and the projector's one idempotent writer.
+    # #813: LCARS's own workers leave maintainer unset, so this only logs and
+    # the hosted finalizer/projector remains their one writer. Standalone
+    # consumers without that coupled finalizer may deliberately provide all
+    # three compatibility inputs and retain the protocol's visible parking
+    # path (#4388).
     #
     # This composite is only safe to invoke via `uses:` BEFORE the agent
     # step runs. Called after it, use the pre-agent snapshot of
@@ -40,11 +50,14 @@ runs:
     - name: Report failure on the issue
       shell: bash
       env:
+        GH_TOKEN: ${{ inputs.token }}
         AGENT: ${{ inputs.agent }}
         MESSAGE_PREFIX: ${{ inputs.message-prefix }}
         REPO: ${{ github.repository }}
         SERVER_URL: ${{ github.server_url }}
         RUN_ID: ${{ github.run_id }}
+        ISSUE_NUM: ${{ inputs.issue }}
         REASON: ${{ inputs.reason }}
         JOB_STATUS: ${{ inputs.job-status }}
+        MAINTAINER: ${{ inputs.maintainer }}
       run: bash "$GITHUB_ACTION_PATH/report-failure.sh"

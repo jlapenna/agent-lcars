@@ -1,22 +1,10 @@
 #!/usr/bin/env bash
-# #813: failure reporting is centralized in the hosted projector
-# (apps/dispatch-broker/src/modules/projector.ts's projectWorkerFailure),
-# driven by the hosted finalizer's own always-invoked completion callback
-# (agent-fallback-finalize.yml calls the OIDC-authenticated
-# /api/control-plane/completion endpoint for every worker result, success or
-# not). That callback is the "existing hosted control-plane path" typed,
-# authenticated evidence already flows through -- this script does not gain
-# a parallel one of its own.
-#
-# This script therefore no longer writes an issue comment, status:needs-human,
-# or a maintainer assignee directly: doing so from here, using this job's own
-# token and this job's own untrusted-adjacent classification, is exactly the
-# duplicated, uncoordinated write path #813 retired (the hosted finalizer
-# independently re-derives the same outcome from GitHub's own job/step
-# metadata and sends it through the ONE idempotent projector writer instead).
-# It only annotates this run's own log, so a human reading this job's output
-# can see the failure was recognized here, ahead of the authoritative report
-# that lands via the hosted callback.
+# #813 centralizes LCARS worker failure writes in the hosted projector. Those
+# workers leave MAINTAINER unset, so this script only annotates their log and
+# never creates a second writer. Published-action consumers such as Sprinkles
+# do not have LCARS's coupled agent-fallback-finalize workflow, however. They
+# opt into the backward-compatible standalone path by supplying MAINTAINER,
+# GH_TOKEN, and ISSUE_NUM; that path posts and parks the anchor directly.
 set -euo pipefail
 
 : "${AGENT:?AGENT is required}"
@@ -26,6 +14,7 @@ set -euo pipefail
 : "${JOB_STATUS:?JOB_STATUS is required}"
 MESSAGE_PREFIX="${MESSAGE_PREFIX:-}"
 REASON="${REASON:-}"
+MAINTAINER="${MAINTAINER:-}"
 
 if [ "$JOB_STATUS" = "cancelled" ]; then
   MSG="was cancelled (likely hit the job's timeout-minutes limit)"
@@ -33,4 +22,40 @@ else
   MSG="failed"
 fi
 
-echo "::notice::${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON -- the hosted finalizer's completion callback reports this on the anchor issue/PR (#813)."
+if [ -z "$MAINTAINER" ]; then
+  echo "::notice::${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON -- the hosted finalizer's completion callback reports this on the anchor issue/PR (#813)."
+  exit 0
+fi
+
+: "${GH_TOKEN:?GH_TOKEN is required when MAINTAINER enables standalone reporting}"
+: "${ISSUE_NUM:?ISSUE_NUM is required when MAINTAINER enables standalone reporting}"
+
+gh issue comment "$ISSUE_NUM" \
+  --repo "$REPO" \
+  --body "${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON"
+
+# Keep the selected agent/status labels and every existing assignee intact.
+# gh can occasionally exit non-zero after a successful mutation (#346), so
+# verify the resulting issue state before treating that as a real failure.
+mutate_or_verify() {
+  local endpoint="$1" field_json="$2" jq_path="$3" value="$4" what="$5"
+  if gh api "repos/$REPO/issues/$ISSUE_NUM/$endpoint" -f "$field_json" --silent; then
+    return 0
+  fi
+  local issue_json
+  if ! issue_json=$(gh api "repos/$REPO/issues/$ISSUE_NUM" 2>&1); then
+    echo "::error::$what for #$ISSUE_NUM failed, and the verification re-read also failed: $issue_json"
+    exit 1
+  fi
+  if ! jq -e --arg v "$value" "[$jq_path] | index(\$v) != null" <<<"$issue_json" >/dev/null; then
+    echo "::error::$what for #$ISSUE_NUM failed and verification confirms it is absent."
+    exit 1
+  fi
+  echo "::notice::gh api response-parse hiccup applying $what to #$ISSUE_NUM, but verification shows it landed (see #346)."
+}
+
+mutate_or_verify labels 'labels[]=status:needs-human' \
+  '.labels[].name' 'status:needs-human' 'status:needs-human'
+
+mutate_or_verify assignees "assignees[]=$MAINTAINER" \
+  '.assignees[].login' "$MAINTAINER" "$MAINTAINER"
