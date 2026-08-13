@@ -21,7 +21,7 @@ describe('GlobalError', () => {
 
     expect(
       screen.getAllByRole('heading', { name: 'Something went wrong' }),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
 
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
 
@@ -40,7 +40,7 @@ describe('GlobalError', () => {
 
     expect(
       screen.getAllByRole('heading', { name: 'Console was updated' }),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(screen.getByText(/redeployed under this tab/i)).toBeTruthy();
 
     // jsdom cannot mock window.location.reload (it's non-configurable), so

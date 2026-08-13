@@ -1,15 +1,8 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
-
-vi.mock('./quick-task-button', () => ({
-  QuickTaskButton: () => <button>Quick task</button>,
-}));
-vi.mock('./refresh-button', () => ({
-  RefreshButton: () => <button>Refresh</button>,
-}));
 
 function renderDeck(
   overrides: Partial<Parameters<typeof InboxMobileCommandDeck>[0]> = {},
@@ -18,10 +11,7 @@ function renderDeck(
     <MantineProvider>
       <InboxMobileCommandDeck
         view="list"
-        openItemCount={7}
         backHref="/inbox"
-        watchedRepos={[{ owner: 'supersprinklesracing', name: 'sprinkles' }]}
-        utilityMenu={<button>More console options</button>}
         scopeLabel="Sprinkles"
         dataFreshness={<span>Data as of just now</span>}
         {...overrides}
@@ -31,14 +21,10 @@ function renderDeck(
 }
 
 describe('InboxMobileCommandDeck', () => {
-  it('puts the list identity, primary utilities, scope, and freshness in one command deck', () => {
+  it('leaves list identity and utilities to the shared header', () => {
     renderDeck();
 
-    expect(screen.getByTestId('inbox-mobile-command-deck')).toBeTruthy();
-    expect(screen.getByLabelText('7 open queue items')).toBeTruthy();
-    expect(screen.getByText('Inbox', { exact: true })).toBeTruthy();
-    expect(screen.getByText('Quick task')).toBeTruthy();
-    expect(screen.getByText('Refresh')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-mobile-command-deck')).toBeNull();
     expect(screen.getByText('Sprinkles')).toBeTruthy();
     expect(screen.getByText('Data as of just now')).toBeTruthy();
   });

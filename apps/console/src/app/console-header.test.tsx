@@ -34,7 +34,7 @@ describe('ConsoleHeader subtitle', () => {
 
 describe('ConsoleHeader nav rail', () => {
   it('places route utilities beside the global navigation', () => {
-    render(
+    const view = render(
       <MantineProvider>
         <ConsoleHeader
           current="deck"
@@ -50,6 +50,21 @@ describe('ConsoleHeader nav rail', () => {
     });
     const commandRow = navigation.parentElement;
     expect(commandRow?.querySelector('button')?.textContent).toBe('Quick task');
+    expect(view.container.querySelector('.console-header')).toHaveAttribute(
+      'data-has-utilities',
+    );
+  });
+
+  it('marks utility-less shells so mobile can retain a route-home fallback', () => {
+    const view = renderHeader('deck');
+
+    expect(view.container.querySelector('.console-header')).not.toHaveAttribute(
+      'data-has-utilities',
+    );
+    expect(screen.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 
   it('offers every console destination', () => {

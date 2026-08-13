@@ -23,7 +23,7 @@ describe('NavPageLoading', () => {
 
     expect(
       screen.getAllByRole('heading', { name: 'Agent Status' }),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       screen.getByRole('link', { name: 'Agents' }).getAttribute('aria-current'),
     ).toBe('page');

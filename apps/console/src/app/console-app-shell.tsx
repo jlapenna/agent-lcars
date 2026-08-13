@@ -1,4 +1,3 @@
-import { Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import { ConsoleHeader, type ConsoleHeaderProps } from './console-header';
@@ -26,14 +25,6 @@ export function ConsoleAppShell({
   return (
     <ConsolePageShell className={className}>
       <ConsoleHeader {...header} />
-      <Title
-        order={1}
-        className="console-page-mobile-title"
-        data-current={header.current}
-        data-streaming-fallback={header.streamingFallback ? '' : undefined}
-      >
-        {header.title}
-      </Title>
       <main className="console-page-content">{children}</main>
       {footer}
     </ConsolePageShell>

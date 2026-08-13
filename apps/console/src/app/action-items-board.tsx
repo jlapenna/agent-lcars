@@ -1,16 +1,12 @@
 import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import { consoleRepositoryUrl } from '../lib/deployment';
 import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
-import { repoScopedConsoleHrefs } from './console-hrefs';
-import { QueueUtilityMenu } from './queue-utility-menu';
 import { QueueWorkspace } from './queue-workspace';
 import { SectionHeading } from './section-heading';
-import { SignOutButton } from './sign-out-button';
 
 export type { BoardCard } from './board-card';
 
@@ -18,13 +14,11 @@ export type { BoardCard } from './board-card';
 export function DecisionInbox({
   yourQueue,
   selectedItemKey,
-  repoFilter,
   mobileDataFreshness,
   mobileScopeLabel,
 }: {
   yourQueue: BoardCard[];
   selectedItemKey?: string;
-  repoFilter?: string;
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
 }) {
@@ -37,14 +31,6 @@ export function DecisionInbox({
       watchedRepos={watchedRepos}
       mobileDataFreshness={mobileDataFreshness}
       mobileScopeLabel={mobileScopeLabel}
-      mobileUtilityMenu={
-        <QueueUtilityMenu
-          repositoryUrl={consoleRepositoryUrl()}
-          includeNavigation
-          navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
-          signOutControl={<SignOutButton />}
-        />
-      }
     />
   );
 }

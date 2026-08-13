@@ -33,8 +33,9 @@ test.describe('/shuttlebay workspace', () => {
     await page.goto('/shuttlebay');
 
     const header = page.locator('.console-header[data-current="shuttlebay"]');
+    await expect(header.getByRole('link', { name: 'Shuttlebay' })).toBeHidden();
     await expect(
-      header.getByRole('link', { name: 'Shuttlebay' }),
+      header.getByRole('heading', { name: 'Shuttlebay' }),
     ).toBeVisible();
     await expect(
       header.getByRole('button', { name: 'Quick task' }),

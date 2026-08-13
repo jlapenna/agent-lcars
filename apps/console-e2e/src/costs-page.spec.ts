@@ -46,7 +46,7 @@ test.describe('/costs workspace @smoke', () => {
     });
   });
 
-  test('uses one mobile command strip and flat essential ledger rows', async ({
+  test('uses the shared elbow header and flat essential mobile ledger rows', async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -54,7 +54,7 @@ test.describe('/costs workspace @smoke', () => {
 
     const header = page.locator('.console-header[data-current="costs"]');
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
-    await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Costs' })).toBeHidden();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(workspace).toBeVisible();
     await expect(page.getByTestId('ledger-issue-row-compact')).toBeVisible();

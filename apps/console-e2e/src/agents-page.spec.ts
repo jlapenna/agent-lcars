@@ -143,7 +143,7 @@ test.describe('/agents page @smoke', () => {
     );
   });
 
-  test('collapses to one mobile command strip and one overflow-safe column', async ({
+  test('uses the shared elbow header and one overflow-safe mobile column', async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -160,7 +160,7 @@ test.describe('/agents page @smoke', () => {
       workspace.locator('.lcars-panel:not(.agents-panel)'),
       8,
     );
-    await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Agents' })).toBeHidden();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),

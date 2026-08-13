@@ -87,7 +87,6 @@ async function InboxBody({
           .filter((item) => matchesFilter(item.repo))
           .map(toCard)}
         selectedItemKey={selectedItemKey}
-        repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
         mobileDataFreshness={
           <DataFreshness
             fetchedAt={dataAsOf}
