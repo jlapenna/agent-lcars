@@ -61,11 +61,10 @@ function navHref(
  * header with their logical parent marked active, so they retain both a
  * visible title and a route back to every console destination.
  *
- * The title/subtitle row itself carries the swept-corner "elbow" accent
- * (`.lcars-header`, sized up from the same shape `.lcars-panel` uses for
- * cards - see global.css) plus a segmented signal bar in the nav rail's own
- * accent colors, so the marquee page title reads as LCARS chrome rather
- * than a plain heading sitting above the pill rail (#204).
+ * The title/subtitle row itself carries a full-size, concentric LCARS elbow
+ * (`.lcars-header`; see global.css) plus a segmented signal bar in the nav
+ * rail's own accent colors, so the marquee page title reads as LCARS chrome
+ * rather than a plain heading sitting above the pill rail (#204).
  *
  * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
  * `cacheComponents` requires a Suspense boundary for, so every page renders
