@@ -652,6 +652,44 @@ class GitHubActionsExporterTests(unittest.TestCase):
             "missing",
         )
 
+    def test_missing_latest_attempt_does_not_retire_earlier_completion(self):
+        repository = "jlapenna/homelab"
+        earlier = workflow_run(run_attempt=1)
+        latest = workflow_run(
+            run_attempt=2,
+            status="in_progress",
+            conclusion=None,
+            updated_at="2026-08-05T04:21:23Z",
+        )
+        self.database.upsert_run(repository, earlier)
+        self.database.upsert_run(repository, latest)
+        self.database.upsert_jobs(
+            repository,
+            latest,
+            [
+                workflow_job(
+                    status="queued",
+                    conclusion=None,
+                    started_at=None,
+                    completed_at=None,
+                )
+            ],
+        )
+
+        self.database.mark_run_missing(repository, latest["id"])
+
+        rows = self.database.rows(
+            """
+            SELECT run_attempt, status FROM workflow_runs
+            WHERE repository = ? AND id = ? ORDER BY run_attempt
+            """,
+            (repository, latest["id"]),
+        )
+        self.assertEqual(
+            [(row["run_attempt"], row["status"]) for row in rows],
+            [(1, "completed"), (2, "missing")],
+        )
+
     def test_active_run_server_error_still_fails_repository_refresh(self):
         repository = "jlapenna/homelab"
         run = workflow_run(status="in_progress", conclusion=None)

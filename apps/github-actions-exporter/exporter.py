@@ -689,6 +689,11 @@ class Database:
                 UPDATE workflow_runs SET status = 'missing'
                 WHERE repository = ? AND id = ?
                   AND status = 'completed' AND jobs_updated_at IS NULL
+                  AND run_attempt = (
+                    SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
+                    WHERE latest.repository = workflow_runs.repository
+                      AND latest.id = workflow_runs.id
+                  )
                 """,
                 (repository, run_id),
             )
