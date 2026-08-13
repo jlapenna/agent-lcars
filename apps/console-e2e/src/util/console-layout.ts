@@ -171,6 +171,7 @@ export async function expectMobileBridgeHeader(header: Locator) {
       Number.parseFloat(headerStyle.getPropertyValue(property));
 
     return {
+      hasUtilities: element.hasAttribute('data-has-utilities'),
       armWidth: pixels('--lcars-elbow-arm'),
       railWidth: pixels('--lcars-elbow-rail'),
       innerRadius: pixels('--lcars-elbow-inner-radius'),
@@ -194,6 +195,11 @@ export async function expectMobileBridgeHeader(header: Locator) {
   expect(elbow.titleDisplay).not.toBe('none');
   expect(elbow.titleWidth).toBeGreaterThan(0);
   expect(elbow.titleRight).toBeLessThanOrEqual(elbow.commandLeft);
-  expect(elbow.navigationDisplay).toBe('none');
-  expect(elbow.activeWidth).toBe(0);
+  if (elbow.hasUtilities) {
+    expect(elbow.navigationDisplay).toBe('none');
+    expect(elbow.activeWidth).toBe(0);
+  } else {
+    expect(elbow.navigationDisplay).toBe('flex');
+    expect(elbow.activeWidth).toBeGreaterThanOrEqual(44);
+  }
 }

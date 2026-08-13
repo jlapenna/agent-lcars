@@ -95,6 +95,7 @@ export function ConsoleHeader({
       mb="xl"
       className="console-header"
       data-current={current}
+      data-has-utilities={utilities ? '' : undefined}
       data-streaming-fallback={streamingFallback ? '' : undefined}
     >
       <div className="lcars-header">

@@ -1576,6 +1576,27 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: none;
   }
 
+  /* Error and not-found shells intentionally have no utility cluster. Keep
+     their active destination as one compact route-home control so hiding the
+     full rail never strands a phone user. */
+  .console-header[data-current]:not([data-has-utilities]) .lcars-nav {
+    display: flex;
+    align-items: center;
+  }
+
+  .console-header[data-current]:not([data-has-utilities]) .lcars-nav-pill {
+    display: none;
+  }
+
+  .console-header[data-current]:not([data-has-utilities])
+    .lcars-nav-pill[data-active] {
+    display: inline-flex;
+    min-height: 44px;
+    padding: 0 14px;
+    border-width: 1px;
+    font-size: 0.75rem;
+  }
+
   .console-header[data-current] .lcars-command-utilities {
     position: relative;
     z-index: 1;

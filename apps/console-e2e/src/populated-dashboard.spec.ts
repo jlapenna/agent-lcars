@@ -657,6 +657,20 @@ test.describe('responsive decision inbox', () => {
       ).toBeVisible();
     });
   }
+
+  test('keeps a route home in utility-less mobile shells @mobile-deep', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto('/missing-console-route');
+
+    const header = page.locator('.console-header[data-current="deck"]');
+    await expectMobileBridgeHeader(header);
+    await expect(
+      header.getByRole('heading', { name: 'Not found' }),
+    ).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
+  });
 });
 
 test.describe('responsive agent operations', () => {
