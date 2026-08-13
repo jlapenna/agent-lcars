@@ -2,13 +2,18 @@ import { workspaceRoot } from '@nx/devkit';
 import { nxE2EPreset } from '@nx/playwright/preset';
 import { defineConfig, devices } from '@playwright/test';
 import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * See https://playwright.dev/docs/test-configuration.
  */
 const baseURL = process.env['BASE_URL'] || 'http://127.0.0.1:4200';
 
-if (!process.env.CI && !fs.existsSync('/.dockerenv')) {
+// Screenshot pixels are authoritative only in the pinned Playwright sandbox:
+// locally that is tools/e2e-docker.sh, and trusted CI's lcars-e2e runner is
+// built FROM the same image. Host-direct runs (including fork PRs on
+// ubuntu-latest) still exercise the non-visual suite without comparing pixels.
+if (!fs.existsSync('/.dockerenv')) {
   process.env.SKIP_VISUAL = '1';
 }
 
@@ -35,6 +40,11 @@ export default defineConfig({
     ],
     process.env.CI ? ['github'] : ['list'],
   ],
+  expect: {
+    toHaveScreenshot: {
+      stylePath: path.join(workspaceRoot, 'tools/e2e/screenshot.css'),
+    },
+  },
   use: {
     baseURL,
     trace: 'on-first-retry',
@@ -47,9 +57,8 @@ export default defineConfig({
       executablePath,
     },
   },
-  // No @visual specs in this suite yet, but keep these knobs wired up so
-  // tools/e2e-docker.sh's SKIP_VISUAL/E2E_GREP/VISUAL_ONLY forwarding works
-  // the moment one is added.
+  // Keep visual selection explicit: host-direct runs skip the tagged specs,
+  // while Docker and trusted CI can select or update only those baselines.
   ...(process.env.SKIP_VISUAL === '1'
     ? { grepInvert: /@visual/, ignoreSnapshots: true }
     : {}),

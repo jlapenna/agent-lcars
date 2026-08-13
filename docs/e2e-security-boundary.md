@@ -13,6 +13,30 @@ Run the local or CI suite through:
 Scope a host run without leaving the boundary by setting `E2E_GREP`, for
 example `E2E_GREP='@smoke' ./tools/e2e-local.sh`.
 
+## Visual baselines
+
+The `@visual` mobile suite compares committed Playwright screenshots only in
+the pinned `lcars-e2e` rendering environment. Host-direct E2E skips those
+comparisons because browser, font, and operating-system rasterization can
+otherwise produce false diffs.
+
+Run the committed visual comparisons locally through the pinned Docker path:
+
+```sh
+VISUAL_ONLY=1 ./tools/e2e-docker.sh @agent-lcars/console-e2e
+```
+
+Regenerate only the tagged baselines after an intentional visual change:
+
+```sh
+E2E_GREP='@visual' ./tools/e2e-docker.sh @agent-lcars/console-e2e --update
+```
+
+Review every changed expected image before committing it. A baseline update is
+evidence of the intended UI, not a way to make an unexplained diff pass. On a
+CI mismatch, download the `console-e2e-diagnostics` artifact and compare the
+expected, actual, and diff images in the Playwright report/test output.
+
 The public and internal Nx targets support only the `emulator` execution path.
 They retain an explicit `live` tombstone because Nx silently falls back to the
 default configuration when a named configuration is absent. The tombstone

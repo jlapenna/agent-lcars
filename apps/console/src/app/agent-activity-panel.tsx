@@ -313,6 +313,14 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
   );
 }
 
+function ScreenshotStableDuration({ seconds }: { seconds: number }) {
+  return (
+    <span data-screenshot="hide" data-screenshot-width="duration">
+      {formatDuration(seconds)}
+    </span>
+  );
+}
+
 /**
  * The autoscaler-aware replacement for the old "all runners offline" alert:
  * that condition can no longer fire meaningfully (a scaled-to-zero pool is
@@ -324,8 +332,9 @@ export function QueueHealthAlert({ liveRuns }: { liveRuns: AgentRun[] }) {
   if (!stalledRun) return null;
   return (
     <Alert color="red" variant="light" data-testid="queue-health-alert">
-      A run has been queued for {formatDuration(stalledRun.elapsedSeconds)} —
-      the runner autoscaler may not be supplying runners.
+      A run has been queued for{' '}
+      <ScreenshotStableDuration seconds={stalledRun.elapsedSeconds} /> — the
+      runner autoscaler may not be supplying runners.
     </Alert>
   );
 }
@@ -367,9 +376,17 @@ export function LiveRunRow({
             </Badge>
             <RepoBadge repo={run.repo} />
             <Text size="xs" c="dimmed">
-              {run.status === 'running'
-                ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m budget used`
-                : `queued for ${formatDuration(run.elapsedSeconds)}`}
+              {run.status === 'running' ? (
+                <>
+                  <ScreenshotStableDuration seconds={run.elapsedSeconds} /> of{' '}
+                  {RUN_TIMEOUT_MINUTES}m budget used
+                </>
+              ) : (
+                <>
+                  queued for{' '}
+                  <ScreenshotStableDuration seconds={run.elapsedSeconds} />
+                </>
+              )}
             </Text>
           </Group>
           {run.status === 'running' && (
@@ -433,9 +450,16 @@ export function LiveRunRow({
       </Group>
       <Group gap={6} wrap="nowrap">
         <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
-          {run.status === 'running'
-            ? `${formatDuration(run.elapsedSeconds)} of ${RUN_TIMEOUT_MINUTES}m`
-            : `queued ${formatDuration(run.elapsedSeconds)}`}
+          {run.status === 'running' ? (
+            <>
+              <ScreenshotStableDuration seconds={run.elapsedSeconds} /> of{' '}
+              {RUN_TIMEOUT_MINUTES}m
+            </>
+          ) : (
+            <>
+              queued <ScreenshotStableDuration seconds={run.elapsedSeconds} />
+            </>
+          )}
         </Text>
         <Group
           gap={6}
