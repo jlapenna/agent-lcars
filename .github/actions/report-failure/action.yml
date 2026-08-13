@@ -28,7 +28,7 @@ inputs:
     required: false
     default: ''
   maintainer:
-    description: Optional maintainer login; setting it opts into standalone-consumer parking.
+    description: Optional maintainer login; provide it with token and issue for standalone-consumer parking.
     required: false
     default: ''
 

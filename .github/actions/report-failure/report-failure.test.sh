@@ -129,8 +129,8 @@ fail() {
   grep -q 'issues/42/assignees' "$FAKE_GH_CALLS" || fail "expected maintainer assignment"
 )
 
-# --- Case 6: MAINTAINER is the explicit opt-in. A partial tuple fails closed
-# instead of logging a misleading hosted-finalizer handoff. ---
+# --- Case 6: any non-empty standalone input is an explicit opt-in. A partial
+# tuple fails closed instead of logging a misleading hosted-finalizer handoff. ---
 (
   base_env
   export MAINTAINER=maintainer-login
@@ -140,8 +140,26 @@ fail() {
   set -e
   test "$status" != 0 || fail "partial standalone inputs must fail"
   case "$output" in
-    *"GH_TOKEN is required when MAINTAINER enables standalone reporting"*) ;;
+    *"GH_TOKEN is required when any standalone-reporting input is set"*) ;;
     *) fail "expected the missing GH_TOKEN diagnostic" ;;
+  esac
+  test ! -s "$FAKE_GH_CALLS" || fail "partial inputs must not call gh"
+)
+
+# --- Case 7: token+issue with a missing maintainer is also partial. This is
+# distinct from LCARS's deliberately all-empty hosted-finalizer mode. ---
+(
+  base_env
+  export GH_TOKEN=test-token
+  export ISSUE_NUM=42
+  set +e
+  output="$(bash "$script" 2>&1)"
+  status=$?
+  set -e
+  test "$status" != 0 || fail "a missing maintainer must fail"
+  case "$output" in
+    *"MAINTAINER is required when any standalone-reporting input is set"*) ;;
+    *) fail "expected the missing MAINTAINER diagnostic" ;;
   esac
   test ! -s "$FAKE_GH_CALLS" || fail "partial inputs must not call gh"
 )

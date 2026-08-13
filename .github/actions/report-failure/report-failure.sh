@@ -14,6 +14,8 @@ set -euo pipefail
 : "${JOB_STATUS:?JOB_STATUS is required}"
 MESSAGE_PREFIX="${MESSAGE_PREFIX:-}"
 REASON="${REASON:-}"
+GH_TOKEN="${GH_TOKEN:-}"
+ISSUE_NUM="${ISSUE_NUM:-}"
 MAINTAINER="${MAINTAINER:-}"
 
 if [ "$JOB_STATUS" = "cancelled" ]; then
@@ -22,13 +24,14 @@ else
   MSG="failed"
 fi
 
-if [ -z "$MAINTAINER" ]; then
+if [ -z "$GH_TOKEN" ] && [ -z "$ISSUE_NUM" ] && [ -z "$MAINTAINER" ]; then
   echo "::notice::${MESSAGE_PREFIX}${AGENT} agent run $MSG: $SERVER_URL/$REPO/actions/runs/$RUN_ID$REASON -- the hosted finalizer's completion callback reports this on the anchor issue/PR (#813)."
   exit 0
 fi
 
-: "${GH_TOKEN:?GH_TOKEN is required when MAINTAINER enables standalone reporting}"
-: "${ISSUE_NUM:?ISSUE_NUM is required when MAINTAINER enables standalone reporting}"
+: "${GH_TOKEN:?GH_TOKEN is required when any standalone-reporting input is set}"
+: "${ISSUE_NUM:?ISSUE_NUM is required when any standalone-reporting input is set}"
+: "${MAINTAINER:?MAINTAINER is required when any standalone-reporting input is set}"
 
 gh issue comment "$ISSUE_NUM" \
   --repo "$REPO" \
