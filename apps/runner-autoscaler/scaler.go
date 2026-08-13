@@ -1633,7 +1633,7 @@ func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
 		cmd := exec.CommandContext(probeCtx, "ssh", "-i", fleetSSHKeyPath,
 			"-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile="+fleetKnownHostsPath,
 			"-o", "StrictHostKeyChecking=yes", "-o", "ControlMaster=no",
-			"-o", "ConnectTimeout=1", strings.TrimPrefix(target, "ssh://"),
+			"-o", fmt.Sprintf("ConnectTimeout=%d", sshTimeoutSeconds), strings.TrimPrefix(target, "ssh://"),
 			fmt.Sprintf("curl -fsS --max-time %d http://127.0.0.1:9100/metrics", sshTimeoutSeconds))
 		output, err := cmd.Output()
 		if err != nil {
