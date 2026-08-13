@@ -87,6 +87,14 @@ script from `snapshot-enforcement-scripts`, the equivalent opt-in is the
 `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only part of
 that tuple fails closed instead of silently losing the report (#4388).
 
+`verify-deliverable` likewise has two deliberately separated modes. LCARS's
+broker-bound workers pass `attempt-id` and remain exact-marker-only (#815):
+no timestamp or shared-login inference can satisfy them. Standalone consumers
+without broker attempt identity leave `attempt-id` empty and provide
+`started-at` plus `expected-comment-login`; only that compatibility mode uses
+the protocol's guarded time-window/login inference. This preserves moving
+`@main` consumers without weakening the hosted control plane (#4388).
+
 `prepare-agent-dispatch` keeps its richer runtime contract backward-compatible
 for moving-`main` consumers: `token` falls back to the caller's
 `github.token`, and the deadline inputs default to a 60-minute budget with

@@ -504,8 +504,8 @@ it's already one system:
 
 - **Deliverable validation** — `.github/actions/verify-deliverable/verify-deliverable.sh`,
   invoked directly from each worker workflow (`claude.yml`/`codex.yml`/
-  `opencode.yml`) via `post-agent-gates.sh`. Exact evidence only (#815): a
-  run passes only when a PR, an issue/PR comment, or (review dispatches
+  `opencode.yml`) via `post-agent-gates.sh`. Broker-bound LCARS workers use
+  exact evidence only (#815): a run passes only when a PR, an issue/PR comment, or (review dispatches
   only) a pull request review carries THIS run's own hidden
   `<!-- attempt-claim:<attempt-id> -->` marker — see
   `libs/dispatch-contracts/src/marker.ts`'s `formatClaimMarker`. The marker
@@ -515,12 +515,15 @@ it's already one system:
   issue closing, a `status:needs-human` label appearing, an expected bot
   comment on a reply or runbook dispatch, or a bare PR review on a review
   dispatch), each scoped by a `STARTED_AT` time window plus a shared bot
-  login (`EXCLUDE_PR_AUTHOR`). #815 retired them once every live lane
+  login (`EXCLUDE_PR_AUTHOR`). #815 retired them for every broker-bound lane
   (Claude, Codex, OpenCode) adopted the exact marker: a shared login could
   credit an unrelated artifact touched by the same identity during the same
   window to a run that produced nothing — confirmed live on #650 generation
   9, where a human's PR #711 that merely said "Issue #650" in its body got
-  credited as #650's own deliverable.
+  credited as #650's own deliverable. The Published action retains those
+  clauses only when `attempt-id` is empty, for standalone consumers whose
+  dispatch system has no broker identity; inference is unreachable whenever
+  an exact attempt ID exists (#4388).
   A comment carrying both the exact attempt claim and
   `<!-- agent-result:v1:no-op -->` is the machine-verifiable already-resolved
   result; the same comment without the claim marker does not pass. The
@@ -562,10 +565,11 @@ exactly one path instead of a second copy of it). The inverse failure
 mode — an unrelated PR created by a shared bot identity, or a stale label
 from earlier work, satisfying validation for work no agent did — is what
 the exact marker exists to close (#815; see #650 generation 9 for the
-confirmed live incident that motivated it). There is no longer a time
-window or bot-login exclusion list to keep in sync with the fleet's
-pipelines: the marker names one specific attempt, so nothing but that exact
-string satisfies the gate.
+confirmed live incident that motivated it). There is no time window or
+bot-login exclusion list on LCARS's broker-bound path: the marker names one
+specific attempt, so nothing but that exact string satisfies the gate.
+Standalone Published-action consumers without an attempt ID use a separate
+compatibility path with guarded legacy inference (#4388).
 
 **First three things to check:**
 
