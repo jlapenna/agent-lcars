@@ -73,7 +73,11 @@ USER root
 # isolating the shared paths per pool (an orchestrator-level change, out of
 # scope here).
 RUN groupadd -g 1002 runner \
-  && useradd -m -u 1002 -g 1002 -s /bin/bash runner
+  && useradd -m -u 1002 -g 1002 -s /bin/bash runner \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends git-lfs \
+  && rm -rf /var/lib/apt/lists/* \
+  && git-lfs --version
 
 # Agent payload only: bin/, externals/, run.sh, config.sh, env.sh. The
 # upstream base is JIT-native (honors ACTIONS_RUNNER_INPUT_JITCONFIG), so
@@ -107,12 +111,10 @@ RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 # pnpm cache here for the `runner` user to be locked out of, and no
 # COREPACK_HOME relocation is needed the way sprinkles' image requires.
 #
-# gh CLI and git-lfs are also deliberately absent: this repo's console-e2e
-# suite does not shell out to either (unlike sprinkles' e2e.yml, which reads
-# live PR labels via `gh pr view` and checks out LFS-tracked screenshot
-# baselines inside its own container job) -- confirmed by grepping
-# apps/console-e2e, tools/e2e, and ci.yml's checkout step before leaving them
-# out, not assumed from the sprinkles precedent.
+# gh CLI remains deliberately absent because this repo's console-e2e suite
+# does not read live PR state. Git LFS is installed above because checkout now
+# hydrates the committed screenshot baselines before Playwright compares them;
+# without it checkout leaves pointer text that no PNG decoder can read.
 # A minimal entrypoint wrapper IS needed here, unlike sprinkles' own
 # e2e-runner image -- this pool sets share_workdir: true without
 # mount_docker_socket in homelab's orchestrator.yml (scaler.go's
