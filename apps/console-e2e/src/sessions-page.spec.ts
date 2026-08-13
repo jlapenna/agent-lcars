@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import { E2E_ISSUE_AGENT_SESSION_ID, usePopulatedFixtures } from './seed';
 import {
   expectDesktopBridgeHeader,
+  expectDesktopLcarsElbow,
   expectMobileBridgeHeader,
 } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
@@ -19,6 +20,7 @@ test.describe('/sessions workspace @smoke', () => {
     const header = page.locator('.console-header[data-current="sessions"]');
     const workspace = page.getByRole('region', { name: 'Session archive' });
     await expectDesktopBridgeHeader(header);
+    await expectDesktopLcarsElbow(header);
     await expect(workspace).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Quick task' }),
