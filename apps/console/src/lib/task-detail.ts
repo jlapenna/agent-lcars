@@ -1,3 +1,4 @@
+import { isE2eTesting } from '@agent-lcars/util-server';
 import { cacheLife, cacheTag } from 'next/cache';
 
 import { type ActionItem, classifyIssue } from './action-items';
@@ -73,16 +74,12 @@ interface GithubIssueLike {
  * doc comment) - a cache hit must report the data's real age, not the
  * render time.
  */
-async function getCachedTaskSource(
+async function fetchTaskSource(
   repo: WatchedRepo,
   issueNumber: number,
 ): Promise<
   Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
 > {
-  'use cache';
-  cacheTag(GITHUB_DATA_TAG);
-  cacheLife(DASHBOARD_CACHE_LIFE);
-
   const octokit = getGithubClient();
   const { data: issue } = await octokit.rest.issues.get({
     owner: repo.owner,
@@ -107,6 +104,30 @@ async function getCachedTaskSource(
     data: { issue, itemEnrichment: enrichment.byNumber.get(issueNumber) },
     fetchedAt: new Date().toISOString(),
   };
+}
+
+async function getProductionCachedTaskSource(
+  repo: WatchedRepo,
+  issueNumber: number,
+): Promise<
+  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
+> {
+  'use cache';
+  cacheTag(GITHUB_DATA_TAG);
+  cacheLife(DASHBOARD_CACHE_LIFE);
+  return fetchTaskSource(repo, issueNumber);
+}
+
+/** See dashboard-data.ts's E2E cache-bypass rationale. */
+function getCachedTaskSource(
+  repo: WatchedRepo,
+  issueNumber: number,
+): Promise<
+  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
+> {
+  return isE2eTesting()
+    ? fetchTaskSource(repo, issueNumber)
+    : getProductionCachedTaskSource(repo, issueNumber);
 }
 
 /**
