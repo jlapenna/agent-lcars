@@ -300,12 +300,11 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 }
 
 /* ---- Elbow panel accent ----
-   A quieter structural echo of the same LCARS corner-into-rail shape,
+   A quieter, half-scale echo of the header's concentric LCARS elbow,
    applied to top-level panel shells only (never per-row/per-item, so it
    doesn't compete with the status badges those rows already carry).
    `--lcars-accent` is set per panel via inline style; `overflow: hidden`
-   on the panel clips both pseudo-elements to the card's own radius, which
-   is what tucks the corner cap into the rounded corner for free. */
+   clips the single elbow to the panel bounds. */
 
 .lcars-panel {
   --lcars-accent: var(--mantine-color-orange-6);
@@ -318,19 +317,12 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   position: absolute;
   inset-block: 0;
   left: 0;
-  width: 8px;
-  background: var(--lcars-accent);
-}
-
-.lcars-panel::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 3rem;
-  height: 1rem;
-  background: var(--lcars-accent);
-  border-bottom-right-radius: 1rem;
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: 0.5rem 0 0 0.5rem;
+  border-color: var(--lcars-accent) transparent transparent var(--lcars-accent);
+  border-top-left-radius: 1rem;
 }
 
 /* ---- Shared console frame ----
@@ -408,10 +400,9 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
    hierarchy of live data. */
 .agents-panel::before {
   width: 4px;
-}
-
-.agents-panel::after {
-  display: none;
+  border: 0;
+  border-radius: 0;
+  background: var(--lcars-accent);
 }
 
 .agents-fleet-strip {
@@ -1523,11 +1514,6 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .agents-panel {
     padding: 14px 16px;
     border-bottom: 1px solid var(--mantine-color-default-border) !important;
-  }
-
-  .agents-fleet-strip::before,
-  .agents-panel::before {
-    width: 4px;
   }
 
   .agents-panel h2 {
