@@ -346,6 +346,72 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         self.assertIn("github_actions_job_oldest_queued_seconds", metrics)
 
+    def test_completed_run_does_not_finalize_or_export_active_job_snapshot(self):
+        run = workflow_run()
+        job = workflow_job(
+            status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.database.upsert_jobs("jlapenna/homelab", run, [job])
+
+        rows = self.database.rows(
+            """
+            SELECT jobs.status, workflow_runs.jobs_updated_at
+            FROM jobs JOIN workflow_runs
+              ON workflow_runs.repository = jobs.repository
+             AND workflow_runs.id = jobs.run_id
+            WHERE jobs.repository = ? AND jobs.id = ?
+            """,
+            ("jlapenna/homelab", job["id"]),
+        )
+        self.assertEqual(
+            [(row["status"], row["jobs_updated_at"]) for row in rows],
+            [("refresh_pending", None)],
+        )
+        self.assertTrue(self.database.jobs_need_refresh("jlapenna/homelab", run))
+        self.assertNotIn("github_actions_jobs_current{", self.metrics())
+        self.assertNotIn("github_actions_job_oldest_queued_seconds{", self.metrics())
+
+        completed_job = workflow_job()
+        self.database.upsert_jobs("jlapenna/homelab", run, [completed_job])
+
+        self.assertFalse(self.database.jobs_need_refresh("jlapenna/homelab", run))
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="success",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            self.metrics(),
+        )
+
+    def test_startup_repairs_legacy_completed_run_with_active_job(self):
+        run = workflow_run()
+        job = workflow_job()
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.database.upsert_jobs("jlapenna/homelab", run, [job])
+        with self.database.lock, self.database.connection:
+            self.database.connection.execute(
+                "UPDATE jobs SET status = 'queued' WHERE repository = ? AND id = ?",
+                ("jlapenna/homelab", job["id"]),
+            )
+        database_path = str(Path(self.temporary_directory.name) / "actions.db")
+        self.database.close()
+        self.database = exporter.Database(database_path)
+        self.addCleanup(self.database.close)
+
+        rows = self.database.rows(
+            """
+            SELECT jobs.status, workflow_runs.jobs_updated_at
+            FROM jobs JOIN workflow_runs
+              ON workflow_runs.repository = jobs.repository
+             AND workflow_runs.id = jobs.run_id
+            WHERE jobs.repository = ? AND jobs.id = ?
+            """,
+            ("jlapenna/homelab", job["id"]),
+        )
+        self.assertEqual(
+            [(row["status"], row["jobs_updated_at"]) for row in rows],
+            [("refresh_pending", None)],
+        )
+        self.assertNotIn("github_actions_jobs_current{", self.metrics())
+
     def test_confirmed_concurrency_group_membership_is_exported(self):
         run = workflow_run(status="in_progress", conclusion=None)
         job = workflow_job(

@@ -536,6 +536,37 @@ class Database:
                 self.connection.execute(
                     "ALTER TABLE jobs ADD COLUMN concurrency_group TEXT NOT NULL DEFAULT 'none'"
                 )
+            active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+            # A completed workflow cannot still have a queued/running job. GitHub's
+            # run endpoint can become terminal a poll before its jobs endpoint does;
+            # older versions stamped that contradictory snapshot as final and then
+            # exported a phantom queue forever. Suppress any persisted impossible
+            # rows on startup and leave their run eligible for a later refresh.
+            self.connection.execute(
+                f"""
+                UPDATE jobs SET status = 'refresh_pending'
+                WHERE status IN ({active_placeholders})
+                  AND EXISTS (
+                    SELECT 1 FROM workflow_runs
+                    WHERE workflow_runs.repository = jobs.repository
+                      AND workflow_runs.id = jobs.run_id
+                      AND workflow_runs.status = 'completed'
+                  )
+                """,
+                ACTIVE_STATUSES,
+            )
+            self.connection.execute(
+                """
+                UPDATE workflow_runs SET jobs_updated_at = NULL
+                WHERE status = 'completed'
+                  AND EXISTS (
+                    SELECT 1 FROM jobs
+                    WHERE jobs.repository = workflow_runs.repository
+                      AND jobs.run_id = workflow_runs.id
+                      AND jobs.status = 'refresh_pending'
+                  )
+                """
+            )
             job_rows = self.connection.execute(
                 """
                 SELECT DISTINCT repository, workflow, name FROM jobs
@@ -815,13 +846,38 @@ class Database:
                         concurrency_group,
                     ),
                 )
+            jobs_snapshot_consistent = True
+            if metric_label(run.get("status")) == "completed":
+                active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+                active_jobs = self.connection.execute(
+                    f"""
+                    SELECT 1 FROM jobs
+                    WHERE repository = ? AND run_id = ?
+                      AND status IN ({active_placeholders})
+                    LIMIT 1
+                    """,
+                    (repository, run_id, *ACTIVE_STATUSES),
+                ).fetchone()
+                if active_jobs is not None:
+                    jobs_snapshot_consistent = False
+                    self.connection.execute(
+                        f"""
+                        UPDATE jobs SET status = 'refresh_pending'
+                        WHERE repository = ? AND run_id = ?
+                          AND status IN ({active_placeholders})
+                        """,
+                        (repository, run_id, *ACTIVE_STATUSES),
+                    )
+            jobs_updated_at = None
+            if jobs_snapshot_consistent:
+                jobs_updated_at = parse_timestamp(run.get("updated_at")) or time.time()
             self.connection.execute(
                 """
                 UPDATE workflow_runs SET jobs_updated_at = ?
                 WHERE repository = ? AND id = ? AND run_attempt = ?
                 """,
                 (
-                    parse_timestamp(run.get("updated_at")) or time.time(),
+                    jobs_updated_at,
                     repository,
                     run_id,
                     int(run.get("run_attempt") or 1),
