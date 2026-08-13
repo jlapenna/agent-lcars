@@ -54,6 +54,7 @@ export function RefreshButton({
         <ActionIcon
           variant="subtle"
           size={compact ? 44 : 'sm'}
+          className="lcars-refresh-button"
           loading={isPending}
           aria-label="Refresh"
           onClick={() =>

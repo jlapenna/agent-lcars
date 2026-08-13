@@ -45,7 +45,7 @@ test.describe('/sessions workspace @smoke', () => {
     });
   });
 
-  test('clips an oversized session title inside the fixed desktop header', async ({
+  test('expands the title on a sufficiently wide desktop before falling back to a safe ellipsis', async ({
     page,
   }, testInfo) => {
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
@@ -61,6 +61,13 @@ test.describe('/sessions workspace @smoke', () => {
         (element) => element.scrollWidth > element.clientWidth,
       ),
     ).toBe(true);
+
+    await page.setViewportSize({ width: 2560, height: 1080 });
+    await expect
+      .poll(() =>
+        title.evaluate((element) => element.scrollWidth <= element.clientWidth),
+      )
+      .toBe(true);
 
     const capture = testInfo.outputPath('session-detail-desktop-title.png');
     await page.screenshot({ path: capture, fullPage: true });

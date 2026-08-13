@@ -140,12 +140,12 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   background: var(--mantine-color-teal-6);
 }
 
-/* ---- Signature: LCARS pill nav rail ----
-   A row of fully-rounded, adjoining color-blocked segments — the one
-   unmistakably-LCARS structural device on the page. The active page's
-   segment is solid-filled; the others sit as quiet outlines in the same
-   accent, so the row reads as one console control rather than a list of
-   links.
+/* ---- Signature: LCARS destination rail ----
+   A row of adjoining color-blocked segments — the one unmistakably-LCARS
+   structural device on the page. Desktop uses solid, unequal-width modules
+   with labels docked to their trailing edges; compact layouts retain the
+   simpler pill treatment below. The active destination reaches full signal
+   color while the other modules stay deliberately subdued.
 
    There is exactly one such rail per page, so `nav.lcars-nav` stays a
    locator that matches only it. The sessions page briefly carried a second,
@@ -277,18 +277,40 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 .lcars-action-button {
   border-radius: 999px;
   border: 2px solid var(--lcars-action-accent);
-  background: color-mix(in srgb, var(--lcars-action-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--lcars-action-accent) 22%, transparent);
   color: var(--lcars-action-accent);
   font-family: var(--font-display), sans-serif;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+  box-shadow: inset 0 -2px 0
+    color-mix(in srgb, var(--lcars-action-accent) 28%, transparent);
 }
 
 .lcars-action-button:hover:not(:disabled) {
   background: var(--lcars-action-accent);
   border-color: var(--lcars-action-accent);
   color: var(--mantine-color-black);
+}
+
+/* Header utility icons are small LCARS modules, not unframed glyphs. Their
+   route color is inherited from the surrounding elbow, with enough tint to
+   remain quiet beside the destination rail. */
+.console-header[data-current] .lcars-refresh-button,
+.console-header[data-current] .queue-utility-trigger {
+  border: 1px solid
+    color-mix(in srgb, var(--lcars-header-accent) 58%, transparent);
+  border-radius: 999px;
+  color: var(--lcars-header-accent);
+  background: color-mix(in srgb, var(--lcars-header-accent) 10%, transparent);
+  box-shadow: inset 0 -2px 0
+    color-mix(in srgb, var(--lcars-header-accent) 18%, transparent);
+}
+
+.console-header[data-current] .lcars-refresh-button:hover,
+.console-header[data-current] .queue-utility-trigger:hover {
+  color: var(--lcars-header-accent);
+  background: color-mix(in srgb, var(--lcars-header-accent) 18%, transparent);
 }
 
 .lcars-action-button[data-accent='amber'] {
@@ -1144,10 +1166,16 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .console-header[data-current] {
+    --lcars-header-accent: var(--mantine-color-orange-6);
+    --lcars-elbow-arm: 16px;
+    --lcars-elbow-rail: 48px;
+    --lcars-elbow-inner-radius: 16px;
+    --lcars-elbow-outer-radius: 32px;
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: grid;
-    grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
+    position: relative;
+    grid-template-columns: minmax(13rem, 1fr) max-content;
     /* Fixed, border-box Bridge-header geometry keeps the shared shell stable
        across route copy, font metrics, and browser rendering differences. */
     height: 80px;
@@ -1158,6 +1186,34 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     background: var(--mantine-color-dark-9);
   }
 
+  /* The desktop frame owns one uninterrupted elbow across the complete top
+     edge. A broad vertical rail rounds inward through a quarter-circle before
+     becoming the thinner horizontal arm: the characteristic LCARS taper,
+     rather than a conventional equal-width CSS border. Route controls sit
+     immediately below it with explicit clearance. */
+  .console-header[data-current]::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 100%;
+    background:
+      radial-gradient(
+          circle at 100% 100%,
+          transparent 0 calc(var(--lcars-elbow-inner-radius) - 1px),
+          var(--lcars-header-accent) var(--lcars-elbow-inner-radius)
+        )
+        var(--lcars-elbow-rail) var(--lcars-elbow-arm) /
+        var(--lcars-elbow-inner-radius) var(--lcars-elbow-inner-radius)
+        no-repeat,
+      linear-gradient(var(--lcars-header-accent) 0 0) top / 100%
+        var(--lcars-elbow-arm) no-repeat,
+      linear-gradient(var(--lcars-header-accent) 0 0) left /
+        var(--lcars-elbow-rail) 100% no-repeat;
+    border-top-left-radius: var(--lcars-elbow-outer-radius);
+    pointer-events: none;
+  }
+
   .console-header[data-current] .lcars-header {
     display: flex;
     min-width: 0;
@@ -1165,7 +1221,10 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     /* Keep the desktop Bridge header at its deliberate 80px rhythm. The
        extra left clearance belongs to the elbow; it should not add height. */
     padding: 12px 20px 10px 4.25rem;
-    border-right: 1px solid var(--mantine-color-dark-4);
+  }
+
+  .console-header[data-current] .lcars-header::before {
+    display: none;
   }
 
   .console-header[data-current] .lcars-header > .mantine-Group-root {
@@ -1192,20 +1251,86 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .console-header[data-current] .lcars-command-row {
     min-width: 0;
-    padding: 0 16px;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding: 0 16px 0 4px;
+    position: relative;
+    background: linear-gradient(
+      to bottom,
+      var(--lcars-header-accent) 0 var(--lcars-elbow-arm),
+      var(--mantine-color-dark-9) var(--lcars-elbow-arm) 100%
+    );
   }
 
   .console-header[data-current] .lcars-nav {
+    align-items: center;
     flex-wrap: nowrap;
+    gap: 4px;
+    padding-top: 1.25rem;
   }
 
   .console-header[data-current] .lcars-nav-pill {
-    padding: 7px 18px;
+    justify-content: flex-end;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
     font-size: 0.875rem;
+    color: var(--pill-ink);
+    background: color-mix(
+      in srgb,
+      var(--pill-fill) 62%,
+      var(--mantine-color-dark-9)
+    );
+    box-shadow: inset 0 -3px 0
+      color-mix(in srgb, var(--mantine-color-dark-9) 38%, transparent);
+  }
+
+  .console-header[data-current] .lcars-nav-pill:not([data-active]):hover {
+    color: var(--pill-ink);
+    background: color-mix(
+      in srgb,
+      var(--pill-fill) 82%,
+      var(--mantine-color-dark-9)
+    );
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-active] {
+    box-shadow:
+      inset 0 -3px 0 color-mix(in srgb, var(--pill-ink) 28%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--pill-fill) 70%, white);
+  }
+
+  /* LCARS controls are modular rather than evenly distributed. The varied
+     lengths create the console's characteristic visual rhythm while keeping
+     every label on one line. */
+  .console-header[data-current] .lcars-nav-pill[data-destination='deck'] {
+    min-width: 5.25rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='inbox'] {
+    min-width: 5.75rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='agents'] {
+    min-width: 5rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='shuttlebay'] {
+    min-width: 7.5rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='sessions'] {
+    min-width: 6.5rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='costs'] {
+    min-width: 4.75rem;
   }
 
   .console-header[data-current] .lcars-command-utilities {
-    border-color: var(--mantine-color-dark-4);
+    align-self: center;
+    border-left: 0;
   }
 
   .console-header[data-current='deck']
@@ -1227,7 +1352,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     ) !important;
   }
 
-  .console-header[data-current='inbox'] .lcars-header {
+  .console-header[data-current='inbox'] {
     --lcars-header-accent: var(--mantine-color-blue-5);
   }
 
@@ -1238,7 +1363,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     background: var(--mantine-color-blue-5) !important;
   }
 
-  .console-header[data-current='agents'] .lcars-header {
+  .console-header[data-current='agents'] {
     --lcars-header-accent: var(--mantine-color-violet-5);
   }
 
@@ -1249,7 +1374,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     background: var(--mantine-color-violet-5) !important;
   }
 
-  .console-header[data-current='shuttlebay'] .lcars-header {
+  .console-header[data-current='shuttlebay'] {
     --lcars-header-accent: var(--mantine-color-blue-5);
   }
 
@@ -1260,7 +1385,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     background: var(--mantine-color-blue-5) !important;
   }
 
-  .console-header[data-current='sessions'] .lcars-header {
+  .console-header[data-current='sessions'] {
     --lcars-header-accent: var(--mantine-color-cyan-5);
   }
 
@@ -1271,7 +1396,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     background: var(--mantine-color-cyan-5) !important;
   }
 
-  .console-header[data-current='costs'] .lcars-header {
+  .console-header[data-current='costs'] {
     --lcars-header-accent: var(--mantine-color-yellow-5);
   }
 
@@ -1300,7 +1425,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
 @media (min-width: 48em) and (max-width: 63.99em) {
   .console-header[data-current] {
-    grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
+    grid-template-columns: minmax(11rem, 1fr) max-content;
   }
 
   .console-header[data-current] .lcars-nav {
@@ -1308,7 +1433,25 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .console-header[data-current] .lcars-nav-pill {
-    padding: 7px 14px;
+    padding-inline: 10px;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='deck'],
+  .console-header[data-current] .lcars-nav-pill[data-destination='inbox'],
+  .console-header[data-current] .lcars-nav-pill[data-destination='agents'] {
+    min-width: 4.5rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='shuttlebay'] {
+    min-width: 6.25rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='sessions'] {
+    min-width: 5.25rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='costs'] {
+    min-width: 4.25rem;
   }
 
   .console-header[data-current]
@@ -1353,8 +1496,15 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   /* Every top-level screen keeps its active destination visible from the
-     same compact LCARS control strip. */
+     same compact LCARS control strip. Mobile gets a miniature elbow rather
+     than a compressed desktop frame: its labeled rail is broad enough to tap,
+     while a narrow arm crosses above the utilities without taking their room. */
   .console-header[data-current] {
+    --lcars-header-accent: var(--mantine-color-orange-6);
+    --lcars-mobile-arm: 10px;
+    --lcars-mobile-rail: 8rem;
+    --lcars-mobile-inner-radius: 14px;
+    --lcars-mobile-outer-radius: 18px;
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
     display: block;
@@ -1385,12 +1535,39 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .console-header[data-current] .lcars-command-row {
+    position: relative;
     height: 64px;
     gap: 4px;
     padding-right: 8px;
+    isolation: isolate;
+    background: var(--mantine-color-dark-9);
+  }
+
+  .console-header[data-current] .lcars-command-row::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    background:
+      radial-gradient(
+          circle at 100% 100%,
+          transparent 0 calc(var(--lcars-mobile-inner-radius) - 1px),
+          var(--lcars-header-accent) var(--lcars-mobile-inner-radius)
+        )
+        var(--lcars-mobile-rail) var(--lcars-mobile-arm) /
+        var(--lcars-mobile-inner-radius) var(--lcars-mobile-inner-radius)
+        no-repeat,
+      linear-gradient(var(--lcars-header-accent) 0 0) top / 100%
+        var(--lcars-mobile-arm) no-repeat,
+      linear-gradient(var(--lcars-header-accent) 0 0) left /
+        var(--lcars-mobile-rail) 100% no-repeat;
+    border-top-left-radius: var(--lcars-mobile-outer-radius);
+    pointer-events: none;
   }
 
   .console-header[data-current] .lcars-nav {
+    position: relative;
+    z-index: 1;
     align-self: stretch;
     flex: 0 0 auto;
   }
@@ -1401,12 +1578,39 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 
   .console-header[data-current] .lcars-nav-pill[data-active] {
     display: inline-flex;
-    min-width: 8rem;
+    justify-content: flex-end;
+    min-width: var(--lcars-mobile-rail);
     height: 64px;
-    padding: 0 16px;
+    padding: var(--lcars-mobile-arm) 18px 0 12px;
     border: 0;
-    border-radius: 0 0 24px;
+    border-radius: 0;
     color: var(--mantine-color-white);
+    background: transparent !important;
+  }
+
+  .console-header[data-current] .lcars-command-utilities {
+    position: relative;
+    z-index: 1;
+    align-self: stretch;
+    box-sizing: border-box;
+    padding-block: 14px 6px;
+  }
+
+  .console-header[data-current='inbox'],
+  .console-header[data-current='shuttlebay'] {
+    --lcars-header-accent: var(--mantine-color-blue-5);
+  }
+
+  .console-header[data-current='agents'] {
+    --lcars-header-accent: var(--mantine-color-violet-5);
+  }
+
+  .console-header[data-current='sessions'] {
+    --lcars-header-accent: var(--mantine-color-cyan-5);
+  }
+
+  .console-header[data-current='costs'] {
+    --lcars-header-accent: var(--mantine-color-yellow-5);
   }
 
   .console-header[data-current='inbox'] .lcars-nav-pill[data-active] {
@@ -2008,13 +2212,17 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
    reachable utilities. Tightening only this shared control geometry keeps
    every console destination operable without wrapping a second header row. */
 @media (max-width: 21.99em) {
+  .console-header[data-current] {
+    --lcars-mobile-rail: 6.75rem;
+    --lcars-mobile-inner-radius: 12px;
+  }
+
   .console-header[data-current] .lcars-command-row {
     gap: 0;
     padding-right: 4px;
   }
 
   .console-header[data-current] .lcars-nav-pill[data-active] {
-    min-width: 6.75rem;
     padding-inline: 12px;
     font-size: 0.75rem;
   }

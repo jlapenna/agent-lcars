@@ -56,15 +56,16 @@ function navHref(
 
 /**
  * Shared top-of-page chrome for the console destinations (Bridge, Inbox,
- * Agents, Shuttlebay, Sessions, Costs): title/subtitle row and the LCARS pill nav rail
+ * Agents, Shuttlebay, Sessions, Costs): title/subtitle row and the LCARS destination rail
  * (the one page every page can jump from/to). Drill-down pages use the same
  * header with their logical parent marked active, so they retain both a
  * visible title and a route back to every console destination.
  *
- * The title/subtitle row itself carries a full-size, concentric LCARS elbow
- * (`.lcars-header`; see global.css) plus a segmented signal bar in the nav
- * rail's own accent colors, so the marquee page title reads as LCARS chrome
- * rather than a plain heading sitting above the pill rail (#204).
+ * The title/subtitle row itself carries a full-size LCARS elbow
+ * (`.lcars-header`; see global.css), whose broad vertical rail curves into a
+ * thinner arm spanning the destination rail. On desktop the marquee title and
+ * navigation therefore read as one piece of LCARS chrome rather than a heading
+ * beside a row of generic pills (#204).
  *
  * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
  * `cacheComponents` requires a Suspense boundary for, so every page renders
@@ -134,7 +135,7 @@ export function ConsoleHeader({
 }
 
 /**
- * The destination pill rail on its own - ConsoleHeader composes it
+ * The destination rail on its own - ConsoleHeader composes it
  * under the title block. It is exported for the rare embedded navigation
  * use case, while all routed pages use the complete `ConsoleHeader` through
  * `ConsoleAppShell`.
