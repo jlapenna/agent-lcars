@@ -877,11 +877,9 @@ test.describe('populated page captures', () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
-    await expect(
-      page
-        .locator('.console-header[data-current="deck"]')
-        .getByRole('link', { name: 'Bridge' }),
-    ).toBeVisible();
+    const header = page.locator('.console-header[data-current="deck"]');
+    await expectMobileBridgeHeader(header);
+    await expect(header.getByRole('heading', { name: 'Bridge' })).toBeVisible();
     await expect(page.getByTestId('deck-inbox-summary')).toBeVisible();
     await expect(page.getByTestId('current-work')).toBeVisible();
     expect(
