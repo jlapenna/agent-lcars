@@ -1,6 +1,10 @@
 import { expect, type Page, type Response, test } from '@playwright/test';
 
-import { useCliSessionFixtures } from './seed';
+import {
+  resetCliSessions,
+  seedCliSessions,
+  useCliSessionFixtures,
+} from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 /**
@@ -103,6 +107,54 @@ async function drainActionResponse(response: Response): Promise<void> {
 }
 
 test.describe('Quick Task write path (agent-lcars#307)', () => {
+  test('renders the current #20001 body immediately after a fixture generation reset (#991)', async ({
+    page,
+  }) => {
+    async function fileAndReadBody(description: string) {
+      await page.goto('/');
+      await openQuickTask(page);
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('Description').fill(description);
+      const expectedBody =
+        (await dialog.getByTestId('quick-task-preview-body').textContent()) ??
+        '';
+      await dialog.getByRole('button', { name: 'File & dispatch' }).click();
+
+      const receipt = taskRefNotification(page);
+      // This assertion spans the full Server Action plus its post-mutation
+      // RSC refresh. Keep the same bounded saturation headroom as the other
+      // receipt-count regression below; the cache-isolation assertion is the
+      // immediate detail read after this completes, not action latency.
+      await expect(receipt).toBeVisible({ timeout: 30_000 });
+      const href = await receipt.getAttribute('href');
+      const issueNumber = Number(href?.match(/\/issues\/(\d+)$/u)?.[1]);
+      expect(issueNumber).toBe(20001);
+
+      await page.goto(`/task/supersprinklesracing/sprinkles/${issueNumber}`);
+      const overflow = page.getByRole('button', {
+        name: `More actions for #${issueNumber}`,
+      });
+      await overflow.click();
+      await page.getByRole('menuitem', { name: 'Edit issue' }).click();
+      const editor = page.getByRole('dialog', {
+        name: `Edit #${issueNumber}`,
+      });
+      await expect(editor.getByLabel('Title')).toHaveValue(description);
+      await expect(editor.getByLabel('Body')).toHaveValue(expectedBody);
+      await page.keyboard.press('Escape');
+    }
+
+    await fileAndReadBody('Fixture generation body A');
+
+    // The reset deliberately reuses #20001. Before #991, a late cache fill
+    // from the first detail render could commit after this invalidation and
+    // make the next generation's first render return body A again.
+    await resetCliSessions();
+    await seedCliSessions();
+
+    await fileAndReadBody('Fixture generation body B');
+  });
+
   test('files a task through the real server action with canonical identity, one-write labels, a broker decision, and attempt presentation', async ({
     page,
   }) => {

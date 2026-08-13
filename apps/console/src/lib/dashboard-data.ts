@@ -1,3 +1,4 @@
+import { isE2eTesting } from '@agent-lcars/util-server';
 import { cacheLife, cacheTag } from 'next/cache';
 
 import { type ActionItemsResult, getActionItems } from './action-items';
@@ -61,25 +62,51 @@ export interface Fetched<T> {
   fetchedAt: string;
 }
 
-export async function getCachedActionItems(): Promise<
+async function fetchActionItems(): Promise<Fetched<ActionItemsResult>> {
+  return { data: await getActionItems(), fetchedAt: new Date().toISOString() };
+}
+
+async function getProductionCachedActionItems(): Promise<
   Fetched<ActionItemsResult>
 > {
   'use cache';
   cacheTag(GITHUB_DATA_TAG);
   cacheLife(DASHBOARD_CACHE_LIFE);
-  return { data: await getActionItems(), fetchedAt: new Date().toISOString() };
+  return fetchActionItems();
 }
 
-export async function getCachedAgentActivity(): Promise<
+async function fetchAgentActivity(): Promise<Fetched<AgentActivity>> {
+  return {
+    data: await getAgentActivity(),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+async function getProductionCachedAgentActivity(): Promise<
   Fetched<AgentActivity>
 > {
   'use cache';
   cacheTag(GITHUB_DATA_TAG);
   cacheLife(DASHBOARD_CACHE_LIFE);
-  return {
-    data: await getAgentActivity(),
-    fetchedAt: new Date().toISOString(),
-  };
+  return fetchAgentActivity();
+}
+
+/**
+ * E2E fixture reads deliberately bypass Next's persistent cache. Tag
+ * invalidation removes committed entries, but it cannot stop an older RSC
+ * request from committing its in-flight fill after a fixture reset. Reusing
+ * fixture IDs then turns that late value into a valid hit for the next test.
+ * Production keeps the same short cache; only the hermetic fixture runtime
+ * pays for a fresh read on every render.
+ */
+export function getCachedActionItems(): Promise<Fetched<ActionItemsResult>> {
+  return isE2eTesting() ? fetchActionItems() : getProductionCachedActionItems();
+}
+
+export function getCachedAgentActivity(): Promise<Fetched<AgentActivity>> {
+  return isE2eTesting()
+    ? fetchAgentActivity()
+    : getProductionCachedAgentActivity();
 }
 
 /** The age the page should report, given every cached source it rendered
