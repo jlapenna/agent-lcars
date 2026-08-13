@@ -193,10 +193,33 @@ test('local storage refuses a caller-owned directory with public permissions', a
   assert.equal((await stat(publicDirectory)).mode & 0o777, 0o755);
 });
 
-test('secret storage adds a version without creating a secret container', async () => {
+test('secret storage adds a version then destroys every older live version', async () => {
   const calls = [];
   const runFile = (file, args, options) => {
     calls.push({ file, args, options });
+    if (args[2] === 'add') {
+      return 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/12\n';
+    }
+    if (args[2] === 'list') {
+      return JSON.stringify([
+        {
+          name: 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/12',
+          state: 'ENABLED',
+        },
+        {
+          name: 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/13',
+          state: 'ENABLED',
+        },
+        {
+          name: 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/11',
+          state: 'DISABLED',
+        },
+        {
+          name: 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/10',
+          state: 'DESTROYED',
+        },
+      ]);
+    }
     return '';
   };
 
@@ -213,9 +236,45 @@ test('secret storage adds a version without creating a secret container', async 
 
   assert.deepEqual(calls[0].args.slice(0, 3), ['secrets', 'versions', 'add']);
   assert.equal(calls[0].args.includes('create'), false);
+  assert.deepEqual(calls[1].args.slice(0, 3), ['secrets', 'versions', 'list']);
+  assert.deepEqual(calls[2].args.slice(0, 4), [
+    'secrets',
+    'versions',
+    'destroy',
+    '11',
+  ]);
   assert.deepEqual(
     JSON.parse(Buffer.from(calls[0].options.input, 'base64').toString('utf8')),
     STORAGE_STATE,
+  );
+});
+
+test('secret storage preserves the replacement when version cleanup fails', async () => {
+  const calls = [];
+  const runFile = (_file, args) => {
+    calls.push(args);
+    if (args[2] === 'add') {
+      return 'projects/test-project/secrets/TEST_STORAGE_STATE/versions/12\n';
+    }
+    throw new Error('list denied');
+  };
+
+  await assert.rejects(
+    saveStorageState(
+      STORAGE_STATE,
+      {
+        storage: 'secret',
+        role: 'admin',
+        project: 'test-project',
+        secretName: 'TEST_STORAGE_STATE',
+      },
+      { runFile },
+    ),
+    /Added a replacement version.*could not prune older versions/,
+  );
+  assert.deepEqual(
+    calls.map((args) => args[2]),
+    ['add', 'list'],
   );
 });
 

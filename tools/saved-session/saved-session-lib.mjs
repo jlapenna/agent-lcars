@@ -129,6 +129,80 @@ export function parseStorageState(serialized) {
   return value;
 }
 
+function secretVersionId(name) {
+  const match = /\/versions\/([1-9][0-9]*)$/u.exec(name);
+  if (!match) {
+    throw new Error('Secret Manager did not return a valid version name.');
+  }
+  return match[1];
+}
+
+function supersededSecretVersionIds(serializedVersions, replacementName) {
+  const versions = JSON.parse(serializedVersions);
+  if (!Array.isArray(versions)) {
+    throw new Error('Secret Manager version list was not an array.');
+  }
+  const replacementNumber = Number(secretVersionId(replacementName));
+
+  return versions.flatMap((version) => {
+    if (
+      !version ||
+      typeof version.name !== 'string' ||
+      (version.state !== undefined && typeof version.state !== 'string')
+    ) {
+      throw new Error(
+        'Secret Manager version list contained an invalid entry.',
+      );
+    }
+    const versionId = secretVersionId(version.name);
+    if (
+      version.state === 'DESTROYED' ||
+      Number(versionId) >= replacementNumber
+    ) {
+      return [];
+    }
+    return [versionId];
+  });
+}
+
+function destroySupersededSecretVersions(
+  secretName,
+  project,
+  replacementName,
+  runFile,
+) {
+  const versions = runFile(
+    'gcloud',
+    [
+      'secrets',
+      'versions',
+      'list',
+      secretName,
+      `--project=${project}`,
+      '--filter=state!=DESTROYED',
+      '--format=json',
+    ],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const versionIds = supersededSecretVersionIds(versions, replacementName);
+  for (const versionId of versionIds) {
+    runFile(
+      'gcloud',
+      [
+        'secrets',
+        'versions',
+        'destroy',
+        versionId,
+        `--secret=${secretName}`,
+        `--project=${project}`,
+        '--quiet',
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+  }
+  return versionIds.length;
+}
+
 /** Expiry of the shortest-lived Auth.js session-cookie chunk, in epoch
  * seconds. Captured browser state can contain unrelated cookies (and Auth.js
  * can split a large token into numbered chunks), so only the session-token
@@ -197,8 +271,9 @@ export async function saveStorageState(
   }
 
   const encoded = Buffer.from(serialized).toString('base64');
+  let replacementName;
   try {
-    runFile(
+    replacementName = runFile(
       'gcloud',
       [
         'secrets',
@@ -207,13 +282,28 @@ export async function saveStorageState(
         secretName,
         `--project=${project}`,
         '--data-file=-',
+        '--format=value(name)',
       ],
-      { input: encoded, stdio: ['pipe', 'ignore', 'pipe'] },
+      { encoding: 'utf8', input: encoded, stdio: ['pipe', 'pipe', 'pipe'] },
     );
   } catch {
     throw new Error(
       `Could not add a version to ${secretName} in ${project}. The tool never creates ` +
         'secret containers; a maintainer must provision the container through the reviewed infrastructure workflow first.',
+    );
+  }
+  try {
+    destroySupersededSecretVersions(
+      secretName,
+      project,
+      replacementName.trim(),
+      runFile,
+    );
+  } catch (error) {
+    throw new Error(
+      `Added a replacement version to ${secretName} in ${project}, but could not prune older versions. ` +
+        'The replacement remains available; inspect Secret Manager before retrying.',
+      { cause: error },
     );
   }
   return { kind: 'secret', destination: `${project}/${secretName}` };
