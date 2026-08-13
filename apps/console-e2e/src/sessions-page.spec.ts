@@ -94,7 +94,7 @@ test.describe('/sessions workspace @smoke', () => {
     await expect(page.getByTestId('issue-grouped-sessions')).toBeVisible();
   });
 
-  test('uses one mobile command strip and flat overflow-safe rows', async ({
+  test('uses the shared elbow header and flat overflow-safe mobile rows', async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -114,7 +114,7 @@ test.describe('/sessions workspace @smoke', () => {
     await expect(workspace).toBeVisible();
     await expect(header).toHaveCount(1);
     await expect(header).toBeVisible();
-    await expect(header.getByRole('link', { name: 'Sessions' })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Sessions' })).toBeHidden();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(page.getByTestId('session-cards')).toBeVisible();
     await expect(sessionRow).toBeVisible();
@@ -174,38 +174,24 @@ test.describe('/sessions workspace @smoke', () => {
     });
   });
 
-  test('uses the command strip as the only visual mobile header', async ({
+  test('uses the shared elbow title as the only visual mobile header', async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
 
     const header = page.locator('.console-header[data-current="sessions"]');
-    const mobileTitle = page.locator(
-      '.console-page-mobile-title[data-current="sessions"]',
-    );
 
     await expectMobileBridgeHeader(header);
-    await expect(mobileTitle).toHaveText(
-      'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
-    );
     await expect(
-      page.getByRole('heading', {
+      header.getByRole('heading', {
         name: 'E2E fixture: issue-agent session title deliberately exceeds the fixed desktop console header column without overflowing navigation',
       }),
     ).toBeVisible();
-    expect(
-      await mobileTitle.evaluate((element) => {
-        const style = getComputedStyle(element);
-        return (
-          style.display === 'block' &&
-          style.position === 'absolute' &&
-          style.width === '1px' &&
-          style.height === '1px' &&
-          style.overflow === 'hidden'
-        );
-      }),
-    ).toBe(true);
+    await expect(header.locator('.lcars-header-title')).toHaveCSS(
+      'text-overflow',
+      'ellipsis',
+    );
     await expect(page.getByTestId('session-header')).toBeVisible();
     expect(
       await page.evaluate(

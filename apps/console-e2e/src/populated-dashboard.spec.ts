@@ -498,42 +498,19 @@ test.describe('responsive decision inbox', () => {
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     const header = page.locator('.console-header[data-current="inbox"]');
-    const mobileTitle = page.locator(
-      '.console-page-mobile-title[data-current="inbox"]',
-    );
-    // Inbox owns a single contextual command deck on phones. The shared route
-    // rail remains available inside its overflow menu instead of competing
-    // visually with the queue identity.
-    await expect(header).toBeHidden();
-    await expect(mobileTitle).toHaveText('Decision Inbox');
+    // The shared title-inside-the-elbow header now owns Inbox identity at every
+    // viewport; route navigation remains available inside its overflow menu.
+    await expectMobileBridgeHeader(header);
     await expect(
-      page.getByRole('heading', { name: 'Decision Inbox' }),
+      header.getByRole('heading', { name: 'Decision Inbox' }),
     ).toBeVisible();
-    expect(
-      await mobileTitle.evaluate((element) => {
-        const style = getComputedStyle(element);
-        return (
-          style.display === 'block' &&
-          style.position === 'absolute' &&
-          style.width === '1px' &&
-          style.height === '1px' &&
-          style.overflow === 'hidden'
-        );
-      }),
-    ).toBe(true);
     await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
     await expect(workspace.locator('.queue-workspace__detail')).toBeHidden();
     await expect(
       workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`),
     ).toBeVisible();
 
-    const queueIdentity = workspace.locator('.queue-mobile-identity');
-    await expect(page.getByTestId('inbox-mobile-command-deck')).toBeVisible();
-    await expect(queueIdentity).toHaveText(/Inbox/);
-    await expect(queueIdentity).toHaveAttribute(
-      'aria-label',
-      /\d+ open queue items/,
-    );
+    await expect(page.getByTestId('inbox-mobile-command-deck')).toHaveCount(0);
 
     const freshness = page.getByTestId('mobile-data-freshness');
     await expect(freshness).toBeVisible();
@@ -552,10 +529,6 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
     await expect(runningRow.locator('.ci-running-badge')).toHaveCount(0);
 
-    await expect(workspace.locator('.queue-mobile-bar')).toHaveCSS(
-      'height',
-      '52px',
-    );
     const search = workspace.getByRole('textbox', {
       name: 'Search the Inbox',
     });
@@ -596,8 +569,12 @@ test.describe('responsive decision inbox', () => {
 
     await expect(workspace.locator('.queue-workspace__list')).toBeHidden();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
-    await expect(header).toBeHidden();
+    await expect(header).toBeVisible();
     await expect(freshness).toBeVisible();
+    await expect(workspace.locator('.queue-mobile-bar')).toHaveCSS(
+      'height',
+      '52px',
+    );
     await expect(workspace.locator('.queue-detail-identity')).toBeHidden();
     await expect(workspace.locator('.queue-mobile-detail-identity')).toHaveText(
       `sprinkles / #${E2E_ITEM_NUMBERS.reviewRequested}`,
@@ -632,7 +609,7 @@ test.describe('responsive decision inbox', () => {
 
       const header = page.locator('.console-header[data-current="deck"]');
       await expect(header).toBeVisible();
-      await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
+      await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
       await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
       await expectMobileBridgeHeader(header);
       await expect(

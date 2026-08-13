@@ -81,14 +81,12 @@ export function QueueWorkspace({
   watchedRepos,
   mobileDataFreshness,
   mobileScopeLabel,
-  mobileUtilityMenu,
 }: {
   cards: BoardCard[];
   selectedItemKey?: string;
   watchedRepos: WatchedRepo[];
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
-  mobileUtilityMenu: ReactNode;
 }) {
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
@@ -275,12 +273,8 @@ export function QueueWorkspace({
     >
       <InboxMobileCommandDeck
         view={explicitDetail ? 'detail' : 'list'}
-        openItemCount={visibleCards.length}
         selectedItem={selectedCard?.item}
         backHref={backHref}
-        watchedRepos={watchedRepos}
-        initialRepoKey={searchParams.get('repo') ?? undefined}
-        utilityMenu={mobileUtilityMenu}
         scopeLabel={mobileScopeLabel}
         dataFreshness={mobileDataFreshness}
       />

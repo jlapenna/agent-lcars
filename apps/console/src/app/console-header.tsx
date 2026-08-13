@@ -1,6 +1,4 @@
-'use client';
-
-import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
+import { Group, Stack, Text, Title } from '@mantine/core';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
@@ -63,9 +61,9 @@ function navHref(
  *
  * The title/subtitle row itself carries a full-size LCARS elbow
  * (`.lcars-header`; see global.css), whose broad vertical rail curves into a
- * thinner arm spanning the destination rail. On desktop the marquee title and
- * navigation therefore read as one piece of LCARS chrome rather than a heading
- * beside a row of generic pills (#204).
+ * thinner arm spanning the controls. The marquee title and navigation or
+ * mobile utilities therefore read as one piece of LCARS chrome rather than a
+ * heading beside a row of generic controls (#204, #1004).
  *
  * Title/subtitle/nav never depend on the slow GitHub/Firestore reads
  * `cacheComponents` requires a Suspense boundary for, so every page renders
@@ -153,11 +151,9 @@ export function ConsoleNavRail({
   return (
     <nav className="lcars-nav" aria-label="Console sections">
       {CONSOLE_DESTINATIONS.map((item) => (
-        <Anchor
+        <Link
           key={item.key}
-          component={Link}
           href={navHref(item, archiveQuery, repoFilter)}
-          underline="never"
           className="lcars-nav-pill"
           data-destination={item.key}
           data-accent={item.accent}
@@ -165,7 +161,7 @@ export function ConsoleNavRail({
           aria-current={item.key === current ? 'page' : undefined}
         >
           {item.label}
-        </Anchor>
+        </Link>
       ))}
     </nav>
   );

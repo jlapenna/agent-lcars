@@ -143,44 +143,57 @@ export async function expectConcentricLcarsElbows(
   }
 }
 
-/** Mobile routes collapse into one 64px command strip. */
+/** Mobile routes reuse the title-inside-the-elbow desktop composition. */
 export async function expectMobileBridgeHeader(header: Locator) {
   await expect(header).toBeVisible();
-  await expect(header).toHaveCSS('height', '64px');
-  expect((await header.boundingBox())?.height).toBe(64);
+  await expect(header).toHaveCSS('height', '74px');
+  expect((await header.boundingBox())?.height).toBe(74);
 
   const elbow = await header.evaluate((element) => {
     const headerStyle = getComputedStyle(element);
     const commandRow = element.querySelector('.lcars-command-row');
+    const title = element.querySelector('.lcars-header-title');
+    const navigation = element.querySelector('.lcars-nav');
     const activeDestination = element.querySelector(
       '.lcars-nav-pill[data-active]',
     );
     if (!commandRow) throw new Error('Mobile LCARS command row is missing');
+    if (!title) throw new Error('Mobile LCARS title is missing');
+    if (!navigation) throw new Error('Mobile LCARS navigation is missing');
     if (!activeDestination) {
       throw new Error('Mobile LCARS active destination is missing');
     }
 
-    const rowElbow = getComputedStyle(commandRow, '::before');
-    const activeBounds = activeDestination.getBoundingClientRect();
+    const frameElbow = getComputedStyle(element, '::before');
+    const titleBounds = title.getBoundingClientRect();
+    const commandBounds = commandRow.getBoundingClientRect();
     const pixels = (property: string) =>
       Number.parseFloat(headerStyle.getPropertyValue(property));
 
     return {
-      armWidth: pixels('--lcars-mobile-arm'),
-      innerRadius: pixels('--lcars-mobile-inner-radius'),
-      outerRadius: pixels('--lcars-mobile-outer-radius'),
-      background: rowElbow.backgroundImage,
-      activeWidth: activeBounds.width,
-      activeHeight: activeBounds.height,
+      armWidth: pixels('--lcars-elbow-arm'),
+      railWidth: pixels('--lcars-elbow-rail'),
+      innerRadius: pixels('--lcars-elbow-inner-radius'),
+      outerRadius: pixels('--lcars-elbow-outer-radius'),
+      background: frameElbow.backgroundImage,
+      titleDisplay: getComputedStyle(title).display,
+      titleWidth: titleBounds.width,
+      titleRight: titleBounds.right,
+      commandLeft: commandBounds.left,
+      navigationDisplay: getComputedStyle(navigation).display,
+      activeWidth: activeDestination.getBoundingClientRect().width,
     };
   });
 
   expect(elbow.armWidth).toBe(10);
-  expect(elbow.activeWidth).toBeGreaterThan(100);
-  expect(elbow.activeWidth).toBeGreaterThan(elbow.armWidth);
+  expect(elbow.railWidth).toBe(44);
   expect(elbow.innerRadius).toBeGreaterThan(elbow.armWidth);
   expect(elbow.outerRadius).toBeGreaterThan(elbow.innerRadius);
   expect(elbow.background).toContain('radial-gradient');
   expect(elbow.background.match(/linear-gradient/g)).toHaveLength(2);
-  expect(elbow.activeHeight).toBe(64);
+  expect(elbow.titleDisplay).not.toBe('none');
+  expect(elbow.titleWidth).toBeGreaterThan(0);
+  expect(elbow.titleRight).toBeLessThanOrEqual(elbow.commandLeft);
+  expect(elbow.navigationDisplay).toBe('none');
+  expect(elbow.activeWidth).toBe(0);
 }

@@ -25,7 +25,7 @@
    resolved page shell in the DOM for the same paint. Keep the placeholder
    visible during the actual wait, then suppress only that copy once a header
    for the same destination exists. Without this handoff rule mobile briefly
-   renders two 64px command strips and strict browser locators see both. */
+   renders two complete headers and strict browser locators see both. */
 body:has(.console-header[data-current='deck']:not([data-streaming-fallback]))
   .console-header[data-current='deck'][data-streaming-fallback],
 body:has(.console-header[data-current='inbox']:not([data-streaming-fallback]))
@@ -42,15 +42,6 @@ body:has(
   .console-header[data-current='sessions'][data-streaming-fallback],
 body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .console-header[data-current='costs'][data-streaming-fallback] {
-  display: none;
-}
-
-/* The server shell keeps an H1 for mobile assistive technology while the
-   compact command strip is the only visual header. Suppress only its streamed
-   placeholder during the brief fallback/resolved overlap, matching the header
-   suppression above. */
-body:has(.console-header[data-current]:not([data-streaming-fallback]))
-  .console-page-mobile-title[data-streaming-fallback] {
   display: none;
 }
 
@@ -355,14 +346,6 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
 .console-page-shell {
   width: 100%;
   max-width: none;
-}
-
-/* Desktop keeps the title inside the fixed command header. On narrow screens
-   the active command pill is the sole visual page identity; this companion H1
-   remains available to assistive technology without creating a second header.
- */
-.console-page-mobile-title {
-  display: none;
 }
 
 .console-workspace {
@@ -1490,110 +1473,117 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .console-page-shell {
+    --lcars-mobile-header-height: 74px;
     width: 100%;
     max-width: none;
     padding: 0 !important;
   }
 
-  /* Every top-level screen keeps its active destination visible from the
-     same compact LCARS control strip. Mobile gets a miniature elbow rather
-     than a compressed desktop frame: its labeled rail is broad enough to tap,
-     while a narrow arm crosses above the utilities without taking their room. */
+  /* Mobile uses the same title-inside-the-elbow composition as desktop. The
+     destination rail moves into the existing overflow menu, preserving a
+     useful title bay and 44px controls even at 320px without a second row. */
   .console-header[data-current] {
     --lcars-header-accent: var(--mantine-color-orange-6);
-    --lcars-mobile-arm: 10px;
-    --lcars-mobile-rail: 8rem;
-    --lcars-mobile-inner-radius: 14px;
-    --lcars-mobile-outer-radius: 18px;
+    --lcars-elbow-arm: 10px;
+    --lcars-elbow-rail: 44px;
+    --lcars-elbow-inner-radius: 14px;
+    --lcars-elbow-outer-radius: 24px;
     --mantine-color-text: var(--mantine-color-gray-0);
     --mantine-color-dimmed: var(--mantine-color-dark-2);
-    display: block;
-    height: 64px;
-    min-height: 64px;
+    display: grid;
+    position: relative;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    height: var(--lcars-mobile-header-height);
+    min-height: var(--lcars-mobile-header-height);
     margin: 0 !important;
+    gap: 0;
     color: var(--mantine-color-text);
     background: var(--mantine-color-dark-9);
   }
 
+  .console-header[data-current]::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 100%;
+    background:
+      radial-gradient(
+          circle at 100% 100%,
+          transparent 0 calc(var(--lcars-elbow-inner-radius) - 1px),
+          var(--lcars-header-accent) var(--lcars-elbow-inner-radius)
+        )
+        var(--lcars-elbow-rail) var(--lcars-elbow-arm) /
+        var(--lcars-elbow-inner-radius) var(--lcars-elbow-inner-radius)
+        no-repeat,
+      linear-gradient(var(--lcars-header-accent) 0 0) top / 100%
+        var(--lcars-elbow-arm) no-repeat,
+      linear-gradient(var(--lcars-header-accent) 0 0) left /
+        var(--lcars-elbow-rail) 100% no-repeat;
+    border-top-left-radius: var(--lcars-elbow-outer-radius);
+    pointer-events: none;
+  }
+
   .console-header[data-current] .lcars-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    padding: 10px 4px 8px 3.25rem;
+  }
+
+  .console-header[data-current] .lcars-header::before {
     display: none;
   }
 
-  /* Keep the document H1 available without rendering a second title band
-     below the active command pill. */
-  .console-page-mobile-title {
-    display: block;
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
+  .console-header[data-current] .lcars-header > .mantine-Group-root {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .console-header[data-current] .lcars-header-title {
+    display: block !important;
+    width: 100%;
+    max-width: 100%;
     overflow: hidden;
-    clip: rect(0 0 0 0);
+    color: var(--mantine-color-gray-0) !important;
+    font-size: clamp(1rem, 5vw, 1.25rem);
+    line-height: 1;
+    text-overflow: ellipsis;
     white-space: nowrap;
-    border: 0;
+  }
+
+  .console-header[data-current] .lcars-header .mantine-Text-root,
+  .console-header[data-current] .lcars-header-bar {
+    display: none;
   }
 
   .console-header[data-current] .lcars-command-row {
     position: relative;
-    height: 64px;
-    gap: 4px;
-    padding-right: 8px;
-    isolation: isolate;
-    background: var(--mantine-color-dark-9);
-  }
-
-  .console-header[data-current] .lcars-command-row::before {
-    content: '';
-    position: absolute;
-    z-index: 0;
-    inset: 0;
-    background:
-      radial-gradient(
-          circle at 100% 100%,
-          transparent 0 calc(var(--lcars-mobile-inner-radius) - 1px),
-          var(--lcars-header-accent) var(--lcars-mobile-inner-radius)
-        )
-        var(--lcars-mobile-rail) var(--lcars-mobile-arm) /
-        var(--lcars-mobile-inner-radius) var(--lcars-mobile-inner-radius)
-        no-repeat,
-      linear-gradient(var(--lcars-header-accent) 0 0) top / 100%
-        var(--lcars-mobile-arm) no-repeat,
-      linear-gradient(var(--lcars-header-accent) 0 0) left /
-        var(--lcars-mobile-rail) 100% no-repeat;
-    border-top-left-radius: var(--lcars-mobile-outer-radius);
-    pointer-events: none;
+    min-width: 0;
+    height: var(--lcars-mobile-header-height);
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0;
+    padding: 10px 8px 0 4px;
+    background: linear-gradient(
+      to bottom,
+      var(--lcars-header-accent) 0 var(--lcars-elbow-arm),
+      var(--mantine-color-dark-9) var(--lcars-elbow-arm) 100%
+    );
   }
 
   .console-header[data-current] .lcars-nav {
-    position: relative;
-    z-index: 1;
-    align-self: stretch;
-    flex: 0 0 auto;
-  }
-
-  .console-header[data-current] .lcars-nav-pill {
     display: none;
-  }
-
-  .console-header[data-current] .lcars-nav-pill[data-active] {
-    display: inline-flex;
-    justify-content: flex-end;
-    min-width: var(--lcars-mobile-rail);
-    height: 64px;
-    padding: var(--lcars-mobile-arm) 18px 0 12px;
-    border: 0;
-    border-radius: 0;
-    color: var(--mantine-color-white);
-    background: transparent !important;
   }
 
   .console-header[data-current] .lcars-command-utilities {
     position: relative;
     z-index: 1;
-    align-self: stretch;
+    align-self: center;
     box-sizing: border-box;
-    padding-block: 14px 6px;
+    margin-left: 0;
+    padding: 0;
+    border: 0;
   }
 
   .console-header[data-current='inbox'],
@@ -1613,68 +1603,14 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     --lcars-header-accent: var(--mantine-color-yellow-5);
   }
 
-  .console-header[data-current='inbox'] .lcars-nav-pill[data-active] {
-    background: var(--mantine-color-blue-5);
-  }
-
-  .console-header[data-current='inbox'] .lcars-command-utilities {
-    /* QueueWorkspace owns the contextual mobile menu. Avoid rendering its
-       duplicate in the global strip while preserving the shared route rail. */
-    display: none;
-  }
-
-  /* Inbox has its own contextual command deck below. Keep the shared route
-     rail while the page is loading, then suppress it only once the command
-     deck exists. This avoids an unlabelled loading state without reintroducing
-     competing headers for the actual workspace. */
-  body:has(.queue-workspace) .console-header[data-current='inbox'] {
-    display: none;
-    height: 0;
-    min-height: 0;
-  }
-
-  .console-header[data-current='agents'] .lcars-nav-pill[data-active] {
-    background: var(--mantine-color-violet-5);
-  }
-
-  .console-header[data-current='shuttlebay'] .lcars-nav-pill[data-active] {
-    background: var(--mantine-color-blue-5);
-  }
-
-  .console-header[data-current='deck'] .lcars-nav-pill[data-active] {
-    color: var(--mantine-color-dark-9);
-    background: var(--mantine-color-orange-6);
-  }
-
-  .console-header[data-current='sessions'] .lcars-nav-pill[data-active] {
-    color: var(--mantine-color-dark-9);
-    background: var(--mantine-color-cyan-5);
-  }
-
-  .console-header[data-current='costs'] .lcars-nav-pill[data-active] {
-    color: var(--mantine-color-dark-9);
-    background: var(--mantine-color-yellow-5);
-  }
-
-  .console-header[data-current]:not([data-current='inbox'])
-    .lcars-command-utilities {
-    margin-left: auto;
-    padding-left: 0;
-    border: 0;
-  }
-
-  .console-header[data-current]:not([data-current='inbox'])
-    .lcars-command-utilities
-    .mantine-Button-root,
-  .console-header[data-current]:not([data-current='inbox'])
+  .console-header[data-current] .lcars-command-utilities .mantine-Button-root,
+  .console-header[data-current]
     .lcars-command-utilities
     .mantine-ActionIcon-root {
     min-height: 44px;
   }
 
-  .console-header[data-current]:not([data-current='inbox'])
-    .lcars-command-utilities
-    .mantine-Button-root {
+  .console-header[data-current] .lcars-command-utilities .mantine-Button-root {
     padding-inline: 10px;
     font-size: 0.6875rem;
   }
@@ -1948,8 +1884,8 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   .queue-workspace {
     display: block;
     width: 100%;
-    height: 100dvh;
-    min-height: 100dvh;
+    height: calc(100dvh - var(--lcars-mobile-header-height, 74px));
+    min-height: calc(100dvh - var(--lcars-mobile-header-height, 74px));
     border: 0;
     border-radius: 0;
     gap: 0;
@@ -1977,38 +1913,6 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
     padding-right: 8px;
     background: var(--mantine-color-dark-9);
     border-bottom: 1px solid var(--mantine-color-default-border);
-  }
-
-  .queue-mobile-identity {
-    align-self: stretch;
-    min-width: 7.25rem;
-    padding: 0 14px 0 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    border-bottom-right-radius: 20px;
-    background: var(--mantine-color-blue-5);
-    color: var(--mantine-color-white);
-    font-family: var(--font-display), sans-serif;
-    letter-spacing: 0.05em;
-  }
-
-  .queue-mobile-title {
-    font-family: var(--font-display), sans-serif;
-    font-size: 0.8125rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .queue-mobile-utilities .mantine-Button-root,
-  .queue-mobile-utilities .mantine-ActionIcon-root {
-    min-height: 44px;
-  }
-
-  .queue-mobile-utilities .mantine-Button-root {
-    padding-inline: 10px;
-    font-size: 0.6875rem;
   }
 
   .queue-detail-reply .mantine-Input-input,
@@ -2066,13 +1970,21 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .queue-workspace__list {
-    height: calc(100dvh - 72px);
+    height: 100%;
     border: 0;
   }
 
   .queue-workspace__detail {
-    height: calc(100dvh - 72px);
+    height: calc(100% - 52px);
     border: 0;
+  }
+
+  .queue-workspace:has(.queue-mobile-meta) .queue-workspace__list {
+    height: calc(100% - 20px);
+  }
+
+  .queue-workspace:has(.queue-mobile-meta) .queue-workspace__detail {
+    height: calc(100% - 72px);
   }
 
   .queue-workspace[data-mobile-view='list'] .queue-workspace__detail,
@@ -2164,7 +2076,7 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 
   .queue-detail-card > .mantine-Stack-root {
-    min-height: calc(100dvh - 96px);
+    min-height: calc(100dvh - var(--lcars-mobile-header-height, 74px) - 96px);
   }
 
   .queue-detail-title {
@@ -2208,28 +2120,14 @@ body:has(.console-header[data-current]:not([data-streaming-fallback]))
   }
 }
 
-/* Below 352px the mobile strip still carries one route identity plus three
-   reachable utilities. Tightening only this shared control geometry keeps
-   every console destination operable without wrapping a second header row. */
+/* At the narrowest supported width, preserve the title bay by tightening the
+   labels around the still-44px utility controls. */
 @media (max-width: 21.99em) {
-  .console-header[data-current] {
-    --lcars-mobile-rail: 6.75rem;
-    --lcars-mobile-inner-radius: 12px;
-  }
-
   .console-header[data-current] .lcars-command-row {
-    gap: 0;
     padding-right: 4px;
   }
 
-  .console-header[data-current] .lcars-nav-pill[data-active] {
-    padding-inline: 12px;
-    font-size: 0.75rem;
-  }
-
-  .console-header[data-current]:not([data-current='inbox'])
-    .lcars-command-utilities
-    .mantine-Button-root {
+  .console-header[data-current] .lcars-command-utilities .mantine-Button-root {
     padding-inline: 6px;
     font-size: 0.625rem;
   }
