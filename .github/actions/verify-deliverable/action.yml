@@ -1,8 +1,8 @@
 name: Verify deliverable
 description: >-
-  Fail the job unless an exact attempt-claim marker exists on a durable
-  GitHub artifact this dispatch produced, distinguishing a failed lookup
-  from a genuine "no deliverable found" (see verify-deliverable.sh).
+  Verify a durable deliverable. Broker-bound runs require an exact attempt
+  marker; standalone consumers without attempt identity use guarded legacy
+  inference (see verify-deliverable.sh).
 
 inputs:
   token:
@@ -21,13 +21,36 @@ inputs:
       itself a pull request, and review mode is the one case this action
       already knows it is.
     required: true
+  started-at:
+    description: UTC start timestamp required only when attempt-id is empty.
+    required: false
+    default: ''
+  runbook:
+    description: Optional runbook name; enables comment evidence in legacy mode.
+    required: false
+    default: ''
+  expected-comment-login:
+    description: Bot login trusted by legacy time-window inference.
+    required: false
+    default: ''
+  exclude-pr-author:
+    description: Comma-separated sibling-pipeline PR authors ignored by legacy inference.
+    required: false
+    default: ''
+  exclude-comment-id:
+    description: Scripted pickup-comment ID ignored by legacy inference.
+    required: false
+    default: ''
   attempt-id:
     description: >-
       This run's stable attempt identity (g<generation>:<intentId>, see
       libs/dispatch-contracts/src/marker.ts's formatAttemptId). The exact
       string a deliverable must carry inside
       `<!-- attempt-claim:<attempt-id> -->` for this run to pass.
-    required: true
+      Optional for standalone consumers. When set, inference is disabled and
+      the exact marker is mandatory.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -46,5 +69,10 @@ runs:
         REPO: ${{ github.repository }}
         NUM: ${{ inputs.issue }}
         MODE: ${{ inputs.mode }}
+        STARTED_AT: ${{ inputs.started-at }}
+        RUNBOOK: ${{ inputs.runbook }}
+        EXPECTED_COMMENT_LOGIN: ${{ inputs.expected-comment-login }}
+        EXCLUDE_PR_AUTHOR: ${{ inputs.exclude-pr-author }}
+        EXCLUDE_COMMENT_ID: ${{ inputs.exclude-comment-id }}
         ATTEMPT_ID: ${{ inputs.attempt-id }}
       run: bash "$GITHUB_ACTION_PATH/verify-deliverable.sh"

@@ -106,19 +106,21 @@ const PUBLISHED = {
     },
     outputs: [],
   },
-  // #815: retired the five inference-based inputs (started-at, runbook,
-  // expected-comment-login, exclude-pr-author, exclude-comment-id) - a
-  // breaking change for the Published surface, called out here and in the
-  // PR body per docs/published-actions.md's "removed input" convention.
-  // Success now requires an exact attempt-claim marker (attempt-id) tied to
-  // the current attempt, or the exact claimed no-op result.
+  // #4388 restores legacy inputs for standalone consumers without broker
+  // attempt identity. Broker-bound callers still pass attempt-id and remain
+  // exact-marker-only; inference is unreachable for them.
   'verify-deliverable': {
     inputs: {
       token: { required: true },
       agent: { required: true },
       issue: { required: true },
       mode: { required: true },
-      'attempt-id': { required: true },
+      'started-at': { required: false, default: '' },
+      runbook: { required: false, default: '' },
+      'expected-comment-login': { required: false, default: '' },
+      'exclude-pr-author': { required: false, default: '' },
+      'exclude-comment-id': { required: false, default: '' },
+      'attempt-id': { required: false, default: '' },
     },
     outputs: [],
   },

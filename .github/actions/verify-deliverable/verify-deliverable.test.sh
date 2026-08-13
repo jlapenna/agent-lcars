@@ -81,11 +81,7 @@ FAKE_GH
 chmod +x "$fake_bin/gh"
 export PATH="$fake_bin:$PATH"
 
-# Common env every case starts from; each case overrides what it needs.
-# ATTEMPT_ID is always set - #815 made it required, matching production:
-# every real dispatch is bound at broker preflight before the agent step
-# runs, and preflight always publishes it (see verify-deliverable.sh's own
-# header comment).
+# Common broker-bound env every exact-mode case starts from.
 base_env() {
   export GH_TOKEN=test-token
   export AGENT="Test Agent"
@@ -93,6 +89,17 @@ base_env() {
   export NUM=42
   export MODE=implement
   export ATTEMPT_ID="g1:test-intent"
+  unset STARTED_AT EXPECTED_COMMENT_LOGIN RUNBOOK EXCLUDE_PR_AUTHOR EXCLUDE_COMMENT_ID
+}
+
+legacy_env() {
+  base_env
+  unset ATTEMPT_ID
+  export STARTED_AT=2026-08-13T23:20:45Z
+  export EXPECTED_COMMENT_LOGIN='agent-lcars[bot]'
+  export RUNBOOK=
+  export EXCLUDE_PR_AUTHOR=
+  export EXCLUDE_COMMENT_ID=
 }
 
 run_case() {
@@ -397,11 +404,11 @@ JSON
 )
 
 # ============================================================================
-# Negative cases (#815): each of the five retired inference clauses is
-# proven gone by feeding the exact shape of fixture that USED to satisfy it
+# Negative cases (#815): each of the five inference clauses retired from
+# broker-bound exact mode is tested with the shape that USED to satisfy it
 # - a time-windowed PR, an issue closure, a status:needs-human label, a bare
 # reply-mode bot comment, and a bare review - all WITHOUT this run's exact
-# attempt-claim marker anywhere. Every one must now be a genuine
+# attempt-claim marker anywhere. Every one must be a genuine exact-mode
 # no-deliverable, matching "An unrelated PR, old label, generic bot comment,
 # issue closure, or review CANNOT satisfy validation" (#815 acceptance
 # criteria).
@@ -505,6 +512,54 @@ JSON
     *"submitted a pull request review on"*) fail "the retired inference wording must not appear" ;;
   esac
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+)
+
+# ============================================================================
+# Standalone compatibility: consumers without broker attempt identity use the
+# guarded time-window/login inference promised by agent-protocol.md.
+# ============================================================================
+
+# The live Sprinkles #4385 shape: a reply-mode run creates a referencing PR
+# as the expected App bot after the run starts, but has no ATTEMPT_ID.
+(
+  legacy_env
+  export MODE=reply
+  case_dir="$test_root/legacy-reply-pr"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case legacy-reply-pr
+  test "$status" = 0 || fail "a standalone consumer's fresh referencing PR should pass"
+  grep -q 'verified via INFERENCE' <<<"$output" || fail "expected the standalone inference notice"
+  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "legacy PR evidence must publish its outcome kind"
+  grep -qx 'outcome-reference=4392' "$GITHUB_OUTPUT" || fail "legacy PR evidence must publish its PR number"
+)
+
+# Exact identity remains the boundary: the same fixture must still fail when
+# ATTEMPT_ID exists but the artifact lacks that exact marker.
+(
+  base_env
+  export STARTED_AT=2026-08-13T23:20:45Z
+  export EXPECTED_COMMENT_LOGIN='agent-lcars[bot]'
+  case_dir="$test_root/exact-never-falls-back"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]"}}]
+JSON
+  run_case exact-never-falls-back
+  test "$status" = 1 || fail "broker-bound validation must never use inference"
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "missing exact evidence must stay a genuine no-deliverable"
+)
+
+# Empty identity is not enough by itself: both legacy guard inputs are
+# mandatory, preventing an unbounded or unauthenticated inference query.
+(
+  base_env
+  unset ATTEMPT_ID STARTED_AT EXPECTED_COMMENT_LOGIN
+  run_case incomplete-legacy-inputs
+  test "$status" = 1 || fail "legacy mode without a start timestamp must fail closed"
+  grep -q 'STARTED_AT is required when ATTEMPT_ID is unset' <<<"$output" || fail "expected the missing legacy timestamp diagnostic"
 )
 
 echo "verify-deliverable.test.sh: all cases passed"
