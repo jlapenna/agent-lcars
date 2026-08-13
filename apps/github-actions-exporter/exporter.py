@@ -909,7 +909,10 @@ class Database:
                     f"""
                     SELECT 1 FROM jobs
                     WHERE repository = ? AND run_id = ?
-                      AND status IN ({active_placeholders})
+                      AND (
+                        status IN ({active_placeholders})
+                        OR status = 'refresh_pending'
+                      )
                     LIMIT 1
                     """,
                     (repository, run_id, *ACTIVE_STATUSES),

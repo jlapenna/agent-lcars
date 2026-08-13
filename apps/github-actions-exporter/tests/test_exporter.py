@@ -442,6 +442,27 @@ class GitHubActionsExporterTests(unittest.TestCase):
             self.metrics(),
         )
 
+    def test_empty_retry_keeps_omitted_refresh_pending_job_retryable(self):
+        repository = "jlapenna/homelab"
+        run = workflow_run()
+        queued_job = workflow_job(
+            status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run(repository, run)
+        self.database.upsert_jobs(repository, run, [queued_job])
+
+        self.database.upsert_jobs(repository, run, [])
+
+        self.assertEqual(
+            self.database.pending_job_refresh_run_ids(repository), {run["id"]}
+        )
+        rows = self.database.rows(
+            "SELECT status FROM jobs WHERE repository = ? AND id = ?",
+            (repository, queued_job["id"]),
+        )
+        self.assertEqual([row["status"] for row in rows], ["refresh_pending"])
+        self.assertNotIn("github_actions_job_oldest_queued_seconds{", self.metrics())
+
     def test_startup_does_not_hide_jobs_from_a_newer_active_attempt(self):
         repository = "jlapenna/homelab"
         completed = workflow_run(run_attempt=1)
