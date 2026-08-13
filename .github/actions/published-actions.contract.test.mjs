@@ -122,20 +122,18 @@ const PUBLISHED = {
     },
     outputs: [],
   },
-  // #813: retired token/issue/maintainer - a breaking change for the
-  // Published surface, called out here and in the PR body per
-  // docs/published-actions.md's "removed input" convention. This action no
-  // longer writes the anchor issue/PR at all (no comment, no
-  // status:needs-human, no assignee): it only logs. The hosted finalizer's
-  // completion callback reports through the projector's one idempotent
-  // writer instead (apps/dispatch-broker/src/modules/projector.ts's
-  // projectWorkerFailure).
+  // #4388 restores token/issue/maintainer as optional compatibility inputs
+  // for standalone consumers. LCARS's own workers omit maintainer and keep
+  // #813's hosted projector as their one writer.
   'report-failure': {
     inputs: {
+      token: { required: false, default: '' },
       agent: { required: true },
       'message-prefix': { required: false, default: '' },
       reason: { required: false, default: '' },
       'job-status': { required: true },
+      issue: { required: false, default: '' },
+      maintainer: { required: false, default: '' },
     },
     outputs: [],
   },
