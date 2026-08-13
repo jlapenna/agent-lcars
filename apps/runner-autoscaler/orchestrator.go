@@ -294,6 +294,10 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		c.DockerHosts = append([]string(nil), resolved.DockerHosts...)
 		c.SparkMetricsURL = resolved.Raw.Fleet.Placement.SparkMetricsURL
 		c.HostMetricsURLTemplate = resolved.Raw.Fleet.Placement.HostMetricsURLTemplate
+		c.HostMetricsTimeouts = make(map[string]time.Duration, len(resolved.HostMetricsTimeouts))
+		for host, timeout := range resolved.HostMetricsTimeouts {
+			c.HostMetricsTimeouts[host] = timeout
+		}
 		c.HostLoadPolicy = resolved.Placement
 		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
 		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
@@ -501,6 +505,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		dockerHosts: dockerHosts, placementHosts: placementHosts, mountDockerSocket: c.MountDockerSocket, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
+		hostMetricsTimeouts: c.HostMetricsTimeouts,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),
 		readinessMetricsURL: c.ReadinessMetricsURL,
 		readinessMetric:     c.ReadinessMetric,

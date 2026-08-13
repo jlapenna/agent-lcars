@@ -122,10 +122,11 @@ type OrchestratorFleet struct {
 }
 
 type FleetHostConfig struct {
-	Name          string `yaml:"name"`
-	Docker        string `yaml:"docker"`
-	RequireMains  bool   `yaml:"require_mains,omitempty"`
-	MetricsViaSSH bool   `yaml:"metrics_via_ssh,omitempty"`
+	Name              string `yaml:"name"`
+	Docker            string `yaml:"docker"`
+	RequireMains      bool   `yaml:"require_mains,omitempty"`
+	MetricsViaSSH     bool   `yaml:"metrics_via_ssh,omitempty"`
+	MetricsTimeoutRaw string `yaml:"metrics_timeout,omitempty"`
 	// RequireReadiness gates placement on an operator-supplied signal, read
 	// from fleet.placement.readiness_metrics_url. Reachability alone is not
 	// always sufficient to decide a host should take work: a machine can be
@@ -307,14 +308,15 @@ func underAllowlist(path string, allowlist []string) bool {
 }
 
 type resolvedOrchestratorConfig struct {
-	Raw              OrchestratorConfig
-	DockerHosts      []string
-	RunnerLimits     map[string]int
-	WorkDirSizeCaps  map[string]int64
-	PnpmStoreBudgets map[string]int64
-	DockerSocketGID  map[string]string
-	MainsRequired    map[string]bool
-	MetricsViaSSH    map[string]bool
+	Raw                 OrchestratorConfig
+	DockerHosts         []string
+	RunnerLimits        map[string]int
+	WorkDirSizeCaps     map[string]int64
+	PnpmStoreBudgets    map[string]int64
+	DockerSocketGID     map[string]string
+	MainsRequired       map[string]bool
+	MetricsViaSSH       map[string]bool
+	HostMetricsTimeouts map[string]time.Duration
 	// ReadinessRequired names the hosts whose placement is gated on the
 	// operator-supplied readiness signal. Nil when no host opts in.
 	ReadinessRequired map[string]bool
@@ -375,6 +377,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	r.WorkDirSizeCaps = map[string]int64{}
 	r.PnpmStoreBudgets = map[string]int64{}
 	r.DockerSocketGID = map[string]string{}
+	r.HostMetricsTimeouts = map[string]time.Duration{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
 		h.Name, h.Docker = strings.TrimSpace(h.Name), strings.TrimSpace(h.Docker)
@@ -396,6 +399,13 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 				r.MetricsViaSSH = map[string]bool{}
 			}
 			r.MetricsViaSSH[h.Name] = true
+		}
+		if raw := strings.TrimSpace(h.MetricsTimeoutRaw); raw != "" {
+			timeout, err := time.ParseDuration(raw)
+			if err != nil || timeout <= 0 {
+				return fmt.Errorf("host %q has invalid metrics_timeout %q", h.Name, h.MetricsTimeoutRaw)
+			}
+			r.HostMetricsTimeouts[h.Name] = timeout
 		}
 		if h.RequireReadiness {
 			if r.ReadinessRequired == nil {

@@ -152,6 +152,24 @@ listener, runner placement, or cleanup. Snapshots publish immediately on
 startup and then every 10 seconds; the console stops presenting a snapshot as
 live after 30 seconds without an update.
 
+## Host telemetry timeout
+
+Host telemetry probes use a one-second deadline by default. A host with a
+legitimately slow node-exporter collector can opt into a longer, scoped
+deadline without delaying probes for the rest of the fleet:
+
+```yaml
+fleet:
+  hosts:
+    - name: pike
+      docker: ssh://runner@pike
+      metrics_timeout: 5s
+```
+
+`metrics_timeout` must be a positive Go duration. The same deadline applies
+to HTTP and SSH telemetry probes; a failed probe still preserves the
+placement gate's existing fail-open behavior.
+
 ## Host readiness gate
 
 Reachability is not always enough to decide a host should run CI. A machine

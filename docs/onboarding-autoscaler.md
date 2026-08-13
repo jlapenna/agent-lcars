@@ -57,6 +57,8 @@ fleet:
   hosts:
     - name: <host-name>
       docker: local # or ssh://<user>@<host>.<domain> for a remote host
+      # Optional per-host override; telemetry probes otherwise time out in 1s.
+      metrics_timeout: 5s
       workdir_size_cap: 30g
       docker_socket_gid: '983' # only required if any scale set on this
       # host sets mount_docker_socket: true (see §2 below)

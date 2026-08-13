@@ -112,6 +112,9 @@ type Config struct {
 	// The single %s is replaced with the Docker host name. Empty disables
 	// load-aware placement.
 	HostMetricsURLTemplate string
+	// HostMetricsTimeouts optionally overrides the one-second telemetry probe
+	// deadline for individual fleet hosts.
+	HostMetricsTimeouts map[string]time.Duration
 	// HostLoadPolicy holds the resolved fleet.placement thresholds (see
 	// resolvedOrchestratorConfig.Placement, which this is copied from
 	// verbatim in runOrchestrator).
