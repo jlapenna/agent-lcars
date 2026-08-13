@@ -551,6 +551,11 @@ class Database:
                     WHERE workflow_runs.repository = jobs.repository
                       AND workflow_runs.id = jobs.run_id
                       AND workflow_runs.status = 'completed'
+                      AND workflow_runs.run_attempt = (
+                        SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
+                        WHERE latest.repository = jobs.repository
+                          AND latest.id = jobs.run_id
+                      )
                   )
                 """,
                 ACTIVE_STATUSES,
@@ -648,6 +653,24 @@ class Database:
             ).fetchall()
         return {int(row["id"]) for row in rows}
 
+    def pending_job_refresh_run_ids(self, repository: str) -> set[int]:
+        """Return terminal runs whose jobs API snapshot was contradictory."""
+        with self.lock:
+            rows = self.connection.execute(
+                """
+                SELECT id FROM workflow_runs
+                WHERE repository = ? AND status = 'completed'
+                  AND jobs_updated_at IS NULL
+                  AND run_attempt = (
+                    SELECT MAX(latest.run_attempt) FROM workflow_runs AS latest
+                    WHERE latest.repository = workflow_runs.repository
+                      AND latest.id = workflow_runs.id
+                  )
+                """,
+                (repository,),
+            ).fetchall()
+        return {int(row["id"]) for row in rows}
+
     def mark_run_missing(self, repository: str, run_id: int) -> None:
         """Retire active metrics for a workflow GitHub no longer exposes."""
         placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
@@ -662,12 +685,28 @@ class Database:
                 parameters,
             )
             self.connection.execute(
+                """
+                UPDATE workflow_runs SET status = 'missing'
+                WHERE repository = ? AND id = ?
+                  AND status = 'completed' AND jobs_updated_at IS NULL
+                """,
+                (repository, run_id),
+            )
+            self.connection.execute(
                 f"""
                 UPDATE jobs SET status = 'missing'
                 WHERE repository = ? AND run_id = ?
                   AND status IN ({placeholders})
                 """,
                 parameters,
+            )
+            self.connection.execute(
+                """
+                UPDATE jobs SET status = 'missing'
+                WHERE repository = ? AND run_id = ?
+                  AND status = 'refresh_pending'
+                """,
+                (repository, run_id),
             )
 
     def run_attempt_gaps(self, repository: str) -> list[tuple[int, tuple[int, ...]]]:
@@ -847,7 +886,19 @@ class Database:
                     ),
                 )
             jobs_snapshot_consistent = True
-            if metric_label(run.get("status")) == "completed":
+            run_attempt = int(run.get("run_attempt") or 1)
+            latest_attempt = self.connection.execute(
+                """
+                SELECT MAX(run_attempt) AS latest_attempt FROM workflow_runs
+                WHERE repository = ? AND id = ?
+                """,
+                (repository, run_id),
+            ).fetchone()
+            if (
+                metric_label(run.get("status")) == "completed"
+                and latest_attempt is not None
+                and run_attempt == int(latest_attempt["latest_attempt"])
+            ):
                 active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
                 active_jobs = self.connection.execute(
                     f"""
@@ -880,7 +931,7 @@ class Database:
                     jobs_updated_at,
                     repository,
                     run_id,
-                    int(run.get("run_attempt") or 1),
+                    run_attempt,
                 ),
             )
 
@@ -1205,7 +1256,9 @@ class Poller:
 
             # A long-running workflow can be older than the overlap and pushed
             # off the newest-runs pages. Persisted active IDs keep it observed.
-            for run_id in self.database.active_run_ids(repository) - discovered_ids:
+            persisted_ids = self.database.active_run_ids(repository)
+            persisted_ids |= self.database.pending_job_refresh_run_ids(repository)
+            for run_id in persisted_ids - discovered_ids:
                 try:
                     run = self.api.get_run(repository, run_id)
                 except GitHubRequestError as exc:

@@ -271,6 +271,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         latest = workflow_run(conclusion="success", run_attempt=2)
         earlier = workflow_run(conclusion="failure", run_attempt=1)
         self.database.upsert_run(repository, latest)
+        self.database.upsert_jobs(repository, latest, [workflow_job()])
         api = Mock()
         api.list_runs.return_value = []
         api.get_run_attempt.return_value = earlier
@@ -411,6 +412,70 @@ class GitHubActionsExporterTests(unittest.TestCase):
             [("refresh_pending", None)],
         )
         self.assertNotIn("github_actions_jobs_current{", self.metrics())
+
+    def test_completed_run_with_pending_jobs_is_polled_until_it_converges(self):
+        repository = "jlapenna/homelab"
+        run = workflow_run()
+        queued_job = workflow_job(
+            status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run(repository, run)
+        self.database.upsert_jobs(repository, run, [queued_job])
+        self.assertEqual(
+            self.database.pending_job_refresh_run_ids(repository), {run["id"]}
+        )
+        api = FakeAPI(run, [workflow_job()])
+        api.list_runs = Mock(return_value=[])
+        poller = exporter.Poller(
+            exporter.Config(token="test", repositories=(repository,)),
+            self.database,
+            api,
+            FakeState(),
+        )
+
+        poller.refresh_repository(repository)
+
+        self.assertEqual(api.job_requests, 1)
+        self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
+        self.assertIn(
+            'github_actions_jobs_total{conclusion="success",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            self.metrics(),
+        )
+
+    def test_startup_does_not_hide_jobs_from_a_newer_active_attempt(self):
+        repository = "jlapenna/homelab"
+        completed = workflow_run(run_attempt=1)
+        active = workflow_run(
+            run_attempt=2,
+            status="in_progress",
+            conclusion=None,
+            updated_at="2026-08-05T04:21:23Z",
+        )
+        active_job = workflow_job(
+            id=789,
+            status="queued",
+            conclusion=None,
+            started_at=None,
+            completed_at=None,
+        )
+        self.database.upsert_run(repository, completed)
+        self.database.upsert_jobs(repository, completed, [workflow_job()])
+        self.database.upsert_run(repository, active)
+        self.database.upsert_jobs(repository, active, [active_job])
+        database_path = str(Path(self.temporary_directory.name) / "actions.db")
+        self.database.close()
+        self.database = exporter.Database(database_path)
+        self.addCleanup(self.database.close)
+
+        rows = self.database.rows(
+            "SELECT status FROM jobs WHERE repository = ? AND id = ?",
+            (repository, active_job["id"]),
+        )
+        self.assertEqual([row["status"] for row in rows], ["queued"])
+        self.assertIn(
+            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
+            self.metrics(),
+        )
 
     def test_confirmed_concurrency_group_membership_is_exported(self):
         run = workflow_run(status="in_progress", conclusion=None)
