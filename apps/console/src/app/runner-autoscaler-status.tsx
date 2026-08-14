@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
 import type {
@@ -37,9 +37,22 @@ function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
   return (
     <Stack gap={2} data-testid={`autoscaler-scale-set-${status.scaleSet}`}>
       <Group gap="xs" wrap="wrap">
-        <Text size="sm" fw={500}>
-          {status.scaleSet}
-        </Text>
+        {status.registrationUrl ? (
+          <Anchor
+            href={status.registrationUrl}
+            target="_blank"
+            rel="noreferrer"
+            size="sm"
+            fw={600}
+            data-testid={`autoscaler-registration-${status.scaleSet}`}
+          >
+            {status.scaleSet}
+          </Anchor>
+        ) : (
+          <Text size="sm" fw={600}>
+            {status.scaleSet}
+          </Text>
+        )}
         {status.draining && (
           <Badge color="yellow" size="xs">
             draining
@@ -51,15 +64,20 @@ function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
         </Text>
       </Group>
       {busy.length > 0 && (
-        <Text size="xs" c="dimmed">
-          jobs:{' '}
-          {busy
-            .map(
-              (runner) =>
-                `${runner.name}${runner.jobId ? ` (${runner.jobId})` : ''}`,
-            )
-            .join(', ')}
-        </Text>
+        <Group gap="xs" wrap="wrap">
+          {busy.map((runner) => (
+            <Badge
+              key={runner.name}
+              variant="light"
+              color="blue"
+              size="sm"
+              data-testid={`autoscaler-runner-${runner.name}`}
+            >
+              {runner.name} on {runner.host}
+              {runner.jobId ? ` · ${runner.jobId}` : ''}
+            </Badge>
+          ))}
+        </Group>
       )}
     </Stack>
   );

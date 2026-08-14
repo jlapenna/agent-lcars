@@ -11,6 +11,7 @@ func TestConsoleStatusSnapshotIncludesQueueAndActiveJob(t *testing.T) {
 	scaler := &Scaler{
 		scaleSetName:     "lcars-ci",
 		registrationName: "primary",
+		registrationURL:  "https://github.com/jlapenna/agent-lcars",
 		minRunners:       1,
 		maxRunners:       4,
 		runners: runnerState{idle: map[string]runnerRef{
@@ -24,7 +25,7 @@ func TestConsoleStatusSnapshotIncludesQueueAndActiveJob(t *testing.T) {
 
 	got := scaler.consoleStatusSnapshot(now)
 
-	if got.ScaleSet != "lcars-ci" || got.Registration != "primary" || got.QueuedJobs != 2 {
+	if got.ScaleSet != "lcars-ci" || got.Registration != "primary" || got.RegistrationURL != "https://github.com/jlapenna/agent-lcars" || got.QueuedJobs != 2 {
 		t.Fatalf("unexpected status identity/queue: %#v", got)
 	}
 	if got.UpdatedAt != now.Format(time.RFC3339Nano) || !got.ExpireAt.Equal(now.Add(3*consoleStatusInterval)) {

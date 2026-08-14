@@ -8,6 +8,7 @@ import type {
 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
+import { mintAttemptAdmission } from './admission-capability';
 import type { AttemptState } from './attempt-reducer';
 import { attemptSpecDigest } from './attempt-reducer';
 import {
@@ -20,6 +21,7 @@ import {
   type TaskAuthorityLease,
   type TaskAuthorityScope,
 } from './authority-storage';
+import { admitAcceptedSpecForTest } from './authority-storage-test-support';
 import { InstallationTokenMinterBoundary } from './mint-resolution';
 import type { TaskIntentState } from './task-intent-reducer';
 
@@ -177,20 +179,24 @@ async function acquire(
 async function admit(
   storage: LifecycleAuthorityStorage,
   value = fixture(),
-  expectedTaskRevision = 0,
   existingLease?: TaskAuthorityLease,
 ) {
-  await storage.registerActivation(value.activation);
-  const lease = existingLease ?? (await acquire(storage, value.scope));
-  const result = await storage.admitAttemptAndRecordLaunch({
-    lease,
-    expectedTaskRevision,
-    nextTask: value.taskState(expectedTaskRevision + 1),
-    attempt: value.attempt,
+  const admitted = await admitAcceptedSpecForTest({
+    storage,
+    activation: value.activation,
     spec: value.spec,
-    specDigest: value.digest,
+    ...(existingLease === undefined ? {} : { lease: existingLease }),
   });
-  return { ...value, lease, result };
+  const attempt = admitted.result.attempt;
+  if (attempt === undefined) throw new Error('Admission omitted its Attempt');
+  return {
+    ...value,
+    lease: admitted.lease,
+    result: admitted.result,
+    spec: admitted.spec,
+    digest: attempt.specDigest,
+    attempt,
+  };
 }
 
 function bindingFor(value: ReturnType<typeof fixture>, runId = 10): RunBinding {
@@ -379,7 +385,7 @@ export function runLifecycleAuthorityStorageContract(
         replay: false,
         launch: { operationId: admitted.spec.attemptId, state: 'pending' },
       });
-      expect((await storage.readTask(admitted.scope))?.revision).toBe(1);
+      expect((await storage.readTask(admitted.scope))?.revision).toBe(2);
       expect(
         await storage.readAttempt({
           tenantId: admitted.tenant.tenantId,
@@ -397,10 +403,12 @@ export function runLifecycleAuthorityStorageContract(
     it('replays admission after task advance and after activation cutover', async () => {
       const { storage } = await makeHarness();
       const admitted = await admit(storage);
+      const admittedTask = admitted.result.task;
+      if (admittedTask === undefined) throw new Error('Admission omitted Task');
       await storage.writeTask({
         lease: admitted.lease,
-        expectedRevision: 1,
-        next: { ...admitted.taskState(2), updatedAt: T1 },
+        expectedRevision: 2,
+        next: { ...admittedTask, revision: 3, updatedAt: T1 },
       });
       await storage.registerActivation({
         ...admitted.activation,
@@ -411,94 +419,15 @@ export function runLifecycleAuthorityStorageContract(
       });
       expect(
         (
-          await storage.admitAttemptAndRecordLaunch({
+          await storage.readAttemptAdmission({
             lease: admitted.lease,
-            expectedTaskRevision: 0,
-            nextTask: admitted.taskState(1),
-            attempt: admitted.attempt,
-            spec: admitted.spec,
-            specDigest: admitted.digest,
+            tenantId: admitted.tenant.tenantId,
+            task: admitted.task,
+            intentId: admitted.spec.local.intentId,
+            intentRevision: admitted.spec.local.generation,
           })
-        ).replay,
+        )?.replay,
       ).toBe(true);
-      await expect(
-        storage.admitAttemptAndRecordLaunch({
-          lease: admitted.lease,
-          expectedTaskRevision: 0,
-          nextTask: { ...admitted.taskState(1), updatedAt: T3 },
-          attempt: admitted.attempt,
-          spec: admitted.spec,
-          specDigest: admitted.digest,
-        }),
-      ).rejects.toThrow(AuthorityConflict);
-      const next = fixture({
-        attemptId: 'B'.repeat(22),
-        intentId: 'intent-2',
-        generation: 2,
-        admissionRevision: 3,
-      });
-      await expect(
-        storage.admitAttemptAndRecordLaunch({
-          lease: admitted.lease,
-          expectedTaskRevision: 2,
-          nextTask: next.taskState(3),
-          attempt: next.attempt,
-          spec: next.spec,
-          specDigest: next.digest,
-        }),
-      ).rejects.toThrow(AuthorityConflict);
-    });
-
-    it('resolves concurrent CAS and global identity collisions without partial writes', async () => {
-      const { storage } = await makeHarness();
-      const first = fixture();
-      await storage.registerActivation(first.activation);
-      const lease = await acquire(storage, first.scope);
-      const second = fixture({
-        attemptId: 'B'.repeat(22),
-        intentId: 'intent-2',
-        generation: 2,
-      });
-      const attempts = [first, second].map((value) =>
-        storage.admitAttemptAndRecordLaunch({
-          lease,
-          expectedTaskRevision: 0,
-          nextTask: value.taskState(1),
-          attempt: value.attempt,
-          spec: value.spec,
-          specDigest: value.digest,
-        }),
-      );
-      const results = await Promise.allSettled(attempts);
-      expect(
-        results.filter((result) => result.status === 'fulfilled'),
-      ).toHaveLength(1);
-      expect(
-        results.filter((result) => result.status === 'rejected'),
-      ).toHaveLength(1);
-      expect(
-        await storage.listLaunches({ tenantId: 'tenant-1', state: 'pending' }),
-      ).toHaveLength(1);
-
-      const winner = results[0]?.status === 'fulfilled' ? first : second;
-      const collision = fixture({
-        issueNumber: 10,
-        attemptId: winner.spec.attemptId,
-        intentId: 'other-task',
-      });
-      await storage.registerActivation(collision.activation);
-      const otherLease = await acquire(storage, collision.scope);
-      await expect(
-        storage.admitAttemptAndRecordLaunch({
-          lease: otherLease,
-          expectedTaskRevision: 0,
-          nextTask: collision.taskState(1),
-          attempt: collision.attempt,
-          spec: collision.spec,
-          specDigest: collision.digest,
-        }),
-      ).rejects.toThrow(AuthorityConflict);
-      expect(await storage.readTask(collision.scope)).toBeUndefined();
     });
 
     it('isolates the same repository/task coordinates by tenant', async () => {
@@ -1084,13 +1013,17 @@ export function runLifecycleAuthorityStorageContract(
         effectiveBoundary: 2,
       });
       await expect(
-        storage.admitAttemptAndRecordLaunch({
+        storage.admitVerifiedAttemptAndRecordLaunch({
           lease: admitted.lease,
-          expectedTaskRevision: 1,
-          nextTask: future.taskState(2),
-          attempt: future.attempt,
-          spec: future.spec,
-          specDigest: future.digest,
+          admission: mintAttemptAdmission({
+            tenant: future.tenant,
+            task: future.task,
+            expectedTaskRevision: 1,
+            intentId: future.spec.local.intentId,
+            intentRevision: future.spec.local.generation,
+            activation: future.spec.activation,
+            execution: future.spec.execution,
+          }),
         }),
       ).rejects.toThrow(AuthorityConflict);
     });

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import type {
   AcceptedAttemptSpec,
@@ -11,7 +11,9 @@ import type {
 } from '@agent-lcars/dispatch-contracts';
 import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
+  acceptedAttemptSpecSchema,
   credentialGrantIssuanceSchema,
+  formatAttemptId,
   hasValidRuntimeObservationPayloadDigest,
   localAttemptMarkerSchema,
   projectionIntentSchema,
@@ -19,6 +21,10 @@ import {
   runtimeObservationEnvelopeSchema,
 } from '@agent-lcars/dispatch-contracts';
 
+import {
+  isVerifiedAttemptAdmission,
+  type VerifiedAttemptAdmission,
+} from './admission-capability';
 import type { AttemptState } from './attempt-reducer';
 import {
   type AttemptEvent,
@@ -42,9 +48,10 @@ import {
   isVerifiedRunBindingIngress,
   type VerifiedRunBindingIngress,
 } from './run-binding-ingress';
-import type { TaskIntentState } from './task-intent-reducer';
+import { admitTaskAttempt, type TaskIntentState } from './task-intent-reducer';
 
 const SHA256 = /^[a-f0-9]{64}$/u;
+const ATTEMPT_ID = /^[A-Za-z0-9_-]{22,64}$/u;
 
 export interface TaskAuthorityScope {
   tenantId: string;
@@ -68,6 +75,11 @@ export interface TaskAuthorityLease {
 /** Implementations supply a trusted server/storage clock. */
 export interface AuthorityClock {
   now(): string;
+}
+
+/** Storage mints an id only after its acceptance preflight succeeds. */
+export interface AttemptIdFactory {
+  mint(): string;
 }
 
 export interface LaunchOutboxRecord {
@@ -114,6 +126,8 @@ export interface ProjectionRecord {
 
 export interface AdmissionResult {
   replay: boolean;
+  task?: TaskIntentState;
+  attempt?: AttemptState;
   launch: LaunchOutboxRecord;
 }
 
@@ -164,14 +178,19 @@ export interface LifecycleAuthorityStorage {
     next: TaskIntentState;
   }): Promise<WriteResult>;
 
-  admitAttemptAndRecordLaunch(input: {
+  /** Runtime-checked coordinator capability; no structural admission writer. */
+  admitVerifiedAttemptAndRecordLaunch(input: {
     lease: TaskAuthorityLease;
-    expectedTaskRevision: number;
-    nextTask: TaskIntentState;
-    attempt: AttemptState;
-    spec: AcceptedAttemptSpec;
-    specDigest: string;
+    admission: VerifiedAttemptAdmission;
   }): Promise<AdmissionResult>;
+  /** Exact read-only replay receipt; never scans across tenant/task scope. */
+  readAttemptAdmission(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+    intentId: string;
+    intentRevision: number;
+  }): Promise<AdmissionResult | undefined>;
   readTask(scope: TaskAuthorityScope): Promise<TaskIntentState | undefined>;
   readAttempt(input: {
     tenantId: string;
@@ -332,14 +351,30 @@ function activationKey(scope: EffectAuthorityScope): string {
   return tupleKey(scope.tenantId, scope.repositoryId, scope.taskClassId);
 }
 
-function acceptanceKey(spec: AcceptedAttemptSpec): string {
+function admissionAcceptanceKey(input: VerifiedAttemptAdmission): string {
   return tupleKey(
-    spec.task.tenantId,
-    spec.task.repositoryId,
-    spec.task.issueNumber,
-    spec.local.intentId,
-    spec.local.generation,
+    input.task.tenantId,
+    input.task.repositoryId,
+    input.task.issueNumber,
+    input.intentId,
+    input.intentRevision,
   );
+}
+
+function admissionCommandDigest(input: VerifiedAttemptAdmission): string {
+  return createHash('sha256')
+    .update(
+      canonicalJson({
+        tenant: input.tenant,
+        task: input.task,
+        expectedTaskRevision: input.expectedTaskRevision,
+        intentId: input.intentId,
+        intentRevision: input.intentRevision,
+        activation: input.activation,
+        execution: input.execution,
+      }),
+    )
+    .digest('hex');
 }
 
 function bindingKey(spec: AcceptedAttemptSpec, binding: RunBinding): string {
@@ -423,6 +458,7 @@ interface StoredAcceptance {
   attemptId: string;
   specDigest: string;
   admissionDigest: string;
+  task: TaskIntentState;
 }
 
 interface StoredIdempotency {
@@ -441,6 +477,9 @@ interface StoredMint {
 
 const systemClock: AuthorityClock = {
   now: () => new Date().toISOString(),
+};
+const systemAttemptIds: AttemptIdFactory = {
+  mint: () => randomBytes(16).toString('base64url'),
 };
 
 /**
@@ -469,7 +508,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly validationWork = new Map<string, ValidationWorkRecord>();
   private readonly activations = new Map<string, ActivationRecord>();
 
-  constructor(private readonly clock: AuthorityClock = systemClock) {}
+  constructor(
+    private readonly clock: AuthorityClock = systemClock,
+    private readonly attemptIds: AttemptIdFactory = systemAttemptIds,
+  ) {}
 
   private now(): string {
     const value = this.clock.now();
@@ -642,117 +684,207 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     return 'applied';
   }
 
-  async admitAttemptAndRecordLaunch(input: {
+  async admitVerifiedAttemptAndRecordLaunch(input: {
     lease: TaskAuthorityLease;
-    expectedTaskRevision: number;
-    nextTask: TaskIntentState;
-    attempt: AttemptState;
-    spec: AcceptedAttemptSpec;
-    specDigest: string;
+    admission: VerifiedAttemptAdmission;
   }): Promise<AdmissionResult> {
-    const scope: EffectAuthorityScope = {
-      ...input.spec.task,
-      taskClassId: input.spec.activation.taskClassId,
-    };
-    this.assertLease(input.lease, input.spec.task, this.now());
-    if (attemptSpecDigest(input.spec) !== input.specDigest) {
+    if (!isVerifiedAttemptAdmission(input.admission)) {
       throw new AuthorityConflict(
-        'Attempt spec digest does not match the spec',
+        'Admission capability was not minted by a coordinator',
       );
     }
-
-    const localKey = acceptanceKey(input.spec);
-    const admissionDigest = canonicalJson({
-      nextTask: input.nextTask,
-      attempt: input.attempt,
-      spec: input.spec,
-      specDigest: input.specDigest,
-    });
+    const admission = input.admission;
+    const now = this.now();
+    this.assertLease(input.lease, admission.task, now);
+    const commandDigest = admissionCommandDigest(admission);
+    const localKey = admissionAcceptanceKey(admission);
     const accepted = this.acceptances.get(localKey);
+    const current = this.tasks.get(canonicalTaskKey(admission.task));
     if (accepted !== undefined) {
-      const storedAttempt = this.attempts.get(accepted.attemptId);
+      const attempt = this.attempts.get(accepted.attemptId);
       const launch = this.launches.get(accepted.attemptId);
       if (
-        accepted.attemptId !== input.spec.attemptId ||
-        accepted.specDigest !== input.specDigest ||
-        accepted.admissionDigest !== admissionDigest ||
-        storedAttempt === undefined ||
-        !same(storedAttempt.spec, input.spec) ||
-        launch === undefined
+        accepted.admissionDigest !== commandDigest ||
+        attempt === undefined ||
+        launch === undefined ||
+        !same(attempt.spec.tenant, admission.tenant) ||
+        !same(attempt.spec.task, admission.task) ||
+        !same(attempt.spec.activation, admission.activation) ||
+        !same(attempt.spec.execution, admission.execution) ||
+        attempt.spec.local.intentId !== admission.intentId ||
+        attempt.spec.local.generation !== admission.intentRevision
       ) {
         throw new AuthorityConflict(
           'Local acceptance tuple was reused differently',
         );
       }
-      return { replay: true, launch: clone(launch) };
+      return {
+        replay: true,
+        task: clone(accepted.task),
+        attempt: clone(attempt),
+        launch: clone(launch),
+      };
     }
-
+    if (
+      current === undefined ||
+      current.revision !== admission.expectedTaskRevision ||
+      !same(current.tenant, admission.tenant) ||
+      !same(current.activation, admission.activation) ||
+      current.desired?.intentId !== admission.intentId ||
+      current.desired.intentRevision !== admission.intentRevision
+    ) {
+      throw new AuthorityConflict('Task admission CAS or authority failed');
+    }
+    const intent = current.intents.find(
+      (candidate) =>
+        candidate.intentId === admission.intentId &&
+        candidate.revision === admission.intentRevision,
+    );
+    const source = current.facts.find(
+      (fact) => fact.factId === intent?.sourceFactId,
+    );
+    if (
+      intent === undefined ||
+      intent.status !== 'desired' ||
+      intent.policyDecision.decision !== 'accepted' ||
+      !same(intent.activation, admission.activation) ||
+      source === undefined
+    ) {
+      throw new AuthorityConflict('Attempt admission provenance is invalid');
+    }
+    const scope: EffectAuthorityScope = {
+      ...admission.task,
+      taskClassId: admission.activation.taskClassId,
+    };
     if (
       !this.mayWriteEffectsSync({
         scope,
-        activation: input.spec.activation,
-        boundary: input.spec.local.admissionRevision,
+        activation: admission.activation,
+        boundary: admission.expectedTaskRevision,
       })
     ) {
       throw new AuthorityConflict('Shadow, retired, or stale activation');
     }
-
-    const key = canonicalTaskKey(input.spec.task);
-    const currentTask = this.tasks.get(key);
-    if ((currentTask?.revision ?? 0) !== input.expectedTaskRevision) {
-      throw new AuthorityConflict('Task CAS failed');
-    }
-    if (
-      input.nextTask.revision !== input.expectedTaskRevision + 1 ||
-      canonicalTaskKey(input.nextTask.task) !== key ||
-      !same(input.nextTask.tenant, input.spec.tenant) ||
-      !same(input.nextTask.activation, input.spec.activation) ||
-      input.nextTask.attempt.kind !== 'unlaunched' ||
-      input.nextTask.attempt.intentId !== input.spec.local.intentId ||
-      !same(input.attempt.spec, input.spec) ||
-      input.attempt.specDigest !== input.specDigest ||
-      input.attempt.revision !== 1 ||
-      input.attempt.phase !== 'launch-pending' ||
-      input.attempt.executionEpoch !== 1 ||
-      input.attempt.launch.operationId !== input.spec.attemptId ||
-      input.attempt.launch.executionEpoch !== 1 ||
-      input.attempt.launch.state !== 'recorded' ||
-      input.attempt.binding !== undefined ||
-      input.attempt.outcome !== undefined ||
-      input.attempt.pendingTerminal !== undefined ||
-      input.attempt.finalization !== undefined ||
-      input.attempt.cancellation !== undefined ||
-      input.attempt.facts.length !== 0 ||
-      input.attempt.commands.length !== 0 ||
-      input.attempt.pendingClaims.length !== 0 ||
-      input.attempt.futureGrantsDenied
-    ) {
+    const attemptId = this.attemptIds.mint();
+    if (!ATTEMPT_ID.test(attemptId) || this.attempts.has(attemptId)) {
       throw new AuthorityConflict(
-        'Admission records are not one next transaction',
+        'Attempt id factory did not mint a unique global id',
       );
     }
-    if (this.attempts.has(input.spec.attemptId)) {
-      throw new AuthorityConflict('Global attemptId collision');
+    const spec: AcceptedAttemptSpec = {
+      schema: 'agent-lcars.attempt-spec/v1',
+      version: 1,
+      requestId: source.requestId,
+      attemptId,
+      tenant: clone(admission.tenant),
+      task: clone(admission.task),
+      activation: {
+        ...clone(admission.activation),
+        mode: 'central-authoritative',
+      },
+      local: {
+        intentId: admission.intentId,
+        generation: admission.intentRevision,
+        attemptMarker: formatAttemptId({
+          generation: admission.intentRevision,
+          intentId: admission.intentId,
+        }),
+        admissionRevision: admission.expectedTaskRevision,
+        idempotencyKey: commandDigest,
+      },
+      execution: clone(admission.execution),
+      authorization: clone(intent.policyDecision),
+    };
+    const parsedSpec = acceptedAttemptSpecSchema.safeParse(spec);
+    if (!parsedSpec.success) {
+      throw new AuthorityConflict(
+        'Resolved admission execution plan is invalid',
+      );
     }
-
+    const acceptedSpec = parsedSpec.data;
+    const specDigest = attemptSpecDigest(acceptedSpec);
+    const task = admitTaskAttempt(current, {
+      expectedRevision: admission.expectedTaskRevision,
+      intentId: admission.intentId,
+      intentRevision: admission.intentRevision,
+      attemptId,
+      activation: admission.activation,
+      admittedAt: now,
+    });
+    const attempt = reduceAttempt(undefined, {
+      kind: 'register',
+      expectedRevision: 0,
+      transitionedAt: now,
+      spec: acceptedSpec,
+      specDigest,
+    });
+    if (task.status !== 'applied' || attempt.status !== 'applied') {
+      throw new AuthorityConflict(
+        'Admission transition was not reducer-derived',
+      );
+    }
     const launch: LaunchOutboxRecord = {
-      operationId: input.spec.attemptId,
-      attemptId: input.spec.attemptId,
-      tenantId: input.spec.tenant.tenantId,
-      repositoryId: input.spec.tenant.repositoryId,
-      issueNumber: input.spec.task.issueNumber,
+      operationId: attemptId,
+      attemptId,
+      tenantId: spec.tenant.tenantId,
+      repositoryId: spec.tenant.repositoryId,
+      issueNumber: spec.task.issueNumber,
       executionEpoch: 1,
       state: 'pending',
     };
-    this.tasks.set(key, clone(input.nextTask));
-    this.attempts.set(input.spec.attemptId, clone(input.attempt));
+    // All validation completed above; this contiguous body is the transaction.
+    this.tasks.set(canonicalTaskKey(admission.task), clone(task.state));
+    this.attempts.set(attemptId, clone(attempt.state));
     this.acceptances.set(localKey, {
-      attemptId: input.spec.attemptId,
-      specDigest: input.specDigest,
-      admissionDigest,
+      attemptId,
+      specDigest,
+      admissionDigest: commandDigest,
+      task: clone(task.state),
     });
-    this.launches.set(input.spec.attemptId, launch);
-    return { replay: false, launch: clone(launch) };
+    this.launches.set(attemptId, clone(launch));
+    return {
+      replay: false,
+      task: clone(task.state),
+      attempt: clone(attempt.state),
+      launch: clone(launch),
+    };
+  }
+
+  async readAttemptAdmission(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+    intentId: string;
+    intentRevision: number;
+  }): Promise<AdmissionResult | undefined> {
+    this.assertLease(input.lease, input.task, this.now());
+    const key = tupleKey(
+      input.task.tenantId,
+      input.task.repositoryId,
+      input.task.issueNumber,
+      input.intentId,
+      input.intentRevision,
+    );
+    const accepted = this.acceptances.get(key);
+    if (accepted === undefined) return undefined;
+    const attempt = this.attempts.get(accepted.attemptId);
+    const launch = this.launches.get(accepted.attemptId);
+    if (
+      attempt === undefined ||
+      launch === undefined ||
+      attempt.spec.tenant.tenantId !== input.tenantId ||
+      !same(attempt.spec.task, input.task) ||
+      attempt.spec.local.intentId !== input.intentId ||
+      attempt.spec.local.generation !== input.intentRevision
+    ) {
+      throw new AuthorityConflict('Admission replay receipt is inconsistent');
+    }
+    return {
+      replay: true,
+      task: clone(accepted.task),
+      attempt: clone(attempt),
+      launch: clone(launch),
+    };
   }
 
   async readTask(

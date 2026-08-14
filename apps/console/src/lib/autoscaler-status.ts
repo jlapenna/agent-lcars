@@ -19,6 +19,7 @@ export interface AutoscalerScaleSetStatus {
   schemaVersion: 1;
   scaleSet: string;
   registration: string;
+  registrationUrl?: string;
   queuedJobs: number;
   minRunners: number;
   maxRunners: number;
@@ -75,6 +76,8 @@ function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
     status['schemaVersion'] !== 1 ||
     typeof status['scaleSet'] !== 'string' ||
     typeof status['registration'] !== 'string' ||
+    (status['registrationUrl'] !== undefined &&
+      typeof status['registrationUrl'] !== 'string') ||
     typeof status['queuedJobs'] !== 'number' ||
     typeof status['minRunners'] !== 'number' ||
     typeof status['maxRunners'] !== 'number' ||
@@ -92,6 +95,9 @@ function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
     schemaVersion: 1,
     scaleSet: status['scaleSet'],
     registration: status['registration'],
+    ...(typeof status['registrationUrl'] === 'string'
+      ? { registrationUrl: status['registrationUrl'] }
+      : {}),
     queuedJobs: status['queuedJobs'],
     minRunners: status['minRunners'],
     maxRunners: status['maxRunners'],
