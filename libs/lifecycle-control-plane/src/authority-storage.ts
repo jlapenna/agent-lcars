@@ -9,12 +9,23 @@ import type {
 } from '@agent-lcars/dispatch-contracts';
 import {
   credentialGrantIssuanceSchema,
+  hasValidRuntimeObservationPayloadDigest,
+  localAttemptMarkerSchema,
   projectionIntentSchema,
   projectionStatusV1Schema,
+  runtimeObservationEnvelopeSchema,
 } from '@agent-lcars/dispatch-contracts';
 
 import type { AttemptState } from './attempt-reducer';
-import { attemptSpecDigest } from './attempt-reducer';
+import {
+  attemptSpecDigest,
+  attemptTransitionDigest,
+  reduceAttempt,
+} from './attempt-reducer';
+import {
+  isVerifiedRunBindingIngress,
+  type VerifiedRunBindingIngress,
+} from './run-binding-ingress';
 import type { TaskIntentState } from './task-intent-reducer';
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -161,6 +172,17 @@ export interface LifecycleAuthorityStorage {
   }): Promise<WriteResult>;
 
   recordObservation(identity: ObservationIdentity): Promise<WriteResult>;
+  /**
+   * One transaction for verified exact run binding ingress. It records both
+   * idempotency keys, CAS-writes the attempt/binding, and resolves the one
+   * launch outbox record to accepted (even when binding preceded a response).
+   */
+  recordBindingObservationAndResolveLaunch(input: {
+    lease: TaskAuthorityLease;
+    /** Runtime-checked opaque ingress capability, not a caller assertion. */
+    verified: VerifiedRunBindingIngress;
+    expectedAttemptRevision: number;
+  }): Promise<WriteResult>;
 
   reserveMint(input: {
     identity: MintIdentity;
@@ -231,6 +253,11 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+/** Avoid delimiter collisions: opaque ids are permitted to contain `:`. */
+function tupleKey(...parts: readonly (string | number)[]): string {
+  return JSON.stringify(parts);
+}
+
 function parsedTime(value: string, field: string): number {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) {
@@ -240,19 +267,51 @@ function parsedTime(value: string, field: string): number {
 }
 
 function canonicalTaskKey(scope: TaskAuthorityScope): string {
-  return `${scope.tenantId}:${scope.repositoryId}:${scope.issueNumber}`;
+  return tupleKey(scope.tenantId, scope.repositoryId, scope.issueNumber);
 }
 
 function activationKey(scope: EffectAuthorityScope): string {
-  return `${scope.tenantId}:${scope.repositoryId}:${scope.taskClassId}`;
+  return tupleKey(scope.tenantId, scope.repositoryId, scope.taskClassId);
 }
 
 function acceptanceKey(spec: AcceptedAttemptSpec): string {
-  return `${canonicalTaskKey(spec.task)}:${spec.local.intentId}:${spec.local.generation}`;
+  return tupleKey(
+    spec.task.tenantId,
+    spec.task.repositoryId,
+    spec.task.issueNumber,
+    spec.local.intentId,
+    spec.local.generation,
+  );
 }
 
 function bindingKey(spec: AcceptedAttemptSpec, binding: RunBinding): string {
-  return `${spec.tenant.tenantId}:${spec.tenant.repositoryId}:${binding.runId}:${binding.runAttempt}:${binding.checkRunId}`;
+  return tupleKey(
+    spec.tenant.tenantId,
+    spec.tenant.repositoryId,
+    binding.runId,
+    binding.runAttempt,
+    binding.checkRunId,
+  );
+}
+
+function observationKeys(identity: {
+  tenantId: string;
+  repositoryId: number;
+  sourceIdentity: string;
+  attemptId: string;
+  factId: string;
+  requestId: string;
+}): { factKey: string; requestKey: string } {
+  const scope = tupleKey(
+    identity.tenantId,
+    identity.repositoryId,
+    identity.sourceIdentity,
+    identity.attemptId,
+  );
+  return {
+    factKey: tupleKey(scope, 'fact', identity.factId),
+    requestKey: tupleKey(scope, 'request', identity.requestId),
+  };
 }
 
 interface StoredAcceptance {
@@ -815,9 +874,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     ) {
       throw new AuthorityConflict('Observation attempt scope is invalid');
     }
-    const scope = `${identity.tenantId}:${identity.repositoryId}:${identity.sourceIdentity}:${identity.attemptId}`;
-    const factKey = `${scope}:fact:${identity.factId}`;
-    const requestKey = `${scope}:request:${identity.requestId}`;
+    const { factKey, requestKey } = observationKeys(identity);
     const fact: StoredIdempotency = {
       counterpartId: identity.requestId,
       canonicalDigest: identity.canonicalDigest,
@@ -842,6 +899,146 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
     this.factKeys.set(factKey, fact);
     this.requestKeys.set(requestKey, request);
+    return 'applied';
+  }
+
+  async recordBindingObservationAndResolveLaunch(input: {
+    lease: TaskAuthorityLease;
+    verified: VerifiedRunBindingIngress;
+    expectedAttemptRevision: number;
+  }): Promise<WriteResult> {
+    if (!isVerifiedRunBindingIngress(input.verified)) {
+      throw new AuthorityConflict(
+        'Binding capability was not minted by ingress',
+      );
+    }
+    const parsedEnvelope = runtimeObservationEnvelopeSchema.safeParse(
+      input.verified.envelope,
+    );
+    const parsedMarker = localAttemptMarkerSchema.safeParse(
+      input.verified.localAttemptMarker,
+    );
+    if (!parsedEnvelope.success || !parsedMarker.success) {
+      throw new AuthorityConflict('Binding observation is invalid');
+    }
+    const envelope = parsedEnvelope.data;
+    if (
+      envelope.payload.kind !== 'run-bound' ||
+      !(await hasValidRuntimeObservationPayloadDigest(envelope))
+    ) {
+      throw new AuthorityConflict('Binding observation is invalid');
+    }
+    const attempt = this.attempts.get(envelope.attemptId);
+    const launch = this.launches.get(envelope.attemptId);
+    if (attempt === undefined || launch === undefined) {
+      throw new AuthorityConflict(
+        'Binding attempt or launch operation is unknown',
+      );
+    }
+    this.assertLease(input.lease, attempt.spec.task, this.now());
+    if (
+      envelope.tenant.tenantId !== attempt.spec.tenant.tenantId ||
+      envelope.tenant.repositoryId !== attempt.spec.tenant.repositoryId ||
+      envelope.task.issueNumber !== attempt.spec.task.issueNumber ||
+      parsedMarker.data !== attempt.spec.local.attemptMarker
+    ) {
+      throw new AuthorityConflict(
+        'Binding ingress scope or local marker is invalid',
+      );
+    }
+    const sourceIdentity = `${envelope.source.kind}:${envelope.source.sourceId}`;
+    const canonicalDigest = attemptTransitionDigest({
+      kind: 'observation',
+      envelope,
+    });
+    const { factKey, requestKey } = observationKeys({
+      tenantId: envelope.tenant.tenantId,
+      repositoryId: envelope.tenant.repositoryId,
+      sourceIdentity,
+      attemptId: envelope.attemptId,
+      factId: envelope.factId,
+      requestId: envelope.requestId,
+    });
+    const fact: StoredIdempotency = {
+      counterpartId: envelope.requestId,
+      canonicalDigest,
+      payloadSha256: envelope.payloadSha256,
+      resourceId: envelope.attemptId,
+    };
+    const request: StoredIdempotency = {
+      counterpartId: envelope.factId,
+      canonicalDigest,
+      payloadSha256: envelope.payloadSha256,
+      resourceId: envelope.attemptId,
+    };
+    const priorFact = this.factKeys.get(factKey);
+    const priorRequest = this.requestKeys.get(requestKey);
+    if (priorFact !== undefined || priorRequest !== undefined) {
+      const converged =
+        attempt.launch.state === 'accepted' &&
+        launch.state === 'accepted' &&
+        attempt.binding !== undefined &&
+        same(attempt.binding, envelope.payload.binding) &&
+        attempt.facts.some(
+          (receipt) =>
+            receipt.factId === envelope.factId &&
+            receipt.requestId === envelope.requestId &&
+            receipt.payloadSha256 === envelope.payloadSha256 &&
+            receipt.canonicalDigest === canonicalDigest,
+        );
+      if (
+        !same(priorFact, fact) ||
+        !same(priorRequest, request) ||
+        !converged
+      ) {
+        throw new AuthorityConflict('Binding fact/request replay conflicts');
+      }
+      return 'replay';
+    }
+    if (
+      !['pending', 'dispatching', 'unknown', 'accepted'].includes(launch.state)
+    ) {
+      throw new AuthorityConflict(
+        'Launch outbox cannot be reconciled by binding',
+      );
+    }
+    const reduced = reduceAttempt(attempt, {
+      kind: 'transition',
+      expectedRevision: input.expectedAttemptRevision,
+      transitionedAt: envelope.observedAt,
+      canonicalDigest,
+      event: { kind: 'observation', envelope },
+    });
+    if (reduced.status !== 'applied') {
+      throw new AuthorityConflict(
+        'Binding observation did not produce a new valid transition',
+      );
+    }
+    const nextAttempt = reduced.state;
+    if (
+      attempt.revision !== input.expectedAttemptRevision ||
+      nextAttempt.revision !== attempt.revision + 1 ||
+      nextAttempt.binding === undefined ||
+      nextAttempt.launch.state !== 'accepted' ||
+      !same(nextAttempt.binding, envelope.payload.binding)
+    ) {
+      throw new AuthorityConflict('Binding attempt CAS failed');
+    }
+    const nextBindingKey = bindingKey(nextAttempt.spec, nextAttempt.binding);
+    const bindingOwner = this.bindings.get(nextBindingKey);
+    if (bindingOwner !== undefined && bindingOwner !== envelope.attemptId) {
+      throw new AuthorityConflict(
+        'Exact run binding belongs to another attempt',
+      );
+    }
+    this.writeAttemptTransaction({
+      lease: input.lease,
+      expectedRevision: input.expectedAttemptRevision,
+      next: nextAttempt,
+    });
+    this.factKeys.set(factKey, fact);
+    this.requestKeys.set(requestKey, request);
+    this.launches.set(envelope.attemptId, { ...launch, state: 'accepted' });
     return 'applied';
   }
 

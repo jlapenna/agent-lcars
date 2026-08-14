@@ -895,6 +895,8 @@ export function reduceAttempt(
           );
         }
         next.binding = clone(envelope.payload.binding);
+        // An exact bound run is stronger than a missing or lost launch response.
+        next.launch = { ...next.launch, state: 'accepted' };
         if (current.pendingTerminal !== undefined) {
           if (
             !sameBinding(
