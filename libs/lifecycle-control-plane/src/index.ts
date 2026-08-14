@@ -12,6 +12,7 @@ export * from './launch-outbox-composition';
 export * from './launch-resolution';
 export * from './mint-resolution';
 export * from './presentation-delivery';
+export * from './run-binding-ingress-composition';
 export * from './signal-task-composition';
 export * from './task-admission-effect-composition';
 export * from './task-attempt-admission';
