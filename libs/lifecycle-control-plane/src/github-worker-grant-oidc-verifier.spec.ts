@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { generateKeyPair, SignJWT } from 'jose';
+import { errors, generateKeyPair, SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,6 +9,7 @@ import {
   GITHUB_ACTIONS_OIDC_ISSUER,
   GitHubWorkerGrantOidcVerifier,
   workerGrantClaimsFromJwtPayload,
+  WorkerGrantJwtUnavailableError,
   WorkerGrantJwtVerificationError,
 } from './github-worker-grant-oidc-verifier';
 
@@ -166,5 +167,28 @@ describe('GitHub WorkerGrant JWT verifier', () => {
       );
       expect((error as Error).message).not.toContain(RAW_JTI);
     }
+  });
+
+  it.each([
+    new Error('jwks-transport-secret'),
+    new errors.JOSEError('jwks-http-or-json-secret'),
+    new errors.JWKSInvalid('jwks-shape-secret'),
+  ])('keeps a JWKS failure operational and secret-free', async (failure) => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const raw = await signedToken(
+      privateKey,
+      payload(Math.floor(Date.now() / 1_000) + 300),
+    );
+    const verifier = new GitHubWorkerGrantOidcVerifier(async () => {
+      throw failure;
+    });
+    let error: unknown;
+    try {
+      await verifier.verify(raw);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(WorkerGrantJwtUnavailableError);
+    expect((error as Error).message).not.toContain(failure.message);
   });
 });

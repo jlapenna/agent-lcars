@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 
-import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
+import { createRemoteJWKSet, errors, type JWTPayload, jwtVerify } from 'jose';
 
 import type {
   WorkerGrantOidcClaims,
@@ -28,6 +28,25 @@ export class WorkerGrantJwtVerificationError extends Error {
     super(message);
     this.name = 'WorkerGrantJwtVerificationError';
   }
+}
+
+export class WorkerGrantJwtUnavailableError extends Error {
+  constructor() {
+    super('GitHub WorkerGrant OIDC verification is unavailable');
+    this.name = 'WorkerGrantJwtUnavailableError';
+  }
+}
+
+function jwksIsUnavailable(error: unknown): boolean {
+  return (
+    error instanceof errors.JWKSTimeout ||
+    error instanceof errors.JWKSInvalid ||
+    error instanceof errors.JWKSMultipleMatchingKeys ||
+    (error instanceof errors.JOSEError &&
+      error.constructor === errors.JOSEError) ||
+    (!(error instanceof errors.JOSEError) &&
+      !(error instanceof WorkerGrantJwtVerificationError))
+  );
 }
 
 function invalidClaim(name: string): never {
@@ -165,7 +184,10 @@ export class GitHubWorkerGrantOidcVerifier implements WorkerGrantOidcVerifier {
         algorithms: ['RS256'],
       });
       return workerGrantClaimsFromJwtPayload(payload);
-    } catch {
+    } catch (error) {
+      if (jwksIsUnavailable(error)) {
+        throw new WorkerGrantJwtUnavailableError();
+      }
       throw new WorkerGrantJwtVerificationError();
     }
   }
