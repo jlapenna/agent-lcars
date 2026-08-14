@@ -150,6 +150,16 @@ export const controlPlaneSignalEnvelopeSchema = z
         message: 'Scheduler source must carry its exact reconcile scan key',
       });
     }
+    if (
+      value.signal.kind === 'reconcile' &&
+      value.source.kind !== 'schedule-reconcile'
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['source'],
+        message: 'Reconcile signals require an authenticated scheduler source',
+      });
+    }
     if (value.source.kind === 'operator-command') {
       const validOperatorSignal =
         (value.source.command === 'retry' &&

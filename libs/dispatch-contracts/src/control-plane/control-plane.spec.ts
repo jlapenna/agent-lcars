@@ -124,6 +124,12 @@ describe('control-plane v1 contracts', () => {
         source: { ...value.source, actorId: '789' },
       }),
     ).toBe(false);
+    expect(
+      parse(controlPlaneSignalEnvelopeSchema, {
+        ...value,
+        signal: { kind: 'reconcile', scanKey: 'scan-1' },
+      }),
+    ).toBe(false);
     const pullRequestMetadata = {
       task,
       repository: tenant.repository,
@@ -590,6 +596,20 @@ describe('control-plane v1 contracts', () => {
         status: 'admitted',
         sourceFactId: 'fact-4',
         policyDecision: rejectedPolicy,
+        activation: centralActivation,
+        createdAt: timestamp,
+      }),
+    ).toBe(false);
+    expect(
+      parse(intentRevisionSchema, {
+        schema: 'agent-lcars.intent/v1',
+        version: 1,
+        task,
+        intentId: 'intent-3',
+        revision: 1,
+        status: 'admitted',
+        sourceFactId: 'fact-4',
+        policyDecision: policy,
         activation: centralActivation,
         createdAt: timestamp,
       }),

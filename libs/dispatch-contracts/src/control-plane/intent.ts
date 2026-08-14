@@ -34,6 +34,14 @@ export const intentRevisionSchema = z
     createdAt: utcDateTimeSchema,
   })
   .superRefine((value, ctx) => {
+    if (value.sourceFactId !== value.policyDecision.sourceFactId) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['policyDecision', 'sourceFactId'],
+        message:
+          'Intent and policy decision must reference the same source fact',
+      });
+    }
     if (
       (value.status === 'admitted' || value.status === 'desired') &&
       value.policyDecision.decision !== 'accepted'
