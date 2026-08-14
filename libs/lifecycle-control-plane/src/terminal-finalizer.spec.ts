@@ -462,6 +462,7 @@ export function runAttemptFinalizerStorageContract(
               terminalState: 'succeeded',
               execution: 'exited',
               result: 'pull-request',
+              reference: { kind: 'pull-request', number: 44 },
               evidenceValidation: 'validated',
             },
           },

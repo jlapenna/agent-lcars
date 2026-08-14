@@ -671,6 +671,9 @@ function deriveAttemptPresentation(
       terminalState: outcome.terminalState,
       execution: outcome.execution,
       result: outcome.result,
+      ...(outcome.reference === undefined
+        ? {}
+        : { reference: outcome.reference }),
       evidenceValidation: outcome.evidenceValidation.status,
       ...(failure === undefined ? {} : { failure }),
     },

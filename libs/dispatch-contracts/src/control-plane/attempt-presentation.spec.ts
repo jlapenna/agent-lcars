@@ -33,6 +33,7 @@ const plan = {
     terminalState: 'succeeded' as const,
     execution: 'exited' as const,
     result: 'pull-request' as const,
+    reference: { kind: 'pull-request' as const, number: 44 },
     evidenceValidation: 'validated' as const,
   },
 };
@@ -91,8 +92,9 @@ describe('AttemptPresentationPlanV1', () => {
         ...plan,
         presentation: {
           ...plan.presentation,
-          terminalState: 'failed',
-          result: 'outcome-gate-failure',
+          execution: 'cancelled',
+          result: 'none',
+          reference: undefined,
           evidenceValidation: 'absent',
         },
       }).success,
@@ -102,6 +104,34 @@ describe('AttemptPresentationPlanV1', () => {
         ...plan,
         presentation: {
           ...plan.presentation,
+          terminalState: 'cancelled',
+          execution: 'cancelled',
+          evidenceValidation: 'not-applicable',
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptPresentationPlanSchema.safeParse({
+        ...plan,
+        presentation: {
+          ...plan.presentation,
+          terminalState: 'failed',
+          result: 'outcome-gate-failure',
+          reference: undefined,
+          evidenceValidation: 'absent',
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptPresentationPlanSchema.safeParse({
+        ...plan,
+        presentation: {
+          ...plan.presentation,
+          terminalState: 'failed',
+          execution: 'not_started',
+          result: 'outcome-gate-failure',
+          reference: undefined,
+          evidenceValidation: 'absent',
           failure: {
             owningSystem: 'finalizer',
             phase: 'validation',

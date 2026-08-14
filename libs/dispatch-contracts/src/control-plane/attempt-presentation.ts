@@ -12,8 +12,26 @@ import {
   attemptIdSchema,
   nonnegativeSafeIntegerSchema,
   opaqueIdSchema,
+  positiveSafeIntegerSchema,
   sha256Schema,
 } from './primitives';
+
+const SUCCESS_RESULTS = new Set([
+  'no-op',
+  'pull-request',
+  'merged-deliverable',
+  'review',
+  'comment',
+]);
+const FAILURE_RESULTS = new Set([
+  'startup-failure',
+  'trajectory-failure',
+  'outcome-gate-failure',
+]);
+const deliverableReferenceSchema = z.strictObject({
+  kind: z.literal('pull-request'),
+  number: positiveSafeIntegerSchema,
+});
 
 /** Closed, provider-neutral summary of immutable finalizer truth. */
 export const attemptPresentationPlanSchema = z
@@ -44,6 +62,7 @@ export const attemptPresentationPlanSchema = z
       terminalState: attemptTerminalStateSchema,
       execution: attemptExecutionStateSchema,
       result: z.union([dispatchOutcomeKindSchema, z.literal('none')]),
+      reference: deliverableReferenceSchema.optional(),
       evidenceValidation: z.enum([
         'validated',
         'absent',
@@ -62,14 +81,80 @@ export const attemptPresentationPlanSchema = z
       value.tenant.repositoryId !== value.task.repositoryId
     )
       ctx.addIssue({ code: 'custom', message: 'Tenant/task mismatch' });
-    if (
-      (value.presentation.terminalState === 'failed') !==
-      (value.presentation.failure !== undefined)
-    )
+    const presentation = value.presentation;
+    const requiresReference =
+      presentation.result === 'pull-request' ||
+      presentation.result === 'merged-deliverable';
+    if (requiresReference !== (presentation.reference !== undefined)) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Failure summary must match failed terminal state',
+        path: ['presentation', 'reference'],
+        message: 'Deliverable reference must match the result kind',
       });
+    }
+    if (presentation.terminalState === 'succeeded') {
+      if (
+        presentation.execution !== 'exited' ||
+        !SUCCESS_RESULTS.has(presentation.result) ||
+        presentation.evidenceValidation !== 'validated' ||
+        presentation.failure !== undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation'],
+          message: 'Succeeded presentation axes are inconsistent',
+        });
+      }
+      return;
+    }
+    if (presentation.terminalState === 'failed') {
+      if (
+        !['exited', 'timed_out', 'not_started'].includes(
+          presentation.execution,
+        ) ||
+        (presentation.result !== 'none' &&
+          !FAILURE_RESULTS.has(presentation.result)) ||
+        presentation.evidenceValidation === 'validated' ||
+        presentation.failure === undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation'],
+          message: 'Failed presentation axes are inconsistent',
+        });
+      }
+      return;
+    }
+    if (
+      presentation.terminalState === 'cancelled' ||
+      presentation.terminalState === 'superseded'
+    ) {
+      if (
+        !['cancelled', 'not_started'].includes(presentation.execution) ||
+        presentation.result !== 'none' ||
+        presentation.evidenceValidation !== 'not-applicable' ||
+        presentation.failure !== undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation'],
+          message: 'Cancelled presentation axes are inconsistent',
+        });
+      }
+      return;
+    }
+    if (
+      !['lost', 'timed_out', 'not_started'].includes(presentation.execution) ||
+      presentation.result !== 'none' ||
+      presentation.evidenceValidation !== 'not-applicable' ||
+      presentation.failure !== undefined
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['presentation'],
+        message: 'Lost or expired presentation axes are inconsistent',
+      });
+    }
   });
 export type AttemptPresentationPlan = z.infer<
   typeof attemptPresentationPlanSchema
