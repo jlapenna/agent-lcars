@@ -89,5 +89,6 @@ export {
   policyPrincipalSchema,
   policyRevisionSchema,
 } from './policy';
+export { utcDateTimeSchema } from './primitives';
 export type { ProjectionIntent, ProjectionStatusV1 } from './projection';
 export { projectionIntentSchema, projectionStatusV1Schema } from './projection';

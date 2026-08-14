@@ -256,7 +256,11 @@ importers:
         specifier: workspace:*
         version: link:../dispatch-contracts
 
-  libs/lifecycle-control-plane: {}
+  libs/lifecycle-control-plane:
+    dependencies:
+      '@agent-lcars/dispatch-contracts':
+        specifier: workspace:*
+        version: link:../dispatch-contracts
 
   libs/env-vars: {}
 

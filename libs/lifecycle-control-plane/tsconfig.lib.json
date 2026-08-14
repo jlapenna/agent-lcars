@@ -8,5 +8,10 @@
     "types": ["node"],
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "references": [
+    {
+      "path": "../dispatch-contracts/tsconfig.lib.json"
+    }
+  ]
 }
