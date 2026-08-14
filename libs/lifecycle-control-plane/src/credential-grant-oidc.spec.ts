@@ -14,6 +14,7 @@ import {
   InMemoryLifecycleAuthorityStorage,
   type MintReservation,
 } from './authority-storage';
+import { admitAcceptedSpecForTest } from './authority-storage-test-support';
 import {
   CredentialGrantConflict,
   CredentialGrantCoordinator,
@@ -26,7 +27,6 @@ import {
   type InstallationTokenMinter,
   InstallationTokenMinterBoundary,
 } from './mint-resolution';
-import type { TaskIntentState } from './task-intent-reducer';
 
 const T0 = '2026-08-16T00:00:00.000Z';
 const T1 = '2026-08-16T00:01:00.000Z';
@@ -56,6 +56,10 @@ class ManualClock implements AuthorityClock {
 class TrackingStorage extends InMemoryLifecycleAuthorityStorage {
   lastReservation?: MintReservation;
 
+  constructor(clock: AuthorityClock) {
+    super(clock, { mint: () => ATTEMPT_ID });
+  }
+
   override async lookupOrReserveMint(
     input: Parameters<
       InMemoryLifecycleAuthorityStorage['lookupOrReserveMint']
@@ -72,7 +76,6 @@ function authorityFixture(): {
   activation: ActivationRecord;
   spec: AcceptedAttemptSpec;
   attempt: AttemptState;
-  taskState: TaskIntentState;
   binding: RunBinding;
 } {
   const tenant: TenantRef = {
@@ -163,45 +166,29 @@ function authorityFixture(): {
     futureGrantsDenied: false,
     updatedAt: T0,
   };
-  const taskState: TaskIntentState = {
-    schema: 'agent-lcars.task-intent-state/v1',
-    version: 1,
-    tenant,
-    task,
-    revision: 1,
-    activation: spec.activation,
-    facts: [],
-    intents: [],
-    attempt: { kind: 'unlaunched', intentId: spec.local.intentId },
-    updatedAt: T0,
-  };
-  return { tenant, activation, spec, attempt, taskState, binding };
+  return { tenant, activation, spec, attempt, binding };
 }
 
 async function activeHarness() {
   const clock = new ManualClock();
   const storage = new TrackingStorage(clock);
   const value = authorityFixture();
-  await storage.registerActivation(value.activation);
-  const lease = await storage.acquireTaskLease({
-    scope: value.spec.task,
-    ownerId: 'owner-1',
-    leaseDurationMs: 60 * 60 * 1000,
-  });
-  await storage.admitAttemptAndRecordLaunch({
-    lease,
-    expectedTaskRevision: 0,
-    nextTask: value.taskState,
-    attempt: value.attempt,
+  const admitted = await admitAcceptedSpecForTest({
+    storage,
+    activation: value.activation,
     spec: value.spec,
-    specDigest: value.attempt.specDigest,
+    ownerId: 'owner-1',
   });
+  const registered = admitted.result.attempt;
+  if (registered === undefined)
+    throw new Error('Admission omitted its Attempt');
+  const lease = admitted.lease;
   await storage.claimLaunch({ lease, attemptId: ATTEMPT_ID });
   const accepted: AttemptState = {
-    ...value.attempt,
+    ...registered,
     revision: 2,
     phase: 'launch-accepted',
-    launch: { ...value.attempt.launch, state: 'accepted' },
+    launch: { ...registered.launch, state: 'accepted' },
     updatedAt: T1,
   };
   await storage.resolveLaunch({
@@ -219,7 +206,15 @@ async function activeHarness() {
     binding: value.binding,
   };
   await storage.writeAttempt({ lease, expectedRevision: 2, next: active });
-  return { ...value, active, clock, lease, storage };
+  return {
+    ...value,
+    spec: registered.spec,
+    attempt: registered,
+    active,
+    clock,
+    lease,
+    storage,
+  };
 }
 
 function claims(
