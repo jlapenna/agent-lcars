@@ -816,13 +816,14 @@ export function runCancellationEffectStorageContract(
       });
       if (launch.work === undefined) throw new Error('missing launch work');
       const worker = new CancellationTaskEffectCoordinator(storage, clock);
-      const cancelled = await worker.reconcile({
+      const cancellationInput = {
         lease: value.lease,
         tenantId: tenant.tenantId,
         task,
         sourceFactId: value.effect.sourceFactId,
         effectKey: value.effect.effectKey,
-      });
+      };
+      const cancelled = await worker.reconcile(cancellationInput);
       expect(cancelled.work?.state).toBe('awaiting-binding');
       expect(cancelled.presentation).toBeUndefined();
       const before = await storage.readAttempt({
@@ -888,6 +889,7 @@ export function runCancellationEffectStorageContract(
       expect(
         await storage.listCancellationWork({ tenantId: tenant.tenantId }),
       ).toMatchObject([{ attemptId: value.attemptId, state: 'pending' }]);
+      expect(await worker.reconcile(cancellationInput)).toEqual(cancelled);
     });
 
     it('preserves cancelling truth when an in-flight launch resolves unknown', async () => {

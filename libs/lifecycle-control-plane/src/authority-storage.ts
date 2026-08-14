@@ -1611,11 +1611,11 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       liveAttempt === undefined ||
       liveLaunch === undefined ||
       receipt.attempt === undefined ||
-      !same(receipt.attempt, liveAttempt) ||
       liveAttempt.spec.tenant.tenantId !== identity.tenantId ||
       !same(liveAttempt.spec.task, identity.task) ||
       liveAttempt.spec.local.intentId !== effect.payload.intentId ||
       liveAttempt.spec.local.generation !== effect.payload.intentRevision ||
+      !same(receipt.attempt.spec, liveAttempt.spec) ||
       liveLaunch.tenantId !== identity.tenantId ||
       liveLaunch.attemptId !== effect.payload.attemptId ||
       liveLaunch.executionEpoch !== liveAttempt.executionEpoch ||
@@ -1627,20 +1627,57 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
 
     const eventId = cancellationEventId(identity, effect.payload);
-    const isDirectTerminal =
+    const receiptIsDirectTerminal =
+      receipt.attempt.phase === 'terminal' &&
+      receipt.attempt.outcome?.execution === 'not_started' &&
+      receipt.attempt.outcome.evidence.kind === 'lifecycle-decision' &&
+      receipt.attempt.outcome.evidence.decisionFactId === eventId;
+    const liveIsDirectTerminal =
       liveAttempt.phase === 'terminal' &&
       liveAttempt.outcome?.execution === 'not_started' &&
       liveAttempt.outcome.evidence.kind === 'lifecycle-decision' &&
       liveAttempt.outcome.evidence.decisionFactId === eventId;
     if (receipt.presentation === undefined) {
-      if (isDirectTerminal) {
+      if (receiptIsDirectTerminal) {
         throw new AuthorityConflict(
           'Direct cancellation terminal receipt is missing its presentation',
         );
       }
+      if (receipt.attempt.phase === 'terminal') {
+        if (!same(receipt.attempt, liveAttempt)) {
+          throw new AuthorityConflict(
+            'Terminal cancellation no-op receipt conflicts with the live Attempt',
+          );
+        }
+        return;
+      }
+      const receiptCommand = receipt.attempt.commands.find(
+        (command) => command.eventId === eventId,
+      );
+      const liveCommand = liveAttempt.commands.find(
+        (command) => command.eventId === eventId,
+      );
+      if (
+        receipt.attempt.cancellation?.eventId !== eventId ||
+        liveAttempt.cancellation?.eventId !== eventId ||
+        !receipt.attempt.futureGrantsDenied ||
+        !liveAttempt.futureGrantsDenied ||
+        receiptCommand === undefined ||
+        liveCommand === undefined ||
+        !same(receiptCommand, liveCommand)
+      ) {
+        throw new AuthorityConflict(
+          'Cancellation transition receipt conflicts with the live Attempt',
+        );
+      }
       return;
     }
-    if (!isDirectTerminal || liveLaunch.state !== 'suppressed') {
+    if (
+      !receiptIsDirectTerminal ||
+      !liveIsDirectTerminal ||
+      !same(receipt.attempt, liveAttempt) ||
+      liveLaunch.state !== 'suppressed'
+    ) {
       throw new AuthorityConflict(
         'Cancellation terminal receipt is not atomically converged',
       );
