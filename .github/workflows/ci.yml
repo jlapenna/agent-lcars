@@ -218,14 +218,10 @@ jobs:
       # `next build` does not execute dynamic server-route imports. Exercise
       # the actual standalone artifact so traced runtime assets (notably the
       # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass
-      # CI and then fail only after an App Hosting rollout. Build this
-      # deployable artifact without Nx cache reads: the standalone trace
-      # includes the pnpm virtual-store layout, which is not a task input, so
-      # a cached artifact from a checkout with stale peer variants can differ
-      # from a clean install even when the source hash is identical.
+      # CI and then fail only after an App Hosting rollout. The trace resolves
+      # the exact installed Cloud Tasks package (#1023), so this deployable
+      # smoke can safely reuse the deterministic Nx build artifact.
       - name: Smoke test deployable console bundle
-        env:
-          NX_SKIP_NX_CACHE: 'true'
         run: |
           pnpm nx bundle @agent-lcars/console
           ./tools/console-standalone-smoke.sh
