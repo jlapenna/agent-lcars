@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 
 import type { CredentialGrantIssuance } from '@agent-lcars/dispatch-contracts';
-import { credentialGrantIssuanceSchema } from '@agent-lcars/dispatch-contracts';
+import {
+  credentialGrantIssuanceSchema,
+  utcDateTimeSchema,
+} from '@agent-lcars/dispatch-contracts';
 
 const verifiedMintResolutions = new WeakSet<object>();
+const MAX_INSTALLATION_TOKEN_LIFETIME_MS = 60 * 60 * 1_000;
 
 export interface InstallationTokenMintPlan {
   installationId: number;
@@ -47,11 +51,23 @@ export class InstallationTokenMinterBoundary {
   ): Promise<VerifiedMintResolution> {
     const response = await this.minter.mint(plan);
     let resolution: VerifiedMintResolution;
-    if (
-      response.kind === 'issued' &&
-      response.token.length > 0 &&
-      Number.isFinite(Date.parse(response.tokenExpiresAt))
-    ) {
+    if (response.kind === 'issued') {
+      if (
+        response.token.length === 0 ||
+        !utcDateTimeSchema.safeParse(response.tokenExpiresAt).success
+      ) {
+        throw new Error('Minter response is malformed');
+      }
+      const issuedAt = this.clock.now();
+      const issuedAtMs = Date.parse(issuedAt);
+      const tokenExpiresAtMs = Date.parse(response.tokenExpiresAt);
+      if (
+        !utcDateTimeSchema.safeParse(issuedAt).success ||
+        tokenExpiresAtMs <= issuedAtMs ||
+        tokenExpiresAtMs - issuedAtMs > MAX_INSTALLATION_TOKEN_LIFETIME_MS
+      ) {
+        throw new Error('Minter response violates the grant lifetime contract');
+      }
       resolution = Object.freeze({
         token: response.token,
         issuance: Object.freeze({
@@ -61,7 +77,7 @@ export class InstallationTokenMinterBoundary {
           credentialProfileId: pending.credentialProfileId,
           issuanceState: 'issued',
           mintState: 'minted',
-          issuedAt: this.clock.now(),
+          issuedAt,
           tokenExpiresAt: response.tokenExpiresAt,
           maxResidualTokenExpiry: response.tokenExpiresAt,
           tokenFingerprint: createHash('sha256')
