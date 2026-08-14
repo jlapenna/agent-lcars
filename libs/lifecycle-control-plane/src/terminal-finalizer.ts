@@ -94,6 +94,8 @@ function validationSelection(
 
 /** Inactive provider-neutral coordinator; every durable write is re-derived. */
 export class AttemptFinalizer {
+  private readonly validationInFlight = new Map<string, Promise<WriteResult>>();
+
   constructor(
     private readonly storage: LifecycleAuthorityStorage,
     private readonly clock: AuthorityClock,
@@ -147,6 +149,33 @@ export class AttemptFinalizer {
   }
 
   async resolveClaim(
+    lease: TaskAuthorityLease,
+    tenantId: string,
+    attemptId: string,
+    claimFactId: string,
+  ): Promise<WriteResult> {
+    const key = [tenantId, attemptId, claimFactId, String(lease.fence)].join(
+      '\u0000',
+    );
+    const prior = this.validationInFlight.get(key);
+    if (prior !== undefined) return prior;
+    const operation = this.resolveClaimInternal(
+      lease,
+      tenantId,
+      attemptId,
+      claimFactId,
+    );
+    this.validationInFlight.set(key, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.validationInFlight.get(key) === operation) {
+        this.validationInFlight.delete(key);
+      }
+    }
+  }
+
+  private async resolveClaimInternal(
     lease: TaskAuthorityLease,
     tenantId: string,
     attemptId: string,
@@ -213,7 +242,7 @@ export class AttemptFinalizer {
       (candidate) => candidate.factId === claimFactId,
     );
     if (currentEvidence?.validation !== undefined) {
-      return this.resolveClaim(lease, tenantId, attemptId, claimFactId);
+      return this.resolveClaimInternal(lease, tenantId, attemptId, claimFactId);
     }
     if (currentEvidence === undefined) {
       throw new TerminalFinalizerConflict(
