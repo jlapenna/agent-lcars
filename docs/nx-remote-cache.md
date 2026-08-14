@@ -29,7 +29,7 @@ gives you "one cache per repo," and pointing two repos at one directory makes
 them fight over each other's `maxCacheSize` eviction budget. L2 is the sharing
 layer; that is what it is for.
 
-### Managed App Hosting builds
+### App Hosting production builds
 
 The console's managed Firebase App Hosting archive builds currently start in
 fresh workspaces. Two consecutive production deployments measured for #1030
@@ -44,18 +44,17 @@ if a build environment supplies an L1 entry, Nx must restore the complete
 declared output instead of inheriting stale files. It is not, by itself, a
 persistence mechanism.
 
-Managed App Hosting does **not** receive the Spark URL or an L2 credential.
-Spark is private-LAN infrastructure, and `apps/console/apphosting.yaml` has no
-remote-cache variables or secrets. Do not add either merely to accelerate a
-managed build: L2 is optional, and introducing a new production credential or
-network path requires its own approved design. CI uses a job-local L1 with
-remote reads disabled to prove that the production task restores a complete,
-bootable artifact. That smoke test proves cache-entry integrity, not cache
-persistence between managed builds.
+The normal production path now runs the declared App Hosting build command on
+the trusted `lcars-ci` runner, where the existing Spark L2 is already available,
+then uploads only `outputFiles.serverApp.include` and registers the artifact as
+an App Hosting `locallyBuilt` build. Spark remains private-LAN infrastructure:
+App Hosting receives neither its URL nor its credential. The deploy verifies
+that the exact commit-labelled build and artifact are READY, its rollout
+succeeded, and it owns 100% of traffic.
 
-Useful production reuse requires either a production-accessible L2 or a
-deployment path that uploads a prebuilt artifact from an environment with
-cache access. Issue #1030 remains open for that architecture decision.
+`workflow_dispatch` retains `build_mode: managed` as an explicit recovery
+path. That path still starts cold for the reasons measured above. It is a
+fallback, not the default production cache policy.
 
 ## How a checkout gets configured
 

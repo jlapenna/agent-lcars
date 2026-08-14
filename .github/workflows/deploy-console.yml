@@ -5,6 +5,15 @@ on:
     workflows: [CI]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      build_mode:
+        description: App Hosting build path
+        type: choice
+        required: true
+        default: prebuilt
+        options:
+          - prebuilt
+          - managed
 
 permissions:
   contents: read
@@ -61,14 +70,22 @@ jobs:
   deploy:
     needs: gate
     if: needs.gate.outputs.verify_passed == 'true'
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
-    timeout-minutes: 20
+    # The prebuilt path runs the console's production Nx graph locally. Keep
+    # that long-running work off lcars-default's latency-sensitive glue pool.
+    runs-on: ['${{ vars.CI_RUNNER_LABEL }}']
+    timeout-minutes: 40
     environment: production
 
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: ./.github/actions/setup-nx-remote-cache
+        if: inputs.build_mode != 'managed'
+        with:
+          url: ${{ vars.NX_CACHE_URL }}
+          write-token: ${{ secrets.NX_CACHE_TOKEN }}
 
       - uses: ./.github/actions/setup-node-pnpm
 
@@ -82,8 +99,25 @@ jobs:
           service_account: ${{ vars.GCP_DEPLOYER_SA }}
           token_format: access_token
 
-      - name: Deploy App Hosting backend
-        id: deploy
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        if: inputs.build_mode != 'managed'
+
+      - name: Build locally and deploy App Hosting backend
+        id: prebuilt
+        if: inputs.build_mode != 'managed'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/deploy-console-prebuilt.mjs \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region us-central1 \
+            --backend "${{ vars.APPHOSTING_BACKEND_ID }}" \
+            --root-dir apps/console \
+            --commit "${{ github.event.workflow_run.head_sha || github.sha }}"
+
+      - name: Deploy with managed App Hosting build
+        id: managed
+        if: inputs.build_mode == 'managed'
         shell: bash
         run: |
           set -euo pipefail
@@ -102,16 +136,12 @@ jobs:
           fi
           echo "source_uri=$SOURCE_URI" >> "$GITHUB_OUTPUT"
 
-      - name: Annotate the deployed PR with its App Hosting version
-        # A release annotation is useful metadata, but an API or permission
-        # hiccup after a successful production rollout must not mark that
-        # rollout as failed.
-        continue-on-error: true
+      - name: Resolve exact deployed App Hosting build
+        id: release
         env:
-          GH_TOKEN: ${{ github.token }}
           ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
-          DEPLOYED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-          SOURCE_URI: ${{ steps.deploy.outputs.source_uri }}
+          PREBUILT_BUILD: ${{ steps.prebuilt.outputs.build_name }}
+          MANAGED_SOURCE_URI: ${{ steps.managed.outputs.source_uri }}
         shell: bash
         run: |
           set -euo pipefail
@@ -124,23 +154,47 @@ jobs:
             exit 1
           fi
 
-          BUILDS=$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            "https://firebaseapphosting.googleapis.com/v1/$BACKEND/builds?pageSize=100&orderBy=create_time%20desc")
-          BUILD=$(jq -r '
-            first(
-              .builds[]
-              | select(.source.archive.userStorageUri == env.SOURCE_URI)
-              | select(.state == "READY")
-              | .name
-            ) // empty
-          ' <<< "$BUILDS")
-          if [ -z "$BUILD" ]; then
-            echo "::error::Could not find a READY App Hosting build for $SOURCE_URI."
-            exit 1
+          if [ -n "$PREBUILT_BUILD" ]; then
+            BUILD=$PREBUILT_BUILD
+          else
+            BUILDS=$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              "https://firebaseapphosting.googleapis.com/v1/$BACKEND/builds?pageSize=100&orderBy=create_time%20desc")
+            BUILD=$(jq -r '
+              first(
+                .builds[]
+                | select(.source.archive.userStorageUri == env.MANAGED_SOURCE_URI)
+                | select(.state == "READY")
+                | .name
+              ) // empty
+            ' <<< "$BUILDS")
           fi
 
-          VERSION=${BUILD##*/}
+          if [ -z "$BUILD" ]; then
+            echo "::error::Could not resolve the exact deployed App Hosting build."
+            exit 1
+          fi
+          BUILD_RESOURCE=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            "https://firebaseapphosting.googleapis.com/v1beta/$BUILD")
+          if [ "$(jq -r '.state' <<< "$BUILD_RESOURCE")" != READY ]; then
+            echo "::error::$BUILD is not READY."
+            exit 1
+          fi
+          echo "version=${BUILD##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Annotate the deployed PR with its App Hosting version
+        # A release annotation is useful metadata, but an API or permission
+        # hiccup after a successful production rollout must not mark that
+        # rollout as failed.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           APP_URL="https://lcars.jlapenna.net"
           BODY=$(printf \
