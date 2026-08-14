@@ -238,6 +238,10 @@ jobs:
 
   e2e:
     name: E2E
+    # Maintainer direction (2026-08-14): pause every E2E execution while
+    # #1049 tracks the reliability work. Keep the job definition visible so
+    # its required-check configuration can be restored deliberately later.
+    if: ${{ false }}
     # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
     # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
     # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox

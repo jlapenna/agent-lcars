@@ -1,3 +1,7 @@
+import {
+  type QuickTaskEvidenceId,
+  quickTaskEvidenceMarkdown,
+} from './quick-task-evidence-contract';
 import type { RepositoryRef } from './watched-repo';
 
 const QUICK_TASK_TITLE_MAX_LENGTH = 80;
@@ -170,6 +174,25 @@ export function composeQuickTaskIssueBody(
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+/**
+ * Server-side evidence attachment helper for the future multipart route.
+ * The browser never supplies this Markdown or its trusted origin.
+ */
+export function composeQuickTaskEvidenceIssueBody(
+  draft: Omit<QuickTaskIssueDraft, 'screenshot'>,
+  repository: RepositoryRef,
+  trustedOrigin: string,
+  evidenceId: QuickTaskEvidenceId,
+): string {
+  return composeQuickTaskIssueBody(
+    {
+      ...draft,
+      screenshot: quickTaskEvidenceMarkdown(trustedOrigin, evidenceId),
+    },
+    repository,
+  );
 }
 
 /** Advisory only: deliberate terse tasks remain submittable. */

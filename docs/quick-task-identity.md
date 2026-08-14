@@ -39,6 +39,16 @@ an unknown query parameter. New parameters remain private until the sanitizer
 explicitly learns their safe value shape. The hidden marker described below is
 appended by the server after the human-readable preview.
 
+## Screenshot evidence contract
+
+The future screenshot picker uses the frozen multipart and gateway contract in
+[Quick Task evidence](quick-task-evidence.md). An optional image receives a
+separate UUID v4 evidence ID, while the existing request ID remains the
+idempotency key for the Quick Task itself. The browser sends the raw file and
+intent only; it never constructs a gateway URL or Markdown image link. The
+server derives both from trusted deployment configuration before it enters the
+existing claim and issue-create protocol.
+
 The issue is created in one GitHub write with both `intake:quick-task` and the
 selected repository integration's `agent:*` label. There is no intermediate
 unroutable issue and no follow-up label mutation.
