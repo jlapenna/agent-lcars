@@ -22,26 +22,22 @@ merge/DIRTY and let check failures sit for hours).
 **Behavior:** polls every PR (default every 120s), prints a timestamped
 line per state change, and exits at the first event that needs you:
 
-| verdict (last stdout line)                     | exit | meaning / next action                                                                                                         |
-| ---------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `VERDICT ALL-MERGED`                           | 0    | every watched PR merged — proceed                                                                                             |
-| `VERDICT ATTENTION <pr> dirty`                 | 2    | needs rebase onto main, re-push, still armed                                                                                  |
-| `VERDICT ATTENTION <pr> behind`                | 2    | strict up-to-date policy: update the branch (`gh pr update-branch` or rebase + push)                                          |
-| `VERDICT ATTENTION <pr> checks-failed:<names>` | 2    | failed or cancelled required checks — inspect with `gh run view --log-failed`; rerun flakes with `gh run rerun <id> --failed` |
-| `VERDICT ATTENTION <pr> closed-unmerged`       | 2    | someone closed it — find out why                                                                                              |
+| verdict (last stdout line)                      | exit | meaning / next action                                                                                                         |
+| ----------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `VERDICT ALL-MERGED`                            | 0    | every watched PR merged — proceed                                                                                             |
+| `VERDICT ATTENTION <pr> dirty`                  | 2    | needs rebase onto main, re-push, still armed                                                                                  |
+| `VERDICT ATTENTION <pr> behind`                 | 2    | strict up-to-date policy: update the branch (`gh pr update-branch` or rebase + push)                                          |
+| `VERDICT ATTENTION <pr> checks-failed:<names>`  | 2    | failed or cancelled required checks — inspect with `gh run view --log-failed`; rerun flakes with `gh run rerun <id> --failed` |
+| `VERDICT ATTENTION <pr> unresolved-threads:<n>` | 2    | checks are green but review threads remain unresolved — address and resolve them using the GraphQL workflow in `pr.md`        |
+| `VERDICT ATTENTION <pr> closed-unmerged`        | 2    | someone closed it — find out why                                                                                              |
 
 Transient `gh`/network errors are reported once and retried, never
 treated as a verdict. There is no timeout: a quiet watch is the success
 path, so let it run until it exits.
 
-## This repo's silent-wait the watcher cannot see
-
-The `Protect main` ruleset sets `required_review_thread_resolution` — a
-PR with any **unresolved review thread** sits queued forever with green
-checks and a clean merge state, which this watcher reads as "still
-waiting" ([pr.md §5](../agent-lcars-dev/references/pr.md) has the
-GraphQL resolution recipe). If a watch stays quiet long after `Verify`
-went green, check the PR's review threads before suspecting the watcher.
+The watcher checks paginated review-thread state after required checks are
+green. It keeps each attention reason as one whitespace-free token so agent
+consumers can parse verdicts even when GitHub check names contain spaces.
 
 (Same script as the sprinkles repo's `github-ci-monitor` skill — keep
 behavioral changes mirrored.)
