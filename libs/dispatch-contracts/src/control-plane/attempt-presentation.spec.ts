@@ -63,6 +63,13 @@ describe('AttemptPresentationPlanV1', () => {
           commandId: 'cancel-1',
           decision: 'cancel-unlaunched',
         },
+        presentation: {
+          kind: 'attempt-finalized',
+          terminalState: 'cancelled',
+          execution: 'not_started',
+          result: 'none',
+          evidenceValidation: 'not-applicable',
+        },
       }).success,
     ).toBe(true);
     expect(
@@ -72,6 +79,46 @@ describe('AttemptPresentationPlanV1', () => {
           kind: 'lifecycle-decision',
           commandId: 'cancel-1',
           terminalFactId: 'wrong-proof-kind',
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptPresentationPlanSchema.safeParse({
+        ...plan,
+        terminal: {
+          kind: 'lifecycle-decision',
+          commandId: 'reject-1',
+          decision: 'launch-rejected',
+        },
+        presentation: {
+          kind: 'attempt-finalized',
+          terminalState: 'cancelled',
+          execution: 'not_started',
+          result: 'none',
+          evidenceValidation: 'not-applicable',
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptPresentationPlanSchema.safeParse({
+        ...plan,
+        terminal: {
+          kind: 'lifecycle-decision',
+          commandId: 'cancel-1',
+          decision: 'cancel-unlaunched',
+        },
+        presentation: {
+          kind: 'attempt-finalized',
+          terminalState: 'failed',
+          execution: 'not_started',
+          result: 'startup-failure',
+          evidenceValidation: 'not-applicable',
+          failure: {
+            owningSystem: 'controller',
+            phase: 'launch',
+            reason: 'launch_rejected',
+            retryDisposition: 'manual',
+          },
         },
       }).success,
     ).toBe(false);

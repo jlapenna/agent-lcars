@@ -92,6 +92,32 @@ export const attemptPresentationPlanSchema = z
         message: 'Deliverable reference must match the result kind',
       });
     }
+    if (value.terminal.kind === 'lifecycle-decision') {
+      const decisionMatches =
+        value.terminal.decision === 'launch-rejected'
+          ? presentation.terminalState === 'failed' &&
+            presentation.execution === 'not_started' &&
+            ['none', 'startup-failure'].includes(presentation.result) &&
+            presentation.evidenceValidation === 'not-applicable'
+          : value.terminal.decision === 'cancel-unlaunched'
+            ? ['cancelled', 'superseded'].includes(
+                presentation.terminalState,
+              ) &&
+              presentation.execution === 'not_started' &&
+              presentation.result === 'none' &&
+              presentation.evidenceValidation === 'not-applicable'
+            : presentation.terminalState === 'lost' &&
+              ['lost', 'timed_out'].includes(presentation.execution) &&
+              presentation.result === 'none' &&
+              presentation.evidenceValidation === 'not-applicable';
+      if (!decisionMatches) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['terminal'],
+          message: 'Lifecycle decision contradicts the presentation outcome',
+        });
+      }
+    }
     if (presentation.terminalState === 'succeeded') {
       if (
         presentation.execution !== 'exited' ||
