@@ -1,6 +1,7 @@
 export * from './attempt-finalization-composition';
 export * from './attempt-reducer';
 export * from './authority-storage';
+export * from './cancellation-effect-composition';
 export * from './cancellation-effects';
 export * from './credential-grant-composition';
 export * from './credential-grant-http';
