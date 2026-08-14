@@ -149,7 +149,9 @@ export type TaskIntentEffect =
       kind: 'park-projection';
       effectKey: string;
       task: CanonicalTaskIdentity;
+      reason: 'policy-rejected' | 'operator-parked';
       intentId?: string;
+      intentRevision?: number;
       activation: ActivationProvenance;
     };
 
@@ -718,7 +720,9 @@ export function reduceTaskIntent(
         kind: 'park-projection',
         effectKey: `${input.envelope.factId}:park-projection`,
         task: clone(state.task),
+        reason: 'policy-rejected',
         intentId: parked.intentId,
+        intentRevision: parked.revision,
         activation: clone(provenance),
       });
     } else {
@@ -895,7 +899,10 @@ export function reduceTaskIntent(
         kind: 'park-projection',
         effectKey: `${input.envelope.factId}:park-projection`,
         task: clone(state.task),
-        ...(changed === undefined ? {} : { intentId: changed.intentId }),
+        reason: 'operator-parked',
+        ...(changed === undefined
+          ? {}
+          : { intentId: changed.intentId, intentRevision: changed.revision }),
         activation: clone(provenance),
       });
       resolution = {

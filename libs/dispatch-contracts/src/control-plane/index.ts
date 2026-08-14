@@ -92,3 +92,5 @@ export {
 export { utcDateTimeSchema } from './primitives';
 export type { ProjectionIntent, ProjectionStatusV1 } from './projection';
 export { projectionIntentSchema, projectionStatusV1Schema } from './projection';
+export type { TaskPresentationPlan } from './task-projection';
+export { taskPresentationPlanSchema } from './task-projection';
