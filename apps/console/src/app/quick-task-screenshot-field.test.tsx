@@ -35,6 +35,10 @@ describe('QuickTaskScreenshotField', () => {
       'accept',
       'image/png,image/jpeg,image/webp',
     );
+    expect(screen.getByLabelText('Screenshot (optional)')).toHaveAttribute(
+      'tabindex',
+      '-1',
+    );
   });
 
   it('accepts a chosen file and cleans up its preview URL when removed', () => {
