@@ -1461,6 +1461,28 @@ describe('createQuickTask', () => {
     expect(deleteRef).not.toHaveBeenCalled();
   });
 
+  it('rejects a distinct concurrent evidence lifecycle instead of sharing an unvalidated upload', async () => {
+    let resolveCreate: (() => void) | undefined;
+    const createIssue = vi.fn(
+      () =>
+        new Promise<{ data: { number: number } }>((resolve) => {
+          resolveCreate = () => resolve({ data: { number: 99 } });
+        }),
+    );
+    mockOctokit({ createIssue });
+    const first = evidenceLifecycle();
+    const second = evidenceLifecycle();
+
+    const firstCall = createQuickTask(request, first.lifecycle);
+    await expect(createQuickTask(request, second.lifecycle)).rejects.toThrow(
+      'Quick Task evidence is already in flight',
+    );
+    await vi.waitFor(() => expect(resolveCreate).toBeTypeOf('function'));
+    resolveCreate();
+    await firstCall;
+    expect(second.prepare).not.toHaveBeenCalled();
+  });
+
   it('returns the original issue when the same request is retried', async () => {
     let persistedBody = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {

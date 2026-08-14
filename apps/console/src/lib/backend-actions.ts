@@ -1240,7 +1240,11 @@ async function createQuickTaskOnce(
 
 const inFlightQuickTasks = new Map<
   string,
-  { digest: string; promise: Promise<QuickTaskReceipt> }
+  {
+    digest: string;
+    evidenceLifecycle?: QuickTaskEvidenceLifecycle;
+    promise: Promise<QuickTaskReceipt>;
+  }
 >();
 
 export function createQuickTask(
@@ -1260,11 +1264,28 @@ export function createQuickTask(
         ),
       );
     }
+    // Evidence bytes are intentionally not in the broker-visible issue
+    // digest. A second HTTP request cannot prove it carries the same bytes as
+    // an already-preparing upload, so never return that request the first
+    // request's success. The multipart route may share this exact lifecycle
+    // object for an in-process retry; every distinct request must wait and
+    // reconcile through its own evidence binding instead.
+    if (
+      (evidenceLifecycle || pending.evidenceLifecycle) &&
+      evidenceLifecycle !== pending.evidenceLifecycle
+    ) {
+      return Promise.reject(
+        new ActionError(
+          'Quick Task evidence is already in flight; retry to reconcile it',
+          409,
+        ),
+      );
+    }
     return pending.promise;
   }
 
   const promise = createQuickTaskOnce(request, digest, evidenceLifecycle);
-  inFlightQuickTasks.set(key, { digest, promise });
+  inFlightQuickTasks.set(key, { digest, evidenceLifecycle, promise });
   const cleanup = () => {
     if (inFlightQuickTasks.get(key)?.promise === promise) {
       inFlightQuickTasks.delete(key);
