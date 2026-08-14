@@ -15,6 +15,7 @@ import type {
 import {
   attemptSpecDigest,
   attemptTransitionDigest,
+  deriveFinalizedOutcome,
   reduceAttempt,
 } from './attempt-reducer';
 
@@ -727,6 +728,99 @@ describe('Attempt reducer', () => {
     );
     expect(finalized.state.outcome).toEqual(outcome);
   });
+
+  it('lets immutable terminal truth dominate validated claims', async () => {
+    const observed = await resultObserved('failure');
+    const claim = await observation('failure-claim', {
+      kind: 'agent-result-claim',
+      claim: {
+        kind: 'pull-request',
+        number: 12,
+        localAttemptMarker: 'g1:intent-1',
+      },
+    });
+    const claimed = applied(
+      reduceAttempt(observed, transition(observed, claim)),
+    ).state;
+    const validating = applied(
+      reduceAttempt(
+        claimed,
+        transition(
+          claimed,
+          { kind: 'start-validation', eventId: 'failure-start', at: deadline },
+          deadline,
+        ),
+      ),
+    ).state;
+    const validated = applied(
+      reduceAttempt(
+        validating,
+        transition(
+          validating,
+          {
+            kind: 'validate-claim',
+            eventId: 'failure-validation',
+            claimFactId: 'failure-claim',
+            validation: {
+              status: 'validated',
+              validationFactId: 'failure-validation',
+              validatedAt: validationTime,
+            },
+          },
+          validationTime,
+        ),
+      ),
+    ).state;
+
+    expect(
+      deriveFinalizedOutcome(validated, 'failure-finalize', finalTime),
+    ).toMatchObject({
+      terminalState: 'failed',
+      execution: 'exited',
+      result: 'none',
+      evidence: { kind: 'no-deliverable', terminalFactId: 'terminal-1' },
+      evidenceValidation: { status: 'not-applicable' },
+    });
+  });
+
+  it.each([
+    ['failure', 'failed', 'exited'],
+    ['timed_out', 'failed', 'timed_out'],
+    ['skipped', 'failed', 'not_started'],
+    ['cancelled', 'cancelled', 'cancelled'],
+  ] as const)(
+    'derives one legal %s terminal outcome without local cancellation provenance',
+    async (conclusion, terminalState, execution) => {
+      const observed = await resultObserved(conclusion);
+      const validating = applied(
+        reduceAttempt(
+          observed,
+          transition(
+            observed,
+            {
+              kind: 'start-validation',
+              eventId: `start-${conclusion}`,
+              at: deadline,
+            },
+            deadline,
+          ),
+        ),
+      ).state;
+      const eventId = `finalize-${conclusion}`;
+      const outcome = deriveFinalizedOutcome(validating, eventId, finalTime);
+      expect(outcome).toMatchObject({ terminalState, execution });
+      expect(
+        reduceAttempt(
+          validating,
+          transition(
+            validating,
+            { kind: 'finalize', eventId, outcome },
+            finalTime,
+          ),
+        ).status,
+      ).toBe('applied');
+    },
+  );
 
   it('finalizes multiple valid claims as ambiguity without inventing a reference', async () => {
     let state = await resultObserved();

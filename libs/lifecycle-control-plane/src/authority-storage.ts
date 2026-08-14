@@ -9,6 +9,7 @@ import type {
   ProjectionStatusV1,
   RunBinding,
 } from '@agent-lcars/dispatch-contracts';
+import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
   credentialGrantIssuanceSchema,
   hasValidRuntimeObservationPayloadDigest,
@@ -20,10 +21,19 @@ import {
 
 import type { AttemptState } from './attempt-reducer';
 import {
+  type AttemptEvent,
   attemptSpecDigest,
   attemptTransitionDigest,
+  deriveFinalizedOutcome,
   reduceAttempt,
 } from './attempt-reducer';
+import {
+  attemptHasCommand,
+  finalizationCommandId,
+  isVerifiedFinalizationTransition,
+  validationForVerdict,
+  type VerifiedFinalizationTransition,
+} from './finalization-capability';
 import {
   isVerifiedMintResolution,
   type VerifiedMintResolution,
@@ -114,6 +124,17 @@ export interface MintReservation {
   grant: CredentialGrantIssuance;
 }
 
+export interface ValidationWorkRecord {
+  tenantId: string;
+  attemptId: string;
+  terminalFactId: string;
+  claimFactId: string;
+  claim: AgentResultClaimV1;
+  state: 'pending' | 'resolving' | 'complete';
+  claimedFence?: number;
+  validationFactId?: string;
+}
+
 /**
  * Server-only durability boundary for the lifecycle authority. Implementations
  * must make each method atomic. No method performs a provider side effect.
@@ -160,6 +181,22 @@ export interface LifecycleAuthorityStorage {
     lease: TaskAuthorityLease;
     expectedRevision: number;
     next: AttemptState;
+  }): Promise<WriteResult>;
+  /** Capability-checked atomic reducer transition, replay indexes and work. */
+  applyFinalizationTransition(input: {
+    lease: TaskAuthorityLease;
+    transition: VerifiedFinalizationTransition;
+  }): Promise<WriteResult>;
+  listValidationWork(input: {
+    tenantId: string;
+    state: ValidationWorkRecord['state'];
+  }): Promise<ValidationWorkRecord[]>;
+  claimValidationWork(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    attemptId: string;
+    terminalFactId: string;
+    claimFactId: string;
   }): Promise<WriteResult>;
 
   readLaunch(input: {
@@ -335,6 +372,21 @@ function observationKeys(identity: {
   };
 }
 
+function validationWorkKey(
+  tenantId: string,
+  attemptId: string,
+  terminalFactId: string,
+  claimFactId: string,
+): string {
+  return tupleKey(
+    tenantId,
+    attemptId,
+    'validation-work',
+    terminalFactId,
+    claimFactId,
+  );
+}
+
 function mintKeys(
   identity: MintIdentity,
   credentialProfileId: string,
@@ -414,6 +466,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly mintCounts = new Map<string, number>();
   private readonly mintLimits = new Map<string, number>();
   private readonly projections = new Map<string, ProjectionRecord>();
+  private readonly validationWork = new Map<string, ValidationWorkRecord>();
   private readonly activations = new Map<string, ActivationRecord>();
 
   constructor(private readonly clock: AuthorityClock = systemClock) {}
@@ -726,6 +779,467 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     next: AttemptState;
   }): Promise<WriteResult> {
     return this.writeAttemptTransaction(input);
+  }
+
+  async applyFinalizationTransition(input: {
+    lease: TaskAuthorityLease;
+    transition: VerifiedFinalizationTransition;
+  }): Promise<WriteResult> {
+    if (!isVerifiedFinalizationTransition(input.transition)) {
+      throw new AuthorityConflict(
+        'Finalization transition capability was not minted by the coordinator',
+      );
+    }
+    const transition = input.transition;
+    const current = this.attempts.get(transition.attemptId);
+    if (
+      current === undefined ||
+      transition.tenantId !== current.spec.tenant.tenantId
+    ) {
+      throw new AuthorityConflict('Attempt is unknown');
+    }
+    this.assertLease(input.lease, current.spec.task, this.now());
+
+    let event: AttemptEvent;
+    if (transition.kind === 'observation') {
+      const { observation } = transition;
+      const envelope = observation.envelope;
+      if (
+        envelope.attemptId !== transition.attemptId ||
+        envelope.tenant.tenantId !== transition.tenantId ||
+        !same(envelope.tenant, current.spec.tenant) ||
+        !same(envelope.task, current.spec.task)
+      ) {
+        throw new AuthorityConflict(
+          'Finalization observation scope is invalid',
+        );
+      }
+      event = {
+        kind: 'observation',
+        envelope,
+        ...('finalizationDeadline' in observation
+          ? { finalizationDeadline: observation.finalizationDeadline }
+          : {}),
+      };
+    } else if (transition.kind === 'start-validation') {
+      const terminalFactId = current.finalization?.terminalFactId;
+      if (terminalFactId === undefined) {
+        throw new AuthorityConflict('Finalization window is absent');
+      }
+      event = {
+        kind: 'start-validation',
+        eventId: finalizationCommandId(
+          'start-validation',
+          transition.attemptId,
+          terminalFactId,
+        ),
+        at: transition.at,
+      };
+      if (attemptHasCommand(current, event.eventId)) {
+        this.assertCommandReplay(current, event);
+        this.assertValidationWorkForState(current);
+        return 'replay';
+      }
+    } else if (transition.kind === 'validate-claim') {
+      const finalization = current.finalization;
+      const evidence = finalization?.evidence.find(
+        (candidate) => candidate.factId === transition.claimFactId,
+      );
+      if (finalization === undefined || evidence === undefined) {
+        throw new AuthorityConflict('Validation claim is unknown');
+      }
+      const expectedValidationFactId = finalizationCommandId(
+        'validate-claim',
+        transition.attemptId,
+        finalization.terminalFactId,
+        transition.claimFactId,
+      );
+      if (transition.validationFactId !== expectedValidationFactId) {
+        throw new AuthorityConflict('Validation fact identity is invalid');
+      }
+      const validation = validationForVerdict({
+        verdict: transition.verdict,
+        validationFactId: transition.validationFactId,
+        validatedAt: transition.at,
+      });
+      event = {
+        kind: 'validate-claim',
+        eventId: transition.validationFactId,
+        claimFactId: transition.claimFactId,
+        validation,
+      };
+      if (evidence.validation !== undefined) {
+        if (!same(evidence.validation, validation)) {
+          throw new AuthorityConflict('Validation verdict conflicts');
+        }
+        this.assertCommandReplay(current, event);
+        this.assertCompletedValidationWork(
+          current,
+          transition.claimFactId,
+          transition.validationFactId,
+        );
+        return 'replay';
+      }
+      const work = this.validationWork.get(
+        validationWorkKey(
+          transition.tenantId,
+          transition.attemptId,
+          finalization.terminalFactId,
+          transition.claimFactId,
+        ),
+      );
+      if (
+        work?.state !== 'resolving' ||
+        work.claimedFence !== input.lease.fence
+      ) {
+        throw new AuthorityConflict(
+          'Validation work must be claimed by the current fence',
+        );
+      }
+    } else {
+      const terminalFactId = current.finalization?.terminalFactId;
+      const expectedEventId =
+        terminalFactId === undefined
+          ? undefined
+          : finalizationCommandId(
+              'finalize',
+              transition.attemptId,
+              terminalFactId,
+            );
+      if (
+        expectedEventId === undefined ||
+        transition.eventId !== expectedEventId
+      ) {
+        throw new AuthorityConflict('Finalization event identity is invalid');
+      }
+      let outcome;
+      try {
+        outcome = deriveFinalizedOutcome(
+          current,
+          transition.eventId,
+          transition.at,
+        );
+      } catch {
+        throw new AuthorityConflict('Final outcome cannot be derived');
+      }
+      event = { kind: 'finalize', eventId: transition.eventId, outcome };
+      if (
+        current.outcome !== undefined &&
+        attemptHasCommand(current, expectedEventId)
+      ) {
+        if (!same(current.outcome, outcome)) {
+          throw new AuthorityConflict('Final outcome replay conflicts');
+        }
+        this.assertCommandReplay(current, event);
+        return 'replay';
+      }
+    }
+
+    const reduced = reduceAttempt(current, {
+      kind: 'transition',
+      expectedRevision: current.revision,
+      transitionedAt: transition.at,
+      canonicalDigest: attemptTransitionDigest(event),
+      event,
+    });
+    if (reduced.status === 'conflict') {
+      throw new AuthorityConflict(
+        'Finalizer transition was not reducer-derived',
+      );
+    }
+    const observation =
+      event.kind === 'observation' ? event.envelope : undefined;
+    const observationIdentity =
+      observation === undefined
+        ? undefined
+        : this.finalizationObservationIdentity(observation, event);
+    if (observationIdentity !== undefined) {
+      this.preflightObservation(observationIdentity, current);
+    }
+    if (reduced.status === 'replay') {
+      if (observationIdentity !== undefined)
+        this.assertObservationReplay(observationIdentity);
+      return 'replay';
+    }
+    const work = reduced.effects.filter(
+      (effect) => effect.kind === 'validate-evidence',
+    );
+    for (const effect of work) {
+      const key = validationWorkKey(
+        current.spec.tenant.tenantId,
+        effect.attemptId,
+        effect.terminalFactId,
+        effect.claimFactId,
+      );
+      const existing = this.validationWork.get(key);
+      const record: ValidationWorkRecord = {
+        tenantId: current.spec.tenant.tenantId,
+        attemptId: effect.attemptId,
+        terminalFactId: effect.terminalFactId,
+        claimFactId: effect.claimFactId,
+        claim: clone(effect.claim),
+        state: 'pending' as const,
+      };
+      if (existing !== undefined && !same(existing, record))
+        throw new AuthorityConflict('Validation work conflicts');
+    }
+    this.writeAttemptTransaction({
+      lease: input.lease,
+      expectedRevision: current.revision,
+      next: reduced.state,
+    });
+    if (observationIdentity !== undefined)
+      this.persistObservation(observationIdentity);
+    for (const effect of work) {
+      const key = validationWorkKey(
+        current.spec.tenant.tenantId,
+        effect.attemptId,
+        effect.terminalFactId,
+        effect.claimFactId,
+      );
+      this.validationWork.set(key, {
+        tenantId: current.spec.tenant.tenantId,
+        attemptId: effect.attemptId,
+        terminalFactId: effect.terminalFactId,
+        claimFactId: effect.claimFactId,
+        claim: clone(effect.claim),
+        state: 'pending',
+      });
+    }
+    if (transition.kind === 'validate-claim') {
+      const terminalFactId = current.finalization?.terminalFactId;
+      if (terminalFactId === undefined) {
+        throw new AuthorityConflict('Validation terminal fact is absent');
+      }
+      const key = validationWorkKey(
+        transition.tenantId,
+        transition.attemptId,
+        terminalFactId,
+        transition.claimFactId,
+      );
+      const prior = this.validationWork.get(key);
+      if (prior === undefined) {
+        throw new AuthorityConflict('Validation work is absent');
+      }
+      this.validationWork.set(key, {
+        ...prior,
+        state: 'complete',
+        validationFactId: transition.validationFactId,
+      });
+    }
+    return 'applied';
+  }
+
+  private finalizationObservationIdentity(
+    envelope: import('@agent-lcars/dispatch-contracts').RuntimeObservationEnvelope,
+    event: AttemptEvent,
+  ): ObservationIdentity {
+    if (
+      !runtimeObservationEnvelopeSchema.safeParse(envelope).success ||
+      !SHA256.test(envelope.payloadSha256) ||
+      !SHA256.test(attemptTransitionDigest(event))
+    ) {
+      throw new AuthorityConflict('Finalization observation is invalid');
+    }
+    return {
+      tenantId: envelope.tenant.tenantId,
+      repositoryId: envelope.tenant.repositoryId,
+      attemptId: envelope.attemptId,
+      sourceIdentity: `${envelope.source.kind}:${envelope.source.sourceId}`,
+      factId: envelope.factId,
+      requestId: envelope.requestId,
+      canonicalDigest: attemptTransitionDigest(event),
+      payloadSha256: envelope.payloadSha256,
+    };
+  }
+
+  private observationRecords(identity: ObservationIdentity): {
+    factKey: string;
+    requestKey: string;
+    fact: StoredIdempotency;
+    request: StoredIdempotency;
+  } {
+    const { factKey, requestKey } = observationKeys(identity);
+    return {
+      factKey,
+      requestKey,
+      fact: {
+        counterpartId: identity.requestId,
+        canonicalDigest: identity.canonicalDigest,
+        payloadSha256: identity.payloadSha256,
+        resourceId: identity.attemptId,
+      },
+      request: {
+        counterpartId: identity.factId,
+        canonicalDigest: identity.canonicalDigest,
+        payloadSha256: identity.payloadSha256,
+        resourceId: identity.attemptId,
+      },
+    };
+  }
+
+  private preflightObservation(
+    identity: ObservationIdentity,
+    attempt: AttemptState,
+  ): void {
+    if (
+      attempt.spec.tenant.tenantId !== identity.tenantId ||
+      attempt.spec.tenant.repositoryId !== identity.repositoryId
+    ) {
+      throw new AuthorityConflict('Finalization observation scope is invalid');
+    }
+    const { factKey, requestKey, fact, request } =
+      this.observationRecords(identity);
+    const priorFact = this.factKeys.get(factKey);
+    const priorRequest = this.requestKeys.get(requestKey);
+    if ((priorFact === undefined) !== (priorRequest === undefined)) {
+      throw new AuthorityConflict(
+        'Observation idempotency records are incomplete',
+      );
+    }
+    if (
+      priorFact !== undefined &&
+      (!same(priorFact, fact) || !same(priorRequest, request))
+    ) {
+      throw new AuthorityConflict(
+        'Fact/request identity was reused differently',
+      );
+    }
+  }
+
+  private assertObservationReplay(identity: ObservationIdentity): void {
+    const { factKey, requestKey, fact, request } =
+      this.observationRecords(identity);
+    if (
+      !same(this.factKeys.get(factKey), fact) ||
+      !same(this.requestKeys.get(requestKey), request)
+    ) {
+      throw new AuthorityConflict(
+        'Observation replay was not durably recorded',
+      );
+    }
+  }
+
+  private persistObservation(identity: ObservationIdentity): void {
+    const { factKey, requestKey, fact, request } =
+      this.observationRecords(identity);
+    this.factKeys.set(factKey, fact);
+    this.requestKeys.set(requestKey, request);
+  }
+
+  private assertValidationWorkForState(state: AttemptState): void {
+    const finalization = state.finalization;
+    if (finalization === undefined) {
+      throw new AuthorityConflict('Finalization window is absent');
+    }
+    for (const evidence of finalization.evidence) {
+      const work = this.validationWork.get(
+        validationWorkKey(
+          state.spec.tenant.tenantId,
+          state.spec.attemptId,
+          finalization.terminalFactId,
+          evidence.factId,
+        ),
+      );
+      if (work === undefined) {
+        throw new AuthorityConflict('Validation work replay is incomplete');
+      }
+    }
+  }
+
+  private assertCommandReplay(state: AttemptState, event: AttemptEvent): void {
+    if (event.kind === 'observation') {
+      throw new AuthorityConflict('Observation replay uses fact identity');
+    }
+    const receipt = state.commands.find(
+      (command) => command.eventId === event.eventId,
+    );
+    if (
+      receipt === undefined ||
+      receipt.canonicalDigest !== attemptTransitionDigest(event)
+    ) {
+      throw new AuthorityConflict('Finalization command replay conflicts');
+    }
+  }
+
+  private assertCompletedValidationWork(
+    state: AttemptState,
+    claimFactId: string,
+    validationFactId: string,
+  ): void {
+    const terminalFactId = state.finalization?.terminalFactId;
+    const work =
+      terminalFactId === undefined
+        ? undefined
+        : this.validationWork.get(
+            validationWorkKey(
+              state.spec.tenant.tenantId,
+              state.spec.attemptId,
+              terminalFactId,
+              claimFactId,
+            ),
+          );
+    if (
+      work?.state !== 'complete' ||
+      work.validationFactId !== validationFactId
+    ) {
+      throw new AuthorityConflict('Validation work replay is incomplete');
+    }
+  }
+
+  async listValidationWork(input: {
+    tenantId: string;
+    state: ValidationWorkRecord['state'];
+  }): Promise<ValidationWorkRecord[]> {
+    return [...this.validationWork.values()]
+      .filter(
+        (work) =>
+          work.tenantId === input.tenantId && work.state === input.state,
+      )
+      .map(clone);
+  }
+
+  async claimValidationWork(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    attemptId: string;
+    terminalFactId: string;
+    claimFactId: string;
+  }): Promise<WriteResult> {
+    const attempt = this.attempts.get(input.attemptId);
+    if (
+      attempt === undefined ||
+      attempt.spec.tenant.tenantId !== input.tenantId
+    ) {
+      throw new AuthorityConflict('Validation attempt is unknown');
+    }
+    this.assertLease(input.lease, attempt.spec.task, this.now());
+    const key = validationWorkKey(
+      input.tenantId,
+      input.attemptId,
+      input.terminalFactId,
+      input.claimFactId,
+    );
+    const work = this.validationWork.get(key);
+    if (work === undefined) {
+      throw new AuthorityConflict('Validation work is unknown');
+    }
+    if (work.state === 'complete') return 'replay';
+    if (work.state === 'resolving') {
+      if (work.claimedFence === input.lease.fence) return 'replay';
+      if (
+        work.claimedFence !== undefined &&
+        work.claimedFence > input.lease.fence
+      ) {
+        throw new AuthorityConflict('Validation work has a newer claimant');
+      }
+    }
+    this.validationWork.set(key, {
+      ...work,
+      state: 'resolving',
+      claimedFence: input.lease.fence,
+    });
+    return 'applied';
   }
 
   private writeAttemptTransaction(input: {

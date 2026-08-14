@@ -382,10 +382,14 @@ export const attemptOutcomeSchema = z
           'result',
         ]);
       }
-      if (value.evidence.kind !== 'lifecycle-decision') {
-        error('Cancelled or superseded outcomes require lifecycle proof', [
-          'evidence',
-        ]);
+      if (
+        value.evidence.kind !== 'lifecycle-decision' &&
+        value.evidence.kind !== 'terminal-run'
+      ) {
+        error(
+          'Cancelled or superseded outcomes require lifecycle or terminal proof',
+          ['evidence'],
+        );
       }
       if (value.failure !== undefined) {
         error('Cancelled or superseded outcomes do not carry failures', [

@@ -466,6 +466,144 @@ function outcomeMatchesTerminalConclusion(
   }
 }
 
+function finalizationFailure(
+  reason: 'deliverable_absent' | 'deliverable_unattributable',
+) {
+  return {
+    owningSystem: 'finalizer' as const,
+    phase: 'validation' as const,
+    reason,
+    retryDisposition: 'manual' as const,
+    evidenceRef: 'finalization-window',
+  };
+}
+
+/**
+ * The terminal run attestation is immutable. A claim can establish a
+ * successful deliverable only for a successful terminal conclusion; it can
+ * never turn a failed, timed-out, skipped, or cancelled run into success.
+ */
+export function deriveFinalizedOutcome(
+  state: AttemptState,
+  eventId: string,
+  finalizedAt: string,
+): AttemptOutcome {
+  const finalization = state.finalization;
+  if (finalization === undefined) {
+    throw new Error('Finalization window is absent');
+  }
+
+  if (finalization.terminalConclusion === 'cancelled') {
+    const cancellation = state.cancellation;
+    if (cancellation === undefined && state.binding === undefined) {
+      throw new Error('Cancelled terminal fact lacks exact run binding');
+    }
+    return {
+      schema: 'agent-lcars.attempt-outcome/v1',
+      version: 1,
+      attemptId: state.spec.attemptId,
+      terminalState:
+        cancellation?.supersededByIntentId === undefined
+          ? 'cancelled'
+          : 'superseded',
+      execution: 'cancelled',
+      result: 'none',
+      evidence:
+        cancellation === undefined
+          ? {
+              kind: 'terminal-run',
+              terminalFactId: finalization.terminalFactId,
+              binding: clone(state.binding as RunBinding),
+            }
+          : {
+              kind: 'lifecycle-decision',
+              decisionFactId: cancellation.eventId,
+            },
+      evidenceValidation: { status: 'not-applicable' },
+      finalizedAt,
+    };
+  }
+
+  const validated = finalization.evidence.filter(
+    (
+      evidence,
+    ): evidence is ClaimedEvidence & {
+      validation: Extract<EvidenceValidation, { status: 'validated' }>;
+    } => evidence.validation?.status === 'validated',
+  );
+  if (finalization.terminalConclusion === 'success' && validated.length === 1) {
+    const evidence = validated[0];
+    const claim = evidence.claim;
+    const result =
+      claim.kind === 'pull-request'
+        ? 'pull-request'
+        : claim.kind === 'comment'
+          ? 'comment'
+          : claim.kind === 'review'
+            ? 'review'
+            : 'no-op';
+    return {
+      schema: 'agent-lcars.attempt-outcome/v1',
+      version: 1,
+      attemptId: state.spec.attemptId,
+      terminalState: 'succeeded',
+      execution: 'exited',
+      result,
+      ...(claim.kind === 'pull-request'
+        ? { reference: { kind: 'pull-request' as const, number: claim.number } }
+        : {}),
+      evidence: {
+        kind: 'validated-claim',
+        validationFactId: evidence.validation.validationFactId,
+        claim: clone(claim),
+      },
+      evidenceValidation: clone(evidence.validation),
+      finalizedAt,
+    };
+  }
+
+  const terminal = finalization.terminalConclusion;
+  const validation: ContractEvidenceValidation =
+    terminal === 'success'
+      ? validated.length > 1
+        ? {
+            status: 'ambiguous',
+            validationFactId: eventId,
+            candidateCount: validated.length,
+            validatedAt: finalizedAt,
+          }
+        : {
+            status: 'absent',
+            validationFactId: eventId,
+            validatedAt: finalizedAt,
+          }
+      : { status: 'not-applicable' };
+  return {
+    schema: 'agent-lcars.attempt-outcome/v1',
+    version: 1,
+    attemptId: state.spec.attemptId,
+    terminalState: 'failed',
+    execution:
+      terminal === 'skipped'
+        ? 'not_started'
+        : terminal === 'timed_out'
+          ? 'timed_out'
+          : 'exited',
+    result: 'none',
+    failure: finalizationFailure(
+      terminal === 'success' && validated.length > 1
+        ? 'deliverable_unattributable'
+        : 'deliverable_absent',
+    ),
+    evidence: {
+      kind: 'no-deliverable',
+      terminalFactId: finalization.terminalFactId,
+    },
+    evidenceValidation: validation,
+    finalizedAt,
+  };
+}
+
 function validFinalizedOutcome(
   outcome: AttemptOutcome,
   state: AttemptState,
@@ -485,6 +623,34 @@ function validFinalizedOutcome(
   const validated = finalization.evidence.filter(
     (evidence) => evidence.validation?.status === 'validated',
   );
+  if (finalization.terminalConclusion === 'cancelled') {
+    return (
+      outcome.terminalState ===
+        (state.cancellation?.supersededByIntentId === undefined
+          ? 'cancelled'
+          : 'superseded') &&
+      outcome.execution === 'cancelled' &&
+      outcome.result === 'none' &&
+      (state.cancellation === undefined
+        ? outcome.evidence.kind === 'terminal-run' &&
+          outcome.evidence.terminalFactId === finalization.terminalFactId &&
+          state.binding !== undefined &&
+          sameBinding(outcome.evidence.binding, state.binding)
+        : outcome.evidence.kind === 'lifecycle-decision' &&
+          outcome.evidence.decisionFactId === state.cancellation.eventId) &&
+      outcome.evidenceValidation.status === 'not-applicable'
+    );
+  }
+  if (finalization.terminalConclusion !== 'success') {
+    return (
+      outcome.terminalState === 'failed' &&
+      outcome.result === 'none' &&
+      outcome.reference === undefined &&
+      outcome.evidence.kind === 'no-deliverable' &&
+      outcome.evidence.terminalFactId === finalization.terminalFactId &&
+      outcome.evidenceValidation.status === 'not-applicable'
+    );
+  }
   if (validated.length === 1) {
     const evidence = validated[0];
     const validation = evidence.validation;
@@ -507,19 +673,6 @@ function validFinalizedOutcome(
       outcome.evidenceValidation.status === 'ambiguous' &&
       outcome.evidenceValidation.validationFactId === eventId &&
       outcome.evidenceValidation.candidateCount === validated.length
-    );
-  }
-
-  if (
-    ['cancelled', 'superseded'].includes(outcome.terminalState) &&
-    state.cancellation !== undefined
-  ) {
-    return (
-      outcome.evidence.kind === 'lifecycle-decision' &&
-      outcome.evidence.decisionFactId === state.cancellation.eventId &&
-      outcome.evidenceValidation.status === 'not-applicable' &&
-      (outcome.terminalState === 'superseded') ===
-        (state.cancellation.supersededByIntentId !== undefined)
     );
   }
 
