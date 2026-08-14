@@ -113,6 +113,7 @@ jobs:
             --region us-central1 \
             --backend "${{ vars.APPHOSTING_BACKEND_ID }}" \
             --root-dir apps/console \
+            --runtime nodejs24 \
             --commit "${{ github.event.workflow_run.head_sha || github.sha }}"
 
       - name: Deploy with managed App Hosting build
@@ -138,6 +139,11 @@ jobs:
 
       - name: Resolve exact deployed App Hosting build
         id: release
+        # The prebuilt tool already proves the exact artifact is live. Keep
+        # release annotation lookup best-effort, matching the managed path's
+        # historical behavior: an API hiccup after a successful rollout must
+        # not turn that rollout red.
+        continue-on-error: true
         env:
           ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
           PREBUILT_BUILD: ${{ steps.prebuilt.outputs.build_name }}
@@ -184,6 +190,7 @@ jobs:
           echo "version=${BUILD##*/}" >> "$GITHUB_OUTPUT"
 
       - name: Annotate the deployed PR with its App Hosting version
+        if: steps.release.outputs.version != ''
         # A release annotation is useful metadata, but an API or permission
         # hiccup after a successful production rollout must not mark that
         # rollout as failed.

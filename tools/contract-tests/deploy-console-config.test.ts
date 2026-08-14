@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
 import {
+  assertBackendContract,
   buildIdFor,
   createArchive,
   loadAppHostingConfig,
@@ -119,6 +120,30 @@ describe('console deployment workflow', () => {
       runCommand: 'node server.js',
     });
     expect(body.labels['commit-sha']).toBe(commit);
+  });
+
+  it('fails closed on an unexpected App Hosting runtime contract', () => {
+    expect(() =>
+      assertBackendContract(
+        {
+          runtime: { value: 'nodejs24' },
+          automaticBaseImageUpdatesDisabled: false,
+        },
+        'nodejs24',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertBackendContract({ runtime: { value: 'nodejs22' } }, 'nodejs24'),
+    ).toThrow(/nodejs22.*nodejs24/u);
+    expect(() =>
+      assertBackendContract(
+        {
+          runtime: { value: 'nodejs24' },
+          automaticBaseImageUpdatesDisabled: true,
+        },
+        'nodejs24',
+      ),
+    ).toThrow(/automatic base image updates disabled/u);
   });
 
   it('materializes pnpm hardlinks as ordinary archive files', async () => {

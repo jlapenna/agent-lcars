@@ -243,6 +243,20 @@ export function makeBuildBody(config, artifact, rootDir, commitSha) {
   };
 }
 
+export function assertBackendContract(backend, expectedRuntime) {
+  const actualRuntime = backend?.runtime?.value;
+  if (actualRuntime !== expectedRuntime) {
+    throw new Error(
+      `App Hosting backend runtime is ${actualRuntime ?? '<missing>'}, expected ${expectedRuntime}`,
+    );
+  }
+  if (backend.automaticBaseImageUpdatesDisabled === true) {
+    throw new Error(
+      'App Hosting backend has automatic base image updates disabled',
+    );
+  }
+}
+
 function resourceId(name) {
   return name?.split('/').at(-1);
 }
@@ -386,21 +400,26 @@ export async function createArchive(repoRoot, includes, buildId) {
     path.join(os.tmpdir(), 'agent-lcars-apphosting-'),
   );
   const archivePath = path.join(tempDirectory, `${buildId}.tar.gz`);
-  await run('tar', [
-    '--create',
-    '--gzip',
-    '--hard-dereference',
-    '--file',
-    archivePath,
-    '--directory',
-    repoRoot,
-    '--',
-    ...includes,
-  ]);
-  if ((await stat(archivePath)).size === 0) {
-    throw new Error('Prebuilt App Hosting archive is empty');
+  try {
+    await run('tar', [
+      '--create',
+      '--gzip',
+      '--hard-dereference',
+      '--file',
+      archivePath,
+      '--directory',
+      repoRoot,
+      '--',
+      ...includes,
+    ]);
+    if ((await stat(archivePath)).size === 0) {
+      throw new Error('Prebuilt App Hosting archive is empty');
+    }
+    return { archivePath, tempDirectory };
+  } catch (error) {
+    await rm(tempDirectory, { recursive: true, force: true });
+    throw error;
   }
-  return { archivePath, tempDirectory };
 }
 
 async function projectNumber(projectId) {
@@ -506,6 +525,7 @@ function parseArgs(argv) {
     'region',
     'backend',
     'root-dir',
+    'runtime',
     'commit',
   ]) {
     if (!args[required]) {
@@ -540,7 +560,8 @@ async function main() {
   const buildName = `${parent}/builds/${buildId}`;
   const rolloutName = `${parent}/rollouts/${buildId}`;
 
-  await apiRequest('GET', parent);
+  const backend = await apiRequest('GET', parent);
+  assertBackendContract(backend, args.runtime);
   console.log(`[Deploy] Building prebuilt artifact: ${config.buildCommand}`);
   await run('bash', ['-lc', config.buildCommand], {
     cwd: repoRoot,
