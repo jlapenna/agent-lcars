@@ -1205,6 +1205,19 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     this.assertLeaseByKey(lease, now);
   }
 
+  private assertCurrentClaimLease(
+    lease: TaskAuthorityLease,
+    scope: TaskAuthorityScope,
+  ): void {
+    if (lease.taskKey !== canonicalTaskKey(scope)) {
+      throw new AuthorityConflict('Lease belongs to another task');
+    }
+    const current = this.leases.get(lease.taskKey);
+    if (current === undefined || !same(current, lease)) {
+      throw new AuthorityConflict('Claim lease has been replaced or released');
+    }
+  }
+
   async registerActivation(record: ActivationRecord): Promise<WriteResult> {
     const key = activationKey({
       ...record.tenant,
@@ -2006,7 +2019,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
             attemptId: work.attemptId,
             operationId: work.operationId,
           };
-    this.assertLease(input.lease, target.task, this.now());
+    // A known response may arrive after expiry, but only while the original
+    // claim remains the latest durable fence. Any takeover replaces the lease
+    // and makes the sealed result stale.
+    this.assertCurrentClaimLease(input.lease, target.task);
     const presentation = this.presentationPlanForTarget(target);
     if (presentation === undefined) {
       throw new AuthorityConflict('Presentation plan is unknown');

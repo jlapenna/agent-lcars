@@ -220,6 +220,7 @@ export function runPresentationDeliveryStorageContract(
         { receive: async () => ({ receiptSha256: SHA_A }) },
         clock,
       ).receive(claim.work);
+      clock.set(T1);
       expect(
         await storage.resolveVerifiedPresentationDelivery({
           lease,
@@ -250,7 +251,6 @@ export function runPresentationDeliveryStorageContract(
       ).rejects.toThrow(AuthorityConflict);
 
       const beforeStaleReplay = await storage.readPresentationDelivery(target);
-      clock.set(T1);
       const laterLease = await storage.acquireTaskLease({
         scope: task,
         ownerId: 'later-resolution-owner',
