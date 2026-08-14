@@ -4,6 +4,7 @@ import {
   Anchor,
   Box,
   Button,
+  FileInput,
   Group,
   Modal,
   Paper,
@@ -52,6 +53,16 @@ const emptySourceContext = (): QuickTaskSourceContext => ({
   capturedAt: '',
 });
 
+interface QuickTaskSubmission {
+  requestId: string;
+  evidenceId?: string;
+  repository: { owner: string; name: string };
+  pipeline: AgentPipeline;
+  description: string;
+  source: QuickTaskSourceContext;
+  file?: File;
+}
+
 /**
  * Files a new `intake:quick-task`-labeled issue from a free-text description and
  * hands it to the selected agent pipeline. The intake and pipeline labels
@@ -88,7 +99,7 @@ export function QuickTaskButton({
   const [hydrated, setHydrated] = useState(false);
   const [opened, setOpened] = useState(false);
   const [description, setDescription] = useState('');
-  const [screenshot, setScreenshot] = useState('');
+  const [screenshot, setScreenshot] = useState<File | null>(null);
   const [source, setSource] =
     useState<QuickTaskSourceContext>(emptySourceContext);
   const [repoIndex, setRepoIndex] = useState(() => {
@@ -145,7 +156,7 @@ export function QuickTaskButton({
 
   const issueBody = selectedRepo
     ? composeQuickTaskIssueBody(
-        { description, screenshot, source },
+        { description, screenshot: '', source },
         {
           owner: selectedRepo.owner,
           name: selectedRepo.name,
@@ -176,10 +187,10 @@ export function QuickTaskButton({
     setOpened(true);
   };
 
-  const submissionNotificationId = (request: QuickTaskRequest) =>
+  const submissionNotificationId = (request: QuickTaskSubmission) =>
     `quick-task:${request.requestId}`;
 
-  const pendingNotification = (request: QuickTaskRequest) => ({
+  const pendingNotification = (request: QuickTaskSubmission) => ({
     id: submissionNotificationId(request),
     message: 'Filing and dispatching quick task…',
     loading: true,
@@ -188,7 +199,7 @@ export function QuickTaskButton({
   });
 
   function showSubmissionFailure(
-    request: QuickTaskRequest,
+    request: QuickTaskSubmission,
     message: string,
   ): void {
     notifications.update({
@@ -215,13 +226,49 @@ export function QuickTaskButton({
     });
   }
 
-  async function settleSubmission(request: QuickTaskRequest): Promise<void> {
+  async function settleSubmission(request: QuickTaskSubmission): Promise<void> {
     try {
-      const result = await createQuickTask(request);
-      if (!result.ok) {
-        showSubmissionFailure(request, result.message);
-        return;
-      }
+      const result = request.file
+        ? await (async () => {
+            const evidenceFile = request.file;
+            if (!evidenceFile)
+              throw new Error('Quick Task evidence is unavailable');
+            const form = new FormData();
+            form.set('intent', JSON.stringify(request));
+            form.set('evidence', evidenceFile);
+            const response = await fetch('/api/quick-task/v1', {
+              method: 'POST',
+              body: form,
+            });
+            const payload = (await response.json()) as {
+              task?: {
+                repository: { owner: string; name: string };
+                issueNumber: number;
+              };
+              url?: string;
+              error?: string;
+            };
+            if (!response.ok || !payload.task || !payload.url)
+              throw new Error(payload.error ?? 'Quick Task submission failed');
+            return { ok: true as const, ...payload };
+          })()
+        : await createQuickTask({
+            requestId: request.requestId,
+            repository: request.repository,
+            pipeline: request.pipeline,
+            description: composeQuickTaskIssueBody(
+              {
+                description: request.description,
+                screenshot: '',
+                source: request.source,
+              },
+              request.repository,
+            ),
+          } satisfies QuickTaskRequest);
+      if (!result.ok || !result.task || !result.url)
+        throw new Error(
+          result.ok ? 'Quick Task submission failed' : result.message,
+        );
       notifications.update({
         id: submissionNotificationId(request),
         message: (
@@ -249,7 +296,7 @@ export function QuickTaskButton({
     }
   }
 
-  function launchSubmission(request: QuickTaskRequest): void {
+  function launchSubmission(request: QuickTaskSubmission): void {
     startTransition(async () => {
       await settleSubmission(request);
     });
@@ -285,17 +332,29 @@ export function QuickTaskButton({
       return;
     }
     submitInFlightRef.current = true;
-    const request: QuickTaskRequest = {
+    let evidenceId: string | undefined;
+    if (screenshot) {
+      try {
+        evidenceId = createRandomId();
+      } catch {
+        showErrorToast('This browser cannot generate a Quick Task evidence ID');
+        return;
+      }
+    }
+    const request: QuickTaskSubmission = {
       requestId,
+      evidenceId,
       repository: {
         owner: selectedRepo.owner,
         name: selectedRepo.name,
       },
       pipeline: effectivePipeline,
-      description: issueBody,
+      description,
+      source,
+      ...(screenshot ? { file: screenshot } : {}),
     };
     setDescription('');
-    setScreenshot('');
+    setScreenshot(null);
     setSource(emptySourceContext());
     close();
     notifications.show(pendingNotification(request));
@@ -383,15 +442,13 @@ export function QuickTaskButton({
               {lowInformationGuidance} You can still file this task as-is.
             </Text>
           )}
-          <Textarea
+          <FileInput
             label="Screenshot"
-            description="A link to a screenshot, video, or other evidence"
+            description="Optional PNG, JPEG, or WebP image (10 MB maximum)"
             value={screenshot}
-            onChange={(event) => {
-              setScreenshot(event.currentTarget.value);
-            }}
-            autosize
-            minRows={1}
+            onChange={setScreenshot}
+            accept="image/png,image/jpeg,image/webp"
+            clearable
           />
 
           <Button
