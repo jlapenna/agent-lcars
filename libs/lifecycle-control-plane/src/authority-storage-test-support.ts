@@ -8,8 +8,22 @@ import type {
   AdmissionResult,
   LifecycleAuthorityStorage,
   TaskAuthorityLease,
+  WriteResult,
 } from './authority-storage';
 import type { TaskIntentState } from './task-intent-reducer';
+import { hydrateTaskForTest } from './task-test-hydration';
+
+/** Test-only compatibility setup; production cannot call a structural writer. */
+export async function seedTaskForTest(
+  storage: LifecycleAuthorityStorage,
+  input: {
+    lease: TaskAuthorityLease;
+    expectedRevision: number;
+    next: TaskIntentState;
+  },
+): Promise<WriteResult> {
+  return hydrateTaskForTest(storage, input);
+}
 
 /**
  * Test-only fixture support for already-approved Attempt specs. This module is
@@ -97,7 +111,7 @@ export async function admitAcceptedSpecForTest(input: {
   if ((await input.storage.readTask(input.spec.task)) === undefined) {
     const desired = desiredTaskStateForTest(input.spec);
     for (let revision = 1; revision <= desired.revision; revision += 1) {
-      await input.storage.writeTask({
+      await seedTaskForTest(input.storage, {
         lease,
         expectedRevision: revision - 1,
         next: { ...structuredClone(desired), revision },

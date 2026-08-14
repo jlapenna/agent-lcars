@@ -48,7 +48,22 @@ import {
   isVerifiedRunBindingIngress,
   type VerifiedRunBindingIngress,
 } from './run-binding-ingress';
-import { admitTaskAttempt, type TaskIntentState } from './task-intent-reducer';
+import {
+  isVerifiedAdmissionEffectCompletion,
+  isVerifiedTaskEffectObsoletion,
+  isVerifiedTaskEffectTransition,
+  type VerifiedAdmissionEffectCompletion,
+  type VerifiedTaskEffectObsoletion,
+  type VerifiedTaskEffectTransition,
+} from './task-effect-capability';
+import {
+  admitTaskAttempt,
+  reduceTaskIntent,
+  type TaskIntentEffect,
+  taskIntentInputDigest,
+  type TaskIntentState,
+} from './task-intent-reducer';
+import { registerTaskTestHydrator } from './task-test-hydration';
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ATTEMPT_ID = /^[A-Za-z0-9_-]{22,64}$/u;
@@ -149,6 +164,32 @@ export interface ValidationWorkRecord {
   validationFactId?: string;
 }
 
+export interface TaskEffectRecord {
+  tenantId: string;
+  task: TaskAuthorityScope;
+  sourceFactId: string;
+  effectKey: string;
+  canonicalDigest: string;
+  activation: ActivationProvenance;
+  payload: TaskIntentEffect;
+  deliveryState: 'pending' | 'working' | 'complete' | 'obsolete';
+  claimedFence?: number;
+  claimToken?: string;
+  completion?: { kind: 'admission-receipt'; attemptId: string };
+  obsoleteReason?: 'superseded' | 'activation-no-longer-authoritative';
+}
+
+export interface TaskEffectTransitionResult {
+  status: 'applied' | 'replay';
+  task: TaskIntentState;
+  effects: TaskEffectRecord[];
+}
+
+export interface TaskEffectClaim {
+  status: 'claimed' | 'replay' | 'terminal';
+  effect: TaskEffectRecord;
+}
+
 /**
  * Server-only durability boundary for the lifecycle authority. Implementations
  * must make each method atomic. No method performs a provider side effect.
@@ -172,11 +213,37 @@ export interface LifecycleAuthorityStorage {
     boundary: number;
   }): Promise<boolean>;
 
-  writeTask(input: {
+  /** Capability-checked Task/Intent reducer transition and exact work receipt. */
+  applyTaskEffectTransition(input: {
     lease: TaskAuthorityLease;
-    expectedRevision: number;
-    next: TaskIntentState;
-  }): Promise<WriteResult>;
+    transition: VerifiedTaskEffectTransition;
+  }): Promise<TaskEffectTransitionResult>;
+  listTaskEffects(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    state?: TaskEffectRecord['deliveryState'];
+  }): Promise<TaskEffectRecord[]>;
+  readTaskEffect(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    sourceFactId: string;
+    effectKey: string;
+  }): Promise<TaskEffectRecord | undefined>;
+  claimTaskEffect(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+    sourceFactId: string;
+    effectKey: string;
+  }): Promise<TaskEffectClaim>;
+  completeTaskEffect(input: {
+    lease: TaskAuthorityLease;
+    completion: VerifiedAdmissionEffectCompletion;
+  }): Promise<TaskEffectRecord>;
+  obsoleteTaskEffect(input: {
+    lease: TaskAuthorityLease;
+    obsoletion: VerifiedTaskEffectObsoletion;
+  }): Promise<TaskEffectRecord>;
 
   /** Runtime-checked coordinator capability; no structural admission writer. */
   admitVerifiedAttemptAndRecordLaunch(input: {
@@ -422,6 +489,36 @@ function validationWorkKey(
   );
 }
 
+function taskEffectKey(input: {
+  tenantId: string;
+  task: TaskAuthorityScope;
+  sourceFactId: string;
+  effectKey: string;
+}): string {
+  return tupleKey(
+    input.tenantId,
+    input.task.repositoryId,
+    input.task.issueNumber,
+    'task-effect',
+    input.sourceFactId,
+    input.effectKey,
+  );
+}
+
+function taskTransitionReceiptKey(input: {
+  tenantId: string;
+  task: TaskAuthorityScope;
+  sourceFactId: string;
+}): string {
+  return tupleKey(
+    input.tenantId,
+    input.task.repositoryId,
+    input.task.issueNumber,
+    'task-effect-receipt',
+    input.sourceFactId,
+  );
+}
+
 function mintKeys(
   identity: MintIdentity,
   credentialProfileId: string,
@@ -475,6 +572,12 @@ interface StoredMint {
   grant: CredentialGrantIssuance;
 }
 
+interface StoredTaskEffectReceipt {
+  canonicalDigest: string;
+  task: TaskIntentState;
+  effects: Array<{ key: string; canonicalDigest: string }>;
+}
+
 const systemClock: AuthorityClock = {
   now: () => new Date().toISOString(),
 };
@@ -507,11 +610,20 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly projections = new Map<string, ProjectionRecord>();
   private readonly validationWork = new Map<string, ValidationWorkRecord>();
   private readonly activations = new Map<string, ActivationRecord>();
+  private readonly taskEffects = new Map<string, TaskEffectRecord>();
+  private readonly taskEffectReceipts = new Map<
+    string,
+    StoredTaskEffectReceipt
+  >();
 
   constructor(
     private readonly clock: AuthorityClock = systemClock,
     private readonly attemptIds: AttemptIdFactory = systemAttemptIds,
-  ) {}
+  ) {
+    registerTaskTestHydrator(this, (input) =>
+      this.#bootstrapTaskForTest(input),
+    );
+  }
 
   private now(): string {
     const value = this.clock.now();
@@ -663,7 +775,29 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     );
   }
 
-  async writeTask(input: {
+  private hasRegisteredActivationSync(input: {
+    task: TaskAuthorityScope;
+    activation: ActivationRecord;
+    boundary: number;
+  }): boolean {
+    // A Task's activation provenance is immutable. Only an exact durable
+    // receipt may recover work after a class cutover; activation rebind/history
+    // is intentionally not implemented by this storage boundary.
+    const registered = this.activations.get(
+      activationKey({
+        ...input.task,
+        taskClassId: input.activation.taskClassId,
+      }),
+    );
+    return (
+      registered !== undefined &&
+      same(registered, input.activation) &&
+      input.boundary >= registered.effectiveBoundary &&
+      registered.mode !== 'retired'
+    );
+  }
+
+  async #bootstrapTaskForTest(input: {
     lease: TaskAuthorityLease;
     expectedRevision: number;
     next: TaskIntentState;
@@ -678,10 +812,352 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       input.next.tenant.tenantId !== input.next.task.tenantId ||
       input.next.tenant.repositoryId !== input.next.task.repositoryId
     ) {
-      throw new AuthorityConflict('Task CAS or canonical identity failed');
+      throw new AuthorityConflict('Task test bootstrap CAS failed');
     }
     this.tasks.set(key, clone(input.next));
     return 'applied';
+  }
+
+  async applyTaskEffectTransition(input: {
+    lease: TaskAuthorityLease;
+    transition: VerifiedTaskEffectTransition;
+  }): Promise<TaskEffectTransitionResult> {
+    if (!isVerifiedTaskEffectTransition(input.transition)) {
+      throw new AuthorityConflict(
+        'Task transition capability was not minted by authenticated ingress',
+      );
+    }
+    const command = input.transition.input;
+    const scope: TaskAuthorityScope = {
+      tenantId: command.envelope.tenant.tenantId,
+      repositoryId: command.envelope.tenant.repositoryId,
+      issueNumber: command.envelope.task.issueNumber,
+    };
+    const now = this.now();
+    this.assertLease(input.lease, scope, now);
+    const digest = taskIntentInputDigest({
+      envelope: command.envelope,
+      policyDecision: command.policyDecision,
+      activation: command.activation,
+      ...(command.candidate === undefined
+        ? {}
+        : { candidate: command.candidate }),
+    });
+    if (digest !== command.canonicalDigest) {
+      throw new AuthorityConflict(
+        'Task transition canonical digest is invalid',
+      );
+    }
+    const receiptKey = taskTransitionReceiptKey({
+      tenantId: scope.tenantId,
+      task: scope,
+      sourceFactId: command.envelope.factId,
+    });
+    const prior = this.taskEffectReceipts.get(receiptKey);
+    if (prior !== undefined) {
+      if (prior.canonicalDigest !== command.canonicalDigest) {
+        throw new AuthorityConflict(
+          'Task fact was replayed with a different command',
+        );
+      }
+      const effects = prior.effects.map(({ key }) => this.taskEffects.get(key));
+      if (
+        effects.some(
+          (effect, index) =>
+            effect === undefined ||
+            effect.canonicalDigest !== prior.effects[index]?.canonicalDigest,
+        )
+      ) {
+        throw new AuthorityConflict('Task effect receipt is inconsistent');
+      }
+      return {
+        status: 'replay',
+        task: clone(prior.task),
+        effects: effects.map((effect) => clone(effect as TaskEffectRecord)),
+      };
+    }
+    if (
+      !this.hasRegisteredActivationSync({
+        task: scope,
+        activation: command.activation,
+        boundary: command.expectedRevision + 1,
+      })
+    ) {
+      throw new AuthorityConflict(
+        'Task transition activation is not registered and current',
+      );
+    }
+    const current = this.tasks.get(canonicalTaskKey(scope));
+    const reduced = reduceTaskIntent(current, command);
+    if (reduced.status === 'conflict') {
+      throw new AuthorityConflict(`Task reducer conflict: ${reduced.message}`);
+    }
+    if (reduced.status === 'replay') {
+      throw new AuthorityConflict('Task replay has no durable effect receipt');
+    }
+    if (
+      reduced.effects.length > 0 &&
+      !this.mayWriteEffectsSync({
+        scope: { ...scope, taskClassId: reduced.state.activation.taskClassId },
+        activation: reduced.state.activation,
+        boundary: reduced.state.revision,
+      })
+    ) {
+      throw new AuthorityConflict(
+        'Task effects require the pinned active authority',
+      );
+    }
+    const records = reduced.effects.map((effect): TaskEffectRecord => {
+      const key = taskEffectKey({
+        tenantId: scope.tenantId,
+        task: scope,
+        sourceFactId: command.envelope.factId,
+        effectKey: effect.effectKey,
+      });
+      if (this.taskEffects.has(key)) {
+        throw new AuthorityConflict('Task effect identity was reused');
+      }
+      return {
+        tenantId: scope.tenantId,
+        task: clone(scope),
+        sourceFactId: command.envelope.factId,
+        effectKey: effect.effectKey,
+        canonicalDigest: createHash('sha256')
+          .update(
+            canonicalJson({ effect, commandDigest: command.canonicalDigest }),
+          )
+          .digest('hex'),
+        activation: clone(effect.activation),
+        payload: clone(effect),
+        deliveryState: 'pending',
+      };
+    });
+    // All checks above occur before the contiguous in-memory transaction body.
+    this.tasks.set(canonicalTaskKey(scope), clone(reduced.state));
+    for (const record of records) {
+      this.taskEffects.set(taskEffectKey(record), clone(record));
+    }
+    this.taskEffectReceipts.set(receiptKey, {
+      canonicalDigest: command.canonicalDigest,
+      task: clone(reduced.state),
+      effects: records.map((record) => ({
+        key: taskEffectKey(record),
+        canonicalDigest: record.canonicalDigest,
+      })),
+    });
+    return {
+      status: 'applied',
+      task: clone(reduced.state),
+      effects: clone(records),
+    };
+  }
+
+  async listTaskEffects(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    state?: TaskEffectRecord['deliveryState'];
+  }): Promise<TaskEffectRecord[]> {
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Task effect tenant scope is invalid');
+    }
+    return [...this.taskEffects.values()]
+      .filter(
+        (effect) =>
+          effect.tenantId === input.tenantId &&
+          same(effect.task, input.task) &&
+          (input.state === undefined || effect.deliveryState === input.state),
+      )
+      .map(clone);
+  }
+
+  async readTaskEffect(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    sourceFactId: string;
+    effectKey: string;
+  }): Promise<TaskEffectRecord | undefined> {
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Task effect tenant scope is invalid');
+    }
+    const value = this.taskEffects.get(taskEffectKey(input));
+    return value === undefined ? undefined : clone(value);
+  }
+
+  async claimTaskEffect(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+    sourceFactId: string;
+    effectKey: string;
+  }): Promise<TaskEffectClaim> {
+    this.assertLease(input.lease, input.task, this.now());
+    const key = taskEffectKey(input);
+    const current = this.taskEffects.get(key);
+    if (current === undefined || current.tenantId !== input.tenantId) {
+      throw new AuthorityConflict('Task effect is unknown');
+    }
+    if (
+      current.deliveryState === 'complete' ||
+      current.deliveryState === 'obsolete'
+    ) {
+      return { status: 'terminal', effect: clone(current) };
+    }
+    if (
+      current.deliveryState === 'working' &&
+      current.claimedFence === input.lease.fence
+    ) {
+      return { status: 'replay', effect: clone(current) };
+    }
+    if (
+      current.deliveryState === 'working' &&
+      current.claimedFence !== input.lease.fence &&
+      (current.claimedFence ?? -1) > input.lease.fence
+    ) {
+      throw new AuthorityConflict('Task effect is claimed by a later fence');
+    }
+    const next: TaskEffectRecord = {
+      ...current,
+      deliveryState: 'working',
+      claimedFence: input.lease.fence,
+      claimToken: randomUUID(),
+    };
+    this.taskEffects.set(key, clone(next));
+    return { status: 'claimed', effect: clone(next) };
+  }
+
+  async completeTaskEffect(input: {
+    lease: TaskAuthorityLease;
+    completion: VerifiedAdmissionEffectCompletion;
+  }): Promise<TaskEffectRecord> {
+    if (!isVerifiedAdmissionEffectCompletion(input.completion)) {
+      throw new AuthorityConflict(
+        'Task effect completion is not a trusted admission receipt',
+      );
+    }
+    const completion = input.completion;
+    this.assertLease(input.lease, completion.task, this.now());
+    const key = taskEffectKey(completion);
+    const current = this.taskEffects.get(key);
+    if (current === undefined || current.tenantId !== completion.tenantId) {
+      throw new AuthorityConflict('Task effect is unknown');
+    }
+    if (
+      current.deliveryState === 'complete' &&
+      current.claimedFence === input.lease.fence &&
+      current.claimToken === completion.claimToken &&
+      current.completion?.attemptId === completion.attemptId
+    ) {
+      return clone(current);
+    }
+    if (
+      current.payload.kind !== 'admit-attempt' ||
+      current.deliveryState !== 'working' ||
+      current.claimedFence !== input.lease.fence ||
+      current.claimToken !== completion.claimToken
+    ) {
+      throw new AuthorityConflict(
+        'Task effect completion requires its current claim fence',
+      );
+    }
+    const acceptance = this.acceptances.get(
+      tupleKey(
+        completion.task.tenantId,
+        completion.task.repositoryId,
+        completion.task.issueNumber,
+        current.payload.intentId,
+        current.payload.intentRevision,
+      ),
+    );
+    const attempt = this.attempts.get(completion.attemptId);
+    const launch = this.launches.get(completion.attemptId);
+    if (
+      acceptance?.attemptId !== completion.attemptId ||
+      attempt === undefined ||
+      launch === undefined ||
+      !same(attempt.spec.task, completion.task) ||
+      attempt.spec.local.intentId !== current.payload.intentId ||
+      attempt.spec.local.generation !== current.payload.intentRevision
+    ) {
+      throw new AuthorityConflict(
+        'Admission receipt does not complete this effect',
+      );
+    }
+    const next: TaskEffectRecord = {
+      ...current,
+      deliveryState: 'complete',
+      completion: {
+        kind: 'admission-receipt',
+        attemptId: completion.attemptId,
+      },
+    };
+    this.taskEffects.set(key, clone(next));
+    return clone(next);
+  }
+
+  async obsoleteTaskEffect(input: {
+    lease: TaskAuthorityLease;
+    obsoletion: VerifiedTaskEffectObsoletion;
+  }): Promise<TaskEffectRecord> {
+    if (!isVerifiedTaskEffectObsoletion(input.obsoletion)) {
+      throw new AuthorityConflict('Task effect obsoletion is not trusted');
+    }
+    const obsoletion = input.obsoletion;
+    this.assertLease(input.lease, obsoletion.task, this.now());
+    const key = taskEffectKey(obsoletion);
+    const current = this.taskEffects.get(key);
+    if (current === undefined || current.tenantId !== obsoletion.tenantId) {
+      throw new AuthorityConflict('Task effect is unknown');
+    }
+    if (
+      current.deliveryState === 'obsolete' &&
+      current.claimedFence === input.lease.fence &&
+      current.claimToken === obsoletion.claimToken &&
+      current.obsoleteReason === obsoletion.reason
+    ) {
+      return clone(current);
+    }
+    if (
+      current.deliveryState !== 'working' ||
+      current.claimedFence !== input.lease.fence ||
+      current.claimToken !== obsoletion.claimToken
+    ) {
+      throw new AuthorityConflict(
+        'Task effect obsoletion requires its current claim fence',
+      );
+    }
+    const task = this.tasks.get(canonicalTaskKey(obsoletion.task));
+    if (
+      current.payload.kind !== 'admit-attempt' ||
+      task === undefined ||
+      (obsoletion.reason === 'superseded' &&
+        ((task.attempt.kind === 'unlaunched' &&
+          task.attempt.intentId === current.payload.intentId &&
+          task.desired?.intentId === current.payload.intentId &&
+          task.desired.intentRevision === current.payload.intentRevision) ||
+          (task.attempt.kind === 'launched' &&
+            task.attempt.intentId === current.payload.intentId &&
+            task.attempt.intentRevision === current.payload.intentRevision))) ||
+      (obsoletion.reason === 'activation-no-longer-authoritative' &&
+        this.mayWriteEffectsSync({
+          scope: {
+            ...obsoletion.task,
+            taskClassId: current.activation.taskClassId,
+          },
+          activation: current.activation,
+          boundary: task.revision,
+        }))
+    ) {
+      throw new AuthorityConflict(
+        'Task effect is not eligible for this obsoletion',
+      );
+    }
+    const next: TaskEffectRecord = {
+      ...current,
+      deliveryState: 'obsolete',
+      obsoleteReason: obsoletion.reason,
+    };
+    this.taskEffects.set(key, clone(next));
+    return clone(next);
   }
 
   async admitVerifiedAttemptAndRecordLaunch(input: {
