@@ -20,9 +20,14 @@
 # Output: one timestamped line per state change, then a final verdict:
 #   VERDICT ALL-MERGED                          (exit 0)
 #   VERDICT ATTENTION <pr> <reason>             (exit 2)
+# <reason> is always a single whitespace-free token, so a consumer may parse
+# the verdict positionally. Check names are sanitized to preserve that (see
+# sanitize_names below) — real names here contain spaces ("E2E Tests").
 # Reasons: dirty (needs rebase), behind (strict up-to-date policy — update
 # the branch), checks-failed:<names> (failed OR cancelled required checks),
-# closed-unmerged.
+# unresolved-threads:<n> (green checks but dangling review threads — under
+# required_review_thread_resolution auto-merge waits forever; resolve them
+# per the repo's pr.md GraphQL recipe), closed-unmerged.
 #
 # Requires: gh (authenticated). Poll cost is two `gh` calls per PR per
 # interval; the default 120s keeps that well inside rate limits.
@@ -55,6 +60,47 @@ fi
 
 declare -A merged=()
 declare -A last=()
+
+# Owner/name for the GraphQL review-thread query, derived once from cwd.
+repo_owner=""
+repo_name=""
+if repo_json=$(gh repo view --json owner,name --jq '.owner.login + "/" + .name' 2>/dev/null); then
+  repo_owner="${repo_json%%/*}"
+  repo_name="${repo_json##*/}"
+fi
+
+unresolved_thread_count() {
+  # Prints the PR's unresolved review-thread count (0 on any error, so a
+  # GraphQL hiccup can never fabricate an attention verdict).
+  [ -n "$repo_owner" ] || { echo 0; return; }
+  gh api graphql --paginate \
+    -F owner="$repo_owner" -F name="$repo_name" -F pr="$1" -f query='
+    query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $pr) {
+          reviewThreads(first: 50, after: $endCursor) {
+            nodes { isResolved }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length' \
+    2>/dev/null | awk '{ sum += $1 } END { print sum + 0 }'
+}
+
+sanitize_names() {
+  # Reads `gh pr checks --json name,bucket` on stdin; prints the failed and
+  # cancelled check names as ONE comma-joined, whitespace-free token.
+  #
+  # GitHub check names are arbitrary strings and routinely contain spaces
+  # ("E2E Tests", "Detect affected E2E projects") — and a workflow can name a
+  # job with a newline. Interpolated raw into the verdict line, a space
+  # silently truncates <reason> for any positional parser, and a newline
+  # forges an entire extra VERDICT line. Collapsing [whitespace + comma] to
+  # `_` keeps names readable while making the delimiter unambiguous.
+  jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel")
+          | .name | gsub("[\\s,]+"; "_")] | join(",")'
+}
 
 log() {
   echo "$(date -u +%H:%M:%S) $*"
@@ -114,13 +160,33 @@ while true; do
     # pass / fail / pending / skipping / cancel). The command exits
     # non-zero while anything is pending or failed; only the output
     # matters here.
-    failed=$(gh pr checks "$pr" --json name,bucket \
-      --jq '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(",")' \
-      2>/dev/null || true)
+    buckets=$(gh pr checks "$pr" --json name,bucket 2>/dev/null || true)
+    # The human-readable log line keeps the original names; the verdict line
+    # gets sanitized ones, because `reason` must stay one token.
+    failed_raw=$(printf '%s' "$buckets" |
+      jq -r '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", ")' 2>/dev/null || true)
+    failed=$(printf '%s' "$buckets" | sanitize_names 2>/dev/null || true)
     if [ -n "$failed" ]; then
-      log "PR #$pr: failed/cancelled checks: $failed"
+      log "PR #$pr: failed/cancelled checks: $failed_raw"
       echo "VERDICT ATTENTION $pr checks-failed:$failed"
       exit 2
+    fi
+
+    # Green checks + BLOCKED + unresolved review threads = the silent
+    # forever-wait required_review_thread_resolution creates: auto-merge
+    # reports no error and no state change, so without this the watch
+    # sleeps for good (this exact combination held three armed PRs on
+    # 2026-08-11). Only fires once nothing is pending, so a review that
+    # lands mid-CI doesn't exit the watch prematurely.
+    pending=$(printf '%s' "$buckets" |
+      jq -r '[.[] | select(.bucket == "pending")] | length' 2>/dev/null || echo 1)
+    if [ "$pending" = "0" ] && [ "$status" = "OPEN:BLOCKED" ]; then
+      threads=$(unresolved_thread_count "$pr")
+      if [ "$threads" -gt 0 ]; then
+        log "PR #$pr: green checks but $threads unresolved review thread(s)"
+        echo "VERDICT ATTENTION $pr unresolved-threads:$threads"
+        exit 2
+      fi
     fi
   done
 
