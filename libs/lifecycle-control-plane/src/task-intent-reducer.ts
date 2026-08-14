@@ -14,13 +14,14 @@ import {
   activationRecordSchema,
   controlPlaneSignalEnvelopeSchema,
   policyDecisionSchema,
+  utcDateTimeSchema,
 } from '@agent-lcars/dispatch-contracts';
 
 const OPAQUE_ID = /^[A-Za-z0-9._:-]{1,200}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 
 function isUtcDateTime(value: string): boolean {
-  return value.endsWith('Z') && Number.isFinite(Date.parse(value));
+  return utcDateTimeSchema.safeParse(value).success;
 }
 
 export interface IntentOrderingKey {
@@ -301,8 +302,19 @@ export function compareIntentOrdering(
   left: IntentOrderingKey,
   right: IntentOrderingKey,
 ): number {
-  const byTime = left.occurredAt.localeCompare(right.occurredAt);
+  const byTime = Date.parse(left.occurredAt) - Date.parse(right.occurredAt);
   return byTime || left.tieBreaker.localeCompare(right.tieBreaker);
+}
+
+function latestSemanticIntent(
+  state: TaskIntentState,
+  semanticKey: string,
+): StoredIntentRevision | undefined {
+  for (let index = state.intents.length - 1; index >= 0; index -= 1) {
+    const intent = state.intents[index];
+    if (intent?.semanticKey === semanticKey) return intent;
+  }
+  return undefined;
 }
 
 function latestIntentRevision(
@@ -552,23 +564,25 @@ export function reduceTaskIntent(
         'An intent ID was reused with different semantic identity',
       );
     }
-    const semanticMatch = state.intents.find(
-      (intent) => intent.semanticKey === candidate.semanticKey,
+    const conflictingSemanticMatch = state.intents.find(
+      (intent) =>
+        intent.semanticKey === candidate.semanticKey &&
+        intent.semanticDigest !== candidate.semanticDigest,
     );
-    if (
-      semanticMatch !== undefined &&
-      semanticMatch.semanticDigest !== candidate.semanticDigest
-    ) {
+    if (conflictingSemanticMatch !== undefined) {
       return conflict(
         current,
         'semantic-conflict',
         'A semantic intent key was reused with a different digest',
       );
     }
-    const latestSemanticMatch =
-      semanticMatch === undefined
-        ? undefined
-        : latestIntentRevision(state, semanticMatch.intentId);
+    const latestSemanticMatch = latestSemanticIntent(
+      state,
+      candidate.semanticKey,
+    );
+    const semanticMatch = state.intents.find(
+      (intent) => intent.semanticKey === candidate.semanticKey,
+    );
     const retriesParkedIntent =
       input.policyDecision.decision === 'accepted' &&
       input.envelope.source.kind === 'operator-command' &&
@@ -577,10 +591,7 @@ export function reduceTaskIntent(
       latestSemanticMatch?.status === 'parked' &&
       candidate.intentId !== latestSemanticMatch.intentId;
     if (semanticMatch !== undefined && !retriesParkedIntent) {
-      const latest = latestIntentRevision(
-        state,
-        semanticMatch.intentId,
-      ) as StoredIntentRevision;
+      const latest = latestSemanticMatch as StoredIntentRevision;
       resolution = {
         kind: 'semantic-duplicate',
         taskRevision: next.revision,

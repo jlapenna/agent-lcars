@@ -11,7 +11,11 @@ import type {
   ReduceTaskIntentResult,
   TaskIntentState,
 } from './task-intent-reducer';
-import { reduceTaskIntent, taskIntentInputDigest } from './task-intent-reducer';
+import {
+  compareIntentOrdering,
+  reduceTaskIntent,
+  taskIntentInputDigest,
+} from './task-intent-reducer';
 
 const shaA = 'a'.repeat(64);
 const shaB = 'b'.repeat(64);
@@ -370,6 +374,36 @@ describe('Task/Intent reducer', () => {
     );
     expect(tiedBSecond.state.desired?.intentId).toBe('b');
     expect(tiedASecond.state.desired?.intentId).toBe('b');
+
+    const wholeSecond = candidate('whole-second', '2026-08-14T12:00:00Z', 'z');
+    const fractionalLater = candidate(
+      'fractional-later',
+      '2026-08-14T12:00:00.1Z',
+      'a',
+    );
+    expect(
+      compareIntentOrdering(
+        fractionalLater.orderingKey,
+        wholeSecond.orderingKey,
+      ),
+    ).toBeGreaterThan(0);
+  });
+
+  it('rejects timestamps outside the strict UTC wire contract', () => {
+    expect(
+      reduceTaskIntent(
+        undefined,
+        input('fact-invalid-time', { transitionedAt: '2026Z' }),
+      ),
+    ).toMatchObject({ status: 'conflict', conflict: 'invalid-input' });
+    expect(
+      reduceTaskIntent(
+        undefined,
+        input('fact-impossible-time', {
+          transitionedAt: '2026-02-30T12:00:00Z',
+        }),
+      ),
+    ).toMatchObject({ status: 'conflict', conflict: 'invalid-input' });
   });
 
   it('supersedes unlaunched work but drains launched work only once', () => {
@@ -513,6 +547,20 @@ describe('Task/Intent reducer', () => {
         (intent) => intent.semanticKey === originalCandidate.semanticKey,
       ),
     ).toHaveLength(3);
+
+    const duplicate = applied(
+      reduceTaskIntent(
+        retried.state,
+        input('fact-retry-duplicate', {
+          expectedRevision: 3,
+          candidate: { ...retryCandidate, intentId: 'ignored-duplicate-id' },
+        }),
+      ),
+    );
+    expect(duplicate.resolution).toMatchObject({
+      kind: 'semantic-duplicate',
+      intentId: 'intent-2',
+    });
   });
 
   it('parks or cancels desired work without terminalizing launched truth', () => {
