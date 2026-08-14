@@ -11,7 +11,7 @@ is: **did my PRs land, and if not, what needs fixing?** An armed PR whose
 nothing pings the session. `watch-prs.sh` closes that gap:
 
 ```bash
-.agents/skills/github-ci-monitor/scripts/watch-prs.sh [--interval <s>] <pr> [<pr>...]
+.agents/skills/github-ci-monitor/scripts/watch-prs.sh [--strict] [--interval <s>] <pr> [<pr>...]
 ```
 
 In an agent session, run it as a **background task** so its exit
@@ -26,7 +26,7 @@ line per state change, and exits at the first event that needs you:
 | ----------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `VERDICT ALL-MERGED`                            | 0    | every watched PR merged — proceed                                                                                             |
 | `VERDICT ATTENTION <pr> dirty`                  | 2    | needs rebase onto main, re-push, still armed                                                                                  |
-| `VERDICT ATTENTION <pr> behind`                 | 2    | strict up-to-date policy: update the branch (`gh pr update-branch` or rebase + push)                                          |
+| `VERDICT ATTENTION <pr> behind`                 | 2    | with `--strict`, update the branch; ignored by default for this repo's non-strict policy                                      |
 | `VERDICT ATTENTION <pr> checks-failed:<names>`  | 2    | failed or cancelled required checks — inspect with `gh run view --log-failed`; rerun flakes with `gh run rerun <id> --failed` |
 | `VERDICT ATTENTION <pr> unresolved-threads:<n>` | 2    | checks are green but review threads remain unresolved — address and resolve them using the GraphQL workflow in `pr.md`        |
 | `VERDICT ATTENTION <pr> closed-unmerged`        | 2    | someone closed it — find out why                                                                                              |

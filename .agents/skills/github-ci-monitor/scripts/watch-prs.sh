@@ -15,7 +15,7 @@
 # nothing pings the session; this exact gap cost hours on #4211/#4230).
 #
 # Usage:
-#   watch-prs.sh [--interval <seconds>] <pr-number> [<pr-number>...]
+#   watch-prs.sh [--strict] [--interval <seconds>] <pr-number> [<pr-number>...]
 #
 # Output: one timestamped line per state change, then a final verdict:
 #   VERDICT ALL-MERGED                          (exit 0)
@@ -23,7 +23,7 @@
 # <reason> is always a single whitespace-free token, so a consumer may parse
 # the verdict positionally. Check names are sanitized to preserve that (see
 # sanitize_names below) — real names here contain spaces ("E2E Tests").
-# Reasons: dirty (needs rebase), behind (strict up-to-date policy — update
+# Reasons: dirty (needs rebase), behind (only with --strict — update
 # the branch), checks-failed:<names> (failed OR cancelled required checks),
 # unresolved-threads:<n> (green checks but dangling review threads — under
 # required_review_thread_resolution auto-merge waits forever; resolve them
@@ -35,12 +35,17 @@
 set -euo pipefail
 
 interval=120
+strict=false
 prs=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --interval)
       interval="$2"
       shift 2
+      ;;
+    --strict)
+      strict=true
+      shift
       ;;
     -*)
       echo "unknown flag: $1" >&2
@@ -54,7 +59,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ ${#prs[@]} -eq 0 ]; then
-  echo "usage: watch-prs.sh [--interval <seconds>] <pr-number> [<pr-number>...]" >&2
+  echo "usage: watch-prs.sh [--strict] [--interval <seconds>] <pr-number> [<pr-number>...]" >&2
   exit 1
 fi
 
@@ -158,11 +163,12 @@ while true; do
         exit 2
         ;;
       *BEHIND*)
-        # Under a strict up-to-date-branch policy, auto-merge waits
-        # indefinitely for someone to update the branch — that someone
-        # is the watching session.
-        echo "VERDICT ATTENTION $pr behind"
-        exit 2
+        # A non-strict ruleset permits this state. Opt into attention only
+        # when the repository actually requires an up-to-date branch.
+        if [ "$strict" = true ]; then
+          echo "VERDICT ATTENTION $pr behind"
+          exit 2
+        fi
         ;;
     esac
 
@@ -171,7 +177,7 @@ while true; do
     # pass / fail / pending / skipping / cancel). The command exits
     # non-zero while anything is pending or failed; only the output
     # matters here.
-    buckets=$(gh pr checks "$pr" --json name,bucket 2>/dev/null || true)
+    buckets=$(gh pr checks "$pr" --required --json name,bucket 2>/dev/null || true)
     # The human-readable log line keeps the original names; the verdict line
     # gets sanitized ones, because `reason` must stay one token.
     failed_raw=$(printf '%s' "$buckets" |
