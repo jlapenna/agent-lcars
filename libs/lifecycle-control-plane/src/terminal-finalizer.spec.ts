@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AttemptState } from './attempt-reducer';
 import { attemptSpecDigest } from './attempt-reducer';
 import {
+  type AttemptPresentationRecord,
   type AuthorityClock,
   AuthorityConflict,
   InMemoryLifecycleAuthorityStorage,
@@ -428,14 +429,53 @@ export function runAttemptFinalizerStorageContract(
           state: 'complete',
         }),
       ).toMatchObject([{ claimFactId: 'fact-claim-1', state: 'complete' }]);
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: spec.attemptId,
+        }),
+      ).toEqual([]);
 
       clock.set(FINAL_TIME);
       expect(
         await finalizer.finalize(lease, tenant.tenantId, spec.attemptId),
       ).toBe('applied');
+      const planned = await storage.listAttemptPresentations({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(planned).toMatchObject([
+        {
+          tenantId: tenant.tenantId,
+          deliveryState: 'pending',
+          plan: {
+            schema: 'agent-lcars.attempt-presentation-plan/v1',
+            version: 1,
+            attemptId: spec.attemptId,
+            terminalFactId: 'fact-terminal-1',
+            activation: spec.activation,
+            presentation: {
+              kind: 'attempt-finalized',
+              terminalState: 'succeeded',
+              execution: 'exited',
+              result: 'pull-request',
+              evidenceValidation: 'validated',
+            },
+          },
+        },
+      ]);
+      expect(JSON.stringify(planned)).not.toMatch(
+        /commentBody|workflowPath|runId|binding|token|evidenceRef/iu,
+      );
       expect(
         await finalizer.finalize(lease, tenant.tenantId, spec.attemptId),
       ).toBe('replay');
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: spec.attemptId,
+        }),
+      ).toEqual(planned);
       await expect(
         storage.applyFinalizationTransition({
           lease,
@@ -464,6 +504,90 @@ export function runAttemptFinalizerStorageContract(
           reference: { kind: 'pull-request', number: 44 },
         },
       });
+    });
+
+    it('atomically plans a failed no-deliverable outcome after a prospective shadow cutover', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await activeFixture(storage);
+      expect(
+        await storage.registerActivation({
+          schema: 'agent-lcars.control-plane-activation/v1',
+          version: 1,
+          tenant,
+          taskClassId: spec.activation.taskClassId,
+          activationId: 'activation-shadow-2',
+          authorityEpoch: 2,
+          effectiveBoundary: 2,
+          mode: 'shadow',
+          effectMode: 'none',
+          recordedAt: '2026-08-16T00:01:00.000Z',
+        }),
+      ).toBe('applied');
+      const verifier = evidenceVerifier();
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        async resolve() {
+          return { status: 'validated' as const };
+        },
+      });
+      const terminal = await new TerminalObservationBoundary(verifier).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-terminal-no-deliverable',
+            factId: 'fact-terminal-no-deliverable',
+          },
+        ),
+      });
+      await finalizer.recordObservation(lease, terminal);
+      clock.set(DEADLINE);
+      await finalizer.beginValidation(lease, tenant.tenantId, spec.attemptId);
+      clock.set(FINAL_TIME);
+      expect(
+        await finalizer.finalize(lease, tenant.tenantId, spec.attemptId),
+      ).toBe('applied');
+
+      const attempt = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      const plans = await storage.listAttemptPresentations({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(attempt).toMatchObject({
+        phase: 'terminal',
+        outcome: {
+          terminalState: 'failed',
+          result: 'none',
+          evidenceValidation: { status: 'absent' },
+        },
+      });
+      expect(plans).toMatchObject([
+        {
+          deliveryState: 'pending',
+          plan: {
+            attemptId: spec.attemptId,
+            activation: spec.activation,
+            presentation: {
+              terminalState: 'failed',
+              result: 'none',
+              evidenceValidation: 'absent',
+              failure: {
+                owningSystem: 'finalizer',
+                phase: 'validation',
+                reason: 'deliverable_absent',
+                retryDisposition: 'manual',
+              },
+            },
+          },
+        },
+      ]);
     });
 
     it('rejects a structural storage command and preserves retryable lookup failure', async () => {
@@ -629,6 +753,69 @@ export function runAttemptFinalizerStorageContract(
     });
   });
 }
+
+describe('in-memory finalization presentation receipt integrity', () => {
+  it.each(['missing', 'changed'] as const)(
+    'rejects exact finalization replay when its live plan is %s',
+    async (corruption) => {
+      const clock = new ManualClock();
+      const storage = new InMemoryLifecycleAuthorityStorage(clock, {
+        mint: () => 'A'.repeat(22),
+      });
+      const { lease, spec } = await activeFixture(storage);
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        async resolve() {
+          return { status: 'validated' as const };
+        },
+      });
+      const terminal = await new TerminalObservationBoundary(
+        evidenceVerifier(),
+      ).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: `request-terminal-corrupt-${corruption}`,
+            factId: `fact-terminal-corrupt-${corruption}`,
+          },
+        ),
+      });
+      await finalizer.recordObservation(lease, terminal);
+      clock.set(DEADLINE);
+      await finalizer.beginValidation(lease, tenant.tenantId, spec.attemptId);
+      clock.set(FINAL_TIME);
+      await finalizer.finalize(lease, tenant.tenantId, spec.attemptId);
+
+      // Deliberate adapter corruption proves replay checks the durable record,
+      // not merely the existence/count of a presentation operation.
+      const internals = storage as unknown as {
+        attemptPresentations: Map<string, AttemptPresentationRecord>;
+      };
+      if (corruption === 'missing') {
+        internals.attemptPresentations.clear();
+      } else {
+        const entry = [...internals.attemptPresentations.entries()][0];
+        if (entry === undefined) throw new Error('Expected presentation plan');
+        entry[1].plan.outcomeDigest = 'b'.repeat(64);
+      }
+      await expect(
+        finalizer.finalize(lease, tenant.tenantId, spec.attemptId),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+      expect(
+        (
+          await storage.readAttempt({
+            tenantId: tenant.tenantId,
+            attemptId: spec.attemptId,
+          })
+        )?.phase,
+      ).toBe('terminal');
+    },
+  );
+});
 
 runAttemptFinalizerStorageContract(
   (clock) =>

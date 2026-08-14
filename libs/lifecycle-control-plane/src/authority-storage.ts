@@ -4,6 +4,7 @@ import type {
   AcceptedAttemptSpec,
   ActivationProvenance,
   ActivationRecord,
+  AttemptPresentationPlan,
   CredentialGrantIssuance,
   RunBinding,
   TaskPresentationPlan,
@@ -11,6 +12,7 @@ import type {
 import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
   acceptedAttemptSpecSchema,
+  attemptPresentationPlanSchema,
   credentialGrantIssuanceSchema,
   formatAttemptId,
   hasValidRuntimeObservationPayloadDigest,
@@ -199,6 +201,12 @@ export interface TaskPresentationRecord {
   obsoleteReason?: 'newer-presentation' | 'task-resumed' | 'task-cancelled';
 }
 
+export interface AttemptPresentationRecord {
+  tenantId: string;
+  plan: AttemptPresentationPlan;
+  deliveryState: 'pending';
+}
+
 export interface TaskEffectTransitionResult {
   status: 'applied' | 'replay';
   task: TaskIntentState;
@@ -259,6 +267,16 @@ export interface LifecycleAuthorityStorage {
     task: TaskAuthorityScope;
     state?: TaskPresentationRecord['deliveryState'];
   }): Promise<TaskPresentationRecord[]>;
+  readAttemptPresentation(input: {
+    tenantId: string;
+    attemptId: string;
+    operationId: string;
+  }): Promise<AttemptPresentationRecord | undefined>;
+  listAttemptPresentations(input: {
+    tenantId: string;
+    attemptId?: string;
+    task?: TaskAuthorityScope;
+  }): Promise<AttemptPresentationRecord[]>;
   listTaskEffects(input: {
     tenantId: string;
     task: TaskAuthorityScope;
@@ -559,6 +577,125 @@ function taskPresentationKey(input: {
   );
 }
 
+function attemptPresentationKey(
+  tenantId: string,
+  attemptId: string,
+  operationId: string,
+): string {
+  return tupleKey(tenantId, attemptId, 'attempt-presentation', operationId);
+}
+
+function attemptPresentationReceiptKey(
+  tenantId: string,
+  attemptId: string,
+  finalizationCommandId: string,
+): string {
+  return tupleKey(
+    tenantId,
+    attemptId,
+    'attempt-presentation-receipt',
+    finalizationCommandId,
+  );
+}
+
+interface DerivedAttemptPresentation {
+  key: string;
+  receiptKey: string;
+  planDigest: string;
+  outcomeDigest: string;
+  record: AttemptPresentationRecord;
+}
+
+function deriveAttemptPresentation(
+  state: AttemptState,
+  finalizationCommandId: string,
+): DerivedAttemptPresentation {
+  const outcome = state.outcome;
+  const activation = state.spec.activation;
+  if (outcome === undefined || activation.mode !== 'central-authoritative') {
+    throw new AuthorityConflict(
+      'Final outcome presentation is not centrally pinned',
+    );
+  }
+  const terminalFactId = state.finalization?.terminalFactId;
+  if (terminalFactId === undefined) {
+    throw new AuthorityConflict('Final outcome terminal fact is absent');
+  }
+  const outcomeDigest = createHash('sha256')
+    .update(canonicalJson(outcome))
+    .digest('hex');
+  const operationId = `attempt-final:${createHash('sha256')
+    .update(
+      canonicalJson({
+        tenantId: state.spec.tenant.tenantId,
+        attemptId: state.spec.attemptId,
+        revision: state.revision,
+        finalizationCommandId,
+        terminalFactId,
+        outcomeDigest,
+      }),
+    )
+    .digest('hex')}`;
+  const failure =
+    outcome.failure === undefined
+      ? undefined
+      : {
+          owningSystem: outcome.failure.owningSystem,
+          phase: outcome.failure.phase,
+          reason: outcome.failure.reason,
+          retryDisposition: outcome.failure.retryDisposition,
+          ...(outcome.failure.retryBudget === undefined
+            ? {}
+            : { retryBudget: outcome.failure.retryBudget }),
+        };
+  const parsed = attemptPresentationPlanSchema.safeParse({
+    schema: 'agent-lcars.attempt-presentation-plan/v1',
+    version: 1,
+    operationId,
+    tenant: state.spec.tenant,
+    task: state.spec.task,
+    attemptId: state.spec.attemptId,
+    attemptRevision: state.revision,
+    finalizationCommandId,
+    terminalFactId,
+    outcomeDigest,
+    activation,
+    presentation: {
+      kind: 'attempt-finalized',
+      terminalState: outcome.terminalState,
+      execution: outcome.execution,
+      result: outcome.result,
+      evidenceValidation: outcome.evidenceValidation.status,
+      ...(failure === undefined ? {} : { failure }),
+    },
+  });
+  if (!parsed.success) {
+    throw new AuthorityConflict('Derived attempt presentation is invalid');
+  }
+  const record: AttemptPresentationRecord = {
+    tenantId: parsed.data.tenant.tenantId,
+    plan: parsed.data,
+    deliveryState: 'pending',
+  };
+  return {
+    key: attemptPresentationKey(
+      record.tenantId,
+      record.plan.attemptId,
+      record.plan.operationId,
+    ),
+    receiptKey: attemptPresentationReceiptKey(
+      record.tenantId,
+      record.plan.attemptId,
+      finalizationCommandId,
+    ),
+    planDigest: createHash('sha256')
+      .update(canonicalJson(record.plan))
+      .digest('hex'),
+    outcomeDigest,
+    record,
+  };
+}
+
 function taskPresentationForEffect(input: {
   tenant: TaskIntentState['tenant'];
   effect: TaskEffectRecord;
@@ -734,6 +871,19 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly taskPresentations = new Map<
     string,
     TaskPresentationRecord
+  >();
+  private readonly attemptPresentations = new Map<
+    string,
+    AttemptPresentationRecord
+  >();
+  private readonly attemptPresentationReceipts = new Map<
+    string,
+    {
+      planKey: string;
+      planDigest: string;
+      outcomeDigest: string;
+      snapshot: AttemptPresentationRecord;
+    }
   >();
   private readonly taskEffectReceipts = new Map<
     string,
@@ -1293,6 +1443,42 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           record.tenantId === input.tenantId &&
           same(record.plan.task, input.task) &&
           (input.state === undefined || record.deliveryState === input.state),
+      )
+      .map(clone);
+  }
+
+  async readAttemptPresentation(input: {
+    tenantId: string;
+    attemptId: string;
+    operationId: string;
+  }): Promise<AttemptPresentationRecord | undefined> {
+    const value = this.attemptPresentations.get(
+      attemptPresentationKey(
+        input.tenantId,
+        input.attemptId,
+        input.operationId,
+      ),
+    );
+    return value === undefined ? undefined : clone(value);
+  }
+
+  async listAttemptPresentations(input: {
+    tenantId: string;
+    attemptId?: string;
+    task?: TaskAuthorityScope;
+  }): Promise<AttemptPresentationRecord[]> {
+    if (input.task !== undefined && input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict(
+        'Attempt presentation tenant scope is invalid',
+      );
+    }
+    return [...this.attemptPresentations.values()]
+      .filter(
+        (record) =>
+          record.tenantId === input.tenantId &&
+          (input.attemptId === undefined ||
+            record.plan.attemptId === input.attemptId) &&
+          (input.task === undefined || same(record.plan.task, input.task)),
       )
       .map(clone);
   }
@@ -2088,6 +2274,33 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           throw new AuthorityConflict('Final outcome replay conflicts');
         }
         this.assertCommandReplay(current, event);
+        const expected = deriveAttemptPresentation(current, event.eventId);
+        const receipt = this.attemptPresentationReceipts.get(
+          expected.receiptKey,
+        );
+        const live = this.attemptPresentations.get(expected.key);
+        const plans = [...this.attemptPresentations.entries()].filter(
+          (record) =>
+            record[1].tenantId === transition.tenantId &&
+            record[1].plan.attemptId === transition.attemptId,
+        );
+        if (
+          receipt === undefined ||
+          live === undefined ||
+          plans.length !== 1 ||
+          plans[0]?.[0] !== expected.key ||
+          receipt.planKey !== expected.key ||
+          receipt.planDigest !== expected.planDigest ||
+          receipt.outcomeDigest !== expected.outcomeDigest ||
+          !same(receipt.snapshot, expected.record) ||
+          createHash('sha256')
+            .update(canonicalJson(live.plan))
+            .digest('hex') !== expected.planDigest ||
+          !same(live, expected.record)
+        )
+          throw new AuthorityConflict(
+            'Final outcome presentation receipt conflicts',
+          );
         return 'replay';
       }
     }
@@ -2140,11 +2353,41 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       if (existing !== undefined && !same(existing, record))
         throw new AuthorityConflict('Validation work conflicts');
     }
+    const presentation =
+      event.kind === 'finalize'
+        ? deriveAttemptPresentation(reduced.state, event.eventId)
+        : undefined;
+    if (presentation !== undefined) {
+      const existingPlans = [...this.attemptPresentations.values()].filter(
+        (record) =>
+          record.tenantId === presentation.record.tenantId &&
+          record.plan.attemptId === presentation.record.plan.attemptId,
+      );
+      if (
+        existingPlans.length !== 0 ||
+        this.attemptPresentations.has(presentation.key) ||
+        this.attemptPresentationReceipts.has(presentation.receiptKey)
+      ) {
+        throw new AuthorityConflict('Attempt presentation operation exists');
+      }
+    }
     this.writeAttemptTransaction({
       lease: input.lease,
       expectedRevision: current.revision,
       next: reduced.state,
     });
+    if (presentation !== undefined) {
+      this.attemptPresentations.set(
+        presentation.key,
+        clone(presentation.record),
+      );
+      this.attemptPresentationReceipts.set(presentation.receiptKey, {
+        planKey: presentation.key,
+        planDigest: presentation.planDigest,
+        outcomeDigest: presentation.outcomeDigest,
+        snapshot: clone(presentation.record),
+      });
+    }
     if (observationIdentity !== undefined)
       this.persistObservation(observationIdentity);
     for (const effect of work) {

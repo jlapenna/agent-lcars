@@ -14,6 +14,8 @@ export {
   localAttemptMarkerSchema,
   runBindingSchema,
 } from './attempt';
+export type { AttemptPresentationPlan } from './attempt-presentation';
+export { attemptPresentationPlanSchema } from './attempt-presentation';
 export type {
   CredentialGrantIssuance,
   CredentialGrantRequest,
