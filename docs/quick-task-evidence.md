@@ -62,6 +62,11 @@ GitHub outcomes retain the evidence and claim for marker reconciliation.
 Pre-create evidence failures reconcile storage as needed, then release the
 claim because no issue can exist.
 
+The frozen lifecycle disposition for a definitive GitHub create failure is one
+combined operation: `delete-created-generation-and-release-claim`. Consumers
+must not choose only one cleanup action, as either orphaned evidence or a
+stranded claim would break retries.
+
 Revocation is terminal: write `revocations/v1/<uuid>` with a create-only
 precondition before generation-matched byte deletion. Tombstones have no TTL;
 the public read route checks them first so stale retries cannot restore access.

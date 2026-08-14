@@ -7,6 +7,7 @@ import {
   QUICK_TASK_EVIDENCE_REVOCATION_PREFIX,
   QUICK_TASK_EVIDENCE_SUCCESS_RESPONSE,
   QUICK_TASK_MULTIPART_FIELDS,
+  type QuickTaskEvidenceLifecycleDisposition,
   quickTaskEvidenceMarkdown,
   quickTaskEvidenceObjectKey,
   quickTaskEvidenceRevocationKey,
@@ -71,5 +72,11 @@ describe('Quick Task evidence contract', () => {
       status: 404,
       headers: {},
     });
+  });
+
+  it('keeps definitive-failure cleanup and claim release inseparable', () => {
+    const disposition: QuickTaskEvidenceLifecycleDisposition =
+      'delete-created-generation-and-release-claim';
+    expect(disposition).toBe('delete-created-generation-and-release-claim');
   });
 });

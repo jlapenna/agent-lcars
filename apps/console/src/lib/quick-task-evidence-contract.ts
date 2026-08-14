@@ -102,6 +102,7 @@ export type QuickTaskEvidenceLifecycleDisposition =
   | 'none'
   | 'release-claim'
   | 'delete-created-generation'
+  | 'delete-created-generation-and-release-claim'
   | 'retain-for-reconciliation';
 
 export type QuickTaskEvidenceErrorStatus =
