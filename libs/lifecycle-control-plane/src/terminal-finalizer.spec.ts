@@ -471,6 +471,18 @@ export function runAttemptFinalizerStorageContract(
       expect(JSON.stringify(planned)).not.toMatch(
         /commentBody|workflowPath|runId|binding|token|evidenceRef/iu,
       );
+      const operationId = planned[0]?.plan.operationId;
+      if (operationId === undefined)
+        throw new Error('missing Attempt presentation operation');
+      expect(
+        await storage.readPresentationDelivery({
+          source: 'attempt',
+          tenantId: tenant.tenantId,
+          task: spec.task,
+          attemptId: spec.attemptId,
+          operationId,
+        }),
+      ).toMatchObject({ state: 'pending' });
       expect(
         await finalizer.finalize(lease, tenant.tenantId, spec.attemptId),
       ).toBe('replay');
