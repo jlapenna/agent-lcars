@@ -6,24 +6,19 @@ import type {
 import { runtimeObservationPayloadSha256 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
-import type { AttemptState } from './attempt-reducer';
-import {
-  attemptSpecDigest,
-  attemptTransitionDigest,
-  reduceAttempt,
-} from './attempt-reducer';
+import { attemptTransitionDigest, reduceAttempt } from './attempt-reducer';
 import {
   AuthorityConflict,
   InMemoryLifecycleAuthorityStorage,
   type LifecycleAuthorityStorage,
   type TaskAuthorityLease,
 } from './authority-storage';
+import { admitAcceptedSpecForTest } from './authority-storage-test-support';
 import {
   ingestVerifiedRunBinding,
   RunBindingIngressConflict,
   RunBindingIngressVerifier,
 } from './launch-binding';
-import type { TaskIntentState } from './task-intent-reducer';
 
 const TIME = '2026-08-16T00:00:00.000Z';
 const SHA = 'a'.repeat(64);
@@ -94,34 +89,7 @@ function fixture() {
       decidedAt: TIME,
     },
   };
-  const attempt: AttemptState = {
-    schema: 'agent-lcars.attempt-state/v1',
-    version: 1,
-    spec,
-    specDigest: attemptSpecDigest(spec),
-    revision: 1,
-    phase: 'launch-pending',
-    launch: { operationId: ATTEMPT_ID, executionEpoch: 1, state: 'recorded' },
-    executionEpoch: 1,
-    facts: [],
-    commands: [],
-    pendingClaims: [],
-    futureGrantsDenied: false,
-    updatedAt: TIME,
-  };
-  const nextTask: TaskIntentState = {
-    schema: 'agent-lcars.task-intent-state/v1',
-    version: 1,
-    tenant,
-    task,
-    revision: 1,
-    activation: spec.activation,
-    facts: [],
-    intents: [],
-    attempt: { kind: 'unlaunched', intentId: 'intent-1' },
-    updatedAt: TIME,
-  };
-  return { activation, spec, attempt, nextTask };
+  return { activation, spec };
 }
 
 async function admittedInto(storage: LifecycleAuthorityStorage): Promise<{
@@ -130,21 +98,13 @@ async function admittedInto(storage: LifecycleAuthorityStorage): Promise<{
   spec: AcceptedAttemptSpec;
 }> {
   const value = fixture();
-  await storage.registerActivation(value.activation);
-  const lease = await storage.acquireTaskLease({
-    scope: task,
-    ownerId: 'owner-1',
-    leaseDurationMs: 60 * 60 * 1000,
-  });
-  await storage.admitAttemptAndRecordLaunch({
-    lease,
-    expectedTaskRevision: 0,
-    nextTask: value.nextTask,
-    attempt: value.attempt,
+  const admitted = await admitAcceptedSpecForTest({
+    storage,
+    activation: value.activation,
     spec: value.spec,
-    specDigest: value.attempt.specDigest,
+    ownerId: 'owner-1',
   });
-  return { storage, lease, spec: value.spec };
+  return { storage, lease: admitted.lease, spec: admitted.spec };
 }
 
 async function envelope(
@@ -468,54 +428,32 @@ export function runVerifiedRunBindingStorageContract(
           idempotencyKey: 'admit-2',
         },
       };
-      const secondAttempt: AttemptState = {
-        ...fixture().attempt,
+      const secondAdmission = await admitAcceptedSpecForTest({
+        storage,
+        activation: { ...fixture().activation, tenant: secondSpec.tenant },
         spec: secondSpec,
-        specDigest: attemptSpecDigest(secondSpec),
-        launch: {
-          operationId: secondSpec.attemptId,
-          executionEpoch: 1,
-          state: 'recorded',
-        },
-      };
-      const secondTask: TaskIntentState = {
-        ...fixture().nextTask,
-        task: secondSpec.task,
-        revision: 1,
-        attempt: { kind: 'unlaunched', intentId: secondSpec.local.intentId },
-        activation: secondSpec.activation,
-      };
-      const secondLease = await storage.acquireTaskLease({
-        scope: secondSpec.task,
         ownerId: 'owner-2',
-        leaseDurationMs: 60 * 60 * 1000,
       });
-      await storage.admitAttemptAndRecordLaunch({
-        lease: secondLease,
-        expectedTaskRevision: 0,
-        nextTask: secondTask,
-        attempt: secondAttempt,
-        spec: secondSpec,
-        specDigest: secondAttempt.specDigest,
-      });
+      const secondLease = secondAdmission.lease;
+      const admittedSecondSpec = secondAdmission.spec;
       const colliding = await verifier.verify({
-        envelope: await envelope(secondSpec),
-        localAttemptMarker: secondSpec.local.attemptMarker,
+        envelope: await envelope(admittedSecondSpec),
+        localAttemptMarker: admittedSecondSpec.local.attemptMarker,
       });
       await expect(
         ingestVerifiedRunBinding(storage, secondLease, colliding),
       ).rejects.toBeInstanceOf(AuthorityConflict);
       expect(
         await storage.readAttempt({
-          tenantId: secondSpec.tenant.tenantId,
-          attemptId: secondSpec.attemptId,
+          tenantId: admittedSecondSpec.tenant.tenantId,
+          attemptId: admittedSecondSpec.attemptId,
         }),
       ).toMatchObject({ revision: 1, phase: 'launch-pending' });
       expect(
         (
           await storage.readLaunch({
-            tenantId: secondSpec.tenant.tenantId,
-            attemptId: secondSpec.attemptId,
+            tenantId: admittedSecondSpec.tenant.tenantId,
+            attemptId: admittedSecondSpec.attemptId,
           })
         )?.state,
       ).toBe('pending');

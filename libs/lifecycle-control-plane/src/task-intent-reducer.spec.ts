@@ -430,6 +430,10 @@ describe('Task/Intent reducer', () => {
       attempt: {
         kind: 'launched',
         intentId: 'intent-fact-1',
+        intentRevision: 1,
+        attemptId: 'A'.repeat(22),
+        admissionRevision: 1,
+        admittedAt: timestamp,
         staleForDesiredState: false,
         cancellationRequested: false,
       },
@@ -448,6 +452,10 @@ describe('Task/Intent reducer', () => {
     ]);
     expect(whileLaunched.state.attempt).toMatchObject({
       kind: 'launched',
+      intentRevision: 1,
+      attemptId: 'A'.repeat(22),
+      admissionRevision: 1,
+      admittedAt: timestamp,
       staleForDesiredState: true,
       cancellationRequested: true,
       supersededByIntentId: 'intent-3',
@@ -592,6 +600,10 @@ describe('Task/Intent reducer', () => {
       attempt: {
         kind: 'launched',
         intentId: 'intent-fact-1',
+        intentRevision: 1,
+        attemptId: 'A'.repeat(22),
+        admissionRevision: 1,
+        admittedAt: timestamp,
         staleForDesiredState: false,
         cancellationRequested: false,
       },
@@ -613,6 +625,10 @@ describe('Task/Intent reducer', () => {
     );
     expect(cancelled.state.attempt).toMatchObject({
       kind: 'launched',
+      intentRevision: 1,
+      attemptId: 'A'.repeat(22),
+      admissionRevision: 1,
+      admittedAt: timestamp,
       cancellationRequested: true,
     });
     expect(cancelled.effects.map((effect) => effect.kind)).toEqual([

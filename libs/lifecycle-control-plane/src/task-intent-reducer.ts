@@ -19,6 +19,7 @@ import {
 
 const OPAQUE_ID = /^[A-Za-z0-9._:-]{1,200}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
+const ATTEMPT_ID = /^[A-Za-z0-9_-]{22,64}$/u;
 
 function isUtcDateTime(value: string): boolean {
   return utcDateTimeSchema.safeParse(value).success;
@@ -48,6 +49,11 @@ export type TaskAttemptRelation =
   | {
       kind: 'launched';
       intentId: string;
+      intentRevision: number;
+      /** Opaque service AttemptId; never the local gN:intent marker. */
+      attemptId: string;
+      admissionRevision: number;
+      admittedAt: string;
       staleForDesiredState: boolean;
       cancellationRequested: boolean;
       supersededByIntentId?: string;
@@ -165,6 +171,15 @@ export type TaskIntentConflictKind =
   | 'revision-conflict'
   | 'semantic-conflict'
   | 'task-mismatch';
+
+export type AdmitTaskAttemptResult =
+  | { status: 'applied'; state: TaskIntentState }
+  | { status: 'replay'; state: TaskIntentState }
+  | {
+      status: 'conflict';
+      state: TaskIntentState;
+      message: string;
+    };
 
 export type ReduceTaskIntentResult =
   | {
@@ -393,6 +408,87 @@ function centralEffects(
   effects: TaskIntentEffect[],
 ): TaskIntentEffect[] {
   return activation.mode === 'central-authoritative' ? effects : [];
+}
+
+/**
+ * Atomically marks a selected desired intent as having one recorded attempt.
+ * It deliberately knows nothing about a provider run: the attempt aggregate
+ * remains launch-pending until its outbox is dispatched and later bound.
+ */
+export function admitTaskAttempt(
+  current: TaskIntentState,
+  input: {
+    expectedRevision: number;
+    intentId: string;
+    intentRevision: number;
+    attemptId: string;
+    activation: ActivationProvenance;
+    admittedAt: string;
+  },
+): AdmitTaskAttemptResult {
+  const replay =
+    current.attempt.kind === 'launched' &&
+    current.attempt.intentId === input.intentId &&
+    current.attempt.intentRevision === input.intentRevision &&
+    current.attempt.attemptId === input.attemptId &&
+    current.attempt.admissionRevision === input.expectedRevision &&
+    current.attempt.admittedAt === input.admittedAt &&
+    sameActivation(current.activation, input.activation);
+  if (replay) return { status: 'replay', state: current };
+  if (
+    !Number.isSafeInteger(input.expectedRevision) ||
+    input.expectedRevision < 0 ||
+    !Number.isSafeInteger(input.intentRevision) ||
+    input.intentRevision < 1 ||
+    !OPAQUE_ID.test(input.intentId) ||
+    !ATTEMPT_ID.test(input.attemptId) ||
+    !isUtcDateTime(input.admittedAt) ||
+    !sameActivation(current.activation, input.activation) ||
+    current.revision !== input.expectedRevision ||
+    current.attempt.kind !== 'unlaunched' ||
+    current.attempt.intentId !== input.intentId ||
+    current.desired === undefined ||
+    current.desired.intentId !== input.intentId ||
+    current.desired.intentRevision !== input.intentRevision
+  ) {
+    return {
+      status: 'conflict',
+      state: current,
+      message: 'Task is not the exact unlaunched desired intent for admission',
+    };
+  }
+  const intent = latestIntentRevision(current, input.intentId);
+  if (
+    intent === undefined ||
+    intent.revision !== input.intentRevision ||
+    intent.status !== 'desired' ||
+    intent.policyDecision.decision !== 'accepted' ||
+    !sameActivation(intent.activation, input.activation)
+  ) {
+    return {
+      status: 'conflict',
+      state: current,
+      message: 'Desired intent provenance is not admissible',
+    };
+  }
+  return {
+    status: 'applied',
+    state: {
+      ...current,
+      revision: current.revision + 1,
+      attempt: {
+        kind: 'launched',
+        intentId: input.intentId,
+        intentRevision: input.intentRevision,
+        attemptId: input.attemptId,
+        admissionRevision: input.expectedRevision,
+        admittedAt: input.admittedAt,
+        staleForDesiredState: false,
+        cancellationRequested: false,
+      },
+      updatedAt: input.admittedAt,
+    },
+  };
 }
 
 /**

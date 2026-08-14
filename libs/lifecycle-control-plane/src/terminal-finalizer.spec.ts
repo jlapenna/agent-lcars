@@ -15,6 +15,7 @@ import {
   type LifecycleAuthorityStorage,
   type TaskAuthorityLease,
 } from './authority-storage';
+import { admitAcceptedSpecForTest } from './authority-storage-test-support';
 import {
   finalizationCommandId,
   mintFinalizationTransition,
@@ -24,7 +25,6 @@ import {
   ingestVerifiedRunBinding,
   RunBindingIngressVerifier,
 } from './launch-binding';
-import type { TaskIntentState } from './task-intent-reducer';
 import {
   AttemptFinalizer,
   ClaimObservationBoundary,
@@ -188,7 +188,6 @@ function finalizerFixture(): {
   activation: ActivationRecord;
   spec: AcceptedAttemptSpec;
   attempt: AttemptState;
-  taskState: TaskIntentState;
 } {
   const activation: ActivationRecord = {
     schema: 'agent-lcars.control-plane-activation/v1',
@@ -262,19 +261,7 @@ function finalizerFixture(): {
     futureGrantsDenied: false,
     updatedAt: '2026-08-16T00:00:00.000Z',
   };
-  const taskState: TaskIntentState = {
-    schema: 'agent-lcars.task-intent-state/v1',
-    version: 1,
-    tenant,
-    task,
-    revision: 1,
-    activation: spec.activation,
-    facts: [],
-    intents: [],
-    attempt: { kind: 'unlaunched', intentId: 'intent-1' },
-    updatedAt: '2026-08-16T00:00:00.000Z',
-  };
-  return { activation, spec, attempt, taskState };
+  return { activation, spec, attempt };
 }
 
 async function activeFixture(storage: LifecycleAuthorityStorage): Promise<{
@@ -282,20 +269,13 @@ async function activeFixture(storage: LifecycleAuthorityStorage): Promise<{
   spec: AcceptedAttemptSpec;
 }> {
   const value = finalizerFixture();
-  await storage.registerActivation(value.activation);
-  const lease = await storage.acquireTaskLease({
-    scope: task,
-    ownerId: 'owner-1',
-    leaseDurationMs: 60 * 60 * 1000,
-  });
-  await storage.admitAttemptAndRecordLaunch({
-    lease,
-    expectedTaskRevision: 0,
-    nextTask: value.taskState,
-    attempt: value.attempt,
+  const admitted = await admitAcceptedSpecForTest({
+    storage,
+    activation: value.activation,
     spec: value.spec,
-    specDigest: value.attempt.specDigest,
+    ownerId: 'owner-1',
   });
+  const lease = admitted.lease;
   const runBindingVerifier = new RunBindingIngressVerifier({
     verifyExactRunBinding(): Promise<void> {
       return Promise.resolve();
@@ -651,5 +631,8 @@ export function runAttemptFinalizerStorageContract(
 }
 
 runAttemptFinalizerStorageContract(
-  (clock) => new InMemoryLifecycleAuthorityStorage(clock),
+  (clock) =>
+    new InMemoryLifecycleAuthorityStorage(clock, {
+      mint: () => 'A'.repeat(22),
+    }),
 );

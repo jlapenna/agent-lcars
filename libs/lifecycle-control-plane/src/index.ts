@@ -4,5 +4,6 @@ export * from './credential-grant-oidc';
 export * from './ingress-policy';
 export * from './launch-binding';
 export * from './mint-resolution';
+export * from './task-attempt-admission';
 export * from './task-intent-reducer';
 export * from './terminal-finalizer';
