@@ -1,3 +1,4 @@
+export * from './attempt-finalization-composition';
 export * from './attempt-reducer';
 export * from './authority-storage';
 export * from './cancellation-effects';
