@@ -37,6 +37,18 @@ export class WorkerGrantJwtUnavailableError extends Error {
   }
 }
 
+function jwksIsUnavailable(error: unknown): boolean {
+  return (
+    error instanceof errors.JWKSTimeout ||
+    error instanceof errors.JWKSInvalid ||
+    error instanceof errors.JWKSMultipleMatchingKeys ||
+    (error instanceof errors.JOSEError &&
+      error.constructor === errors.JOSEError) ||
+    (!(error instanceof errors.JOSEError) &&
+      !(error instanceof WorkerGrantJwtVerificationError))
+  );
+}
+
 function invalidClaim(name: string): never {
   throw new WorkerGrantJwtVerificationError(
     `GitHub WorkerGrant OIDC ${name} claim is invalid`,
@@ -173,11 +185,7 @@ export class GitHubWorkerGrantOidcVerifier implements WorkerGrantOidcVerifier {
       });
       return workerGrantClaimsFromJwtPayload(payload);
     } catch (error) {
-      if (
-        error instanceof errors.JWKSTimeout ||
-        (!(error instanceof errors.JOSEError) &&
-          !(error instanceof WorkerGrantJwtVerificationError))
-      ) {
+      if (jwksIsUnavailable(error)) {
         throw new WorkerGrantJwtUnavailableError();
       }
       throw new WorkerGrantJwtVerificationError();
