@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
+  "dependencies": {
+    "@agent-lcars/dispatch-contracts": "workspace:*"
+  },
   "exports": {
     ".": "./src/index.ts"
   }
