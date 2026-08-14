@@ -31,19 +31,31 @@ layer; that is what it is for.
 
 ### Managed App Hosting builds
 
-The console's managed Firebase App Hosting builder has a narrower cache
-boundary than developer machines and CI. App Hosting preserves its workspace
-state across builds, so `.nx/cache` is its L1. `tools/cloud-build-prebuild.sh`
-removes stale `dist` and `.tsbuildinfo` outputs but deliberately preserves that
-content-addressed cache; the next `@agent-lcars/console:bundle` invocation can
-then restore a complete `dist/apps/console` output for unchanged inputs.
+The console's managed Firebase App Hosting archive builds currently start in
+fresh workspaces. Two consecutive production deployments measured for #1030
+(`build-2026-08-14-007` and `build-2026-08-14-009`) each reported `0/18` Nx
+cache hits, even though the second build included the cache-preserving prebuild
+change. Preserving `.nx/cache` therefore does not create cross-deployment reuse
+in this build mode.
+
+`tools/cloud-build-prebuild.sh` still removes stale `dist` and `.tsbuildinfo`
+outputs while leaving `.nx/cache` intact. That is the correct cleanup boundary:
+if a build environment supplies an L1 entry, Nx must restore the complete
+declared output instead of inheriting stale files. It is not, by itself, a
+persistence mechanism.
 
 Managed App Hosting does **not** receive the Spark URL or an L2 credential.
 Spark is private-LAN infrastructure, and `apps/console/apphosting.yaml` has no
 remote-cache variables or secrets. Do not add either merely to accelerate a
 managed build: L2 is optional, and introducing a new production credential or
-network path requires its own approved design. CI proves the production cache
-contract using local L1 with remote reads disabled.
+network path requires its own approved design. CI uses a job-local L1 with
+remote reads disabled to prove that the production task restores a complete,
+bootable artifact. That smoke test proves cache-entry integrity, not cache
+persistence between managed builds.
+
+Useful production reuse requires either a production-accessible L2 or a
+deployment path that uploads a prebuilt artifact from an environment with
+cache access. Issue #1030 remains open for that architecture decision.
 
 ## How a checkout gets configured
 

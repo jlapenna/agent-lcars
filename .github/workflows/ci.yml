@@ -221,9 +221,10 @@ jobs:
       # CI and then fail only after an App Hosting rollout. The trace resolves
       # the exact installed Cloud Tasks package (#1023), so this deployable
       # smoke can safely reuse the deterministic Nx build artifact. Exercise
-      # that contract with remote reads disabled: clean the first build's
-      # outputs, restore them from the builder-local L1, and boot what Nx
-      # restored (#1030).
+      # that artifact contract with remote reads disabled: clean the first
+      # build's outputs, restore them from this job's L1, and boot what Nx
+      # restored. This proves output completeness, not cache persistence
+      # between managed App Hosting archive builds (#1030).
       - name: Smoke test cached deployable console bundle
         run: ./tools/console-cache-restore-smoke.sh
 
