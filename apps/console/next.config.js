@@ -1,6 +1,35 @@
 //@ts-check
 // eslint-disable-next-line no-restricted-syntax
 const { composePlugins, withNx } = require('@nx/next');
+// eslint-disable-next-line no-restricted-syntax
+const path = require('node:path');
+
+// Resolve through the workspace dependency symlink so the trace follows the
+// one physical pnpm package selected by this install. A virtual-store glob
+// also sees unused stale peer variants, making identical Nx inputs produce
+// different standalone artifacts (#1023).
+const cloudTasksEntry = require.resolve('@google-cloud/tasks');
+const cloudTasksBuildSegment = `${path.sep}build${path.sep}`;
+const cloudTasksBuildIndex = cloudTasksEntry.lastIndexOf(
+  cloudTasksBuildSegment,
+);
+
+if (cloudTasksBuildIndex === -1) {
+  throw new Error(
+    `Could not locate @google-cloud/tasks package root from ${cloudTasksEntry}`,
+  );
+}
+
+const cloudTasksProtoInclude = path
+  .relative(
+    __dirname,
+    path.join(
+      cloudTasksEntry.slice(0, cloudTasksBuildIndex),
+      'build/protos/protos.json',
+    ),
+  )
+  .split(path.sep)
+  .join('/');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -11,13 +40,11 @@ const nextConfig = {
   serverExternalPackages: ['@google-cloud/tasks'],
   // The generated JSON loader above resolves this file dynamically, so
   // Next's standalone trace sees protos.js but misses its sibling JSON file.
-  // Pin the runtime asset into the webhook route trace explicitly. The pnpm
-  // version segment is intentionally globbed so dependency updates do not
-  // silently drop it from production again.
+  // Pin the runtime asset from the exact package Node resolves; dependency
+  // updates move this path automatically without sweeping up stale physical
+  // pnpm peer variants that are not part of the install.
   outputFileTracingIncludes: {
-    '/api/control-plane/webhook*': [
-      '../../node_modules/.pnpm/@google-cloud+tasks@*/node_modules/@google-cloud/tasks/build/protos/protos.json',
-    ],
+    '/api/control-plane/webhook*': [cloudTasksProtoInclude],
   },
   // Next 16's native cache model, enabling `"use cache"` +
   // `cacheTag`/`cacheLife` (see lib/dashboard-data.ts for why the legacy
@@ -32,8 +59,7 @@ const nextConfig = {
   // checkout), and the standalone build then mirrors the WRONG absolute
   // path, breaking `node .../standalone/apps/console/server.js`
   // (#2216). Pin it explicitly, same as onecake/primes.
-  // eslint-disable-next-line no-restricted-syntax
-  outputFileTracingRoot: require('path').join(__dirname, '../../'),
+  outputFileTracingRoot: path.join(__dirname, '../../'),
   // `allowedDevOrigins` is a top-level Next.js config option (since 15.3 /
   // Next 16), NOT an `experimental` one — under `experimental` Next ignores it.
   // Lets the dev server accept requests from a LAN device during preview
