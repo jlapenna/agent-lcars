@@ -173,15 +173,32 @@ describe('inactive GitHub installation-token minter', () => {
   it.each([401, 403, 404, 422])(
     'treats documented rejection %s as definite no-send',
     async (status) => {
+      const providerResponse = response(
+        'provider-secret',
+        status,
+        'text/plain',
+      );
+      const cancel = vi.spyOn(providerResponse.body!, 'cancel');
       const test = harness({
-        request: async () => response('provider-secret', status, 'text/plain'),
+        request: async () => providerResponse,
       });
       await expect(test.minter.mint(PLAN)).resolves.toEqual({
         kind: 'definitely-not-started',
       });
       expect(test.request).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledTimes(1);
     },
   );
+
+  it('releases an ambiguous non-success response before failing', async () => {
+    const providerResponse = response('provider-secret', 500, 'text/plain');
+    const cancel = vi.spyOn(providerResponse.body!, 'cancel');
+    const test = harness({ request: async () => providerResponse });
+    await expect(test.minter.mint(PLAN)).rejects.toBeInstanceOf(
+      GitHubInstallationTokenMintUnknownError,
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     ['network', async () => Promise.reject(new Error('network-secret'))],

@@ -121,6 +121,15 @@ async function boundedJson(response: Response): Promise<unknown> {
   }
 }
 
+async function releaseResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // A received status still determines issuance semantics. Failure to release
+    // transport capacity must not turn a definite rejection into ambiguity.
+  }
+}
+
 function validPlan(plan: unknown): plan is InstallationTokenMintPlan {
   const value =
     plan !== null && typeof plan === 'object'
@@ -205,10 +214,11 @@ export class GitHubInstallationTokenMinter implements InstallationTokenMinter {
       throw new GitHubInstallationTokenMintUnknownError();
     }
 
-    if ([401, 403, 404, 422].includes(response.status)) {
-      return { kind: 'definitely-not-started' };
-    }
     if (response.status !== 201) {
+      await releaseResponse(response);
+      if ([401, 403, 404, 422].includes(response.status)) {
+        return { kind: 'definitely-not-started' };
+      }
       throw new GitHubInstallationTokenMintUnknownError();
     }
 
