@@ -257,6 +257,28 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # The shared runner workspace can retain the hook installed by an older
+      # `checkout lfs:true` run even after this repository stops using LFS.
+      # That hook makes checkout fail before the new revision is available if
+      # the refreshed runner image no longer contains git-lfs (#1049). This
+      # migration must therefore be inline and precede checkout: a script from
+      # the incoming revision cannot be read yet. Leave every non-LFS hook
+      # untouched.
+      - name: Remove retired Git LFS checkout hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --git-dir >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          hook_path="$(git rev-parse --git-path hooks/post-checkout)"
+          if [[ -f "$hook_path" ]] &&
+            grep -Fq 'git lfs post-checkout' "$hook_path"; then
+            rm -- "$hook_path"
+            echo "::notice::Removed retired Git LFS post-checkout hook."
+          fi
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0

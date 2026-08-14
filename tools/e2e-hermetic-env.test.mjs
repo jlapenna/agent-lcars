@@ -533,6 +533,31 @@ test('E2E affected-path fallback consumes the complete changed-file list', () =>
   assert.doesNotMatch(workflow, /git diff --name-only[^\n]*\|\s*grep[^\n]*q/u);
 });
 
+test('E2E retires only the stale Git LFS hook before checkout', () => {
+  const workflow = fs.readFileSync(
+    path.join(root, '.github/workflows/ci.yml'),
+    'utf8',
+  );
+  const e2eJob = workflow.slice(workflow.indexOf('\n  e2e:'));
+  const cleanup = e2eJob.indexOf(
+    '- name: Remove retired Git LFS checkout hook',
+  );
+  const checkout = e2eJob.indexOf('- uses: actions/checkout@v7');
+
+  assert.notEqual(cleanup, -1);
+  assert.notEqual(checkout, -1);
+  assert.ok(cleanup < checkout, 'stale hook cleanup must precede checkout');
+  const cleanupStep = e2eJob.slice(cleanup, checkout);
+  assert.match(
+    cleanupStep,
+    /hook_path="\$\(git rev-parse --git-path hooks\/post-checkout\)"/u,
+  );
+  assert.match(
+    cleanupStep,
+    /grep -Fq 'git lfs post-checkout' "\$hook_path"; then\s+rm -- "\$hook_path"/u,
+  );
+});
+
 test('live rejection is static and does not echo ambient credentials', () => {
   const sentinel = 'sentinel-live-credential';
   const result = spawnSync(path.join(root, 'tools/e2e/reject-live.sh'), [], {
