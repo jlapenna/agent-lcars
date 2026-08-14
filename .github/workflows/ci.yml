@@ -305,8 +305,12 @@ jobs:
               run=true
             elif (( affected_count > 0 )); then
               run=true
-            elif git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq \
-              '^(\.github/workflows/ci\.yml|tools/e2e-local\.sh|tools/e2e-docker\.sh|tools/kill-e2e-ports\.sh|tools/e2e/|tools/e2e-runner/)'; then
+            elif ! changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              echo "::warning::Changed-file detection failed; running the suite."
+              run=true
+            elif grep -E \
+              '^(\.github/workflows/ci\.yml|tools/e2e-local\.sh|tools/e2e-docker\.sh|tools/kill-e2e-ports\.sh|tools/e2e/|tools/e2e-runner/)' \
+              <<< "$changed_files" >/dev/null; then
               run=true
             fi
           fi

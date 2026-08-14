@@ -520,6 +520,19 @@ test('console E2E keeps rendered evidence diagnostic instead of pixel-gated', ()
   }
 });
 
+test('E2E affected-path fallback consumes the complete changed-file list', () => {
+  const workflow = fs.readFileSync(
+    path.join(root, '.github/workflows/ci.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /changed_files="\$\(git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"\)"/u,
+  );
+  assert.doesNotMatch(workflow, /git diff --name-only[^\n]*\|\s*grep[^\n]*q/u);
+});
+
 test('live rejection is static and does not echo ambient credentials', () => {
   const sentinel = 'sentinel-live-credential';
   const result = spawnSync(path.join(root, 'tools/e2e/reject-live.sh'), [], {
