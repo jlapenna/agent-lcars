@@ -37,9 +37,13 @@ type Scaler struct {
 	// log attribution, never in placement/ownership logic, which stays keyed
 	// on the process-wide-unique scaleSetName (see runnerScaleSetLabelKey).
 	registrationName string
-	runners          runnerState
-	runnerImage      string
-	runnerMemory     int64
+	// registrationURL is the non-secret GitHub organization/repository URL for
+	// this scale set's registration. The console publishes it as an optional
+	// operator link; it is never used for listener ownership or credentials.
+	registrationURL string
+	runners         runnerState
+	runnerImage     string
+	runnerMemory    int64
 	// runnerPidsLimit: see Config.RunnerPidsLimit. Zero means no limit.
 	runnerPidsLimit int64
 	// runnerShmSize: see Config.RunnerShmSize. Zero means Docker's own

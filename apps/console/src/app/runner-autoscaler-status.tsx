@@ -37,16 +37,22 @@ function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
   return (
     <Stack gap={2} data-testid={`autoscaler-scale-set-${status.scaleSet}`}>
       <Group gap="xs" wrap="wrap">
-        <Anchor
-          href={status.registration}
-          target="_blank"
-          rel="noreferrer"
-          size="sm"
-          fw={600}
-          data-testid={`autoscaler-registration-${status.scaleSet}`}
-        >
-          {status.scaleSet}
-        </Anchor>
+        {status.registrationUrl ? (
+          <Anchor
+            href={status.registrationUrl}
+            target="_blank"
+            rel="noreferrer"
+            size="sm"
+            fw={600}
+            data-testid={`autoscaler-registration-${status.scaleSet}`}
+          >
+            {status.scaleSet}
+          </Anchor>
+        ) : (
+          <Text size="sm" fw={600}>
+            {status.scaleSet}
+          </Text>
+        )}
         {status.draining && (
           <Badge color="yellow" size="xs">
             draining

@@ -37,16 +37,17 @@ type consoleRunnerStatus struct {
 }
 
 type consoleScaleSetStatus struct {
-	SchemaVersion int                   `firestore:"schemaVersion"`
-	ScaleSet      string                `firestore:"scaleSet"`
-	Registration  string                `firestore:"registration"`
-	QueuedJobs    int64                 `firestore:"queuedJobs"`
-	MinRunners    int                   `firestore:"minRunners"`
-	MaxRunners    int                   `firestore:"maxRunners"`
-	Draining      bool                  `firestore:"draining"`
-	Runners       []consoleRunnerStatus `firestore:"runners"`
-	UpdatedAt     string                `firestore:"updatedAt"`
-	ExpireAt      time.Time             `firestore:"expireAt"`
+	SchemaVersion   int                   `firestore:"schemaVersion"`
+	ScaleSet        string                `firestore:"scaleSet"`
+	Registration    string                `firestore:"registration"`
+	RegistrationURL string                `firestore:"registrationUrl,omitempty"`
+	QueuedJobs      int64                 `firestore:"queuedJobs"`
+	MinRunners      int                   `firestore:"minRunners"`
+	MaxRunners      int                   `firestore:"maxRunners"`
+	Draining        bool                  `firestore:"draining"`
+	Runners         []consoleRunnerStatus `firestore:"runners"`
+	UpdatedAt       string                `firestore:"updatedAt"`
+	ExpireAt        time.Time             `firestore:"expireAt"`
 }
 
 // consoleStatusPublisher abstracts the writer for tests and keeps status
@@ -149,7 +150,7 @@ func (a *Scaler) consoleStatusSnapshot(now time.Time) consoleScaleSetStatus {
 	a.runners.mu.Unlock()
 	sort.Slice(runners, func(i, j int) bool { return runners[i].Name < runners[j].Name })
 	return consoleScaleSetStatus{
-		SchemaVersion: 1, ScaleSet: a.scaleSetLabel(), Registration: a.registrationName,
+		SchemaVersion: 1, ScaleSet: a.scaleSetLabel(), Registration: a.registrationName, RegistrationURL: a.registrationURL,
 		QueuedJobs: a.queuedJobs.Load(), MinRunners: a.minRunners, MaxRunners: a.maxRunners,
 		Draining: a.draining.Load(), Runners: runners, UpdatedAt: now.UTC().Format(time.RFC3339Nano),
 		// The console treats this as a presentation staleness boundary. It is

@@ -43,7 +43,8 @@ describe('RunnerAutoscalerStatus', () => {
               {
                 schemaVersion: 1,
                 scaleSet: 'lcars-ci',
-                registration: 'https://github.com/jlapenna/agent-lcars',
+                registration: 'primary',
+                registrationUrl: 'https://github.com/jlapenna/agent-lcars',
                 queuedJobs: 2,
                 minRunners: 0,
                 maxRunners: 4,
