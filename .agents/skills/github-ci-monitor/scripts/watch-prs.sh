@@ -64,16 +64,23 @@ declare -A last=()
 # Owner/name for the GraphQL review-thread query, derived once from cwd.
 repo_owner=""
 repo_name=""
-if repo_json=$(gh repo view --json owner,name --jq '.owner.login + "/" + .name' 2>/dev/null); then
-  repo_owner="${repo_json%%/*}"
-  repo_name="${repo_json##*/}"
-fi
+discover_repo() {
+  [ -n "$repo_owner" ] && return 0
+  if repo_json=$(gh repo view --json owner,name --jq '.owner.login + "/" + .name' 2>/dev/null); then
+    repo_owner="${repo_json%%/*}"
+    repo_name="${repo_json##*/}"
+    return 0
+  fi
+  return 1
+}
+discover_repo || true
 
 unresolved_thread_count() {
   # Prints the PR's unresolved review-thread count (0 on any error, so a
   # GraphQL hiccup can never fabricate an attention verdict).
-  [ -n "$repo_owner" ] || { echo 0; return; }
-  gh api graphql --paginate \
+  discover_repo || { echo 0; return; }
+  local counts
+  if ! counts=$(gh api graphql --paginate \
     -F owner="$repo_owner" -F name="$repo_name" -F pr="$1" -f query='
     query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
@@ -85,7 +92,11 @@ unresolved_thread_count() {
         }
       }
     }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length' \
-    2>/dev/null | awk '{ sum += $1 } END { print sum + 0 }'
+    2>/dev/null); then
+    echo 0
+    return
+  fi
+  printf '%s\n' "$counts" | awk '{ sum += $1 } END { print sum + 0 }'
 }
 
 sanitize_names() {
