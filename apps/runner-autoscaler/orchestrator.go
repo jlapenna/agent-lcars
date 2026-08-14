@@ -498,7 +498,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		}
 	}
 	scaler := &Scaler{
-		scaleSetName: c.ScaleSetName, registrationName: c.RegistrationName, logger: logger.With("component", "scaler"),
+		scaleSetName: c.ScaleSetName, registrationName: c.RegistrationName, registrationURL: c.RegistrationURL, logger: logger.With("component", "scaler"),
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage: c.RunnerImage, runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,

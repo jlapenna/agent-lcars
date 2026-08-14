@@ -44,6 +44,7 @@ describe('RunnerAutoscalerStatus', () => {
                 schemaVersion: 1,
                 scaleSet: 'lcars-ci',
                 registration: 'primary',
+                registrationUrl: 'https://github.com/jlapenna/agent-lcars',
                 queuedJobs: 2,
                 minRunners: 0,
                 maxRunners: 4,
@@ -68,7 +69,12 @@ describe('RunnerAutoscalerStatus', () => {
     expect(
       screen.getByTestId('autoscaler-scale-set-lcars-ci'),
     ).toHaveTextContent('2 queued · 1 busy · 1 idle · 4 max');
-    expect(screen.getByText(/runner-b \(job-42\)/)).toBeTruthy();
+    expect(
+      screen.getByTestId('autoscaler-registration-lcars-ci'),
+    ).toHaveAttribute('href', 'https://github.com/jlapenna/agent-lcars');
+    expect(screen.getByTestId('autoscaler-runner-runner-b')).toHaveTextContent(
+      'runner-b on spark · job-42',
+    );
   });
 
   it('makes a telemetry read failure visible without adding empty panel chrome', () => {

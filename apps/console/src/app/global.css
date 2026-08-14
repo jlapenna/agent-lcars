@@ -312,6 +312,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --lcars-action-accent: var(--mantine-color-violet-5);
 }
 
+.lcars-action-button[data-accent='blue'] {
+  --lcars-action-accent: var(--mantine-color-blue-5);
+}
+
 /* ---- Elbow panel accent ----
    A quieter, half-scale echo of the header's concentric LCARS elbow,
    applied to top-level panel shells only (never per-row/per-item, so it

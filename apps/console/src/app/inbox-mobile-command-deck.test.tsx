@@ -43,6 +43,9 @@ describe('InboxMobileCommandDeck', () => {
     expect(
       screen.getByRole('link', { name: 'Back to Inbox list' }),
     ).toHaveAttribute('href', '/inbox');
+    expect(
+      screen.getByRole('link', { name: 'Back to Inbox list' }),
+    ).toHaveClass('lcars-action-button');
     expect(screen.getByText('Data as of just now')).toBeTruthy();
   });
 });

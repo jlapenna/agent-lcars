@@ -27,14 +27,7 @@ export function CompactItemRow({
   return (
     <Stack gap={2} data-testid={`compact-item-${item.number}`}>
       <Group gap="xs" wrap="nowrap" align="center">
-        <Badge
-          variant="outline"
-          color="gray"
-          size="xs"
-          style={{ flexShrink: 0 }}
-        >
-          {item.kind === 'pr' ? 'PR' : 'Issue'}
-        </Badge>
+        <ItemKindBadge kind={item.kind} />
         <RepoBadge repo={item.repo} />
         <Anchor
           href={item.url}
@@ -57,5 +50,18 @@ export function CompactItemRow({
         {action}
       </Group>
     </Stack>
+  );
+}
+
+/**
+ * Shared item-kind badge for compact operational rows. Its filled, small
+ * treatment matches the live/queued badges in Active Agents, so stale-claim
+ * rows do not introduce a competing badge vocabulary.
+ */
+export function ItemKindBadge({ kind }: { kind: ActionItem['kind'] }) {
+  return (
+    <Badge variant="filled" color="gray" size="sm" style={{ flexShrink: 0 }}>
+      {kind === 'pr' ? 'PR' : 'Issue'}
+    </Badge>
   );
 }
