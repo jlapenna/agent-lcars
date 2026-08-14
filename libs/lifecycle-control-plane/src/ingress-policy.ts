@@ -749,7 +749,10 @@ export type IngressRecordResult =
   | { status: 'applied'; record: IngressInboxRecord }
   | { status: 'replay'; record: IngressInboxRecord };
 
-function stableDeliverySha256(envelope: ControlPlaneSignalEnvelope): string {
+/** Stable semantic delivery identity; receipt time and HMAC key rotation are excluded. */
+export function stableIngressDeliverySha256(
+  envelope: ControlPlaneSignalEnvelope,
+): string {
   if (envelope.source.kind !== 'github-webhook') {
     throw new IngressPolicyConflict('Inbox delivery is invalid');
   }
@@ -841,7 +844,7 @@ export class InMemoryIngressPolicyInbox implements IngressPolicyInbox {
     }
     const source = envelope.source;
     const key = this.deliveryKey(envelope.tenant.tenantId, source.deliveryId);
-    const inputSha256 = stableDeliverySha256(envelope);
+    const inputSha256 = stableIngressDeliverySha256(envelope);
     const current = this.records.get(key);
     if (current !== undefined) {
       if (current.inputSha256 !== inputSha256) {
