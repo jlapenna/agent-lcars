@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   captureQuickTaskSource,
+  composeQuickTaskEvidenceIssueBody,
   composeQuickTaskIssueBody,
   deriveQuickTaskTitle,
   lowInformationQuickTaskGuidance,
@@ -126,6 +127,22 @@ describe('Quick Task evidence composition', () => {
         { owner: 'org', name: 'repo' },
       ),
     ).not.toContain('## Screenshot');
+  });
+
+  it('attaches gateway Markdown only from a trusted server origin', () => {
+    expect(
+      composeQuickTaskEvidenceIssueBody(
+        {
+          description: 'The task list hangs after refresh',
+          source: { route: '', identities: '', capturedAt: '' },
+        },
+        { owner: 'org', name: 'repo' },
+        'https://lcars.example.net',
+        '0d6a4b56-31d0-4d39-b0b2-5a2520cc4882',
+      ),
+    ).toContain(
+      '![Screenshot](https://lcars.example.net/api/quick-task-evidence/v1/0d6a4b56-31d0-4d39-b0b2-5a2520cc4882)',
+    );
   });
 });
 
