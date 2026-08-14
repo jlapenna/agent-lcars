@@ -9,6 +9,7 @@ import {
   GITHUB_ACTIONS_OIDC_ISSUER,
   GitHubWorkerGrantOidcVerifier,
   workerGrantClaimsFromJwtPayload,
+  WorkerGrantJwtUnavailableError,
   WorkerGrantJwtVerificationError,
 } from './github-worker-grant-oidc-verifier';
 
@@ -166,5 +167,25 @@ describe('GitHub WorkerGrant JWT verifier', () => {
       );
       expect((error as Error).message).not.toContain(RAW_JTI);
     }
+  });
+
+  it('keeps a JWKS transport failure operational and secret-free', async () => {
+    const secret = 'jwks-transport-secret';
+    const { privateKey } = await generateKeyPair('RS256');
+    const raw = await signedToken(
+      privateKey,
+      payload(Math.floor(Date.now() / 1_000) + 300),
+    );
+    const verifier = new GitHubWorkerGrantOidcVerifier(async () => {
+      throw new Error(secret);
+    });
+    let error: unknown;
+    try {
+      await verifier.verify(raw);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(WorkerGrantJwtUnavailableError);
+    expect((error as Error).message).not.toContain(secret);
   });
 });
