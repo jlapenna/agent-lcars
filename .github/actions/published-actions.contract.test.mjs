@@ -26,6 +26,25 @@ const actionsDirectory = path.resolve('.github/actions');
 // `default` is asserted only when present here (multi-line defaults are
 // asserted by requiredness alone).
 const PUBLISHED = {
+  'credential-grant': {
+    inputs: {
+      'attempt-id': { required: true },
+      'request-id': { required: true },
+    },
+    outputs: [
+      'kind',
+      'token',
+      'grant-id',
+      'credential-profile-id',
+      'issued-at',
+      'token-expires-at',
+      'renewal-deadline',
+      'max-residual-token-expiry',
+      'denial-code',
+      'retry-after',
+      'terminal-state',
+    ],
+  },
   'mint-agent-token': {
     inputs: {
       'client-id': { required: true },

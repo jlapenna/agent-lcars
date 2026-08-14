@@ -5,5 +5,9 @@
   "projectType": "library",
   "tags": ["platform:tooling", "scope:shared"],
   "// why": "Nx lint targets are per-project, and .github/actions belonged to no project -- so both gates that matter (ci.yml's `pnpm lint`, and the pre-push hook's `nx affected -t lint`) skipped every composite action's JavaScript. Nothing was ignoring it; nobody was asking for it. The dispatch broker has since moved to apps/dispatch-broker; rerun-infra-killed-runs remains here, and this project is what keeps it linted.",
-  "targets": {}
+  "targets": {
+    "test": {
+      "command": "node --test .github/actions/credential-grant/credential-grant.test.mjs"
+    }
+  }
 }
