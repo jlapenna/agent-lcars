@@ -478,6 +478,30 @@ JSON
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
 )
 
+# --- N3b: an explicit requires-human result is not a separate exact-mode
+# outcome today. A worker may write a marked explanatory comment while the
+# projector independently owns the status:needs-human label; the verifier
+# accepts the exact evidence as a comment, never fabricates a "park" outcome
+# from the label or prose. This freezes the current split for the lifecycle
+# contract work: explicit parking is projector state, not worker validation.
+(
+  base_env
+  case_dir="$test_root/exact-requires-human-comment-is-comment-outcome"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":557,"user":{"login":"agent-lcars[bot]"},"body":"I need maintainer direction before continuing.\n<!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  cat > "$case_dir/issue.json" <<'JSON'
+{"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
+JSON
+  run_case exact-requires-human-comment-is-comment-outcome
+  test "$status" = 0 || fail "an exact marked requires-human comment should pass"
+  grep -qx 'outcome-kind=comment' "$GITHUB_OUTPUT" || fail "requires-human prose and a label must remain a comment outcome"
+  if grep -q '^outcome-kind=park$' "$GITHUB_OUTPUT"; then
+    fail "the exact verifier must not fabricate a park outcome from projector-owned state"
+  fi
+)
+
 # --- N4: the issue closing, with no marker on any comment, no longer
 # satisfies the gate. ---
 (
