@@ -24,7 +24,9 @@ test.describe('/agents page @smoke', () => {
     page,
   }) => {
     await page.goto('/');
-    const header = page.locator('.console-header:visible');
+    const header = page.locator(
+      '.console-header:not([data-streaming-fallback])',
+    );
     await expect(header).toHaveCount(1);
     await expect(header.getByRole('link', { name: 'Agents' })).toBeVisible();
     await header.getByRole('link', { name: 'Agents' }).click();
@@ -78,11 +80,11 @@ test.describe('/agents page @smoke', () => {
 
   test('uses the compact operational hierarchy on desktop', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.goto('/agents');
 
     const header = page.locator(
-      '.console-header[data-current="agents"]:visible',
+      '.console-header[data-current="agents"]:not([data-streaming-fallback])',
     );
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     await expect(header).toHaveCount(1);
@@ -104,13 +106,6 @@ test.describe('/agents page @smoke', () => {
     await expect(workspace.getByTestId('active-agents-section')).toBeVisible();
     await expect(workspace.getByTestId('claimed-idle-section')).toHaveCount(0);
     await expect(workspace.getByTestId('recent-outcomes')).toHaveCount(0);
-
-    const capture = testInfo.outputPath('agents-desktop.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('agents-desktop.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('preserves repository scope in header and mobile navigation', async ({
@@ -119,7 +114,7 @@ test.describe('/agents page @smoke', () => {
     await page.goto('/agents?repo=supersprinklesracing%2Fsprinkles');
 
     const header = page.locator(
-      '.console-header[data-current="agents"]:visible',
+      '.console-header[data-current="agents"]:not([data-streaming-fallback])',
     );
     await expect(header).toHaveCount(1);
     await expect(header.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
@@ -145,12 +140,12 @@ test.describe('/agents page @smoke', () => {
 
   test('uses the shared elbow header and one overflow-safe mobile column', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/agents');
 
     const header = page.locator(
-      '.console-header[data-current="agents"]:visible',
+      '.console-header[data-current="agents"]:not([data-streaming-fallback])',
     );
     const workspace = page.getByRole('region', { name: 'Agent operations' });
     await expect(header).toHaveCount(1);
@@ -214,12 +209,5 @@ test.describe('/agents page @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('agents-mobile.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('agents-mobile.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 });

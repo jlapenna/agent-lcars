@@ -1,4 +1,4 @@
-import { expect, Page, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 import {
   E2E_ISSUE_AGENT_SESSION_ID,
@@ -9,28 +9,14 @@ import { expectMobileBridgeHeader } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 
 /**
- * #40: every screenshot taken during the LCARS redesign (#32) was of an
- * environment with zero action items, zero runs, and zero issue-agent
- * sessions — so terracotta (failed), mustard (timeout), jade (success),
- * magenta (review-requested), and the whole `ACTION_COLORS` badge set had
- * never been rendered against anything at all. Only the nav chrome had.
+ * #40: the initial LCARS redesign coverage used an empty environment, so
+ * terracotta (failed), mustard (timeout), jade (success), magenta
+ * (review-requested), and the whole `ACTION_COLORS` badge set had never been
+ * exercised against populated data.
  *
  * These drive the same pages against the populated fixture set (see
- * `lib/e2e-github-fixtures.ts`) so each of those states is actually
- * exercised, in both color schemes.
+ * `lib/e2e-github-fixtures.ts`) so each state and its interactions are covered.
  */
-
-/** The console reads the scheme from the cookie its own toggle writes (see
- * layout.tsx), so this is the honest way to render a page in light mode. */
-async function useColorScheme(page: Page, scheme: 'light' | 'dark') {
-  await page.context().addCookies([
-    {
-      name: 'mantine-color-scheme',
-      value: scheme,
-      url: 'http://127.0.0.1:4200',
-    },
-  ]);
-}
 
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
@@ -322,7 +308,7 @@ test.describe('populated dashboard', () => {
 
   test('keeps older issue groups behind one phone disclosure @sessions-mobile-history', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/sessions');
 
@@ -348,13 +334,6 @@ test.describe('populated dashboard', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('sessions-mobile-history.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('sessions-mobile-history.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 });
 
@@ -366,7 +345,9 @@ test.describe('responsive decision inbox', () => {
     await expect(
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toHaveCount(0);
-    const header = page.locator('.console-header[data-current="deck"]');
+    const header = page.locator(
+      '.console-header[data-current="deck"]:not([data-streaming-fallback])',
+    );
     await expect(header.getByRole('link', { name: 'Bridge' })).toHaveAttribute(
       'aria-current',
       'page',
@@ -406,7 +387,9 @@ test.describe('responsive decision inbox', () => {
     const repoQuery = 'supersprinklesracing%2Fsprinkles';
     await page.goto(`/?repo=${repoQuery}`);
 
-    const header = page.locator('.console-header');
+    const header = page.locator(
+      '.console-header:not([data-streaming-fallback])',
+    );
     const inboxLink = header.getByRole('link', { name: 'Inbox' });
     await expect(inboxLink).toHaveAttribute('href', `/inbox?repo=${repoQuery}`);
     await inboxLink.click();
@@ -430,11 +413,13 @@ test.describe('responsive decision inbox', () => {
 
   test('keeps the Inbox workspace and navigation usable on a tablet', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 820, height: 1180 });
     await page.goto('/inbox');
 
-    const header = page.locator('.console-header[data-current="inbox"]');
+    const header = page.locator(
+      '.console-header[data-current="inbox"]:not([data-streaming-fallback])',
+    );
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
     await expect(header).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
@@ -453,10 +438,6 @@ test.describe('responsive decision inbox', () => {
     await expect(menu.getByRole('menuitem', { name: 'Bridge' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Inbox' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await testInfo.attach('inbox-tablet.png', {
-      body: await page.screenshot({ fullPage: true }),
-      contentType: 'image/png',
-    });
   });
 
   test('exposes an operable keyboard and semantic Inbox workflow', async ({
@@ -490,14 +471,14 @@ test.describe('responsive decision inbox', () => {
     await expect(filter).toBeFocused();
   });
 
-  test('uses a list-to-detail flow on a phone viewport', async ({
-    page,
-  }, testInfo) => {
+  test('uses a list-to-detail flow on a phone viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/inbox');
 
     const workspace = page.getByRole('region', { name: 'Decision Inbox' });
-    const header = page.locator('.console-header[data-current="inbox"]');
+    const header = page.locator(
+      '.console-header[data-current="inbox"]:not([data-streaming-fallback])',
+    );
     // The shared title-inside-the-elbow header now owns Inbox identity at every
     // viewport; route navigation remains available inside its overflow menu.
     await expectMobileBridgeHeader(header);
@@ -548,13 +529,6 @@ test.describe('responsive decision inbox', () => {
     expect(undersizedFilterItems).toEqual([]);
     await page.getByRole('menuitem', { name: 'Newest update' }).click();
     await expect(page).toHaveURL(/sort=newest/);
-
-    const capture = testInfo.outputPath('inbox-mobile-polished.png');
-    await page.screenshot({ path: capture, fullPage: false });
-    await testInfo.attach('inbox-mobile-polished.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
 
     await page.getByRole('button', { name: 'More console options' }).click();
     const menu = page.getByRole('menu');
@@ -607,7 +581,9 @@ test.describe('responsive decision inbox', () => {
       await page.setViewportSize(viewport);
       await page.goto('/');
 
-      const header = page.locator('.console-header[data-current="deck"]');
+      const header = page.locator(
+        '.console-header[data-current="deck"]:not([data-streaming-fallback])',
+      );
       await expect(header).toBeVisible();
       await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
       await expect(header.getByRole('link', { name: 'Inbox' })).toBeHidden();
@@ -664,7 +640,9 @@ test.describe('responsive decision inbox', () => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto('/missing-console-route');
 
-    const header = page.locator('.console-header[data-current="deck"]');
+    const header = page.locator(
+      '.console-header[data-current="deck"]:not([data-streaming-fallback])',
+    );
     await expectMobileBridgeHeader(header);
     await expect(
       header.getByRole('heading', { name: 'Not found' }),
@@ -680,7 +658,7 @@ test.describe('responsive agent operations', () => {
   ]) {
     test(`keeps the populated Agents page usable at ${viewport.width}px @agents-mobile`, async ({
       page,
-    }, testInfo) => {
+    }) => {
       const browserErrors: string[] = [];
       page.on('console', (message) => {
         if (message.type() === 'error') browserErrors.push(message.text());
@@ -785,14 +763,6 @@ test.describe('responsive agent operations', () => {
         page.getByRole('menu').getByRole('menuitem', { name: 'Sessions' }),
       ).toBeVisible();
       await page.keyboard.press('Escape');
-
-      const filename = `agents-populated-${viewport.width}px.png`;
-      const capture = testInfo.outputPath(filename);
-      await page.screenshot({ path: capture, fullPage: true });
-      await testInfo.attach(filename, {
-        path: capture,
-        contentType: 'image/png',
-      });
     });
   }
 
@@ -822,67 +792,8 @@ test.describe('responsive agent operations', () => {
   });
 });
 
-// Screenshots, not assertions: #40 asks for the populated pages to be looked
-// at in both schemes, so these capture them on every run and nothing here
-// fails on appearance. Deliberately NOT `toHaveScreenshot` baselines — this
-// suite has no committed baselines and CI's rendering environment isn't
-// pinned to a developer's, so a baseline here would be a flake generator.
-//
-// Written via `testInfo.outputPath()` and attached with `testInfo.attach()`
-// rather than to a cwd-relative path: an attachment is embedded in the
-// Playwright HTML report, which is the artifact CI actually uploads (see
-// ci.yml, which uploads it on success too precisely so these are
-// retrievable after a green run — a capture nobody can open isn't a
-// capture).
-test.describe('populated page captures', () => {
-  for (const scheme of ['light', 'dark'] as const) {
-    test(`captures the console in ${scheme} mode`, async ({
-      page,
-    }, testInfo) => {
-      await useColorScheme(page, scheme);
-      // The session detail page is a drill-down, not a nav destination, so
-      // it renders its own back-link header instead of the pill rail (see
-      // ConsoleHeader's doc comment) — each page gets its own readiness
-      // marker rather than one shared nav assertion.
-      for (const [name, path, ready] of [
-        ['deck', '/', '[data-testid="current-work"]'],
-        [
-          'inbox',
-          '/inbox',
-          '.console-header[data-current="inbox"]:not([data-streaming-fallback])',
-        ],
-        [
-          'agents',
-          '/agents',
-          '.console-header[data-current="agents"]:not([data-streaming-fallback])',
-        ],
-        [
-          'sessions',
-          '/sessions',
-          '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
-        ],
-        [
-          'session-detail',
-          `/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`,
-          '[data-testid="session-header"]',
-        ],
-      ] as const) {
-        await page.goto(path);
-        await expect(page.locator(ready)).toBeVisible();
-        const file = `${name}-${scheme}.png`;
-        const capture = testInfo.outputPath(file);
-        await page.screenshot({ path: capture, fullPage: true });
-        await testInfo.attach(file, {
-          path: capture,
-          contentType: 'image/png',
-        });
-      }
-    });
-  }
-
-  test('captures the phone list and detail flow', async ({
-    page,
-  }, testInfo) => {
+test.describe('populated phone flows', () => {
+  test('keeps the phone list and detail flow usable', async ({ page }) => {
     const browserErrors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') browserErrors.push(message.text());
@@ -891,7 +802,9 @@ test.describe('populated page captures', () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
-    const header = page.locator('.console-header[data-current="deck"]');
+    const header = page.locator(
+      '.console-header[data-current="deck"]:not([data-streaming-fallback])',
+    );
     await expectMobileBridgeHeader(header);
     await expect(header.getByRole('heading', { name: 'Bridge' })).toBeVisible();
     await expect(page.getByTestId('deck-inbox-summary')).toBeVisible();
@@ -912,42 +825,22 @@ test.describe('populated page captures', () => {
     expect(decisionAction?.height).toBeGreaterThanOrEqual(44);
     expect(taskAction?.height).toBeGreaterThanOrEqual(44);
     expect(browserErrors).toEqual([]);
-    const deckCapture = testInfo.outputPath('deck-mobile.png');
-    await page.screenshot({ path: deckCapture });
-    await testInfo.attach('deck-mobile.png', {
-      path: deckCapture,
-      contentType: 'image/png',
-    });
-
     await page.goto('/inbox');
     await expect(
       page.getByRole('region', { name: 'Decision Inbox' }),
     ).toBeVisible();
 
     await expect(page.locator('.queue-workspace__list')).toBeVisible();
-    const listCapture = testInfo.outputPath('inbox-mobile-list.png');
-    await page.screenshot({ path: listCapture });
-    await testInfo.attach('inbox-mobile-list.png', {
-      path: listCapture,
-      contentType: 'image/png',
-    });
-
     await page
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
       .getByRole('link')
       .click();
     await expect(page.locator('.queue-workspace__detail')).toBeVisible();
-    const detailCapture = testInfo.outputPath('inbox-mobile-detail.png');
-    await page.screenshot({ path: detailCapture });
-    await testInfo.attach('inbox-mobile-detail.png', {
-      path: detailCapture,
-      contentType: 'image/png',
-    });
   });
 
-  test('captures the Inbox list and detail at narrow-phone width', async ({
+  test('keeps the Inbox list and detail usable at narrow-phone width', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto('/inbox');
 
@@ -961,24 +854,11 @@ test.describe('populated page captures', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    const listCapture = testInfo.outputPath('inbox-narrow-list.png');
-    await page.screenshot({ path: listCapture });
-    await testInfo.attach('inbox-narrow-list.png', {
-      path: listCapture,
-      contentType: 'image/png',
-    });
-
     await workspace
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
       .getByRole('link')
       .click();
     await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
     await expect(workspace.locator('.queue-detail-identity')).toBeHidden();
-    const detailCapture = testInfo.outputPath('inbox-narrow-detail.png');
-    await page.screenshot({ path: detailCapture });
-    await testInfo.attach('inbox-narrow-detail.png', {
-      path: detailCapture,
-      contentType: 'image/png',
-    });
   });
 });

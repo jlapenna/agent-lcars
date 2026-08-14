@@ -10,9 +10,8 @@ import { cliSessionRow, useE2eAdminBeforeEach } from './util/e2e-test-utils';
 useE2eAdminBeforeEach();
 useCliSessionFixtures();
 
-// @smoke: this is the only spec in the suite so far — it must run in the
-// default per-PR smoke lane (E2E_GREP is @smoke|@visual, #2599/#2860), not
-// just the run-e2e-labeled full tier.
+// @smoke keeps this focused flow selectable through the hermetic E2E_GREP
+// boundary when a quick local confirmation is more useful than the full suite.
 test.describe('Agent Activity panel CLI sessions @smoke', () => {
   test('renders active sessions with direct actions and leaves history to Sessions', async ({
     page,

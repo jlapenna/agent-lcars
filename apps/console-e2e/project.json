@@ -90,12 +90,6 @@
       "options": {
         "command": "./tools/e2e-docker.sh @agent-lcars/console-e2e"
       }
-    },
-    "e2e-docker-update": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "./tools/e2e-docker.sh @agent-lcars/console-e2e --update"
-      }
     }
   }
 }

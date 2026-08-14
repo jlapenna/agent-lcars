@@ -13,29 +13,19 @@ Run the local or CI suite through:
 Scope a host run without leaving the boundary by setting `E2E_GREP`, for
 example `E2E_GREP='@smoke' ./tools/e2e-local.sh`.
 
-## Visual baselines
+## Rendered diagnostics
 
-The `@visual` mobile suite compares committed Playwright screenshots only in
-the pinned `lcars-e2e` rendering environment. Host-direct E2E skips those
-comparisons because browser, font, and operating-system rasterization can
-otherwise produce false diffs.
+Console E2E uses semantic interaction and layout assertions rather than
+committed pixel goldens. Playwright captures a screenshot automatically when a
+test fails, and CI uploads it with the trace and HTML report in the
+`console-e2e-diagnostics` artifact. This preserves rendered evidence without
+making real-time labels, font rasterization, or intentional styling changes a
+pass/fail contract.
 
-Run the committed visual comparisons locally through the pinned Docker path:
-
-```sh
-VISUAL_ONLY=1 ./tools/e2e-docker.sh @agent-lcars/console-e2e
-```
-
-Regenerate only the tagged baselines after an intentional visual change:
-
-```sh
-E2E_GREP='@visual' ./tools/e2e-docker.sh @agent-lcars/console-e2e --update
-```
-
-Review every changed expected image before committing it. A baseline update is
-evidence of the intended UI, not a way to make an unexplained diff pass. On a
-CI mismatch, download the `console-e2e-diagnostics` artifact and compare the
-expected, actual, and diff images in the Playwright report/test output.
+Host-direct runs also use a run-scoped Nx L1 cache inside their isolated HOME.
+That keeps another worktree's cache reset from deleting terminal-output paths
+mid-build; the allowlisted remote-cache capability can still satisfy or store
+deterministic build inputs.
 
 The public and internal Nx targets support only the `emulator` execution path.
 They retain an explicit `live` tombstone because Nx silently falls back to the
@@ -48,8 +38,8 @@ authorization, never the direct `e2e-run` target.
 `tools/e2e-local.sh` starts the Nx process with an empty environment, a temporary
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
 allowlist. That list contains the build-time Firebase/Auth dummy values,
-Playwright's browser location, the safe suite-selection controls (`E2E_GREP`,
-`SKIP_VISUAL`, `VISUAL_ONLY`, and `UPDATE_SNAPSHOTS`), and the caller's
+Playwright's browser location, the safe suite-selection control (`E2E_GREP`),
+and the caller's
 conventional Corepack and Firebase emulator cache paths. Keeping
 `COREPACK_HOME` and `FIREBASE_EMULATORS_PATH` at those two derived locations
 lets already installed package-manager and emulator distributions work offline

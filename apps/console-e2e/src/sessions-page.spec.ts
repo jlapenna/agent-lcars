@@ -14,10 +14,12 @@ usePopulatedFixtures();
 test.describe('/sessions workspace @smoke', () => {
   test('uses the task-grouped archive hierarchy on desktop', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.goto('/sessions');
 
-    const header = page.locator('.console-header[data-current="sessions"]');
+    const header = page.locator(
+      '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+    );
     const workspace = page.getByRole('region', { name: 'Session archive' });
     await expectDesktopBridgeHeader(header);
     await expectDesktopLcarsElbow(header);
@@ -36,21 +38,16 @@ test.describe('/sessions workspace @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('sessions-desktop.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('sessions-desktop.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('expands the title on a sufficiently wide desktop before falling back to a safe ellipsis', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
 
-    const header = page.locator('.console-header[data-current="sessions"]');
+    const header = page.locator(
+      '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+    );
     const title = header.locator('.lcars-header-title');
 
     await expectDesktopBridgeHeader(header);
@@ -68,13 +65,6 @@ test.describe('/sessions workspace @smoke', () => {
         title.evaluate((element) => element.scrollWidth <= element.clientWidth),
       )
       .toBe(true);
-
-    const capture = testInfo.outputPath('session-detail-desktop-title.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('session-detail-desktop-title.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('switches between flat and by-issue archive views', async ({ page }) => {
@@ -96,13 +86,15 @@ test.describe('/sessions workspace @smoke', () => {
 
   test('uses the shared elbow header and flat overflow-safe mobile rows', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(
       '/sessions?days=30&source=issue-agent&issue=9005&view=flat',
     );
 
-    const header = page.locator('.console-header[data-current="sessions"]');
+    const header = page.locator(
+      '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+    );
     const workspace = page.getByRole('region', { name: 'Session archive' });
     const sessionRow = page.getByTestId(
       `session-card-${E2E_ISSUE_AGENT_SESSION_ID}`,
@@ -165,22 +157,17 @@ test.describe('/sessions workspace @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('sessions-mobile.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('sessions-mobile.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('uses the shared elbow title as the only visual mobile header', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
 
-    const header = page.locator('.console-header[data-current="sessions"]');
+    const header = page.locator(
+      '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+    );
 
     await expectMobileBridgeHeader(header);
     await expect(
@@ -198,13 +185,6 @@ test.describe('/sessions workspace @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('session-detail-mobile-title.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('session-detail-mobile-title.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('keeps the tablet command rail within the viewport', async ({
@@ -213,7 +193,9 @@ test.describe('/sessions workspace @smoke', () => {
     await page.setViewportSize({ width: 768, height: 1024 });
     await page.goto('/sessions?days=30');
 
-    const header = page.locator('.console-header[data-current="sessions"]');
+    const header = page.locator(
+      '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+    );
     await expect(header.getByRole('link', { name: 'Sessions' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();

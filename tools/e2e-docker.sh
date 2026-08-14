@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 #
-# Runs an e2e project's Playwright suite inside the pinned Docker environment
-# (tools/e2e/Dockerfile) instead of on the host, so screenshot rendering is
-# identical to CI. Local/interactive use only -- apps/console-e2e's own
-# playwright.config.ts auto-skips @visual specs entirely outside of CI/Docker
-# for exactly this reason.
+# Runs an e2e project's Playwright suite inside the same pinned Docker
+# environment that backs the trusted CI runner. This is the local path for
+# reproducing browser/runtime-specific failures without making rendered pixels
+# themselves a pass/fail contract.
 #
 # WARNING: this replaces the host checkout's node_modules/ with an empty
 # directory (see the Turbopack note below) so the container can mount its own
@@ -32,14 +31,8 @@
 # previously-hit failures, not stylistic choices.
 #
 # Usage:
-#   tools/e2e-docker.sh <nx-project> [--update] [-- <playwright args>]
-#   E2E_GREP="pattern" tools/e2e-docker.sh <nx-project> [--update]
-#
-#   --update            regenerate screenshot baselines (UPDATE_SNAPSHOTS=1,
-#                       read by playwright.config.ts). With no E2E_GREP
-#                       scoping this rewrites EVERY spec's baselines in the
-#                       suite -- prints a loud warning (and, interactively,
-#                       pauses 5s) when it detects that combination.
+#   tools/e2e-docker.sh <nx-project> [-- <playwright args>]
+#   E2E_GREP="pattern" tools/e2e-docker.sh <nx-project>
 #   -- <playwright args> forwarded verbatim to the underlying implementation
 #                        target -- only takes effect if that target does NOT
 #                        set `forwardAllArgs: false`. This repo's console-e2e
@@ -54,10 +47,8 @@
 #                        to run rather than silently dropping the args.
 #   E2E_GREP="pattern"  env-var equivalent for projects where the CLI
 #                       passthrough above is rejected: forwarded into the
-#                       container and read by playwright.config.ts (mirrors
-#                       the existing SKIP_VISUAL/VISUAL_ONLY pattern) to
-#                       scope a run to one spec/suite without regenerating
-#                       every other spec's snapshots.
+#                       container and read by playwright.config.ts to scope a
+#                       run to one spec/suite.
 #
 # Resource caps (override for bigger/smaller machines):
 #   E2E_DOCKER_MEMORY=12g  E2E_DOCKER_MEMORY_SWAP=14g  E2E_DOCKER_PIDS=8192
@@ -94,14 +85,12 @@
 # logic without Docker.
 set -euo pipefail
 
-PROJECT="${1:?usage: tools/e2e-docker.sh <nx-project> [--update] [-- <playwright args>]}"
+PROJECT="${1:?usage: tools/e2e-docker.sh <nx-project> [-- <playwright args>]}"
 shift || true
 
-UPDATE_ENV=()
 PASSTHROUGH_ARGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --update) UPDATE_ENV=(-e UPDATE_SNAPSHOTS=1) ;;
     --)
       shift
       PASSTHROUGH_ARGS=("$@")
@@ -111,12 +100,6 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-
-# Also honor an ambient UPDATE_SNAPSHOTS=1 so baselines can be refreshed
-# without --update (e.g. a CI label-driven run).
-if [ "${UPDATE_SNAPSHOTS:-}" = "1" ]; then
-  UPDATE_ENV=(-e UPDATE_SNAPSHOTS=1)
-fi
 
 DRY_RUN=0
 if [ "${E2E_DOCKER_DRY_RUN:-}" = "1" ]; then
@@ -142,8 +125,8 @@ ci_env_value() {
 # Fail loudly instead of silently dropping '-- <playwright args>': with
 # forwardAllArgs:false, nx:run-commands ignores trailing CLI args entirely,
 # so without this check the WHOLE suite would run regardless of what was
-# passed after `--` -- exactly how members#2448 rewrote unrelated specs'
-# screenshot baselines (a scoped `--grep` silently never reached Playwright).
+# passed after `--`. A scoped `--grep` silently never reaching Playwright is
+# especially misleading during failure reproduction.
 if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
   NX_PROJECT_JSON="$(cd "$ROOT" && pnpm exec nx show project "$PROJECT" --json 2>/dev/null || true)"
   # jq's `//` alternative operator treats JSON `false` as falsy too (not just
@@ -157,36 +140,12 @@ if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
     echo "and the WHOLE suite would run instead. Refusing to run." >&2
     echo >&2
     echo "Use E2E_GREP instead (read by this project's playwright.config.ts):" >&2
-    UPDATE_SUFFIX=""
-    if [ "${#UPDATE_ENV[@]}" -gt 0 ]; then
-      UPDATE_SUFFIX=" --update"
-    fi
-    echo "  E2E_GREP=\"<pattern>\" $0 $PROJECT${UPDATE_SUFFIX}" >&2
+    echo "  E2E_GREP=\"<pattern>\" $0 $PROJECT" >&2
     exit 2
   elif [ "$FORWARD_ALL_ARGS" = "unknown" ]; then
     echo "e2e-docker: warning: couldn't determine '${PROJECT}:e2e-implementation's forwardAllArgs" >&2
     echo "via 'nx show project' (bad project name, or nx unavailable on the host)" >&2
     echo "— proceeding, but the passthrough args below may be silently dropped." >&2
-  fi
-fi
-
-# Loud (non-blocking) warning when a baseline regen has no scoping at all --
-# UPDATE_SNAPSHOTS=1 with neither E2E_GREP nor (now-validated) passthrough
-# args rewrites EVERY screenshot in the suite. Only pause for confirmation
-# when a human is actually watching a real terminal.
-if [ "${#UPDATE_ENV[@]}" -gt 0 ] && [ -z "${E2E_GREP:-}" ] && [ "${#PASSTHROUGH_ARGS[@]}" -eq 0 ]; then
-  echo "############################################################" >&2
-  echo "# e2e-docker: WARNING — regenerating screenshot baselines" >&2
-  echo "# for the ENTIRE '${PROJECT}' suite. No E2E_GREP scoping is" >&2
-  echo "# set, so every spec's snapshots will be overwritten, not" >&2
-  echo "# just the one you're working on." >&2
-  echo "#" >&2
-  echo "# To scope this to one spec/suite instead:" >&2
-  echo "#   E2E_GREP=\"pattern\" $0 $PROJECT --update" >&2
-  echo "############################################################" >&2
-  if [ "$DRY_RUN" -eq 0 ] && [ -z "${CI:-}" ] && [ -t 0 ]; then
-    echo ">> Ctrl-C now to abort, or wait 5s to continue with the full-suite regen..." >&2
-    sleep 5
   fi
 fi
 
@@ -422,8 +381,6 @@ DOCKER_ARGS=(
   -e NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}"
   -e HUSKY=0
   -e CI=1
-  -e VISUAL_ONLY="${VISUAL_ONLY:-}"
-  -e SKIP_VISUAL="${SKIP_VISUAL:-}"
   -e E2E_GREP="${E2E_GREP:-}"
   -e E2E_HERMETIC=1
   -e NX_LOAD_DOT_ENV_FILES=false
@@ -437,7 +394,6 @@ DOCKER_ARGS=(
   -e NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)"
   -e NEXT_PUBLIC_FIREBASE_PROJECT_ID="$(ci_env_value NEXT_PUBLIC_FIREBASE_PROJECT_ID)"
   -e NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$(ci_env_value NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)"
-  "${UPDATE_ENV[@]}"
   -w /work
   "$IMAGE"
 )
@@ -479,5 +435,5 @@ fi
 decide_install_step
 
 echo ">> e2e-docker: $INSTALL_NOTE" >&2
-echo ">> running ${PROJECT}:e2e-implementation in container (${UPDATE_ENV[*]:-no-update}; mem=$MEM) ..."
+echo ">> running ${PROJECT}:e2e-implementation in container (mem=$MEM) ..."
 exec docker "${DOCKER_ARGS[@]}" bash -lc "$INNER_CMD"

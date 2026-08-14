@@ -2,20 +2,11 @@ import { workspaceRoot } from '@nx/devkit';
 import { nxE2EPreset } from '@nx/playwright/preset';
 import { defineConfig, devices } from '@playwright/test';
 import * as fs from 'fs';
-import * as path from 'path';
 
 /**
  * See https://playwright.dev/docs/test-configuration.
  */
 const baseURL = process.env['BASE_URL'] || 'http://127.0.0.1:4200';
-
-// Screenshot pixels are authoritative only in the pinned Playwright sandbox:
-// locally that is tools/e2e-docker.sh, and trusted CI's lcars-e2e runner is
-// built FROM the same image. Host-direct runs (including fork PRs on
-// ubuntu-latest) still exercise the non-visual suite without comparing pixels.
-if (!fs.existsSync('/.dockerenv')) {
-  process.env.SKIP_VISUAL = '1';
-}
 
 const envChromium = process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'];
 const executablePath =
@@ -40,14 +31,14 @@ export default defineConfig({
     ],
     process.env.CI ? ['github'] : ['list'],
   ],
-  expect: {
-    toHaveScreenshot: {
-      stylePath: path.join(workspaceRoot, 'tools/e2e/screenshot.css'),
-    },
-  },
   use: {
     baseURL,
     trace: 'on-first-retry',
+    // Captures are diagnostics, never pass/fail goldens. Pixel equality made
+    // intentional styling changes fail and let real-time labels turn unrelated
+    // commits red (#1049); retain the useful failure evidence without making
+    // rendered bytes part of the test contract.
+    screenshot: 'only-on-failure',
     locale: 'en-US',
     timezoneId: 'America/Los_Angeles',
     contextOptions: {
@@ -57,19 +48,7 @@ export default defineConfig({
       executablePath,
     },
   },
-  // Keep visual selection explicit: host-direct runs skip the tagged specs,
-  // while Docker and trusted CI can select or update only those baselines.
-  ...(process.env.SKIP_VISUAL === '1'
-    ? { grepInvert: /@visual/, ignoreSnapshots: true }
-    : {}),
-  ...(process.env.VISUAL_ONLY === '1' ? { grep: /@visual/ } : {}),
   ...(process.env.E2E_GREP ? { grep: new RegExp(process.env.E2E_GREP) } : {}),
-  // tools/e2e-docker.sh's `--update` mode: re-renders inside the pinned
-  // Docker environment (see that script) and writes the new baselines back
-  // to the host checkout via its bind mount.
-  ...(process.env.UPDATE_SNAPSHOTS === '1'
-    ? { updateSnapshots: 'all' as const }
-    : {}),
   // Serve the prebuilt standalone bundle directly rather than via `nx run
   // serve-e2e` — invoking nx here re-enters the running task graph
   // ("Recursive task invocation detected"). The `e2e` target's `dependsOn`

@@ -11,12 +11,12 @@ useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
 test.describe('/costs workspace @smoke', () => {
-  test('uses the compact ledger hierarchy on desktop', async ({
-    page,
-  }, testInfo) => {
+  test('uses the compact ledger hierarchy on desktop', async ({ page }) => {
     await page.goto('/costs');
 
-    const header = page.locator('.console-header[data-current="costs"]');
+    const header = page.locator(
+      '.console-header[data-current="costs"]:not([data-streaming-fallback])',
+    );
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
     await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
@@ -37,22 +37,17 @@ test.describe('/costs workspace @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('costs-desktop.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('costs-desktop.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('uses the shared elbow header and flat essential mobile ledger rows', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/costs?days=30&source=issue-agent&issue=9005');
 
-    const header = page.locator('.console-header[data-current="costs"]');
+    const header = page.locator(
+      '.console-header[data-current="costs"]:not([data-streaming-fallback])',
+    );
     const workspace = page.getByRole('region', { name: 'Cost ledger' });
     await expect(header.getByRole('link', { name: 'Costs' })).toBeHidden();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
@@ -99,13 +94,6 @@ test.describe('/costs workspace @smoke', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('costs-mobile.png');
-    await page.screenshot({ path: capture, fullPage: true });
-    await testInfo.attach('costs-mobile.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('keeps the tablet command rail within the viewport', async ({
@@ -114,7 +102,9 @@ test.describe('/costs workspace @smoke', () => {
     await page.setViewportSize({ width: 768, height: 1024 });
     await page.goto('/costs?days=30');
 
-    const header = page.locator('.console-header[data-current="costs"]');
+    const header = page.locator(
+      '.console-header[data-current="costs"]:not([data-streaming-fallback])',
+    );
     await expect(header.getByRole('link', { name: 'Costs' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Inbox' })).toBeVisible();
