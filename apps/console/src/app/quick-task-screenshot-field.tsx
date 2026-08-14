@@ -84,6 +84,7 @@ export function QuickTaskScreenshotField({
         id={inputId}
         type="file"
         accept={QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES.join(',')}
+        tabIndex={-1}
         onChange={chooseFromInput}
         disabled={disabled}
         style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
