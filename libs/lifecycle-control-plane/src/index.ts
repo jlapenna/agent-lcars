@@ -3,6 +3,7 @@ export * from './authority-storage';
 export * from './credential-grant-oidc';
 export * from './ingress-policy';
 export * from './launch-binding';
+export * from './launch-resolution';
 export * from './mint-resolution';
 export * from './task-attempt-admission';
 export * from './task-effects';

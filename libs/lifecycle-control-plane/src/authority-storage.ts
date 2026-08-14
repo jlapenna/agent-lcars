@@ -33,6 +33,7 @@ import {
   deriveFinalizedOutcome,
   reduceAttempt,
 } from './attempt-reducer';
+import { registerAttemptTestHydrator } from './attempt-test-hydration';
 import {
   attemptHasCommand,
   finalizationCommandId,
@@ -40,6 +41,13 @@ import {
   validationForVerdict,
   type VerifiedFinalizationTransition,
 } from './finalization-capability';
+import {
+  isVerifiedLaunchResolution,
+  launchResolutionEventId,
+  mintClaimedLaunchWork,
+  type VerifiedClaimedLaunchWork,
+  type VerifiedLaunchResolution,
+} from './launch-resolution-capability';
 import {
   isVerifiedMintResolution,
   type VerifiedMintResolution,
@@ -106,6 +114,12 @@ export interface LaunchOutboxRecord {
   executionEpoch: number;
   state: 'pending' | 'dispatching' | 'accepted' | 'unknown';
   claimedFence?: number;
+  claimToken?: string;
+}
+
+export interface LaunchWorkClaim {
+  status: 'claimed' | 'replay' | 'terminal';
+  work?: VerifiedClaimedLaunchWork;
 }
 
 export interface ObservationIdentity {
@@ -263,11 +277,6 @@ export interface LifecycleAuthorityStorage {
     tenantId: string;
     attemptId: string;
   }): Promise<AttemptState | undefined>;
-  writeAttempt(input: {
-    lease: TaskAuthorityLease;
-    expectedRevision: number;
-    next: AttemptState;
-  }): Promise<WriteResult>;
   /** Capability-checked atomic reducer transition, replay indexes and work. */
   applyFinalizationTransition(input: {
     lease: TaskAuthorityLease;
@@ -293,17 +302,14 @@ export interface LifecycleAuthorityStorage {
     tenantId: string;
     state: LaunchOutboxRecord['state'];
   }): Promise<LaunchOutboxRecord[]>;
-  claimLaunch(input: {
+  claimLaunchWork(input: {
     lease: TaskAuthorityLease;
+    tenantId: string;
     attemptId: string;
-  }): Promise<WriteResult>;
-  resolveLaunch(input: {
+  }): Promise<LaunchWorkClaim>;
+  resolveVerifiedLaunch(input: {
     lease: TaskAuthorityLease;
-    attemptId: string;
-    expectedState: LaunchOutboxRecord['state'];
-    state: 'accepted' | 'unknown';
-    expectedAttemptRevision: number;
-    nextAttempt: AttemptState;
+    resolution: VerifiedLaunchResolution;
   }): Promise<WriteResult>;
 
   recordObservation(identity: ObservationIdentity): Promise<WriteResult>;
@@ -609,6 +615,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly mintLimits = new Map<string, number>();
   private readonly projections = new Map<string, ProjectionRecord>();
   private readonly validationWork = new Map<string, ValidationWorkRecord>();
+  private readonly launchResolutionReceipts = new Map<string, string>();
   private readonly activations = new Map<string, ActivationRecord>();
   private readonly taskEffects = new Map<string, TaskEffectRecord>();
   private readonly taskEffectReceipts = new Map<
@@ -623,6 +630,17 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     registerTaskTestHydrator(this, (input) =>
       this.#bootstrapTaskForTest(input),
     );
+    registerAttemptTestHydrator(this, (input) =>
+      this.#hydrateAttemptForTest(input),
+    );
+  }
+
+  #hydrateAttemptForTest(input: {
+    lease: TaskAuthorityLease;
+    expectedRevision: number;
+    next: AttemptState;
+  }): WriteResult {
+    return this.writeAttemptTransaction(input);
   }
 
   private now(): string {
@@ -1381,14 +1399,6 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     return clone(value);
   }
 
-  async writeAttempt(input: {
-    lease: TaskAuthorityLease;
-    expectedRevision: number;
-    next: AttemptState;
-  }): Promise<WriteResult> {
-    return this.writeAttemptTransaction(input);
-  }
-
   async applyFinalizationTransition(input: {
     lease: TaskAuthorityLease;
     transition: VerifiedFinalizationTransition;
@@ -1946,88 +1956,181 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       .map(clone);
   }
 
-  async claimLaunch(input: {
+  async claimLaunchWork(input: {
     lease: TaskAuthorityLease;
+    tenantId: string;
     attemptId: string;
-  }): Promise<WriteResult> {
+  }): Promise<LaunchWorkClaim> {
     const attempt = this.attempts.get(input.attemptId);
     const current = this.launches.get(input.attemptId);
-    if (attempt === undefined || current === undefined) {
+    if (
+      attempt === undefined ||
+      current === undefined ||
+      attempt.spec.tenant.tenantId !== input.tenantId
+    ) {
       throw new AuthorityConflict('Launch operation is unknown');
     }
     this.assertLease(input.lease, attempt.spec.task, this.now());
+    if (current.state === 'accepted' || current.state === 'unknown') {
+      return { status: 'terminal' };
+    }
     if (
       current.state === 'dispatching' &&
       current.claimedFence === input.lease.fence
     ) {
-      return 'replay';
+      return { status: 'replay' };
     }
-    if (current.state !== 'pending') {
+    if (
+      attempt.spec.activation.mode !== 'central-authoritative' ||
+      current.tenantId !== attempt.spec.tenant.tenantId ||
+      current.repositoryId !== attempt.spec.tenant.repositoryId ||
+      current.issueNumber !== attempt.spec.task.issueNumber ||
+      current.operationId !== attempt.launch.operationId ||
+      current.executionEpoch !== attempt.executionEpoch ||
+      attempt.phase !== 'launch-pending' ||
+      attempt.launch.state !== 'recorded' ||
+      attempt.binding !== undefined ||
+      attempt.outcome !== undefined ||
+      attempt.pendingTerminal !== undefined
+    ) {
+      throw new AuthorityConflict('Launch work contradicts the Attempt state');
+    }
+    const base = {
+      tenantId: attempt.spec.tenant.tenantId,
+      repositoryId: attempt.spec.tenant.repositoryId,
+      task: attempt.spec.task,
+      attemptId: attempt.spec.attemptId,
+      operationId: current.operationId,
+      executionEpoch: current.executionEpoch,
+      localAttemptMarker: attempt.spec.local.attemptMarker,
+      claimFence: input.lease.fence,
+      claimToken: randomUUID(),
+    } as const;
+    if (current.state === 'pending') {
+      const next = {
+        ...current,
+        state: 'dispatching' as const,
+        claimedFence: input.lease.fence,
+        claimToken: base.claimToken,
+      };
+      this.launches.set(input.attemptId, next);
+      return {
+        status: 'claimed',
+        work: mintClaimedLaunchWork({ ...base, permission: 'dispatch' }),
+      };
+    }
+    if (
+      current.state !== 'dispatching' ||
+      current.claimedFence === undefined ||
+      current.claimedFence >= input.lease.fence
+    ) {
       throw new AuthorityConflict('Launch operation is not claimable');
     }
     this.launches.set(input.attemptId, {
       ...current,
-      state: 'dispatching',
       claimedFence: input.lease.fence,
+      claimToken: base.claimToken,
     });
-    return 'applied';
+    return {
+      status: 'claimed',
+      work: mintClaimedLaunchWork({ ...base, permission: 'reconcile-unknown' }),
+    };
   }
 
-  async resolveLaunch(input: {
+  async resolveVerifiedLaunch(input: {
     lease: TaskAuthorityLease;
-    attemptId: string;
-    expectedState: LaunchOutboxRecord['state'];
-    state: 'accepted' | 'unknown';
-    expectedAttemptRevision: number;
-    nextAttempt: AttemptState;
+    resolution: VerifiedLaunchResolution;
   }): Promise<WriteResult> {
-    const attempt = this.attempts.get(input.attemptId);
-    const current = this.launches.get(input.attemptId);
+    if (!isVerifiedLaunchResolution(input.resolution)) {
+      throw new AuthorityConflict(
+        'Launch resolution was not verified at its boundary',
+      );
+    }
+    const resolution = input.resolution;
+    const work = resolution.work;
+    if (!SHA256.test(resolution.responseSha256)) {
+      throw new AuthorityConflict('Launch response digest is invalid');
+    }
+    const attempt = this.attempts.get(work.attemptId);
+    const current = this.launches.get(work.attemptId);
     if (attempt === undefined || current === undefined) {
       throw new AuthorityConflict('Launch operation is unknown');
     }
     this.assertLease(input.lease, attempt.spec.task, this.now());
-    if (current.state === input.state) {
-      if (!same(attempt, input.nextAttempt)) {
-        throw new AuthorityConflict('Launch and attempt resolution diverged');
-      }
+    if (
+      attempt.spec.tenant.tenantId !== work.tenantId ||
+      attempt.spec.tenant.repositoryId !== work.repositoryId ||
+      !same(attempt.spec.task, work.task) ||
+      attempt.spec.attemptId !== work.attemptId ||
+      attempt.spec.local.attemptMarker !== work.localAttemptMarker ||
+      current.operationId !== work.operationId ||
+      current.executionEpoch !== work.executionEpoch
+    ) {
+      throw new AuthorityConflict('Launch resolution identity is invalid');
+    }
+    const event = {
+      kind:
+        resolution.kind === 'accepted'
+          ? ('launch-accepted' as const)
+          : ('launch-response-unknown' as const),
+      eventId: launchResolutionEventId({
+        attemptId: work.attemptId,
+        operationId: work.operationId,
+        executionEpoch: work.executionEpoch,
+        kind: resolution.kind,
+      }),
+    };
+    const receiptKey = tupleKey(work.attemptId, event.eventId);
+    const priorResponseDigest = this.launchResolutionReceipts.get(receiptKey);
+    if (
+      current.state === resolution.kind &&
+      attempt.launch.state ===
+        (resolution.kind === 'accepted' ? 'accepted' : 'response-unknown') &&
+      attempt.commands.some((command) => command.eventId === event.eventId) &&
+      priorResponseDigest === resolution.responseSha256
+    ) {
       return 'replay';
     }
-    if (current.state !== input.expectedState) {
-      throw new AuthorityConflict('Launch outbox state conflict');
-    }
-    const ownsClaim = current.claimedFence === input.lease.fence;
-    if (!ownsClaim && input.state !== 'unknown') {
+    if (priorResponseDigest !== undefined) {
       throw new AuthorityConflict(
-        'Only the claimant may accept a launch; takeover must reconcile unknown',
+        'Launch response identity was reused differently',
       );
     }
-    const expectedAttemptLaunchState =
-      input.state === 'accepted' ? 'accepted' : 'response-unknown';
-    const expectedAttemptPhase =
-      input.state === 'accepted'
-        ? 'launch-accepted'
-        : 'launch-response-unknown';
     if (
       current.state !== 'dispatching' ||
-      !['accepted', 'unknown'].includes(input.state) ||
-      input.nextAttempt.spec.attemptId !== input.attemptId ||
-      input.nextAttempt.launch.state !== expectedAttemptLaunchState ||
-      input.nextAttempt.phase !== expectedAttemptPhase
+      current.claimedFence !== input.lease.fence ||
+      current.claimToken !== work.claimToken ||
+      work.claimFence !== input.lease.fence ||
+      (resolution.kind === 'accepted' && work.permission !== 'dispatch')
+    ) {
+      throw new AuthorityConflict('Launch outbox state conflict');
+    }
+    const reduced = reduceAttempt(attempt, {
+      kind: 'transition',
+      expectedRevision: attempt.revision,
+      transitionedAt: resolution.resolvedAt,
+      canonicalDigest: attemptTransitionDigest(event),
+      event,
+    });
+    if (
+      reduced.status !== 'applied' ||
+      reduced.state.launch.state !==
+        (resolution.kind === 'accepted' ? 'accepted' : 'response-unknown')
     ) {
       throw new AuthorityConflict(
-        'Launch resolution contradicts attempt state',
+        'Launch resolution contradicts Attempt reducer',
       );
     }
     this.writeAttemptTransaction({
       lease: input.lease,
-      expectedRevision: input.expectedAttemptRevision,
-      next: input.nextAttempt,
+      expectedRevision: attempt.revision,
+      next: reduced.state,
     });
-    this.launches.set(input.attemptId, {
+    this.launches.set(work.attemptId, {
       ...current,
-      state: input.state,
+      state: resolution.kind,
     });
+    this.launchResolutionReceipts.set(receiptKey, resolution.responseSha256);
     return 'applied';
   }
 

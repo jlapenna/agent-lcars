@@ -25,6 +25,11 @@ import {
   admitAcceptedSpecForTest,
   seedTaskForTest,
 } from './authority-storage-test-support';
+import { mintUnknownLaunchReconciliation } from './launch-resolution-capability';
+import {
+  resolveLaunchForTest,
+  writeAttemptForTest,
+} from './launch-resolution-test-support';
 import { InstallationTokenMinterBoundary } from './mint-resolution';
 import type { TaskIntentState } from './task-intent-reducer';
 
@@ -218,27 +223,19 @@ async function activateAttempt(
   admitted: Awaited<ReturnType<typeof admit>>,
   binding = bindingFor(admitted),
 ): Promise<AttemptState> {
-  expect(
-    await storage.claimLaunch({
-      lease: admitted.lease,
-      attemptId: admitted.spec.attemptId,
-    }),
-  ).toBe('applied');
-  const accepted: AttemptState = {
-    ...admitted.attempt,
-    revision: 2,
-    phase: 'launch-accepted',
-    launch: { ...admitted.attempt.launch, state: 'accepted' },
-    updatedAt: T1,
-  };
-  await storage.resolveLaunch({
+  await resolveLaunchForTest({
+    storage,
     lease: admitted.lease,
+    tenantId: admitted.spec.tenant.tenantId,
     attemptId: admitted.spec.attemptId,
-    expectedState: 'dispatching',
-    state: 'accepted',
-    expectedAttemptRevision: 1,
-    nextAttempt: accepted,
+    kind: 'accepted',
+    at: T1,
   });
+  const accepted = await storage.readAttempt({
+    tenantId: admitted.spec.tenant.tenantId,
+    attemptId: admitted.spec.attemptId,
+  });
+  if (accepted === undefined) throw new Error('accepted Attempt disappeared');
   const active: AttemptState = {
     ...accepted,
     revision: 3,
@@ -246,7 +243,8 @@ async function activateAttempt(
     binding,
     updatedAt: T1,
   };
-  await storage.writeAttempt({
+  await writeAttemptForTest({
+    storage,
     lease: admitted.lease,
     expectedRevision: 2,
     next: active,
@@ -458,54 +456,57 @@ export function runLifecycleAuthorityStorageContract(
       const { storage, clock } = await makeHarness();
       const admitted = await admit(storage);
       const claims = await Promise.all([
-        storage.claimLaunch({
+        storage.claimLaunchWork({
           lease: admitted.lease,
+          tenantId: admitted.spec.tenant.tenantId,
           attemptId: admitted.spec.attemptId,
         }),
-        storage.claimLaunch({
+        storage.claimLaunchWork({
           lease: admitted.lease,
+          tenantId: admitted.spec.tenant.tenantId,
           attemptId: admitted.spec.attemptId,
         }),
       ]);
-      expect(claims.sort()).toEqual(['applied', 'replay']);
-      const unknown: AttemptState = {
-        ...admitted.attempt,
-        revision: 2,
-        phase: 'launch-response-unknown',
-        launch: { ...admitted.attempt.launch, state: 'response-unknown' },
-        updatedAt: T1,
-      };
+      expect(claims.map((claim) => claim.status).sort()).toEqual([
+        'claimed',
+        'replay',
+      ]);
       clock.set(T4);
       const takeover = await acquire(storage, admitted.scope, 'owner-2');
-      await storage.resolveLaunch({
+      const takeoverClaim = await storage.claimLaunchWork({
         lease: takeover,
+        tenantId: admitted.spec.tenant.tenantId,
         attemptId: admitted.spec.attemptId,
-        expectedState: 'dispatching',
-        state: 'unknown',
-        expectedAttemptRevision: 1,
-        nextAttempt: unknown,
+      });
+      if (takeoverClaim.work === undefined)
+        throw new Error('takeover did not mint work');
+      await storage.resolveVerifiedLaunch({
+        lease: takeover,
+        resolution: mintUnknownLaunchReconciliation({
+          work: takeoverClaim.work,
+          resolvedAt: T4,
+        }),
       });
       await expect(
-        storage.resolveLaunch({
+        storage.claimLaunchWork({
           lease: takeover,
+          tenantId: admitted.spec.tenant.tenantId,
           attemptId: admitted.spec.attemptId,
-          expectedState: 'unknown',
-          state: 'accepted',
-          expectedAttemptRevision: 2,
-          nextAttempt: {
-            ...unknown,
-            revision: 3,
-            phase: 'launch-accepted',
-            launch: { ...unknown.launch, state: 'accepted' },
-          },
         }),
-      ).rejects.toThrow(AuthorityConflict);
+      ).resolves.toEqual({ status: 'terminal' });
       expect(takeover.fence).toBeGreaterThan(admitted.lease.fence);
       await expect(
-        storage.writeAttempt({
+        writeAttemptForTest({
+          storage,
           lease: admitted.lease,
           expectedRevision: 2,
-          next: { ...unknown, revision: 3 },
+          next: {
+            ...((await storage.readAttempt({
+              tenantId: admitted.spec.tenant.tenantId,
+              attemptId: admitted.spec.attemptId,
+            })) as AttemptState),
+            revision: 3,
+          },
         }),
       ).rejects.toThrow(AuthorityConflict);
     });
@@ -516,21 +517,24 @@ export function runLifecycleAuthorityStorageContract(
       const binding = bindingFor(first);
       const active = await activateAttempt(storage, first, binding);
       expect(
-        await storage.writeAttempt({
+        await writeAttemptForTest({
+          storage,
           lease: first.lease,
           expectedRevision: 2,
           next: active,
         }),
       ).toBe('replay');
       await expect(
-        storage.writeAttempt({
+        writeAttemptForTest({
+          storage,
           lease: first.lease,
           expectedRevision: 3,
           next: { ...active, revision: 5 },
         }),
       ).rejects.toThrow(AuthorityConflict);
       await expect(
-        storage.writeAttempt({
+        writeAttemptForTest({
+          storage,
           lease: first.lease,
           expectedRevision: 3,
           next: { ...active, revision: 4, binding: undefined },
@@ -541,26 +545,23 @@ export function runLifecycleAuthorityStorageContract(
         storage,
         fixture({ issueNumber: 10, attemptId: 'B'.repeat(22) }),
       );
-      await storage.claimLaunch({
+      await resolveLaunchForTest({
+        storage,
         lease: second.lease,
+        tenantId: second.spec.tenant.tenantId,
+        attemptId: second.spec.attemptId,
+        kind: 'accepted',
+        at: T1,
+      });
+      const acceptedSecond = await storage.readAttempt({
+        tenantId: second.spec.tenant.tenantId,
         attemptId: second.spec.attemptId,
       });
-      const acceptedSecond = {
-        ...second.attempt,
-        revision: 2,
-        phase: 'launch-accepted' as const,
-        launch: { ...second.attempt.launch, state: 'accepted' as const },
-      };
-      await storage.resolveLaunch({
-        lease: second.lease,
-        attemptId: second.spec.attemptId,
-        expectedState: 'dispatching',
-        state: 'accepted',
-        expectedAttemptRevision: 1,
-        nextAttempt: acceptedSecond,
-      });
+      if (acceptedSecond === undefined)
+        throw new Error('second Attempt disappeared');
       await expect(
-        storage.writeAttempt({
+        writeAttemptForTest({
+          storage,
           lease: second.lease,
           expectedRevision: 2,
           next: { ...acceptedSecond, revision: 3, phase: 'active', binding },
@@ -575,13 +576,15 @@ export function runLifecycleAuthorityStorageContract(
         outcome,
         futureGrantsDenied: true,
       };
-      await storage.writeAttempt({
+      await writeAttemptForTest({
+        storage,
         lease: first.lease,
         expectedRevision: 3,
         next: terminal,
       });
       await expect(
-        storage.writeAttempt({
+        writeAttemptForTest({
+          storage,
           lease: first.lease,
           expectedRevision: 4,
           next: {
@@ -668,7 +671,8 @@ export function runLifecycleAuthorityStorageContract(
       const admitted = await admit(storage);
       const binding = bindingFor(admitted);
       const active = await activateAttempt(storage, admitted, binding);
-      await storage.writeAttempt({
+      await writeAttemptForTest({
+        storage,
         lease: admitted.lease,
         expectedRevision: active.revision,
         next: {
@@ -876,7 +880,8 @@ export function runLifecycleAuthorityStorageContract(
       const { storage, clock } = await makeHarness();
       const admitted = await admit(storage);
       const outcome = cancelledOutcome(admitted.spec.attemptId);
-      await storage.writeAttempt({
+      await writeAttemptForTest({
+        storage,
         lease: admitted.lease,
         expectedRevision: 1,
         next: {
