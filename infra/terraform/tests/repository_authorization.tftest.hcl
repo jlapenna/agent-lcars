@@ -52,6 +52,14 @@ run "renders_exact_repository_authorization" {
     }
   }
 
+  override_resource {
+    target          = google_project_iam_custom_role.quick_task_evidence_runtime
+    override_during = plan
+    values = {
+      name = "projects/agent-lcars/roles/quickTaskEvidenceRuntime"
+    }
+  }
+
   assert {
     condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab']"
     error_message = "The WIF provider must authorize exactly Agent LCARS, Sprinkles, and Homelab."
