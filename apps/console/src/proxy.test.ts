@@ -49,4 +49,16 @@ describe('console proxy public control-plane routes', () => {
 
     expect(proxy(request).status).toBe(200);
   });
+
+  it('exposes only the exact evidence route prefix without a session', () => {
+    const evidence = new NextRequest(
+      'https://lcars.jlapenna.net/api/quick-task-evidence/v1/0d6a4b56-31d0-4d39-b0b2-5a2520cc4882',
+    );
+    const adjacent = new NextRequest(
+      'https://lcars.jlapenna.net/api/quick-task-evidence/admin',
+    );
+
+    expect(proxy(evidence).status).toBe(200);
+    expect(proxy(adjacent).status).toBe(401);
+  });
 });
