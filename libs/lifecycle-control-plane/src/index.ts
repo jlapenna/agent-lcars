@@ -8,6 +8,7 @@ export * from './github-installation-token-minter';
 export * from './github-worker-grant-oidc-verifier';
 export * from './ingress-policy';
 export * from './launch-binding';
+export * from './launch-outbox-composition';
 export * from './launch-resolution';
 export * from './mint-resolution';
 export * from './presentation-delivery';
