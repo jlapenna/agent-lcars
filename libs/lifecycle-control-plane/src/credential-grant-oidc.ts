@@ -7,13 +7,16 @@ import type {
 } from '@agent-lcars/dispatch-contracts';
 import {
   credentialGrantRequestSchema,
+  runBindingSchema,
   utcDateTimeSchema,
 } from '@agent-lcars/dispatch-contracts';
+import { z } from 'zod';
 
 import type { LifecycleAuthorityStorage } from './authority-storage';
 import { InstallationTokenMinterBoundary } from './mint-resolution';
 
 const SHA256 = /^[a-f0-9]{64}$/u;
+const GIT_COMMIT_SHA = /^[a-f0-9]{40}$/u;
 const V1_MAX_ISSUANCES = 1;
 const verifiedWorkerGrants = new WeakSet<object>();
 
@@ -22,25 +25,36 @@ export class CredentialGrantConflict extends Error {
 }
 
 /** Normalized signed facts only. Raw JWTs and headers never cross this API. */
-export interface WorkerGrantOidcClaims {
-  issuer: string;
-  audience: string;
-  sourceId: string;
-  jtiSha256: string;
-  expiresAt: string;
-  repositoryId: number;
-  attemptId: string;
-  requestId: string;
-  localAttemptMarker: string;
-  runId: number;
-  runAttempt: number;
-  checkRunId: number;
-  workflowPath: string;
-  workflowRef: string;
-  workflowSha: string;
-  jobWorkflowRef?: string;
-  jobWorkflowSha?: string;
-}
+const workerGrantOidcClaimsSchema = z
+  .strictObject({
+    issuer: z.string().min(1),
+    audience: z.string().min(1),
+    jtiSha256: z.string().regex(SHA256),
+    expiresAt: utcDateTimeSchema,
+    repositoryId: z.number().int().safe().positive(),
+    repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+    runId: z.number().int().safe().positive(),
+    runAttempt: z.number().int().safe().positive(),
+    checkRunId: z.number().int().safe().positive(),
+    /** Raw GitHub `workflow_ref`: OWNER/REPO/PATH@REF. */
+    workflowRef: z.string().min(1),
+    workflowSha: z.string().regex(GIT_COMMIT_SHA),
+    /** Raw reusable-workflow claims; present only as a complete pair. */
+    jobWorkflowRef: z.string().min(1).optional(),
+    jobWorkflowSha: z.string().regex(GIT_COMMIT_SHA).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      (value.jobWorkflowRef === undefined) !==
+      (value.jobWorkflowSha === undefined)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Reusable workflow ref and SHA must be present together',
+      });
+    }
+  });
+export type WorkerGrantOidcClaims = z.infer<typeof workerGrantOidcClaimsSchema>;
 
 /** A future server-only JWT/JWKS adapter supplies this injected verifier. */
 export interface WorkerGrantOidcVerifier {
@@ -55,6 +69,8 @@ export interface ExpectedWorkerGrantOidcSource {
 
 export interface VerifiedWorkerGrantOidc {
   readonly claims: WorkerGrantOidcClaims;
+  readonly binding: RunBinding;
+  readonly sourceId: string;
 }
 
 export function isVerifiedWorkerGrantOidc(
@@ -67,13 +83,44 @@ export function isVerifiedWorkerGrantOidc(
   );
 }
 
-function exactBinding(claims: WorkerGrantOidcClaims): RunBinding {
-  return {
+interface ParsedWorkflowRef {
+  repository: string;
+  workflowPath: string;
+  workflowRef: string;
+}
+
+function parseWorkflowRef(value: unknown): ParsedWorkflowRef | undefined {
+  if (typeof value !== 'string') return;
+  const workflowMarker = '/.github/workflows/';
+  const markerAt = value.indexOf(workflowMarker);
+  const refAt = value.indexOf('@', markerAt + workflowMarker.length);
+  if (markerAt <= 0 || refAt <= markerAt + workflowMarker.length) return;
+  const repository = value.slice(0, markerAt);
+  const workflowPath = value.slice(markerAt + 1, refAt);
+  const workflowRef = value.slice(refAt + 1);
+  if (
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
+    !/^\.github\/workflows\/.+\.ya?ml$/u.test(workflowPath) ||
+    workflowRef.length === 0
+  )
+    return;
+  return { repository, workflowPath, workflowRef };
+}
+
+function exactBinding(claims: WorkerGrantOidcClaims): RunBinding | undefined {
+  const workflow = parseWorkflowRef(claims.workflowRef);
+  if (workflow === undefined) return;
+  if (
+    claims.jobWorkflowRef !== undefined &&
+    parseWorkflowRef(claims.jobWorkflowRef) === undefined
+  )
+    return;
+  const binding: RunBinding = {
     runId: claims.runId,
     runAttempt: claims.runAttempt,
     checkRunId: claims.checkRunId,
-    workflowPath: claims.workflowPath,
-    workflowRef: claims.workflowRef,
+    workflowPath: workflow.workflowPath,
+    workflowRef: workflow.workflowRef,
     workflowSha: claims.workflowSha,
     ...(claims.jobWorkflowRef === undefined
       ? {}
@@ -82,31 +129,7 @@ function exactBinding(claims: WorkerGrantOidcClaims): RunBinding {
       ? {}
       : { jobWorkflowSha: claims.jobWorkflowSha }),
   };
-}
-
-function validClaims(value: WorkerGrantOidcClaims): boolean {
-  return (
-    value.issuer.length > 0 &&
-    value.audience.length > 0 &&
-    value.sourceId.length > 0 &&
-    SHA256.test(value.jtiSha256) &&
-    utcDateTimeSchema.safeParse(value.expiresAt).success &&
-    value.attemptId.length > 0 &&
-    value.requestId.length > 0 &&
-    /^g[1-9]\d*:[A-Za-z0-9._:-]+$/u.test(value.localAttemptMarker) &&
-    [value.repositoryId, value.runId, value.runAttempt, value.checkRunId].every(
-      (part) => Number.isSafeInteger(part) && part > 0,
-    ) &&
-    value.workflowPath.startsWith('.github/workflows/') &&
-    value.workflowRef.length > 0 &&
-    SHA256.test(value.workflowSha) &&
-    ((value.jobWorkflowRef === undefined &&
-      value.jobWorkflowSha === undefined) ||
-      (value.jobWorkflowRef !== undefined &&
-        value.jobWorkflowSha !== undefined &&
-        value.jobWorkflowRef.length > 0 &&
-        SHA256.test(value.jobWorkflowSha)))
-  );
+  return runBindingSchema.safeParse(binding).success ? binding : undefined;
 }
 
 /** Mints the only runtime capability accepted by the inactive coordinator. */
@@ -118,20 +141,32 @@ export class WorkerGrantOidcBoundary {
   ) {}
 
   async verify(raw: unknown): Promise<VerifiedWorkerGrantOidc> {
-    const claims = await this.verifier.verify(raw);
+    const parsedClaims = workerGrantOidcClaimsSchema.safeParse(
+      await this.verifier.verify(raw),
+    );
+    if (!parsedClaims.success) {
+      throw new CredentialGrantConflict('Verified OIDC claims are invalid');
+    }
+    const claims = parsedClaims.data;
     const now = this.clock.now();
+    const binding = exactBinding(claims);
+    const workflow = parseWorkflowRef(claims.workflowRef);
     if (
-      !validClaims(claims) ||
+      binding === undefined ||
+      workflow === undefined ||
+      workflow.repository.toLowerCase() !== claims.repository.toLowerCase() ||
       !utcDateTimeSchema.safeParse(now).success ||
       claims.issuer !== this.expected.issuer ||
       claims.audience !== this.expected.audience ||
-      claims.sourceId !== this.expected.sourceId ||
+      this.expected.sourceId.length === 0 ||
       Date.parse(claims.expiresAt) <= Date.parse(now)
     ) {
       throw new CredentialGrantConflict('Verified OIDC claims are invalid');
     }
     const verified = Object.freeze({
       claims: Object.freeze(structuredClone(claims)),
+      binding: Object.freeze(structuredClone(binding)),
+      sourceId: this.expected.sourceId,
     });
     verifiedWorkerGrants.add(verified);
     return verified;
@@ -224,11 +259,6 @@ export class CredentialGrantCoordinator {
     if (Date.parse(claims.expiresAt) <= Date.parse(now)) {
       return { kind: 'denied', code: 'oidc_invalid' };
     }
-    if (
-      claims.attemptId !== request.attemptId ||
-      claims.requestId !== request.requestId
-    )
-      return { kind: 'denied', code: 'oidc_invalid' };
     const tenant = await this.tenants.resolve(claims.repositoryId);
     if (tenant === undefined || tenant.repositoryId !== claims.repositoryId)
       return { kind: 'denied', code: 'tenant_mismatch' };
@@ -249,19 +279,15 @@ export class CredentialGrantCoordinator {
       return { kind: 'denied', code: 'attempt_not_active' };
     if (Date.parse(now) >= Date.parse(attempt.spec.execution.renewalDeadline))
       return { kind: 'denied', code: 'renewal_deadline_elapsed' };
-    const binding = exactBinding(claims);
-    if (
-      attempt.binding === undefined ||
-      !sameBinding(attempt.binding, binding) ||
-      claims.localAttemptMarker !== attempt.spec.local.attemptMarker
-    )
+    const binding = input.verified.binding;
+    if (attempt.binding === undefined || !sameBinding(attempt.binding, binding))
       return { kind: 'denied', code: 'binding_mismatch' };
     const credentialProfileId = attempt.spec.execution.credentialProfileId;
     const identity = {
       tenantId: tenant.tenantId,
       repositoryId: tenant.repositoryId,
       attemptId: request.attemptId,
-      sourceIdentity: `${claims.issuer}:${claims.audience}:${claims.sourceId}`,
+      sourceIdentity: `${claims.issuer}:${claims.audience}:${input.verified.sourceId}`,
       binding,
       requestId: request.requestId,
       jtiSha256: claims.jtiSha256,
@@ -270,11 +296,12 @@ export class CredentialGrantCoordinator {
         attemptId: request.attemptId,
         issuer: claims.issuer,
         audience: claims.audience,
-        sourceId: claims.sourceId,
+        sourceId: input.verified.sourceId,
         jtiSha256: claims.jtiSha256,
         expiresAt: claims.expiresAt,
         repositoryId: claims.repositoryId,
-        localAttemptMarker: claims.localAttemptMarker,
+        repository: claims.repository.toLowerCase(),
+        localAttemptMarker: attempt.spec.local.attemptMarker,
         binding,
         specDigest: attempt.specDigest,
         activation: attempt.spec.activation,

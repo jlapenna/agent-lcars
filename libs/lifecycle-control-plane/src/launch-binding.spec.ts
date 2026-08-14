@@ -75,7 +75,7 @@ function fixture() {
     execution: {
       workflowPath: '.github/workflows/worker.yml',
       workflowRef: 'refs/heads/main',
-      workflowSha: SHA,
+      workflowSha: 'c'.repeat(40),
       mode: 'implement',
       executorId: 'executor-1',
       credentialProfileId: 'profile-1',

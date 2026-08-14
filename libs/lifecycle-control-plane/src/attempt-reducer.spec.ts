@@ -39,7 +39,7 @@ const binding = {
   checkRunId: 11,
   workflowPath: '.github/workflows/worker.yml',
   workflowRef: 'refs/heads/main',
-  workflowSha: sha,
+  workflowSha: 'c'.repeat(40),
 };
 
 const spec: AcceptedAttemptSpec = {
@@ -65,7 +65,7 @@ const spec: AcceptedAttemptSpec = {
   execution: {
     workflowPath: '.github/workflows/worker.yml',
     workflowRef: 'refs/heads/main',
-    workflowSha: sha,
+    workflowSha: 'c'.repeat(40),
     mode: 'implement',
     executorId: 'executor-1',
     credentialProfileId: 'profile-1',

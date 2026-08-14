@@ -26,3 +26,6 @@ export const utcDateTimeSchema = z.iso
   .refine((value) => value.endsWith('Z'), 'Must be a UTC timestamp');
 
 export const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+/** GitHub Actions currently signs workflow commits as lowercase Git SHA-1. */
+export const gitCommitShaSchema = z.string().regex(/^[a-f0-9]{40}$/u);

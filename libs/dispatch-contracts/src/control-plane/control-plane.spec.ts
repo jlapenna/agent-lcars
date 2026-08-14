@@ -9,6 +9,7 @@ import {
   credentialGrantIssuanceSchema,
   credentialGrantRequestSchema,
   credentialGrantResultSchema,
+  gitCommitShaSchema,
   githubTaskDisplayMetadataSchema,
   hasValidRuntimeObservationPayloadDigest,
   intentRevisionSchema,
@@ -54,7 +55,7 @@ const binding = {
   checkRunId: 11,
   workflowPath: '.github/workflows/worker.yml',
   workflowRef: 'refs/heads/main',
-  workflowSha: sha,
+  workflowSha: 'c'.repeat(40),
 };
 
 function parse(
@@ -165,7 +166,7 @@ describe('control-plane v1 contracts', () => {
       execution: {
         workflowPath: '.github/workflows/worker.yml',
         workflowRef: 'refs/heads/main',
-        workflowSha: sha,
+        workflowSha: 'c'.repeat(40),
         mode: 'implement',
         executorId: 'executor-1',
         credentialProfileId: 'profile-1',
@@ -174,6 +175,10 @@ describe('control-plane v1 contracts', () => {
       authorization: policy,
     };
     expect(acceptedAttemptSpecSchema.parse(value)).toEqual(value);
+    expect(gitCommitShaSchema.parse(value.execution.workflowSha)).toBe(
+      value.execution.workflowSha,
+    );
+    expect(parse(gitCommitShaSchema, sha)).toBe(false);
     expect(
       parse(acceptedAttemptSpecSchema, { ...value, attemptId: 'g2:intent-1' }),
     ).toBe(false);

@@ -49,7 +49,7 @@ const binding = {
   checkRunId: 11,
   workflowPath: '.github/workflows/worker.yml',
   workflowRef: 'refs/heads/main',
-  workflowSha: SHA,
+  workflowSha: 'c'.repeat(40),
 };
 
 async function envelope(
