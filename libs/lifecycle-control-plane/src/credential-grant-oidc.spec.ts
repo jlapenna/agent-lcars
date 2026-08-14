@@ -24,6 +24,10 @@ import {
   type WorkerGrantOidcClaims,
 } from './credential-grant-oidc';
 import {
+  resolveLaunchForTest,
+  writeAttemptForTest,
+} from './launch-resolution-test-support';
+import {
   type InstallationTokenMinter,
   InstallationTokenMinterBoundary,
 } from './mint-resolution';
@@ -183,29 +187,31 @@ async function activeHarness() {
   if (registered === undefined)
     throw new Error('Admission omitted its Attempt');
   const lease = admitted.lease;
-  await storage.claimLaunch({ lease, attemptId: ATTEMPT_ID });
-  const accepted: AttemptState = {
-    ...registered,
-    revision: 2,
-    phase: 'launch-accepted',
-    launch: { ...registered.launch, state: 'accepted' },
-    updatedAt: T1,
-  };
-  await storage.resolveLaunch({
+  await resolveLaunchForTest({
+    storage,
     lease,
+    tenantId: registered.spec.tenant.tenantId,
     attemptId: ATTEMPT_ID,
-    expectedState: 'dispatching',
-    state: 'accepted',
-    expectedAttemptRevision: 1,
-    nextAttempt: accepted,
+    kind: 'accepted',
+    at: T1,
   });
+  const accepted = await storage.readAttempt({
+    tenantId: registered.spec.tenant.tenantId,
+    attemptId: ATTEMPT_ID,
+  });
+  if (accepted === undefined) throw new Error('Accepted Attempt disappeared');
   const active: AttemptState = {
     ...accepted,
     revision: 3,
     phase: 'active',
     binding: value.binding,
   };
-  await storage.writeAttempt({ lease, expectedRevision: 2, next: active });
+  await writeAttemptForTest({
+    storage,
+    lease,
+    expectedRevision: 2,
+    next: active,
+  });
   return {
     ...value,
     spec: registered.spec,
@@ -374,7 +380,8 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
       built.service.issue({ request: request(), verified: wrongRun }),
     ).resolves.toEqual({ kind: 'denied', code: 'binding_mismatch' });
 
-    await harness.storage.writeAttempt({
+    await writeAttemptForTest({
+      storage: harness.storage,
       lease: harness.lease,
       expectedRevision: 3,
       next: { ...harness.active, revision: 4, phase: 'result-observed' },

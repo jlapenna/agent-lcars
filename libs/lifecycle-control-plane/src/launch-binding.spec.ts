@@ -19,6 +19,10 @@ import {
   RunBindingIngressConflict,
   RunBindingIngressVerifier,
 } from './launch-binding';
+import {
+  resolveLaunchForTest,
+  writeAttemptForTest,
+} from './launch-resolution-test-support';
 
 const TIME = '2026-08-16T00:00:00.000Z';
 const SHA = 'a'.repeat(64);
@@ -227,34 +231,23 @@ export function runVerifiedRunBindingStorageContract(
         const { storage, lease, spec } = await admittedInto(
           await makeStorage(),
         );
-        if (state !== 'pending') {
-          await storage.claimLaunch({ lease, attemptId: spec.attemptId });
-        }
+        const claim =
+          state === 'pending'
+            ? undefined
+            : await storage.claimLaunchWork({
+                lease,
+                tenantId: spec.tenant.tenantId,
+                attemptId: spec.attemptId,
+              });
         if (state === 'accepted' || state === 'unknown') {
-          const current = await storage.readAttempt({
+          await resolveLaunchForTest({
+            storage,
+            lease,
             tenantId: spec.tenant.tenantId,
             attemptId: spec.attemptId,
-          });
-          if (current === undefined)
-            throw new Error('admitted attempt disappeared');
-          await storage.resolveLaunch({
-            lease,
-            attemptId: spec.attemptId,
-            expectedState: 'dispatching',
-            state,
-            expectedAttemptRevision: current.revision,
-            nextAttempt: {
-              ...current,
-              revision: current.revision + 1,
-              phase:
-                state === 'accepted'
-                  ? 'launch-accepted'
-                  : 'launch-response-unknown',
-              launch: {
-                ...current.launch,
-                state: state === 'accepted' ? 'accepted' : 'response-unknown',
-              },
-            },
+            kind: state,
+            at: TIME,
+            work: claim?.work,
           });
         }
         const verified = await verifier.verify({
@@ -285,32 +278,23 @@ export function runVerifiedRunBindingStorageContract(
 
     it('does not let a delayed launch response regress an exact bound run', async () => {
       const { storage, lease, spec } = await admittedInto(await makeStorage());
-      await storage.claimLaunch({ lease, attemptId: spec.attemptId });
+      await storage.claimLaunchWork({
+        lease,
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
       const verified = await verifier.verify({
         envelope: await envelope(spec),
         localAttemptMarker: spec.local.attemptMarker,
       });
       await ingestVerifiedRunBinding(storage, lease, verified);
-      const bound = await storage.readAttempt({
-        tenantId: spec.tenant.tenantId,
-        attemptId: spec.attemptId,
-      });
-      if (bound === undefined) throw new Error('bound attempt disappeared');
       await expect(
-        storage.resolveLaunch({
+        storage.claimLaunchWork({
           lease,
+          tenantId: spec.tenant.tenantId,
           attemptId: spec.attemptId,
-          expectedState: 'dispatching',
-          state: 'unknown',
-          expectedAttemptRevision: bound.revision,
-          nextAttempt: {
-            ...bound,
-            revision: bound.revision + 1,
-            phase: 'launch-response-unknown',
-            launch: { ...bound.launch, state: 'response-unknown' },
-          },
         }),
-      ).rejects.toBeInstanceOf(AuthorityConflict);
+      ).resolves.toEqual({ status: 'terminal' });
       expect(
         (
           await storage.readLaunch({
@@ -388,7 +372,8 @@ export function runVerifiedRunBindingStorageContract(
       });
       if (terminal.status !== 'applied')
         throw new Error('terminal should be pending');
-      await storage.writeAttempt({
+      await writeAttemptForTest({
+        storage,
         lease,
         expectedRevision: before.revision,
         next: terminal.state,
