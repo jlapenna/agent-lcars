@@ -338,6 +338,32 @@ describe('control-plane v1 contracts', () => {
         result: 'none',
       }),
     ).toBe(false);
+    const providerCancelled = {
+      ...value,
+      terminalState: 'cancelled',
+      execution: 'cancelled',
+      result: 'none',
+      reference: undefined,
+      evidence: {
+        kind: 'terminal-run',
+        terminalFactId: 'terminal-1',
+        binding,
+      },
+      evidenceValidation: { status: 'not-applicable' },
+    };
+    expect(parse(attemptOutcomeSchema, providerCancelled)).toBe(true);
+    expect(
+      parse(attemptOutcomeSchema, {
+        ...providerCancelled,
+        terminalState: 'superseded',
+      }),
+    ).toBe(false);
+    expect(
+      parse(attemptOutcomeSchema, {
+        ...providerCancelled,
+        execution: 'not_started',
+      }),
+    ).toBe(false);
     expect(
       parse(attemptOutcomeSchema, {
         ...value,

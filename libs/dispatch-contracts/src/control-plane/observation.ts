@@ -382,10 +382,16 @@ export const attemptOutcomeSchema = z
           'result',
         ]);
       }
-      if (value.evidence.kind !== 'lifecycle-decision') {
-        error('Cancelled or superseded outcomes require lifecycle proof', [
-          'evidence',
-        ]);
+      const hasCancellationProof =
+        value.evidence.kind === 'lifecycle-decision' ||
+        (value.terminalState === 'cancelled' &&
+          value.execution === 'cancelled' &&
+          value.evidence.kind === 'terminal-run');
+      if (!hasCancellationProof) {
+        error(
+          'Supersession requires lifecycle proof; run cancellation may use exact terminal proof',
+          ['evidence'],
+        );
       }
       if (value.failure !== undefined) {
         error('Cancelled or superseded outcomes do not carry failures', [
