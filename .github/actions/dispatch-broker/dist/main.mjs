@@ -14526,6 +14526,51 @@ function date4(params) {
 // node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/classic/external.js
 config(en_default());
 
+// libs/dispatch-contracts/src/marker.ts
+function formatAttemptId({ generation, intentId }) {
+  return `g${generation}:${intentId}`;
+}
+function formatDispatchMarker(attempt) {
+  return `[dispatch:${formatAttemptId(attempt)}]`;
+}
+function displayTitleMatchesAttempt(displayTitle, attempt) {
+  return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
+}
+
+// libs/dispatch-contracts/src/outcomes.ts
+var DISPATCH_OUTCOME_KINDS = [
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure",
+  "park",
+  "no-op",
+  "pull-request",
+  "merged-deliverable",
+  "review",
+  "comment",
+  "closed",
+  "unknown-success"
+];
+var dispatchOutcomeKindSchema = external_exports.enum(DISPATCH_OUTCOME_KINDS);
+var dispatchOutcomeReferenceSchema = external_exports.looseObject({
+  kind: external_exports.literal("pull-request"),
+  number: external_exports.number().int().safe().positive()
+});
+function isDispatchOutcomeKind(value) {
+  return dispatchOutcomeKindSchema.safeParse(value).success;
+}
+function isDispatchOutcomeReference(value) {
+  return dispatchOutcomeReferenceSchema.safeParse(value).success;
+}
+var FAILURE_OUTCOME_KINDS = /* @__PURE__ */ new Set([
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure"
+]);
+function isFailureOutcomeKind(outcome) {
+  return FAILURE_OUTCOME_KINDS.has(outcome);
+}
+
 // libs/dispatch-contracts/src/failure.ts
 var OWNING_SYSTEMS = Object.freeze([
   "controller",
@@ -14697,38 +14742,30 @@ function isWellFormedFailureClassification(value) {
   return failureClassificationSchema.safeParse(value).success;
 }
 
-// libs/dispatch-contracts/src/outcomes.ts
-var DISPATCH_OUTCOME_KINDS = [
-  "startup-failure",
-  "trajectory-failure",
-  "outcome-gate-failure",
-  "park",
-  "no-op",
-  "pull-request",
-  "merged-deliverable",
-  "review",
-  "comment",
-  "closed",
-  "unknown-success"
+// libs/dispatch-contracts/src/projection.ts
+var PROJECTION_CONVERGENCE_STATES = [
+  /** No convergence attempt has been recorded yet. */
+  "pending",
+  /** `observedRevision === desiredRevision`: the last attempt's GitHub
+   *  writes all succeeded. */
+  "converged",
+  /** The last convergence attempt failed; `observedRevision` still reflects
+   *  the most recent revision that DID succeed (0 if there has never been
+   *  one), not the failed attempt's target. */
+  "diverged"
 ];
-var dispatchOutcomeKindSchema = external_exports.enum(DISPATCH_OUTCOME_KINDS);
-var dispatchOutcomeReferenceSchema = external_exports.looseObject({
-  kind: external_exports.literal("pull-request"),
-  number: external_exports.number().int().safe().positive()
+var projectionConvergenceStateSchema = external_exports.enum(
+  PROJECTION_CONVERGENCE_STATES
+);
+var projectionStatusSchema = external_exports.looseObject({
+  desiredRevision: external_exports.number().int().safe().nonnegative(),
+  observedRevision: external_exports.number().int().safe().nonnegative(),
+  state: projectionConvergenceStateSchema,
+  /** When this checkpoint was recorded. */
+  observedAt: external_exports.string().min(1)
 });
-function isDispatchOutcomeKind(value) {
-  return dispatchOutcomeKindSchema.safeParse(value).success;
-}
-function isDispatchOutcomeReference(value) {
-  return dispatchOutcomeReferenceSchema.safeParse(value).success;
-}
-var FAILURE_OUTCOME_KINDS = /* @__PURE__ */ new Set([
-  "startup-failure",
-  "trajectory-failure",
-  "outcome-gate-failure"
-]);
-function isFailureOutcomeKind(outcome) {
-  return FAILURE_OUTCOME_KINDS.has(outcome);
+function isWellFormedProjectionStatus(value) {
+  return projectionStatusSchema.safeParse(value).success;
 }
 
 // libs/dispatch-contracts/src/pipelines.ts
@@ -14820,32 +14857,6 @@ function pipelineContract(pipeline) {
 }
 function workerWorkflow(pipeline) {
   return pipelineContract(pipeline).workflowFile;
-}
-
-// libs/dispatch-contracts/src/projection.ts
-var PROJECTION_CONVERGENCE_STATES = [
-  /** No convergence attempt has been recorded yet. */
-  "pending",
-  /** `observedRevision === desiredRevision`: the last attempt's GitHub
-   *  writes all succeeded. */
-  "converged",
-  /** The last convergence attempt failed; `observedRevision` still reflects
-   *  the most recent revision that DID succeed (0 if there has never been
-   *  one), not the failed attempt's target. */
-  "diverged"
-];
-var projectionConvergenceStateSchema = external_exports.enum(
-  PROJECTION_CONVERGENCE_STATES
-);
-var projectionStatusSchema = external_exports.looseObject({
-  desiredRevision: external_exports.number().int().safe().nonnegative(),
-  observedRevision: external_exports.number().int().safe().nonnegative(),
-  state: projectionConvergenceStateSchema,
-  /** When this checkpoint was recorded. */
-  observedAt: external_exports.string().min(1)
-});
-function isWellFormedProjectionStatus(value) {
-  return projectionStatusSchema.safeParse(value).success;
 }
 
 // libs/dispatch-contracts/src/ledger.ts
@@ -14940,17 +14951,6 @@ var dispatchLedgerSchema = external_exports.looseObject({
   anomalies: external_exports.array(ledgerAnomalySchema),
   projection: external_exports.custom((value) => isWellFormedProjectionStatus(value)).optional()
 });
-
-// libs/dispatch-contracts/src/marker.ts
-function formatAttemptId({ generation, intentId }) {
-  return `g${generation}:${intentId}`;
-}
-function formatDispatchMarker(attempt) {
-  return `[dispatch:${formatAttemptId(attempt)}]`;
-}
-function displayTitleMatchesAttempt(displayTitle, attempt) {
-  return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
-}
 
 // libs/dispatch-contracts/src/oidc.ts
 var COMPLETION_OIDC_AUDIENCE = "agent-lcars-dispatch-completion";

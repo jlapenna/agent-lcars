@@ -5,6 +5,7 @@
  * Import this, do not re-derive it. See ../README.md.
  */
 
+export * from './control-plane';
 export type {
   FailureClassification,
   FailurePhase,

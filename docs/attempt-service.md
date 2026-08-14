@@ -144,13 +144,20 @@ type AttemptSpecV1 = {
   schema: 'agent-lcars.attempt-spec/v1';
   version: 1;
   requestId: string;
+  attemptId: string; // opaque, globally unique, service-minted
   tenant: {
     tenantId: string;
     repositoryId: number;
     repository: string;
     installationId: number;
   };
-  task: { issueNumber: number; observedPullRequest?: { number: number } };
+  task: { tenantId: string; repositoryId: number; issueNumber: number };
+  activation: {
+    activationId: string;
+    taskClassId: string;
+    authorityEpoch: number;
+    mode: 'central-authoritative';
+  };
   local: {
     intentId: string;
     generation: number;
@@ -166,12 +173,25 @@ type AttemptSpecV1 = {
     renewalDeadline: string;
   };
   authorization: {
-    decision: 'authorized';
-    policyRevision: string;
+    schema: 'agent-lcars.policy-decision/v1';
+    version: 1;
+    decision: 'accepted';
+    policy: { policyId: string; policyVersion: number; contentSha256: string };
+    ruleId: string;
+    sourceFactId: string;
+    principal:
+      | { kind: 'github-actor'; actorId: number; login: string }
+      | { kind: 'operator'; operatorId: string }
+      | { kind: 'system'; systemId: string };
     evidenceRef: string;
+    decidedAt: string;
   };
 };
 ```
+
+Observed repository names and issue-versus-pull-request subject data live in a
+separate `GitHubTaskDisplayMetadata` record. They never alter the canonical
+task key or create a second PR namespace.
 
 The service checks the marker is exactly the local generation/intent pair. Its
 acceptance key is `(tenantId, repositoryId, issueNumber, intentId, generation)`
@@ -224,33 +244,30 @@ type AgentResultClaimV1 =
   | {
       kind: 'pull-request';
       number: number;
-      url: string;
       localAttemptMarker: string;
     }
   | {
       kind: 'comment';
       commentId: string;
-      url: string;
       localAttemptMarker: string;
     }
   | {
       kind: 'review';
       reviewId: string;
       pullNumber: number;
-      url: string;
       localAttemptMarker: string;
     }
   | {
       kind: 'structured-no-op';
       commentId: string;
-      url: string;
       localAttemptMarker: string;
     };
 ```
 
 Claims are untrusted, even with OIDC: they only name the exact object the
-service should fetch. There is no arbitrary URL, label, close, or `evidence[]`
-variant.
+service should fetch. Canonical links are derived after that fetch; claim URLs
+are not persisted because query, fragment, or user-info text can carry secrets.
+There is no arbitrary locator, label, close, or `evidence[]` variant.
 
 ```ts
 type CredentialGrantRequestV1 = {
@@ -333,8 +350,11 @@ canonical `(tenantId, repositoryId, issueNumber)` task, the control plane stores
 task revision, deduplicated normalized signals, immutable intent revisions, at
 most one desired intent, current attempt reference, and the immutable policy
 decision that admitted every mutation. A versioned PolicyDecisionV1 records
-policy ID, policy version, content SHA, decision, rule ID, and actor/evidence
-reference; evaluation happens centrally against registered immutable policy.
+policy ID, policy version, content SHA, an `accepted | rejected` decision,
+rule ID, source fact, typed authenticated principal, and evidence reference;
+evaluation happens centrally against registered immutable policy. Parking is
+an intent/projector decision derived from a rejected or held admission, not a
+third authorization truth value.
 
 | Input to reducer                                        | Durable reducer effect                   | Deterministic decision                                                                                                           |
 | ------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -407,7 +427,7 @@ appends a unique fact ID before applying effect. A terminal run fact opens a
 bounded finalization window: late exact claims are accepted and independently
 validated until outcome commit. At commit, the finalizer decides zero valid
 claims as typed no-deliverable/failure, one valid exact claim as its matching
-outcome/reference, and multiple valid exact PR claims as pull-request outcome
+outcome/reference, and multiple valid claims as an ambiguous validation failure
 without an invented reference, matching #1018. After commit an identical fact
 is a no-op; a new contradictory fact/claim is quarantined and cannot replace
 the immutable outcome.

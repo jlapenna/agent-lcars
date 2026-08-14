@@ -30,13 +30,13 @@ import { z } from 'zod';
 export type OwningSystem =
   'controller' | 'runner' | 'worker' | 'finalizer' | 'projector';
 
-export const OWNING_SYSTEMS: readonly OwningSystem[] = Object.freeze([
+export const OWNING_SYSTEMS = Object.freeze([
   'controller',
   'runner',
   'worker',
   'finalizer',
   'projector',
-]);
+] as const) satisfies readonly OwningSystem[];
 
 /**
  * The lifecycle phase a failure occurred in. These are deliberately finer
