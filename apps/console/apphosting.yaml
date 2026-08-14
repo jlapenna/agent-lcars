@@ -39,10 +39,6 @@ env:
     value: '1'
     availability:
       - BUILD
-  - variable: NX_SKIP_NX_CACHE
-    value: 'true'
-    availability:
-      - BUILD
   - variable: PATH
     value: /workspace/node_modules/.go/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     availability:

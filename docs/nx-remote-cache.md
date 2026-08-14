@@ -29,6 +29,22 @@ gives you "one cache per repo," and pointing two repos at one directory makes
 them fight over each other's `maxCacheSize` eviction budget. L2 is the sharing
 layer; that is what it is for.
 
+### Managed App Hosting builds
+
+The console's managed Firebase App Hosting builder has a narrower cache
+boundary than developer machines and CI. App Hosting preserves its workspace
+state across builds, so `.nx/cache` is its L1. `tools/cloud-build-prebuild.sh`
+removes stale `dist` and `.tsbuildinfo` outputs but deliberately preserves that
+content-addressed cache; the next `@agent-lcars/console:bundle` invocation can
+then restore a complete `dist/apps/console` output for unchanged inputs.
+
+Managed App Hosting does **not** receive the Spark URL or an L2 credential.
+Spark is private-LAN infrastructure, and `apps/console/apphosting.yaml` has no
+remote-cache variables or secrets. Do not add either merely to accelerate a
+managed build: L2 is optional, and introducing a new production credential or
+network path requires its own approved design. CI proves the production cache
+contract using local L1 with remote reads disabled.
+
 ## How a checkout gets configured
 
 `tools/setup-nx-remote-cache.sh` writes the gitignored `.nx-remote-cache.env`

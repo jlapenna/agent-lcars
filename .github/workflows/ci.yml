@@ -220,11 +220,12 @@ jobs:
       # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass
       # CI and then fail only after an App Hosting rollout. The trace resolves
       # the exact installed Cloud Tasks package (#1023), so this deployable
-      # smoke can safely reuse the deterministic Nx build artifact.
-      - name: Smoke test deployable console bundle
-        run: |
-          pnpm nx bundle @agent-lcars/console
-          ./tools/console-standalone-smoke.sh
+      # smoke can safely reuse the deterministic Nx build artifact. Exercise
+      # that contract with remote reads disabled: clean the first build's
+      # outputs, restore them from the builder-local L1, and boot what Nx
+      # restored (#1030).
+      - name: Smoke test cached deployable console bundle
+        run: ./tools/console-cache-restore-smoke.sh
 
       # This bundle is outside the default build graph, but is what both the
       # telemetry-watcher image and the runner sidecar execute. Keep its
