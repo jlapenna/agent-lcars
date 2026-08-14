@@ -32,6 +32,7 @@ const T0 = '2026-08-16T00:00:00.000Z';
 const T1 = '2026-08-16T00:01:00.000Z';
 const T2 = '2026-08-16T00:30:00.000Z';
 const T6 = '2026-08-16T06:00:00.000Z';
+const T6_30 = '2026-08-16T06:30:00.000Z';
 const T7 = '2026-08-16T07:00:00.000Z';
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
@@ -411,6 +412,47 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
     });
     expect(harness.storage.lastReservation).toBeUndefined();
     expect(mintCalls).toBe(0);
+  });
+
+  it('records but withholds a token whose mint completes after the deadline', async () => {
+    const harness = await activeHarness();
+    let mintCalls = 0;
+    const built = coordinator(harness, {
+      async mint() {
+        mintCalls += 1;
+        harness.clock.set(T6);
+        return {
+          kind: 'issued',
+          token: 'late-ephemeral-token',
+          tokenExpiresAt: T6_30,
+        };
+      },
+    });
+    const verified = await verifiedProof(harness, harness.clock, {
+      expiresAt: T7,
+    });
+    await expect(
+      built.service.issue({ request: request(), verified }),
+    ).resolves.toEqual({
+      kind: 'denied',
+      code: 'renewal_deadline_elapsed',
+    });
+    const grantId = harness.storage.lastReservation?.grant.grantId;
+    if (grantId === undefined) throw new Error('reservation missing');
+    const durable = await harness.storage.readMint({
+      tenantId: harness.tenant.tenantId,
+      grantId,
+    });
+    expect(durable).toMatchObject({
+      issuanceState: 'issued',
+      issuedAt: T6,
+      tokenExpiresAt: T6_30,
+    });
+    expect(durable).not.toHaveProperty('token');
+    await expect(
+      built.service.issue({ request: request(), verified }),
+    ).resolves.toEqual({ kind: 'denied', code: 'renewal_deadline_elapsed' });
+    expect(mintCalls).toBe(1);
   });
 
   it('reserves once under concurrency, persists metadata only, and never replays the token', async () => {

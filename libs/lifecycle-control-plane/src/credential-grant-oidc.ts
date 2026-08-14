@@ -320,6 +320,15 @@ export class CredentialGrantCoordinator {
       ) {
         return { kind: 'denied', code: 'service_unavailable' };
       }
+      // The provider may finish after a request that began just before the
+      // immutable deadline. Retain the known exposure, but never deliver the
+      // now-out-of-policy token to the worker.
+      if (
+        Date.parse(minted.issuance.issuedAt) >=
+        Date.parse(attempt.spec.execution.renewalDeadline)
+      ) {
+        return { kind: 'denied', code: 'renewal_deadline_elapsed' };
+      }
       return {
         kind: 'issued',
         token: minted.token,
