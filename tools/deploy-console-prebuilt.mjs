@@ -600,6 +600,7 @@ async function main() {
     buildBody,
     { buildId, requestId: randomUUID() },
   );
+  await waitForOperation(buildOperation);
 
   const rolloutBody = {
     displayName: `prebuilt ${commitSha.slice(0, 12)}`,
@@ -633,7 +634,6 @@ async function main() {
     rolloutBody,
     { rolloutId: buildId, requestId: randomUUID() },
   );
-  await waitForOperation(buildOperation);
   await waitForOperation(rolloutOperation);
   const image = await verifyRollout({
     parent,

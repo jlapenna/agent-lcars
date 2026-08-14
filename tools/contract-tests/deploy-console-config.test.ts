@@ -122,6 +122,24 @@ describe('console deployment workflow', () => {
     expect(body.labels['commit-sha']).toBe(commit);
   });
 
+  it('waits for build registration before validating or starting a rollout', async () => {
+    const deployTool = await readFile(
+      'tools/deploy-console-prebuilt.mjs',
+      'utf8',
+    );
+    const buildWait = deployTool.indexOf(
+      'await waitForOperation(buildOperation)',
+    );
+    const rolloutValidation = deployTool.indexOf("validateOnly: 'true'");
+    const rolloutStart = deployTool.indexOf(
+      'console.log(`[Deploy] Starting rollout',
+    );
+
+    expect(buildWait).toBeGreaterThan(-1);
+    expect(buildWait).toBeLessThan(rolloutValidation);
+    expect(buildWait).toBeLessThan(rolloutStart);
+  });
+
   it('fails closed on an unexpected App Hosting runtime contract', () => {
     expect(() =>
       assertBackendContract(
