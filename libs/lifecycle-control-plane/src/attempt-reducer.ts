@@ -828,24 +828,24 @@ export function reduceAttempt(
   const event = input.event;
 
   if (event.kind === 'launch-accepted') {
-    if (current.phase !== 'launch-pending') {
+    if (!['launch-pending', 'cancelling'].includes(current.phase)) {
       return conflict(
         current,
         'invalid-transition',
         'Launch acceptance requires launch-pending',
       );
     }
-    next.phase = 'launch-accepted';
+    if (current.phase !== 'cancelling') next.phase = 'launch-accepted';
     next.launch.state = 'accepted';
   } else if (event.kind === 'launch-response-unknown') {
-    if (current.phase !== 'launch-pending') {
+    if (!['launch-pending', 'cancelling'].includes(current.phase)) {
       return conflict(
         current,
         'invalid-transition',
         'Unknown launch response requires launch-pending',
       );
     }
-    next.phase = 'launch-response-unknown';
+    if (current.phase !== 'cancelling') next.phase = 'launch-response-unknown';
     next.launch.state = 'response-unknown';
     effects.push({
       kind: 'discover-exact-run',

@@ -3,14 +3,25 @@ import type {
   ControlPlaneSignalEnvelope,
   PolicyDecision,
 } from '@agent-lcars/dispatch-contracts';
+import { runtimeObservationPayloadSha256 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { AttemptState } from './attempt-reducer';
 import {
   type AuthorityClock,
   AuthorityConflict,
   InMemoryLifecycleAuthorityStorage,
   type LifecycleAuthorityStorage,
+  type TaskAuthorityLease,
+  type WriteResult,
 } from './authority-storage';
+import { CancellationTaskEffectCoordinator } from './cancellation-effects';
+import {
+  ingestVerifiedRunBinding,
+  RunBindingIngressVerifier,
+} from './launch-binding';
+import { LaunchResponseBoundary } from './launch-resolution-capability';
+import { writeAttemptForTest } from './launch-resolution-test-support';
 import { TaskAttemptAdmissionCoordinator } from './task-attempt-admission';
 import {
   mintAdmissionEffectCompletion,
@@ -337,7 +348,587 @@ runTaskEffectStorageContract({
   create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
 });
 
+export interface CancellationEffectStorageFactory {
+  create(
+    clock: AuthorityClock,
+  ): LifecycleAuthorityStorage | Promise<LifecycleAuthorityStorage>;
+  /** Test-only setup seam; production storage never exposes a raw writer. */
+  hydrateAttempt(input: {
+    storage: LifecycleAuthorityStorage;
+    lease: TaskAuthorityLease;
+    expectedRevision: number;
+    next: AttemptState;
+  }): Promise<WriteResult>;
+}
+
+async function launchedCancellationEffect(
+  storage: LifecycleAuthorityStorage,
+  clock: Clock,
+) {
+  await storage.registerActivation(activation());
+  const lease = await storage.acquireTaskLease({
+    scope: task,
+    ownerId: 'cancel-owner',
+    leaseDurationMs: 60_000,
+  });
+  const desired = await storage.applyTaskEffectTransition({
+    lease,
+    transition: transition(clock),
+  });
+  const admission = desired.effects.find(
+    (effect) => effect.payload.kind === 'admit-attempt',
+  );
+  if (admission === undefined) throw new Error('missing admission effect');
+  const plans = {
+    resolve: vi.fn(async () => ({
+      workflowPath: '.github/workflows/worker.yml',
+      workflowRef: 'refs/heads/main',
+      workflowSha: SHA,
+      mode: 'implement' as const,
+      executorId: 'executor-1',
+      credentialProfileId: 'profile-1',
+      renewalDeadline: T1,
+    })),
+  };
+  const admissionWorker = new AdmissionTaskEffectCoordinator(
+    storage,
+    new TaskAttemptAdmissionCoordinator(storage, plans),
+  );
+  await admissionWorker.reconcile({
+    lease,
+    tenantId: tenant.tenantId,
+    task,
+    sourceFactId: admission.sourceFactId,
+    effectKey: admission.effectKey,
+  });
+  const admitted = await storage.readTask(task);
+  if (admitted === undefined || admitted.attempt.kind !== 'launched') {
+    throw new Error('missing launched task');
+  }
+  const cancelled = await storage.applyTaskEffectTransition({
+    lease,
+    transition: mintTaskEffectTransition(
+      {
+        expectedRevision: admitted.revision,
+        envelope: {
+          ...envelope('fact-cancel-launched'),
+          signal: { kind: 'cancel', commandKey: 'cancel-launched' },
+        },
+        policyDecision: policy('fact-cancel-launched'),
+        activation: activation(),
+      },
+      clock,
+    ),
+  });
+  const effect = cancelled.effects.find(
+    (candidate) => candidate.payload.kind === 'cancel-or-drain',
+  );
+  if (effect === undefined) throw new Error('missing cancel-or-drain effect');
+  return {
+    lease,
+    effect,
+    attemptId: admitted.attempt.attemptId,
+    storage,
+  };
+}
+
+/** Reusable async backend contract for #1057 cancellation truth/work. */
+export function runCancellationEffectStorageContract(
+  factory: CancellationEffectStorageFactory,
+): void {
+  describe('cancellation effect storage contract', () => {
+    it('suppresses a never-claimed launch and replays its exact receipt', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      await storage.registerActivation(activation());
+      const lease = await storage.acquireTaskLease({
+        scope: task,
+        ownerId: 'one',
+        leaseDurationMs: 60_000,
+      });
+      await storage.applyTaskEffectTransition({
+        lease,
+        transition: transition(clock),
+      });
+      const cancelled = await storage.applyTaskEffectTransition({
+        lease,
+        transition: mintTaskEffectTransition(
+          {
+            expectedRevision: 1,
+            envelope: {
+              ...envelope('fact-suppress'),
+              signal: { kind: 'cancel', commandKey: 'cancel-suppress' },
+            },
+            policyDecision: policy('fact-suppress'),
+            activation: activation(),
+          },
+          clock,
+        ),
+      });
+      const effect = cancelled.effects.find(
+        (candidate) => candidate.payload.kind === 'cancel-unlaunched',
+      );
+      if (effect === undefined)
+        throw new Error('missing targetless cancellation');
+      const coordinator = new CancellationTaskEffectCoordinator(storage, clock);
+      const input = {
+        lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: effect.sourceFactId,
+        effectKey: effect.effectKey,
+      };
+      const first = await coordinator.reconcile(input);
+      expect(await coordinator.reconcile(input)).toEqual(first);
+      expect(first.effect.deliveryState).toBe('complete');
+      expect(
+        await storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toEqual([]);
+    });
+
+    it('terminalizes an admitted but unclaimed launch and makes it non-dispatchable', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      const coordinator = new CancellationTaskEffectCoordinator(storage, clock);
+      const cancelled = await coordinator.reconcile({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      expect(cancelled).toMatchObject({
+        effect: { deliveryState: 'complete' },
+        attempt: {
+          phase: 'terminal',
+          outcome: { execution: 'not_started' },
+        },
+      });
+      expect(
+        await storage.readLaunch({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toMatchObject({ state: 'suppressed' });
+      expect(
+        await storage.claimLaunchWork({
+          lease: value.lease,
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toEqual({ status: 'terminal' });
+      const terminal = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      if (terminal === undefined) throw new Error('missing terminal attempt');
+      const verifier = new RunBindingIngressVerifier({
+        async verifyExactRunBinding() {
+          return undefined;
+        },
+      });
+      const payload = {
+        kind: 'run-bound' as const,
+        binding: {
+          runId: 17,
+          runAttempt: 1,
+          checkRunId: 18,
+          workflowPath: terminal.spec.execution.workflowPath,
+          workflowRef: terminal.spec.execution.workflowRef,
+          workflowSha: terminal.spec.execution.workflowSha,
+        },
+      };
+      await expect(
+        ingestVerifiedRunBinding(
+          storage,
+          value.lease,
+          await verifier.verify({
+            localAttemptMarker: terminal.spec.local.attemptMarker,
+            envelope: {
+              schema: 'agent-lcars.runtime-observation/v1',
+              version: 1,
+              requestId: 'request-suppressed-binding',
+              factId: 'fact-suppressed-binding',
+              attemptId: terminal.spec.attemptId,
+              tenant: terminal.spec.tenant,
+              task: terminal.spec.task,
+              source: { kind: 'github-provider', sourceId: 'provider' },
+              observedAt: T0,
+              payloadSha256: await runtimeObservationPayloadSha256(payload),
+              payload,
+            },
+          }),
+        ),
+      ).rejects.toThrow(AuthorityConflict);
+      expect(
+        await storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toEqual(terminal);
+      expect(
+        await storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toEqual([]);
+    });
+
+    it('records cancelling truth before a late accepted launch and promotes binding work atomically', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      const launch = await storage.claimLaunchWork({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      if (launch.work === undefined) throw new Error('missing launch work');
+      const worker = new CancellationTaskEffectCoordinator(storage, clock);
+      const cancelled = await worker.reconcile({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      expect(cancelled.work?.state).toBe('awaiting-binding');
+      const before = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      expect(before?.phase).toBe('cancelling');
+      const resolution = await new LaunchResponseBoundary(
+        {
+          resolve: async () => ({
+            kind: 'accepted' as const,
+            responseSha256: SHA,
+          }),
+        },
+        clock,
+      ).resolve(launch.work);
+      await storage.resolveVerifiedLaunch({ lease: value.lease, resolution });
+      const accepted = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      expect(accepted).toMatchObject({
+        phase: 'cancelling',
+        launch: { state: 'accepted' },
+      });
+      if (accepted === undefined) throw new Error('missing cancelled attempt');
+      const verifier = new RunBindingIngressVerifier({
+        async verifyExactRunBinding() {
+          return undefined;
+        },
+      });
+      const payload = {
+        kind: 'run-bound' as const,
+        binding: {
+          runId: 1,
+          runAttempt: 1,
+          checkRunId: 2,
+          workflowPath: accepted.spec.execution.workflowPath,
+          workflowRef: accepted.spec.execution.workflowRef,
+          workflowSha: accepted.spec.execution.workflowSha,
+        },
+      };
+      await ingestVerifiedRunBinding(
+        storage,
+        value.lease,
+        await verifier.verify({
+          localAttemptMarker: accepted.spec.local.attemptMarker,
+          envelope: {
+            schema: 'agent-lcars.runtime-observation/v1',
+            version: 1,
+            requestId: 'request-binding-cancel',
+            factId: 'fact-binding-cancel',
+            attemptId: accepted.spec.attemptId,
+            tenant: accepted.spec.tenant,
+            task: accepted.spec.task,
+            source: { kind: 'github-provider', sourceId: 'provider' },
+            observedAt: T0,
+            payloadSha256: await runtimeObservationPayloadSha256(payload),
+            payload,
+          },
+        }),
+      );
+      expect(
+        await storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toMatchObject([{ attemptId: value.attemptId, state: 'pending' }]);
+    });
+
+    it('preserves cancelling truth when an in-flight launch resolves unknown', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      const launch = await storage.claimLaunchWork({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      if (launch.work === undefined) throw new Error('missing launch work');
+      const worker = new CancellationTaskEffectCoordinator(storage, clock);
+      await worker.reconcile({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      await storage.resolveVerifiedLaunch({
+        lease: value.lease,
+        resolution: await new LaunchResponseBoundary(
+          {
+            resolve: async () => ({
+              kind: 'unknown' as const,
+              responseSha256: SHA,
+            }),
+          },
+          clock,
+        ).resolve(launch.work),
+      });
+      expect(
+        await storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toMatchObject({
+        phase: 'cancelling',
+        launch: { state: 'response-unknown' },
+        futureGrantsDenied: true,
+      });
+      expect(
+        await storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toMatchObject([
+        { attemptId: value.attemptId, state: 'awaiting-binding' },
+      ]);
+    });
+
+    it('records cancellation and denies grants during finalization without creating drain work', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      const attempt = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      if (attempt === undefined) throw new Error('missing admitted attempt');
+      await factory.hydrateAttempt({
+        storage,
+        lease: value.lease,
+        expectedRevision: attempt.revision,
+        next: {
+          ...attempt,
+          revision: attempt.revision + 1,
+          phase: 'result-observed',
+          finalization: {
+            terminalFactId: 'terminal-finalizing',
+            terminalConclusion: 'success',
+            openedAt: T0,
+            closesAt: T1,
+            evidence: [],
+          },
+        },
+      });
+      const cancelled = await new CancellationTaskEffectCoordinator(
+        storage,
+        clock,
+      ).reconcile({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      expect(cancelled).toMatchObject({
+        effect: { deliveryState: 'complete' },
+        attempt: {
+          phase: 'result-observed',
+          cancellation: { eventId: expect.any(String) },
+          futureGrantsDenied: true,
+        },
+      });
+      expect(cancelled.work).toBeUndefined();
+      expect(
+        await storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toEqual([]);
+    });
+
+    it('completes cancellation as a pure no-op when the pinned Attempt is already terminal', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      const attempt = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      });
+      if (attempt === undefined) throw new Error('missing admitted attempt');
+      await factory.hydrateAttempt({
+        storage,
+        lease: value.lease,
+        expectedRevision: attempt.revision,
+        next: {
+          ...attempt,
+          revision: attempt.revision + 1,
+          phase: 'terminal',
+          futureGrantsDenied: true,
+          outcome: {
+            schema: 'agent-lcars.attempt-outcome/v1',
+            version: 1,
+            attemptId: attempt.spec.attemptId,
+            terminalState: 'cancelled',
+            execution: 'not_started',
+            result: 'none',
+            evidence: {
+              kind: 'lifecycle-decision',
+              decisionFactId: 'prior-cancel',
+            },
+            evidenceValidation: { status: 'not-applicable' },
+            finalizedAt: T0,
+          },
+        },
+      });
+      const completed = await new CancellationTaskEffectCoordinator(
+        storage,
+        clock,
+      ).reconcile({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      expect(completed).toMatchObject({
+        effect: { deliveryState: 'complete' },
+        attempt: { phase: 'terminal', outcome: { terminalState: 'cancelled' } },
+      });
+      expect(completed.work).toBeUndefined();
+    });
+
+    it('recovers a claimed cancellation after crash under a later fence despite a prospective shadow registration', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      await storage.claimTaskEffect({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      await storage.registerActivation(activation('shadow'));
+      clock.set(T1);
+      const later = await storage.acquireTaskLease({
+        scope: task,
+        ownerId: 'later-cancel-owner',
+        leaseDurationMs: 60_000,
+      });
+      const recovered = await new CancellationTaskEffectCoordinator(
+        storage,
+        clock,
+      ).reconcile({
+        lease: later,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+      expect(recovered).toMatchObject({
+        effect: { deliveryState: 'complete' },
+        attempt: { phase: 'terminal' },
+      });
+    });
+
+    it('fails closed for forged, foreign, and expired cancellation authority', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock);
+      await expect(
+        storage.applyVerifiedCancellationEffect({
+          lease: value.lease,
+          cancellation: {} as never,
+        }),
+      ).rejects.toThrow(AuthorityConflict);
+      const worker = new CancellationTaskEffectCoordinator(storage, clock);
+      await expect(
+        worker.reconcile({
+          lease: value.lease,
+          tenantId: 'other-tenant',
+          task,
+          sourceFactId: value.effect.sourceFactId,
+          effectKey: value.effect.effectKey,
+        }),
+      ).rejects.toThrow(AuthorityConflict);
+      clock.set(T1);
+      await expect(
+        worker.reconcile({
+          lease: value.lease,
+          tenantId: tenant.tenantId,
+          task,
+          sourceFactId: value.effect.sourceFactId,
+          effectKey: value.effect.effectKey,
+        }),
+      ).rejects.toThrow(AuthorityConflict);
+    });
+  });
+}
+
+runCancellationEffectStorageContract({
+  create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
+  hydrateAttempt: writeAttemptForTest,
+});
+
 describe('AdmissionTaskEffectCoordinator', () => {
+  it('returns the immutable cancellation receipt after commit/retry without new work', async () => {
+    const clock = new Clock();
+    const storage = new InMemoryLifecycleAuthorityStorage(clock);
+    await storage.registerActivation(activation());
+    const lease = await storage.acquireTaskLease({
+      scope: task,
+      ownerId: 'one',
+      leaseDurationMs: 60_000,
+    });
+    await storage.applyTaskEffectTransition({
+      lease,
+      transition: transition(clock),
+    });
+    const parked = await storage.applyTaskEffectTransition({
+      lease,
+      transition: mintTaskEffectTransition(
+        {
+          expectedRevision: 1,
+          envelope: {
+            ...envelope('fact-cancel-retry'),
+            signal: { kind: 'cancel', commandKey: 'cancel-retry' },
+          },
+          policyDecision: policy('fact-cancel-retry'),
+          activation: activation(),
+        },
+        clock,
+      ),
+    });
+    const effect = parked.effects.find(
+      (candidate) => candidate.payload.kind === 'cancel-unlaunched',
+    );
+    if (effect === undefined) throw new Error('missing cancellation effect');
+    const coordinator = new CancellationTaskEffectCoordinator(storage, clock);
+    const input = {
+      lease,
+      tenantId: tenant.tenantId,
+      task,
+      sourceFactId: effect.sourceFactId,
+      effectKey: effect.effectKey,
+    };
+
+    const committed = await coordinator.reconcile(input);
+    const replay = await coordinator.reconcile(input);
+
+    expect(replay).toEqual(committed);
+    expect(replay.effect.deliveryState).toBe('complete');
+    expect(
+      await storage.listCancellationWork({ tenantId: tenant.tenantId }),
+    ).toEqual([]);
+  });
+
   it('leaves cancel and park work durably pending without claiming provider behavior', async () => {
     const clock = new Clock();
     const storage = new InMemoryLifecycleAuthorityStorage(clock);
