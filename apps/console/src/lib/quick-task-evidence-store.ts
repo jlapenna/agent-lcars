@@ -24,6 +24,16 @@ const metadataFor = (binding: QuickTaskEvidenceBinding) => ({
   createdAt: binding.createdAt,
 });
 
+/** GCS reports a failed ifGenerationMatch precondition as HTTP 412. */
+function isCreatePreconditionFailure(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 412
+  );
+}
+
 export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
   constructor(private readonly bucket: Bucket) {}
   async create(
@@ -42,8 +52,11 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
           metadata: metadataFor(binding),
         },
       });
-    } catch (_error) {
-      throw new QuickTaskEvidenceError(409, 'Evidence binding conflict');
+    } catch (error) {
+      if (isCreatePreconditionFailure(error)) {
+        throw new QuickTaskEvidenceError(409, 'Evidence binding conflict');
+      }
+      throw new QuickTaskEvidenceError(503, 'Evidence storage is unavailable');
     }
     const [metadata] = await file.getMetadata();
     return { binding, generation: String(metadata.generation) };

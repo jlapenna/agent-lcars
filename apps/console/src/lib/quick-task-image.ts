@@ -50,11 +50,7 @@ export async function normalizeQuickTaskEvidence(
     ) {
       throw new QuickTaskEvidenceError(422, 'Invalid evidence image');
     }
-    const bytes = await image
-      .rotate()
-      .withMetadata({})
-      .webp({ lossless: true })
-      .toBuffer();
+    const bytes = await image.rotate().webp({ lossless: true }).toBuffer();
     if (bytes.byteLength > QUICK_TASK_EVIDENCE_MAX_OUTPUT_BYTES)
       throw new QuickTaskEvidenceError(
         413,
