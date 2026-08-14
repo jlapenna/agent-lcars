@@ -20,6 +20,7 @@ workflows, no separate actions repo, and no Marketplace listing.
 
 | Action                         | Purpose                                                                                         |
 | ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `credential-grant`             | Inactive exact-run OIDC exchange for one server-authorized ephemeral credential                 |
 | `mint-agent-token`             | Mint a scoped Agent LCARS App installation token (owner/repositories/permission-\* passthrough) |
 | `claim-issue`                  | Assign the fleet-claim login, optionally posting a pickup comment                               |
 | `agent-setup`                  | Agent git identity, run-start timestamp, optional shared Nx cache                               |
@@ -76,6 +77,17 @@ compatible fix is a patch release, a new optional input or action is a minor
 release, and a removed or renamed input or a changed default requires a major
 release. The contract-test manifest diff in review is the "this needs a major
 bump" signal.
+
+`credential-grant` is published but deliberately inactive: no workflow calls
+it until the separately reviewed server route, durable backend, App policy,
+and activation epoch exist. A future caller grants `id-token: write`, passes
+only the server-minted global `attempt-id` and its unique `request-id`, and
+pins the Action to an immutable Agent LCARS commit for the first live lane.
+The Action owns its OIDC audience and LCARS HTTPS endpoint; callers cannot
+choose repository, installation, credential profile, scope, workflow SHA, or
+fallback behavior. It performs one POST and never retries an ambiguous send.
+The server validates the signed workflow commit SHA and exact stored run
+binding; a caller-provided SHA is not part of the interface.
 
 `report-failure` keeps LCARS's #813 architecture and a standalone-consumer
 compatibility path. LCARS workers omit `maintainer`, so the action only logs;
