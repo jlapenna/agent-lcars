@@ -49,6 +49,10 @@ env:
     value: 'agent-lcars'
     availability:
       - RUNTIME
+  - variable: QUICK_TASK_EVIDENCE_BUCKET
+    value: 'agent-lcars-quick-task-evidence'
+    availability:
+      - RUNTIME
       - BUILD
 
   # NextAuth URL

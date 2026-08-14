@@ -4,7 +4,6 @@ import {
   Anchor,
   Box,
   Button,
-  FileInput,
   Group,
   Modal,
   Paper,
@@ -38,6 +37,7 @@ import {
   readQuickTaskPreferences,
   writeQuickTaskPreferences,
 } from './quick-task-preferences';
+import { QuickTaskScreenshotField } from './quick-task-screenshot-field';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
@@ -337,6 +337,7 @@ export function QuickTaskButton({
       try {
         evidenceId = createRandomId();
       } catch {
+        submitInFlightRef.current = false;
         showErrorToast('This browser cannot generate a Quick Task evidence ID');
         return;
       }
@@ -442,13 +443,9 @@ export function QuickTaskButton({
               {lowInformationGuidance} You can still file this task as-is.
             </Text>
           )}
-          <FileInput
-            label="Screenshot"
-            description="Optional PNG, JPEG, or WebP image (10 MB maximum)"
-            value={screenshot}
-            onChange={setScreenshot}
-            accept="image/png,image/jpeg,image/webp"
-            clearable
+          <QuickTaskScreenshotField
+            value={screenshot ?? undefined}
+            onChange={(file) => setScreenshot(file ?? null)}
           />
 
           <Button
