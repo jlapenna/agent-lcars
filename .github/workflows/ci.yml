@@ -237,16 +237,6 @@ jobs:
 
   e2e:
     name: E2E
-    # Temporarily disabled while #1049 tracks the runner/suite failures. Verify
-    # remains the required merge gate and still covers the full unit, typecheck,
-    # and production-build matrix.
-    if: ${{ false }}
-    # !!! DO NOT MERGE until jlapenna/homelab#520's lcars-e2e scale set is
-    # actually deployed and its listener is confirmed registering runners
-    # (see that PR's own "Deploy procedure" section) !!! Until then this
-    # job's trusted path has no runner label to land on and every push
-    # would hang until the 30-minute timeout. Tracked on agent-lcars#920.
-    #
     # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
     # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
     # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
@@ -306,7 +296,14 @@ jobs:
             )"; then
               echo "::warning::Nx affected detection failed; running the suite."
               run=true
-            elif [[ "$(printf '%s' "$affected_json" | jq 'length')" -gt 0 ]]; then
+            elif ! affected_count="$(
+              node -e \
+                "const fs=require('node:fs'); process.stdout.write(String(JSON.parse(fs.readFileSync(0, 'utf8')).length))" \
+                <<< "$affected_json"
+            )"; then
+              echo "::warning::Nx affected output was invalid; running the suite."
+              run=true
+            elif (( affected_count > 0 )); then
               run=true
             elif git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq \
               '^(\.github/workflows/ci\.yml|tools/e2e-local\.sh|tools/e2e-docker\.sh|tools/kill-e2e-ports\.sh|tools/e2e/|tools/e2e-runner/)'; then
