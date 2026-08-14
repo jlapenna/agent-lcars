@@ -39,11 +39,10 @@
 #
 # Deliberately takes no Playwright passthrough args. The `e2e` target sets
 # forwardAllArgs:false, so nx:run-commands silently DROPS trailing args and
-# runs the whole suite regardless -- the same trap tools/e2e-docker.sh
-# guards against, after a scoped `--grep` that never reached Playwright
-# rewrote unrelated specs' screenshot baselines (members#2448). Rather than
-# reimplement that guard, this rejects them outright and points back at this
-# same hermetic entrypoint with E2E_GREP.
+# runs the whole suite regardless -- the same trap tools/e2e-docker.sh guards
+# against. Rather than silently broadening a focused diagnostic run, this
+# rejects trailing arguments and points back at this same hermetic entrypoint
+# with E2E_GREP.
 #
 # Concurrency: this and every other e2e-local run on the same host bind the
 # same fixed Firebase-emulator/Next.js ports (see tools/kill-e2e-ports.sh), so
@@ -201,6 +200,12 @@ SAFE_ENV=(
   "TMPDIR=$TEMP_HOME/tmp"
   "NX_DAEMON=false"
   "NX_LOAD_DOT_ENV_FILES=false"
+  # Keep the E2E task's L1 cache inside this run's isolated HOME. A shared
+  # worktree cache can be deleted by an unrelated `nx reset` while the bundle
+  # is writing terminal output, turning a successful build into ENOENT
+  # (#1049). Remote-cache reads remain available through the explicit
+  # capability pair below.
+  "NX_CACHE_DIRECTORY=$TEMP_HOME/nx-cache"
   "E2E_HERMETIC=1"
   "NODE_OPTIONS=--max-old-space-size=6144"
   "E2E_ENV_FILE=$CI_ENV"
@@ -239,15 +244,8 @@ if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
   SAFE_ENV+=("PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
 fi
 
-# These are deliberate, non-credential inputs to Playwright. Boolean controls
-# only have meaning when set to exactly 1; E2E_GREP is the supported way to
-# scope a host run because the public Nx target cannot forward CLI arguments.
-for key in SKIP_VISUAL VISUAL_ONLY UPDATE_SNAPSHOTS; do
-  value="${!key-}"
-  if [ "$value" = "1" ]; then
-    SAFE_ENV+=("$key=1")
-  fi
-done
+# E2E_GREP is the supported way to scope a host run because the public Nx
+# target cannot forward CLI arguments.
 if [ -n "${E2E_GREP:-}" ]; then
   SAFE_ENV+=("E2E_GREP=$E2E_GREP")
 fi

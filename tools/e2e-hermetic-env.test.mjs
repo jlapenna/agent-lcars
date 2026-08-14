@@ -62,6 +62,7 @@ test('ambient credentials cannot cross the E2E boundary', () => {
     if (process.env.HOME === ${JSON.stringify(process.env.HOME)}) process.exit(14);
     if (process.env.E2E_HERMETIC !== '1') process.exit(15);
     if (process.env.NX_LOAD_DOT_ENV_FILES !== 'false') process.exit(16);
+    if (process.env.NX_CACHE_DIRECTORY !== process.env.HOME + '/nx-cache') process.exit(17);
     process.stdout.write('hermetic environment verified\\n');
   `;
 
@@ -117,12 +118,9 @@ test('an incomplete remote cache capability cannot cross the E2E boundary', () =
   assert.equal(result.stdout, 'incomplete remote cache capability rejected\n');
 });
 
-test('safe Playwright selection controls cross the E2E boundary', () => {
+test('the safe Playwright selection control crosses the E2E boundary', () => {
   const controls = {
-    E2E_GREP: '@smoke|@visual',
-    SKIP_VISUAL: '1',
-    UPDATE_SNAPSHOTS: '1',
-    VISUAL_ONLY: '1',
+    E2E_GREP: '@smoke|@mobile-layout',
   };
   const probe = `
     const expected = ${JSON.stringify(controls)};
@@ -488,6 +486,51 @@ test('public and internal Nx targets explicitly reject live configuration', () =
     project.targets['e2e-local'].configurations.live.command,
     rejectionCommand,
   );
+});
+
+test('console E2E keeps rendered evidence diagnostic instead of pixel-gated', () => {
+  const config = fs.readFileSync(
+    path.join(root, 'apps/console-e2e/playwright.config.ts'),
+    'utf8',
+  );
+  const project = JSON.parse(
+    fs.readFileSync(path.join(root, 'apps/console-e2e/project.json'), 'utf8'),
+  );
+  const sourceRoot = path.join(root, 'apps/console-e2e/src');
+  const sourceEntries = fs.readdirSync(sourceRoot, {
+    recursive: true,
+    withFileTypes: true,
+  });
+  const sourceFiles = sourceEntries
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(entry.parentPath, entry.name));
+
+  assert.match(config, /screenshot:\s*'only-on-failure'/u);
+  assert.doesNotMatch(
+    config,
+    /toHaveScreenshot|updateSnapshots|ignoreSnapshots|SKIP_VISUAL|VISUAL_ONLY/u,
+  );
+  assert.equal(project.targets['e2e-docker-update'], undefined);
+  assert.deepEqual(
+    sourceFiles.filter((file) => file.endsWith('.png')),
+    [],
+  );
+  for (const file of sourceFiles.filter((entry) => entry.endsWith('.ts'))) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /toHaveScreenshot/u);
+  }
+});
+
+test('E2E affected-path fallback consumes the complete changed-file list', () => {
+  const workflow = fs.readFileSync(
+    path.join(root, '.github/workflows/ci.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /changed_files="\$\(git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"\)"/u,
+  );
+  assert.doesNotMatch(workflow, /git diff --name-only[^\n]*\|\s*grep[^\n]*q/u);
 });
 
 test('live rejection is static and does not echo ambient credentials', () => {

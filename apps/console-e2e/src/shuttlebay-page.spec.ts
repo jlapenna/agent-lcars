@@ -28,11 +28,13 @@ test.describe('/shuttlebay workspace', () => {
 
   test('keeps every console destination reachable on a narrow phone', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto('/shuttlebay');
 
-    const header = page.locator('.console-header[data-current="shuttlebay"]');
+    const header = page.locator(
+      '.console-header[data-current="shuttlebay"]:not([data-streaming-fallback])',
+    );
     await expect(header.getByRole('link', { name: 'Shuttlebay' })).toBeHidden();
     await expect(
       header.getByRole('heading', { name: 'Shuttlebay' }),
@@ -56,13 +58,6 @@ test.describe('/shuttlebay workspace', () => {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-
-    const capture = testInfo.outputPath('shuttlebay-narrow-mobile.png');
-    await page.screenshot({ path: capture, fullPage: false });
-    await testInfo.attach('shuttlebay-narrow-mobile.png', {
-      path: capture,
-      contentType: 'image/png',
-    });
   });
 
   test('keeps the overflow menu available on a tablet command rail', async ({
@@ -71,7 +66,9 @@ test.describe('/shuttlebay workspace', () => {
     await page.setViewportSize({ width: 820, height: 1024 });
     await page.goto('/shuttlebay');
 
-    const header = page.locator('.console-header[data-current="shuttlebay"]');
+    const header = page.locator(
+      '.console-header[data-current="shuttlebay"]:not([data-streaming-fallback])',
+    );
     await expect(
       header.getByRole('link', { name: 'Shuttlebay' }),
     ).toBeVisible();

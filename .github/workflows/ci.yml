@@ -237,26 +237,13 @@ jobs:
 
   e2e:
     name: E2E
-    # Temporarily disabled while #1049 tracks the runner/suite failures. Verify
-    # remains the required merge gate and still covers the full unit, typecheck,
-    # and production-build matrix.
-    if: ${{ false }}
-    # !!! DO NOT MERGE until jlapenna/homelab#520's lcars-e2e scale set is
-    # actually deployed and its listener is confirmed registering runners
-    # (see that PR's own "Deploy procedure" section) !!! Until then this
-    # job's trusted path has no runner label to land on and every push
-    # would hang until the 30-minute timeout. Tracked on agent-lcars#920.
-    #
     # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
     # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
     # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
     # plus the JIT runner agent, and jlapenna/homelab's orchestrator.yml
-    # pins that image as the lcars-e2e pool's runner_image. That's what
-    # lets this job invoke the suite directly below -- no
-    # tools/e2e-docker.sh wrapper, no host Docker socket, and (once a
-    # @visual spec exists) screenshot rendering that matches
-    # tools/e2e-docker.sh's local runs byte-for-byte, closing the gap the
-    # job-level comment used to carry here.
+    # pins that image as the lcars-e2e pool's runner_image. That's what lets
+    # this job invoke the suite directly below -- no tools/e2e-docker.sh
+    # wrapper or host Docker socket.
     #
     # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- lcars-e2e
     # is a trusted self-hosted pool, off-limits to untrusted fork code the
@@ -270,67 +257,77 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # The current lcars-e2e runner image predates committed visual
-      # baselines, so bootstrap the pinned client once for that transition.
-      # After tools/e2e-runner/Dockerfile is published this becomes a cheap
-      # no-op; keeping it makes a stale image recoverable instead of turning
-      # LFS pointers into "Could not decode expected image as PNG" failures.
-      - name: Ensure Git LFS is available
-        shell: bash
-        env:
-          GIT_LFS_VERSION: 3.7.1
-          GIT_LFS_SHA256_AMD64: 1c0b6ee5200ca708c5cebebb18fdeb0e1c98f1af5c1a9cba205a4c0ab5a5ec08
-          GIT_LFS_SHA256_ARM64: 73a9c90eeb4312133a63c3eaee0c38c019ea7bfa0953d174809d25b18588dd8d
-        run: |
-          if command -v git-lfs >/dev/null 2>&1; then
-            git-lfs --version
-            exit 0
-          fi
-
-          case "$(uname -m)" in
-            x86_64)
-              lfs_arch=amd64
-              lfs_sha256="$GIT_LFS_SHA256_AMD64"
-              ;;
-            aarch64 | arm64)
-              lfs_arch=arm64
-              lfs_sha256="$GIT_LFS_SHA256_ARM64"
-              ;;
-            *)
-              echo "Unsupported Git LFS architecture: $(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-
-          lfs_archive="$RUNNER_TEMP/git-lfs.tar.gz"
-          lfs_extract="$RUNNER_TEMP/git-lfs-extract"
-          lfs_bin="$RUNNER_TEMP/git-lfs-bin"
-          mkdir -p "$lfs_extract" "$lfs_bin"
-          curl --fail --location --silent --show-error \
-            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-${lfs_arch}-v${GIT_LFS_VERSION}.tar.gz" \
-            --output "$lfs_archive"
-          echo "${lfs_sha256}  ${lfs_archive}" | sha256sum --check --strict
-          tar --extract --gzip --file "$lfs_archive" --directory "$lfs_extract"
-          install -m 0755 \
-            "$lfs_extract/git-lfs-${GIT_LFS_VERSION}/git-lfs" \
-            "$lfs_bin/git-lfs"
-          echo "$lfs_bin" >> "$GITHUB_PATH"
-          "$lfs_bin/git-lfs" --version
-
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          lfs: true
 
-      # The E2E targets are explicitly cache:false, so tests always run. Its
-      # hermetic wrapper admits only this L2 capability pair to let the
-      # deterministic console bundle reuse or warm the remote cache.
+      - uses: ./.github/actions/setup-node-pnpm
+
+      # Keep repository-wide CI from exercising the console after unrelated
+      # actions/control-plane/docs changes. Nx owns the dependency graph, so
+      # changes to console dependencies still select this project; the small
+      # explicit list covers E2E harness/workflow files outside that graph.
+      # Unknown event shapes or an affected-query failure run the suite rather
+      # than silently losing coverage.
+      - name: Determine whether console E2E is affected
+        id: e2e-scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          run=false
+
+          if [[ "$EVENT_NAME" != pull_request && "$EVENT_NAME" != push ]]; then
+            run=true
+          elif [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] || \
+               ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::No usable E2E comparison base; running the suite."
+            run=true
+          else
+            if ! affected_json="$(
+              ./tools/nx show projects --affected \
+                --base="$BASE_SHA" \
+                --head="$HEAD_SHA" \
+                --projects='@agent-lcars/console-e2e' \
+                --json
+            )"; then
+              echo "::warning::Nx affected detection failed; running the suite."
+              run=true
+            elif ! affected_count="$(
+              node -e \
+                "const fs=require('node:fs'); process.stdout.write(String(JSON.parse(fs.readFileSync(0, 'utf8')).length))" \
+                <<< "$affected_json"
+            )"; then
+              echo "::warning::Nx affected output was invalid; running the suite."
+              run=true
+            elif (( affected_count > 0 )); then
+              run=true
+            elif ! changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              echo "::warning::Changed-file detection failed; running the suite."
+              run=true
+            elif grep -E \
+              '^(\.github/workflows/ci\.yml|tools/e2e-local\.sh|tools/e2e-docker\.sh|tools/kill-e2e-ports\.sh|tools/e2e/|tools/e2e-runner/)' \
+              <<< "$changed_files" >/dev/null; then
+              run=true
+            fi
+          fi
+
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [[ "$run" == false ]]; then
+            echo "::notice::Console and its E2E harness are unaffected; skipping browser setup and tests."
+          fi
+
+      # The E2E targets are explicitly cache:false, so selected tests always
+      # run. Its hermetic wrapper admits only this L2 capability pair to let
+      # the deterministic console bundle reuse or warm the remote cache.
       - uses: ./.github/actions/setup-nx-remote-cache
+        if: steps.e2e-scope.outputs.run == 'true'
         with:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
-
-      - uses: ./.github/actions/setup-node-pnpm
 
       # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
       # emulator. Fork PRs use GitHub-hosted runners, where Java 17 remains
@@ -341,6 +338,7 @@ jobs:
       # two ways to express the same runtime condition.
       - name: Detect Java 21 runtime
         id: java-runtime
+        if: steps.e2e-scope.outputs.run == 'true'
         shell: bash
         run: |
           java_major=''
@@ -358,7 +356,7 @@ jobs:
           fi
 
       - uses: actions/setup-java@v5
-        if: steps.java-runtime.outputs.ready != 'true'
+        if: steps.e2e-scope.outputs.run == 'true' && steps.java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
           java-version: '21'
@@ -374,6 +372,7 @@ jobs:
       # reverted per #920 -- E2E never runs on that image anymore.)
       - name: Detect preinstalled Playwright browsers
         id: playwright-deps
+        if: steps.e2e-scope.outputs.run == 'true'
         shell: bash
         run: |
           if compgen -G '/ms-playwright/chromium-*' > /dev/null; then
@@ -383,11 +382,11 @@ jobs:
           fi
 
       - name: Install Playwright browser from baked dependencies
-        if: steps.playwright-deps.outputs.ready == 'true'
+        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready == 'true'
         run: pnpm exec playwright install chromium
 
       - name: Install Playwright browser and dependencies
-        if: steps.playwright-deps.outputs.ready != 'true'
+        if: steps.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
       # One e2e entrypoint for every environment (fork ubuntu-latest,
@@ -403,13 +402,14 @@ jobs:
       # the boundary via the PLAYWRIGHT_BROWSERS_PATH carve-out the script
       # forwards when the image sets it.
       - name: Run console e2e suite
+        if: steps.e2e-scope.outputs.run == 'true'
         run: ./tools/e2e-local.sh
 
       # Preserve Playwright's HTML report, traces, screenshots, and error
       # context after the ephemeral runner exits. `if: always()` is
       # load-bearing: failures are when these artifacts matter most (#991).
       - name: Upload console e2e diagnostics
-        if: always()
+        if: always() && steps.e2e-scope.outputs.run == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: console-e2e-diagnostics-${{ github.run_attempt }}

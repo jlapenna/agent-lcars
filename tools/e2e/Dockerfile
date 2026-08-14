@@ -1,9 +1,8 @@
-# Pinned environment for deterministic Playwright screenshot rendering.
+# Pinned environment for deterministic Playwright browser execution.
 #
-# Screenshot baselines are sensitive to the OS font rasterizer (freetype/
-# fontconfig) and the exact browser build. Rendering inside this image makes
-# local runs match CI byte-for-byte, so a screenshot diff means a real visual
-# change rather than environment noise.
+# Keeping the browser build and system dependencies aligned with CI makes
+# browser/runtime failures reproducible locally without treating rendered
+# pixels as a versioned pass/fail contract.
 #
 # The base tag MUST match the @playwright/test version resolved in
 # pnpm-lock.yaml, or the bundled browser build won't match. The image tag used

@@ -102,8 +102,10 @@ with `AGENT_LCARS_GITHUB_TOKEN not defined`, which names neither cause.
 
 It also passes `--skip-nx-cache`, deliberately: an e2e result replayed from
 the Nx cache reports a green suite that never ran, which is worse than
-useless when the suite is the thing you are trying to trust. For screenshot
-work use `:e2e-docker` instead, which pins the rendering environment.
+useless when the suite is the thing you are trying to trust. Use
+`:e2e-docker` when reproducing a browser/runtime-specific CI failure in the
+pinned runner environment. Screenshots are retained as failure diagnostics;
+they are not committed pixel-equality gates.
 
 To scope a run, drive Playwright directly — `:e2e` sets
 `forwardAllArgs: false`, so trailing args passed to it are silently dropped
