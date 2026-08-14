@@ -6,10 +6,10 @@ import { canonicalTaskIdentitySchema, tenantRefSchema } from './identity';
 import { policyDecisionSchema } from './policy';
 import {
   attemptIdSchema,
+  gitCommitShaSchema,
   nonnegativeSafeIntegerSchema,
   opaqueIdSchema,
   positiveSafeIntegerSchema,
-  sha256Schema,
   utcDateTimeSchema,
 } from './primitives';
 
@@ -24,7 +24,7 @@ export const localAttemptMarkerSchema = z
 const executionSchema = z.strictObject({
   workflowPath: z.string().startsWith('.github/workflows/'),
   workflowRef: z.string().min(1),
-  workflowSha: sha256Schema,
+  workflowSha: gitCommitShaSchema,
   mode: z.enum(['implement', 'review', 'reply', 'runbook']),
   executorId: opaqueIdSchema,
   credentialProfileId: opaqueIdSchema,
@@ -106,9 +106,9 @@ export const runBindingSchema = z
     checkRunId: positiveSafeIntegerSchema,
     workflowPath: z.string().startsWith('.github/workflows/'),
     workflowRef: z.string().min(1),
-    workflowSha: sha256Schema,
+    workflowSha: gitCommitShaSchema,
     jobWorkflowRef: z.string().min(1).optional(),
-    jobWorkflowSha: sha256Schema.optional(),
+    jobWorkflowSha: gitCommitShaSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (

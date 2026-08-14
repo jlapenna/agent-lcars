@@ -124,7 +124,7 @@ function authorityFixture(): {
     execution: {
       workflowPath: '.github/workflows/worker.yml',
       workflowRef: 'refs/heads/main',
-      workflowSha: SHA_A,
+      workflowSha: 'c'.repeat(40),
       mode: 'implement',
       executorId: 'executor-1',
       credentialProfileId: 'profile-1',
@@ -228,14 +228,23 @@ function claims(
   overrides: Partial<WorkerGrantOidcClaims> = {},
 ): WorkerGrantOidcClaims {
   return {
-    ...EXPECTED_SOURCE,
+    issuer: EXPECTED_SOURCE.issuer,
+    audience: EXPECTED_SOURCE.audience,
     jtiSha256: SHA_B,
     expiresAt: T2,
     repositoryId: value.tenant.repositoryId,
-    attemptId: value.spec.attemptId,
-    requestId: 'grant-request-1',
-    localAttemptMarker: value.spec.local.attemptMarker,
-    ...value.binding,
+    repository: value.tenant.repository,
+    runId: value.binding.runId,
+    runAttempt: value.binding.runAttempt,
+    checkRunId: value.binding.checkRunId,
+    workflowRef: `${value.tenant.repository}/${value.binding.workflowPath}@${value.binding.workflowRef}`,
+    workflowSha: value.binding.workflowSha,
+    ...(value.binding.jobWorkflowRef === undefined
+      ? {}
+      : { jobWorkflowRef: value.binding.jobWorkflowRef }),
+    ...(value.binding.jobWorkflowSha === undefined
+      ? {}
+      : { jobWorkflowSha: value.binding.jobWorkflowSha }),
     ...overrides,
   };
 }
@@ -294,11 +303,11 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
     expect(
       credentialGrantIdentityDigest({
         request: { attemptId: ATTEMPT_ID, requestId: 'request-1' },
-        binding: { runId: 10, workflowSha: SHA_A },
+        binding: { runId: 10, workflowSha: 'c'.repeat(40) },
       }),
     ).toBe(
       credentialGrantIdentityDigest({
-        binding: { workflowSha: SHA_A, runId: 10 },
+        binding: { workflowSha: 'c'.repeat(40), runId: 10 },
         request: { requestId: 'request-1', attemptId: ATTEMPT_ID },
       }),
     );
@@ -346,15 +355,99 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
     for (const changed of [
       { issuer: 'https://issuer.invalid' },
       { audience: 'other-audience' },
-      { sourceId: 'other-source' },
     ]) {
       await expect(
         verifiedProof(harness, harness.clock, changed),
       ).rejects.toBeInstanceOf(CredentialGrantConflict);
     }
+    const invalidSource = new WorkerGrantOidcBoundary(
+      {
+        async verify() {
+          return claims(harness);
+        },
+      },
+      { ...EXPECTED_SOURCE, sourceId: '' },
+      harness.clock,
+    );
+    await expect(invalidSource.verify('proof')).rejects.toBeInstanceOf(
+      CredentialGrantConflict,
+    );
   });
 
-  it('denies tenant, marker, binding, and inactive-attempt mismatches without minting', async () => {
+  it('normalizes real GitHub workflow claims and rejects fictional or malformed facts', async () => {
+    const harness = await activeHarness();
+    const verified = await verifiedProof(harness, harness.clock);
+    expect(verified.binding).toEqual(harness.binding);
+    expect(verified.claims.workflowSha).toMatch(/^[a-f0-9]{40}$/u);
+    expect(verified.claims).not.toHaveProperty('attemptId');
+    expect(verified.claims).not.toHaveProperty('requestId');
+    expect(verified.claims).not.toHaveProperty('localAttemptMarker');
+    expect(verified.claims).not.toHaveProperty('sourceId');
+
+    const reusableRef =
+      'octo/automation/.github/workflows/reusable.yml@refs/tags/v1';
+    const reusable = await verifiedProof(harness, harness.clock, {
+      jobWorkflowRef: reusableRef,
+      jobWorkflowSha: 'd'.repeat(40),
+    });
+    expect(reusable.binding).toMatchObject({
+      jobWorkflowRef: reusableRef,
+      jobWorkflowSha: 'd'.repeat(40),
+    });
+
+    for (const malformed of [
+      { repository: 'octo/other' },
+      { workflowRef: 'octo/example/worker.yml@refs/heads/main' },
+      { workflowSha: SHA_A },
+      { runId: 0 },
+      { jobWorkflowRef: reusableRef },
+    ]) {
+      await expect(
+        verifiedProof(harness, harness.clock, malformed),
+      ).rejects.toBeInstanceOf(CredentialGrantConflict);
+    }
+
+    const fictional = new WorkerGrantOidcBoundary(
+      {
+        async verify() {
+          return {
+            ...claims(harness),
+            attemptId: ATTEMPT_ID,
+            requestId: 'grant-request-1',
+            localAttemptMarker: 'g1:intent-1',
+          } as WorkerGrantOidcClaims;
+        },
+      },
+      EXPECTED_SOURCE,
+      harness.clock,
+    );
+    await expect(fictional.verify('proof')).rejects.toBeInstanceOf(
+      CredentialGrantConflict,
+    );
+  });
+
+  it('uses immutable numeric repository identity across a signed slug rename', async () => {
+    const harness = await activeHarness();
+    let mintCalls = 0;
+    const built = coordinator(harness, {
+      async mint() {
+        mintCalls += 1;
+        return { kind: 'definitely-not-started' };
+      },
+    });
+    const renamedRepository = 'octo/renamed-example';
+    const verified = await verifiedProof(harness, harness.clock, {
+      repository: renamedRepository,
+      workflowRef: `${renamedRepository}/${harness.binding.workflowPath}@${harness.binding.workflowRef}`,
+    });
+    await expect(
+      built.service.issue({ request: request(), verified }),
+    ).resolves.toEqual({ kind: 'denied', code: 'service_unavailable' });
+    expect(built.tenantLookups()).toBe(1);
+    expect(mintCalls).toBe(1);
+  });
+
+  it('denies tenant, binding, and inactive-attempt mismatches without minting', async () => {
     const harness = await activeHarness();
     let mintCalls = 0;
     const built = coordinator(harness, {
@@ -369,16 +462,22 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
     await expect(
       built.service.issue({ request: request(), verified: wrongTenant }),
     ).resolves.toEqual({ kind: 'denied', code: 'tenant_mismatch' });
-    const wrongMarker = await verifiedProof(harness, harness.clock, {
-      localAttemptMarker: 'g1:other',
+    const wrongWorkflow = await verifiedProof(harness, harness.clock, {
+      workflowRef: 'octo/example/.github/workflows/other.yml@refs/heads/main',
     });
     await expect(
-      built.service.issue({ request: request(), verified: wrongMarker }),
+      built.service.issue({ request: request(), verified: wrongWorkflow }),
     ).resolves.toEqual({ kind: 'denied', code: 'binding_mismatch' });
     const wrongRun = await verifiedProof(harness, harness.clock, { runId: 99 });
     await expect(
       built.service.issue({ request: request(), verified: wrongRun }),
     ).resolves.toEqual({ kind: 'denied', code: 'binding_mismatch' });
+    await expect(
+      built.service.issue({
+        request: { ...request(), attemptId: 'B'.repeat(22) },
+        verified: await verifiedProof(harness, harness.clock),
+      }),
+    ).resolves.toEqual({ kind: 'denied', code: 'tenant_mismatch' });
 
     await writeAttemptForTest({
       storage: harness.storage,
@@ -550,13 +649,10 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
     await expect(
       built.service.issue({ request: request(), verified: changedJti }),
     ).rejects.toBeInstanceOf(AuthorityConflict);
-    const changedRequest = await verifiedProof(harness, harness.clock, {
-      requestId: 'grant-request-2',
-    });
     await expect(
       built.service.issue({
         request: request('grant-request-2'),
-        verified: changedRequest,
+        verified: first,
       }),
     ).rejects.toBeInstanceOf(AuthorityConflict);
     expect(mintCalls).toBe(1);
