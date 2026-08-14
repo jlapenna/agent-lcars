@@ -35,6 +35,10 @@ import {
 } from './attempt-reducer';
 import { registerAttemptTestHydrator } from './attempt-test-hydration';
 import {
+  isVerifiedCancellationEffect,
+  type VerifiedCancellationEffect,
+} from './cancellation-effect-capability';
+import {
   attemptHasCommand,
   finalizationCommandId,
   isVerifiedFinalizationTransition,
@@ -112,7 +116,7 @@ export interface LaunchOutboxRecord {
   repositoryId: number;
   issueNumber: number;
   executionEpoch: number;
-  state: 'pending' | 'dispatching' | 'accepted' | 'unknown';
+  state: 'pending' | 'dispatching' | 'accepted' | 'unknown' | 'suppressed';
   claimedFence?: number;
   claimToken?: string;
 }
@@ -204,6 +208,15 @@ export interface TaskEffectClaim {
   effect: TaskEffectRecord;
 }
 
+export interface CancellationWorkRecord {
+  tenantId: string;
+  attemptId: string;
+  eventId: string;
+  executionEpoch: number;
+  state: 'awaiting-binding' | 'pending';
+  supersededByIntentId?: string;
+}
+
 /**
  * Server-only durability boundary for the lifecycle authority. Implementations
  * must make each method atomic. No method performs a provider side effect.
@@ -258,6 +271,37 @@ export interface LifecycleAuthorityStorage {
     lease: TaskAuthorityLease;
     obsoletion: VerifiedTaskEffectObsoletion;
   }): Promise<TaskEffectRecord>;
+  applyVerifiedCancellationEffect(input: {
+    lease: TaskAuthorityLease;
+    cancellation: VerifiedCancellationEffect;
+  }): Promise<{
+    effect: TaskEffectRecord;
+    attempt?: AttemptState;
+    work?: CancellationWorkRecord;
+  }>;
+  /**
+   * Returns the immutable cancellation transaction receipt after a caller
+   * crashes between commit and observing its response. This remains lease
+   * scoped: a stale or foreign controller cannot use it as a read bypass.
+   */
+  readCancellationReceipt(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+    sourceFactId: string;
+    effectKey: string;
+  }): Promise<
+    | {
+        effect: TaskEffectRecord;
+        attempt?: AttemptState;
+        work?: CancellationWorkRecord;
+      }
+    | undefined
+  >;
+  listCancellationWork(input: {
+    tenantId: string;
+    state?: CancellationWorkRecord['state'];
+  }): Promise<CancellationWorkRecord[]>;
 
   /** Runtime-checked coordinator capability; no structural admission writer. */
   admitVerifiedAttemptAndRecordLaunch(input: {
@@ -621,6 +665,15 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly taskEffectReceipts = new Map<
     string,
     StoredTaskEffectReceipt
+  >();
+  private readonly cancellationWork = new Map<string, CancellationWorkRecord>();
+  private readonly cancellationReceipts = new Map<
+    string,
+    {
+      effect: TaskEffectRecord;
+      attempt?: AttemptState;
+      work?: CancellationWorkRecord;
+    }
   >();
 
   constructor(
@@ -1176,6 +1229,235 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     };
     this.taskEffects.set(key, clone(next));
     return clone(next);
+  }
+
+  async applyVerifiedCancellationEffect(input: {
+    lease: TaskAuthorityLease;
+    cancellation: VerifiedCancellationEffect;
+  }): Promise<{
+    effect: TaskEffectRecord;
+    attempt?: AttemptState;
+    work?: CancellationWorkRecord;
+  }> {
+    if (!isVerifiedCancellationEffect(input.cancellation)) {
+      throw new AuthorityConflict(
+        'Cancellation effect was not minted by its coordinator',
+      );
+    }
+    const command = input.cancellation;
+    this.assertLease(input.lease, command.task, this.now());
+    const effect = this.taskEffects.get(taskEffectKey(command));
+    const receipt = this.cancellationReceipts.get(taskEffectKey(command));
+    if (
+      receipt !== undefined &&
+      effect?.deliveryState === 'complete' &&
+      effect.canonicalDigest === command.canonicalDigest &&
+      effect.claimToken === command.claimToken
+    )
+      return clone(receipt);
+    if (
+      effect === undefined ||
+      effect.tenantId !== command.tenantId ||
+      effect.canonicalDigest !== command.canonicalDigest ||
+      effect.deliveryState !== 'working' ||
+      effect.claimedFence !== input.lease.fence ||
+      command.claimFence !== input.lease.fence ||
+      effect.claimToken !== command.claimToken ||
+      effect.payload.kind !== command.kind
+    ) {
+      throw new AuthorityConflict('Cancellation effect claim is invalid');
+    }
+    if (effect.payload.kind === 'cancel-unlaunched') {
+      const accepted = this.acceptances.has(
+        tupleKey(
+          command.tenantId,
+          command.task.repositoryId,
+          command.task.issueNumber,
+          effect.payload.intentId,
+          effect.payload.intentRevision,
+        ),
+      );
+      if (accepted)
+        throw new AuthorityConflict(
+          'Admission won the no-Attempt cancellation race',
+        );
+      const next = { ...effect, deliveryState: 'complete' as const };
+      this.taskEffects.set(taskEffectKey(command), clone(next));
+      const result = { effect: clone(next) };
+      this.cancellationReceipts.set(taskEffectKey(command), clone(result));
+      return result;
+    }
+    const target = effect.payload;
+    const attempt = this.attempts.get(target.attemptId);
+    const launch =
+      attempt === undefined ? undefined : this.launches.get(target.attemptId);
+    if (
+      attempt === undefined ||
+      launch === undefined ||
+      attempt.spec.tenant.tenantId !== command.tenantId ||
+      !same(attempt.spec.task, command.task) ||
+      attempt.spec.local.intentId !== target.intentId ||
+      attempt.spec.local.generation !== target.intentRevision
+    )
+      throw new AuthorityConflict(
+        'Cancellation target is not the pinned Attempt',
+      );
+    const eventId = `cancel:${createHash('sha256')
+      .update(
+        canonicalJson({
+          tenantId: command.tenantId,
+          task: {
+            tenantId: command.task.tenantId,
+            repositoryId: command.task.repositoryId,
+            issueNumber: command.task.issueNumber,
+          },
+          sourceFactId: command.sourceFactId,
+          effectKey: command.effectKey,
+          target: {
+            attemptId: target.attemptId,
+            intentId: target.intentId,
+            intentRevision: target.intentRevision,
+            supersededByIntentId: target.supersededByIntentId,
+          },
+        }),
+      )
+      .digest('hex')}`;
+    if (attempt.phase === 'terminal') {
+      const next = { ...effect, deliveryState: 'complete' as const };
+      this.taskEffects.set(taskEffectKey(command), clone(next));
+      const result = { effect: clone(next), attempt: clone(attempt) };
+      this.cancellationReceipts.set(taskEffectKey(command), clone(result));
+      return result;
+    }
+    let event: AttemptEvent;
+    let suppressed = false;
+    if (
+      launch.state === 'pending' &&
+      launch.claimedFence === undefined &&
+      attempt.binding === undefined &&
+      attempt.pendingTerminal === undefined &&
+      attempt.finalization === undefined
+    ) {
+      event = {
+        kind: 'cancel-unlaunched',
+        eventId,
+        supersededByIntentId: target.supersededByIntentId,
+        outcome: {
+          schema: 'agent-lcars.attempt-outcome/v1',
+          version: 1,
+          attemptId: target.attemptId,
+          terminalState:
+            target.supersededByIntentId === undefined
+              ? 'cancelled'
+              : 'superseded',
+          execution: 'not_started',
+          result: 'none',
+          evidence: { kind: 'lifecycle-decision', decisionFactId: eventId },
+          evidenceValidation: { status: 'not-applicable' },
+          finalizedAt: command.at,
+        },
+      };
+      suppressed = true;
+    } else {
+      event = {
+        kind: 'request-cancel',
+        eventId,
+        ...(target.supersededByIntentId === undefined
+          ? {}
+          : { supersededByIntentId: target.supersededByIntentId }),
+      };
+    }
+    const reduced = reduceAttempt(attempt, {
+      kind: 'transition',
+      expectedRevision: attempt.revision,
+      transitionedAt: command.at,
+      canonicalDigest: attemptTransitionDigest(event),
+      event,
+    });
+    if (reduced.status !== 'applied')
+      throw new AuthorityConflict(
+        'Cancellation reducer rejected the pinned Attempt',
+      );
+    const work: CancellationWorkRecord | undefined =
+      suppressed || reduced.state.finalization !== undefined
+        ? undefined
+        : {
+            tenantId: command.tenantId,
+            attemptId: target.attemptId,
+            eventId,
+            executionEpoch: attempt.executionEpoch,
+            state:
+              reduced.state.binding === undefined
+                ? 'awaiting-binding'
+                : 'pending',
+            ...(target.supersededByIntentId === undefined
+              ? {}
+              : { supersededByIntentId: target.supersededByIntentId }),
+          };
+    this.writeAttemptTransaction({
+      lease: input.lease,
+      expectedRevision: attempt.revision,
+      next: reduced.state,
+    });
+    if (suppressed)
+      this.launches.set(target.attemptId, { ...launch, state: 'suppressed' });
+    if (work !== undefined)
+      this.cancellationWork.set(
+        tupleKey(command.tenantId, target.attemptId, eventId),
+        clone(work),
+      );
+    const completed = { ...effect, deliveryState: 'complete' as const };
+    this.taskEffects.set(taskEffectKey(command), clone(completed));
+    const result = {
+      effect: clone(completed),
+      attempt: clone(reduced.state),
+      ...(work === undefined ? {} : { work: clone(work) }),
+    };
+    this.cancellationReceipts.set(taskEffectKey(command), clone(result));
+    return result;
+  }
+
+  async readCancellationReceipt(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+    sourceFactId: string;
+    effectKey: string;
+  }): Promise<
+    | {
+        effect: TaskEffectRecord;
+        attempt?: AttemptState;
+        work?: CancellationWorkRecord;
+      }
+    | undefined
+  > {
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict(
+        'Cancellation receipt tenant scope is invalid',
+      );
+    }
+    this.assertLease(input.lease, input.task, this.now());
+    const key = taskEffectKey(input);
+    const effect = this.taskEffects.get(key);
+    if (effect === undefined || effect.tenantId !== input.tenantId) {
+      throw new AuthorityConflict('Cancellation effect is unknown');
+    }
+    if (effect.deliveryState !== 'complete') return undefined;
+    const receipt = this.cancellationReceipts.get(key);
+    return receipt === undefined ? undefined : clone(receipt);
+  }
+
+  async listCancellationWork(input: {
+    tenantId: string;
+    state?: CancellationWorkRecord['state'];
+  }): Promise<CancellationWorkRecord[]> {
+    return [...this.cancellationWork.values()]
+      .filter(
+        (work) =>
+          work.tenantId === input.tenantId &&
+          (input.state === undefined || work.state === input.state),
+      )
+      .map(clone);
   }
 
   async admitVerifiedAttemptAndRecordLaunch(input: {
@@ -1971,7 +2253,11 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       throw new AuthorityConflict('Launch operation is unknown');
     }
     this.assertLease(input.lease, attempt.spec.task, this.now());
-    if (current.state === 'accepted' || current.state === 'unknown') {
+    if (
+      current.state === 'accepted' ||
+      current.state === 'unknown' ||
+      current.state === 'suppressed'
+    ) {
       return { status: 'terminal' };
     }
     if (
@@ -2317,6 +2603,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     this.factKeys.set(factKey, fact);
     this.requestKeys.set(requestKey, request);
     this.launches.set(envelope.attemptId, { ...launch, state: 'accepted' });
+    for (const [key, work] of this.cancellationWork) {
+      if (
+        work.attemptId === envelope.attemptId &&
+        work.state === 'awaiting-binding'
+      ) {
+        this.cancellationWork.set(key, { ...work, state: 'pending' });
+      }
+    }
     return 'applied';
   }
 

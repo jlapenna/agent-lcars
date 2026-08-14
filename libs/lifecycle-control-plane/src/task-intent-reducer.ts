@@ -131,6 +131,7 @@ export type TaskIntentEffect =
       effectKey: string;
       task: CanonicalTaskIdentity;
       intentId: string;
+      intentRevision: number;
       activation: ActivationProvenance;
     }
   | {
@@ -138,6 +139,9 @@ export type TaskIntentEffect =
       effectKey: string;
       task: CanonicalTaskIdentity;
       intentId: string;
+      intentRevision: number;
+      /** Immutable global Attempt target captured with the Task transition. */
+      attemptId: string;
       supersededByIntentId?: string;
       activation: ActivationProvenance;
     }
@@ -795,6 +799,8 @@ export function reduceTaskIntent(
               effectKey: `${input.envelope.factId}:cancel-or-drain`,
               task: clone(state.task),
               intentId: state.attempt.intentId,
+              intentRevision: state.attempt.intentRevision,
+              attemptId: state.attempt.attemptId,
               supersededByIntentId: desired.intentId,
               activation: clone(provenance),
             });
@@ -846,11 +852,23 @@ export function reduceTaskIntent(
       next.desired = undefined;
     }
     if (state.attempt.kind === 'unlaunched') {
+      if (
+        desired === undefined ||
+        desired.intentId !== state.attempt.intentId ||
+        state.desired?.intentRevision !== desired.revision
+      ) {
+        return conflict(
+          current,
+          'semantic-conflict',
+          'Unlaunched cancellation requires the exact selected desired intent',
+        );
+      }
       effects.push({
         kind: 'cancel-unlaunched',
         effectKey: `${input.envelope.factId}:cancel-unlaunched`,
         task: clone(state.task),
         intentId: state.attempt.intentId,
+        intentRevision: desired.revision,
         activation: clone(provenance),
       });
       next.attempt = { kind: 'none' };
@@ -861,6 +879,8 @@ export function reduceTaskIntent(
           effectKey: `${input.envelope.factId}:cancel-or-drain`,
           task: clone(state.task),
           intentId: state.attempt.intentId,
+          intentRevision: state.attempt.intentRevision,
+          attemptId: state.attempt.attemptId,
           activation: clone(provenance),
         });
       }
