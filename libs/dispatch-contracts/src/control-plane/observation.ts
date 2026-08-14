@@ -382,12 +382,14 @@ export const attemptOutcomeSchema = z
           'result',
         ]);
       }
-      if (
-        value.evidence.kind !== 'lifecycle-decision' &&
-        value.evidence.kind !== 'terminal-run'
-      ) {
+      const hasCancellationProof =
+        value.evidence.kind === 'lifecycle-decision' ||
+        (value.terminalState === 'cancelled' &&
+          value.execution === 'cancelled' &&
+          value.evidence.kind === 'terminal-run');
+      if (!hasCancellationProof) {
         error(
-          'Cancelled or superseded outcomes require lifecycle or terminal proof',
+          'Supersession requires lifecycle proof; run cancellation may use exact terminal proof',
           ['evidence'],
         );
       }
