@@ -102,6 +102,11 @@ env:
     availability:
       - RUNTIME
 
+  - variable: QUICK_TASK_EVIDENCE_BUCKET
+    value: 'agent-lcars-quick-task-evidence'
+    availability:
+      - RUNTIME
+
   - variable: AGENT_LCARS_ARTIFACT_SHARE_BASE_URL
     value: 'https://share.lan.jlapenna.net'
     availability:

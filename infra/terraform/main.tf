@@ -86,6 +86,26 @@ resource "google_storage_bucket" "transcripts" {
   depends_on = [google_project_service.services]
 }
 
+resource "google_storage_bucket" "quick_task_evidence" {
+  name                        = "${var.project_id}-quick-task-evidence"
+  location                    = "US"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  versioning { enabled = false }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_project_iam_custom_role" "quick_task_evidence_runtime" {
+  role_id     = "quickTaskEvidenceRuntime"
+  title       = "Quick Task evidence runtime"
+  description = "Create, read, and delete immutable Quick Task evidence objects."
+  permissions = [
+    "storage.objects.create",
+    "storage.objects.get",
+    "storage.objects.delete",
+  ]
+}
+
 resource "google_service_account" "telemetry_writer" {
   account_id   = "telemetry-writer"
   display_name = "Agent LCARS telemetry writer"
@@ -190,6 +210,12 @@ resource "google_cloud_tasks_queue_iam_member" "apphosting_dispatch_webhooks_enq
 resource "google_storage_bucket_iam_member" "apphosting_transcripts" {
   bucket = google_storage_bucket.transcripts.name
   role   = "roles/storage.objectViewer"
+  member = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_storage_bucket_iam_member" "apphosting_quick_task_evidence" {
+  bucket = google_storage_bucket.quick_task_evidence.name
+  role   = google_project_iam_custom_role.quick_task_evidence_runtime.name
   member = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
 }
 
