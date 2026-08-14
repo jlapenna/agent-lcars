@@ -105,7 +105,9 @@ the Nx cache reports a green suite that never ran, which is worse than
 useless when the suite is the thing you are trying to trust. Use
 `:e2e-docker` when reproducing a browser/runtime-specific CI failure in the
 pinned runner environment. Screenshots are retained as failure diagnostics;
-they are not committed pixel-equality gates.
+they are not committed pixel-equality gates. The repository-wide contract and
+failure-triage checklist live in
+[`docs/e2e-reliability.md`](../../../../docs/e2e-reliability.md).
 
 To scope a run, drive Playwright directly — `:e2e` sets
 `forwardAllArgs: false`, so trailing args passed to it are silently dropped

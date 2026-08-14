@@ -22,6 +22,9 @@ test fails, and CI uploads it with the trace and HTML report in the
 making real-time labels, font rasterization, or intentional styling changes a
 pass/fail contract.
 
+See [E2E reliability policy](e2e-reliability.md) for the failure taxonomy,
+baseline decision rule, harness requirements, and review checklist.
+
 Host-direct runs also use a run-scoped Nx L1 cache inside their isolated HOME.
 That keeps another worktree's cache reset from deleting terminal-output paths
 mid-build; the allowlisted remote-cache capability can still satisfy or store
