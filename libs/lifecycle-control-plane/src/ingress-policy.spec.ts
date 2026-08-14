@@ -352,6 +352,11 @@ describe('registered ingress policy evaluation', () => {
     const registered = policy();
     await inbox.registerPolicy(registered);
     const result = await inbox.recordAndEvaluate({ envelope });
+    expect(result.record.policyEvidence).toEqual({
+      principal: evidence().principal,
+      roles: ['maintainer'],
+      evidenceRef: 'role-proof-789',
+    });
     expect(result.record.handoff.policyDecision).toMatchObject({
       decision: 'accepted',
       ruleId: 'maintainer-implement',

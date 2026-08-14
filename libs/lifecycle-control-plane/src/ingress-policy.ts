@@ -740,6 +740,8 @@ export interface IngressInboxRecord {
   factId: string;
   hmacKeyVersion: string;
   receivedAt: string;
+  /** Immutable effective role snapshot used by the recorded decision. */
+  policyEvidence: AuthenticatedPolicyEvidence;
   handoff: VerifiedIngressHandoff;
 }
 
@@ -880,6 +882,7 @@ export class InMemoryIngressPolicyInbox implements IngressPolicyInbox {
       factId: envelope.factId,
       hmacKeyVersion: source.hmacKeyVersion,
       receivedAt: envelope.receivedAt,
+      policyEvidence: clone(evidence),
       handoff: { envelope: clone(envelope), policyDecision: decision },
     };
     this.records.set(key, record);
