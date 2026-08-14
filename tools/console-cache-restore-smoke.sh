@@ -1,12 +1,14 @@
 #!/bin/bash
-# Prove the App Hosting console build can restore a complete deployable output
-# from the builder-local Nx cache, without relying on the private Spark L2.
+# Prove the production console task can restore a complete deployable output
+# from a job-local Nx cache, without relying on the private Spark L2. This is
+# an artifact-integrity check; it does not claim that App Hosting persists the
+# cache between archive builds.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [ -n "${NX_SKIP_NX_CACHE:-}" ]; then
-  echo 'NX_SKIP_NX_CACHE must be unset for the App Hosting cache smoke.' >&2
+  echo 'NX_SKIP_NX_CACHE must be unset for the console cache smoke.' >&2
   exit 1
 fi
 
@@ -26,7 +28,7 @@ build_bundle() {
   ./tools/nx run @agent-lcars/console:bundle --skipRemoteCache --verbose
 }
 
-echo 'Populating the builder-local Nx cache from a production console bundle...'
+echo 'Populating the job-local Nx cache from a production console bundle...'
 build_bundle
 
 echo 'Removing outputs and restoring the deployable bundle from local Nx cache...'
@@ -39,7 +41,7 @@ sed -E $'s/\x1B\\[[0-9;]*[mK]//g' "$smoke_dir/cache-restore.log" \
   >"$smoke_dir/cache-restore.plain.log"
 if ! grep -Eq '@agent-lcars/console:build.*\[local cache\]' \
   "$smoke_dir/cache-restore.plain.log"; then
-  echo 'Console build was not restored from the builder-local Nx cache.' >&2
+  echo 'Console build was not restored from the job-local Nx cache.' >&2
   exit 1
 fi
 
