@@ -92,6 +92,7 @@ resource "google_storage_bucket" "quick_task_evidence" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   versioning { enabled = false }
+  soft_delete_policy { retention_duration_seconds = 0 }
   depends_on = [google_project_service.services]
 }
 

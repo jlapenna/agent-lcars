@@ -166,8 +166,8 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_storage_bucket.quick_task_evidence.name == "agent-lcars-quick-task-evidence" && google_storage_bucket.quick_task_evidence.uniform_bucket_level_access && google_storage_bucket.quick_task_evidence.public_access_prevention == "enforced" && !google_storage_bucket.quick_task_evidence.versioning[0].enabled
-    error_message = "Quick Task evidence must use its dedicated private uniform-access bucket without versioning."
+    condition     = google_storage_bucket.quick_task_evidence.name == "agent-lcars-quick-task-evidence" && google_storage_bucket.quick_task_evidence.uniform_bucket_level_access && google_storage_bucket.quick_task_evidence.public_access_prevention == "enforced" && !google_storage_bucket.quick_task_evidence.versioning[0].enabled && google_storage_bucket.quick_task_evidence.soft_delete_policy[0].retention_duration_seconds == 0
+    error_message = "Quick Task evidence must use its dedicated private uniform-access bucket without versioning or soft-delete retention."
   }
 
   assert {
