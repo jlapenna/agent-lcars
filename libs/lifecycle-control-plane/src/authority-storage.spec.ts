@@ -21,7 +21,10 @@ import {
   type TaskAuthorityLease,
   type TaskAuthorityScope,
 } from './authority-storage';
-import { admitAcceptedSpecForTest } from './authority-storage-test-support';
+import {
+  admitAcceptedSpecForTest,
+  seedTaskForTest,
+} from './authority-storage-test-support';
 import { InstallationTokenMinterBoundary } from './mint-resolution';
 import type { TaskIntentState } from './task-intent-reducer';
 
@@ -356,21 +359,21 @@ export function runLifecycleAuthorityStorageContract(
       const value = fixture();
       const lease = await acquire(storage, value.scope);
       expect(
-        await storage.writeTask({
+        await seedTaskForTest(storage, {
           lease,
           expectedRevision: 0,
           next: value.taskState(1),
         }),
       ).toBe('applied');
       expect(
-        await storage.writeTask({
+        await seedTaskForTest(storage, {
           lease,
           expectedRevision: 0,
           next: value.taskState(1),
         }),
       ).toBe('replay');
       await expect(
-        storage.writeTask({
+        seedTaskForTest(storage, {
           lease,
           expectedRevision: 0,
           next: { ...value.taskState(1), updatedAt: T1 },
@@ -405,7 +408,7 @@ export function runLifecycleAuthorityStorageContract(
       const admitted = await admit(storage);
       const admittedTask = admitted.result.task;
       if (admittedTask === undefined) throw new Error('Admission omitted Task');
-      await storage.writeTask({
+      await seedTaskForTest(storage, {
         lease: admitted.lease,
         expectedRevision: 2,
         next: { ...admittedTask, revision: 3, updatedAt: T1 },

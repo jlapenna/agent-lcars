@@ -11,6 +11,7 @@ import {
   type LifecycleAuthorityStorage,
   type TaskAuthorityScope,
 } from './authority-storage';
+import { seedTaskForTest } from './authority-storage-test-support';
 import {
   type AdmissionPlanResolver,
   TaskAttemptAdmissionCoordinator,
@@ -131,7 +132,7 @@ async function setup(resolver: AdmissionPlanResolver) {
     ownerId: 'owner-1',
     leaseDurationMs: 60_000,
   });
-  await storage.writeTask({ lease, expectedRevision: 0, next: state() });
+  await seedTaskForTest(storage, { lease, expectedRevision: 0, next: state() });
   return {
     storage,
     lease,
@@ -238,7 +239,7 @@ async function prepareAdmissionTask(input: {
     ownerId: input.ownerId ?? 'owner-1',
     leaseDurationMs: input.leaseDurationMs ?? 60_000,
   });
-  await input.storage.writeTask({
+  await seedTaskForTest(input.storage, {
     lease,
     expectedRevision: 0,
     next: input.taskState,
@@ -384,7 +385,7 @@ export function runTaskAttemptAdmissionStorageContract(
       });
       const admittedTask = first.task;
       if (admittedTask === undefined) throw new Error('Admission omitted Task');
-      await storage.writeTask({
+      await seedTaskForTest(storage, {
         lease,
         expectedRevision: 2,
         next: { ...admittedTask, revision: 3 },
