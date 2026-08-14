@@ -11,8 +11,10 @@ import {
   type AuthorityClock,
   AuthorityConflict,
   InMemoryLifecycleAuthorityStorage,
+  type LaunchOutboxRecord,
   type LifecycleAuthorityStorage,
   type TaskAuthorityLease,
+  type TaskEffectRecord,
   type WriteResult,
 } from './authority-storage';
 import { CancellationTaskEffectCoordinator } from './cancellation-effects';
@@ -506,6 +508,7 @@ export interface CancellationEffectStorageFactory {
 async function launchedCancellationEffect(
   storage: LifecycleAuthorityStorage,
   clock: Clock,
+  options: { supersede?: boolean } = {},
 ) {
   await storage.registerActivation(activation());
   const lease = await storage.acquireTaskLease({
@@ -549,18 +552,20 @@ async function launchedCancellationEffect(
   }
   const cancelled = await storage.applyTaskEffectTransition({
     lease,
-    transition: mintTaskEffectTransition(
-      {
-        expectedRevision: admitted.revision,
-        envelope: {
-          ...envelope('fact-cancel-launched'),
-          signal: { kind: 'cancel', commandKey: 'cancel-launched' },
-        },
-        policyDecision: policy('fact-cancel-launched'),
-        activation: activation(),
-      },
-      clock,
-    ),
+    transition: options.supersede
+      ? transition(clock, 'fact-supersede-launched', admitted.revision)
+      : mintTaskEffectTransition(
+          {
+            expectedRevision: admitted.revision,
+            envelope: {
+              ...envelope('fact-cancel-launched'),
+              signal: { kind: 'cancel', commandKey: 'cancel-launched' },
+            },
+            policyDecision: policy('fact-cancel-launched'),
+            activation: activation(),
+          },
+          clock,
+        ),
   });
   const effect = cancelled.effects.find(
     (candidate) => candidate.payload.kind === 'cancel-or-drain',
@@ -623,6 +628,12 @@ export function runCancellationEffectStorageContract(
       const first = await coordinator.reconcile(input);
       expect(await coordinator.reconcile(input)).toEqual(first);
       expect(first.effect.deliveryState).toBe('complete');
+      expect(first.presentation).toBeUndefined();
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+        }),
+      ).toEqual([]);
       expect(
         await storage.listCancellationWork({ tenantId: tenant.tenantId }),
       ).toEqual([]);
@@ -633,20 +644,52 @@ export function runCancellationEffectStorageContract(
       const storage = await factory.create(clock);
       const value = await launchedCancellationEffect(storage, clock);
       const coordinator = new CancellationTaskEffectCoordinator(storage, clock);
-      const cancelled = await coordinator.reconcile({
+      const input = {
         lease: value.lease,
         tenantId: tenant.tenantId,
         task,
         sourceFactId: value.effect.sourceFactId,
         effectKey: value.effect.effectKey,
-      });
+      };
+      const cancelled = await coordinator.reconcile(input);
+      expect(await coordinator.reconcile(input)).toEqual(cancelled);
       expect(cancelled).toMatchObject({
         effect: { deliveryState: 'complete' },
         attempt: {
           phase: 'terminal',
-          outcome: { execution: 'not_started' },
+          outcome: {
+            terminalState: 'cancelled',
+            execution: 'not_started',
+            result: 'none',
+          },
+        },
+        presentation: {
+          deliveryState: 'pending',
+          plan: {
+            terminal: {
+              kind: 'lifecycle-decision',
+              decision: 'cancel-unlaunched',
+            },
+            presentation: {
+              terminalState: 'cancelled',
+              execution: 'not_started',
+              result: 'none',
+              evidenceValidation: 'not-applicable',
+            },
+          },
         },
       });
+      expect(cancelled.presentation?.plan.terminal.commandId).toBe(
+        cancelled.attempt?.outcome?.evidence.kind === 'lifecycle-decision'
+          ? cancelled.attempt.outcome.evidence.decisionFactId
+          : undefined,
+      );
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toEqual([cancelled.presentation]);
       expect(
         await storage.readLaunch({
           tenantId: tenant.tenantId,
@@ -714,6 +757,54 @@ export function runCancellationEffectStorageContract(
       ).toEqual([]);
     });
 
+    it('presents a superseded unclaimed Attempt with exact lifecycle provenance', async () => {
+      const clock = new Clock();
+      const storage = await factory.create(clock);
+      const value = await launchedCancellationEffect(storage, clock, {
+        supersede: true,
+      });
+      const result = await new CancellationTaskEffectCoordinator(
+        storage,
+        clock,
+      ).reconcile({
+        lease: value.lease,
+        tenantId: tenant.tenantId,
+        task,
+        sourceFactId: value.effect.sourceFactId,
+        effectKey: value.effect.effectKey,
+      });
+
+      expect(result).toMatchObject({
+        attempt: {
+          phase: 'terminal',
+          outcome: {
+            terminalState: 'superseded',
+            execution: 'not_started',
+            result: 'none',
+          },
+        },
+        presentation: {
+          plan: {
+            terminal: {
+              kind: 'lifecycle-decision',
+              decision: 'cancel-unlaunched',
+            },
+            presentation: {
+              terminalState: 'superseded',
+              execution: 'not_started',
+              result: 'none',
+            },
+          },
+        },
+      });
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toEqual([result.presentation]);
+    });
+
     it('records cancelling truth before a late accepted launch and promotes binding work atomically', async () => {
       const clock = new Clock();
       const storage = await factory.create(clock);
@@ -733,6 +824,7 @@ export function runCancellationEffectStorageContract(
         effectKey: value.effect.effectKey,
       });
       expect(cancelled.work?.state).toBe('awaiting-binding');
+      expect(cancelled.presentation).toBeUndefined();
       const before = await storage.readAttempt({
         tenantId: tenant.tenantId,
         attemptId: value.attemptId,
@@ -829,6 +921,12 @@ export function runCancellationEffectStorageContract(
         ).resolve(launch.work),
       });
       expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toEqual([]);
+      expect(
         await storage.readAttempt({
           tenantId: tenant.tenantId,
           attemptId: value.attemptId,
@@ -890,6 +988,13 @@ export function runCancellationEffectStorageContract(
         },
       });
       expect(cancelled.work).toBeUndefined();
+      expect(cancelled.presentation).toBeUndefined();
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: value.attemptId,
+        }),
+      ).toEqual([]);
       expect(
         await storage.listCancellationWork({ tenantId: tenant.tenantId }),
       ).toEqual([]);
@@ -944,6 +1049,7 @@ export function runCancellationEffectStorageContract(
         attempt: { phase: 'terminal', outcome: { terminalState: 'cancelled' } },
       });
       expect(completed.work).toBeUndefined();
+      expect(completed.presentation).toBeUndefined();
     });
 
     it('recovers a claimed cancellation after crash under a later fence despite a prospective shadow registration', async () => {
@@ -1017,6 +1123,113 @@ export function runCancellationEffectStorageContract(
 runCancellationEffectStorageContract({
   create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
   hydrateAttempt: writeAttemptForTest,
+});
+
+describe('cancelled Attempt presentation replay integrity', () => {
+  it.each([
+    'missing Attempt',
+    'changed Attempt',
+    'unsuppressed launch',
+    'missing presentation',
+  ] as const)('rejects replay with a %s', async (corruption) => {
+    const clock = new Clock();
+    const storage = new InMemoryLifecycleAuthorityStorage(clock);
+    const value = await launchedCancellationEffect(storage, clock);
+    const coordinator = new CancellationTaskEffectCoordinator(storage, clock);
+    const input = {
+      lease: value.lease,
+      tenantId: tenant.tenantId,
+      task,
+      sourceFactId: value.effect.sourceFactId,
+      effectKey: value.effect.effectKey,
+    };
+    const committed = await coordinator.reconcile(input);
+    if (committed.attempt === undefined)
+      throw new Error('missing committed Attempt');
+
+    const internals = storage as unknown as {
+      attempts: Map<string, AttemptState>;
+      launches: Map<string, LaunchOutboxRecord>;
+      attemptPresentations: Map<string, unknown>;
+    };
+    if (corruption === 'missing Attempt') {
+      internals.attempts.delete(value.attemptId);
+    } else if (corruption === 'changed Attempt') {
+      internals.attempts.set(value.attemptId, {
+        ...committed.attempt,
+        revision: committed.attempt.revision + 1,
+      });
+    } else if (corruption === 'unsuppressed launch') {
+      const launch = internals.launches.get(value.attemptId);
+      if (launch === undefined) throw new Error('missing committed launch');
+      internals.launches.set(value.attemptId, { ...launch, state: 'pending' });
+    } else {
+      internals.attemptPresentations.clear();
+    }
+
+    await expect(coordinator.reconcile(input)).rejects.toThrow(
+      AuthorityConflict,
+    );
+  });
+
+  it('replays a later no-op cancellation against an already suppressed terminal Attempt', async () => {
+    const clock = new Clock();
+    const storage = new InMemoryLifecycleAuthorityStorage(clock);
+    const value = await launchedCancellationEffect(storage, clock);
+    const coordinator = new CancellationTaskEffectCoordinator(storage, clock);
+    await coordinator.reconcile({
+      lease: value.lease,
+      tenantId: tenant.tenantId,
+      task,
+      sourceFactId: value.effect.sourceFactId,
+      effectKey: value.effect.effectKey,
+    });
+
+    const laterFactId = 'fact-later-cancel-noop';
+    const laterEffectKey = 'effect-later-cancel-noop';
+    const laterEffect: TaskEffectRecord = {
+      ...value.effect,
+      sourceFactId: laterFactId,
+      effectKey: laterEffectKey,
+      canonicalDigest: 'b'.repeat(64),
+      deliveryState: 'pending',
+    };
+    const internals = storage as unknown as {
+      taskEffects: Map<string, TaskEffectRecord>;
+    };
+    internals.taskEffects.set(
+      JSON.stringify([
+        tenant.tenantId,
+        task.repositoryId,
+        task.issueNumber,
+        'task-effect',
+        laterFactId,
+        laterEffectKey,
+      ]),
+      laterEffect,
+    );
+    const input = {
+      lease: value.lease,
+      tenantId: tenant.tenantId,
+      task,
+      sourceFactId: laterFactId,
+      effectKey: laterEffectKey,
+    };
+
+    const first = await coordinator.reconcile(input);
+    expect(first).toMatchObject({
+      effect: { deliveryState: 'complete' },
+      attempt: { phase: 'terminal' },
+    });
+    expect(first.presentation).toBeUndefined();
+    expect(await coordinator.reconcile(input)).toEqual(first);
+    expect(
+      await storage.listAttemptPresentations({
+        tenantId: tenant.tenantId,
+        attemptId: value.attemptId,
+      }),
+    ).toHaveLength(1);
+  });
 });
 
 describe('AdmissionTaskEffectCoordinator', () => {

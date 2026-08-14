@@ -1,10 +1,8 @@
-import type { AttemptState } from './attempt-reducer';
 import type {
-  CancellationWorkRecord,
+  CancellationEffectResult,
   LifecycleAuthorityStorage,
   TaskAuthorityLease,
   TaskAuthorityScope,
-  TaskEffectRecord,
 } from './authority-storage';
 import {
   type CancellationEffectClock,
@@ -27,11 +25,7 @@ export class CancellationTaskEffectCoordinator {
     task: TaskAuthorityScope;
     sourceFactId: string;
     effectKey: string;
-  }): Promise<{
-    effect: TaskEffectRecord;
-    attempt?: AttemptState;
-    work?: CancellationWorkRecord;
-  }> {
+  }): Promise<CancellationEffectResult> {
     const effect = await this.storage.readTaskEffect(input);
     if (effect === undefined) throw new Error('Task effect is unknown');
     if (
