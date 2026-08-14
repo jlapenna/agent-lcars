@@ -18,6 +18,11 @@ import { executeHostedControllerCommand } from './hosted-controller-command';
 import { type Pipeline } from './primary-action';
 import type { QuickTaskReceipt, QuickTaskRequest } from './quick-task-contract';
 import { deriveQuickTaskTitle } from './quick-task-evidence';
+import type {
+  QuickTaskEvidenceIntent,
+  QuickTaskEvidenceObject,
+  QuickTaskEvidencePreIssueCreateHook,
+} from './quick-task-evidence-contract';
 import {
   type AgentIntegration,
   agentIntegration,
@@ -714,6 +719,16 @@ interface QuickTaskClaim {
   claimantId: string;
 }
 
+/**
+ * Server-only input for the future multipart route. It is intentionally not
+ * part of QuickTaskRequest: the existing action and broker wire contract stay
+ * byte-for-byte compatible for Quick Tasks without evidence.
+ */
+export interface QuickTaskEvidenceLifecycle {
+  intent: QuickTaskEvidenceIntent;
+  hook: QuickTaskEvidencePreIssueCreateHook;
+}
+
 function normalizeQuickTaskRequest(
   request: QuickTaskRequest & { repository: WatchedRepo },
 ): NormalizedQuickTaskRequest {
@@ -1118,6 +1133,7 @@ async function releaseQuickTaskClaim(
 async function createQuickTaskOnce(
   request: NormalizedQuickTaskRequest,
   digest: string,
+  evidenceLifecycle?: QuickTaskEvidenceLifecycle,
 ): Promise<QuickTaskReceipt> {
   const integration = requireAgentIntegration(
     request.repository,
@@ -1143,6 +1159,39 @@ async function createQuickTaskOnce(
   }
 
   const octokit = getGithubClient();
+  let preparedEvidence: QuickTaskEvidenceObject | undefined;
+  if (evidenceLifecycle) {
+    try {
+      const { data: repository } = await octokit.rest.repos.get({
+        owner: request.repository.owner,
+        repo: request.repository.name,
+      });
+      const visibility = repository.visibility;
+      if (
+        typeof repository.id !== 'number' ||
+        (visibility !== 'public' &&
+          visibility !== 'private' &&
+          visibility !== 'internal')
+      ) {
+        throw new ActionError(
+          'Quick Task evidence repository metadata is unavailable',
+          503,
+        );
+      }
+      preparedEvidence = await evidenceLifecycle.hook.prepare({
+        intent: evidenceLifecycle.intent,
+        repositoryId: repository.id,
+        visibility,
+      });
+    } catch (error) {
+      // Evidence preparation happens before issues.create, so no issue can
+      // exist. Its adapter reconciles any ambiguous storage write; releasing
+      // this durable claim lets the same browser intent retry afterwards.
+      await releaseQuickTaskClaim(request, digest, claim.claimantId);
+      throw error;
+    }
+  }
+
   try {
     const { data: issue } = await octokit.rest.issues.create({
       owner: request.repository.owner,
@@ -1154,6 +1203,20 @@ async function createQuickTaskOnce(
     return receiptFor(request, issue.number);
   } catch (error) {
     if (isDefinitiveCreateFailure(error)) {
+      if (preparedEvidence && evidenceLifecycle) {
+        try {
+          await evidenceLifecycle.hook.rollbackDefinitiveCreateFailure(
+            preparedEvidence,
+          );
+        } finally {
+          // A definitive GitHub response proves this request did not create
+          // an issue. Always attempt both parts of the frozen cleanup
+          // disposition, even when storage rollback itself needs operator
+          // reconciliation.
+          await releaseQuickTaskClaim(request, digest, claim.claimantId);
+        }
+        throw error;
+      }
       // A 4xx proves GitHub did not create the issue, so releasing the claim
       // is safe and lets the same browser intent retry after the validation,
       // permission, or label problem is corrected.
@@ -1182,6 +1245,7 @@ const inFlightQuickTasks = new Map<
 
 export function createQuickTask(
   rawRequest: QuickTaskRequest & { repository: WatchedRepo },
+  evidenceLifecycle?: QuickTaskEvidenceLifecycle,
 ): Promise<QuickTaskReceipt> {
   const request = normalizeQuickTaskRequest(rawRequest);
   const digest = quickTaskDigest(request);
@@ -1199,7 +1263,7 @@ export function createQuickTask(
     return pending.promise;
   }
 
-  const promise = createQuickTaskOnce(request, digest);
+  const promise = createQuickTaskOnce(request, digest, evidenceLifecycle);
   inFlightQuickTasks.set(key, { digest, promise });
   const cleanup = () => {
     if (inFlightQuickTasks.get(key)?.promise === promise) {
