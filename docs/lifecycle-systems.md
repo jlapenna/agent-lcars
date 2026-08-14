@@ -8,6 +8,12 @@ label. This document is that issue's Phase 6 checkbox, "Document operational
 ownership and runbooks for all five systems." It answers one question per
 system: when this breaks, whose problem is it, and what do you check first.
 
+This document describes the **current production topology**. The reviewed
+target for centralizing task/intent/attempt controller logic and reducing
+consumer repositories to thin adapters is
+[`attempt-service.md`](attempt-service.md); that target design does not change
+production authority until a separately approved lane activation occurs.
+
 > [!IMPORTANT]
 > **Canary/alert system retired (2026-08-10, #885).** Every scheduled canary
 > workflow (`dispatch-canary`, `agent-dispatch-canary`, `bootstrap-canary`,
