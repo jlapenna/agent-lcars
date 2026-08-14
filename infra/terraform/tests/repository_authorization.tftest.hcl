@@ -52,6 +52,14 @@ run "renders_exact_repository_authorization" {
     }
   }
 
+  override_resource {
+    target          = google_project_iam_custom_role.quick_task_evidence_runtime
+    override_during = plan
+    values = {
+      name = "projects/agent-lcars/roles/quickTaskEvidenceRuntime"
+    }
+  }
+
   assert {
     condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab']"
     error_message = "The WIF provider must authorize exactly Agent LCARS, Sprinkles, and Homelab."
@@ -155,6 +163,21 @@ run "renders_exact_repository_authorization" {
   assert {
     condition     = google_project_iam_member.writer_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/(default)\"" && google_project_iam_member.apphosting_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/(default)\""
     error_message = "Telemetry identities must remain confined to the default database and unable to access dispatch authority."
+  }
+
+  assert {
+    condition     = google_storage_bucket.quick_task_evidence.name == "agent-lcars-quick-task-evidence" && google_storage_bucket.quick_task_evidence.uniform_bucket_level_access && google_storage_bucket.quick_task_evidence.public_access_prevention == "enforced" && !google_storage_bucket.quick_task_evidence.versioning[0].enabled && google_storage_bucket.quick_task_evidence.soft_delete_policy[0].retention_duration_seconds == 0
+    error_message = "Quick Task evidence must use its dedicated private uniform-access bucket without versioning or soft-delete retention."
+  }
+
+  assert {
+    condition     = google_project_iam_custom_role.quick_task_evidence_runtime.role_id == "quickTaskEvidenceRuntime" && toset(google_project_iam_custom_role.quick_task_evidence_runtime.permissions) == toset(["storage.objects.create", "storage.objects.get", "storage.objects.delete"])
+    error_message = "The evidence runtime role must grant only create, get, and delete."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.apphosting_quick_task_evidence.bucket == google_storage_bucket.quick_task_evidence.name && google_storage_bucket_iam_member.apphosting_quick_task_evidence.role == google_project_iam_custom_role.quick_task_evidence_runtime.name && google_storage_bucket_iam_member.apphosting_quick_task_evidence.member == "serviceAccount:firebase-app-hosting-compute@agent-lcars.iam.gserviceaccount.com"
+    error_message = "Only the App Hosting runtime may receive the evidence bucket runtime role."
   }
 }
 
