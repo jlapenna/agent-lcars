@@ -256,6 +256,8 @@ importers:
         specifier: workspace:*
         version: link:../dispatch-contracts
 
+  libs/lifecycle-control-plane: {}
+
   libs/env-vars: {}
 
   libs/logging:

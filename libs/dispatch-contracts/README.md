@@ -23,6 +23,13 @@ Covered today:
 | Dispatch marker `[dispatch:g<n>:<id>]`              | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                                                                                                                                                               |
 | Recovery operation key (`recovery/v1:<domain>:...`) | Never shared before — `pr-heal.yml`'s `pr-heal-ledger:v1` comment and `post-deploy-verify.yml`'s `post-deploy-verify-dispatch:<sha>` marker in `supersprinklesracing/sprinkles` each independently invented an equivalent idempotency key (see [#864](https://github.com/jlapenna/agent-lcars/issues/864)) |
 
+The provider-neutral Lifecycle Control Plane v1 boundary lives under
+`src/control-plane/`. It defines strict, versioned facts for central task,
+intent, attempt, outcome, projection, credential-grant, and activation
+authority. The target architecture and the reducer/storage invariants that are
+intentionally outside these schemas are documented in
+[`docs/attempt-service.md`](../../docs/attempt-service.md).
+
 ## Why it has zero dependencies
 
 This package is TypeScript now — `.github/actions/dispatch-broker`'s old

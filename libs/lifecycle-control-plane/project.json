@@ -1,0 +1,7 @@
+{
+  "name": "@agent-lcars/lifecycle-control-plane",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/lifecycle-control-plane/src",
+  "projectType": "library",
+  "tags": ["platform:server", "scope:shared"]
+}
