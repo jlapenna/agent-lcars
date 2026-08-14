@@ -84,6 +84,21 @@ describe('QuickTaskButton', () => {
     expect(button.disabled).toBe(false);
   });
 
+  it('places filing controls before the optional issue preview', async () => {
+    renderButton();
+    await openDialog();
+    enterDescription();
+
+    const submitButton = screen.getByRole('button', {
+      name: 'File & dispatch',
+    });
+    const preview = screen.getByTestId('quick-task-preview');
+    expect(
+      submitButton.compareDocumentPosition(preview) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('files a repository-explicit request and renders its canonical TaskRef', async () => {
     (createQuickTask as Mock).mockResolvedValue(receipt());
     renderButton();

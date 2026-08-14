@@ -37,10 +37,10 @@ export function InboxMobileCommandDeck({
           <Button
             component="a"
             href={backHref}
-            variant="filled"
-            color="blue"
+            variant="default"
             leftSection={<IconChevronLeft aria-hidden="true" size={18} />}
-            className="queue-mobile-back"
+            className="lcars-action-button queue-mobile-back"
+            data-accent="blue"
             aria-label="Back to Inbox list"
           >
             Back

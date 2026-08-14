@@ -394,6 +394,17 @@ export function QuickTaskButton({
             minRows={1}
           />
 
+          <Button
+            disabled={
+              !description.trim() ||
+              !selectedRepo ||
+              pipelineOptions.length === 0
+            }
+            onClick={handleCreate}
+          >
+            File & dispatch
+          </Button>
+
           {description.trim() && (
             <Paper withBorder p="sm" data-testid="quick-task-preview">
               <Stack gap="xs">
@@ -433,16 +444,6 @@ export function QuickTaskButton({
               </Stack>
             </Paper>
           )}
-          <Button
-            disabled={
-              !description.trim() ||
-              !selectedRepo ||
-              pipelineOptions.length === 0
-            }
-            onClick={handleCreate}
-          >
-            File & dispatch
-          </Button>
         </Stack>
       </Modal>
     </>
