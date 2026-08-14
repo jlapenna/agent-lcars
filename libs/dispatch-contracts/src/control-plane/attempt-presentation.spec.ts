@@ -16,8 +16,11 @@ const plan = {
   task: { tenantId: 'tenant-1', repositoryId: 123, issueNumber: 9 },
   attemptId: 'A'.repeat(22),
   attemptRevision: 9,
-  finalizationCommandId: 'finalize-1',
-  terminalFactId: 'terminal-1',
+  terminal: {
+    kind: 'finalization' as const,
+    commandId: 'finalize-1',
+    terminalFactId: 'terminal-1',
+  },
   outcomeDigest: sha,
   activation: {
     activationId: 'activation-1',
@@ -51,6 +54,26 @@ describe('AttemptPresentationPlanV1', () => {
   });
 
   it('requires exact tenant scope, central provenance, and closed failure truth', () => {
+    expect(
+      attemptPresentationPlanSchema.safeParse({
+        ...plan,
+        terminal: {
+          kind: 'lifecycle-decision',
+          commandId: 'cancel-1',
+          decision: 'cancel-unlaunched',
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      attemptPresentationPlanSchema.safeParse({
+        ...plan,
+        terminal: {
+          kind: 'lifecycle-decision',
+          commandId: 'cancel-1',
+          terminalFactId: 'wrong-proof-kind',
+        },
+      }).success,
+    ).toBe(false);
     expect(
       attemptPresentationPlanSchema.safeParse({
         ...plan,

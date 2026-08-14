@@ -630,8 +630,11 @@ function deriveAttemptPresentation(
         tenantId: state.spec.tenant.tenantId,
         attemptId: state.spec.attemptId,
         revision: state.revision,
-        finalizationCommandId,
-        terminalFactId,
+        terminal: {
+          kind: 'finalization',
+          commandId: finalizationCommandId,
+          terminalFactId,
+        },
         outcomeDigest,
       }),
     )
@@ -656,8 +659,11 @@ function deriveAttemptPresentation(
     task: state.spec.task,
     attemptId: state.spec.attemptId,
     attemptRevision: state.revision,
-    finalizationCommandId,
-    terminalFactId,
+    terminal: {
+      kind: 'finalization',
+      commandId: finalizationCommandId,
+      terminalFactId,
+    },
     outcomeDigest,
     activation,
     presentation: {

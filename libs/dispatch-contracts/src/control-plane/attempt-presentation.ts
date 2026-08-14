@@ -25,8 +25,18 @@ export const attemptPresentationPlanSchema = z
     task: canonicalTaskIdentitySchema,
     attemptId: attemptIdSchema,
     attemptRevision: nonnegativeSafeIntegerSchema,
-    finalizationCommandId: opaqueIdSchema,
-    terminalFactId: opaqueIdSchema,
+    terminal: z.discriminatedUnion('kind', [
+      z.strictObject({
+        kind: z.literal('finalization'),
+        commandId: opaqueIdSchema,
+        terminalFactId: opaqueIdSchema,
+      }),
+      z.strictObject({
+        kind: z.literal('lifecycle-decision'),
+        commandId: opaqueIdSchema,
+        decision: z.enum(['launch-rejected', 'cancel-unlaunched', 'mark-lost']),
+      }),
+    ]),
     outcomeDigest: sha256Schema,
     activation: centralActivationProvenanceSchema,
     presentation: z.strictObject({

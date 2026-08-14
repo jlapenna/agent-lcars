@@ -452,7 +452,10 @@ export function runAttemptFinalizerStorageContract(
             schema: 'agent-lcars.attempt-presentation-plan/v1',
             version: 1,
             attemptId: spec.attemptId,
-            terminalFactId: 'fact-terminal-1',
+            terminal: {
+              kind: 'finalization',
+              terminalFactId: 'fact-terminal-1',
+            },
             activation: spec.activation,
             presentation: {
               kind: 'attempt-finalized',
