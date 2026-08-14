@@ -3,7 +3,6 @@ import type {
   ActivationRecord,
   AttemptOutcome,
   CredentialGrantIssuance,
-  ProjectionIntent,
   RunBinding,
 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
@@ -876,114 +875,6 @@ export function runLifecycleAuthorityStorageContract(
       ).rejects.toThrow(AuthorityConflict);
     });
 
-    it('claims projection delivery and keeps retries isolated from terminal truth', async () => {
-      const { storage, clock } = await makeHarness();
-      const admitted = await admit(storage);
-      const outcome = cancelledOutcome(admitted.spec.attemptId);
-      await writeAttemptForTest({
-        storage,
-        lease: admitted.lease,
-        expectedRevision: 1,
-        next: {
-          ...admitted.attempt,
-          revision: 2,
-          phase: 'terminal',
-          outcome,
-          futureGrantsDenied: true,
-        },
-      });
-      const intent: ProjectionIntent = {
-        schema: 'agent-lcars.projection-intent/v1',
-        version: 1,
-        operationId: 'projection-1',
-        attemptId: admitted.spec.attemptId,
-        kind: 'outcome-comment',
-        desiredRevision: 1,
-        payload: { kind: 'outcome-comment', outcomeDigest: SHA_A },
-      };
-      expect(
-        await storage.enqueueProjection({
-          lease: admitted.lease,
-          tenantId: admitted.tenant.tenantId,
-          intent,
-        }),
-      ).toBe('applied');
-      const claims = await Promise.all([
-        storage.claimProjection({
-          lease: admitted.lease,
-          tenantId: admitted.tenant.tenantId,
-          operationId: intent.operationId,
-        }),
-        storage.claimProjection({
-          lease: admitted.lease,
-          tenantId: admitted.tenant.tenantId,
-          operationId: intent.operationId,
-        }),
-      ]);
-      expect(claims.sort()).toEqual(['applied', 'replay']);
-      clock.set(T4);
-      const takeover = await acquire(storage, admitted.scope, 'owner-2');
-      expect(
-        await storage.claimProjection({
-          lease: takeover,
-          tenantId: admitted.tenant.tenantId,
-          operationId: intent.operationId,
-        }),
-      ).toBe('applied');
-      await storage.acknowledgeProjection({
-        lease: takeover,
-        tenantId: admitted.tenant.tenantId,
-        status: {
-          operationId: intent.operationId,
-          state: 'diverged',
-          observedAt: T1,
-          failure: {
-            owningSystem: 'projector',
-            phase: 'reporting',
-            reason: 'github_write_failed',
-            retryDisposition: 'manual',
-            evidenceRef: 'projection-failure-1',
-          },
-        },
-      });
-      expect(
-        await storage.listProjections({
-          tenantId: admitted.tenant.tenantId,
-          state: 'pending',
-        }),
-      ).toHaveLength(1);
-      await storage.claimProjection({
-        lease: takeover,
-        tenantId: admitted.tenant.tenantId,
-        operationId: intent.operationId,
-      });
-      const converged = {
-        operationId: intent.operationId,
-        state: 'converged' as const,
-        observedAt: T2,
-      };
-      await storage.acknowledgeProjection({
-        lease: takeover,
-        tenantId: admitted.tenant.tenantId,
-        status: converged,
-      });
-      expect(
-        await storage.acknowledgeProjection({
-          lease: takeover,
-          tenantId: admitted.tenant.tenantId,
-          status: converged,
-        }),
-      ).toBe('replay');
-      expect(
-        (
-          await storage.readAttempt({
-            tenantId: admitted.tenant.tenantId,
-            attemptId: admitted.spec.attemptId,
-          })
-        )?.outcome,
-      ).toEqual(outcome);
-    });
-
     it('allows pinned in-flight effects but blocks shadow admissions and pre-boundary effects', async () => {
       const { storage } = await makeHarness();
       const admitted = await admit(storage);
@@ -994,23 +885,6 @@ export function runLifecycleAuthorityStorageContract(
         mode: 'shadow',
         effectMode: 'none',
       });
-      const intent: ProjectionIntent = {
-        schema: 'agent-lcars.projection-intent/v1',
-        version: 1,
-        operationId: 'projection-old-attempt',
-        attemptId: admitted.spec.attemptId,
-        kind: 'ledger-projection',
-        desiredRevision: 1,
-        payload: { kind: 'ledger-projection', ledgerRevision: 1 },
-      };
-      expect(
-        await storage.enqueueProjection({
-          lease: admitted.lease,
-          tenantId: admitted.tenant.tenantId,
-          intent,
-        }),
-      ).toBe('applied');
-
       const future = fixture({
         activationId: 'activation-3',
         authorityEpoch: 3,

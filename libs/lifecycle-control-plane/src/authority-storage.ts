@@ -5,9 +5,8 @@ import type {
   ActivationProvenance,
   ActivationRecord,
   CredentialGrantIssuance,
-  ProjectionIntent,
-  ProjectionStatusV1,
   RunBinding,
+  TaskPresentationPlan,
 } from '@agent-lcars/dispatch-contracts';
 import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
@@ -16,9 +15,8 @@ import {
   formatAttemptId,
   hasValidRuntimeObservationPayloadDigest,
   localAttemptMarkerSchema,
-  projectionIntentSchema,
-  projectionStatusV1Schema,
   runtimeObservationEnvelopeSchema,
+  taskPresentationPlanSchema,
 } from '@agent-lcars/dispatch-contracts';
 
 import {
@@ -149,14 +147,6 @@ export interface MintIdentity {
   canonicalDigest: string;
 }
 
-export interface ProjectionRecord {
-  tenantId: string;
-  intent: ProjectionIntent;
-  status?: ProjectionStatusV1;
-  deliveryState: 'pending' | 'delivering' | 'complete';
-  claimedFence?: number;
-}
-
 export interface AdmissionResult {
   replay: boolean;
   task?: TaskIntentState;
@@ -188,19 +178,33 @@ export interface TaskEffectRecord {
   sourceFactId: string;
   effectKey: string;
   canonicalDigest: string;
+  /** Reducer revision that causally emitted this effect; never reconstructed. */
+  taskRevision: number;
   activation: ActivationProvenance;
   payload: TaskIntentEffect;
   deliveryState: 'pending' | 'working' | 'complete' | 'obsolete';
   claimedFence?: number;
   claimToken?: string;
-  completion?: { kind: 'admission-receipt'; attemptId: string };
+  completion?:
+    | { kind: 'admission-receipt'; attemptId: string }
+    | { kind: 'task-presentation-receipt'; operationId: string };
   obsoleteReason?: 'superseded' | 'activation-no-longer-authoritative';
+}
+
+export interface TaskPresentationRecord {
+  tenantId: string;
+  plan: TaskPresentationPlan;
+  deliveryState: 'pending' | 'obsolete';
+  obsoleteAtTaskRevision?: number;
+  obsoleteReason?: 'newer-presentation' | 'task-resumed' | 'task-cancelled';
 }
 
 export interface TaskEffectTransitionResult {
   status: 'applied' | 'replay';
   task: TaskIntentState;
   effects: TaskEffectRecord[];
+  plans: TaskPresentationRecord[];
+  obsoletedPlans: TaskPresentationRecord[];
 }
 
 export interface TaskEffectClaim {
@@ -245,6 +249,16 @@ export interface LifecycleAuthorityStorage {
     lease: TaskAuthorityLease;
     transition: VerifiedTaskEffectTransition;
   }): Promise<TaskEffectTransitionResult>;
+  readTaskPresentation(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    operationId: string;
+  }): Promise<TaskPresentationRecord | undefined>;
+  listTaskPresentations(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    state?: TaskPresentationRecord['deliveryState'];
+  }): Promise<TaskPresentationRecord[]>;
   listTaskEffects(input: {
     tenantId: string;
     task: TaskAuthorityScope;
@@ -392,30 +406,6 @@ export interface LifecycleAuthorityStorage {
     tenantId: string;
     grantId: string;
   }): Promise<CredentialGrantIssuance | undefined>;
-
-  enqueueProjection(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    intent: ProjectionIntent;
-  }): Promise<WriteResult>;
-  listProjections(input: {
-    tenantId: string;
-    state: ProjectionRecord['deliveryState'];
-  }): Promise<ProjectionRecord[]>;
-  claimProjection(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    operationId: string;
-  }): Promise<WriteResult>;
-  acknowledgeProjection(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    status: ProjectionStatusV1;
-  }): Promise<WriteResult>;
-  readProjection(input: {
-    tenantId: string;
-    operationId: string;
-  }): Promise<ProjectionRecord | undefined>;
 }
 
 export class AuthorityConflict extends Error {
@@ -555,6 +545,74 @@ function taskEffectKey(input: {
   );
 }
 
+function taskPresentationKey(input: {
+  tenantId: string;
+  task: TaskAuthorityScope;
+  operationId: string;
+}): string {
+  return tupleKey(
+    input.tenantId,
+    input.task.repositoryId,
+    input.task.issueNumber,
+    'task-presentation',
+    input.operationId,
+  );
+}
+
+function taskPresentationForEffect(input: {
+  tenant: TaskIntentState['tenant'];
+  effect: TaskEffectRecord;
+  transitionDigest: string;
+}): TaskPresentationPlan | undefined {
+  const payload = input.effect.payload;
+  if (payload.kind !== 'park-projection') return undefined;
+  const semantic = {
+    tenantId: input.tenant.tenantId,
+    task: input.effect.task,
+    taskRevision: input.effect.taskRevision,
+    sourceFactId: input.effect.sourceFactId,
+    taskEffectKey: input.effect.effectKey,
+    effectDigest: input.effect.canonicalDigest,
+    transitionDigest: input.transitionDigest,
+    activation: input.effect.activation,
+    presentation: {
+      disposition: 'parked' as const,
+      humanAttention: 'required' as const,
+      notice: { kind: 'task-parked' as const },
+      ...(payload.intentId === undefined
+        ? {}
+        : {
+            intentId: payload.intentId,
+            intentRevision: payload.intentRevision,
+          }),
+      reason: payload.reason,
+    },
+  };
+  const operationId = `task-park:${createHash('sha256').update(canonicalJson(semantic)).digest('hex')}`;
+  const plan: TaskPresentationPlan = {
+    schema: 'agent-lcars.task-presentation-plan/v1',
+    version: 1,
+    operationId,
+    tenant: clone(input.tenant),
+    task: clone(input.effect.task),
+    taskRevision: input.effect.taskRevision,
+    sourceFactId: input.effect.sourceFactId,
+    taskEffectKey: input.effect.effectKey,
+    effectDigest: input.effect.canonicalDigest,
+    transitionDigest: input.transitionDigest,
+    activation: clone(input.effect.activation),
+    presentation: semantic.presentation,
+  };
+  if (!taskPresentationPlanSchema.safeParse(plan).success) {
+    throw new AuthorityConflict('Derived task presentation plan is invalid');
+  }
+  return plan;
+}
+
+function taskPresentationDigest(record: TaskPresentationRecord): string {
+  return createHash('sha256').update(canonicalJson(record.plan)).digest('hex');
+}
+
 function taskTransitionReceiptKey(input: {
   tenantId: string;
   task: TaskAuthorityScope;
@@ -626,6 +684,18 @@ interface StoredTaskEffectReceipt {
   canonicalDigest: string;
   task: TaskIntentState;
   effects: Array<{ key: string; canonicalDigest: string }>;
+  plans: Array<{
+    key: string;
+    canonicalDigest: string;
+    snapshot: TaskPresentationRecord;
+  }>;
+  obsoletedPlans: Array<{
+    key: string;
+    canonicalDigest: string;
+    obsoleteAtTaskRevision: number;
+    obsoleteReason: NonNullable<TaskPresentationRecord['obsoleteReason']>;
+    snapshot: TaskPresentationRecord;
+  }>;
 }
 
 const systemClock: AuthorityClock = {
@@ -657,11 +727,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly mintSlots = new Map<string, string>();
   private readonly mintCounts = new Map<string, number>();
   private readonly mintLimits = new Map<string, number>();
-  private readonly projections = new Map<string, ProjectionRecord>();
   private readonly validationWork = new Map<string, ValidationWorkRecord>();
   private readonly launchResolutionReceipts = new Map<string, string>();
   private readonly activations = new Map<string, ActivationRecord>();
   private readonly taskEffects = new Map<string, TaskEffectRecord>();
+  private readonly taskPresentations = new Map<
+    string,
+    TaskPresentationRecord
+  >();
   private readonly taskEffectReceipts = new Map<
     string,
     StoredTaskEffectReceipt
@@ -932,6 +1005,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         );
       }
       const effects = prior.effects.map(({ key }) => this.taskEffects.get(key));
+      const plans = prior.plans.map(({ key }) =>
+        this.taskPresentations.get(key),
+      );
+      const obsoletedPlans = prior.obsoletedPlans.map(({ key }) =>
+        this.taskPresentations.get(key),
+      );
       if (
         effects.some(
           (effect, index) =>
@@ -941,10 +1020,58 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       ) {
         throw new AuthorityConflict('Task effect receipt is inconsistent');
       }
+      if (
+        obsoletedPlans.some(
+          (plan, index) =>
+            plan === undefined ||
+            taskPresentationDigest(plan) !==
+              prior.obsoletedPlans[index]?.canonicalDigest ||
+            plan.deliveryState !== 'obsolete' ||
+            plan.obsoleteAtTaskRevision !==
+              prior.obsoletedPlans[index]?.obsoleteAtTaskRevision ||
+            plan.obsoleteReason !== prior.obsoletedPlans[index]?.obsoleteReason,
+        )
+      )
+        throw new AuthorityConflict(
+          'Task presentation obsoletion receipt is inconsistent',
+        );
+      if (
+        plans.some(
+          (plan, index) =>
+            plan === undefined ||
+            taskPresentationDigest(plan) !==
+              prior.plans[index]?.canonicalDigest,
+        )
+      ) {
+        throw new AuthorityConflict(
+          'Task presentation receipt is inconsistent',
+        );
+      }
+      if (
+        plans.some((plan) => {
+          const source = effects.find(
+            (effect) => effect?.effectKey === plan?.plan.taskEffectKey,
+          );
+          return (
+            source === undefined ||
+            source.deliveryState !== 'complete' ||
+            source.completion?.kind !== 'task-presentation-receipt' ||
+            source.completion.operationId !== plan?.plan.operationId
+          );
+        })
+      ) {
+        throw new AuthorityConflict(
+          'Task presentation source effect is incomplete',
+        );
+      }
       return {
         status: 'replay',
         task: clone(prior.task),
         effects: effects.map((effect) => clone(effect as TaskEffectRecord)),
+        plans: prior.plans.map(({ snapshot }) => clone(snapshot)),
+        obsoletedPlans: prior.obsoletedPlans.map(({ snapshot }) =>
+          clone(snapshot),
+        ),
       };
     }
     if (
@@ -998,15 +1125,90 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
             canonicalJson({ effect, commandDigest: command.canonicalDigest }),
           )
           .digest('hex'),
+        taskRevision: reduced.state.revision,
         activation: clone(effect.activation),
         payload: clone(effect),
         deliveryState: 'pending',
       };
     });
+    const plans = records.flatMap((effect) => {
+      const plan = taskPresentationForEffect({
+        tenant: reduced.state.tenant,
+        effect,
+        transitionDigest: command.canonicalDigest,
+      });
+      return plan === undefined
+        ? []
+        : [
+            {
+              tenantId: scope.tenantId,
+              plan,
+              deliveryState: 'pending' as const,
+            },
+          ];
+    });
+    for (const plan of plans) {
+      const effect = records.find(
+        (candidate) => candidate.effectKey === plan.plan.taskEffectKey,
+      );
+      if (effect === undefined)
+        throw new AuthorityConflict('Task presentation effect is absent');
+      effect.deliveryState = 'complete';
+      effect.completion = {
+        kind: 'task-presentation-receipt',
+        operationId: plan.plan.operationId,
+      };
+    }
+    for (const plan of plans) {
+      const key = taskPresentationKey({
+        tenantId: plan.tenantId,
+        task: scope,
+        operationId: plan.plan.operationId,
+      });
+      if (this.taskPresentations.has(key)) {
+        throw new AuthorityConflict('Task presentation operation was reused');
+      }
+    }
     // All checks above occur before the contiguous in-memory transaction body.
     this.tasks.set(canonicalTaskKey(scope), clone(reduced.state));
     for (const record of records) {
       this.taskEffects.set(taskEffectKey(record), clone(record));
+    }
+    const obsoleteReason =
+      plans.length > 0
+        ? 'newer-presentation'
+        : reduced.resolution.kind === 'desired'
+          ? 'task-resumed'
+          : reduced.resolution.kind === 'cancelled'
+            ? 'task-cancelled'
+            : undefined;
+    const obsoletedPlans: TaskPresentationRecord[] = [];
+    for (const [key, priorPlan] of this.taskPresentations) {
+      if (
+        priorPlan.tenantId === scope.tenantId &&
+        same(priorPlan.plan.task, scope) &&
+        priorPlan.deliveryState === 'pending' &&
+        obsoleteReason !== undefined
+      ) {
+        const obsolete: TaskPresentationRecord = {
+          ...priorPlan,
+          deliveryState: 'obsolete',
+          obsoleteAtTaskRevision: reduced.state.revision,
+          obsoleteReason,
+        };
+        this.taskPresentations.set(key, obsolete);
+        obsoletedPlans.push(obsolete);
+      }
+    }
+    for (const plan of plans) {
+      this.taskPresentations.set(
+        taskPresentationKey({
+          tenantId: plan.tenantId,
+          task: scope,
+          operationId: plan.plan.operationId,
+        }),
+        clone(plan),
+      );
     }
     this.taskEffectReceipts.set(receiptKey, {
       canonicalDigest: command.canonicalDigest,
@@ -1015,11 +1217,35 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         key: taskEffectKey(record),
         canonicalDigest: record.canonicalDigest,
       })),
+      plans: plans.map((plan) => ({
+        key: taskPresentationKey({
+          tenantId: plan.tenantId,
+          task: scope,
+          operationId: plan.plan.operationId,
+        }),
+        canonicalDigest: taskPresentationDigest(plan),
+        snapshot: clone(plan),
+      })),
+      obsoletedPlans: obsoletedPlans.map((plan) => ({
+        key: taskPresentationKey({
+          tenantId: plan.tenantId,
+          task: scope,
+          operationId: plan.plan.operationId,
+        }),
+        canonicalDigest: taskPresentationDigest(plan),
+        obsoleteAtTaskRevision: plan.obsoleteAtTaskRevision as number,
+        obsoleteReason: plan.obsoleteReason as NonNullable<
+          TaskPresentationRecord['obsoleteReason']
+        >,
+        snapshot: clone(plan),
+      })),
     });
     return {
       status: 'applied',
       task: clone(reduced.state),
       effects: clone(records),
+      plans: clone(plans),
+      obsoletedPlans: clone(obsoletedPlans),
     };
   }
 
@@ -1037,6 +1263,36 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           effect.tenantId === input.tenantId &&
           same(effect.task, input.task) &&
           (input.state === undefined || effect.deliveryState === input.state),
+      )
+      .map(clone);
+  }
+
+  async readTaskPresentation(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    operationId: string;
+  }): Promise<TaskPresentationRecord | undefined> {
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Task presentation tenant scope is invalid');
+    }
+    const value = this.taskPresentations.get(taskPresentationKey(input));
+    return value === undefined ? undefined : clone(value);
+  }
+
+  async listTaskPresentations(input: {
+    tenantId: string;
+    task: TaskAuthorityScope;
+    state?: TaskPresentationRecord['deliveryState'];
+  }): Promise<TaskPresentationRecord[]> {
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Task presentation tenant scope is invalid');
+    }
+    return [...this.taskPresentations.values()]
+      .filter(
+        (record) =>
+          record.tenantId === input.tenantId &&
+          same(record.plan.task, input.task) &&
+          (input.state === undefined || record.deliveryState === input.state),
       )
       .map(clone);
   }
@@ -1116,7 +1372,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       current.deliveryState === 'complete' &&
       current.claimedFence === input.lease.fence &&
       current.claimToken === completion.claimToken &&
-      current.completion?.attemptId === completion.attemptId
+      current.completion?.kind === 'admission-receipt' &&
+      current.completion.attemptId === completion.attemptId
     ) {
       return clone(current);
     }
@@ -2877,141 +3134,6 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       return undefined;
     }
     return clone(stored.grant);
-  }
-
-  async enqueueProjection(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    intent: ProjectionIntent;
-  }): Promise<WriteResult> {
-    if (!projectionIntentSchema.safeParse(input.intent).success) {
-      throw new AuthorityConflict('Projection intent is invalid');
-    }
-    const attempt = this.attempts.get(input.intent.attemptId);
-    if (
-      attempt === undefined ||
-      input.tenantId !== attempt.spec.tenant.tenantId
-    ) {
-      throw new AuthorityConflict('Projection attempt scope is invalid');
-    }
-    this.assertLease(input.lease, attempt.spec.task, this.now());
-    const key = `${input.tenantId}:${input.intent.operationId}`;
-    const current = this.projections.get(key);
-    if (current !== undefined) {
-      if (!same(current.intent, input.intent)) {
-        throw new AuthorityConflict(
-          'Projection operation was reused differently',
-        );
-      }
-      return 'replay';
-    }
-    this.projections.set(key, {
-      tenantId: input.tenantId,
-      intent: clone(input.intent),
-      deliveryState: 'pending',
-    });
-    return 'applied';
-  }
-
-  async listProjections(input: {
-    tenantId: string;
-    state: ProjectionRecord['deliveryState'];
-  }): Promise<ProjectionRecord[]> {
-    return [...this.projections.values()]
-      .filter(
-        (projection) =>
-          projection.tenantId === input.tenantId &&
-          projection.deliveryState === input.state,
-      )
-      .map(clone);
-  }
-
-  async claimProjection(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    operationId: string;
-  }): Promise<WriteResult> {
-    const key = `${input.tenantId}:${input.operationId}`;
-    const current = this.projections.get(key);
-    const attempt =
-      current === undefined
-        ? undefined
-        : this.attempts.get(current.intent.attemptId);
-    if (current === undefined || attempt === undefined) {
-      throw new AuthorityConflict('Projection operation is unknown');
-    }
-    this.assertLease(input.lease, attempt.spec.task, this.now());
-    if (
-      current.deliveryState === 'delivering' &&
-      current.claimedFence === input.lease.fence
-    ) {
-      return 'replay';
-    }
-    if (current.deliveryState === 'delivering') {
-      // Projection effects are idempotent by operationId, so a later fenced
-      // owner may redeliver after the previous task lease disappeared.
-      current.claimedFence = input.lease.fence;
-      return 'applied';
-    }
-    if (current.deliveryState !== 'pending') {
-      throw new AuthorityConflict('Projection is not claimable');
-    }
-    current.deliveryState = 'delivering';
-    current.claimedFence = input.lease.fence;
-    return 'applied';
-  }
-
-  async acknowledgeProjection(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    status: ProjectionStatusV1;
-  }): Promise<WriteResult> {
-    if (!projectionStatusV1Schema.safeParse(input.status).success) {
-      throw new AuthorityConflict('Projection status is invalid');
-    }
-    const key = `${input.tenantId}:${input.status.operationId}`;
-    const current = this.projections.get(key);
-    const attempt =
-      current === undefined
-        ? undefined
-        : this.attempts.get(current.intent.attemptId);
-    if (current === undefined || attempt === undefined) {
-      throw new AuthorityConflict('Projection operation is unknown');
-    }
-    this.assertLease(input.lease, attempt.spec.task, this.now());
-    if (same(current.status, input.status)) return 'replay';
-    if (
-      current.deliveryState !== 'delivering' ||
-      current.claimedFence !== input.lease.fence ||
-      input.status.state === 'pending'
-    ) {
-      throw new AuthorityConflict('Projection acknowledgement is not claimed');
-    }
-    if (current.status?.state === 'converged') {
-      throw new AuthorityConflict('Converged projection is immutable');
-    }
-    if (
-      current.status !== undefined &&
-      parsedTime(input.status.observedAt, 'observedAt') <
-        parsedTime(current.status.observedAt, 'observedAt')
-    ) {
-      throw new AuthorityConflict('Projection acknowledgement moved backwards');
-    }
-    current.status = clone(input.status);
-    current.deliveryState =
-      input.status.state === 'converged' ? 'complete' : 'pending';
-    current.claimedFence = undefined;
-    return 'applied';
-  }
-
-  async readProjection(input: {
-    tenantId: string;
-    operationId: string;
-  }): Promise<ProjectionRecord | undefined> {
-    const value = this.projections.get(
-      `${input.tenantId}:${input.operationId}`,
-    );
-    return value === undefined ? undefined : clone(value);
   }
 }
 

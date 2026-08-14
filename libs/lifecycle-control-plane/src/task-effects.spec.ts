@@ -143,6 +143,145 @@ export interface TaskEffectStorageFactory {
   create(clock: AuthorityClock): LifecycleAuthorityStorage;
 }
 
+/** Reusable async contract for the inactive parked-task presentation outbox. */
+export function runTaskPresentationStorageContract(
+  factory: TaskEffectStorageFactory,
+): void {
+  describe('task presentation storage contract', () => {
+    it('atomically derives a policy-rejected no-Attempt park plan and replays it', async () => {
+      const clock = new Clock();
+      const storage = factory.create(clock);
+      await storage.registerActivation(activation());
+      const lease = await storage.acquireTaskLease({
+        scope: task,
+        ownerId: 'presentation',
+        leaseDurationMs: 60_000,
+      });
+      const rejected = mintTaskEffectTransition(
+        {
+          expectedRevision: 0,
+          envelope: envelope('fact-policy-park'),
+          policyDecision: {
+            ...policy('fact-policy-park'),
+            decision: 'rejected',
+          },
+          activation: activation(),
+          candidate: {
+            intentId: 'intent-policy-park',
+            semanticKey: 'policy-park',
+            semanticDigest: SHA,
+            orderingKey: { occurredAt: T0, tieBreaker: 'policy-park' },
+          },
+        },
+        clock,
+      );
+      const first = await storage.applyTaskEffectTransition({
+        lease,
+        transition: rejected,
+      });
+      expect(first).toMatchObject({
+        effects: [
+          {
+            payload: { kind: 'park-projection', reason: 'policy-rejected' },
+            deliveryState: 'complete',
+          },
+        ],
+        plans: [
+          {
+            deliveryState: 'pending',
+            plan: {
+              taskRevision: 1,
+              presentation: {
+                reason: 'policy-rejected',
+                disposition: 'parked',
+              },
+            },
+          },
+        ],
+      });
+      expect(
+        await storage.applyTaskEffectTransition({
+          lease,
+          transition: rejected,
+        }),
+      ).toEqual({ ...first, status: 'replay' });
+      expect('enqueueProjection' in storage).toBe(false);
+      expect('claimProjection' in storage).toBe(false);
+      expect('acknowledgeProjection' in storage).toBe(false);
+      const retry = transition(clock, 'fact-retry-after-park', 1);
+      const resumed = await storage.applyTaskEffectTransition({
+        lease,
+        transition: retry,
+      });
+      expect(resumed).toMatchObject({
+        task: { attempt: { kind: 'unlaunched' } },
+        obsoletedPlans: [
+          {
+            deliveryState: 'obsolete',
+            obsoleteAtTaskRevision: 2,
+            obsoleteReason: 'task-resumed',
+          },
+        ],
+      });
+      expect(
+        await storage.applyTaskEffectTransition({ lease, transition: retry }),
+      ).toEqual({ ...resumed, status: 'replay' });
+      expect(
+        await storage.applyTaskEffectTransition({
+          lease,
+          transition: rejected,
+        }),
+      ).toEqual({ ...first, status: 'replay' });
+      const originalOperation = first.plans[0]?.plan.operationId;
+      if (originalOperation === undefined) throw new Error('missing park plan');
+      expect(
+        await storage.readTaskPresentation({
+          tenantId: tenant.tenantId,
+          task,
+          operationId: originalOperation,
+        }),
+      ).toMatchObject({
+        deliveryState: 'obsolete',
+        obsoleteReason: 'task-resumed',
+      });
+    });
+
+    it('keeps shadow transitions effect-free and isolates task-presentation reads', async () => {
+      const clock = new Clock();
+      const storage = factory.create(clock);
+      const shadow = activation('shadow');
+      await storage.registerActivation(shadow);
+      const lease = await storage.acquireTaskLease({
+        scope: task,
+        ownerId: 'shadow-presentation',
+        leaseDurationMs: 60_000,
+      });
+      const result = await storage.applyTaskEffectTransition({
+        lease,
+        transition: transition(clock, 'fact-shadow-presentation', 0, shadow),
+      });
+      expect(result).toMatchObject({
+        effects: [],
+        plans: [],
+        obsoletedPlans: [],
+      });
+      expect(
+        await storage.listTaskPresentations({
+          tenantId: tenant.tenantId,
+          task,
+        }),
+      ).toEqual([]);
+      await expect(
+        storage.readTaskPresentation({
+          tenantId: 'foreign',
+          task,
+          operationId: 'task-park:foreign',
+        }),
+      ).rejects.toThrow(AuthorityConflict);
+    });
+  });
+}
+
 /** Reusable backend-agnostic contract for the #1051 durable work seam. */
 export function runTaskEffectStorageContract(
   factory: TaskEffectStorageFactory,
@@ -345,6 +484,9 @@ export function runTaskEffectStorageContract(
 }
 
 runTaskEffectStorageContract({
+  create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
+});
+runTaskPresentationStorageContract({
   create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
 });
 
@@ -962,6 +1104,32 @@ describe('AdmissionTaskEffectCoordinator', () => {
       'cancel-unlaunched',
       'park-projection',
     ]);
+    expect(parked).toMatchObject({
+      plans: [
+        {
+          deliveryState: 'pending',
+          plan: {
+            taskRevision: 2,
+            presentation: {
+              disposition: 'parked',
+              humanAttention: 'required',
+              notice: { kind: 'task-parked' },
+              reason: 'operator-parked',
+              intentId: 'intent-fact-1',
+              intentRevision: 2,
+            },
+          },
+        },
+      ],
+    });
+    expect(
+      parked.effects.find(
+        (effect) => effect.payload.kind === 'park-projection',
+      ),
+    ).toMatchObject({
+      deliveryState: 'complete',
+      completion: { kind: 'task-presentation-receipt' },
+    });
     const worker = new AdmissionTaskEffectCoordinator(
       storage,
       new TaskAttemptAdmissionCoordinator(storage, {
@@ -979,7 +1147,7 @@ describe('AdmissionTaskEffectCoordinator', () => {
         }),
       ).toMatchObject({
         status: 'deferred',
-        effect: { deliveryState: 'pending' },
+        effect: {},
       });
     }
   });
