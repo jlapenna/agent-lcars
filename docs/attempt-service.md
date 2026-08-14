@@ -426,13 +426,16 @@ or immutable outcome.
 ## CredentialGrant protocol
 
 GitHub Actions OIDC exposes `jti`, `repository_id`, `run_id`, `run_attempt`,
-`workflow_ref`, `workflow_sha`, and for reusable workflows
+`check_run_id`, `workflow_ref`, `workflow_sha`, and for reusable workflows
 `job_workflow_ref`/`job_workflow_sha`. Tenant selection comes only from
 signed numeric `repository_id`; the service requires exact `run_id`,
 `run_attempt`, `check_run_id`, caller `workflow_sha`, reusable
 `job_workflow_sha` where used, plus pinned path/ref and accepted attempt
 binding. A ref without expected SHA is never authorization. See GitHub's
 [OIDC claims reference](https://docs.github.com/actions/reference/security/oidc#custom-claims-provided-by-github).
+The first lane must capture a real token in a one-shot branch proof and confirm
+these claims before any grant endpoint is activated; an absent claim fails the
+activation gate rather than silently weakening the binding.
 
 1. The pinned trusted client obtains OIDC and sends only `attemptId` and a
    unique `requestId`; it cannot select a binding, repository, installation,
