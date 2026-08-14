@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   AcceptedAttemptSpec,
   ActivationProvenance,
@@ -22,6 +24,10 @@ import {
   attemptTransitionDigest,
   reduceAttempt,
 } from './attempt-reducer';
+import {
+  isVerifiedMintResolution,
+  type VerifiedMintResolution,
+} from './mint-resolution';
 import {
   isVerifiedRunBindingIngress,
   type VerifiedRunBindingIngress,
@@ -83,7 +89,8 @@ export interface MintIdentity {
   sourceIdentity: string;
   binding: RunBinding;
   requestId: string;
-  jti: string;
+  /** One-way SHA-256 of a signed OIDC JTI; raw JTIs are never durable. */
+  jtiSha256: string;
   canonicalDigest: string;
 }
 
@@ -101,6 +108,11 @@ export interface AdmissionResult {
 }
 
 export type WriteResult = 'applied' | 'replay';
+
+export interface MintReservation {
+  status: 'created' | 'existing';
+  grant: CredentialGrantIssuance;
+}
 
 /**
  * Server-only durability boundary for the lifecycle authority. Implementations
@@ -184,15 +196,24 @@ export interface LifecycleAuthorityStorage {
     expectedAttemptRevision: number;
   }): Promise<WriteResult>;
 
-  reserveMint(input: {
+  /**
+   * Atomically finds the durable request/JTI reservation or creates it. Only
+   * `created` may invoke the external token minter.
+   */
+  lookupOrReserveMint(input: {
     identity: MintIdentity;
-    grant: CredentialGrantIssuance;
+    credentialProfileId: string;
     maxIssuances: number;
-  }): Promise<WriteResult>;
+  }): Promise<MintReservation>;
   resolveMint(input: {
     tenantId: string;
     attemptId: string;
     grant: CredentialGrantIssuance;
+  }): Promise<WriteResult>;
+  resolveVerifiedMint(input: {
+    tenantId: string;
+    attemptId: string;
+    verified: VerifiedMintResolution;
   }): Promise<WriteResult>;
   readMint(input: {
     tenantId: string;
@@ -311,6 +332,38 @@ function observationKeys(identity: {
   return {
     factKey: tupleKey(scope, 'fact', identity.factId),
     requestKey: tupleKey(scope, 'request', identity.requestId),
+  };
+}
+
+function mintKeys(
+  identity: MintIdentity,
+  credentialProfileId: string,
+): {
+  requestKey: string;
+  jtiKey: string;
+  slotKey: string;
+} {
+  return {
+    requestKey: tupleKey(
+      identity.tenantId,
+      identity.repositoryId,
+      identity.sourceIdentity,
+      identity.attemptId,
+      'request',
+      identity.requestId,
+    ),
+    // A signed verifier source + JTI is one-use globally, never per tenant.
+    jtiKey: tupleKey(
+      'verified-jti',
+      identity.sourceIdentity,
+      identity.jtiSha256,
+    ),
+    slotKey: tupleKey(
+      identity.tenantId,
+      identity.attemptId,
+      'profile',
+      credentialProfileId,
+    ),
   };
 }
 
@@ -1042,12 +1095,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     return 'applied';
   }
 
-  async reserveMint(input: {
-    identity: MintIdentity;
-    grant: CredentialGrantIssuance;
-    maxIssuances: number;
-  }): Promise<WriteResult> {
-    const now = this.now();
+  private reserveMintAt(
+    input: {
+      identity: MintIdentity;
+      grant: CredentialGrantIssuance;
+      maxIssuances: number;
+    },
+    now: string,
+  ): WriteResult {
     const parsedGrant = credentialGrantIssuanceSchema.safeParse(input.grant);
     if (!parsedGrant.success) {
       throw new AuthorityConflict(
@@ -1066,14 +1121,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         attempt.spec.execution.credentialProfileId ||
       attempt.binding === undefined ||
       !same(attempt.binding, input.identity.binding) ||
-      !['active', 'result-observed', 'validating'].includes(attempt.phase)
+      attempt.phase !== 'active'
     ) {
       throw new AuthorityConflict('Mint request scope or profile is invalid');
     }
     if (
       attempt.futureGrantsDenied ||
-      attempt.phase === 'cancelling' ||
-      attempt.phase === 'terminal' ||
       parsedTime(now, 'clock.now') >=
         parsedTime(attempt.spec.execution.renewalDeadline, 'renewalDeadline')
     ) {
@@ -1091,16 +1144,18 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     if (
       !Number.isSafeInteger(input.maxIssuances) ||
       input.maxIssuances <= 0 ||
-      !SHA256.test(input.identity.canonicalDigest)
+      !SHA256.test(input.identity.canonicalDigest) ||
+      !SHA256.test(input.identity.jtiSha256)
     ) {
       throw new AuthorityConflict('Mint budget or digest is invalid');
     }
 
-    const prefix = `${input.identity.tenantId}:${input.identity.repositoryId}:${input.identity.sourceIdentity}:${input.identity.attemptId}`;
-    const requestKey = `${prefix}:request:${input.identity.requestId}`;
-    const jtiKey = `${input.identity.tenantId}:${input.identity.repositoryId}:${input.identity.sourceIdentity}:jti:${input.identity.jti}`;
+    const { requestKey, jtiKey, slotKey } = mintKeys(
+      input.identity,
+      grant.credentialProfileId,
+    );
     const request: StoredIdempotency = {
-      counterpartId: input.identity.jti,
+      counterpartId: input.identity.jtiSha256,
       canonicalDigest: input.identity.canonicalDigest,
       resourceId: grant.grantId,
     };
@@ -1131,7 +1186,6 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       return 'replay';
     }
 
-    const slotKey = `${input.identity.tenantId}:${input.identity.attemptId}:${grant.credentialProfileId}`;
     const storedLimit = this.mintLimits.get(slotKey);
     if (storedLimit !== undefined && storedLimit !== input.maxIssuances) {
       throw new AuthorityConflict('Credential issuance budget is immutable');
@@ -1171,11 +1225,92 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     return 'applied';
   }
 
+  async lookupOrReserveMint(input: {
+    identity: MintIdentity;
+    credentialProfileId: string;
+    maxIssuances: number;
+  }): Promise<MintReservation> {
+    const { requestKey, jtiKey, slotKey } = mintKeys(
+      input.identity,
+      input.credentialProfileId,
+    );
+    const priorRequest = this.mintRequestKeys.get(requestKey);
+    const priorJti = this.jtiKeys.get(jtiKey);
+    if (priorRequest !== undefined || priorJti !== undefined) {
+      if (
+        priorRequest === undefined ||
+        priorJti === undefined ||
+        priorRequest.resourceId !== priorJti.resourceId ||
+        priorRequest.counterpartId !== input.identity.jtiSha256 ||
+        priorJti.counterpartId !== input.identity.requestId ||
+        priorRequest.canonicalDigest !== input.identity.canonicalDigest ||
+        priorJti.canonicalDigest !== input.identity.canonicalDigest
+      ) {
+        throw new AuthorityConflict(
+          'Mint request or JTI was reused differently',
+        );
+      }
+      const stored = this.mints.get(priorRequest.resourceId);
+      if (
+        stored === undefined ||
+        !same(stored.identity, input.identity) ||
+        stored.grant.credentialProfileId !== input.credentialProfileId ||
+        this.mintLimits.get(slotKey) !== input.maxIssuances
+      ) {
+        throw new AuthorityConflict(
+          'Mint reservation is corrupt, changed, or cross-scoped',
+        );
+      }
+      return { status: 'existing', grant: clone(stored.grant) };
+    }
+    const mintStartedAt = this.now();
+    const grant: CredentialGrantIssuance = {
+      grantId: randomUUID(),
+      attemptId: input.identity.attemptId,
+      requestId: input.identity.requestId,
+      credentialProfileId: input.credentialProfileId,
+      issuanceState: 'pending',
+      mintState: 'mint-in-progress',
+      mintStartedAt,
+    };
+    this.reserveMintAt({ ...input, grant }, mintStartedAt);
+    return { status: 'created', grant: clone(grant) };
+  }
+
   async resolveMint(input: {
     tenantId: string;
     attemptId: string;
     grant: CredentialGrantIssuance;
   }): Promise<WriteResult> {
+    return this.resolveMintAt(input, 'unknown-only');
+  }
+
+  async resolveVerifiedMint(input: {
+    tenantId: string;
+    attemptId: string;
+    verified: VerifiedMintResolution;
+  }): Promise<WriteResult> {
+    if (!isVerifiedMintResolution(input.verified)) {
+      throw new AuthorityConflict('Mint resolution was not verified here');
+    }
+    return this.resolveMintAt(
+      {
+        tenantId: input.tenantId,
+        attemptId: input.attemptId,
+        grant: input.verified.issuance,
+      },
+      'verified',
+    );
+  }
+
+  private resolveMintAt(
+    input: {
+      tenantId: string;
+      attemptId: string;
+      grant: CredentialGrantIssuance;
+    },
+    authority: 'unknown-only' | 'verified',
+  ): WriteResult {
     const parsedGrant = credentialGrantIssuanceSchema.safeParse(input.grant);
     if (!parsedGrant.success) {
       throw new AuthorityConflict('Grant resolution metadata is invalid');
@@ -1195,10 +1330,15 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       stored.grant.issuanceState !== 'pending' ||
       stored.grant.mintState !== 'mint-in-progress' ||
       !(
-        (grant.issuanceState === 'issued' && grant.mintState === 'minted') ||
+        (authority === 'verified' &&
+          grant.issuanceState === 'issued' &&
+          grant.mintState === 'minted') ||
         (grant.issuanceState === 'denied' &&
-          grant.mintState === 'mint-unknown' &&
-          grant.denialCode === 'mint_unknown')
+          ((grant.mintState === 'mint-unknown' &&
+            grant.denialCode === 'mint_unknown') ||
+            (authority === 'verified' &&
+              grant.mintState === 'not-started' &&
+              grant.denialCode === 'service_unavailable')))
       ) ||
       grant.requestId !== stored.grant.requestId ||
       grant.credentialProfileId !== stored.grant.credentialProfileId

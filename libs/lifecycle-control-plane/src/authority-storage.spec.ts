@@ -20,6 +20,7 @@ import {
   type TaskAuthorityLease,
   type TaskAuthorityScope,
 } from './authority-storage';
+import { InstallationTokenMinterBoundary } from './mint-resolution';
 import type { TaskIntentState } from './task-intent-reducer';
 
 const T0 = '2026-08-16T00:00:00.000Z';
@@ -258,21 +259,35 @@ function cancelledOutcome(attemptId: string): AttemptOutcome {
   };
 }
 
-function pendingGrant(
+async function resolveIssuedMint(
+  storage: LifecycleAuthorityStorage,
+  tenantId: string,
   attemptId: string,
-  grantId = 'grant-1',
-  requestId = 'grant-request-1',
-  mintStartedAt = T1,
-): CredentialGrantIssuance {
-  return {
-    grantId,
-    attemptId,
-    requestId,
-    credentialProfileId: 'profile-1',
-    issuanceState: 'pending',
-    mintState: 'mint-in-progress',
-    mintStartedAt,
-  };
+  pending: Extract<CredentialGrantIssuance, { issuanceState: 'pending' }>,
+  issuedAt: string,
+  tokenExpiresAt: string,
+): Promise<void> {
+  const boundary = new InstallationTokenMinterBoundary(
+    {
+      async mint() {
+        return {
+          kind: 'issued' as const,
+          token: 'ephemeral-test-token',
+          tokenExpiresAt,
+        };
+      },
+    },
+    { now: () => issuedAt },
+  );
+  const verified = await boundary.mint(
+    {
+      installationId: 1,
+      repositoryId: 1,
+      credentialProfileId: pending.credentialProfileId,
+    },
+    pending,
+  );
+  await storage.resolveVerifiedMint({ tenantId, attemptId, verified });
 }
 
 function mintIdentity(
@@ -288,7 +303,14 @@ function mintIdentity(
     sourceIdentity: 'worker-oidc-1',
     binding,
     requestId,
-    jti,
+    jtiSha256: String(
+      'abcdef'[
+        Array.from(jti).reduce(
+          (sum, character) => sum + character.charCodeAt(0),
+          0,
+        ) % 6
+      ],
+    ).repeat(64),
     canonicalDigest: requestId === 'grant-request-1' ? SHA_A : SHA_B,
   };
 }
@@ -675,31 +697,62 @@ export function runLifecycleAuthorityStorageContract(
       const { storage, clock } = await makeHarness();
       const admitted = await admit(storage);
       const binding = bindingFor(admitted);
-      const grant = pendingGrant(admitted.spec.attemptId);
       await expect(
-        storage.reserveMint({
+        storage.lookupOrReserveMint({
           identity: mintIdentity(admitted, binding),
-          grant,
+          credentialProfileId: admitted.spec.execution.credentialProfileId,
           maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
       await activateAttempt(storage, admitted, binding);
       clock.set(T1);
-      const mismatch = { ...grant, requestId: 'different-request' };
       await expect(
-        storage.reserveMint({
+        storage.lookupOrReserveMint({
           identity: mintIdentity(admitted, binding),
-          grant: mismatch,
+          credentialProfileId: 'different-profile',
           maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
       expect(
-        await storage.reserveMint({
+        await storage.lookupOrReserveMint({
           identity: mintIdentity(admitted, binding),
-          grant,
+          credentialProfileId: admitted.spec.execution.credentialProfileId,
           maxIssuances: 2,
         }),
-      ).toBe('applied');
+      ).toMatchObject({
+        status: 'created',
+        grant: {
+          attemptId: admitted.spec.attemptId,
+          requestId: 'grant-request-1',
+          issuanceState: 'pending',
+          mintState: 'mint-in-progress',
+          mintStartedAt: T1,
+        },
+      });
+    });
+
+    it('atomically rejects a grant when terminal evidence wins the read/reserve race', async () => {
+      const { storage, clock } = await makeHarness();
+      const admitted = await admit(storage);
+      const binding = bindingFor(admitted);
+      const active = await activateAttempt(storage, admitted, binding);
+      await storage.writeAttempt({
+        lease: admitted.lease,
+        expectedRevision: active.revision,
+        next: {
+          ...active,
+          revision: active.revision + 1,
+          phase: 'result-observed',
+        },
+      });
+      clock.set(T1);
+      await expect(
+        storage.lookupOrReserveMint({
+          identity: mintIdentity(admitted, binding),
+          credentialProfileId: admitted.spec.execution.credentialProfileId,
+          maxIssuances: 1,
+        }),
+      ).rejects.toThrow(AuthorityConflict);
     });
 
     it('atomically fences JTI replay, overlap, budget, and mint-unknown', async () => {
@@ -708,57 +761,75 @@ export function runLifecycleAuthorityStorageContract(
       const binding = bindingFor(first);
       await activateAttempt(storage, first, binding);
       clock.set(T1);
-      const grant = pendingGrant(first.spec.attemptId);
       const identity = mintIdentity(first, binding);
-      expect(
-        await storage.reserveMint({ identity, grant, maxIssuances: 2 }),
-      ).toBe('applied');
-      expect(
-        await storage.reserveMint({ identity, grant, maxIssuances: 2 }),
-      ).toBe('replay');
-      const issued: CredentialGrantIssuance = {
-        grantId: grant.grantId,
-        attemptId: first.spec.attemptId,
-        requestId: grant.requestId,
-        credentialProfileId: 'profile-1',
-        issuanceState: 'issued',
-        mintState: 'minted',
-        issuedAt: T1,
-        tokenExpiresAt: T2,
-        maxResidualTokenExpiry: T2,
-        tokenFingerprint: SHA_A,
-      };
-      await storage.resolveMint({
-        tenantId: first.tenant.tenantId,
-        attemptId: first.spec.attemptId,
-        grant: issued,
+      const reservation = await storage.lookupOrReserveMint({
+        identity,
+        credentialProfileId: first.spec.execution.credentialProfileId,
+        maxIssuances: 2,
       });
-      const nextGrantAtT1 = pendingGrant(
+      expect(reservation.status).toBe('created');
+      const grant = reservation.grant as Extract<
+        CredentialGrantIssuance,
+        { issuanceState: 'pending' }
+      >;
+      expect(
+        await storage.lookupOrReserveMint({
+          identity,
+          credentialProfileId: first.spec.execution.credentialProfileId,
+          maxIssuances: 2,
+        }),
+      ).toEqual({ status: 'existing', grant });
+      await expect(
+        storage.lookupOrReserveMint({
+          identity,
+          credentialProfileId: first.spec.execution.credentialProfileId,
+          maxIssuances: 1,
+        }),
+      ).rejects.toThrow(AuthorityConflict);
+      await expect(
+        storage.resolveMint({
+          tenantId: first.tenant.tenantId,
+          attemptId: first.spec.attemptId,
+          grant: {
+            grantId: grant.grantId,
+            attemptId: first.spec.attemptId,
+            requestId: grant.requestId,
+            credentialProfileId: grant.credentialProfileId,
+            issuanceState: 'issued',
+            mintState: 'minted',
+            issuedAt: T1,
+            tokenExpiresAt: T2,
+            maxResidualTokenExpiry: T2,
+            tokenFingerprint: SHA_A,
+          },
+        }),
+      ).rejects.toThrow(AuthorityConflict);
+      await resolveIssuedMint(
+        storage,
+        first.tenant.tenantId,
         first.spec.attemptId,
-        'grant-2',
-        'grant-request-2',
+        grant,
+        T1,
+        T2,
       );
       await expect(
-        storage.reserveMint({
+        storage.lookupOrReserveMint({
           identity: mintIdentity(first, binding, 'grant-request-2', 'jti-1'),
-          grant: nextGrantAtT1,
+          credentialProfileId: first.spec.execution.credentialProfileId,
           maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
       clock.set(T3);
-      const nextGrant = pendingGrant(
-        first.spec.attemptId,
-        'grant-2',
-        'grant-request-2',
-        T3,
-      );
-      expect(
-        await storage.reserveMint({
-          identity: mintIdentity(first, binding, 'grant-request-2', 'jti-2'),
-          grant: nextGrant,
-          maxIssuances: 2,
-        }),
-      ).toBe('applied');
+      const nextReservation = await storage.lookupOrReserveMint({
+        identity: mintIdentity(first, binding, 'grant-request-2', 'jti-2'),
+        credentialProfileId: first.spec.execution.credentialProfileId,
+        maxIssuances: 2,
+      });
+      expect(nextReservation.status).toBe('created');
+      const nextGrant = nextReservation.grant as Extract<
+        CredentialGrantIssuance,
+        { issuanceState: 'pending' }
+      >;
       const unknown: CredentialGrantIssuance = {
         grantId: nextGrant.grantId,
         attemptId: first.spec.attemptId,
@@ -776,14 +847,9 @@ export function runLifecycleAuthorityStorageContract(
         grant: unknown,
       });
       await expect(
-        storage.reserveMint({
+        storage.lookupOrReserveMint({
           identity: mintIdentity(first, binding, 'grant-request-3', 'jti-3'),
-          grant: pendingGrant(
-            first.spec.attemptId,
-            'grant-3',
-            'grant-request-3',
-            T3,
-          ),
+          credentialProfileId: first.spec.execution.credentialProfileId,
           maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
@@ -794,15 +860,13 @@ export function runLifecycleAuthorityStorageContract(
         }),
       ).not.toHaveProperty('token');
       await expect(
-        storage.reserveMint({
-          identity: mintIdentity(first, binding, 'grant-extra', 'jti-extra'),
+        storage.resolveMint({
+          tenantId: first.tenant.tenantId,
+          attemptId: first.spec.attemptId,
           grant: {
-            ...grant,
-            grantId: 'grant-extra',
-            requestId: 'grant-extra',
+            ...unknown,
             token: 'raw',
           } as never,
-          maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
     });
@@ -813,14 +877,14 @@ export function runLifecycleAuthorityStorageContract(
       const firstBinding = bindingFor(first, 10);
       await activateAttempt(storage, first, firstBinding);
       clock.set(T1);
-      await storage.reserveMint({
+      await storage.lookupOrReserveMint({
         identity: mintIdentity(
           first,
           firstBinding,
           'grant-request-1',
           'fleet-jti',
         ),
-        grant: pendingGrant(first.spec.attemptId),
+        credentialProfileId: first.spec.execution.credentialProfileId,
         maxIssuances: 2,
       });
       const second = await admit(
@@ -830,18 +894,14 @@ export function runLifecycleAuthorityStorageContract(
       const secondBinding = bindingFor(second, 20);
       await activateAttempt(storage, second, secondBinding);
       await expect(
-        storage.reserveMint({
+        storage.lookupOrReserveMint({
           identity: mintIdentity(
             second,
             secondBinding,
             'grant-request-2',
             'fleet-jti',
           ),
-          grant: pendingGrant(
-            second.spec.attemptId,
-            'grant-2',
-            'grant-request-2',
-          ),
+          credentialProfileId: second.spec.execution.credentialProfileId,
           maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
@@ -853,38 +913,28 @@ export function runLifecycleAuthorityStorageContract(
       const binding = bindingFor(admitted);
       await activateAttempt(storage, admitted, binding);
       clock.set(T1);
-      const grant = pendingGrant(admitted.spec.attemptId);
-      await storage.reserveMint({
+      const reservation = await storage.lookupOrReserveMint({
         identity: mintIdentity(admitted, binding),
-        grant,
+        credentialProfileId: admitted.spec.execution.credentialProfileId,
         maxIssuances: 1,
       });
-      await storage.resolveMint({
-        tenantId: admitted.tenant.tenantId,
-        attemptId: admitted.spec.attemptId,
-        grant: {
-          grantId: grant.grantId,
-          attemptId: admitted.spec.attemptId,
-          requestId: grant.requestId,
-          credentialProfileId: 'profile-1',
-          issuanceState: 'issued',
-          mintState: 'minted',
-          issuedAt: T1,
-          tokenExpiresAt: T2,
-          maxResidualTokenExpiry: T2,
-          tokenFingerprint: SHA_A,
-        },
-      });
+      const grant = reservation.grant as Extract<
+        CredentialGrantIssuance,
+        { issuanceState: 'pending' }
+      >;
+      await resolveIssuedMint(
+        storage,
+        admitted.tenant.tenantId,
+        admitted.spec.attemptId,
+        grant,
+        T1,
+        T2,
+      );
       clock.set(T3);
       await expect(
-        storage.reserveMint({
+        storage.lookupOrReserveMint({
           identity: mintIdentity(admitted, binding, 'grant-request-2', 'jti-2'),
-          grant: pendingGrant(
-            admitted.spec.attemptId,
-            'grant-2',
-            'grant-request-2',
-            T3,
-          ),
+          credentialProfileId: admitted.spec.execution.credentialProfileId,
           maxIssuances: 2,
         }),
       ).rejects.toThrow(AuthorityConflict);
