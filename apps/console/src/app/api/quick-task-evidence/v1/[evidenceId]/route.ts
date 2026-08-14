@@ -10,13 +10,23 @@ import { quickTaskEvidenceStore } from '../../../../../lib/quick-task-evidence-s
 const notFound = () =>
   new NextResponse(null, QUICK_TASK_EVIDENCE_NOT_FOUND_RESPONSE);
 
-async function readEvidence(evidenceId: string): Promise<NextResponse> {
+async function readEvidence(
+  evidenceId: string,
+  metadataOnly = false,
+): Promise<NextResponse> {
   if (!isQuickTaskEvidenceId(evidenceId)) return notFound();
   try {
     const store = quickTaskEvidenceStore(
       process.env['QUICK_TASK_EVIDENCE_BUCKET'] ?? '',
     );
     if (await store.isRevoked(evidenceId)) return notFound();
+    if (metadataOnly) {
+      if (!(await store.readObject(evidenceId))) return notFound();
+      return new NextResponse(null, {
+        status: 200,
+        headers: QUICK_TASK_EVIDENCE_RESPONSE_HEADERS,
+      });
+    }
     const bytes = await store.read(evidenceId);
     if (!bytes) return notFound();
     return new NextResponse(new Uint8Array(bytes), {
@@ -39,9 +49,5 @@ export async function HEAD(
   _request: Request,
   { params }: { params: Promise<{ evidenceId: string }> },
 ) {
-  const response = await readEvidence((await params).evidenceId);
-  return new NextResponse(null, {
-    status: response.status,
-    headers: response.headers,
-  });
+  return readEvidence((await params).evidenceId, true);
 }

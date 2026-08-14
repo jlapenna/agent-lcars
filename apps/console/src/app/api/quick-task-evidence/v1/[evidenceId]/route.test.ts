@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   isRevoked: vi.fn(),
   read: vi.fn(),
+  readObject: vi.fn(),
   store: vi.fn(),
 }));
 
@@ -17,11 +18,16 @@ const context = (id = evidenceId) => ({
   params: Promise.resolve({ evidenceId: id }),
 });
 
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
 describe('Quick Task evidence public route', () => {
   it('returns only normalized bytes and the frozen headers', async () => {
     mocks.store.mockReturnValue({
       isRevoked: mocks.isRevoked,
       read: mocks.read,
+      readObject: mocks.readObject,
     });
     mocks.isRevoked.mockResolvedValue(false);
     mocks.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
@@ -44,6 +50,7 @@ describe('Quick Task evidence public route', () => {
     mocks.store.mockReturnValue({
       isRevoked: mocks.isRevoked,
       read: mocks.read,
+      readObject: mocks.readObject,
     });
     mocks.isRevoked.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     mocks.read
@@ -68,14 +75,16 @@ describe('Quick Task evidence public route', () => {
     mocks.store.mockReturnValue({
       isRevoked: mocks.isRevoked,
       read: mocks.read,
+      readObject: mocks.readObject,
     });
     mocks.isRevoked.mockResolvedValue(false);
-    mocks.read.mockResolvedValue(new Uint8Array([1]));
+    mocks.readObject.mockResolvedValue({ generation: '1', binding: {} });
 
     const response = await HEAD(new Request('https://example.test'), context());
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('image/webp');
     expect(await response.text()).toBe('');
+    expect(mocks.read).not.toHaveBeenCalled();
   });
 });
