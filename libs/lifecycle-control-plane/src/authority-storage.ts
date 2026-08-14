@@ -57,6 +57,12 @@ import {
   type VerifiedMintResolution,
 } from './mint-resolution';
 import {
+  isVerifiedPresentationResolution,
+  mintClaimedPresentationWork,
+  type VerifiedClaimedPresentationWork,
+  type VerifiedPresentationResolution,
+} from './presentation-delivery-capability';
+import {
   isVerifiedRunBindingIngress,
   type VerifiedRunBindingIngress,
 } from './run-binding-ingress';
@@ -207,6 +213,40 @@ export interface AttemptPresentationRecord {
   deliveryState: 'pending';
 }
 
+export interface PresentationDeliveryRecord {
+  source: 'task' | 'attempt';
+  tenantId: string;
+  task: TaskAuthorityScope;
+  attemptId?: string;
+  operationId: string;
+  planDigest: string;
+  state: 'pending' | 'in-flight' | 'converged' | 'unknown' | 'obsolete';
+  claimedFence?: number;
+  receiptSha256?: string;
+  resolvedAt?: string;
+}
+
+export type PresentationDeliveryTarget =
+  | {
+      source: 'task';
+      tenantId: string;
+      task: TaskAuthorityScope;
+      operationId: string;
+    }
+  | {
+      source: 'attempt';
+      tenantId: string;
+      task: TaskAuthorityScope;
+      attemptId: string;
+      operationId: string;
+    };
+
+export interface PresentationDeliveryClaim {
+  status: 'claimed' | 'replay' | 'terminal';
+  record: PresentationDeliveryRecord;
+  work?: VerifiedClaimedPresentationWork;
+}
+
 export interface TaskEffectTransitionResult {
   status: 'applied' | 'replay';
   task: TaskIntentState;
@@ -284,6 +324,24 @@ export interface LifecycleAuthorityStorage {
     attemptId?: string;
     task?: TaskAuthorityScope;
   }): Promise<AttemptPresentationRecord[]>;
+  readPresentationDelivery(
+    input: PresentationDeliveryTarget,
+  ): Promise<PresentationDeliveryRecord | undefined>;
+  listPresentationDelivery(input: {
+    tenantId: string;
+    source?: PresentationDeliveryRecord['source'];
+    task?: TaskAuthorityScope;
+    attemptId?: string;
+    state?: PresentationDeliveryRecord['state'];
+  }): Promise<PresentationDeliveryRecord[]>;
+  claimPresentationDelivery(input: {
+    lease: TaskAuthorityLease;
+    target: PresentationDeliveryTarget;
+  }): Promise<PresentationDeliveryClaim>;
+  resolveVerifiedPresentationDelivery(input: {
+    lease: TaskAuthorityLease;
+    resolution: VerifiedPresentationResolution;
+  }): Promise<'applied' | 'replay'>;
   listTaskEffects(input: {
     tenantId: string;
     task: TaskAuthorityScope;
@@ -623,6 +681,67 @@ function attemptPresentationReceiptKey(
   );
 }
 
+function presentationPlanDigest(
+  plan: TaskPresentationPlan | AttemptPresentationPlan,
+): string {
+  return createHash('sha256').update(canonicalJson(plan)).digest('hex');
+}
+
+function presentationClaimTokenDigest(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function publicPresentationDeliveryRecord(
+  record: StoredPresentationDeliveryRecord,
+): PresentationDeliveryRecord {
+  const { claimTokenSha256: _claimTokenSha256, ...publicRecord } = record;
+  return clone(publicRecord);
+}
+
+function presentationDeliveryKey(target: PresentationDeliveryTarget): string {
+  return target.source === 'task'
+    ? tupleKey(
+        target.tenantId,
+        'presentation-delivery',
+        'task',
+        target.task.repositoryId,
+        target.task.issueNumber,
+        target.operationId,
+      )
+    : tupleKey(
+        target.tenantId,
+        'presentation-delivery',
+        'attempt',
+        target.task.repositoryId,
+        target.task.issueNumber,
+        target.attemptId,
+        target.operationId,
+      );
+}
+
+function taskDeliveryTarget(
+  record: TaskPresentationRecord,
+): Extract<PresentationDeliveryTarget, { source: 'task' }> {
+  return {
+    source: 'task',
+    tenantId: record.tenantId,
+    task: clone(record.plan.task),
+    operationId: record.plan.operationId,
+  };
+}
+
+function attemptDeliveryTarget(
+  record: AttemptPresentationRecord,
+): Extract<PresentationDeliveryTarget, { source: 'attempt' }> {
+  return {
+    source: 'attempt',
+    tenantId: record.tenantId,
+    task: clone(record.plan.task),
+    attemptId: record.plan.attemptId,
+    operationId: record.plan.operationId,
+  };
+}
+
 interface DerivedAttemptPresentation {
   key: string;
   receiptKey: string;
@@ -879,6 +998,19 @@ interface StoredTaskEffectReceipt {
   }>;
 }
 
+interface StoredPresentationDeliveryReceipt {
+  planDigest: string;
+  kind: 'converged' | 'unknown';
+  receiptSha256: string;
+  resolvedAt: string;
+  snapshot: PresentationDeliveryRecord;
+}
+
+interface StoredPresentationDeliveryRecord extends PresentationDeliveryRecord {
+  /** One-way proof for the opaque work capability; never returned or logged. */
+  claimTokenSha256?: string;
+}
+
 const systemClock: AuthorityClock = {
   now: () => new Date().toISOString(),
 };
@@ -928,6 +1060,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       outcomeDigest: string;
       snapshot: AttemptPresentationRecord;
     }
+  >();
+  private readonly presentationDeliveries = new Map<
+    string,
+    StoredPresentationDeliveryRecord
+  >();
+  private readonly presentationDeliveryReceipts = new Map<
+    string,
+    StoredPresentationDeliveryReceipt
   >();
   private readonly taskEffectReceipts = new Map<
     string,
@@ -1254,6 +1394,27 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           'Task presentation source effect is incomplete',
         );
       }
+      for (const plan of plans) {
+        if (plan !== undefined) {
+          this.assertPresentationDeliveryPlan(
+            taskDeliveryTarget(plan),
+            plan.plan,
+          );
+        }
+      }
+      for (const plan of obsoletedPlans) {
+        if (plan !== undefined) {
+          const delivery = this.assertPresentationDeliveryPlan(
+            taskDeliveryTarget(plan),
+            plan.plan,
+          );
+          if (delivery.state !== 'obsolete') {
+            throw new AuthorityConflict(
+              'Obsolete Task presentation delivery conflicts',
+            );
+          }
+        }
+      }
       return {
         status: 'replay',
         task: clone(prior.task),
@@ -1359,11 +1520,13 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         throw new AuthorityConflict('Task presentation operation was reused');
       }
     }
-    // All checks above occur before the contiguous in-memory transaction body.
-    this.tasks.set(canonicalTaskKey(scope), clone(reduced.state));
-    for (const record of records) {
-      this.taskEffects.set(taskEffectKey(record), clone(record));
-    }
+    const newPlanDeliveries = plans.map((plan) => {
+      const target = taskDeliveryTarget(plan);
+      return {
+        key: presentationDeliveryKey(target),
+        record: this.preflightNewPresentationDelivery(target, plan.plan),
+      };
+    });
     const obsoleteReason =
       plans.length > 0
         ? 'newer-presentation'
@@ -1372,7 +1535,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           : reduced.resolution.kind === 'cancelled'
             ? 'task-cancelled'
             : undefined;
-    const obsoletedPlans: TaskPresentationRecord[] = [];
+    const pendingObsoletions: Array<{
+      planKey: string;
+      plan: TaskPresentationRecord;
+      deliveryKey: string;
+      delivery: PresentationDeliveryRecord;
+    }> = [];
     for (const [key, priorPlan] of this.taskPresentations) {
       if (
         priorPlan.tenantId === scope.tenantId &&
@@ -1380,15 +1548,37 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         priorPlan.deliveryState === 'pending' &&
         obsoleteReason !== undefined
       ) {
+        const target = taskDeliveryTarget(priorPlan);
+        const delivery = this.assertPresentationDeliveryPlan(
+          target,
+          priorPlan.plan,
+        );
+        if (delivery.state !== 'pending') continue;
         const obsolete: TaskPresentationRecord = {
           ...priorPlan,
           deliveryState: 'obsolete',
           obsoleteAtTaskRevision: reduced.state.revision,
           obsoleteReason,
         };
-        this.taskPresentations.set(key, obsolete);
-        obsoletedPlans.push(obsolete);
+        pendingObsoletions.push({
+          planKey: key,
+          plan: obsolete,
+          deliveryKey: presentationDeliveryKey(target),
+          delivery: { ...delivery, state: 'obsolete' },
+        });
       }
+    }
+    // All checks above occur before the contiguous in-memory transaction body.
+    this.tasks.set(canonicalTaskKey(scope), clone(reduced.state));
+    for (const record of records) {
+      this.taskEffects.set(taskEffectKey(record), clone(record));
+    }
+    for (const obsolete of pendingObsoletions) {
+      this.taskPresentations.set(obsolete.planKey, clone(obsolete.plan));
+      this.presentationDeliveries.set(
+        obsolete.deliveryKey,
+        clone(obsolete.delivery),
+      );
     }
     for (const plan of plans) {
       this.taskPresentations.set(
@@ -1400,6 +1590,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         clone(plan),
       );
     }
+    for (const delivery of newPlanDeliveries) {
+      this.presentationDeliveries.set(delivery.key, clone(delivery.record));
+    }
+    const obsoletedPlans = pendingObsoletions.map(({ plan }) => plan);
     this.taskEffectReceipts.set(receiptKey, {
       canonicalDigest: command.canonicalDigest,
       task: clone(reduced.state),
@@ -1455,6 +1649,419 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           (input.state === undefined || effect.deliveryState === input.state),
       )
       .map(clone);
+  }
+
+  private presentationPlanForTarget(target: PresentationDeliveryTarget):
+    | {
+        plan: TaskPresentationPlan | AttemptPresentationPlan;
+        deliveryState: 'pending' | 'obsolete';
+      }
+    | undefined {
+    if (target.source === 'task') {
+      const record = this.taskPresentations.get(
+        taskPresentationKey({
+          tenantId: target.tenantId,
+          task: target.task,
+          operationId: target.operationId,
+        }),
+      );
+      return record === undefined
+        ? undefined
+        : { plan: record.plan, deliveryState: record.deliveryState };
+    }
+    const record = this.attemptPresentations.get(
+      attemptPresentationKey(
+        target.tenantId,
+        target.attemptId,
+        target.operationId,
+      ),
+    );
+    if (record === undefined || !same(record.plan.task, target.task)) {
+      return undefined;
+    }
+    return { plan: record.plan, deliveryState: record.deliveryState };
+  }
+
+  private pendingPresentationDelivery(
+    target: PresentationDeliveryTarget,
+    plan: TaskPresentationPlan | AttemptPresentationPlan,
+  ): StoredPresentationDeliveryRecord {
+    return {
+      source: target.source,
+      tenantId: target.tenantId,
+      task: clone(target.task),
+      ...(target.source === 'attempt' ? { attemptId: target.attemptId } : {}),
+      operationId: target.operationId,
+      planDigest: presentationPlanDigest(plan),
+      state: 'pending',
+    };
+  }
+
+  private preflightNewPresentationDelivery(
+    target: PresentationDeliveryTarget,
+    plan: TaskPresentationPlan | AttemptPresentationPlan,
+  ): StoredPresentationDeliveryRecord {
+    const record = this.pendingPresentationDelivery(target, plan);
+    if (this.presentationDeliveries.has(presentationDeliveryKey(target))) {
+      throw new AuthorityConflict('Presentation delivery operation exists');
+    }
+    return record;
+  }
+
+  private assertPresentationDeliveryPlan(
+    target: PresentationDeliveryTarget,
+    plan: TaskPresentationPlan | AttemptPresentationPlan,
+  ): StoredPresentationDeliveryRecord {
+    const record = this.presentationDeliveries.get(
+      presentationDeliveryKey(target),
+    );
+    if (
+      record === undefined ||
+      record.source !== target.source ||
+      record.tenantId !== target.tenantId ||
+      !same(record.task, target.task) ||
+      record.attemptId !==
+        (target.source === 'attempt' ? target.attemptId : undefined) ||
+      record.operationId !== target.operationId ||
+      record.planDigest !== presentationPlanDigest(plan)
+    ) {
+      throw new AuthorityConflict(
+        'Presentation delivery does not match its immutable plan',
+      );
+    }
+    return record;
+  }
+
+  private assertPresentationDeliveryReceipt(
+    key: string,
+    record: StoredPresentationDeliveryRecord,
+  ): void {
+    const receipt = this.presentationDeliveryReceipts.get(key);
+    if (record.state === 'converged' || record.state === 'unknown') {
+      if (
+        receipt === undefined ||
+        receipt.planDigest !== record.planDigest ||
+        receipt.kind !== record.state ||
+        receipt.receiptSha256 !== record.receiptSha256 ||
+        receipt.resolvedAt !== record.resolvedAt ||
+        !same(receipt.snapshot, publicPresentationDeliveryRecord(record))
+      ) {
+        throw new AuthorityConflict(
+          'Presentation delivery receipt conflicts with live state',
+        );
+      }
+      return;
+    }
+    if (receipt !== undefined) {
+      throw new AuthorityConflict(
+        'Nonterminal presentation delivery has a terminal receipt',
+      );
+    }
+  }
+
+  async readPresentationDelivery(
+    input: PresentationDeliveryTarget,
+  ): Promise<PresentationDeliveryRecord | undefined> {
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Presentation delivery tenant is invalid');
+    }
+    const value = this.presentationDeliveries.get(
+      presentationDeliveryKey(input),
+    );
+    if (value === undefined) return undefined;
+    const presentation = this.presentationPlanForTarget(input);
+    if (presentation === undefined) {
+      throw new AuthorityConflict('Presentation plan is unknown');
+    }
+    this.assertPresentationDeliveryPlan(input, presentation.plan);
+    this.assertPresentationDeliveryReceipt(
+      presentationDeliveryKey(input),
+      value,
+    );
+    return publicPresentationDeliveryRecord(value);
+  }
+
+  async listPresentationDelivery(input: {
+    tenantId: string;
+    source?: PresentationDeliveryRecord['source'];
+    task?: TaskAuthorityScope;
+    attemptId?: string;
+    state?: PresentationDeliveryRecord['state'];
+  }): Promise<PresentationDeliveryRecord[]> {
+    if (input.task !== undefined && input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Presentation delivery tenant is invalid');
+    }
+    return [...this.presentationDeliveries.values()]
+      .filter(
+        (record) =>
+          record.tenantId === input.tenantId &&
+          (input.source === undefined || record.source === input.source) &&
+          (input.task === undefined || same(record.task, input.task)) &&
+          (input.attemptId === undefined ||
+            record.attemptId === input.attemptId) &&
+          (input.state === undefined || record.state === input.state),
+      )
+      .map((record) => {
+        const target: PresentationDeliveryTarget =
+          record.source === 'task'
+            ? {
+                source: 'task',
+                tenantId: record.tenantId,
+                task: record.task,
+                operationId: record.operationId,
+              }
+            : record.attemptId === undefined
+              ? (() => {
+                  throw new AuthorityConflict(
+                    'Attempt delivery identity is incomplete',
+                  );
+                })()
+              : {
+                  source: 'attempt',
+                  tenantId: record.tenantId,
+                  task: record.task,
+                  attemptId: record.attemptId,
+                  operationId: record.operationId,
+                };
+        const presentation = this.presentationPlanForTarget(target);
+        if (presentation === undefined) {
+          throw new AuthorityConflict('Presentation plan is unknown');
+        }
+        this.assertPresentationDeliveryPlan(target, presentation.plan);
+        this.assertPresentationDeliveryReceipt(
+          presentationDeliveryKey(target),
+          record,
+        );
+        return publicPresentationDeliveryRecord(record);
+      });
+  }
+
+  async claimPresentationDelivery(input: {
+    lease: TaskAuthorityLease;
+    target: PresentationDeliveryTarget;
+  }): Promise<PresentationDeliveryClaim> {
+    const { target } = input;
+    const now = this.now();
+    this.assertLease(input.lease, target.task, now);
+    if (target.tenantId !== target.task.tenantId) {
+      throw new AuthorityConflict('Presentation delivery tenant is invalid');
+    }
+    const presentation = this.presentationPlanForTarget(target);
+    if (presentation === undefined) {
+      throw new AuthorityConflict('Presentation plan is unknown');
+    }
+    const current = this.assertPresentationDeliveryPlan(
+      target,
+      presentation.plan,
+    );
+    if (presentation.deliveryState === 'obsolete') {
+      if (current.state !== 'obsolete') {
+        throw new AuthorityConflict(
+          'Obsolete presentation has active delivery work',
+        );
+      }
+      return {
+        status: 'terminal',
+        record: publicPresentationDeliveryRecord(current),
+      };
+    }
+    if (
+      current.state === 'converged' ||
+      current.state === 'unknown' ||
+      current.state === 'obsolete'
+    ) {
+      this.assertPresentationDeliveryReceipt(
+        presentationDeliveryKey(target),
+        current,
+      );
+      return {
+        status: 'terminal',
+        record: publicPresentationDeliveryRecord(current),
+      };
+    }
+    if (current.state === 'in-flight') {
+      if (current.claimedFence === input.lease.fence) {
+        return {
+          status: 'replay',
+          record: publicPresentationDeliveryRecord(current),
+        };
+      }
+      if ((current.claimedFence ?? -1) > input.lease.fence) {
+        throw new AuthorityConflict(
+          'Presentation delivery is claimed by a later fence',
+        );
+      }
+      const receiptSha256 = createHash('sha256')
+        .update(
+          canonicalJson({
+            source: current.source,
+            tenantId: current.tenantId,
+            attemptId: current.attemptId,
+            operationId: current.operationId,
+            planDigest: current.planDigest,
+            kind: 'abandoned-in-flight',
+          }),
+        )
+        .digest('hex');
+      const unknown: StoredPresentationDeliveryRecord = {
+        ...current,
+        state: 'unknown',
+        claimedFence: input.lease.fence,
+        claimTokenSha256: undefined,
+        receiptSha256,
+        resolvedAt: now,
+      };
+      this.presentationDeliveries.set(
+        presentationDeliveryKey(target),
+        clone(unknown),
+      );
+      this.presentationDeliveryReceipts.set(presentationDeliveryKey(target), {
+        planDigest: unknown.planDigest,
+        kind: 'unknown',
+        receiptSha256,
+        resolvedAt: now,
+        snapshot: publicPresentationDeliveryRecord(unknown),
+      });
+      return {
+        status: 'terminal',
+        record: publicPresentationDeliveryRecord(unknown),
+      };
+    }
+    const claimToken = randomUUID();
+    const claimed: StoredPresentationDeliveryRecord = {
+      ...current,
+      state: 'in-flight',
+      claimedFence: input.lease.fence,
+      claimTokenSha256: presentationClaimTokenDigest(claimToken),
+    };
+    const workInput: VerifiedClaimedPresentationWork =
+      target.source === 'task'
+        ? {
+            source: 'task',
+            tenantId: target.tenantId,
+            repositoryId: target.task.repositoryId,
+            issueNumber: target.task.issueNumber,
+            operationId: target.operationId,
+            planDigest: claimed.planDigest,
+            claimFence: input.lease.fence,
+            claimToken,
+            permission: 'submit',
+            plan: clone(presentation.plan as TaskPresentationPlan),
+          }
+        : {
+            source: 'attempt',
+            tenantId: target.tenantId,
+            repositoryId: target.task.repositoryId,
+            issueNumber: target.task.issueNumber,
+            attemptId: target.attemptId,
+            operationId: target.operationId,
+            planDigest: claimed.planDigest,
+            claimFence: input.lease.fence,
+            claimToken,
+            permission: 'submit',
+            plan: clone(presentation.plan as AttemptPresentationPlan),
+          };
+    this.presentationDeliveries.set(
+      presentationDeliveryKey(target),
+      clone(claimed),
+    );
+    let work: VerifiedClaimedPresentationWork;
+    try {
+      work = mintClaimedPresentationWork(workInput);
+    } catch (error) {
+      this.presentationDeliveries.set(
+        presentationDeliveryKey(target),
+        clone(current),
+      );
+      throw error;
+    }
+    return {
+      status: 'claimed',
+      record: publicPresentationDeliveryRecord(claimed),
+      work,
+    };
+  }
+
+  async resolveVerifiedPresentationDelivery(input: {
+    lease: TaskAuthorityLease;
+    resolution: VerifiedPresentationResolution;
+  }): Promise<'applied' | 'replay'> {
+    if (!isVerifiedPresentationResolution(input.resolution)) {
+      throw new AuthorityConflict('Presentation resolution is not trusted');
+    }
+    const { resolution } = input;
+    const { work } = resolution;
+    const target: PresentationDeliveryTarget =
+      work.source === 'task'
+        ? {
+            source: 'task',
+            tenantId: work.tenantId,
+            task: clone(work.plan.task),
+            operationId: work.operationId,
+          }
+        : {
+            source: 'attempt',
+            tenantId: work.tenantId,
+            task: clone(work.plan.task),
+            attemptId: work.attemptId,
+            operationId: work.operationId,
+          };
+    this.assertLease(input.lease, target.task, this.now());
+    const presentation = this.presentationPlanForTarget(target);
+    if (presentation === undefined) {
+      throw new AuthorityConflict('Presentation plan is unknown');
+    }
+    const key = presentationDeliveryKey(target);
+    const current = this.assertPresentationDeliveryPlan(
+      target,
+      presentation.plan,
+    );
+    const prior = this.presentationDeliveryReceipts.get(key);
+    if (prior !== undefined) {
+      if (
+        prior.planDigest !== work.planDigest ||
+        prior.kind !== resolution.kind ||
+        prior.receiptSha256 !== resolution.receiptSha256 ||
+        prior.resolvedAt !== resolution.resolvedAt ||
+        current.claimedFence !== work.claimFence ||
+        work.claimFence !== input.lease.fence ||
+        current.claimTokenSha256 !==
+          presentationClaimTokenDigest(work.claimToken) ||
+        !same(work.plan, presentation.plan) ||
+        !same(prior.snapshot, publicPresentationDeliveryRecord(current))
+      ) {
+        throw new AuthorityConflict('Presentation resolution replay conflicts');
+      }
+      return 'replay';
+    }
+    if (
+      current.state !== 'in-flight' ||
+      current.claimedFence !== input.lease.fence ||
+      work.claimFence !== input.lease.fence ||
+      current.claimTokenSha256 !==
+        presentationClaimTokenDigest(work.claimToken) ||
+      current.planDigest !== work.planDigest ||
+      !same(work.plan, presentation.plan)
+    ) {
+      throw new AuthorityConflict(
+        'Presentation resolution does not own the in-flight work',
+      );
+    }
+    const next: StoredPresentationDeliveryRecord = {
+      ...current,
+      state: resolution.kind,
+      receiptSha256: resolution.receiptSha256,
+      resolvedAt: resolution.resolvedAt,
+    };
+    this.presentationDeliveries.set(key, clone(next));
+    this.presentationDeliveryReceipts.set(key, {
+      planDigest: next.planDigest,
+      kind: resolution.kind,
+      receiptSha256: resolution.receiptSha256,
+      resolvedAt: resolution.resolvedAt,
+      snapshot: publicPresentationDeliveryRecord(next),
+    });
+    return 'applied';
   }
 
   async readTaskPresentation(input: {
@@ -1538,6 +2145,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     ) {
       throw new AuthorityConflict('Attempt presentation operation exists');
     }
+    this.preflightNewPresentationDelivery(
+      attemptDeliveryTarget(presentation.record),
+      presentation.record.plan,
+    );
   }
 
   private persistAttemptPresentation(
@@ -1550,6 +2161,11 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       outcomeDigest: presentation.outcomeDigest,
       snapshot: clone(presentation.record),
     });
+    const target = attemptDeliveryTarget(presentation.record);
+    this.presentationDeliveries.set(
+      presentationDeliveryKey(target),
+      this.pendingPresentationDelivery(target, presentation.record.plan),
+    );
   }
 
   private assertAttemptPresentationReplay(
@@ -1579,6 +2195,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         'Final outcome presentation receipt conflicts',
       );
     }
+    this.assertPresentationDeliveryPlan(
+      attemptDeliveryTarget(expected.record),
+      expected.record.plan,
+    );
   }
 
   private assertCancellationReceiptIntegrity(

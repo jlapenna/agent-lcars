@@ -24,6 +24,10 @@ import {
 } from './launch-binding';
 import { LaunchResponseBoundary } from './launch-resolution-capability';
 import { writeAttemptForTest } from './launch-resolution-test-support';
+import {
+  PresentationDeliveryBoundary,
+  PresentationDeliveryCoordinator,
+} from './presentation-delivery';
 import { TaskAttemptAdmissionCoordinator } from './task-attempt-admission';
 import {
   mintAdmissionEffectCompletion,
@@ -201,6 +205,16 @@ export function runTaskPresentationStorageContract(
           },
         ],
       });
+      const plannedOperation = first.plans[0]?.plan.operationId;
+      if (plannedOperation === undefined) throw new Error('missing park plan');
+      expect(
+        await storage.readPresentationDelivery({
+          source: 'task',
+          tenantId: tenant.tenantId,
+          task,
+          operationId: plannedOperation,
+        }),
+      ).toMatchObject({ state: 'pending' });
       expect(
         await storage.applyTaskEffectTransition({
           lease,
@@ -246,6 +260,81 @@ export function runTaskPresentationStorageContract(
         deliveryState: 'obsolete',
         obsoleteReason: 'task-resumed',
       });
+      expect(
+        await storage.readPresentationDelivery({
+          source: 'task',
+          tenantId: tenant.tenantId,
+          task,
+          operationId: originalOperation,
+        }),
+      ).toMatchObject({ state: 'obsolete' });
+    });
+
+    it('preserves an in-flight parked presentation when the Task resumes', async () => {
+      const clock = new Clock();
+      const storage = factory.create(clock);
+      await storage.registerActivation(activation());
+      const lease = await storage.acquireTaskLease({
+        scope: task,
+        ownerId: 'presentation-in-flight',
+        leaseDurationMs: 60_000,
+      });
+      const parked = await storage.applyTaskEffectTransition({
+        lease,
+        transition: mintTaskEffectTransition(
+          {
+            expectedRevision: 0,
+            envelope: envelope('fact-policy-park-in-flight'),
+            policyDecision: {
+              ...policy('fact-policy-park-in-flight'),
+              decision: 'rejected',
+            },
+            activation: activation(),
+            candidate: {
+              intentId: 'intent-policy-park-in-flight',
+              semanticKey: 'policy-park-in-flight',
+              semanticDigest: SHA,
+              orderingKey: {
+                occurredAt: T0,
+                tieBreaker: 'policy-park-in-flight',
+              },
+            },
+          },
+          clock,
+        ),
+      });
+      const operationId = parked.plans[0]?.plan.operationId;
+      if (operationId === undefined) throw new Error('missing park plan');
+      await storage.claimPresentationDelivery({
+        lease,
+        target: {
+          source: 'task',
+          tenantId: tenant.tenantId,
+          task,
+          operationId,
+        },
+      });
+
+      const resumed = await storage.applyTaskEffectTransition({
+        lease,
+        transition: transition(clock, 'fact-resume-in-flight', 1),
+      });
+      expect(resumed.obsoletedPlans).toEqual([]);
+      expect(
+        await storage.readTaskPresentation({
+          tenantId: tenant.tenantId,
+          task,
+          operationId,
+        }),
+      ).toMatchObject({ deliveryState: 'pending' });
+      expect(
+        await storage.readPresentationDelivery({
+          source: 'task',
+          tenantId: tenant.tenantId,
+          task,
+          operationId,
+        }),
+      ).toMatchObject({ state: 'in-flight' });
     });
 
     it('keeps shadow transitions effect-free and isolates task-presentation reads', async () => {
@@ -690,6 +779,18 @@ export function runCancellationEffectStorageContract(
           attemptId: value.attemptId,
         }),
       ).toEqual([cancelled.presentation]);
+      const presentationOperation = cancelled.presentation?.plan.operationId;
+      if (presentationOperation === undefined)
+        throw new Error('missing cancelled Attempt presentation');
+      expect(
+        await storage.readPresentationDelivery({
+          source: 'attempt',
+          tenantId: tenant.tenantId,
+          task,
+          attemptId: value.attemptId,
+          operationId: presentationOperation,
+        }),
+      ).toMatchObject({ state: 'pending' });
       expect(
         await storage.readLaunch({
           tenantId: tenant.tenantId,
@@ -755,6 +856,28 @@ export function runCancellationEffectStorageContract(
       expect(
         await storage.listCancellationWork({ tenantId: tenant.tenantId }),
       ).toEqual([]);
+
+      await storage.registerActivation(activation('shadow'));
+      const receiver = vi.fn(async () => ({ receiptSha256: SHA }));
+      const delivered = await new PresentationDeliveryCoordinator(
+        storage,
+        new PresentationDeliveryBoundary({ receive: receiver }, clock),
+      ).deliver({
+        lease: value.lease,
+        target: {
+          source: 'attempt',
+          tenantId: tenant.tenantId,
+          task,
+          attemptId: value.attemptId,
+          operationId: presentationOperation,
+        },
+      });
+      expect(delivered).toMatchObject({
+        source: 'attempt',
+        state: 'converged',
+        receiptSha256: SHA,
+      });
+      expect(receiver).toHaveBeenCalledOnce();
     });
 
     it('presents a superseded unclaimed Attempt with exact lifecycle provenance', async () => {
