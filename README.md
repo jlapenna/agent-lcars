@@ -151,6 +151,8 @@ issues and pull requests. GitHub App identities, including
   new GitHub account/repo as a registration on the shared runner fleet.
 - [docs/e2e-security-boundary.md](docs/e2e-security-boundary.md) — the
   credential-free local/CI E2E boundary.
+- [docs/e2e-reliability.md](docs/e2e-reliability.md) — the E2E contract,
+  failure taxonomy, harness rules, and review checklist.
 - [docs/trajectory-evaluation.md](docs/trajectory-evaluation.md) — the
   reviewed production-trajectory corpus, rolling read-only report, and
   mutation-free prompt/setup comparison boundary.
