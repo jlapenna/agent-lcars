@@ -395,6 +395,12 @@ describe('inactive verified-OIDC CredentialGrant coordinator', () => {
       jobWorkflowSha: 'd'.repeat(40),
     });
 
+    const refWithAt = 'refs/heads/feature@v2';
+    const unusualRef = await verifiedProof(harness, harness.clock, {
+      workflowRef: `${harness.tenant.repository}/${harness.binding.workflowPath}@${refWithAt}`,
+    });
+    expect(unusualRef.binding.workflowRef).toBe(refWithAt);
+
     for (const malformed of [
       { repository: 'octo/other' },
       { workflowRef: 'octo/example/worker.yml@refs/heads/main' },

@@ -93,15 +93,14 @@ function parseWorkflowRef(value: unknown): ParsedWorkflowRef | undefined {
   if (typeof value !== 'string') return;
   const workflowMarker = '/.github/workflows/';
   const markerAt = value.indexOf(workflowMarker);
-  const refAt = value.lastIndexOf('@');
+  const refAt = value.indexOf('@', markerAt + workflowMarker.length);
   if (markerAt <= 0 || refAt <= markerAt + workflowMarker.length) return;
   const repository = value.slice(0, markerAt);
   const workflowPath = value.slice(markerAt + 1, refAt);
   const workflowRef = value.slice(refAt + 1);
   if (
     !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
-    !workflowPath.startsWith('.github/workflows/') ||
-    workflowPath.includes('@') ||
+    !/^\.github\/workflows\/.+\.ya?ml$/u.test(workflowPath) ||
     workflowRef.length === 0
   )
     return;
