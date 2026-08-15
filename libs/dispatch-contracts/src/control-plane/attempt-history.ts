@@ -1459,6 +1459,10 @@ function assertTransitionSemantics(input: {
   let claimIndex = 0;
   let validationIndex = 0;
   let evidenceIndex = 0;
+  const emittedFactReferences = new Map<
+    string,
+    AttemptHistoryRecordReference
+  >();
   let terminalCommandSeen = false;
   let evidenceSeen = false;
   for (const emission of emitted) {
@@ -1471,6 +1475,16 @@ function assertTransitionSemantics(input: {
         throw new HistoryIntegrityError('missing-reference');
       const ref = historyRecordReference(record);
       factIndex += 1;
+      if (payload.payload.kind === 'agent-result-claim') {
+        emittedFactReferences.set(
+          payload.factId,
+          attemptHistoryRecordReference(
+            record,
+            { tenantId: head.tenantId, attemptId: head.attemptId },
+            'fact',
+          ),
+        );
+      }
       if (
         (payload.payload.kind === 'heartbeat' ||
           payload.payload.kind === 'adapter-failure') &&
@@ -1572,6 +1586,13 @@ function assertTransitionSemantics(input: {
         throw new HistoryIntegrityError('missing-reference');
       const ref = historyRecordReference(record);
       claimIndex += 1;
+      const emittedFactRef = emittedFactReferences.get(payload.claimFactId);
+      if (
+        emittedFactRef === undefined ||
+        !sameReference(payload.factRef, emittedFactRef)
+      ) {
+        throw new HistoryIntegrityError('invalid-record');
+      }
       if (['validating', 'terminal', 'launch-rejected'].includes(head.phase)) {
         throw new HistoryIntegrityError('invalid-head');
       }
@@ -1983,6 +2004,10 @@ export function appendAttemptHistoryTransition(input: {
   const evidenceEmissions = input.emitted.filter(
     (emission) => emission.stream === 'evidence',
   );
+  const emittedFact =
+    factEmissions.length === 1
+      ? attemptFactPayloadSchema.parse(factEmissions[0]?.payload)
+      : undefined;
   if (
     claimEmissions.length > 0 &&
     (claimEmissions.length !== 1 ||
@@ -1991,6 +2016,19 @@ export function appendAttemptHistoryTransition(input: {
         'agent-result-claim')
   ) {
     throw new HistoryIntegrityError('invalid-record');
+  }
+  if (emittedFact?.payload.kind === 'agent-result-claim') {
+    if (claimEmissions.length !== 1) {
+      throw new HistoryIntegrityError('invalid-record');
+    }
+    const claim = attemptClaimPayloadSchema.parse(claimEmissions[0]?.payload);
+    if (
+      claim.claimFactId !== emittedFact.factId ||
+      claim.claimDigest !== emittedFact.payload.claimDigest ||
+      !sameClaimValue(claim.claim, emittedFact.payload.claim)
+    ) {
+      throw new HistoryIntegrityError('invalid-record');
+    }
   }
   if (
     validationEmissions.length > 0 &&
@@ -2046,6 +2084,15 @@ export function appendAttemptHistoryTransition(input: {
     } else if (emission.stream === 'command') {
       const command = attemptCommandPayloadSchema.parse(payload);
       let claimFactId: string | undefined;
+      if (command.payload.kind === 'attempt-registered') {
+        if (
+          base.aggregateRevision !== 0 ||
+          command.payload.commandId !== base.attemptId ||
+          command.payload.specDigest !== base.specDigest
+        ) {
+          throw new HistoryIntegrityError('invalid-head');
+        }
+      }
       if (command.payload.kind === 'validate-claim-requested') {
         claimFactId = attemptClaimPayloadSchema.parse(
           resolveKnownRecord(

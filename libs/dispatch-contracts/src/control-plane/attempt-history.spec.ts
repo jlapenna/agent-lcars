@@ -179,6 +179,35 @@ function command(
   };
 }
 
+function registrationCommand(
+  input: {
+    commandId?: string;
+    specDigest?: string;
+    transitionedAt?: string;
+  } = {},
+): AttemptCommandRecordPayload {
+  const commandId = input.commandId ?? attemptId;
+  const specDigest = input.specDigest ?? attemptSpecDigest(spec);
+  const transitionedAt = input.transitionedAt ?? at;
+  return {
+    schema: 'agent-lcars.attempt-command/v1',
+    version: 1,
+    transitionedAt,
+    canonicalDigest: attemptHistoryTransitionDigest({
+      kind: 'register',
+      expectedRevision: 0,
+      transitionedAt,
+      spec,
+      specDigest,
+    }),
+    payload: {
+      kind: 'attempt-registered',
+      commandId,
+      specDigest,
+    },
+  };
+}
+
 function lifecycleOutcome(input: {
   terminalState: 'failed' | 'cancelled' | 'superseded' | 'lost';
   execution: 'not_started' | 'cancelled' | 'lost' | 'timed_out';
@@ -520,6 +549,47 @@ describe('bounded Attempt history contracts', () => {
       (result.head.spec.execution as { executorId: string }).executorId =
         'mutated';
     }).toThrow();
+  });
+
+  it('rejects repeated and phantom registration commands after genesis', () => {
+    const start = registered();
+    for (const payload of [
+      registrationCommand(),
+      registrationCommand({ commandId: 'phantom-registration' }),
+      registrationCommand({ specDigest: 'c'.repeat(64) }),
+    ]) {
+      expect(() =>
+        appendAttemptHistoryTransition({
+          head: start.head,
+          nextRevision: 2,
+          transitionedAt: at,
+          emitted: [{ stream: 'command', payload }],
+        }),
+      ).toThrow(HistoryIntegrityError);
+    }
+  });
+
+  it('rejects forged registration identities even at genesis', () => {
+    const genesis = createGenesisAttemptHistoryHead({
+      tenantId: 'tenant-1',
+      attemptId,
+      spec,
+      specDigest: attemptSpecDigest(spec),
+      updatedAt: at,
+    });
+    for (const payload of [
+      registrationCommand({ commandId: 'phantom-registration' }),
+      registrationCommand({ specDigest: 'c'.repeat(64) }),
+    ]) {
+      expect(() =>
+        appendAttemptHistoryTransition({
+          head: genesis,
+          nextRevision: 1,
+          transitionedAt: at,
+          emitted: [{ stream: 'command', payload }],
+        }),
+      ).toThrow(HistoryIntegrityError);
+    }
   });
 
   it('projects legacy inline state without changing the durable head meaning', () => {
@@ -1378,6 +1448,14 @@ describe('bounded Attempt history contracts', () => {
       claimDigest,
       claim: claimValue,
     };
+    expect(() =>
+      appendAttemptHistoryTransition({
+        head: bound.head,
+        nextRevision: 3,
+        transitionedAt: later,
+        emitted: [{ stream: 'fact', payload: claimFact }],
+      }),
+    ).toThrow(HistoryIntegrityError);
     const accepted = appendAttemptHistoryTransition({
       head: bound.head,
       nextRevision: 3,
@@ -1417,5 +1495,84 @@ describe('bounded Attempt history contracts', () => {
         ],
       }),
     ).toThrow();
+  });
+
+  it('rejects a claim reference to an older duplicate fact record', () => {
+    const start = registered();
+    const bound = appendAttemptHistoryTransition({
+      head: start.head,
+      nextRevision: 2,
+      transitionedAt: later,
+      emitted: [
+        {
+          stream: 'fact',
+          payload: fact('bound-for-ref', { kind: 'run-bound', binding }),
+        },
+      ],
+    });
+    const claimValue = {
+      kind: 'structured-no-op' as const,
+      commentId: 'duplicate-fact-ref',
+      localAttemptMarker: spec.local.attemptMarker,
+    };
+    const claimDigest = historyPayloadDigest({
+      kind: 'agent-result-claim',
+      claim: claimValue,
+    });
+    const oldFact = fact('duplicate-fact', {
+      kind: 'agent-result-claim',
+      claimFactId: 'duplicate-fact',
+      claimDigest,
+      claim: claimValue,
+    });
+    const oldFactAppend = appendHistoryRecord({
+      head: bound.head.streams.fact,
+      payload: oldFact,
+      appliedRevision: 3,
+    });
+    // Model a resolver bundle whose head was persisted after the old fact but
+    // before its claim record. The transition must not silently orphan the
+    // newly emitted duplicate fact by resolving the claim against this old
+    // record.
+    const forgedBase: AttemptHistoryHead = {
+      ...bound.head,
+      aggregateRevision: 3,
+      updatedAt: later,
+      streams: { ...bound.head.streams, fact: oldFactAppend.head },
+    };
+    const newFact = fact('duplicate-fact', {
+      kind: 'agent-result-claim',
+      claimFactId: 'duplicate-fact',
+      claimDigest,
+      claim: claimValue,
+    });
+    const oldFactRef = attemptHistoryRecordReference(
+      oldFactAppend.record,
+      { tenantId: 'tenant-1', attemptId },
+      'fact',
+    );
+    const claim = {
+      schema: 'agent-lcars.attempt-claim/v1' as const,
+      version: 1 as const,
+      claimFactId: 'duplicate-fact',
+      factRef: oldFactRef,
+      requestId: 'request-duplicate-fact',
+      observedAt: later,
+      transitionedAt: later,
+      claimDigest,
+      claim: claimValue,
+    };
+    expect(() =>
+      appendAttemptHistoryTransition({
+        head: forgedBase,
+        nextRevision: 4,
+        transitionedAt: later,
+        emitted: [
+          { stream: 'fact', payload: newFact },
+          { stream: 'claim', payload: claim },
+        ],
+        priorRecords: [{ record: oldFactAppend.record, payload: oldFact }],
+      }),
+    ).toThrow(HistoryIntegrityError);
   });
 });
