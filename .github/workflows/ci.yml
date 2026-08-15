@@ -223,9 +223,9 @@ jobs:
       # smoke can safely reuse the deterministic Nx build artifact. Exercise
       # that artifact contract with remote reads disabled: clean the first
       # build's outputs, restore them from this job's L1, and boot what Nx
-      # restored. This proves output completeness for the local prebuilt
-      # deployment path; it does not make the manual managed-build fallback
-      # persistent (#1030).
+      # restored. This proves output completeness for the optional local
+      # prebuilt diagnostic path; it does not change the managed App Hosting
+      # production default (#1128).
       - name: Smoke test cached deployable console bundle
         run: ./tools/console-cache-restore-smoke.sh
 

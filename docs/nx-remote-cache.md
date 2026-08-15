@@ -44,17 +44,16 @@ if a build environment supplies an L1 entry, Nx must restore the complete
 declared output instead of inheriting stale files. It is not, by itself, a
 persistence mechanism.
 
-The normal production path now runs the declared App Hosting build command on
-the trusted `lcars-ci` runner, where the existing Spark L2 is already available,
-then uploads only `outputFiles.serverApp.include` and registers the artifact as
-an App Hosting `locallyBuilt` build. Spark remains private-LAN infrastructure:
-App Hosting receives neither its URL nor its credential. The deploy verifies
-that the exact commit-labelled build and artifact are READY, its rollout
-succeeded, and it owns 100% of traffic.
+The normal production path uses Firebase's managed App Hosting build. It starts
+cold for the reasons measured above, so Spark's private-LAN L2 is deliberately
+not part of the production build contract.
 
-`workflow_dispatch` retains `build_mode: managed` as an explicit recovery
-path. That path still starts cold for the reasons measured above. It is a
-fallback, not the default production cache policy.
+`workflow_dispatch` retains `build_mode: prebuilt` only as an explicit
+diagnostic option while the App Hosting prebuilt importer is repaired (#1128).
+That path runs the declared build command on the trusted `lcars-ci` runner,
+uploads only `outputFiles.serverApp.include`, and registers a `locallyBuilt`
+artifact. Its cache and exact-traffic guarantees do not describe the default
+managed production path.
 
 ## How a checkout gets configured
 
