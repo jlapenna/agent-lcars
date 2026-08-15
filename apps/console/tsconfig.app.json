@@ -48,6 +48,9 @@
       "path": "../../libs/dispatch-contracts/tsconfig.lib.json"
     },
     {
+      "path": "../../libs/lifecycle-control-plane/tsconfig.lib.json"
+    },
+    {
       "path": "../../libs/util-server/tsconfig.lib.json"
     },
     {

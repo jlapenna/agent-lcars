@@ -32,6 +32,26 @@ export default [
   ...nx.configs['flat/react-typescript'],
   ...baseConfig,
   {
+    files: ['**/src/lib/hosted-lifecycle/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@agent-lcars/lifecycle-control-plane/*',
+                '**/lifecycle-control-plane/**',
+              ],
+              message:
+                'Hosted lifecycle code must import lifecycle contracts through the package root.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: ['.next/**/*'],
   },
 ];

@@ -287,6 +287,67 @@ describe('inactive signal-to-task composition', () => {
     expect(test.policyHandoffReads()).toBe(2);
   });
 
+  it('sanitizes storage claim fields from the public transition receipt', async () => {
+    const test = harness({
+      transition: () =>
+        ({
+          status: 'applied',
+          task: undefined,
+          effects: [
+            {
+              tenantId: TENANT.tenantId,
+              task: {
+                tenantId: TENANT.tenantId,
+                repositoryId: TENANT.repositoryId,
+                issueNumber: 9,
+              },
+              sourceFactId: 'fact-1',
+              effectKey: 'effect-1',
+              canonicalDigest: 'd'.repeat(64),
+              taskRevision: 1,
+              activation: {
+                activationId: ACTIVATION.activationId,
+                authorityEpoch: 1,
+                taskClassId: ACTIVATION.taskClassId,
+                mode: 'central-authoritative',
+              },
+              payload: {
+                kind: 'park-projection',
+                effectKey: 'effect-1',
+                task: {
+                  tenantId: TENANT.tenantId,
+                  repositoryId: TENANT.repositoryId,
+                  issueNumber: 9,
+                },
+                reason: 'operator-parked',
+                activation: {
+                  activationId: ACTIVATION.activationId,
+                  authorityEpoch: 1,
+                  taskClassId: ACTIVATION.taskClassId,
+                  mode: 'central-authoritative',
+                },
+              },
+              deliveryState: 'pending',
+              claimedFence: 4,
+              claimToken: 'secret-claim-token',
+            },
+          ],
+          plans: [],
+          obsoletedPlans: [],
+        }) as unknown as TaskEffectTransitionResult,
+    });
+
+    const result = await test.composition.handleWebhook({} as never);
+    expect(result.transition.effects[0]).not.toHaveProperty('claimedFence');
+    expect(result.transition.effects[0]).not.toHaveProperty('claimToken');
+    expect(result.transition.effects[0]?.activation).toEqual({
+      activationId: ACTIVATION.activationId,
+      authorityEpoch: 1,
+      taskClassId: ACTIVATION.taskClassId,
+      mode: 'central-authoritative',
+    });
+  });
+
   it('derives scope and candidate from the normalized envelope only', async () => {
     const test = harness();
 
