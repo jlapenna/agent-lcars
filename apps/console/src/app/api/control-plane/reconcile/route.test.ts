@@ -10,10 +10,11 @@ vi.mock('@/lib/hosted-reconciler', () => ({ runHostedReconcile }));
 
 import { POST } from './route';
 
-function request(token?: string): Request {
+function request(token?: string, body?: string): Request {
   return new Request('https://console.test/api/control-plane/reconcile', {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    ...(body === undefined ? {} : { body }),
   });
 }
 
@@ -56,7 +57,30 @@ describe('POST /api/control-plane/reconcile', () => {
       candidates: 2,
       dispatched: 2,
     });
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
+
+  it('treats a zero-byte request stream as body-less', async () => {
+    const zeroByteStreamRequest = request('signed-token', '');
+    expect(zeroByteStreamRequest.body).not.toBeNull();
+
+    const response = await POST(zeroByteStreamRequest);
+
+    expect(response.status).toBe(200);
+    expect(runHostedReconcile).toHaveBeenCalledOnce();
+  });
+
+  it.each(['{}', 'raw-body'])(
+    'rejects a supplied body %j before running the scan',
+    async (body) => {
+      const response = await POST(request('signed-token', body));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: 'Invalid reconcile request',
+      });
+      expect(runHostedReconcile).not.toHaveBeenCalled();
+    },
+  );
 
   it('fails the scheduler request when any candidate dispatch fails', async () => {
     runHostedReconcile.mockResolvedValue({

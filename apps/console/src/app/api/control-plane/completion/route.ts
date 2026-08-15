@@ -6,18 +6,17 @@ import {
   completeHostedWorker,
   HostedCompletionInputError,
 } from '@/lib/hosted-completion';
-
-function bearerToken(header: string | null): string {
-  const match = header?.match(/^Bearer ([^\s]+)$/u);
-  if (!match) throw new Error('A bearer token is required');
-  return match[1];
-}
+import {
+  parseHostedBearerToken,
+  parseHostedCompletionRequestBody,
+  parseHostedJsonBody,
+} from '@/lib/hosted-lifecycle/hosted-route-contract';
 
 export async function POST(request: Request): Promise<NextResponse> {
   let identity;
   try {
     identity = await verifyCompletionOidcToken(
-      bearerToken(request.headers.get('authorization')),
+      parseHostedBearerToken(request.headers.get('authorization')),
       controlPlaneRepository(),
     );
   } catch (error) {
@@ -27,7 +26,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let body: unknown;
   try {
-    body = await request.json();
+    body = parseHostedJsonBody(
+      await request.text(),
+      parseHostedCompletionRequestBody,
+    );
   } catch {
     return NextResponse.json(
       { error: 'Invalid completion request' },
