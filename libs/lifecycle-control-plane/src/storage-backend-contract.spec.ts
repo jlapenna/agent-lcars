@@ -16,6 +16,7 @@ import { assertLifecycleAuthorityStorageMethodChecklist } from './storage-backen
 import type { AttemptAdmissionHistoryStorageHooks } from './task-attempt-admission.spec.support';
 import { readTaskHistoryForTest } from './task-history-test-support';
 import { inMemoryTerminalClaimHistoryHooks } from './terminal-claim-history.in-memory.spec.support';
+import { inMemoryValidationHistoryHooks } from './validation-history.in-memory.spec.support';
 
 assertLifecycleAuthorityStorageMethodChecklist<InMemoryLifecycleAuthorityStorage>();
 
@@ -139,4 +140,5 @@ runLifecycleAuthorityBackendContract({
   launchResolutionHistory: inMemoryLaunchResolutionHistoryStorageHooks(),
   cancellationHistory: inMemoryCancellationHistoryStorageHooks(),
   terminalClaimHistory: inMemoryTerminalClaimHistoryHooks(),
+  validationHistory: inMemoryValidationHistoryHooks(),
 });
