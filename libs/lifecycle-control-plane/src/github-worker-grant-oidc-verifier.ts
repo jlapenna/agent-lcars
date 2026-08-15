@@ -2,6 +2,10 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 
+import {
+  DURABLE_SCALAR_BYTE_LIMITS,
+  utf8ByteLength,
+} from '@agent-lcars/dispatch-contracts';
 import { createRemoteJWKSet, errors, type JWTPayload, jwtVerify } from 'jose';
 
 import type {
@@ -71,6 +75,16 @@ function stringClaim(
   return value;
 }
 
+function durableStringClaim(
+  payload: JWTPayload,
+  name: string,
+  maximumBytes: number,
+): string {
+  const value = stringClaim(payload, name, maximumBytes);
+  if (utf8ByteLength(value) > maximumBytes) invalidClaim(name);
+  return value;
+}
+
 function positiveIntegerClaim(payload: JWTPayload, name: string): number {
   const value = payload[name];
   const parsed =
@@ -117,7 +131,11 @@ export function workerGrantClaimsFromJwtPayload(
   if (!audienceIncludesExpected(payload.aud)) invalidClaim('audience');
 
   const jti = stringClaim(payload, 'jti', MAX_JTI_LENGTH);
-  const repository = stringClaim(payload, 'repository', 200);
+  const repository = durableStringClaim(
+    payload,
+    'repository',
+    DURABLE_SCALAR_BYTE_LIMITS.repository,
+  );
   if (!REPOSITORY.test(repository)) invalidClaim('repository');
   const workflowSha = stringClaim(payload, 'workflow_sha', 40);
   if (!GIT_COMMIT_SHA.test(workflowSha)) invalidClaim('workflow_sha');
@@ -131,7 +149,8 @@ export function workerGrantClaimsFromJwtPayload(
     jobWorkflowRef !== undefined &&
     (typeof jobWorkflowRef !== 'string' ||
       jobWorkflowRef.length === 0 ||
-      jobWorkflowRef.length > 2_000)
+      utf8ByteLength(jobWorkflowRef) >
+        DURABLE_SCALAR_BYTE_LIMITS.jobWorkflowRef)
   ) {
     invalidClaim('job_workflow_ref');
   }
@@ -152,7 +171,11 @@ export function workerGrantClaimsFromJwtPayload(
     runId: positiveIntegerClaim(payload, 'run_id'),
     runAttempt: positiveIntegerClaim(payload, 'run_attempt'),
     checkRunId: positiveIntegerClaim(payload, 'check_run_id'),
-    workflowRef: stringClaim(payload, 'workflow_ref'),
+    workflowRef: durableStringClaim(
+      payload,
+      'workflow_ref',
+      DURABLE_SCALAR_BYTE_LIMITS.workflowRef,
+    ),
     workflowSha,
     ...(jobWorkflowRef === undefined ? {} : { jobWorkflowRef }),
     ...(jobWorkflowSha === undefined ? {} : { jobWorkflowSha }),

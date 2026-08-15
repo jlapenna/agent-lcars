@@ -1,5 +1,31 @@
 import { z } from 'zod';
 
+import { LIFECYCLE_DURABILITY_LIMITS } from './durability';
+
+/** UTF-8 length is the durable wire-size unit, not JavaScript code units. */
+export function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+/**
+ * Bounds for mutable provider display metadata. Hashes intentionally remain
+ * separate fixed-format primitives below; they are not general strings.
+ */
+export const DURABLE_SCALAR_BYTE_LIMITS =
+  LIFECYCLE_DURABILITY_LIMITS.scalarBytes;
+
+export function utf8ByteLimitedStringSchema(maxBytes: number) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new RangeError('UTF-8 byte limit must be a finite positive integer');
+  }
+  return z
+    .string()
+    .refine(
+      (value) => utf8ByteLength(value) <= maxBytes,
+      `Must be at most ${maxBytes} UTF-8 bytes`,
+    );
+}
+
 /** Closed, provider-neutral primitives shared by control-plane wire records. */
 export const opaqueIdSchema = z
   .string()

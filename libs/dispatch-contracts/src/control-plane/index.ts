@@ -32,6 +32,30 @@ export {
   grantIssuanceStateSchema,
   grantMintStateSchema,
 } from './credential';
+export type {
+  DurabilityByteBudget,
+  DurabilityCapacityUnit,
+  DurabilityCountBudget,
+  DurableJsonValue,
+  DurablePageValidationResult,
+  DurableTransitionInput,
+  DurableTransitionValidationResult,
+  LifecycleDurabilityLimits,
+} from './durability';
+export {
+  assertDurableValueWithinLimit,
+  canonicalDurableJson,
+  DurabilityCapacityError,
+  LIFECYCLE_DURABILITY_LIMITS,
+  lifecycleDurabilityLimitsSchema,
+  normalizeDurableValue,
+  serializedDurableByteLength,
+  serializedRecordByteLength,
+  UnsupportedDurableValueError,
+  validateDurablePage,
+  validateDurableTransition,
+  validateDurableValue,
+} from './durability';
 export type { PersistedFailureClassification } from './failure';
 export { persistedFailureClassificationSchema } from './failure';
 export type {
@@ -91,7 +115,13 @@ export {
   policyPrincipalSchema,
   policyRevisionSchema,
 } from './policy';
-export { gitCommitShaSchema, utcDateTimeSchema } from './primitives';
+export {
+  DURABLE_SCALAR_BYTE_LIMITS,
+  gitCommitShaSchema,
+  utcDateTimeSchema,
+  utf8ByteLength,
+  utf8ByteLimitedStringSchema,
+} from './primitives';
 export type { ProjectionIntent, ProjectionStatusV1 } from './projection';
 export { projectionIntentSchema, projectionStatusV1Schema } from './projection';
 export type { TaskPresentationPlan } from './task-projection';

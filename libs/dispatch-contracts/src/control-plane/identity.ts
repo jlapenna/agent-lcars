@@ -1,17 +1,23 @@
 import { z } from 'zod';
 
 import {
+  DURABLE_SCALAR_BYTE_LIMITS,
   opaqueIdSchema,
   positiveSafeIntegerSchema,
   sha256Schema,
   utcDateTimeSchema,
+  utf8ByteLimitedStringSchema,
 } from './primitives';
+
+const repositorySchema = utf8ByteLimitedStringSchema(
+  DURABLE_SCALAR_BYTE_LIMITS.repository,
+).regex(/^[^/\s]+\/[^/\s]+$/u);
 
 /** Registered tenant repository identity. The mutable slug is display metadata. */
 export const tenantRefSchema = z.strictObject({
   tenantId: opaqueIdSchema,
   repositoryId: positiveSafeIntegerSchema,
-  repository: z.string().regex(/^[^/\s]+\/[^/\s]+$/u),
+  repository: repositorySchema,
   installationId: positiveSafeIntegerSchema,
 });
 export type TenantRef = z.infer<typeof tenantRefSchema>;
@@ -31,7 +37,7 @@ export type CanonicalTaskIdentity = z.infer<typeof canonicalTaskIdentitySchema>;
 export const githubTaskDisplayMetadataSchema = z
   .strictObject({
     task: canonicalTaskIdentitySchema,
-    repository: z.string().regex(/^[^/\s]+\/[^/\s]+$/u),
+    repository: repositorySchema,
     subject: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('issue') }),
       z.strictObject({

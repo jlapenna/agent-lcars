@@ -7,8 +7,10 @@ import type {
 } from '@agent-lcars/dispatch-contracts';
 import {
   credentialGrantRequestSchema,
+  DURABLE_SCALAR_BYTE_LIMITS,
   runBindingSchema,
   utcDateTimeSchema,
+  utf8ByteLimitedStringSchema,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
@@ -32,15 +34,23 @@ const workerGrantOidcClaimsSchema = z
     jtiSha256: z.string().regex(SHA256),
     expiresAt: utcDateTimeSchema,
     repositoryId: z.number().int().safe().positive(),
-    repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+    repository: utf8ByteLimitedStringSchema(
+      DURABLE_SCALAR_BYTE_LIMITS.repository,
+    ).regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
     runId: z.number().int().safe().positive(),
     runAttempt: z.number().int().safe().positive(),
     checkRunId: z.number().int().safe().positive(),
     /** Raw GitHub `workflow_ref`: OWNER/REPO/PATH@REF. */
-    workflowRef: z.string().min(1),
+    workflowRef: utf8ByteLimitedStringSchema(
+      DURABLE_SCALAR_BYTE_LIMITS.workflowRef,
+    ).min(1),
     workflowSha: z.string().regex(GIT_COMMIT_SHA),
     /** Raw reusable-workflow claims; present only as a complete pair. */
-    jobWorkflowRef: z.string().min(1).optional(),
+    jobWorkflowRef: utf8ByteLimitedStringSchema(
+      DURABLE_SCALAR_BYTE_LIMITS.jobWorkflowRef,
+    )
+      .min(1)
+      .optional(),
     jobWorkflowSha: z.string().regex(GIT_COMMIT_SHA).optional(),
   })
   .superRefine((value, ctx) => {
