@@ -28,6 +28,8 @@ import {
   runLaunchResolutionHistoryStorageContract,
   runLaunchResolutionStorageContract,
 } from './launch-resolution.spec.support';
+import type { MarkLostCompositionFactory } from './mark-lost-history.spec.support';
+import { runMarkLostHistoryStorageContract } from './mark-lost-history.spec.support';
 import type { PresentationDeliveryStorageHooks } from './presentation-delivery.spec.support';
 import { runPresentationDeliveryStorageContract } from './presentation-delivery.spec.support';
 import {
@@ -71,6 +73,7 @@ export interface LifecycleAuthorityBackendFactory {
   validationHistory: ValidationHistoryStorageHooks;
   finalizationHistory: FinalizationHistoryStorageHooks;
   launchRejectionHistory: LaunchRejectionCompositionFactory;
+  markLostHistory: MarkLostCompositionFactory;
 }
 /**
  * Stable aggregate entrypoint for every provider-neutral storage contract.
@@ -127,6 +130,7 @@ export function runLifecycleAuthorityBackendContract(
     factory.finalizationHistory,
   );
   runLaunchRejectionHistoryStorageContract(factory.launchRejectionHistory);
+  runMarkLostHistoryStorageContract(factory.markLostHistory);
   runPresentationDeliveryStorageContract({ create, ...factory.presentation });
   runIngressPolicyInboxContract((clock, evidenceResolver) =>
     factory.createInbox(clock, evidenceResolver),

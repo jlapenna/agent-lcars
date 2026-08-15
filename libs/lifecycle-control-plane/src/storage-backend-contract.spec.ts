@@ -13,6 +13,8 @@ import { LaunchRejectionComposition } from './launch-rejection-composition';
 import { inMemoryLaunchRejectionHistoryHooks } from './launch-rejection-history.in-memory.spec.support';
 import { inMemoryLaunchResolutionHistoryStorageHooks } from './launch-resolution-history.in-memory.spec.support';
 import { writeAttemptForTest } from './launch-resolution-test-support';
+import { MarkLostComposition } from './mark-lost-composition';
+import { inMemoryMarkLostHistoryHooks } from './mark-lost-history.in-memory.spec.support';
 import { inMemoryPresentationDeliveryStorageHooks } from './presentation-delivery.in-memory.spec.support';
 import { runLifecycleAuthorityBackendContract } from './storage-backend-contract.spec.support';
 import { assertLifecycleAuthorityStorageMethodChecklist } from './storage-backend-method-checklist';
@@ -159,5 +161,18 @@ runLifecycleAuthorityBackendContract({
           verify: async (candidate) => candidate as never,
         },
       }).reject({ lease, proof, expectedAttemptRevision }),
+  },
+  markLostHistory: {
+    create: (clock) =>
+      new InMemoryLifecycleAuthorityStorage(clock, {
+        mint: () => 'A'.repeat(22),
+      }),
+    historyHooks: inMemoryMarkLostHistoryHooks(),
+    terminate: ({ storage, lease, now, request }) =>
+      new MarkLostComposition({
+        storage,
+        clock: { now: () => now },
+        verifier: { verifyRunStuck: ({ candidate }) => candidate },
+      }).terminate({ lease, ...request }),
   },
 });

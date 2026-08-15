@@ -61,6 +61,8 @@ export type {
   TrustedLaunchResponseVerifier,
 } from './launch-resolution-capability';
 export { LaunchResponseBoundary } from './launch-resolution-capability';
+export * from './mark-lost-capability';
+export * from './mark-lost-composition';
 export type {
   MarkLostEligibilityConflictReason,
   MarkLostEligibilityInput,

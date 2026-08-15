@@ -20,6 +20,8 @@ describe('lifecycle-control-plane public API', () => {
     expect(api.GitHubWorkerGrantOidcVerifier).toBeDefined();
     expect(api.RunBindingIngressVerifier).toBeDefined();
     expect(api.LaunchResponseBoundary).toBeDefined();
+    expect(api.MarkLostComposition).toBeDefined();
+    expect(api.MarkLostBoundary).toBeDefined();
     expect(api.GITHUB_ACTIONS_OIDC_ISSUER).toBe(
       'https://token.actions.githubusercontent.com',
     );
