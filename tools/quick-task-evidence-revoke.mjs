@@ -49,6 +49,16 @@ function exactBinding(metadata, input) {
   );
 }
 
+function exactTombstoneBinding(metadata, input) {
+  return exactBinding(
+    {
+      ...metadata,
+      generation: metadata.metadata?.generation,
+    },
+    input,
+  );
+}
+
 /**
  * Terminal revocation: verify the complete immutable binding, create the
  * permanent tombstone, then delete exactly the observed byte generation.
@@ -74,19 +84,36 @@ export async function revokeEvidence(bucket, input) {
   };
   if (!input.apply) return result;
 
-  await tombstone.save('', {
-    resumable: false,
-    preconditionOpts: { ifGenerationMatch: 0 },
-    metadata: {
+  try {
+    await tombstone.save('', {
+      resumable: false,
+      preconditionOpts: { ifGenerationMatch: 0 },
       metadata: {
-        schemaVersion: 'v1',
-        evidenceId: input.evidenceId,
-        repositoryId: input.repositoryId,
-        requestId: input.requestId,
-        generation: input.generation,
+        metadata: {
+          schemaVersion: 'v1',
+          evidenceId: input.evidenceId,
+          repositoryId: input.repositoryId,
+          requestId: input.requestId,
+          generation: input.generation,
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (error?.code !== 412) throw error;
+    let existing;
+    try {
+      [existing] = await tombstone.getMetadata();
+    } catch {
+      throw new Error('Evidence tombstone could not be verified', {
+        cause: error,
+      });
+    }
+    if (!exactTombstoneBinding(existing, input)) {
+      throw new Error('Evidence tombstone could not be verified', {
+        cause: error,
+      });
+    }
+  }
   await object.delete({ ifGenerationMatch: Number(input.generation) });
   return result;
 }
