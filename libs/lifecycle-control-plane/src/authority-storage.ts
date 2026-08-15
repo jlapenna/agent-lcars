@@ -2611,7 +2611,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       event = {
         kind: 'cancel-unlaunched',
         eventId,
-        supersededByIntentId: target.supersededByIntentId,
+        ...(target.supersededByIntentId === undefined
+          ? {}
+          : { supersededByIntentId: target.supersededByIntentId }),
         outcome: {
           schema: 'agent-lcars.attempt-outcome/v1',
           version: 1,

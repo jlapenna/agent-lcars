@@ -14537,40 +14537,6 @@ function displayTitleMatchesAttempt(displayTitle, attempt) {
   return Boolean(displayTitle?.includes(formatDispatchMarker(attempt)));
 }
 
-// libs/dispatch-contracts/src/outcomes.ts
-var DISPATCH_OUTCOME_KINDS = [
-  "startup-failure",
-  "trajectory-failure",
-  "outcome-gate-failure",
-  "park",
-  "no-op",
-  "pull-request",
-  "merged-deliverable",
-  "review",
-  "comment",
-  "closed",
-  "unknown-success"
-];
-var dispatchOutcomeKindSchema = external_exports.enum(DISPATCH_OUTCOME_KINDS);
-var dispatchOutcomeReferenceSchema = external_exports.looseObject({
-  kind: external_exports.literal("pull-request"),
-  number: external_exports.number().int().safe().positive()
-});
-function isDispatchOutcomeKind(value) {
-  return dispatchOutcomeKindSchema.safeParse(value).success;
-}
-function isDispatchOutcomeReference(value) {
-  return dispatchOutcomeReferenceSchema.safeParse(value).success;
-}
-var FAILURE_OUTCOME_KINDS = /* @__PURE__ */ new Set([
-  "startup-failure",
-  "trajectory-failure",
-  "outcome-gate-failure"
-]);
-function isFailureOutcomeKind(outcome) {
-  return FAILURE_OUTCOME_KINDS.has(outcome);
-}
-
 // libs/dispatch-contracts/src/failure.ts
 var OWNING_SYSTEMS = Object.freeze([
   "controller",
@@ -14740,6 +14706,40 @@ var failureClassificationSchema = external_exports.looseObject({
 });
 function isWellFormedFailureClassification(value) {
   return failureClassificationSchema.safeParse(value).success;
+}
+
+// libs/dispatch-contracts/src/outcomes.ts
+var DISPATCH_OUTCOME_KINDS = [
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure",
+  "park",
+  "no-op",
+  "pull-request",
+  "merged-deliverable",
+  "review",
+  "comment",
+  "closed",
+  "unknown-success"
+];
+var dispatchOutcomeKindSchema = external_exports.enum(DISPATCH_OUTCOME_KINDS);
+var dispatchOutcomeReferenceSchema = external_exports.looseObject({
+  kind: external_exports.literal("pull-request"),
+  number: external_exports.number().int().safe().positive()
+});
+function isDispatchOutcomeKind(value) {
+  return dispatchOutcomeKindSchema.safeParse(value).success;
+}
+function isDispatchOutcomeReference(value) {
+  return dispatchOutcomeReferenceSchema.safeParse(value).success;
+}
+var FAILURE_OUTCOME_KINDS = /* @__PURE__ */ new Set([
+  "startup-failure",
+  "trajectory-failure",
+  "outcome-gate-failure"
+]);
+function isFailureOutcomeKind(outcome) {
+  return FAILURE_OUTCOME_KINDS.has(outcome);
 }
 
 // libs/dispatch-contracts/src/projection.ts

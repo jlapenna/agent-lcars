@@ -11,6 +11,7 @@ import type {
 import {
   acceptedAttemptSpecSchema,
   attemptOutcomeSchema,
+  canonicalDurableJson,
   canonicalRuntimeObservationPayload,
   evidenceValidationSchema,
   runtimeObservationEnvelopeSchema,
@@ -215,22 +216,9 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, child]) => child !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalValue(child)]),
-    );
-  }
-  return value;
-}
-
 /** Stable source material for a caller-provided transition digest. */
 export function canonicalAttemptTransition(event: AttemptEvent): string {
-  return JSON.stringify(canonicalValue(event));
+  return canonicalDurableJson(event);
 }
 
 export function attemptTransitionDigest(event: AttemptEvent): string {
@@ -241,9 +229,7 @@ export function attemptTransitionDigest(event: AttemptEvent): string {
 
 /** The accepted spec is immutable; its digest is recomputed at registration. */
 export function attemptSpecDigest(spec: AcceptedAttemptSpec): string {
-  return createHash('sha256')
-    .update(JSON.stringify(canonicalValue(spec)))
-    .digest('hex');
+  return createHash('sha256').update(canonicalDurableJson(spec)).digest('hex');
 }
 
 function conflict(
@@ -259,7 +245,7 @@ function isTimestamp(value: string): boolean {
 }
 
 function sameBinding(left: RunBinding, right: RunBinding): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return canonicalDurableJson(left) === canonicalDurableJson(right);
 }
 
 function bindingMatchesSpec(
