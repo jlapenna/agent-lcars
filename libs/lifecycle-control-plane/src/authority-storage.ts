@@ -550,6 +550,17 @@ function same(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right);
 }
 
+/** History references are an optional shadow receipt, not idempotency input. */
+function sameObservationIdempotency(
+  left: StoredIdempotency | undefined,
+  right: StoredIdempotency | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const { historyRecordRef: _leftHistoryRecordRef, ...leftIdentity } = left;
+  const { historyRecordRef: _rightHistoryRecordRef, ...rightIdentity } = right;
+  return same(leftIdentity, rightIdentity);
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -1567,10 +1578,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           head.outcomeRef !== undefined &&
           head.outcomeDigest !==
             attemptHistoryPayloadDigest(attempt.outcome)) ||
-        (head.outcomeRef !== undefined && head.phase !== 'terminal') ||
-        (head.cancellation !== undefined &&
-          attempt.outcome === undefined &&
-          head.phase !== 'cancelling')
+        (head.outcomeRef !== undefined && head.phase !== 'terminal')
       ) {
         throw new AuthorityConflict(
           'Attempt history head conflicts with legacy Attempt',
@@ -1788,7 +1796,19 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       ) {
         throw new AuthorityConflict('Attempt terminal history is incomplete');
       }
-      if (head.outcomeRef === undefined && attempt.outcome === undefined) {
+      if (head.finalization !== undefined) {
+        // Validation/final-outcome shadowing is intentionally a later
+        // increment. The terminal observation prefix remains truthful while
+        // legacy state advances through validation and finalization.
+        if (head.phase !== 'result-observed') {
+          throw new AuthorityConflict(
+            'Attempt finalization history phase is invalid',
+          );
+        }
+      } else if (
+        head.outcomeRef === undefined &&
+        attempt.outcome === undefined
+      ) {
         const expectedPhase =
           head.cancellation !== undefined
             ? 'cancelling'
@@ -1857,25 +1877,100 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const facts = history.records.get('fact') ?? [];
       const unsupportedFact = facts.some(({ payload }) => {
         const kind = (payload as { payload?: { kind?: string } }).payload?.kind;
-        return kind !== 'run-bound';
+        return !['run-bound', 'run-terminal', 'agent-result-claim'].includes(
+          kind ?? '',
+        );
       });
       if (unsupportedFact) {
         throw new AuthorityConflict(
           'Attempt history fact mirror contains unsupported data',
         );
       }
-      if (facts.length !== (head.binding === undefined ? 0 : 1)) {
+      const terminalRecords = facts.filter(
+        ({ payload }) =>
+          (payload as { payload?: { kind?: string } }).payload?.kind ===
+          'run-terminal',
+      );
+      const claimFactRecords = facts.filter(
+        ({ payload }) =>
+          (payload as { payload?: { kind?: string } }).payload?.kind ===
+          'agent-result-claim',
+      );
+      if (
+        facts.length !==
+          (head.binding === undefined ? 0 : 1) +
+            terminalRecords.length +
+            claimFactRecords.length ||
+        terminalRecords.length > 1
+      ) {
         throw new AuthorityConflict('Attempt history fact mirror is invalid');
       }
       const evidenceRecords = history.records.get('evidence') ?? [];
       if (evidenceRecords.length > 1) {
         throw new AuthorityConflict('Attempt history evidence is duplicated');
       }
-      for (const stream of ['claim', 'validation'] as const) {
-        if ((history.records.get(stream) ?? []).length !== 0)
+      const claimRecords = history.records.get('claim') ?? [];
+      if (claimRecords.length !== claimFactRecords.length)
+        throw new AuthorityConflict('Attempt claim history mirror is invalid');
+      if ((history.records.get('validation') ?? []).length !== 0)
+        throw new AuthorityConflict('Attempt validation history is premature');
+      const expectedTerminalFactId =
+        attempt.pendingTerminal?.factId ?? attempt.finalization?.terminalFactId;
+      if (
+        (expectedTerminalFactId === undefined &&
+          terminalRecords.length !== 0) ||
+        (expectedTerminalFactId !== undefined &&
+          (terminalRecords.length > 1 ||
+            (terminalRecords.length === 1 &&
+              (terminalRecords[0]?.payload as { factId?: string }).factId !==
+                expectedTerminalFactId)))
+      ) {
+        throw new AuthorityConflict('Attempt terminal history is invalid');
+      }
+      const legacyClaimIds = [
+        ...attempt.pendingClaims.map((claim) => claim.factId),
+        ...(attempt.finalization?.evidence.map((claim) => claim.factId) ?? []),
+      ].sort();
+      const historicalClaimIds = claimFactRecords
+        .map(({ payload }) => (payload as { factId?: string }).factId)
+        .filter((value): value is string => value !== undefined)
+        .sort();
+      // Pre-history Attempts may already be in finalization when this shadow
+      // feature is introduced. Once any claim is mirrored, however, the
+      // tracked prefix must be exact and complete.
+      if (
+        claimFactRecords.length !== 0 &&
+        !same(legacyClaimIds, historicalClaimIds)
+      ) {
+        throw new AuthorityConflict(
+          'Attempt claim history conflicts with legacy state',
+        );
+      }
+      for (const entry of facts) {
+        const payload = entry.payload as {
+          factId?: string;
+          requestId?: string;
+          canonicalDigest?: string;
+          payload?: { kind?: string };
+        };
+        if (
+          payload.payload?.kind !== 'run-bound' &&
+          payload.payload?.kind !== 'run-terminal' &&
+          payload.payload?.kind !== 'agent-result-claim'
+        )
+          continue;
+        if (
+          !attempt.facts.some(
+            (fact) =>
+              fact.factId === payload.factId &&
+              fact.requestId === payload.requestId &&
+              fact.canonicalDigest === payload.canonicalDigest,
+          )
+        ) {
           throw new AuthorityConflict(
-            'Attempt history auxiliary mirror is invalid',
+            'Attempt fact history conflicts with legacy state',
           );
+        }
       }
       const directCancellation = cancellationCommands.find(
         ({ value }) => value.payload?.kind === 'cancel-unlaunched',
@@ -5015,6 +5110,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       throw new AuthorityConflict('Attempt is unknown');
     }
     this.assertLease(input.lease, current.spec.task, this.now());
+    this.assertFinalizationHistoryLineage(current);
 
     let event: AttemptEvent;
     if (transition.kind === 'observation') {
@@ -5178,8 +5274,13 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       this.preflightObservation(observationIdentity, current);
     }
     if (reduced.status === 'replay') {
-      if (observationIdentity !== undefined)
+      if (observationIdentity !== undefined) {
         this.assertObservationReplay(observationIdentity);
+        this.assertFinalizationObservationHistoryReplay(
+          observationIdentity,
+          current,
+        );
+      }
       return 'replay';
     }
     const work = reduced.effects.filter(
@@ -5213,15 +5314,44 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         : undefined;
     if (presentation !== undefined)
       this.preflightNewAttemptPresentation(presentation);
-    this.writeAttemptTransaction({
-      lease: input.lease,
-      expectedRevision: current.revision,
-      next: reduced.state,
-    });
-    if (presentation !== undefined)
-      this.persistAttemptPresentation(presentation);
-    if (observationIdentity !== undefined)
-      this.persistObservation(observationIdentity);
+    const historyTransition =
+      observation === undefined
+        ? undefined
+        : this.appendFinalizationObservationHistory({
+            attempt: current,
+            next: reduced.state,
+            event: event as Extract<AttemptEvent, { kind: 'observation' }>,
+            transitionedAt: transition.at,
+          });
+    const previousAttempt = this.attempts.get(current.spec.attemptId);
+    const previousOutcome = this.outcomes.get(current.spec.attemptId);
+    const previousHistory = this.attemptHistories.get(current.spec.attemptId);
+    const previousFact =
+      observationIdentity === undefined
+        ? undefined
+        : this.factKeys.get(observationKeys(observationIdentity).factKey);
+    const previousRequest =
+      observationIdentity === undefined
+        ? undefined
+        : this.requestKeys.get(observationKeys(observationIdentity).requestKey);
+    const presentationKey = presentation?.key;
+    const presentationReceiptKey = presentation?.receiptKey;
+    const deliveryKey = presentation
+      ? presentationDeliveryKey(attemptDeliveryTarget(presentation.record))
+      : undefined;
+    const previousPresentation =
+      presentationKey === undefined
+        ? undefined
+        : this.attemptPresentations.get(presentationKey);
+    const previousPresentationReceipt =
+      presentationReceiptKey === undefined
+        ? undefined
+        : this.attemptPresentationReceipts.get(presentationReceiptKey);
+    const previousDelivery =
+      deliveryKey === undefined
+        ? undefined
+        : this.presentationDeliveries.get(deliveryKey);
+    const previousWork = new Map<string, ValidationWorkRecord | undefined>();
     for (const effect of work) {
       const key = validationWorkKey(
         current.spec.tenant.tenantId,
@@ -5229,35 +5359,109 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         effect.terminalFactId,
         effect.claimFactId,
       );
-      this.validationWork.set(key, {
-        tenantId: current.spec.tenant.tenantId,
-        attemptId: effect.attemptId,
-        terminalFactId: effect.terminalFactId,
-        claimFactId: effect.claimFactId,
-        claim: clone(effect.claim),
-        state: 'pending',
-      });
+      previousWork.set(key, this.validationWork.get(key));
     }
     if (transition.kind === 'validate-claim') {
       const terminalFactId = current.finalization?.terminalFactId;
-      if (terminalFactId === undefined) {
-        throw new AuthorityConflict('Validation terminal fact is absent');
+      if (terminalFactId !== undefined) {
+        const key = validationWorkKey(
+          transition.tenantId,
+          transition.attemptId,
+          terminalFactId,
+          transition.claimFactId,
+        );
+        previousWork.set(key, this.validationWork.get(key));
       }
-      const key = validationWorkKey(
-        transition.tenantId,
-        transition.attemptId,
-        terminalFactId,
-        transition.claimFactId,
-      );
-      const prior = this.validationWork.get(key);
-      if (prior === undefined) {
-        throw new AuthorityConflict('Validation work is absent');
-      }
-      this.validationWork.set(key, {
-        ...prior,
-        state: 'complete',
-        validationFactId: transition.validationFactId,
+    }
+    const restore = <T>(
+      map: Map<string, T>,
+      key: string,
+      value: T | undefined,
+    ): void => {
+      if (value === undefined) Map.prototype.delete.call(map, key);
+      else Map.prototype.set.call(map, key, value);
+    };
+    try {
+      this.writeAttemptTransaction({
+        lease: input.lease,
+        expectedRevision: current.revision,
+        next: reduced.state,
       });
+      if (presentation !== undefined)
+        this.persistAttemptPresentation(presentation);
+      if (observationIdentity !== undefined)
+        this.persistObservation(
+          observationIdentity,
+          historyTransition?.factRef,
+        );
+      for (const effect of work) {
+        const key = validationWorkKey(
+          current.spec.tenant.tenantId,
+          effect.attemptId,
+          effect.terminalFactId,
+          effect.claimFactId,
+        );
+        this.validationWork.set(key, {
+          tenantId: current.spec.tenant.tenantId,
+          attemptId: effect.attemptId,
+          terminalFactId: effect.terminalFactId,
+          claimFactId: effect.claimFactId,
+          claim: clone(effect.claim),
+          state: 'pending',
+        });
+      }
+      if (transition.kind === 'validate-claim') {
+        const terminalFactId = current.finalization?.terminalFactId;
+        if (terminalFactId === undefined) {
+          throw new AuthorityConflict('Validation terminal fact is absent');
+        }
+        const key = validationWorkKey(
+          transition.tenantId,
+          transition.attemptId,
+          terminalFactId,
+          transition.claimFactId,
+        );
+        const prior = this.validationWork.get(key);
+        if (prior === undefined) {
+          throw new AuthorityConflict('Validation work is absent');
+        }
+        this.validationWork.set(key, {
+          ...prior,
+          state: 'complete',
+          validationFactId: transition.validationFactId,
+        });
+      }
+      if (historyTransition !== undefined)
+        this.attemptHistories.set(
+          current.spec.attemptId,
+          historyTransition.history,
+        );
+    } catch (error) {
+      restore(this.attempts, current.spec.attemptId, previousAttempt);
+      restore(this.outcomes, current.spec.attemptId, previousOutcome);
+      restore(this.attemptHistories, current.spec.attemptId, previousHistory);
+      if (observationIdentity !== undefined) {
+        const { factKey, requestKey } = observationKeys(observationIdentity);
+        restore(this.factKeys, factKey, previousFact);
+        restore(this.requestKeys, requestKey, previousRequest);
+      }
+      for (const [key, value] of previousWork)
+        restore(this.validationWork, key, value);
+      if (presentationKey !== undefined)
+        restore(
+          this.attemptPresentations,
+          presentationKey,
+          previousPresentation,
+        );
+      if (presentationReceiptKey !== undefined)
+        restore(
+          this.attemptPresentationReceipts,
+          presentationReceiptKey,
+          previousPresentationReceipt,
+        );
+      if (deliveryKey !== undefined)
+        restore(this.presentationDeliveries, deliveryKey, previousDelivery);
+      throw error;
     }
     return 'applied';
   }
@@ -5285,7 +5489,247 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     };
   }
 
-  private observationRecords(identity: ObservationIdentity): {
+  /**
+   * Compatibility is only for Attempts created before history existed. Once
+   * admission has durable lineage, a missing sibling is corruption, never a
+   * reason to silently stop shadowing terminal evidence.
+   */
+  private assertFinalizationHistoryLineage(attempt: AttemptState): void {
+    const localKey = tupleKey(
+      attempt.spec.task.tenantId,
+      attempt.spec.task.repositoryId,
+      attempt.spec.task.issueNumber,
+      attempt.spec.local.intentId,
+      attempt.spec.local.generation,
+    );
+    const receipt = this.attemptAdmissionHistoryReceipts.get(localKey);
+    const history = this.attemptHistories.get(attempt.spec.attemptId);
+    if (receipt === undefined && history === undefined) return;
+    const acceptance = this.acceptances.get(localKey);
+    const taskHistory = this.taskHistories.get(
+      canonicalTaskKey(attempt.spec.task),
+    );
+    if (
+      receipt === undefined ||
+      history === undefined ||
+      acceptance === undefined ||
+      taskHistory === undefined ||
+      acceptance.attemptId !== attempt.spec.attemptId ||
+      acceptance.specDigest !== attempt.specDigest ||
+      receipt.attemptId !== attempt.spec.attemptId ||
+      receipt.tenantId !== attempt.spec.tenant.tenantId ||
+      !same(receipt.task, attempt.spec.task) ||
+      receipt.specDigest !== attempt.specDigest
+    ) {
+      throw new AuthorityConflict(
+        'Attempt admission history lineage is invalid',
+      );
+    }
+    this.assertStoredTaskHistoryIntegrity(attempt.spec.task, taskHistory);
+    this.assertStoredAttemptHistoryIntegrity(history, attempt);
+    this.assertStoredAttemptAdmissionHistoryReceipt({
+      receipt,
+      taskHistory,
+      attemptHistory: history,
+      attempt,
+    });
+  }
+
+  /**
+   * The legacy reducer remains the source of truth.  When this Attempt has
+   * history lineage, mirror a finalizer observation in the same durable
+   * transition so the history head cannot get ahead of the legacy state.
+   */
+  private appendFinalizationObservationHistory(input: {
+    attempt: AttemptState;
+    next: AttemptState;
+    event: Extract<AttemptEvent, { kind: 'observation' }>;
+    transitionedAt: string;
+  }):
+    | {
+        history: StoredAttemptHistory;
+        factRef: HistoryRecordReference;
+      }
+    | undefined {
+    const existing = this.attemptHistories.get(input.attempt.spec.attemptId);
+    if (existing === undefined) return undefined;
+    this.assertStoredAttemptHistoryIntegrity(existing, input.attempt);
+    const envelope = input.event.envelope;
+    const payload =
+      envelope.payload.kind === 'run-terminal'
+        ? {
+            kind: 'run-terminal' as const,
+            binding: envelope.payload.binding,
+            conclusion: envelope.payload.conclusion,
+            observedAt: envelope.payload.observedAt,
+            finalizationDeadline: input.event.finalizationDeadline,
+          }
+        : envelope.payload.kind === 'agent-result-claim'
+          ? {
+              kind: 'agent-result-claim' as const,
+              claimFactId: envelope.factId,
+              claimDigest: attemptHistoryPayloadDigest({
+                kind: 'agent-result-claim',
+                claim: envelope.payload.claim,
+              }),
+              claim: envelope.payload.claim,
+            }
+          : undefined;
+    if (payload === undefined) {
+      throw new AuthorityConflict('Finalization observation kind is invalid');
+    }
+    const factPayload = {
+      schema: 'agent-lcars.attempt-fact/v1' as const,
+      version: 1 as const,
+      factId: envelope.factId,
+      requestId: envelope.requestId,
+      source: envelope.source,
+      observedAt: envelope.observedAt,
+      transitionedAt: input.transitionedAt,
+      payloadSha256: envelope.payloadSha256,
+      canonicalDigest: attemptTransitionDigest(input.event),
+      payload,
+    };
+    const identity = {
+      tenantId: input.attempt.spec.tenant.tenantId,
+      attemptId: input.attempt.spec.attemptId,
+    };
+    try {
+      const factRecord = appendHistoryRecord({
+        head: existing.head.streams.fact,
+        payload: factPayload,
+        appliedRevision: input.next.revision,
+      }).record;
+      const factRef = attemptHistoryRecordReference(
+        factRecord,
+        identity,
+        'fact',
+      );
+      const emitted: Array<{ stream: AttemptHistoryStream; payload: unknown }> =
+        [{ stream: 'fact', payload: factPayload }];
+      if (payload.kind === 'agent-result-claim') {
+        emitted.push({
+          stream: 'claim',
+          payload: {
+            schema: 'agent-lcars.attempt-claim/v1' as const,
+            version: 1 as const,
+            claimFactId: payload.claimFactId,
+            factRef,
+            requestId: envelope.requestId,
+            observedAt: envelope.observedAt,
+            transitionedAt: input.transitionedAt,
+            claimDigest: payload.claimDigest,
+            claim: payload.claim,
+          },
+        });
+      }
+      const transition = appendAttemptHistoryTransition({
+        head: existing.head,
+        nextRevision: input.next.revision,
+        transitionedAt: input.transitionedAt,
+        emitted,
+      });
+      const payloadsByStream = new Map<AttemptHistoryStream, unknown[]>();
+      for (const emission of emitted) {
+        const values = payloadsByStream.get(emission.stream) ?? [];
+        values.push(emission.payload);
+        payloadsByStream.set(emission.stream, values);
+      }
+      const records = new Map(existing.records);
+      for (const record of transition.records) {
+        const stream = record.streamKind as AttemptHistoryStream;
+        const historyPayload = payloadsByStream.get(stream)?.shift();
+        if (historyPayload === undefined)
+          throw new AuthorityConflict(
+            'Finalization history payload is missing',
+          );
+        records.set(stream, [
+          ...(existing.records.get(stream) ?? []),
+          { record: clone(record), payload: clone(historyPayload) },
+        ]);
+      }
+      const stored = { head: clone(transition.head), records };
+      this.assertStoredAttemptHistoryIntegrity(stored, input.next);
+      return { history: stored, factRef };
+    } catch (error) {
+      if (error instanceof AuthorityConflict) throw error;
+      throw new AuthorityConflict('Finalization history transition is invalid');
+    }
+  }
+
+  private assertFinalizationObservationHistoryReplay(
+    identity: ObservationIdentity,
+    attempt: AttemptState,
+  ): void {
+    const history = this.attemptHistories.get(identity.attemptId);
+    const { factKey, requestKey } = observationKeys(identity);
+    const fact = this.factKeys.get(factKey);
+    const request = this.requestKeys.get(requestKey);
+    const ref = fact?.historyRecordRef ?? request?.historyRecordRef;
+    if (history === undefined) {
+      if (ref !== undefined)
+        throw new AuthorityConflict('Finalization history receipt is orphaned');
+      return;
+    }
+    this.assertStoredAttemptHistoryIntegrity(history, attempt);
+    if (
+      ref === undefined ||
+      !same(fact?.historyRecordRef, ref) ||
+      !same(request?.historyRecordRef, ref)
+    ) {
+      throw new AuthorityConflict('Finalization history receipt is missing');
+    }
+    const entry = history.records
+      .get('fact')
+      ?.find(({ record }) =>
+        same(
+          attemptHistoryRecordReference(
+            record,
+            { tenantId: identity.tenantId, attemptId: identity.attemptId },
+            'fact',
+          ),
+          ref,
+        ),
+      );
+    if (entry === undefined)
+      throw new AuthorityConflict('Finalization history fact is missing');
+    const payload = verifyAttemptHistoryPayload(
+      'fact',
+      entry.record,
+      entry.payload,
+      { tenantId: identity.tenantId, attemptId: identity.attemptId },
+    ).payload as {
+      factId: string;
+      requestId: string;
+      payloadSha256: string;
+      canonicalDigest: string;
+      payload: { kind: string; claimFactId?: string };
+    };
+    if (
+      payload.factId !== identity.factId ||
+      payload.requestId !== identity.requestId ||
+      payload.payloadSha256 !== identity.payloadSha256 ||
+      payload.canonicalDigest !== identity.canonicalDigest ||
+      !['run-terminal', 'agent-result-claim'].includes(payload.payload.kind)
+    ) {
+      throw new AuthorityConflict('Finalization history fact conflicts');
+    }
+    if (payload.payload.kind === 'agent-result-claim') {
+      const claim = history.records
+        .get('claim')
+        ?.find(
+          ({ payload: value }) =>
+            (value as { claimFactId?: string }).claimFactId === identity.factId,
+        );
+      if (claim === undefined)
+        throw new AuthorityConflict('Finalization claim history is missing');
+    }
+  }
+
+  private observationRecords(
+    identity: ObservationIdentity,
+    historyRecordRef?: HistoryRecordReference,
+  ): {
     factKey: string;
     requestKey: string;
     fact: StoredIdempotency;
@@ -5300,12 +5744,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         canonicalDigest: identity.canonicalDigest,
         payloadSha256: identity.payloadSha256,
         resourceId: identity.attemptId,
+        ...(historyRecordRef === undefined ? {} : { historyRecordRef }),
       },
       request: {
         counterpartId: identity.factId,
         canonicalDigest: identity.canonicalDigest,
         payloadSha256: identity.payloadSha256,
         resourceId: identity.attemptId,
+        ...(historyRecordRef === undefined ? {} : { historyRecordRef }),
       },
     };
   }
@@ -5331,7 +5777,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
     if (
       priorFact !== undefined &&
-      (!same(priorFact, fact) || !same(priorRequest, request))
+      (!sameObservationIdempotency(priorFact, fact) ||
+        !sameObservationIdempotency(priorRequest, request))
     ) {
       throw new AuthorityConflict(
         'Fact/request identity was reused differently',
@@ -5343,8 +5790,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     const { factKey, requestKey, fact, request } =
       this.observationRecords(identity);
     if (
-      !same(this.factKeys.get(factKey), fact) ||
-      !same(this.requestKeys.get(requestKey), request)
+      !sameObservationIdempotency(this.factKeys.get(factKey), fact) ||
+      !sameObservationIdempotency(this.requestKeys.get(requestKey), request)
     ) {
       throw new AuthorityConflict(
         'Observation replay was not durably recorded',
@@ -5352,9 +5799,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
   }
 
-  private persistObservation(identity: ObservationIdentity): void {
-    const { factKey, requestKey, fact, request } =
-      this.observationRecords(identity);
+  private persistObservation(
+    identity: ObservationIdentity,
+    historyRecordRef?: HistoryRecordReference,
+  ): void {
+    const { factKey, requestKey, fact, request } = this.observationRecords(
+      identity,
+      historyRecordRef,
+    );
     this.factKeys.set(factKey, fact);
     this.requestKeys.set(requestKey, request);
   }

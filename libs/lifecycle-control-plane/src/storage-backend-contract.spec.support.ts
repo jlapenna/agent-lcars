@@ -37,6 +37,7 @@ import {
   runTaskEffectStorageContract,
   runTaskPresentationStorageContract,
 } from './task-effects.spec.support';
+import type { TerminalClaimHistoryStorageHooks } from './terminal-claim-history.in-memory.spec.support';
 import { runAttemptFinalizerStorageContract } from './terminal-finalizer.spec.support';
 
 /** A durable adapter's test factory may control trusted time and IDs. */
@@ -60,6 +61,7 @@ export interface LifecycleAuthorityBackendFactory {
   bindingHistory: BindingHistoryStorageHooks;
   launchResolutionHistory: LaunchResolutionHistoryStorageHooks;
   cancellationHistory: CancellationHistoryStorageHooks;
+  terminalClaimHistory: TerminalClaimHistoryStorageHooks;
 }
 /**
  * Stable aggregate entrypoint for every provider-neutral storage contract.
@@ -103,8 +105,9 @@ export function runLifecycleAuthorityBackendContract(
     () => create({ now: () => '2026-08-01T00:00:00.000Z' }),
     factory.bindingHistory,
   );
-  runAttemptFinalizerStorageContract((clock) =>
-    factory.create(clock, { mint: () => 'A'.repeat(22) }),
+  runAttemptFinalizerStorageContract(
+    (clock) => factory.create(clock, { mint: () => 'A'.repeat(22) }),
+    factory.terminalClaimHistory,
   );
   runPresentationDeliveryStorageContract({ create, ...factory.presentation });
   runIngressPolicyInboxContract((clock, evidenceResolver) =>
