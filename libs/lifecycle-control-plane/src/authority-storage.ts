@@ -4338,6 +4338,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       receipt.rejectedAt !== rejection.rejectedAt ||
       rejection.expectedAttemptRevision + 1 !== attempt.revision ||
       receipt.canonicalDigest !== attemptTransitionDigest(event) ||
+      !same(event.outcome, outcome) ||
       receipt.outcomeDigest !== attemptHistoryPayloadDigest(outcome) ||
       this.outcomes.get(attempt.spec.attemptId) !== canonicalJson(outcome) ||
       !attempt.commands.some(
@@ -7733,6 +7734,23 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       operationId: proof.operationId,
       executionEpoch: proof.executionEpoch,
     });
+    const receiptKey = tupleKey(proof.attemptId, eventId);
+    const priorReceipt = this.launchRejectionReceipts.get(receiptKey);
+    if (
+      priorReceipt !== undefined &&
+      priorReceipt.proofSha256 !== proof.proofSha256
+    ) {
+      throw new AuthorityConflict(
+        'Launch rejection identity was reused differently',
+      );
+    }
+    // A response-lost retry is a replay of one durable decision, not a new
+    // clock-derived decision. The stored receipt is authoritative only after
+    // the proof identity/digest above has matched exactly.
+    const canonicalRejection =
+      priorReceipt === undefined
+        ? rejection
+        : { ...rejection, rejectedAt: priorReceipt.rejectedAt };
     const event: Extract<AttemptEvent, { kind: 'launch-rejected' }> = {
       kind: 'launch-rejected',
       eventId,
@@ -7752,11 +7770,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         },
         evidence: { kind: 'lifecycle-decision', decisionFactId: eventId },
         evidenceValidation: { status: 'not-applicable' },
-        finalizedAt: rejection.rejectedAt,
+        finalizedAt: canonicalRejection.rejectedAt,
       },
     };
-    const receiptKey = tupleKey(proof.attemptId, event.eventId);
-    const priorReceipt = this.launchRejectionReceipts.get(receiptKey);
     this.assertFinalizationHistoryLineage(attempt);
     if (attempt.phase === 'terminal') {
       if (priorReceipt === undefined) {
@@ -7768,7 +7784,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         attempt,
         launch,
         event,
-        rejection,
+        rejection: canonicalRejection,
         receipt: priorReceipt,
       });
       return 'replay';
@@ -7782,7 +7798,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       );
     }
     if (
-      attempt.revision !== rejection.expectedAttemptRevision ||
+      attempt.revision !== canonicalRejection.expectedAttemptRevision ||
       !['launch-pending', 'launch-response-unknown'].includes(attempt.phase) ||
       attempt.binding !== undefined ||
       attempt.pendingTerminal !== undefined ||
@@ -7799,8 +7815,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
     const reduced = reduceAttempt(attempt, {
       kind: 'transition',
-      expectedRevision: rejection.expectedAttemptRevision,
-      transitionedAt: rejection.rejectedAt,
+      expectedRevision: canonicalRejection.expectedAttemptRevision,
+      transitionedAt: canonicalRejection.rejectedAt,
       canonicalDigest: attemptTransitionDigest(event),
       event,
     });
@@ -7821,7 +7837,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const commandPayload = {
         schema: 'agent-lcars.attempt-command/v1' as const,
         version: 1 as const,
-        transitionedAt: rejection.rejectedAt,
+        transitionedAt: canonicalRejection.rejectedAt,
         canonicalDigest: attemptTransitionDigest(event),
         payload: {
           kind: 'launch-rejected' as const,
@@ -7853,7 +7869,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           outcome: reduced.state.outcome as NonNullable<
             AttemptState['outcome']
           >,
-          transitionedAt: rejection.rejectedAt,
+          transitionedAt: canonicalRejection.rejectedAt,
         };
         const emitted: Array<{
           stream: AttemptHistoryStream;
@@ -7865,7 +7881,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         const transition = appendAttemptHistoryTransition({
           head: existingHistory.head,
           nextRevision: reduced.state.revision,
-          transitionedAt: rejection.rejectedAt,
+          transitionedAt: canonicalRejection.rejectedAt,
           emitted,
           priorRecords: [...existingHistory.records.values()].flatMap(
             (records) =>
@@ -7952,7 +7968,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     try {
       this.writeAttemptTransaction({
         lease: input.lease,
-        expectedRevision: rejection.expectedAttemptRevision,
+        expectedRevision: canonicalRejection.expectedAttemptRevision,
         next: reduced.state,
       });
       const {
@@ -7967,7 +7983,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       this.persistAttemptPresentation(presentation);
       this.launchRejectionReceipts.set(receiptKey, {
         proofSha256: proof.proofSha256,
-        rejectedAt: rejection.rejectedAt,
+        rejectedAt: canonicalRejection.rejectedAt,
         canonicalDigest: attemptTransitionDigest(event),
         outcomeDigest: attemptHistoryPayloadDigest(reduced.state.outcome),
         ...(historyReceipt === undefined
