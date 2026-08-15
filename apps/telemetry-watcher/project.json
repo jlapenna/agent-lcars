@@ -79,6 +79,34 @@
         }
       }
     },
+    "session-title-cli": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "platform": "node",
+        "outputPath": "dist/apps/telemetry-watcher-session-title-cli",
+        "outputFileName": "lcars-session-title.cjs",
+        "format": ["cjs"],
+        "bundle": true,
+        "thirdParty": true,
+        "target": "node24",
+        "main": "apps/telemetry-watcher/src/session-title-cli.ts",
+        "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
+        "skipTypeCheck": true,
+        "esbuildOptions": {
+          "sourcemap": false
+        }
+      },
+      "configurations": {
+        "development": {},
+        "production": {
+          "esbuildOptions": {
+            "sourcemap": false
+          }
+        }
+      }
+    },
     "docker-build": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
