@@ -6,6 +6,7 @@ import {
   type LifecycleAuthorityStorage,
 } from './authority-storage';
 import { inMemoryCancellationHistoryStorageHooks } from './cancellation-history.in-memory.spec.support';
+import { inMemoryFinalizationHistoryHooks } from './finalization-history.in-memory.spec.support';
 import { InMemoryIngressPolicyInbox } from './ingress-policy';
 import { inMemoryBindingHistoryHooks } from './launch-binding-history-test-support';
 import { inMemoryLaunchResolutionHistoryStorageHooks } from './launch-resolution-history.in-memory.spec.support';
@@ -141,4 +142,5 @@ runLifecycleAuthorityBackendContract({
   cancellationHistory: inMemoryCancellationHistoryStorageHooks(),
   terminalClaimHistory: inMemoryTerminalClaimHistoryHooks(),
   validationHistory: inMemoryValidationHistoryHooks(),
+  finalizationHistory: inMemoryFinalizationHistoryHooks(),
 });
