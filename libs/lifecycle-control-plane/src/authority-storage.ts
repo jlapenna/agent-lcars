@@ -1,10 +1,9 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   AcceptedAttemptSpec,
   ActivationProvenance,
   ActivationRecord,
-  AttemptHistoryHead,
   AttemptHistoryStream,
   AttemptPresentationPlan,
   CredentialGrantIssuance,
@@ -14,11 +13,9 @@ import type {
   ReplayReceipt,
   RunBinding,
   TaskFactHistoryPayload,
-  TaskHistoryHead,
   TaskIntentHistoryPayload,
   TaskPresentationPlan,
 } from '@agent-lcars/dispatch-contracts';
-import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
   acceptedAttemptSpecSchema,
   appendAttemptHistoryTransition,
@@ -27,8 +24,6 @@ import {
   attemptHistoryPayloadDigest,
   attemptHistoryRecordReference,
   attemptHistoryTransitionDigest,
-  attemptPresentationPlanSchema,
-  canonicalDurableJson,
   createGenesisHistoryHead,
   createGenesisTaskHistoryHead,
   createReplayReceipt,
@@ -40,9 +35,7 @@ import {
   localAttemptMarkerSchema,
   registerAttemptHistory,
   runtimeObservationEnvelopeSchema,
-  sha256Digest,
   taskHistoryHeadSchema,
-  taskPresentationPlanSchema,
   upgradeLegacyTaskIntentState,
   validateDurableTransition,
   validateTaskHistoryTransition,
@@ -71,6 +64,93 @@ import {
   reduceAttempt,
 } from './attempt-reducer';
 import { registerAttemptTestHydrator } from './attempt-test-hydration';
+import type {
+  AdmissionResult,
+  AttemptIdFactory,
+  AttemptPresentationRecord,
+  AuthorityClock,
+  CancellationEffectResult,
+  CancellationWorkRecord,
+  EffectAuthorityScope,
+  LaunchOutboxRecord,
+  LaunchWorkClaim,
+  LifecycleAuthorityStorage,
+  MintIdentity,
+  MintReservation,
+  ObservationIdentity,
+  PresentationDeliveryClaim,
+  PresentationDeliveryRecord,
+  PresentationDeliveryTarget,
+  TaskAuthorityLease,
+  TaskAuthorityScope,
+  TaskEffectClaim,
+  TaskEffectRecord,
+  TaskEffectTransitionResult,
+  TaskPresentationRecord,
+  ValidationWorkRecord,
+  WriteResult,
+} from './authority-port';
+import {
+  activationKey,
+  admissionAcceptanceKey,
+  admissionCommandDigest,
+  attemptDeliveryTarget,
+  attemptPresentationKey,
+  AuthorityConflict,
+  bindingKey,
+  cancellationEventId,
+  canonicalJson,
+  canonicalTaskKey,
+  clone,
+  deriveAttemptPresentation,
+  type DerivedAttemptPresentation,
+  finalizationPresentationProvenance,
+  mintKeys,
+  observationKeys,
+  observationSourceIdentity,
+  parsedTime,
+  presentationClaimTokenDigest,
+  presentationDeliveryKey,
+  presentationPlanDigest,
+  publicPresentationDeliveryRecord,
+  same,
+  sameObservationIdempotency,
+  taskDeliveryTarget,
+  taskEffectKey,
+  taskHistoryKey,
+  taskHistoryRecordKey,
+  taskHistoryRecordReferenceKey,
+  taskPresentationDigest,
+  taskPresentationForEffect,
+  taskPresentationKey,
+  taskSnapshotDigest,
+  taskTransitionReceiptKey,
+  tupleKey,
+  validationWorkKey,
+} from './authority-primitives';
+export * from './authority-port';
+import {
+  type StoredAcceptance,
+  type StoredAttemptAdmissionHistoryReceipt,
+  type StoredAttemptHistory,
+  type StoredAttemptHistoryRecord,
+  type StoredCancellationReceipt,
+  type StoredFinalizationHistoryReceipt,
+  type StoredIdempotency,
+  type StoredLaunchRejectionReceipt,
+  type StoredLaunchResolutionReceipt,
+  type StoredMarkLostReceipt,
+  type StoredMint,
+  type StoredPresentationDeliveryReceipt,
+  type StoredPresentationDeliveryRecord,
+  type StoredRunStuckObservation,
+  type StoredTaskEffectReceipt,
+  type StoredTaskHistory,
+  type StoredTaskHistoryRecord,
+  type StoredValidationHistoryReceipt,
+  systemAttemptIds,
+  systemClock,
+} from './authority-records';
 import {
   isVerifiedCancellationEffect,
   type VerifiedCancellationEffect,
@@ -91,7 +171,6 @@ import {
   isVerifiedLaunchResolution,
   launchResolutionEventId,
   mintClaimedLaunchWork,
-  type VerifiedClaimedLaunchWork,
   type VerifiedLaunchResolution,
 } from './launch-resolution-capability';
 import {
@@ -135,1151 +214,15 @@ import {
 import {
   admitTaskAttempt,
   reduceTaskIntent,
-  type TaskIntentEffect,
   taskIntentInputDigest,
   type TaskIntentState,
 } from './task-intent-reducer';
 import { registerTaskTestHydrator } from './task-test-hydration';
 
+export { AuthorityConflict };
+
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ATTEMPT_ID = /^[A-Za-z0-9_-]{22,64}$/u;
-
-export interface TaskAuthorityScope {
-  tenantId: string;
-  repositoryId: number;
-  issueNumber: number;
-}
-
-export interface EffectAuthorityScope extends TaskAuthorityScope {
-  taskClassId: string;
-}
-
-export interface TaskAuthorityLease {
-  taskKey: string;
-  ownerId: string;
-  /** Monotonic for this task, including release/reacquire ABA cycles. */
-  fence: number;
-  acquiredAt: string;
-  expiresAt: string;
-}
-
-/** Implementations supply a trusted server/storage clock. */
-export interface AuthorityClock {
-  now(): string;
-}
-
-/** Storage mints an id only after its acceptance preflight succeeds. */
-export interface AttemptIdFactory {
-  mint(): string;
-}
-
-export interface LaunchOutboxRecord {
-  operationId: string;
-  attemptId: string;
-  tenantId: string;
-  repositoryId: number;
-  issueNumber: number;
-  executionEpoch: number;
-  state: 'pending' | 'dispatching' | 'accepted' | 'unknown' | 'suppressed';
-  claimedFence?: number;
-  claimToken?: string;
-}
-
-export interface LaunchWorkClaim {
-  status: 'claimed' | 'replay' | 'terminal';
-  work?: VerifiedClaimedLaunchWork;
-}
-
-export interface ObservationIdentity {
-  tenantId: string;
-  repositoryId: number;
-  attemptId: string;
-  sourceIdentity: string;
-  factId: string;
-  requestId: string;
-  canonicalDigest: string;
-  payloadSha256: string;
-}
-
-export interface MintIdentity {
-  tenantId: string;
-  repositoryId: number;
-  attemptId: string;
-  sourceIdentity: string;
-  binding: RunBinding;
-  requestId: string;
-  /** One-way SHA-256 of a signed OIDC JTI; raw JTIs are never durable. */
-  jtiSha256: string;
-  canonicalDigest: string;
-}
-
-export interface AdmissionResult {
-  replay: boolean;
-  task?: TaskIntentState;
-  attempt?: AttemptState;
-  launch: LaunchOutboxRecord;
-}
-
-export type WriteResult = 'applied' | 'replay';
-
-export interface MintReservation {
-  status: 'created' | 'existing';
-  grant: CredentialGrantIssuance;
-}
-
-export interface ValidationWorkRecord {
-  tenantId: string;
-  attemptId: string;
-  terminalFactId: string;
-  claimFactId: string;
-  claim: AgentResultClaimV1;
-  state: 'pending' | 'resolving' | 'complete';
-  claimedFence?: number;
-  validationFactId?: string;
-}
-
-export interface TaskEffectRecord {
-  tenantId: string;
-  task: TaskAuthorityScope;
-  sourceFactId: string;
-  effectKey: string;
-  canonicalDigest: string;
-  /** Reducer revision that causally emitted this effect; never reconstructed. */
-  taskRevision: number;
-  activation: ActivationProvenance;
-  payload: TaskIntentEffect;
-  deliveryState: 'pending' | 'working' | 'complete' | 'obsolete';
-  claimedFence?: number;
-  claimToken?: string;
-  completion?:
-    | { kind: 'admission-receipt'; attemptId: string }
-    | { kind: 'task-presentation-receipt'; operationId: string };
-  obsoleteReason?: 'superseded' | 'activation-no-longer-authoritative';
-}
-
-export interface TaskPresentationRecord {
-  tenantId: string;
-  plan: TaskPresentationPlan;
-  deliveryState: 'pending' | 'obsolete';
-  obsoleteAtTaskRevision?: number;
-  obsoleteReason?: 'newer-presentation' | 'task-resumed' | 'task-cancelled';
-}
-
-export interface AttemptPresentationRecord {
-  tenantId: string;
-  plan: AttemptPresentationPlan;
-  deliveryState: 'pending';
-}
-
-export interface PresentationDeliveryRecord {
-  source: 'task' | 'attempt';
-  tenantId: string;
-  task: TaskAuthorityScope;
-  attemptId?: string;
-  operationId: string;
-  planDigest: string;
-  state: 'pending' | 'in-flight' | 'converged' | 'unknown' | 'obsolete';
-  claimedFence?: number;
-  receiptSha256?: string;
-  resolvedAt?: string;
-}
-
-export type PresentationDeliveryTarget =
-  | {
-      source: 'task';
-      tenantId: string;
-      task: TaskAuthorityScope;
-      operationId: string;
-    }
-  | {
-      source: 'attempt';
-      tenantId: string;
-      task: TaskAuthorityScope;
-      attemptId: string;
-      operationId: string;
-    };
-
-export interface PresentationDeliveryClaim {
-  status: 'claimed' | 'replay' | 'terminal';
-  record: PresentationDeliveryRecord;
-  work?: VerifiedClaimedPresentationWork;
-}
-
-export interface TaskEffectTransitionResult {
-  status: 'applied' | 'replay';
-  task: TaskIntentState;
-  effects: TaskEffectRecord[];
-  plans: TaskPresentationRecord[];
-  obsoletedPlans: TaskPresentationRecord[];
-}
-
-export interface TaskEffectClaim {
-  status: 'claimed' | 'replay' | 'terminal';
-  effect: TaskEffectRecord;
-}
-
-export interface CancellationWorkRecord {
-  tenantId: string;
-  attemptId: string;
-  eventId: string;
-  executionEpoch: number;
-  state: 'awaiting-binding' | 'pending';
-  supersededByIntentId?: string;
-}
-
-export interface CancellationEffectResult {
-  effect: TaskEffectRecord;
-  attempt?: AttemptState;
-  work?: CancellationWorkRecord;
-  presentation?: AttemptPresentationRecord;
-}
-
-/**
- * Server-only durability boundary for the lifecycle authority. Implementations
- * must make each method atomic. No method performs a provider side effect.
- */
-export interface LifecycleAuthorityStorage {
-  acquireTaskLease(input: {
-    scope: TaskAuthorityScope;
-    ownerId: string;
-    leaseDurationMs: number;
-  }): Promise<TaskAuthorityLease>;
-  renewTaskLease(input: {
-    lease: TaskAuthorityLease;
-    leaseDurationMs: number;
-  }): Promise<TaskAuthorityLease>;
-  releaseTaskLease(lease: TaskAuthorityLease): Promise<boolean>;
-
-  registerActivation(record: ActivationRecord): Promise<WriteResult>;
-  mayWriteEffects(input: {
-    scope: EffectAuthorityScope;
-    activation: ActivationProvenance;
-    boundary: number;
-  }): Promise<boolean>;
-
-  /** Capability-checked Task/Intent reducer transition and exact work receipt. */
-  applyTaskEffectTransition(input: {
-    lease: TaskAuthorityLease;
-    transition: VerifiedTaskEffectTransition;
-  }): Promise<TaskEffectTransitionResult>;
-  readTaskPresentation(input: {
-    tenantId: string;
-    task: TaskAuthorityScope;
-    operationId: string;
-  }): Promise<TaskPresentationRecord | undefined>;
-  listTaskPresentations(input: {
-    tenantId: string;
-    task: TaskAuthorityScope;
-    state?: TaskPresentationRecord['deliveryState'];
-  }): Promise<TaskPresentationRecord[]>;
-  readAttemptPresentation(input: {
-    tenantId: string;
-    attemptId: string;
-    operationId: string;
-  }): Promise<AttemptPresentationRecord | undefined>;
-  listAttemptPresentations(input: {
-    tenantId: string;
-    attemptId?: string;
-    task?: TaskAuthorityScope;
-  }): Promise<AttemptPresentationRecord[]>;
-  readPresentationDelivery(
-    input: PresentationDeliveryTarget,
-  ): Promise<PresentationDeliveryRecord | undefined>;
-  listPresentationDelivery(input: {
-    tenantId: string;
-    source?: PresentationDeliveryRecord['source'];
-    task?: TaskAuthorityScope;
-    attemptId?: string;
-    state?: PresentationDeliveryRecord['state'];
-  }): Promise<PresentationDeliveryRecord[]>;
-  claimPresentationDelivery(input: {
-    lease: TaskAuthorityLease;
-    target: PresentationDeliveryTarget;
-  }): Promise<PresentationDeliveryClaim>;
-  resolveVerifiedPresentationDelivery(input: {
-    lease: TaskAuthorityLease;
-    resolution: VerifiedPresentationResolution;
-  }): Promise<'applied' | 'replay'>;
-  listTaskEffects(input: {
-    tenantId: string;
-    task: TaskAuthorityScope;
-    state?: TaskEffectRecord['deliveryState'];
-  }): Promise<TaskEffectRecord[]>;
-  readTaskEffect(input: {
-    tenantId: string;
-    task: TaskAuthorityScope;
-    sourceFactId: string;
-    effectKey: string;
-  }): Promise<TaskEffectRecord | undefined>;
-  claimTaskEffect(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    task: TaskAuthorityScope;
-    sourceFactId: string;
-    effectKey: string;
-  }): Promise<TaskEffectClaim>;
-  completeTaskEffect(input: {
-    lease: TaskAuthorityLease;
-    completion: VerifiedAdmissionEffectCompletion;
-  }): Promise<TaskEffectRecord>;
-  obsoleteTaskEffect(input: {
-    lease: TaskAuthorityLease;
-    obsoletion: VerifiedTaskEffectObsoletion;
-  }): Promise<TaskEffectRecord>;
-  applyVerifiedCancellationEffect(input: {
-    lease: TaskAuthorityLease;
-    cancellation: VerifiedCancellationEffect;
-  }): Promise<CancellationEffectResult>;
-  /**
-   * Returns the immutable cancellation transaction receipt after a caller
-   * crashes between commit and observing its response. This remains lease
-   * scoped: a stale or foreign controller cannot use it as a read bypass.
-   */
-  readCancellationReceipt(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    task: TaskAuthorityScope;
-    sourceFactId: string;
-    effectKey: string;
-  }): Promise<CancellationEffectResult | undefined>;
-  listCancellationWork(input: {
-    tenantId: string;
-    state?: CancellationWorkRecord['state'];
-  }): Promise<CancellationWorkRecord[]>;
-
-  /** Runtime-checked coordinator capability; no structural admission writer. */
-  admitVerifiedAttemptAndRecordLaunch(input: {
-    lease: TaskAuthorityLease;
-    admission: VerifiedAttemptAdmission;
-  }): Promise<AdmissionResult>;
-  /** Exact read-only replay receipt; never scans across tenant/task scope. */
-  readAttemptAdmission(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    task: TaskAuthorityScope;
-    intentId: string;
-    intentRevision: number;
-  }): Promise<AdmissionResult | undefined>;
-  readTask(scope: TaskAuthorityScope): Promise<TaskIntentState | undefined>;
-  readAttempt(input: {
-    tenantId: string;
-    attemptId: string;
-  }): Promise<AttemptState | undefined>;
-  /** Capability-checked atomic reducer transition, replay indexes and work. */
-  applyFinalizationTransition(input: {
-    lease: TaskAuthorityLease;
-    transition: VerifiedFinalizationTransition;
-  }): Promise<WriteResult>;
-  listValidationWork(input: {
-    tenantId: string;
-    state: ValidationWorkRecord['state'];
-  }): Promise<ValidationWorkRecord[]>;
-  claimValidationWork(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    attemptId: string;
-    terminalFactId: string;
-    claimFactId: string;
-  }): Promise<WriteResult>;
-
-  readLaunch(input: {
-    tenantId: string;
-    attemptId: string;
-  }): Promise<LaunchOutboxRecord | undefined>;
-  listLaunches(input: {
-    tenantId: string;
-    state: LaunchOutboxRecord['state'];
-  }): Promise<LaunchOutboxRecord[]>;
-  claimLaunchWork(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    attemptId: string;
-  }): Promise<LaunchWorkClaim>;
-  resolveVerifiedLaunch(input: {
-    lease: TaskAuthorityLease;
-    resolution: VerifiedLaunchResolution;
-  }): Promise<WriteResult>;
-  /** Server-minted definitive no-run terminal decision; no provider call. */
-  rejectVerifiedLaunch(input: {
-    lease: TaskAuthorityLease;
-    rejection: VerifiedLaunchRejection;
-  }): Promise<WriteResult>;
-  /**
-   * Durable, lease-scoped record of one verified non-terminal run
-   * observation. It records evidence only: no phase, grant, outcome, or
-   * presentation changes, and no reducer transition is applied.
-   */
-  recordRunStuckObservation(input: {
-    lease: TaskAuthorityLease;
-    tenantId: string;
-    attemptId: string;
-    observation: VerifiedRunStuckObservation;
-  }): Promise<WriteResult>;
-  /**
-   * Server-verified loss decision for an exact bound run. The eligibility
-   * receipt authorizes it; this transaction still re-checks live authority,
-   * binding, and bounded history itself.
-   */
-  terminateLostAttempt(input: {
-    lease: TaskAuthorityLease;
-    termination: VerifiedMarkLostTermination;
-  }): Promise<WriteResult>;
-
-  recordObservation(identity: ObservationIdentity): Promise<WriteResult>;
-  /**
-   * One transaction for verified exact run binding ingress. It records both
-   * idempotency keys, CAS-writes the attempt/binding, and resolves the one
-   * launch outbox record to accepted (even when binding preceded a response).
-   */
-  recordBindingObservationAndResolveLaunch(input: {
-    lease: TaskAuthorityLease;
-    /** Runtime-checked opaque ingress capability, not a caller assertion. */
-    verified: VerifiedRunBindingIngress;
-    expectedAttemptRevision: number;
-  }): Promise<WriteResult>;
-
-  /**
-   * Atomically finds the durable request/JTI reservation or creates it. Only
-   * `created` may invoke the external token minter.
-   */
-  lookupOrReserveMint(input: {
-    identity: MintIdentity;
-    credentialProfileId: string;
-    maxIssuances: number;
-  }): Promise<MintReservation>;
-  resolveMint(input: {
-    tenantId: string;
-    attemptId: string;
-    grant: CredentialGrantIssuance;
-  }): Promise<WriteResult>;
-  resolveVerifiedMint(input: {
-    tenantId: string;
-    attemptId: string;
-    verified: VerifiedMintResolution;
-  }): Promise<WriteResult>;
-  readMint(input: {
-    tenantId: string;
-    grantId: string;
-  }): Promise<CredentialGrantIssuance | undefined>;
-}
-
-export class AuthorityConflict extends Error {
-  override name = 'AuthorityConflict';
-}
-
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, child]) => child !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonicalValue(child)]),
-    );
-  }
-  return value;
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalValue(value));
-}
-
-function taskSnapshotDigest(task: TaskIntentState): string {
-  return sha256Digest(canonicalDurableJson(canonicalValue(task)));
-}
-
-function same(left: unknown, right: unknown): boolean {
-  return canonicalJson(left) === canonicalJson(right);
-}
-
-/** History references are an optional shadow receipt, not idempotency input. */
-function sameObservationIdempotency(
-  left: StoredIdempotency | undefined,
-  right: StoredIdempotency | undefined,
-): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  const { historyRecordRef: _leftHistoryRecordRef, ...leftIdentity } = left;
-  const { historyRecordRef: _rightHistoryRecordRef, ...rightIdentity } = right;
-  return same(leftIdentity, rightIdentity);
-}
-
-function clone<T>(value: T): T {
-  return structuredClone(value);
-}
-
-/** One stable identity string for an observation's trusted source. */
-function observationSourceIdentity(source: {
-  kind: string;
-  sourceId: string;
-}): string {
-  return `${source.kind}:${source.sourceId}`;
-}
-
-/** Avoid delimiter collisions: opaque ids are permitted to contain `:`. */
-function tupleKey(...parts: readonly (string | number)[]): string {
-  return JSON.stringify(parts);
-}
-
-function parsedTime(value: string, field: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    throw new AuthorityConflict(`${field} must be a timestamp`);
-  }
-  return parsed;
-}
-
-function canonicalTaskKey(scope: TaskAuthorityScope): string {
-  return tupleKey(scope.tenantId, scope.repositoryId, scope.issueNumber);
-}
-
-function activationKey(scope: EffectAuthorityScope): string {
-  return tupleKey(scope.tenantId, scope.repositoryId, scope.taskClassId);
-}
-
-function admissionAcceptanceKey(input: VerifiedAttemptAdmission): string {
-  return tupleKey(
-    input.task.tenantId,
-    input.task.repositoryId,
-    input.task.issueNumber,
-    input.intentId,
-    input.intentRevision,
-  );
-}
-
-function admissionCommandDigest(input: VerifiedAttemptAdmission): string {
-  return createHash('sha256')
-    .update(
-      canonicalJson({
-        tenant: input.tenant,
-        task: input.task,
-        expectedTaskRevision: input.expectedTaskRevision,
-        intentId: input.intentId,
-        intentRevision: input.intentRevision,
-        activation: input.activation,
-        execution: input.execution,
-      }),
-    )
-    .digest('hex');
-}
-
-function bindingKey(spec: AcceptedAttemptSpec, binding: RunBinding): string {
-  return tupleKey(
-    spec.tenant.tenantId,
-    spec.tenant.repositoryId,
-    binding.runId,
-    binding.runAttempt,
-    binding.checkRunId,
-  );
-}
-
-function observationKeys(identity: {
-  tenantId: string;
-  repositoryId: number;
-  sourceIdentity: string;
-  attemptId: string;
-  factId: string;
-  requestId: string;
-}): { factKey: string; requestKey: string } {
-  const scope = tupleKey(
-    identity.tenantId,
-    identity.repositoryId,
-    identity.sourceIdentity,
-    identity.attemptId,
-  );
-  return {
-    factKey: tupleKey(scope, 'fact', identity.factId),
-    requestKey: tupleKey(scope, 'request', identity.requestId),
-  };
-}
-
-function validationWorkKey(
-  tenantId: string,
-  attemptId: string,
-  terminalFactId: string,
-  claimFactId: string,
-): string {
-  return tupleKey(
-    tenantId,
-    attemptId,
-    'validation-work',
-    terminalFactId,
-    claimFactId,
-  );
-}
-
-function taskEffectKey(input: {
-  tenantId: string;
-  task: TaskAuthorityScope;
-  sourceFactId: string;
-  effectKey: string;
-}): string {
-  return tupleKey(
-    input.tenantId,
-    input.task.repositoryId,
-    input.task.issueNumber,
-    'task-effect',
-    input.sourceFactId,
-    input.effectKey,
-  );
-}
-
-function cancellationEventId(
-  command: Pick<
-    VerifiedCancellationEffect,
-    'tenantId' | 'task' | 'sourceFactId' | 'effectKey'
-  >,
-  target: Extract<TaskIntentEffect, { kind: 'cancel-or-drain' }>,
-): string {
-  return `cancel:${createHash('sha256')
-    .update(
-      canonicalJson({
-        tenantId: command.tenantId,
-        task: {
-          tenantId: command.task.tenantId,
-          repositoryId: command.task.repositoryId,
-          issueNumber: command.task.issueNumber,
-        },
-        sourceFactId: command.sourceFactId,
-        effectKey: command.effectKey,
-        target: {
-          attemptId: target.attemptId,
-          intentId: target.intentId,
-          intentRevision: target.intentRevision,
-          supersededByIntentId: target.supersededByIntentId,
-        },
-      }),
-    )
-    .digest('hex')}`;
-}
-
-function taskPresentationKey(input: {
-  tenantId: string;
-  task: TaskAuthorityScope;
-  operationId: string;
-}): string {
-  return tupleKey(
-    input.tenantId,
-    input.task.repositoryId,
-    input.task.issueNumber,
-    'task-presentation',
-    input.operationId,
-  );
-}
-
-function attemptPresentationKey(
-  tenantId: string,
-  attemptId: string,
-  operationId: string,
-): string {
-  return tupleKey(tenantId, attemptId, 'attempt-presentation', operationId);
-}
-
-function attemptPresentationReceiptKey(
-  tenantId: string,
-  attemptId: string,
-  finalizationCommandId: string,
-): string {
-  return tupleKey(
-    tenantId,
-    attemptId,
-    'attempt-presentation-receipt',
-    finalizationCommandId,
-  );
-}
-
-function presentationPlanDigest(
-  plan: TaskPresentationPlan | AttemptPresentationPlan,
-): string {
-  return createHash('sha256').update(canonicalJson(plan)).digest('hex');
-}
-
-function presentationClaimTokenDigest(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-function publicPresentationDeliveryRecord(
-  record: StoredPresentationDeliveryRecord,
-): PresentationDeliveryRecord {
-  const { claimTokenSha256: _claimTokenSha256, ...publicRecord } = record;
-  return clone(publicRecord);
-}
-
-function presentationDeliveryKey(target: PresentationDeliveryTarget): string {
-  return target.source === 'task'
-    ? tupleKey(
-        target.tenantId,
-        'presentation-delivery',
-        'task',
-        target.task.repositoryId,
-        target.task.issueNumber,
-        target.operationId,
-      )
-    : tupleKey(
-        target.tenantId,
-        'presentation-delivery',
-        'attempt',
-        target.task.repositoryId,
-        target.task.issueNumber,
-        target.attemptId,
-        target.operationId,
-      );
-}
-
-function taskDeliveryTarget(
-  record: TaskPresentationRecord,
-): Extract<PresentationDeliveryTarget, { source: 'task' }> {
-  return {
-    source: 'task',
-    tenantId: record.tenantId,
-    task: clone(record.plan.task),
-    operationId: record.plan.operationId,
-  };
-}
-
-function attemptDeliveryTarget(
-  record: AttemptPresentationRecord,
-): Extract<PresentationDeliveryTarget, { source: 'attempt' }> {
-  return {
-    source: 'attempt',
-    tenantId: record.tenantId,
-    task: clone(record.plan.task),
-    attemptId: record.plan.attemptId,
-    operationId: record.plan.operationId,
-  };
-}
-
-interface DerivedAttemptPresentation {
-  key: string;
-  receiptKey: string;
-  planDigest: string;
-  outcomeDigest: string;
-  record: AttemptPresentationRecord;
-}
-
-function finalizationPresentationProvenance(
-  state: AttemptState,
-  commandId: string,
-): Extract<AttemptPresentationPlan['terminal'], { kind: 'finalization' }> {
-  const terminalFactId = state.finalization?.terminalFactId;
-  if (terminalFactId === undefined) {
-    throw new AuthorityConflict('Final outcome terminal fact is absent');
-  }
-  return { kind: 'finalization', commandId, terminalFactId };
-}
-
-function deriveAttemptPresentation(
-  state: AttemptState,
-  terminal: AttemptPresentationPlan['terminal'],
-  historyBoundFinalization = false,
-): DerivedAttemptPresentation {
-  const outcome = state.outcome;
-  const activation = state.spec.activation;
-  if (outcome === undefined || activation.mode !== 'central-authoritative') {
-    throw new AuthorityConflict(
-      'Final outcome presentation is not centrally pinned',
-    );
-  }
-  if (
-    (terminal.kind === 'finalization' &&
-      state.finalization?.terminalFactId !== terminal.terminalFactId) ||
-    (terminal.kind === 'lifecycle-decision' &&
-      (outcome.evidence.kind !== 'lifecycle-decision' ||
-        outcome.evidence.decisionFactId !== terminal.commandId))
-  ) {
-    throw new AuthorityConflict(
-      'Final outcome presentation provenance is invalid',
-    );
-  }
-  const outcomeDigest =
-    terminal.kind === 'finalization' && historyBoundFinalization
-      ? attemptHistoryPayloadDigest(outcome)
-      : createHash('sha256').update(canonicalJson(outcome)).digest('hex');
-  const operationId = `attempt-final:${createHash('sha256')
-    .update(
-      canonicalJson({
-        tenantId: state.spec.tenant.tenantId,
-        attemptId: state.spec.attemptId,
-        revision: state.revision,
-        terminal,
-        outcomeDigest,
-      }),
-    )
-    .digest('hex')}`;
-  const failure =
-    outcome.failure === undefined
-      ? undefined
-      : {
-          owningSystem: outcome.failure.owningSystem,
-          phase: outcome.failure.phase,
-          reason: outcome.failure.reason,
-          retryDisposition: outcome.failure.retryDisposition,
-          ...(outcome.failure.retryBudget === undefined
-            ? {}
-            : { retryBudget: outcome.failure.retryBudget }),
-        };
-  const parsed = attemptPresentationPlanSchema.safeParse({
-    schema: 'agent-lcars.attempt-presentation-plan/v1',
-    version: 1,
-    operationId,
-    tenant: state.spec.tenant,
-    task: state.spec.task,
-    attemptId: state.spec.attemptId,
-    attemptRevision: state.revision,
-    terminal,
-    outcomeDigest,
-    activation,
-    presentation: {
-      kind: 'attempt-finalized',
-      terminalState: outcome.terminalState,
-      execution: outcome.execution,
-      result: outcome.result,
-      ...(outcome.reference === undefined
-        ? {}
-        : { reference: outcome.reference }),
-      evidenceValidation: outcome.evidenceValidation.status,
-      ...(failure === undefined ? {} : { failure }),
-    },
-  });
-  if (!parsed.success) {
-    throw new AuthorityConflict('Derived attempt presentation is invalid');
-  }
-  const record: AttemptPresentationRecord = {
-    tenantId: parsed.data.tenant.tenantId,
-    plan: parsed.data,
-    deliveryState: 'pending',
-  };
-  return {
-    key: attemptPresentationKey(
-      record.tenantId,
-      record.plan.attemptId,
-      record.plan.operationId,
-    ),
-    receiptKey: attemptPresentationReceiptKey(
-      record.tenantId,
-      record.plan.attemptId,
-      terminal.commandId,
-    ),
-    planDigest: createHash('sha256')
-      .update(canonicalJson(record.plan))
-      .digest('hex'),
-    outcomeDigest,
-    record,
-  };
-}
-
-function taskPresentationForEffect(input: {
-  tenant: TaskIntentState['tenant'];
-  effect: TaskEffectRecord;
-  transitionDigest: string;
-}): TaskPresentationPlan | undefined {
-  const payload = input.effect.payload;
-  if (payload.kind !== 'park-projection') return undefined;
-  const semantic = {
-    tenantId: input.tenant.tenantId,
-    task: input.effect.task,
-    taskRevision: input.effect.taskRevision,
-    sourceFactId: input.effect.sourceFactId,
-    taskEffectKey: input.effect.effectKey,
-    effectDigest: input.effect.canonicalDigest,
-    transitionDigest: input.transitionDigest,
-    activation: input.effect.activation,
-    presentation: {
-      disposition: 'parked' as const,
-      humanAttention: 'required' as const,
-      notice: { kind: 'task-parked' as const },
-      ...(payload.intentId === undefined
-        ? {}
-        : {
-            intentId: payload.intentId,
-            intentRevision: payload.intentRevision,
-          }),
-      reason: payload.reason,
-    },
-  };
-  const operationId = `task-park:${createHash('sha256').update(canonicalJson(semantic)).digest('hex')}`;
-  const plan: TaskPresentationPlan = {
-    schema: 'agent-lcars.task-presentation-plan/v1',
-    version: 1,
-    operationId,
-    tenant: clone(input.tenant),
-    task: clone(input.effect.task),
-    taskRevision: input.effect.taskRevision,
-    sourceFactId: input.effect.sourceFactId,
-    taskEffectKey: input.effect.effectKey,
-    effectDigest: input.effect.canonicalDigest,
-    transitionDigest: input.transitionDigest,
-    activation: clone(input.effect.activation),
-    presentation: semantic.presentation,
-  };
-  if (!taskPresentationPlanSchema.safeParse(plan).success) {
-    throw new AuthorityConflict('Derived task presentation plan is invalid');
-  }
-  return plan;
-}
-
-function taskPresentationDigest(record: TaskPresentationRecord): string {
-  return createHash('sha256').update(canonicalJson(record.plan)).digest('hex');
-}
-
-function taskTransitionReceiptKey(input: {
-  tenantId: string;
-  task: TaskAuthorityScope;
-  sourceFactId: string;
-}): string {
-  return tupleKey(
-    input.tenantId,
-    input.task.repositoryId,
-    input.task.issueNumber,
-    'task-effect-receipt',
-    input.sourceFactId,
-  );
-}
-
-function taskHistoryKey(task: TaskAuthorityScope): string {
-  return canonicalTaskKey(task);
-}
-
-function taskHistoryRecordKey(record: HistoryRecord): string {
-  return tupleKey(
-    record.tenantId,
-    record.aggregateKind,
-    record.aggregateId,
-    record.streamKind,
-    record.sequence,
-  );
-}
-
-function taskHistoryRecordReferenceKey(
-  reference: HistoryRecordReference,
-): string {
-  return tupleKey(
-    reference.tenantId,
-    reference.aggregateKind,
-    reference.aggregateId,
-    reference.streamKind,
-    reference.sequence,
-  );
-}
-
-function mintKeys(
-  identity: MintIdentity,
-  credentialProfileId: string,
-): {
-  requestKey: string;
-  jtiKey: string;
-  slotKey: string;
-} {
-  return {
-    requestKey: tupleKey(
-      identity.tenantId,
-      identity.repositoryId,
-      identity.sourceIdentity,
-      identity.attemptId,
-      'request',
-      identity.requestId,
-    ),
-    // A signed verifier source + JTI is one-use globally, never per tenant.
-    jtiKey: tupleKey(
-      'verified-jti',
-      identity.sourceIdentity,
-      identity.jtiSha256,
-    ),
-    slotKey: tupleKey(
-      identity.tenantId,
-      identity.attemptId,
-      'profile',
-      credentialProfileId,
-    ),
-  };
-}
-
-interface StoredAcceptance {
-  attemptId: string;
-  specDigest: string;
-  admissionDigest: string;
-  taskSnapshotDigest: string;
-  task: TaskIntentState;
-}
-
-interface StoredAttemptAdmissionHistoryReceipt {
-  tenantId: string;
-  tenant: AcceptedAttemptSpec['tenant'];
-  task: TaskAuthorityScope;
-  intentId: string;
-  intentRevision: number;
-  taskRevision: number;
-  attemptId: string;
-  admittedAt: string;
-  specDigest: string;
-  admissionDigest: string;
-  taskSnapshotDigest: string;
-  taskAdmissionRecordRef: HistoryRecordReference;
-  attemptRegistrationRecordRef: HistoryRecordReference;
-}
-
-interface StoredIdempotency {
-  counterpartId: string;
-  canonicalDigest: string;
-  payloadSha256?: string;
-  resourceId: string;
-  historyRecordRef?: HistoryRecordReference;
-}
-
-interface StoredMint {
-  tenantId: string;
-  repositoryId: number;
-  identity: MintIdentity;
-  grant: CredentialGrantIssuance;
-}
-
-interface StoredTaskEffectReceipt {
-  canonicalDigest: string;
-  task: TaskIntentState;
-  effects: Array<{ key: string; canonicalDigest: string }>;
-  plans: Array<{
-    key: string;
-    canonicalDigest: string;
-    snapshot: TaskPresentationRecord;
-  }>;
-  obsoletedPlans: Array<{
-    key: string;
-    canonicalDigest: string;
-    obsoleteAtTaskRevision: number;
-    obsoleteReason: NonNullable<TaskPresentationRecord['obsoleteReason']>;
-    snapshot: TaskPresentationRecord;
-  }>;
-}
-
-interface StoredPresentationDeliveryReceipt {
-  planDigest: string;
-  kind: 'converged' | 'unknown';
-  receiptSha256: string;
-  resolvedAt: string;
-  snapshot: PresentationDeliveryRecord;
-}
-
-interface StoredTaskHistoryRecord {
-  record: HistoryRecord;
-  payload: unknown;
-}
-
-interface StoredTaskHistory {
-  head: TaskHistoryHead;
-  factRecords: StoredTaskHistoryRecord[];
-  intentRecords: StoredTaskHistoryRecord[];
-  effectRecords: StoredTaskHistoryRecord[];
-  workRecords: StoredTaskHistoryRecord[];
-  presentationRecords: StoredTaskHistoryRecord[];
-  replayReceipts: Map<string, ReplayReceipt>;
-  auxHeads: Map<'effect' | 'command' | 'presentation', HistoryHead>;
-}
-
-interface StoredAttemptHistoryRecord {
-  record: HistoryRecord;
-  payload: unknown;
-}
-
-/** Shadow-only Attempt history. Legacy Attempt state remains authoritative. */
-interface StoredAttemptHistory {
-  head: AttemptHistoryHead;
-  records: Map<AttemptHistoryStream, StoredAttemptHistoryRecord[]>;
-}
-
-interface StoredCancellationReceipt {
-  result: CancellationEffectResult;
-  /** Private exact refs; never exposed through the authority API. */
-  history?: {
-    commandRef: HistoryRecordReference;
-    evidenceRef?: HistoryRecordReference;
-  };
-}
-
-interface StoredLaunchResolutionReceipt {
-  responseSha256: string;
-  /** Private exact ref; never exposed through the authority API. */
-  history?: { commandRef: HistoryRecordReference };
-}
-
-/** Private exact replay material for a definitive no-run terminal decision. */
-interface StoredLaunchRejectionReceipt {
-  proofSha256: string;
-  rejectedAt: string;
-  canonicalDigest: string;
-  outcomeDigest: string;
-  history?: {
-    commandRef: HistoryRecordReference;
-    evidenceRef: HistoryRecordReference;
-  };
-}
-
-/**
- * One recorded non-terminal run observation. It holds the observation's exact
- * identity, binding, trusted time, and one-way digests — never a provider body
- * and never the commit fence.
- */
-interface StoredRunStuckObservation {
-  tenantId: string;
-  attemptId: string;
-  factId: string;
-  requestId: string;
-  sourceIdentity: string;
-  binding: RunBinding;
-  observedAt: string;
-  proofDigest: string;
-  payloadDigest: string;
-  canonicalDigest: string;
-}
-
-/**
- * Private exact replay material for a verified loss decision. Only the
- * receipt's stable causal commitment is kept; observations, provider evidence,
- * and the commit fence never become durable state.
- */
-interface StoredMarkLostReceipt {
-  receiptId: string;
-  idempotencyKey: string;
-  causalDigest: string;
-  terminatedAt: string;
-  canonicalDigest: string;
-  outcomeDigest: string;
-  history: {
-    commandRef: HistoryRecordReference;
-    evidenceRef: HistoryRecordReference;
-  };
-}
-
-/**
- * Private exact history pointers for finalization commands.  They are kept
- * beside the mutable work queue rather than exposed as part of its public
- * record, so a replay proves the same durable transition without turning a
- * storage detail into an API capability.
- */
-interface StoredValidationHistoryReceipt {
-  attemptId: string;
-  commandId: string;
-  commandRef: HistoryRecordReference;
-  validationRef?: HistoryRecordReference;
-}
-
-/** Private exact refs for the one terminal finalization outcome. */
-interface StoredFinalizationHistoryReceipt {
-  attemptId: string;
-  commandId: string;
-  commandRef: HistoryRecordReference;
-  evidenceRef: HistoryRecordReference;
-}
-
-interface StoredPresentationDeliveryRecord extends PresentationDeliveryRecord {
-  /** One-way proof for the opaque work capability; never returned or logged. */
-  claimTokenSha256?: string;
-}
-
-const systemClock: AuthorityClock = {
-  now: () => new Date().toISOString(),
-};
-const systemAttemptIds: AttemptIdFactory = {
-  mint: () => randomBytes(16).toString('base64url'),
-};
 
 /**
  * Reference implementation for the backend contract suite. Methods are
