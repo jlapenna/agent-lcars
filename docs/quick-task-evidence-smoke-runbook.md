@@ -68,9 +68,6 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$TMP_DIR"' EXIT
 BASE_URL='https://lcars.jlapenna.net'
 BUCKET='agent-lcars-quick-task-evidence'
-REPOSITORY_OWNER='jlapenna'
-REPOSITORY_NAME='agent-lcars'
-PIPELINE='codex'
 ```
 
 Use the console’s Quick Task dialog for the normal admin path. Select the
@@ -94,20 +91,24 @@ evidence=<the selected image file>
 
 The response must be 201. Its private JSON receipt contains the request ID, the
 created repository/issue number, and the GitHub issue URL. Capture the actual
-requestId from that private response (or from the server marker in the issue
-body if the browser does not expose the response) into a local variable. The
-issue body must contain a server-composed Screenshot Markdown link; source
-context must be sanitized. It must not contain a browser-supplied origin or
-arbitrary raw URL.
-Capture the evidenceId only from that server-composed URL into a local
+requestId and repository owner/name from that private response (or capture the
+request ID from the server marker if the browser does not expose the response).
+These repository values must describe the task the server actually created;
+do not rely on a remembered UI default or a hard-coded repository. The issue
+body must contain a server-composed Screenshot Markdown link; source context
+must be sanitized. It must not contain a browser-supplied origin or arbitrary
+raw URL. Capture the evidenceId only from that server-composed URL into a local
 variable. Keep the issue URL private until cleanup; never add a smoke-test
-comment. Do not invent either ID.
+comment. Do not invent any identity.
 
-Enter both actual values only into the private shell. The request ID comes
-from the 201 receipt or marker; the evidence ID comes from the server URL:
+Enter the actual values only into the private shell. The request ID and
+repository come from the 201 receipt (the request ID may instead come from the
+marker); the evidence ID comes from the server URL:
 
     read -r REQUEST_ID
     read -r EVIDENCE_ID
+    read -r REPOSITORY_OWNER
+    read -r REPOSITORY_NAME
 
 ## 2. Check submission authorization
 
