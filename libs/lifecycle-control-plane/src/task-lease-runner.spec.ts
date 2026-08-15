@@ -30,6 +30,7 @@ const lease: TaskAuthorityLease = {
   acquiredAt: '2026-08-14T00:00:00.000Z',
   expiresAt: '2026-08-14T01:00:00.000Z',
 };
+const clock = { now: () => '2026-08-14T00:30:00.000Z' };
 
 function storageFixture() {
   const acquireTaskLease = vi.fn(async () => ({ ...lease }));
@@ -46,6 +47,7 @@ describe('StorageTaskLeaseRunner', () => {
     const test = storageFixture();
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -76,6 +78,7 @@ describe('StorageTaskLeaseRunner', () => {
     const operation = vi.fn(async () => 'unreachable');
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -105,6 +108,7 @@ describe('StorageTaskLeaseRunner', () => {
     const operation = vi.fn(async () => 'unreachable');
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -122,6 +126,7 @@ describe('StorageTaskLeaseRunner', () => {
     test.acquireTaskLease.mockResolvedValue(rawLease);
     const options = {
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     };
@@ -151,6 +156,30 @@ describe('StorageTaskLeaseRunner', () => {
     expect(Object.isFrozen(rawLease)).toBe(false);
   });
 
+  it.each([
+    ['expired', lease.expiresAt],
+    ['not started', '2026-08-13T23:59:59.999Z'],
+    ['malformed clock', 'not-a-time'],
+  ])(
+    'rejects and releases a lease that is %s at callback entry',
+    async (_name, now) => {
+      const test = storageFixture();
+      const operation = vi.fn(async () => 'unreachable');
+      const runner = new StorageTaskLeaseRunner({
+        storage: test.storage,
+        clock: { now: () => now },
+        ownerId: 'runner-1',
+        leaseDurationMs: 30_000,
+      });
+
+      await expect(runner.run(scope, operation)).rejects.toThrow(
+        /not active at callback entry/iu,
+      );
+      expect(operation).not.toHaveBeenCalled();
+      expect(test.releaseTaskLease).toHaveBeenCalledExactlyOnceWith(lease);
+    },
+  );
+
   it('releases before rethrowing callback failure', async () => {
     const test = storageFixture();
     const callbackError = new Error('callback failed');
@@ -161,6 +190,7 @@ describe('StorageTaskLeaseRunner', () => {
     });
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -180,6 +210,7 @@ describe('StorageTaskLeaseRunner', () => {
     test.releaseTaskLease.mockRejectedValueOnce(releaseError);
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -193,6 +224,7 @@ describe('StorageTaskLeaseRunner', () => {
     const test = storageFixture();
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -222,6 +254,7 @@ describe('StorageTaskLeaseRunner', () => {
     });
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -258,6 +291,7 @@ describe('StorageTaskLeaseRunner', () => {
     }));
     const runner = new StorageTaskLeaseRunner({
       storage: test.storage,
+      clock,
       ownerId: 'runner-1',
       leaseDurationMs: 30_000,
     });
@@ -279,6 +313,7 @@ describe('StorageTaskLeaseRunner', () => {
     const storage = {} as api.LifecycleAuthorityStorage;
     const runner = new api.StorageTaskLeaseRunner({
       storage,
+      clock,
       ownerId: 'server-owned',
       leaseDurationMs: 1_000,
     });

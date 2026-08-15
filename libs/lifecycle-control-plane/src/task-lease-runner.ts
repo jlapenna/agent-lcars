@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type {
+  AuthorityClock,
   LifecycleAuthorityStorage,
   TaskAuthorityLease,
   TaskAuthorityScope,
@@ -10,6 +11,7 @@ import type { TaskLeaseRunner } from './signal-task-composition';
 /** Server-owned configuration for the callback-oriented task lease runner. */
 export interface StorageTaskLeaseRunnerOptions {
   storage: LifecycleAuthorityStorage;
+  clock: AuthorityClock;
   ownerId: string;
   leaseDurationMs: number;
 }
@@ -109,11 +111,13 @@ function attachReleaseFailure(primary: unknown, releaseError: unknown): void {
 export class StorageTaskLeaseRunner implements TaskLeaseRunner {
   private readonly tails = new Map<string, Promise<void>>();
   private readonly storage: LifecycleAuthorityStorage;
+  private readonly clock: AuthorityClock;
   private readonly ownerId: string;
   private readonly leaseDurationMs: number;
 
   constructor(options: StorageTaskLeaseRunnerOptions) {
     this.storage = options.storage;
+    this.clock = options.clock;
     this.ownerId = options.ownerId;
     this.leaseDurationMs = options.leaseDurationMs;
   }
@@ -166,6 +170,16 @@ export class StorageTaskLeaseRunner implements TaskLeaseRunner {
     let callbackError: unknown;
     let result!: T;
     try {
+      const now = this.clock.now();
+      if (
+        !canonicalUtcTimestamp(now) ||
+        Date.parse(now) < Date.parse(callbackLease.acquiredAt) ||
+        Date.parse(now) >= Date.parse(callbackLease.expiresAt)
+      ) {
+        throw new TaskLeaseValidationError(
+          'Storage returned a task lease that is not active at callback entry',
+        );
+      }
       result = await operation(callbackLease);
     } catch (error) {
       callbackFailed = true;
