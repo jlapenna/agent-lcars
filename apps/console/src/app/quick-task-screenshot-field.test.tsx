@@ -3,7 +3,6 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { QUICK_TASK_EVIDENCE_DISCLOSURE_WARNING } from '../lib/quick-task-evidence-contract';
 import { QuickTaskScreenshotField } from './quick-task-screenshot-field';
 
 function PickerHarness() {
@@ -26,11 +25,8 @@ function image(name = 'screenshot.png', type = 'image/png') {
 describe('QuickTaskScreenshotField', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('always shows the outside-GitHub-access warning and accepted formats', () => {
+  it('shows the accepted formats and hides the file input from keyboard focus', () => {
     renderPicker();
-    expect(
-      screen.getByText(QUICK_TASK_EVIDENCE_DISCLOSURE_WARNING),
-    ).toBeTruthy();
     expect(screen.getByLabelText('Screenshot (optional)')).toHaveAttribute(
       'accept',
       'image/png,image/jpeg,image/webp',

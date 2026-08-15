@@ -43,15 +43,6 @@ headers. Malformed, missing, revoked, and unreadable IDs all receive the same
 storage metadata. `GET` and `HEAD` share this status/header contract; `HEAD`
 returns no response body.
 
-The URL is a bearer capability. The picker must display this warning for every
-repository:
-
-> This screenshot is stored outside GitHub repository access controls. Anyone
-> who obtains the LCARS or GitHub-proxy image link can view and forward it,
-> even after losing repository access. If this repository is or becomes public,
-> the screenshot is public. GitHub and other readers may cache copies. Do not
-> upload secrets or sensitive data.
-
 ## Lifecycle and operations
 
 The evidence lifecycle hook runs only after the existing Quick Task claim wins
