@@ -10,7 +10,10 @@ on:
         description: App Hosting build path
         type: choice
         required: true
-        default: prebuilt
+        # The managed path is the production default until the App Hosting
+        # prebuilt importer is repaired (#1128). Prebuilt remains available
+        # only for an intentional diagnostic dispatch.
+        default: managed
         options:
           - prebuilt
           - managed
@@ -70,8 +73,9 @@ jobs:
   deploy:
     needs: gate
     if: needs.gate.outputs.verify_passed == 'true'
-    # The prebuilt path runs the console's production Nx graph locally. Keep
-    # that long-running work off lcars-default's latency-sensitive glue pool.
+    # The optional prebuilt path runs the console's production Nx graph
+    # locally. Keep that long-running diagnostic work off lcars-default's
+    # latency-sensitive glue pool.
     runs-on: ['${{ vars.CI_RUNNER_LABEL }}']
     timeout-minutes: 40
     environment: production
@@ -82,7 +86,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: ./.github/actions/setup-nx-remote-cache
-        if: inputs.build_mode != 'managed'
+        if: inputs.build_mode == 'prebuilt'
         with:
           url: ${{ vars.NX_CACHE_URL }}
           write-token: ${{ secrets.NX_CACHE_TOKEN }}
@@ -100,11 +104,11 @@ jobs:
           token_format: access_token
 
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-        if: inputs.build_mode != 'managed'
+        if: inputs.build_mode == 'prebuilt'
 
       - name: Build locally and deploy App Hosting backend
         id: prebuilt
-        if: inputs.build_mode != 'managed'
+        if: inputs.build_mode == 'prebuilt'
         shell: bash
         run: |
           set -euo pipefail
@@ -118,7 +122,9 @@ jobs:
 
       - name: Deploy with managed App Hosting build
         id: managed
-        if: inputs.build_mode == 'managed'
+        # workflow_run has no inputs, so it intentionally follows the
+        # managed production default. A manual prebuilt dispatch is opt-in.
+        if: inputs.build_mode != 'prebuilt'
         shell: bash
         run: |
           set -euo pipefail

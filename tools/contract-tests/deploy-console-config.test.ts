@@ -54,16 +54,18 @@ describe('console deployment workflow', () => {
     );
   });
 
-  it('uses the cache-enabled CI pool for local builds with a managed fallback', async () => {
+  it('uses managed builds by default and keeps prebuilt deployment opt-in', async () => {
     const workflow = await readFile(
       '.github/workflows/deploy-console.yml',
       'utf8',
     );
 
     expect(workflow).toContain("runs-on: ['${{ vars.CI_RUNNER_LABEL }}']");
+    expect(workflow).toContain('default: managed');
     expect(workflow).toContain('./.github/actions/setup-nx-remote-cache');
     expect(workflow).toContain('node tools/deploy-console-prebuilt.mjs');
-    expect(workflow).toContain("if: inputs.build_mode == 'managed'");
+    expect(workflow).toContain("if: inputs.build_mode == 'prebuilt'");
+    expect(workflow).toContain("if: inputs.build_mode != 'prebuilt'");
   });
 
   it('translates the App Hosting YAML into a local build contract', async () => {
