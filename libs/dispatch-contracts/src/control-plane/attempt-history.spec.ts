@@ -659,6 +659,41 @@ describe('bounded Attempt history contracts', () => {
     expect(next.head.executionEpoch).toBe(start.head.executionEpoch);
   });
 
+  it('permits a revision jump over legacy Attempt progress but rejects equal or lower revisions', () => {
+    const start = registered();
+    const jumped = appendAttemptHistoryTransition({
+      head: start.head,
+      nextRevision: 3,
+      transitionedAt: later,
+      emitted: [
+        {
+          stream: 'fact',
+          payload: fact('bound-jump', { kind: 'run-bound', binding }),
+        },
+      ],
+    });
+    expect(jumped.head.aggregateRevision).toBe(3);
+    expect(jumped.records[0]?.appliedRevision).toBe(3);
+    for (const nextRevision of [1, 3]) {
+      expect(() =>
+        appendAttemptHistoryTransition({
+          head: jumped.head,
+          nextRevision,
+          transitionedAt: later,
+          emitted: [
+            {
+              stream: 'fact',
+              payload: fact(`bound-invalid-${nextRevision}`, {
+                kind: 'run-bound',
+                binding,
+              }),
+            },
+          ],
+        }),
+      ).toThrow(HistoryIntegrityError);
+    }
+  });
+
   it('preserves terminal-before-binding and rejects a mismatched later binding or duplicate terminal', () => {
     const start = registered();
     const terminal = fact('terminal-1', {

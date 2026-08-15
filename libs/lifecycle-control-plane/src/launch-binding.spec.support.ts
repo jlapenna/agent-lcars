@@ -18,6 +18,7 @@ import {
   RunBindingIngressConflict,
   RunBindingIngressVerifier,
 } from './launch-binding';
+import type { BindingHistoryStorageHooks } from './launch-binding-history-test-support';
 import {
   resolveLaunchForTest,
   writeAttemptForTest,
@@ -154,9 +155,12 @@ const verifier = new RunBindingIngressVerifier({
 });
 
 /** Every asynchronous authority adapter must pass this binding transaction suite. */
+export type { BindingHistoryStorageHooks } from './launch-binding-history-test-support';
+
 export function runVerifiedRunBindingStorageContract(
   makeStorage: () =>
     LifecycleAuthorityStorage | Promise<LifecycleAuthorityStorage>,
+  hooks: BindingHistoryStorageHooks,
 ): void {
   describe('verified run-binding storage contract', () => {
     it('rejects structural capabilities, marker mismatches, and stale payload digests', async () => {
@@ -224,6 +228,314 @@ export function runVerifiedRunBindingStorageContract(
       expect(await ingestVerifiedRunBinding(storage, lease, verified)).toBe(
         'replay',
       );
+    });
+
+    it('records the exact run-bound fact, digest, and binding head', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await ingestVerifiedRunBinding(storage, lease, verified);
+      const history = await hooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(history?.head).toMatchObject({
+        aggregateRevision: 2,
+        binding: runBindingFromEnvelope(verified.envelope),
+      });
+      const fact = history?.records.fact[0];
+      expect(fact?.payload).toMatchObject({
+        factId: verified.envelope.factId,
+        requestId: verified.envelope.requestId,
+        canonicalDigest: expect.any(String),
+        payloadSha256: verified.envelope.payloadSha256,
+        payload: {
+          kind: 'run-bound',
+          binding: runBindingFromEnvelope(verified.envelope),
+        },
+      });
+      expect(fact?.record).toMatchObject({
+        sequence: 1,
+        appliedRevision: 2,
+        streamKind: 'fact',
+      });
+    });
+
+    it('fails closed when admission-backed history is missing', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      hooks.deleteAttemptHistory(storage);
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+    });
+
+    it('rejects corrupt binding heads, records, references, and admission lineage on replay', async () => {
+      for (const corruption of [
+        'head',
+        'payload',
+        'digest',
+        'reference',
+        'receipt',
+        'task-pointer',
+      ] as const) {
+        const { storage, lease, spec } = await admittedInto(
+          await makeStorage(),
+        );
+        const verified = await verifier.verify({
+          envelope: await envelope(spec),
+          localAttemptMarker: spec.local.attemptMarker,
+        });
+        await ingestVerifiedRunBinding(storage, lease, verified);
+        if (corruption === 'head') hooks.corruptAttemptHistoryHead(storage);
+        else if (
+          corruption === 'payload' ||
+          corruption === 'digest' ||
+          corruption === 'reference'
+        )
+          hooks.corruptAttemptHistoryRecord(storage, corruption);
+        else if (corruption === 'receipt')
+          hooks.corruptAdmissionReceipt(storage);
+        else hooks.corruptAdmissionTaskPointer(storage);
+        await expect(
+          ingestVerifiedRunBinding(storage, lease, verified),
+        ).rejects.toBeInstanceOf(AuthorityConflict);
+      }
+    });
+
+    it('accepts accepted and unknown launch progress before binding at revision three', async () => {
+      for (const state of ['accepted', 'unknown'] as const) {
+        const { storage, lease, spec } = await admittedInto(
+          await makeStorage(),
+        );
+        const claim = await storage.claimLaunchWork({
+          lease,
+          tenantId: spec.tenant.tenantId,
+          attemptId: spec.attemptId,
+        });
+        await resolveLaunchForTest({
+          storage,
+          lease,
+          tenantId: spec.tenant.tenantId,
+          attemptId: spec.attemptId,
+          kind: state,
+          at: TIME,
+          work: claim?.work,
+        });
+        const verified = await verifier.verify({
+          envelope: await envelope(spec),
+          localAttemptMarker: spec.local.attemptMarker,
+        });
+        await expect(
+          ingestVerifiedRunBinding(storage, lease, verified),
+        ).resolves.toBe('applied');
+        const history = await hooks.readAttemptHistory(storage, {
+          lease,
+          tenantId: spec.tenant.tenantId,
+          attemptId: spec.attemptId,
+        });
+        expect(history?.head.aggregateRevision).toBe(3);
+        expect(history?.records.command).toHaveLength(1);
+        expect(history?.records.fact).toHaveLength(1);
+        expect(history?.records.claim).toHaveLength(0);
+        expect(history?.records.validation).toHaveLength(0);
+        expect(history?.records.evidence).toHaveLength(0);
+        expect(history?.records.fact[0]?.record.appliedRevision).toBe(3);
+      }
+    });
+
+    it('replays a binding after later Attempt progress without appending history', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await ingestVerifiedRunBinding(storage, lease, verified);
+      const before = await hooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (before === undefined) throw new Error('binding history disappeared');
+      const attempt = await storage.readAttempt({
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (attempt === undefined) throw new Error('bound attempt disappeared');
+      const heartbeatPayload = {
+        kind: 'heartbeat' as const,
+        grantId: 'grant-later-progress',
+        at: TIME,
+        phase: 'agent-execution' as const,
+      };
+      const heartbeatEnvelope = await envelope(spec, {
+        factId: 'fact-later-progress',
+        requestId: 'request-later-progress',
+        payload: heartbeatPayload,
+        payloadSha256: await runtimeObservationPayloadSha256(heartbeatPayload),
+      });
+      const heartbeat = reduceAttempt(attempt, {
+        kind: 'transition',
+        expectedRevision: attempt.revision,
+        transitionedAt: TIME,
+        canonicalDigest: attemptTransitionDigest({
+          kind: 'observation',
+          envelope: heartbeatEnvelope,
+        }),
+        event: {
+          kind: 'observation',
+          envelope: heartbeatEnvelope,
+        },
+      });
+      if (heartbeat.status !== 'applied')
+        throw new Error('later progress was not applied');
+      await writeAttemptForTest({
+        storage,
+        lease,
+        expectedRevision: attempt.revision,
+        next: heartbeat.state,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('replay');
+      const after = await hooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(after?.head).toEqual(before.head);
+      expect(after?.records.fact).toHaveLength(1);
+      expect(after?.records.fact[0]?.record).toEqual(
+        before.records.fact[0]?.record,
+      );
+    });
+
+    it('supports true legacy binding and replay when no lineage or history exists', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      hooks.deleteAdmissionLineage(storage);
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('applied');
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('replay');
+      await expect(
+        hooks.readAttemptHistory(storage, {
+          lease,
+          tenantId: spec.tenant.tenantId,
+          attemptId: spec.attemptId,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('treats an acceptance without new history artifacts as legacy binding', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      hooks.deleteAdmissionHistoryArtifactsRetainAcceptance(storage);
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('applied');
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('replay');
+    });
+
+    it('rolls back all binding state when the history commit fails', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      await hooks.prepareAwaitingBindingCancellation(storage, lease, spec);
+      const beforeCancellation = await storage.listCancellationWork({
+        tenantId: spec.tenant.tenantId,
+        state: 'awaiting-binding',
+      });
+      expect(beforeCancellation).toHaveLength(1);
+      const restore = hooks.failAttemptHistoryCommit(storage);
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).rejects.toThrow();
+      restore();
+      const rolledBack = await storage.readAttempt({
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(rolledBack).toMatchObject({ revision: 2, phase: 'cancelling' });
+      expect(rolledBack?.binding).toBeUndefined();
+      expect(
+        await storage.listCancellationWork({
+          tenantId: spec.tenant.tenantId,
+          state: 'awaiting-binding',
+        }),
+      ).toEqual(beforeCancellation);
+      expect(
+        await storage.listCancellationWork({
+          tenantId: spec.tenant.tenantId,
+          state: 'pending',
+        }),
+      ).toHaveLength(0);
+      expect(await ingestVerifiedRunBinding(storage, lease, verified)).toBe(
+        'applied',
+      );
+    });
+
+    it('does not leak a global binding index when history commit fails', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      const restore = hooks.failAttemptHistoryCommit(storage);
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).rejects.toThrow();
+      restore();
+      const internals = hooks.inspectBindingInternals(storage);
+      expect(internals.factKeys).toBe(0);
+      expect(internals.requestKeys).toBe(0);
+      expect(internals.bindings).toBe(0);
+      const secondSpec: AcceptedAttemptSpec = {
+        ...spec,
+        requestId: 'request-second-after-failure',
+        attemptId: 'B'.repeat(22),
+        task: { ...spec.task, issueNumber: 10 },
+        local: {
+          ...spec.local,
+          intentId: 'intent-second-after-failure',
+          attemptMarker: 'g1:intent-second-after-failure',
+          idempotencyKey: 'admit-second-after-failure',
+        },
+      };
+      const second = await admitAcceptedSpecForTest({
+        storage,
+        activation: { ...fixture().activation, tenant: secondSpec.tenant },
+        spec: secondSpec,
+        ownerId: 'owner-second-after-failure',
+      });
+      const secondBinding = await verifier.verify({
+        envelope: await envelope(second.spec),
+        localAttemptMarker: second.spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, second.lease, secondBinding),
+      ).resolves.toBe('applied');
+      await expect(
+        ingestVerifiedRunBinding(storage, second.lease, secondBinding),
+      ).resolves.toBe('replay');
     });
 
     it('converges pending, dispatching, accepted, and unknown outboxes to one accepted bound run', async () => {
@@ -397,6 +709,30 @@ export function runVerifiedRunBindingStorageContract(
         launch: { state: 'accepted' },
         finalization: { terminalFactId: 'fact-terminal-1' },
       });
+      const history = await hooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(history?.head.aggregateRevision).toBe(3);
+      expect(history?.records.command).toHaveLength(1);
+      expect(history?.records.fact).toHaveLength(1);
+      expect(
+        history?.records.fact.filter(
+          ({ payload }) =>
+            (payload as { payload?: { kind?: string } }).payload?.kind ===
+            'run-bound',
+        ),
+      ).toHaveLength(1);
+      expect(
+        history?.records.fact.find(
+          ({ payload }) =>
+            (payload as { payload?: { kind?: string } }).payload?.kind ===
+            'run-bound',
+        )?.record.appliedRevision,
+      ).toBe(3);
+      expect(history?.head.phase).toBe('active');
+      expect(history?.head.finalization).toBeUndefined();
     });
 
     it('rejects a global exact-binding collision across attempts without partial second writes', async () => {
@@ -433,6 +769,13 @@ export function runVerifiedRunBindingStorageContract(
       await expect(
         ingestVerifiedRunBinding(storage, secondLease, colliding),
       ).rejects.toBeInstanceOf(AuthorityConflict);
+      const secondHistory = await hooks.readAttemptHistory(storage, {
+        lease: secondLease,
+        tenantId: admittedSecondSpec.tenant.tenantId,
+        attemptId: admittedSecondSpec.attemptId,
+      });
+      expect(secondHistory?.records.command).toHaveLength(1);
+      expect(secondHistory?.records.fact).toHaveLength(0);
       expect(
         await storage.readAttempt({
           tenantId: admittedSecondSpec.tenant.tenantId,

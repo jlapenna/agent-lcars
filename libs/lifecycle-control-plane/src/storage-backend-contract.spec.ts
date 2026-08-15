@@ -6,6 +6,7 @@ import {
   type LifecycleAuthorityStorage,
 } from './authority-storage';
 import { InMemoryIngressPolicyInbox } from './ingress-policy';
+import { inMemoryBindingHistoryHooks } from './launch-binding-history-test-support';
 import { writeAttemptForTest } from './launch-resolution-test-support';
 import { inMemoryPresentationDeliveryStorageHooks } from './presentation-delivery.in-memory.spec.support';
 import { runLifecycleAuthorityBackendContract } from './storage-backend-contract.spec.support';
@@ -131,4 +132,5 @@ runLifecycleAuthorityBackendContract({
   createInbox: (clock, evidenceResolver) =>
     new InMemoryIngressPolicyInbox(clock, evidenceResolver),
   admissionHistory,
+  bindingHistory: inMemoryBindingHistoryHooks(),
 });
