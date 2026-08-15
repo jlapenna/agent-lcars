@@ -17,6 +17,7 @@ import {
   TerminalFinalizerConflict,
   TerminalObservationBoundary,
 } from './terminal-finalizer';
+import { inMemoryValidationHistoryHooks } from './validation-history.in-memory.spec.support';
 
 const tenant = {
   tenantId: 'tenant-1',
@@ -242,4 +243,5 @@ runAttemptFinalizerStorageContract(
       mint: () => 'A'.repeat(22),
     }),
   inMemoryTerminalClaimHistoryHooks(),
+  inMemoryValidationHistoryHooks(),
 );
