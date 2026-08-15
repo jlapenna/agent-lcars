@@ -41,6 +41,24 @@ const TRANSCRIPT = (
     }),
   ].join('\n');
 
+const CODEX_TRANSCRIPT = (
+  sessionId: string,
+  timestamp: string,
+  cwd = '/home/dev/project',
+) =>
+  [
+    JSON.stringify({
+      timestamp,
+      type: 'session_meta',
+      payload: { id: sessionId, originator: 'codex_cli', cwd },
+    }),
+    JSON.stringify({
+      timestamp,
+      type: 'event_msg',
+      payload: { type: 'user_message', message: 'Inferred prompt title' },
+    }),
+  ].join('\n');
+
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
   const store: SessionStore = {
@@ -69,6 +87,161 @@ function fakeStat(content: string | undefined): {
 describe('WatcherDaemon', () => {
   const HEARTBEAT_MS = 10_000;
   const STALENESS_MS = 30_000;
+
+  it('applies a native Codex title only to an already accepted allowlisted Codex transcript', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/codex/session-native-title.jsonl': CODEX_TRANSCRIPT(
+        'codex-session-native-title',
+        '2026-08-15T10:00:00.000Z',
+      ),
+    };
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        {
+          path: '/root/codex',
+          adapter: 'codex',
+          recursive: true,
+          cwdAllowlist: ['/home/dev/*'],
+        },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-08-15T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      readCodexNativeTitles: () =>
+        new Map([
+          ['codex-session-native-title', 'Explicit native Codex title'],
+          ['undiscovered-codex-session', 'Must not create a session'],
+        ]),
+    });
+
+    await daemon.tick();
+
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        sessionId: 'codex-session-native-title',
+        agent: 'codex',
+        title: 'Explicit native Codex title',
+      }),
+    ]);
+  });
+
+  it('keeps the Codex transcript fallback for unavailable state, non-allowlisted roots, and Claude sessions', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/codex/allowlisted.jsonl': CODEX_TRANSCRIPT(
+        'codex-fallback',
+        '2026-08-15T10:00:00.000Z',
+      ),
+      '/root/codex/not-allowlisted.jsonl': CODEX_TRANSCRIPT(
+        'codex-private',
+        '2026-08-15T10:00:00.000Z',
+        '/private/project',
+      ),
+      '/root/claude/claude-title.jsonl': TRANSCRIPT(
+        'claude-title',
+        '2026-08-15T10:00:00.000Z',
+      ).replace(
+        '"gitBranch":"main",',
+        '"gitBranch":"main","aiTitle":"Claude aiTitle wins",',
+      ),
+    };
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        {
+          path: '/root/codex',
+          adapter: 'codex',
+          recursive: true,
+          cwdAllowlist: ['/home/dev/*'],
+        },
+        { path: '/root/claude', adapter: 'claude-code' },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-08-15T10:00:01.000Z',
+      discover: (rootPath) =>
+        Object.keys(files).filter((file) => file.startsWith(rootPath)),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      readCodexNativeTitles: () => {
+        throw new Error('native state unavailable');
+      },
+    });
+
+    await daemon.tick();
+
+    expect(upserts).toHaveLength(2);
+    expect(upserts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'codex-fallback',
+          title: 'Inferred prompt title',
+        }),
+        expect.objectContaining({
+          sessionId: 'claude-title',
+          title: 'Claude aiTitle wins',
+        }),
+      ]),
+    );
+    expect(upserts.map((doc) => doc.sessionId)).not.toContain('codex-private');
+  });
+
+  it('reconciles a changed native title on an unchanged transcript without duplicate upserts', async () => {
+    const { store, upserts } = createFakeStore();
+    const files = {
+      '/root/codex/session-native-title.jsonl': CODEX_TRANSCRIPT(
+        'codex-title-refresh',
+        '2026-08-15T10:00:00.000Z',
+      ),
+    };
+    let nativeTitle = 'First native title';
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        {
+          path: '/root/codex',
+          adapter: 'codex',
+          recursive: true,
+          cwdAllowlist: ['/home/dev/*'],
+        },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-08-15T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      readCodexNativeTitles: () =>
+        new Map([['codex-title-refresh', nativeTitle]]),
+    });
+
+    await daemon.tick();
+    nativeTitle = 'Updated native title';
+    await daemon.tick();
+    await daemon.tick();
+
+    expect(upserts.map((doc) => doc.title)).toEqual([
+      'First native title',
+      'Updated native title',
+    ]);
+  });
 
   it('ships an initial summary for each discovered transcript on the first tick', async () => {
     const { store, upserts } = createFakeStore();

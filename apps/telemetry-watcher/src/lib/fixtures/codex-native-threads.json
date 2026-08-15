@@ -1,0 +1,20 @@
+[
+  {
+    "id": "codex-session-native-title",
+    "title": "Explicit native Codex title",
+    "updated_at": 1786788777,
+    "updated_at_ms": 1786788777806
+  },
+  {
+    "id": "codex-session-older-title",
+    "title": "Earlier native title",
+    "updated_at": 1786788700,
+    "updated_at_ms": 1786788700000
+  },
+  {
+    "id": "codex-session-older-title",
+    "title": "Later native title",
+    "updated_at": 1786788777,
+    "updated_at_ms": 1786788777806
+  }
+]

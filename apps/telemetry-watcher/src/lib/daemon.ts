@@ -13,6 +13,7 @@ import {
   AntigravitySummaryDbConfig,
   pollAntigravitySummaries as defaultPollAntigravitySummaries,
 } from './antigravity-summary-source';
+import { readCodexNativeTitles as defaultReadCodexNativeTitles } from './codex-native-title-source';
 import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { discoverSessionArtifacts as defaultDiscoverArtifacts } from './discover-artifacts';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
@@ -107,10 +108,18 @@ export interface WatcherDaemonOptions {
     allowlistPrefixes: string[],
     options?: { onUnavailable?: (error: unknown) => void },
   ) => SessionSummary[];
+  /** Best-effort local Codex state reader. Its results are only ever joined
+   * to a Codex summary this daemon has already accepted through a root's
+   * cwd allowlist; it can neither discover a session nor bypass that filter.
+   * Injectable so tests never need a real Codex installation. */
+  readCodexNativeTitles?: () => ReadonlyMap<string, string>;
 }
 
 interface TrackedSession {
   summary: SessionSummary;
+  /** Whether this exact summary came from an allowlisted Codex root and may
+   * receive a title from Codex's unrelated local state DB. */
+  nativeCodexTitleEligible: boolean;
   /** Last time this tick's discovery pass successfully found this session. */
   lastHeartbeatAt: string;
 }
@@ -238,7 +247,10 @@ export class WatcherDaemon {
     // supports) only matters for callers walking an arbitrary multi-file
     // directory, not this daemon's discovery.
     const missingAdapterWarned = new Set<string>();
-    const summaries: SessionSummary[] = [];
+    const summaries: Array<{
+      summary: SessionSummary;
+      nativeCodexTitleEligible: boolean;
+    }> = [];
     for (const [file, { stat, root }] of changedFiles) {
       const adapter = getTranscriptAdapter(root.adapter);
       if (!adapter) {
@@ -279,11 +291,16 @@ export class WatcherDaemon {
           ) {
             continue;
           }
-          summaries.push(
-            this.options.host
+          summaries.push({
+            summary: this.options.host
               ? { ...summary, host: this.options.host }
               : summary,
-          );
+            // The native state database is deliberately not a discovery or
+            // privacy-scoping source. Runner roots are allowlist-free, so
+            // their Codex sessions keep the transcript-derived fallback.
+            nativeCodexTitleEligible:
+              root.adapter === 'codex' && root.cwdAllowlist !== undefined,
+          });
           acceptedSessionIds.push(summary.sessionId);
         }
         this.sessionIdsByFile.set(file, acceptedSessionIds);
@@ -299,15 +316,43 @@ export class WatcherDaemon {
     // (each is a `git` subprocess spawn) rather than serially awaiting one
     // at a time.
     const enrichedSummaries = await Promise.all(
-      summaries.map((summary) =>
-        applyGitContext(summary, resolveGitBranch, resolveGitRepo),
-      ),
+      summaries.map(async ({ summary, nativeCodexTitleEligible }) => ({
+        summary: await applyGitContext(
+          summary,
+          resolveGitBranch,
+          resolveGitRepo,
+        ),
+        nativeCodexTitleEligible,
+      })),
     );
-    for (const summary of enrichedSummaries) {
+    for (const { summary, nativeCodexTitleEligible } of enrichedSummaries) {
       this.sessions.set(summary.sessionId, {
         summary,
+        nativeCodexTitleEligible,
         lastHeartbeatAt: now,
       });
+    }
+
+    let codexNativeTitles: ReadonlyMap<string, string> = new Map();
+    const hasNativeCodexTitleCandidate = Array.from(
+      this.sessions.values(),
+    ).some(
+      ({ summary, nativeCodexTitleEligible }) =>
+        nativeCodexTitleEligible && summary.agent === 'codex',
+    );
+    if (hasNativeCodexTitleCandidate) {
+      try {
+        codexNativeTitles =
+          this.options.readCodexNativeTitles?.() ??
+          defaultReadCodexNativeTitles();
+      } catch (error) {
+        // An injected reader must have the same fail-soft operational contract
+        // as the real local SQLite reader; transcript ingestion still wins.
+        logger.warn(
+          'agent-lcars-telemetry-watcher: failed to read native Codex titles, retaining transcript title fallbacks',
+          error,
+        );
+      }
     }
 
     for (const [sessionId, tracked] of this.sessions) {
@@ -339,10 +384,15 @@ export class WatcherDaemon {
       const artifacts = this.options.shareDir
         ? discoverArtifacts(this.options.shareDir, sessionId)
         : [];
+      const nativeTitle =
+        tracked.nativeCodexTitleEligible && tracked.summary.agent === 'codex'
+          ? codexNativeTitles.get(sessionId)
+          : undefined;
+      const titledSummary = nativeTitle
+        ? { ...tracked.summary, title: nativeTitle }
+        : tracked.summary;
       const summary =
-        artifacts.length > 0
-          ? { ...tracked.summary, artifacts }
-          : tracked.summary;
+        artifacts.length > 0 ? { ...titledSummary, artifacts } : titledSummary;
 
       const doc = buildSessionDoc(summary, liveness, {
         runId: this.options.runId,
