@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 
-import { controlPlaneRepository } from '@/lib/deployment';
-import { verifyReconcileOidcToken } from '@/lib/github-actions-oidc';
 import {
   parseHostedBearerToken,
   parseHostedReconcileRequestBody,
-} from '@/lib/hosted-lifecycle/hosted-route-contract';
+} from '@/lib/control-plane-request';
+import { controlPlaneRepository } from '@/lib/deployment';
+import { verifyReconcileOidcToken } from '@/lib/github-actions-oidc';
 import { runHostedReconcile } from '@/lib/hosted-reconciler';
 
 export async function POST(request: Request): Promise<NextResponse> {

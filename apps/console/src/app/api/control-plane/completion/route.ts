@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
 
+import {
+  parseHostedBearerToken,
+  parseHostedCompletionRequestBody,
+  parseHostedJsonBody,
+} from '@/lib/control-plane-request';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyCompletionOidcToken } from '@/lib/github-actions-oidc';
 import {
   completeHostedWorker,
   HostedCompletionInputError,
 } from '@/lib/hosted-completion';
-import {
-  parseHostedBearerToken,
-  parseHostedCompletionRequestBody,
-  parseHostedJsonBody,
-} from '@/lib/hosted-lifecycle/hosted-route-contract';
 
 export async function POST(request: Request): Promise<NextResponse> {
   let identity;
