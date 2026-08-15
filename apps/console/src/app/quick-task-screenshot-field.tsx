@@ -4,7 +4,6 @@ import { Box, Button, Group, Image, Paper, Stack, Text } from '@mantine/core';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
-  QUICK_TASK_EVIDENCE_DISCLOSURE_WARNING,
   QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES,
   QUICK_TASK_EVIDENCE_MAX_INPUT_BYTES,
 } from '../lib/quick-task-evidence-contract';
@@ -76,9 +75,6 @@ export function QuickTaskScreenshotField({
           PNG, JPEG, or WebP; up to 10 MiB.
         </Text>
       </Box>
-      <Text size="xs" c="orange" role="note">
-        {QUICK_TASK_EVIDENCE_DISCLOSURE_WARNING}
-      </Text>
       <input
         ref={inputRef}
         id={inputId}

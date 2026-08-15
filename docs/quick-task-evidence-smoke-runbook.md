@@ -74,8 +74,7 @@ Use the console’s Quick Task dialog for the normal admin path. Select the
 watched repository and pipeline, enter a disposable description such as
 [smoke] Quick Task screenshot evidence — close after validation, select the
 synthetic image in the optional Screenshot field, and submit once. The field
-accepts PNG, JPEG, or WebP up to 10 MiB and displays the bearer-capability
-warning before submission.
+accepts PNG, JPEG, or WebP up to 10 MiB before submission.
 
 In browser developer tools, confirm the request is the following before
 continuing. Do not copy the request’s Cookie header or full response into a
@@ -271,7 +270,7 @@ implementation and tests:
   identical empty 404 response for malformed, absent, revoked, and
   unavailable IDs.
 - apps/console/src/lib/quick-task-evidence-contract.ts defines the limits,
-  object/tombstone prefixes, bearer warning, and response headers.
+  object/tombstone prefixes, and response headers.
 - tools/quick-task-evidence-revoke.mjs and its test define the read-only
   audit default, exact-binding checks, permanent tombstone, and
   generation-matched deletion order.

@@ -193,6 +193,3 @@ export function quickTaskEvidenceMarkdown(
 ): string {
   return `![Screenshot](${quickTaskEvidenceUrl(trustedOrigin, evidenceId)})`;
 }
-
-export const QUICK_TASK_EVIDENCE_DISCLOSURE_WARNING =
-  'This screenshot is stored outside GitHub repository access controls. Anyone who obtains the LCARS or GitHub-proxy image link can view and forward it, even after losing repository access. If this repository is or becomes public, the screenshot is public. GitHub and other readers may cache copies. Do not upload secrets or sensitive data.';
