@@ -77,6 +77,10 @@ export * from './signal-task-composition';
 export * from './task-admission-effect-composition';
 export type { AdmissionPlanResolver } from './task-attempt-admission';
 export * from './task-intent-reducer';
+export {
+  StorageTaskLeaseRunner,
+  type StorageTaskLeaseRunnerOptions,
+} from './task-lease-runner';
 export type {
   EvidenceValidationResolver,
   EvidenceValidationSelection,
