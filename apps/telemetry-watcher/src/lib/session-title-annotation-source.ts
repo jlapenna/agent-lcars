@@ -63,9 +63,12 @@ function readFileBounded(
   }
   const descriptor = fs.openSync(
     filePath,
-    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
   );
   try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      return undefined;
+    }
     const bytes = Buffer.allocUnsafe(maxBytes + 1);
     const bytesRead = fs.readSync(descriptor, bytes, 0, bytes.length, 0);
     return bytesRead > maxBytes

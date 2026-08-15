@@ -113,6 +113,15 @@ describe('readSessionTitleAnnotations', () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
+  it('rechecks the opened descriptor before reading a stale regular-file entry', () => {
+    expect(
+      readSessionTitleAnnotations('/annotations', {
+        readDirectory: () => [entry('null.json')],
+        joinPath: () => '/dev/null',
+      }),
+    ).toEqual(new Map());
+  });
+
   it('fails soft for an absent directory, unreadable file, and oversized content', () => {
     expect(
       readSessionTitleAnnotations('/missing', {
