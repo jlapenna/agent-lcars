@@ -1,19 +1,18 @@
 import 'server-only';
 
 import type {
+  LaunchOutboxRecord,
   LifecycleAuthorityStorage,
   TaskAuthorityLease,
   TaskAuthorityScope,
+  TaskEffectRecord,
 } from './authority-storage';
 import type {
   AdmissionPlanResolver,
   TaskAttemptAdmissionCoordinator,
 } from './task-attempt-admission';
 import { TaskAttemptAdmissionCoordinator as AdmissionCoordinator } from './task-attempt-admission';
-import type {
-  AdmissionTaskEffectCoordinator,
-  TaskEffectReconcileResult,
-} from './task-effects';
+import type { AdmissionTaskEffectCoordinator } from './task-effects';
 import { AdmissionTaskEffectCoordinator as EffectCoordinator } from './task-effects';
 
 export interface TaskEffectLeaseRunner {
@@ -35,6 +34,19 @@ export interface TaskAdmissionEffectInput {
   sourceFactId: string;
   effectKey: string;
 }
+
+/** Public receipt; effect claims, digests, and full Attempt facts stay private. */
+export type TaskAdmissionEffectResult =
+  | {
+      status: 'deferred';
+      deliveryState: TaskEffectRecord['deliveryState'];
+    }
+  | {
+      status: 'completed';
+      attemptId: string;
+      launchState: LaunchOutboxRecord['state'];
+      replay: boolean;
+    };
 
 export class TaskAdmissionEffectCompositionConflict extends Error {
   override name = 'TaskAdmissionEffectCompositionConflict';
@@ -59,7 +71,7 @@ export class TaskAdmissionEffectComposition {
 
   async reconcile(
     input: TaskAdmissionEffectInput,
-  ): Promise<TaskEffectReconcileResult> {
+  ): Promise<TaskAdmissionEffectResult> {
     if (
       input.tenantId.length === 0 ||
       input.tenantId !== input.task.tenantId ||
@@ -70,8 +82,23 @@ export class TaskAdmissionEffectComposition {
         'Task effect identity is invalid or crosses tenant scope',
       );
     }
-    return this.dependencies.leases.run(input.task, (lease) =>
+    const result = await this.dependencies.leases.run(input.task, (lease) =>
       this.effects.reconcile({ ...input, lease }),
     );
+    if (result.status === 'deferred') {
+      return { status: 'deferred', deliveryState: result.effect.deliveryState };
+    }
+    const attempt = result.admission.attempt;
+    if (attempt === undefined) {
+      throw new TaskAdmissionEffectCompositionConflict(
+        'Admission receipt did not contain an Attempt',
+      );
+    }
+    return {
+      status: 'completed',
+      attemptId: attempt.spec.attemptId,
+      launchState: result.admission.launch.state,
+      replay: result.admission.replay,
+    };
   }
 }
