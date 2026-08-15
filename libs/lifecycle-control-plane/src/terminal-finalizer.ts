@@ -270,6 +270,21 @@ export class AttemptFinalizer {
         'Resolver returned an invalid verdict',
       );
     }
+    // Another validator may complete while the external resolver is awaited.
+    // Re-read before minting a local transition so the stored validation's
+    // immutable timestamp/verdict wins rather than racing a second command.
+    state = await this.read(tenantId, attemptId);
+    const refreshedEvidence = state.finalization?.evidence.find(
+      (candidate) => candidate.factId === claimFactId,
+    );
+    if (refreshedEvidence?.validation !== undefined) {
+      return this.resolveClaimInternal(lease, tenantId, attemptId, claimFactId);
+    }
+    if (refreshedEvidence === undefined) {
+      throw new TerminalFinalizerConflict(
+        'Claim disappeared during validation',
+      );
+    }
     const transition = mintFinalizationTransition({
       kind: 'validate-claim',
       tenantId,

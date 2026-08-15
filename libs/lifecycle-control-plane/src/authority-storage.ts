@@ -1564,6 +1564,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private assertStoredAttemptHistoryIntegrity(
     history: StoredAttemptHistory,
     attempt: AttemptState,
+    requireValidationReceipts = true,
   ): void {
     try {
       const head = verifyAttemptHistoryHead(history.head);
@@ -1843,6 +1844,18 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ) {
           throw new AuthorityConflict(
             'Attempt validation history is incomplete',
+          );
+        }
+        // A terminal Attempt can only be reached through the validating
+        // phase.  Keep that transition immutable even while finalize/evidence
+        // shadowing is delivered separately: terminal legacy truth without
+        // its start-validation command is a partial history prefix.
+        if (
+          attempt.phase === 'terminal' &&
+          startValidationCommands.length !== 1
+        ) {
+          throw new AuthorityConflict(
+            'Attempt terminal validation history is incomplete',
           );
         }
         if (
@@ -2249,6 +2262,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ) {
           throw new AuthorityConflict('Attempt binding history is invalid');
         }
+      }
+      if (requireValidationReceipts) {
+        this.assertValidationHistoryReceiptBijection(history, attempt);
       }
     } catch (error) {
       if (error instanceof AuthorityConflict) throw error;
@@ -5782,7 +5798,6 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       attemptHistory: history,
       attempt,
     });
-    this.assertValidationHistoryReceiptBijection(history, attempt);
     if (attempt.phase === 'validating') {
       this.assertValidationWorkForState(attempt);
     }
@@ -5905,7 +5920,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ]);
       }
       const stored = { head: clone(transition.head), records };
-      this.assertStoredAttemptHistoryIntegrity(stored, input.next);
+      this.assertStoredAttemptHistoryIntegrity(stored, input.next, false);
       return { history: stored, factRef };
     } catch (error) {
       if (error instanceof AuthorityConflict) throw error;
@@ -6074,7 +6089,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         throw new AuthorityConflict('Validation history receipt is missing');
       }
       const stored = { head: clone(transition.head), records };
-      this.assertStoredAttemptHistoryIntegrity(stored, input.next);
+      this.assertStoredAttemptHistoryIntegrity(stored, input.next, false);
       return {
         history: stored,
         receipt: {
@@ -6584,15 +6599,32 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       finalization === undefined ||
       finalization.terminalFactId !== input.terminalFactId ||
       evidence === undefined ||
-      evidence.validation !== undefined ||
       work === undefined ||
       work.tenantId !== input.tenantId ||
       work.attemptId !== input.attemptId ||
       work.terminalFactId !== input.terminalFactId ||
       work.claimFactId !== input.claimFactId ||
-      work.state === 'complete' ||
       !same(work.claim, evidence.claim)
     ) {
+      throw new AuthorityConflict('Validation work is unknown');
+    }
+    if (evidence.validation !== undefined) {
+      const expectedValidationFactId = finalizationCommandId(
+        'validate-claim',
+        input.attemptId,
+        input.terminalFactId,
+        input.claimFactId,
+      );
+      if (
+        work.state !== 'complete' ||
+        work.validationFactId !== expectedValidationFactId ||
+        evidence.validation.validationFactId !== expectedValidationFactId
+      ) {
+        throw new AuthorityConflict('Validation work replay is incomplete');
+      }
+      return 'replay';
+    }
+    if (work.state === 'complete') {
       throw new AuthorityConflict('Validation work is unknown');
     }
     if (work.state === 'resolving') {

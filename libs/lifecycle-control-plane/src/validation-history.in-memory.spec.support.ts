@@ -16,7 +16,8 @@ export type ValidationHistoryCorruption =
   | 'validation-command'
   | 'validation-record'
   | 'validation-ref'
-  | 'private-receipt';
+  | 'private-receipt'
+  | 'missing-start-command-and-receipt';
 
 export interface ValidationHistoryStorageHooks {
   readAttemptHistory: typeof readAttemptHistoryForTest;
@@ -167,6 +168,24 @@ export const inMemoryValidationHistoryHooks =
           if (receipt === undefined)
             throw new Error('missing validation history receipt');
           receipt.validationRef = { recordDigest: 'a'.repeat(64) };
+          return;
+        }
+        case 'missing-start-command-and-receipt': {
+          const commands = value.records.get('command');
+          if (commands === undefined) throw new Error('missing command stream');
+          const index = commands.findIndex(
+            (entry) => entry.payload.payload?.kind === 'start-validation',
+          );
+          if (index < 0) throw new Error('missing start command');
+          commands.splice(index, 1);
+          const receipts = internals(storage).validationHistoryReceipts;
+          if (receipts === undefined) throw new Error('missing receipt map');
+          const startReceipt = [...receipts.entries()].find(
+            ([, receipt]) => receipt.validationRef === undefined,
+          );
+          if (startReceipt === undefined)
+            throw new Error('missing start validation receipt');
+          receipts.delete(startReceipt[0]);
           return;
         }
       }

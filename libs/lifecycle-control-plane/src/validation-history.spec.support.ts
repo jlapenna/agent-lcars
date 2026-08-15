@@ -31,6 +31,7 @@ const TENANT_ID = 'tenant-1';
 const ATTEMPT_ID = 'A'.repeat(22);
 const DEADLINE = '2026-08-16T00:05:00.000Z';
 const BEFORE_DEADLINE = '2026-08-16T00:04:59.000Z';
+const FINAL_TIME = '2026-08-16T00:06:00.000Z';
 
 class ValidationClock implements AuthorityClock {
   constructor(private value = '2026-08-16T00:00:00.000Z') {}
@@ -402,6 +403,57 @@ export function runValidationHistoryStorageContract(
       ).toHaveLength(1);
     });
 
+    it('returns replay when another worker completes during resolver await', async () => {
+      const value = await setup(makeStorage, 1);
+      let competingResolutionCount = 0;
+      const competingWorker = new AttemptFinalizer(value.storage, value.clock, {
+        resolve: async () => {
+          competingResolutionCount += 1;
+          return { status: 'validated' as const };
+        },
+      });
+      const finalizer = new AttemptFinalizer(value.storage, value.clock, {
+        resolve: async () => {
+          value.clock.set(FINAL_TIME);
+          expect(
+            await competingWorker.resolveClaim(
+              value.lease,
+              TENANT_ID,
+              ATTEMPT_ID,
+              firstClaim(value.claims),
+            ),
+          ).toBe('applied');
+          return { status: 'validated' as const };
+        },
+      });
+      await finalizer.beginValidation(value.lease, TENANT_ID, ATTEMPT_ID);
+      expect(
+        await finalizer.resolveClaim(
+          value.lease,
+          TENANT_ID,
+          ATTEMPT_ID,
+          firstClaim(value.claims),
+        ),
+      ).toBe('replay');
+      expect(competingResolutionCount).toBe(1);
+      expect(
+        await value.storage.listValidationWork({
+          tenantId: TENANT_ID,
+          state: 'complete',
+        }),
+      ).toMatchObject([{ claimFactId: firstClaim(value.claims) }]);
+      const history = await hooks.readAttemptHistory(value.storage, {
+        lease: value.lease,
+        tenantId: TENANT_ID,
+        attemptId: ATTEMPT_ID,
+      });
+      expect(history?.records.validation).toHaveLength(1);
+      expect(history?.records.validation[0]?.payload.validation).toMatchObject({
+        status: 'validated',
+        validatedAt: FINAL_TIME,
+      });
+    });
+
     it('rejects stale claimant fence/token and exact-replays a completed result', async () => {
       const value = await setup(makeStorage, 1);
       await value.finalizer.beginValidation(value.lease, TENANT_ID, ATTEMPT_ID);
@@ -675,11 +727,6 @@ export function runValidationHistoryStorageContract(
     it('rejects a fresh validation when its private start receipt is corrupted before work mutation', async () => {
       const value = await setup(makeStorage, 1);
       await value.finalizer.beginValidation(value.lease, TENANT_ID, ATTEMPT_ID);
-      const before = await hooks.readAttemptHistory(value.storage, {
-        lease: value.lease,
-        tenantId: TENANT_ID,
-        attemptId: ATTEMPT_ID,
-      });
       const attemptBefore = await value.storage.readAttempt({
         tenantId: TENANT_ID,
         attemptId: ATTEMPT_ID,
@@ -705,13 +752,59 @@ export function runValidationHistoryStorageContract(
           tenantId: TENANT_ID,
           attemptId: ATTEMPT_ID,
         }),
-      ).resolves.toEqual(before);
+      ).rejects.toBeInstanceOf(AuthorityConflict);
       expect(
         await value.storage.listValidationWork({
           tenantId: TENANT_ID,
           state: 'pending',
         }),
       ).toHaveLength(1);
+    });
+
+    it('rejects start-validation replay when its command and private receipt are both missing', async () => {
+      const value = await setup(makeStorage, 1);
+      expect(
+        await value.finalizer.beginValidation(
+          value.lease,
+          TENANT_ID,
+          ATTEMPT_ID,
+        ),
+      ).toBe('applied');
+      expect(
+        await value.finalizer.resolveClaim(
+          value.lease,
+          TENANT_ID,
+          ATTEMPT_ID,
+          firstClaim(value.claims),
+        ),
+      ).toBe('applied');
+      expect(
+        await value.finalizer.finalize(value.lease, TENANT_ID, ATTEMPT_ID),
+      ).toBe('applied');
+      const attemptBefore = await value.storage.readAttempt({
+        tenantId: TENANT_ID,
+        attemptId: ATTEMPT_ID,
+      });
+      hooks.corruptValidationHistory(
+        value.storage,
+        'missing-start-command-and-receipt',
+      );
+      await expect(
+        value.finalizer.finalize(value.lease, TENANT_ID, ATTEMPT_ID),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+      await expect(
+        value.storage.readAttempt({
+          tenantId: TENANT_ID,
+          attemptId: ATTEMPT_ID,
+        }),
+      ).resolves.toEqual(attemptBefore);
+      await expect(
+        hooks.readAttemptHistory(value.storage, {
+          lease: value.lease,
+          tenantId: TENANT_ID,
+          attemptId: ATTEMPT_ID,
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
     });
 
     it('does not manufacture validation history when a legacy Attempt history is absent', async () => {
