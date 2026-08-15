@@ -528,9 +528,6 @@ export function verifyHistoryAppend(
   ) {
     throw new HistoryIntegrityError('sequence-overflow');
   }
-  if (head.lastAppliedRevision === Number.MAX_SAFE_INTEGER) {
-    throw new HistoryIntegrityError('sequence-overflow');
-  }
   if (
     head.tenantId !== record.tenantId ||
     head.aggregateKind !== record.aggregateKind ||

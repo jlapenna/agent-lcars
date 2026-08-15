@@ -155,6 +155,15 @@ describe('immutable lifecycle history primitives', () => {
       appliedRevision: 99,
     });
     expect(equal.head.lastAppliedRevision).toBe(99);
+    const maxRevision = appendHistoryRecord({
+      head: {
+        ...equal.head,
+        lastAppliedRevision: Number.MAX_SAFE_INTEGER,
+      },
+      payload: 'equal-maximum-revision',
+      appliedRevision: Number.MAX_SAFE_INTEGER,
+    });
+    expect(maxRevision.head.lastAppliedRevision).toBe(Number.MAX_SAFE_INTEGER);
     expect(() =>
       appendHistoryRecord({
         head: equal.head,
