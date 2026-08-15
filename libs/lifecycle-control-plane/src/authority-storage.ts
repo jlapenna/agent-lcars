@@ -102,7 +102,9 @@ import {
 } from './mark-lost-capability';
 import {
   hasMarkLostEligibilityFence,
+  isVerifiedRunStuckObservation,
   type MarkLostEligibilityReceipt,
+  type VerifiedRunStuckObservation,
 } from './mark-lost-eligibility';
 import {
   isVerifiedMintResolution,
@@ -503,6 +505,17 @@ export interface LifecycleAuthorityStorage {
     rejection: VerifiedLaunchRejection;
   }): Promise<WriteResult>;
   /**
+   * Durable, lease-scoped record of one verified non-terminal run
+   * observation. It records evidence only: no phase, grant, outcome, or
+   * presentation changes, and no reducer transition is applied.
+   */
+  recordRunStuckObservation(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    attemptId: string;
+    observation: VerifiedRunStuckObservation;
+  }): Promise<WriteResult>;
+  /**
    * Server-verified loss decision for an exact bound run. The eligibility
    * receipt authorizes it; this transaction still re-checks live authority,
    * binding, and bounded history itself.
@@ -592,6 +605,14 @@ function sameObservationIdempotency(
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/** One stable identity string for an observation's trusted source. */
+function observationSourceIdentity(source: {
+  kind: string;
+  sourceId: string;
+}): string {
+  return `${source.kind}:${source.sourceId}`;
 }
 
 /** Avoid delimiter collisions: opaque ids are permitted to contain `:`. */
@@ -1192,6 +1213,24 @@ interface StoredLaunchRejectionReceipt {
 }
 
 /**
+ * One recorded non-terminal run observation. It holds the observation's exact
+ * identity, binding, trusted time, and one-way digests — never a provider body
+ * and never the commit fence.
+ */
+interface StoredRunStuckObservation {
+  tenantId: string;
+  attemptId: string;
+  factId: string;
+  requestId: string;
+  sourceIdentity: string;
+  binding: RunBinding;
+  observedAt: string;
+  proofDigest: string;
+  payloadDigest: string;
+  canonicalDigest: string;
+}
+
+/**
  * Private exact replay material for a verified loss decision. Only the
  * receipt's stable causal commitment is kept; observations, provider evidence,
  * and the commit fence never become durable state.
@@ -1278,6 +1317,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     StoredLaunchRejectionReceipt
   >();
   private readonly markLostReceipts = new Map<string, StoredMarkLostReceipt>();
+  private readonly runStuckObservations = new Map<
+    string,
+    StoredRunStuckObservation
+  >();
+  /** Second index so one request identity can never name two observations. */
+  private readonly runStuckObservationRequests = new Map<string, string>();
   private readonly validationHistoryReceipts = new Map<
     string,
     StoredValidationHistoryReceipt
@@ -8275,6 +8320,156 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     return 'applied';
   }
 
+  private runStuckObservationKeys(input: {
+    attemptId: string;
+    factId: string;
+    requestId: string;
+  }): { factKey: string; requestKey: string } {
+    return {
+      factKey: tupleKey(input.attemptId, 'run-stuck-fact', input.factId),
+      requestKey: tupleKey(
+        input.attemptId,
+        'run-stuck-request',
+        input.requestId,
+      ),
+    };
+  }
+
+  /**
+   * Every observation the receipt leans on must already be a durable record
+   * this authority wrote under a lease. Without this the evidence half of an
+   * eligibility receipt would be only as trustworthy as its verifier adapter.
+   */
+  private assertMarkLostObservations(input: {
+    attempt: AttemptState;
+    receipt: MarkLostEligibilityReceipt;
+  }): void {
+    const { attempt, receipt } = input;
+    const seen = new Set<string>();
+    for (const observation of receipt.observations) {
+      const { factKey, requestKey } = this.runStuckObservationKeys({
+        attemptId: attempt.spec.attemptId,
+        factId: observation.factId,
+        requestId: observation.requestId,
+      });
+      const recorded = this.runStuckObservations.get(factKey);
+      if (
+        recorded === undefined ||
+        seen.has(observation.factId) ||
+        recorded.tenantId !== attempt.spec.tenant.tenantId ||
+        recorded.attemptId !== attempt.spec.attemptId ||
+        recorded.requestId !== observation.requestId ||
+        recorded.sourceIdentity !==
+          observationSourceIdentity(observation.source) ||
+        !same(recorded.binding, observation.binding) ||
+        !same(recorded.binding, receipt.binding) ||
+        recorded.observedAt !== observation.observedAt ||
+        recorded.proofDigest !== observation.proofDigest ||
+        recorded.payloadDigest !== observation.payloadDigest ||
+        recorded.canonicalDigest !== observation.canonicalDigest ||
+        this.runStuckObservationRequests.get(requestKey) !== observation.factId
+      ) {
+        throw new AuthorityConflict('Mark-lost evidence was never recorded');
+      }
+      seen.add(observation.factId);
+    }
+  }
+
+  async recordRunStuckObservation(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    attemptId: string;
+    observation: VerifiedRunStuckObservation;
+  }): Promise<WriteResult> {
+    if (!isVerifiedRunStuckObservation(input.observation)) {
+      throw new AuthorityConflict(
+        'Run-stuck observation was not verified at its boundary',
+      );
+    }
+    const observation = input.observation;
+    // Only a non-terminal poll is loss evidence. A terminal conclusion belongs
+    // to finalization and a definitive no-run to the launch-rejected path; a
+    // contradiction belongs to neither. None of them may be banked here.
+    if (observation.status.kind !== 'nonterminal') {
+      throw new AuthorityConflict('Run-stuck observation is not loss evidence');
+    }
+    // Loss is a server-side reconciliation verdict. A runtime self-report can
+    // never assert that its own run is stuck.
+    if (observation.source.kind !== 'control-plane-reconciler') {
+      throw new AuthorityConflict('Run-stuck observation source is untrusted');
+    }
+    const attempt = this.attempts.get(input.attemptId);
+    if (
+      attempt === undefined ||
+      attempt.spec.tenant.tenantId !== input.tenantId
+    ) {
+      throw new AuthorityConflict('Run-stuck observation scope is invalid');
+    }
+    this.assertLease(input.lease, attempt.spec.task, this.now());
+    const launch = this.launches.get(input.attemptId);
+    if (
+      attempt.spec.activation.mode !== 'central-authoritative' ||
+      !this.mayWriteEffectsSync({
+        scope: {
+          ...attempt.spec.task,
+          taskClassId: attempt.spec.activation.taskClassId,
+        },
+        activation: attempt.spec.activation,
+        boundary: attempt.spec.local.admissionRevision,
+      }) ||
+      attempt.phase !== 'active' ||
+      attempt.binding === undefined ||
+      !same(attempt.binding, observation.binding) ||
+      attempt.cancellation !== undefined ||
+      attempt.pendingTerminal !== undefined ||
+      attempt.finalization !== undefined ||
+      attempt.outcome !== undefined ||
+      attempt.futureGrantsDenied ||
+      launch === undefined ||
+      launch.state !== 'accepted'
+    ) {
+      throw new AuthorityConflict(
+        'Run-stuck observation contradicts current Attempt',
+      );
+    }
+    const { factKey, requestKey } = this.runStuckObservationKeys({
+      attemptId: input.attemptId,
+      factId: observation.factId,
+      requestId: observation.requestId,
+    });
+    const record: StoredRunStuckObservation = {
+      tenantId: input.tenantId,
+      attemptId: input.attemptId,
+      factId: observation.factId,
+      requestId: observation.requestId,
+      sourceIdentity: observationSourceIdentity(observation.source),
+      binding: clone(observation.binding),
+      observedAt: observation.observedAt,
+      proofDigest: observation.proofDigest,
+      payloadDigest: observation.payloadDigest,
+      canonicalDigest: observation.canonicalDigest,
+    };
+    const priorRecord = this.runStuckObservations.get(factKey);
+    const priorRequest = this.runStuckObservationRequests.get(requestKey);
+    if (priorRecord !== undefined || priorRequest !== undefined) {
+      if (!same(priorRecord, record) || priorRequest !== observation.factId) {
+        throw new AuthorityConflict(
+          'Run-stuck observation identity was reused differently',
+        );
+      }
+      return 'replay';
+    }
+    try {
+      this.runStuckObservations.set(factKey, record);
+      this.runStuckObservationRequests.set(requestKey, observation.factId);
+    } catch (error) {
+      Map.prototype.delete.call(this.runStuckObservations, factKey);
+      Map.prototype.delete.call(this.runStuckObservationRequests, requestKey);
+      throw error;
+    }
+    return 'applied';
+  }
+
   async terminateLostAttempt(input: {
     lease: TaskAuthorityLease;
     termination: VerifiedMarkLostTermination;
@@ -8410,6 +8605,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       history: existingHistory,
       receipt,
     });
+    this.assertMarkLostObservations({ attempt, receipt });
     const reduced = reduceAttempt(attempt, {
       kind: 'transition',
       expectedRevision: receipt.attemptRevision,
@@ -8672,7 +8868,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         'Binding ingress scope or local marker is invalid',
       );
     }
-    const sourceIdentity = `${envelope.source.kind}:${envelope.source.sourceId}`;
+    const sourceIdentity = observationSourceIdentity(envelope.source);
     const canonicalDigest = attemptTransitionDigest({
       kind: 'observation',
       envelope,
