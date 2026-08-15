@@ -95,6 +95,16 @@ import {
   type VerifiedLaunchResolution,
 } from './launch-resolution-capability';
 import {
+  isVerifiedMarkLostTermination,
+  markLostEventId,
+  markLostLeaseFence,
+  type VerifiedMarkLostTermination,
+} from './mark-lost-capability';
+import {
+  hasMarkLostEligibilityFence,
+  type MarkLostEligibilityReceipt,
+} from './mark-lost-eligibility';
+import {
   isVerifiedMintResolution,
   type VerifiedMintResolution,
 } from './mint-resolution';
@@ -491,6 +501,15 @@ export interface LifecycleAuthorityStorage {
   rejectVerifiedLaunch(input: {
     lease: TaskAuthorityLease;
     rejection: VerifiedLaunchRejection;
+  }): Promise<WriteResult>;
+  /**
+   * Server-verified loss decision for an exact bound run. The eligibility
+   * receipt authorizes it; this transaction still re-checks live authority,
+   * binding, and bounded history itself.
+   */
+  terminateLostAttempt(input: {
+    lease: TaskAuthorityLease;
+    termination: VerifiedMarkLostTermination;
   }): Promise<WriteResult>;
 
   recordObservation(identity: ObservationIdentity): Promise<WriteResult>;
@@ -1173,6 +1192,24 @@ interface StoredLaunchRejectionReceipt {
 }
 
 /**
+ * Private exact replay material for a verified loss decision. Only the
+ * receipt's stable causal commitment is kept; observations, provider evidence,
+ * and the commit fence never become durable state.
+ */
+interface StoredMarkLostReceipt {
+  receiptId: string;
+  idempotencyKey: string;
+  causalDigest: string;
+  terminatedAt: string;
+  canonicalDigest: string;
+  outcomeDigest: string;
+  history: {
+    commandRef: HistoryRecordReference;
+    evidenceRef: HistoryRecordReference;
+  };
+}
+
+/**
  * Private exact history pointers for finalization commands.  They are kept
  * beside the mutable work queue rather than exposed as part of its public
  * record, so a replay proves the same durable transition without turning a
@@ -1240,6 +1277,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     string,
     StoredLaunchRejectionReceipt
   >();
+  private readonly markLostReceipts = new Map<string, StoredMarkLostReceipt>();
   private readonly validationHistoryReceipts = new Map<
     string,
     StoredValidationHistoryReceipt
@@ -1734,6 +1772,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
             'request-cancel',
             'cancel-unlaunched',
             'launch-rejected',
+            'mark-lost',
             'launch-accepted',
             'launch-response-unknown',
             'start-validation',
@@ -1813,6 +1852,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         throw new AuthorityConflict(
           'Attempt launch rejection history is duplicated',
         );
+      }
+      const markLostCommands = transitionCommands.filter(
+        ({ value }) => value.payload?.kind === 'mark-lost',
+      );
+      if (markLostCommands.length > 1) {
+        throw new AuthorityConflict('Attempt mark-lost history is duplicated');
       }
       if (launchCommands.length > 1) {
         throw new AuthorityConflict('Attempt launch history is duplicated');
@@ -2253,10 +2298,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ({ value }) => value.payload?.kind === 'cancel-unlaunched',
       );
       const directLaunchRejection = launchRejectionCommands[0];
+      const directMarkLost = markLostCommands[0];
       const finalizeCommand = finalizeCommands[0];
       if (
         directCancellation === undefined &&
         directLaunchRejection === undefined &&
+        directMarkLost === undefined &&
         finalizeCommand === undefined &&
         evidenceRecords.length !== 0
       )
@@ -2351,6 +2398,50 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           throw new AuthorityConflict(
             'Attempt launch rejection evidence is invalid',
           );
+        }
+      }
+      if (directMarkLost !== undefined) {
+        const evidence = evidenceRecords[0];
+        const value = evidence?.payload as
+          | {
+              finalizeCommandRef?: HistoryRecordReference;
+              outcomeDigest?: string;
+              outcome?: unknown;
+            }
+          | undefined;
+        const outcome = attempt.outcome;
+        // The decision identity binds an eligibility receipt the integrity
+        // pass cannot see, so legacy truth is the only cross-check: the
+        // command must name exactly the decision the outcome was built from.
+        if (
+          outcome === undefined ||
+          outcome.evidence.kind !== 'lifecycle-decision' ||
+          directMarkLost.value.payload?.commandId !==
+            outcome.evidence.decisionFactId ||
+          evidence === undefined ||
+          value?.finalizeCommandRef === undefined ||
+          !same(
+            value.finalizeCommandRef,
+            attemptHistoryRecordReference(
+              directMarkLost.entry.record,
+              identity,
+              'command',
+            ),
+          ) ||
+          head.outcomeRef === undefined ||
+          !same(
+            head.outcomeRef,
+            attemptHistoryRecordReference(
+              evidence.record,
+              identity,
+              'evidence',
+            ),
+          ) ||
+          head.outcomeDigest !== value.outcomeDigest ||
+          value.outcomeDigest !== attemptHistoryPayloadDigest(outcome) ||
+          !same(value.outcome, outcome)
+        ) {
+          throw new AuthorityConflict('Attempt mark-lost evidence is invalid');
         }
       }
       if (finalizeCommand !== undefined) {
@@ -4429,6 +4520,176 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       kind: 'lifecycle-decision',
       commandId: event.eventId,
       decision: 'launch-rejected',
+    });
+    this.assertAttemptPresentationReplay(presentation);
+  }
+
+  private assertMarkLostBaseline(input: {
+    attempt: AttemptState;
+    history: StoredAttemptHistory;
+    receipt: MarkLostEligibilityReceipt;
+  }): void {
+    const { attempt, history, receipt } = input;
+    const head = history.head;
+    if (
+      head.phase !== 'active' ||
+      head.aggregateRevision !== attempt.revision ||
+      head.binding === undefined ||
+      !same(head.binding, receipt.binding) ||
+      head.launch.state !== 'accepted' ||
+      head.launch.operationId !== receipt.launchOperationId ||
+      head.executionEpoch !== receipt.executionEpoch ||
+      head.cancellation !== undefined ||
+      head.pendingTerminal !== undefined ||
+      head.finalization !== undefined ||
+      head.outcomeRef !== undefined ||
+      head.outcomeDigest !== undefined ||
+      head.futureGrantsDenied ||
+      head.spec.activation.authorityEpoch !== receipt.authorityEpoch ||
+      !same(head.spec.task, receipt.task)
+    ) {
+      throw new AuthorityConflict('Mark-lost head is not eligible');
+    }
+    const identity = {
+      tenantId: attempt.spec.tenant.tenantId,
+      attemptId: attempt.spec.attemptId,
+    };
+    const bound = (history.records.get('fact') ?? []).filter(
+      ({ payload }) =>
+        (payload as { payload?: { kind?: string } }).payload?.kind ===
+        'run-bound',
+    );
+    const baseline = bound[0];
+    if (bound.length !== 1 || baseline === undefined) {
+      throw new AuthorityConflict('Mark-lost baseline binding is ambiguous');
+    }
+    const payload = verifyAttemptHistoryPayload(
+      'fact',
+      baseline.record,
+      baseline.payload,
+      identity,
+    ).payload as {
+      factId?: string;
+      requestId?: string;
+      observedAt?: string;
+      payloadSha256?: string;
+      canonicalDigest?: string;
+      payload?: { kind?: string; binding?: unknown };
+    };
+    if (
+      !same(
+        attemptHistoryRecordReference(baseline.record, identity, 'fact'),
+        receipt.baseline.reference,
+      ) ||
+      baseline.record.recordDigest !== receipt.baseline.recordDigest ||
+      baseline.record.payloadDigest !== receipt.baseline.payloadDigest ||
+      payload.factId !== receipt.baseline.factId ||
+      payload.requestId !== receipt.baseline.requestId ||
+      payload.observedAt !== receipt.baseline.observedAt ||
+      payload.payloadSha256 !== receipt.baseline.payloadSha256 ||
+      payload.canonicalDigest !== receipt.baseline.canonicalDigest ||
+      payload.payload?.kind !== 'run-bound' ||
+      !same(payload.payload.binding, receipt.binding)
+    ) {
+      throw new AuthorityConflict('Mark-lost baseline fact is invalid');
+    }
+  }
+
+  private assertMarkLostReplay(input: {
+    attempt: AttemptState;
+    event: Extract<AttemptEvent, { kind: 'mark-lost' }>;
+    termination: VerifiedMarkLostTermination;
+    receipt: StoredMarkLostReceipt;
+  }): void {
+    const { attempt, event, termination, receipt } = input;
+    const outcome = attempt.outcome;
+    if (
+      attempt.phase !== 'terminal' ||
+      outcome === undefined ||
+      receipt.receiptId !== termination.receipt.receiptId ||
+      receipt.idempotencyKey !== termination.receipt.idempotencyKey ||
+      receipt.causalDigest !== termination.receipt.causalDigest ||
+      termination.receipt.attemptRevision + 1 !== attempt.revision ||
+      receipt.canonicalDigest !== attemptTransitionDigest(event) ||
+      !same(event.outcome, outcome) ||
+      receipt.outcomeDigest !== attemptHistoryPayloadDigest(outcome) ||
+      this.outcomes.get(attempt.spec.attemptId) !== canonicalJson(outcome) ||
+      !attempt.commands.some(
+        (command) =>
+          command.eventId === event.eventId &&
+          command.canonicalDigest === receipt.canonicalDigest,
+      )
+    ) {
+      throw new AuthorityConflict('Mark-lost replay conflicts');
+    }
+    const history = this.attemptHistories.get(attempt.spec.attemptId);
+    if (history === undefined) {
+      throw new AuthorityConflict('Mark-lost history receipt is orphaned');
+    }
+    this.assertStoredAttemptHistoryIntegrity(history, attempt);
+    const identity = {
+      tenantId: attempt.spec.tenant.tenantId,
+      attemptId: attempt.spec.attemptId,
+    };
+    const command = history.records
+      .get('command')
+      ?.find(({ record }) =>
+        same(
+          attemptHistoryRecordReference(record, identity, 'command'),
+          receipt.history.commandRef,
+        ),
+      );
+    const evidence = history.records
+      .get('evidence')
+      ?.find(({ record }) =>
+        same(
+          attemptHistoryRecordReference(record, identity, 'evidence'),
+          receipt.history.evidenceRef,
+        ),
+      );
+    if (command === undefined || evidence === undefined) {
+      throw new AuthorityConflict('Mark-lost history record is missing');
+    }
+    const commandPayload = verifyAttemptHistoryPayload(
+      'command',
+      command.record,
+      command.payload,
+      identity,
+    ).payload as {
+      canonicalDigest?: string;
+      payload?: {
+        kind?: string;
+        commandId?: string;
+        outcomeDigest?: string;
+        outcome?: unknown;
+      };
+    };
+    const evidencePayload = verifyAttemptHistoryPayload(
+      'evidence',
+      evidence.record,
+      evidence.payload,
+      identity,
+    ).payload as {
+      finalizeCommandRef?: HistoryRecordReference;
+      outcomeDigest?: string;
+      outcome?: unknown;
+    };
+    if (
+      commandPayload.payload?.kind !== 'mark-lost' ||
+      commandPayload.payload.commandId !== event.eventId ||
+      commandPayload.canonicalDigest !== attemptTransitionDigest(event) ||
+      commandPayload.payload.outcomeDigest !== receipt.outcomeDigest ||
+      !same(commandPayload.payload.outcome, outcome) ||
+      !same(evidencePayload.finalizeCommandRef, receipt.history.commandRef) ||
+      evidencePayload.outcomeDigest !== receipt.outcomeDigest ||
+      !same(evidencePayload.outcome, outcome)
+    ) {
+      throw new AuthorityConflict('Mark-lost history replay conflicts');
+    }
+    const presentation = deriveAttemptPresentation(attempt, {
+      kind: 'lifecycle-decision',
+      commandId: event.eventId,
+      decision: 'mark-lost',
     });
     this.assertAttemptPresentationReplay(presentation);
   }
@@ -7998,6 +8259,313 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       restore(this.outcomes, proof.attemptId, previousOutcome);
       restore(this.attemptHistories, proof.attemptId, previousHistory);
       restore(this.launchRejectionReceipts, receiptKey, previousReceipt);
+      restore(
+        this.attemptPresentations,
+        presentation.key,
+        previousPresentation,
+      );
+      restore(
+        this.attemptPresentationReceipts,
+        presentation.receiptKey,
+        previousPresentationReceipt,
+      );
+      restore(this.presentationDeliveries, deliveryKey, previousDelivery);
+      throw error;
+    }
+    return 'applied';
+  }
+
+  async terminateLostAttempt(input: {
+    lease: TaskAuthorityLease;
+    termination: VerifiedMarkLostTermination;
+  }): Promise<WriteResult> {
+    if (!isVerifiedMarkLostTermination(input.termination)) {
+      throw new AuthorityConflict(
+        'Mark-lost termination was not verified at its boundary',
+      );
+    }
+    const termination = input.termination;
+    const receipt = termination.receipt;
+    const attempt = this.attempts.get(receipt.attemptId);
+    const launch = this.launches.get(receipt.attemptId);
+    if (attempt === undefined || launch === undefined) {
+      throw new AuthorityConflict(
+        'Lost Attempt or launch operation is unknown',
+      );
+    }
+    this.assertLease(input.lease, attempt.spec.task, this.now());
+    // Eligibility was decided under one lease incarnation; a receipt cannot
+    // survive into a later one, whose holder must observe state itself.
+    if (
+      !hasMarkLostEligibilityFence(receipt, markLostLeaseFence(input.lease))
+    ) {
+      throw new AuthorityConflict('Mark-lost eligibility fence is invalid');
+    }
+    if (
+      attempt.spec.activation.mode !== 'central-authoritative' ||
+      !this.mayWriteEffectsSync({
+        scope: {
+          ...attempt.spec.task,
+          taskClassId: attempt.spec.activation.taskClassId,
+        },
+        activation: attempt.spec.activation,
+        boundary: attempt.spec.local.admissionRevision,
+      }) ||
+      receipt.tenantId !== attempt.spec.tenant.tenantId ||
+      !same(receipt.task, attempt.spec.task) ||
+      receipt.authorityEpoch !== attempt.spec.activation.authorityEpoch ||
+      receipt.launchOperationId !== attempt.launch.operationId ||
+      receipt.executionEpoch !== attempt.executionEpoch ||
+      launch.operationId !== receipt.launchOperationId ||
+      launch.executionEpoch !== receipt.executionEpoch ||
+      launch.tenantId !== receipt.tenantId ||
+      launch.repositoryId !== attempt.spec.tenant.repositoryId ||
+      launch.attemptId !== receipt.attemptId ||
+      launch.issueNumber !== receipt.task.issueNumber
+    ) {
+      throw new AuthorityConflict('Mark-lost identity or authority is invalid');
+    }
+    const eventId = markLostEventId({
+      attemptId: receipt.attemptId,
+      launchOperationId: receipt.launchOperationId,
+      executionEpoch: receipt.executionEpoch,
+      receiptId: receipt.receiptId,
+    });
+    const receiptKey = tupleKey(receipt.attemptId, eventId);
+    const priorReceipt = this.markLostReceipts.get(receiptKey);
+    if (
+      priorReceipt !== undefined &&
+      (priorReceipt.causalDigest !== receipt.causalDigest ||
+        priorReceipt.idempotencyKey !== receipt.idempotencyKey)
+    ) {
+      throw new AuthorityConflict('Mark-lost identity was reused differently');
+    }
+    // A response-lost retry replays one durable decision; it never derives a
+    // second decision from a later clock.
+    const terminatedAt = priorReceipt?.terminatedAt ?? termination.terminatedAt;
+    const event: Extract<AttemptEvent, { kind: 'mark-lost' }> = {
+      kind: 'mark-lost',
+      eventId,
+      outcome: {
+        schema: 'agent-lcars.attempt-outcome/v1',
+        version: 1,
+        attemptId: receipt.attemptId,
+        terminalState: 'lost',
+        execution: 'lost',
+        result: 'none',
+        // No failure classification: a lost run is an absence of observation,
+        // not an observed failure, and `attemptPresentationPlanSchema` rejects
+        // a failure axis on a lost outcome for exactly that reason. Retry
+        // policy belongs to the Task, which owns supersession and lineage.
+        evidence: { kind: 'lifecycle-decision', decisionFactId: eventId },
+        evidenceValidation: { status: 'not-applicable' },
+        finalizedAt: terminatedAt,
+      },
+    };
+    this.assertFinalizationHistoryLineage(attempt);
+    if (attempt.phase === 'terminal') {
+      if (priorReceipt === undefined) {
+        throw new AuthorityConflict(
+          'Terminal Attempt has no mark-lost receipt',
+        );
+      }
+      this.assertMarkLostReplay({
+        attempt,
+        event,
+        termination,
+        receipt: priorReceipt,
+      });
+      return 'replay';
+    }
+    if (
+      priorReceipt !== undefined ||
+      attempt.commands.some((command) => command.eventId === event.eventId)
+    ) {
+      throw new AuthorityConflict('Mark-lost identity was reused differently');
+    }
+    if (
+      attempt.revision !== receipt.attemptRevision ||
+      attempt.phase !== 'active' ||
+      attempt.binding === undefined ||
+      !same(attempt.binding, receipt.binding) ||
+      attempt.pendingTerminal !== undefined ||
+      attempt.finalization !== undefined ||
+      attempt.outcome !== undefined ||
+      attempt.cancellation !== undefined ||
+      attempt.futureGrantsDenied ||
+      launch.state !== 'accepted'
+    ) {
+      throw new AuthorityConflict('Mark-lost contradicts current Attempt');
+    }
+    // Loss is decided against the bounded run-bound baseline, so an Attempt
+    // with no durable history has nothing to authorize it. Such Attempts
+    // remain reachable through finalization instead of a shadow lineage.
+    const existingHistory = this.attemptHistories.get(receipt.attemptId);
+    if (existingHistory === undefined) {
+      throw new AuthorityConflict('Mark-lost requires bounded Attempt history');
+    }
+    this.assertStoredAttemptHistoryIntegrity(existingHistory, attempt);
+    this.assertMarkLostBaseline({
+      attempt,
+      history: existingHistory,
+      receipt,
+    });
+    const reduced = reduceAttempt(attempt, {
+      kind: 'transition',
+      expectedRevision: receipt.attemptRevision,
+      transitionedAt: terminatedAt,
+      canonicalDigest: attemptTransitionDigest(event),
+      event,
+    });
+    if (reduced.status !== 'applied' || reduced.state.phase !== 'terminal') {
+      throw new AuthorityConflict('Mark-lost was not reducer-derived');
+    }
+    const presentation = deriveAttemptPresentation(reduced.state, {
+      kind: 'lifecycle-decision',
+      commandId: event.eventId,
+      decision: 'mark-lost',
+    });
+    this.preflightNewAttemptPresentation(presentation);
+    const identity = {
+      tenantId: receipt.tenantId,
+      attemptId: receipt.attemptId,
+    };
+    const outcomeDigest = attemptHistoryPayloadDigest(reduced.state.outcome);
+    const commandPayload = {
+      schema: 'agent-lcars.attempt-command/v1' as const,
+      version: 1 as const,
+      transitionedAt: terminatedAt,
+      canonicalDigest: attemptTransitionDigest(event),
+      payload: {
+        kind: 'mark-lost' as const,
+        commandId: event.eventId,
+        outcomeDigest,
+        outcome: reduced.state.outcome as NonNullable<AttemptState['outcome']>,
+      },
+    };
+    let nextHistory: StoredAttemptHistory;
+    let historyReceipt: StoredMarkLostReceipt['history'];
+    try {
+      const preview = appendHistoryRecord({
+        head: existingHistory.head.streams.command,
+        payload: commandPayload,
+        appliedRevision: reduced.state.revision,
+      }).record;
+      const evidencePayload = {
+        schema: 'agent-lcars.attempt-evidence/v1' as const,
+        version: 1 as const,
+        finalizeCommandRef: attemptHistoryRecordReference(
+          preview,
+          identity,
+          'command',
+        ),
+        claimRefs: [],
+        validationRefs: [],
+        outcomeDigest,
+        outcome: reduced.state.outcome as NonNullable<AttemptState['outcome']>,
+        transitionedAt: terminatedAt,
+      };
+      const emitted: Array<{
+        stream: AttemptHistoryStream;
+        payload: unknown;
+      }> = [
+        { stream: 'command', payload: commandPayload },
+        { stream: 'evidence', payload: evidencePayload },
+      ];
+      const transition = appendAttemptHistoryTransition({
+        head: existingHistory.head,
+        nextRevision: reduced.state.revision,
+        transitionedAt: terminatedAt,
+        emitted,
+        priorRecords: [...existingHistory.records.values()].flatMap((records) =>
+          records.map(({ record, payload }) => ({ record, payload })),
+        ),
+      });
+      const records = new Map(existingHistory.records);
+      const commandRecord = transition.records.find(
+        (record) => record.streamKind === 'command',
+      );
+      const evidenceRecord = transition.records.find(
+        (record) => record.streamKind === 'evidence',
+      );
+      if (commandRecord === undefined || evidenceRecord === undefined) {
+        throw new AuthorityConflict('Mark-lost history record is missing');
+      }
+      for (const [stream, record, payload] of [
+        ['command', commandRecord, commandPayload],
+        ['evidence', evidenceRecord, evidencePayload],
+      ] as const) {
+        records.set(stream, [
+          ...(existingHistory.records.get(stream) ?? []),
+          { record: clone(record), payload: clone(payload) },
+        ]);
+      }
+      nextHistory = { head: clone(transition.head), records };
+      this.assertStoredAttemptHistoryIntegrity(
+        nextHistory,
+        reduced.state,
+        false,
+      );
+      historyReceipt = {
+        commandRef: attemptHistoryRecordReference(
+          commandRecord,
+          identity,
+          'command',
+        ),
+        evidenceRef: attemptHistoryRecordReference(
+          evidenceRecord,
+          identity,
+          'evidence',
+        ),
+      };
+    } catch (error) {
+      if (error instanceof AuthorityConflict) throw error;
+      throw new AuthorityConflict('Mark-lost history transition is invalid');
+    }
+    const previousAttempt = this.attempts.get(receipt.attemptId);
+    const previousOutcome = this.outcomes.get(receipt.attemptId);
+    const previousHistory = this.attemptHistories.get(receipt.attemptId);
+    const previousReceipt = this.markLostReceipts.get(receiptKey);
+    const previousPresentation = this.attemptPresentations.get(
+      presentation.key,
+    );
+    const previousPresentationReceipt = this.attemptPresentationReceipts.get(
+      presentation.receiptKey,
+    );
+    const deliveryKey = presentationDeliveryKey(
+      attemptDeliveryTarget(presentation.record),
+    );
+    const previousDelivery = this.presentationDeliveries.get(deliveryKey);
+    const restore = <T>(
+      map: Map<string, T>,
+      key: string,
+      value: T | undefined,
+    ): void => {
+      if (value === undefined) Map.prototype.delete.call(map, key);
+      else Map.prototype.set.call(map, key, value);
+    };
+    try {
+      this.writeAttemptTransaction({
+        lease: input.lease,
+        expectedRevision: receipt.attemptRevision,
+        next: reduced.state,
+      });
+      this.persistAttemptPresentation(presentation);
+      this.markLostReceipts.set(receiptKey, {
+        receiptId: receipt.receiptId,
+        idempotencyKey: receipt.idempotencyKey,
+        causalDigest: receipt.causalDigest,
+        terminatedAt,
+        canonicalDigest: attemptTransitionDigest(event),
+        outcomeDigest,
+        history: clone(historyReceipt),
+      });
+      this.attemptHistories.set(receipt.attemptId, nextHistory);
+    } catch (error) {
+      restore(this.attempts, receipt.attemptId, previousAttempt);
+      restore(this.outcomes, receipt.attemptId, previousOutcome);
+      restore(this.attemptHistories, receipt.attemptId, previousHistory);
+      restore(this.markLostReceipts, receiptKey, previousReceipt);
       restore(
         this.attemptPresentations,
         presentation.key,
