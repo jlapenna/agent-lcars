@@ -148,6 +148,11 @@ export function joinSessionTitleAnnotations(
   return summaries.map((original) => {
     const summary = cloneSummary(original);
     const annotation = byId.get(summary.sessionId);
+    if (annotation === undefined && summary.titleSource === 'annotation') {
+      delete summary.title;
+      delete summary.titleSource;
+      return summary;
+    }
     const selection =
       annotation &&
       selectSessionTitle({

@@ -118,6 +118,15 @@ describe('joinSessionTitleAnnotations', () => {
     ).toBe('Native');
   });
 
+  it('clears a prior annotation title when its annotation disappears', () => {
+    const [enriched] = joinSessionTitleAnnotations(
+      [summary('s', 'Prompt', 'inferred')],
+      [annotation('s', 'Local')],
+    );
+
+    expect(joinSessionTitleAnnotations([enriched], [])).toEqual([summary('s')]);
+  });
+
   it('fails closed for duplicate annotation identities and ignores timestamp order', () => {
     const discovered = [summary('s', 'Prompt', 'inferred')];
     expect(
