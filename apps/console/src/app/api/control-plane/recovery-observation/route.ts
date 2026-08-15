@@ -3,21 +3,22 @@ import { NextResponse } from 'next/server';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyRecoveryObservationOidcToken } from '@/lib/github-actions-oidc';
 import {
+  assertHostedRecoveryObservationAuthority,
+  type HostedRecoveryObservationRequestBody,
+  parseHostedBearerToken,
+  parseHostedJsonBody,
+  parseHostedRecoveryObservationRequestBody,
+} from '@/lib/hosted-lifecycle/hosted-route-contract';
+import {
   HostedRecoveryObservationInputError,
   recordHostedRecoveryObservation,
 } from '@/lib/hosted-recovery-observation';
-
-function bearerToken(header: string | null): string {
-  const match = header?.match(/^Bearer ([^\s]+)$/u);
-  if (!match) throw new Error('A bearer token is required');
-  return match[1];
-}
 
 export async function POST(request: Request): Promise<NextResponse> {
   let identity;
   try {
     identity = await verifyRecoveryObservationOidcToken(
-      bearerToken(request.headers.get('authorization')),
+      parseHostedBearerToken(request.headers.get('authorization')),
       controlPlaneRepository(),
     );
   } catch (error) {
@@ -28,9 +29,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: unknown;
+  let body: HostedRecoveryObservationRequestBody;
   try {
-    body = await request.json();
+    body = parseHostedJsonBody(
+      await request.text(),
+      parseHostedRecoveryObservationRequestBody,
+    );
+    assertHostedRecoveryObservationAuthority(body, identity);
   } catch {
     return NextResponse.json(
       { error: 'Invalid recovery-observation request' },

@@ -60,6 +60,7 @@ describe('POST /api/control-plane/completion', () => {
   it('processes a completion under the signed worker identity', async () => {
     const response = await POST(request('signed-token'));
     expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(verifyCompletionOidcToken).toHaveBeenCalledWith(
       'signed-token',
       'jlapenna/agent-lcars',
@@ -85,6 +86,29 @@ describe('POST /api/control-plane/completion', () => {
     );
     expect(response.status).toBe(400);
     expect(completeHostedWorker).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an extra field', { ...body, attacker: true }],
+    ['a wrong issue type', { ...body, issue: '736' }],
+    ['a wrong generation type', { ...body, generation: '2' }],
+    ['a malformed token', { ...body, token: 'short' }],
+  ])(
+    'rejects %s before invoking the controller',
+    async (_label, requestBody) => {
+      const response = await POST(request('signed-token', requestBody));
+      expect(response.status).toBe(400);
+      expect(completeHostedWorker).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns a transient failure without changing the error contract', async () => {
+    completeHostedWorker.mockRejectedValue(new Error('controller unavailable'));
+    const response = await POST(request('signed-token'));
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Hosted completion failed',
+    });
   });
 
   it('does not process a completion when OIDC claims fail', async () => {
