@@ -54,7 +54,9 @@ function command(
   activation: ActivationRecord = active,
   taskOverride = task,
   decision: PolicyDecision['decision'] = 'accepted',
+  signalKind: 'requested-work' | 'reconcile' = 'requested-work',
 ) {
+  const scanKey = `scan-${factId}`;
   const envelope = {
     schema: 'agent-lcars.control-plane-signal/v1' as const,
     version: 1 as const,
@@ -62,25 +64,35 @@ function command(
     factId,
     tenant,
     task: taskOverride,
-    signal: {
-      kind: 'requested-work' as const,
-      mode: 'implement' as const,
-      requestKey: `key-${factId}`,
-    },
+    signal:
+      signalKind === 'reconcile'
+        ? { kind: 'reconcile' as const, scanKey }
+        : {
+            kind: 'requested-work' as const,
+            mode: 'implement' as const,
+            requestKey: `key-${factId}`,
+          },
     receivedAt: T0,
-    source: {
-      kind: 'github-webhook' as const,
-      deliveryId: `delivery-${factId}`,
-      repositoryId: tenant.repositoryId,
-      installationId: tenant.installationId,
-      bodySha256: SHA,
-      event: 'issues' as const,
-      action: 'labeled' as const,
-      actorId: 8,
-      actorLogin: 'octo',
-      occurredAt: T0,
-      hmacKeyVersion: 'key-v1',
-    },
+    source:
+      signalKind === 'reconcile'
+        ? {
+            kind: 'schedule-reconcile' as const,
+            schedulerId: 'scheduler-1',
+            scanKey,
+          }
+        : {
+            kind: 'github-webhook' as const,
+            deliveryId: `delivery-${factId}`,
+            repositoryId: tenant.repositoryId,
+            installationId: tenant.installationId,
+            bodySha256: SHA,
+            event: 'issues' as const,
+            action: 'labeled' as const,
+            actorId: 8,
+            actorLogin: 'octo',
+            occurredAt: T0,
+            hmacKeyVersion: 'key-v1',
+          },
   };
   const policy: PolicyDecision = {
     schema: 'agent-lcars.policy-decision/v1',
@@ -93,7 +105,10 @@ function command(
     decision,
     ruleId: 'maintainer',
     sourceFactId: factId,
-    principal: { kind: 'github-actor', actorId: 8, login: 'octo' },
+    principal:
+      signalKind === 'reconcile'
+        ? { kind: 'system', systemId: 'scheduler-1' }
+        : { kind: 'github-actor', actorId: 8, login: 'octo' },
     evidenceRef: `evidence-${factId}`,
     decidedAt: T0,
   };
@@ -103,18 +118,31 @@ function command(
       envelope,
       policyDecision: policy,
       activation,
-      candidate: {
-        intentId: `intent-${factId}`,
-        semanticKey: `semantic-${factId}`,
-        semanticDigest: SHA,
-        orderingKey: { occurredAt: T0, tieBreaker: `tie-${factId}` },
-      },
+      ...(signalKind === 'reconcile'
+        ? {}
+        : {
+            candidate: {
+              intentId: `intent-${factId}`,
+              semanticKey: `semantic-${factId}`,
+              semanticDigest: SHA,
+              orderingKey: { occurredAt: T0, tieBreaker: `tie-${factId}` },
+            },
+          }),
     },
     clock,
   );
 }
 
-function admissionSpec(): AcceptedAttemptSpec {
+function admissionSpec(
+  overrides: {
+    intentId?: string;
+    generation?: number;
+    admissionRevision?: number;
+  } = {},
+): AcceptedAttemptSpec {
+  const intentId = overrides.intentId ?? 'intent-admit-1';
+  const generation = overrides.generation ?? 1;
+  const admissionRevision = overrides.admissionRevision ?? 1;
   return {
     schema: 'agent-lcars.attempt-spec/v1',
     version: 1,
@@ -129,10 +157,10 @@ function admissionSpec(): AcceptedAttemptSpec {
       mode: 'central-authoritative',
     },
     local: {
-      intentId: 'intent-admit-1',
-      generation: 1,
-      attemptMarker: 'g1:intent-admit-1',
-      admissionRevision: 1,
+      intentId,
+      generation,
+      attemptMarker: `g${generation}:${intentId}`,
+      admissionRevision,
       idempotencyKey: 'admit-1',
     },
     execution: {
@@ -232,6 +260,48 @@ describe('Task history shadow storage', () => {
         transition: command(clock, 'legacy-2', 1),
       }),
     ).rejects.toThrow('history');
+  });
+
+  it('upgrades an observed reconcile fact and permits the next transition and admission', async () => {
+    const { clock, storage, lease } = await storageFixture();
+    const observed = command(
+      clock,
+      'legacy-observed',
+      0,
+      active,
+      task,
+      'accepted',
+      'reconcile',
+    );
+    const reduced = reduceTaskIntent(undefined, observed.input);
+    if (reduced.status !== 'applied')
+      throw new Error(
+        `observed fixture did not reduce: ${JSON.stringify(reduced)}`,
+      );
+    expect(reduced.state.facts[0]?.resolution.kind).toBe('observed');
+    await seedTaskForTest(storage, {
+      lease,
+      expectedRevision: 0,
+      next: reduced.state,
+    });
+
+    await expect(
+      storage.applyTaskEffectTransition({
+        lease,
+        transition: command(clock, 'legacy-next', 1),
+      }),
+    ).resolves.toMatchObject({ status: 'applied', task: { revision: 2 } });
+
+    const admission = await admitAcceptedSpecForTest({
+      storage,
+      activation: active,
+      lease,
+      spec: admissionSpec({
+        intentId: 'intent-legacy-next',
+        admissionRevision: 2,
+      }),
+    });
+    expect(admission.result.replay).toBe(false);
   });
 
   it('fails closed on a corrupt head and rolls back when the history commit fails', async () => {

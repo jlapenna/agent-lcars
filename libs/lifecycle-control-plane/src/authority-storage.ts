@@ -28,6 +28,7 @@ import {
   formatAttemptId,
   hasValidRuntimeObservationPayloadDigest,
   historyRecordReference,
+  inferTaskFactSituation,
   localAttemptMarkerSchema,
   runtimeObservationEnvelopeSchema,
   taskHistoryHeadSchema,
@@ -1587,15 +1588,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       version: 1 as const,
       task: task.task,
       ...fact,
-      situation:
-        fact.resolution.kind === 'cancelled'
-          ? 'cancel'
-          : fact.resolution.kind === 'parked' &&
-              fact.policyDecision.decision === 'accepted'
-            ? 'park'
-            : fact.resolution.kind === 'observed'
-              ? 'reconcile'
-              : 'requested-work',
+      situation: inferTaskFactSituation(fact),
     }));
     const intentPayloads = task.intents.map((intent) => {
       const { schema: _schema, version: _version, ...intentFields } = intent;
