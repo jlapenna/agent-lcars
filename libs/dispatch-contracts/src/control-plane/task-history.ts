@@ -22,6 +22,7 @@ import {
   historyPayloadDigest,
   type HistoryRecord,
   type HistoryRecordReference,
+  historyRecordReference,
   historyRecordReferenceSchema,
   sha256Digest,
   verifyHistoryRecord,
@@ -872,6 +873,162 @@ export interface TaskHistoryTransitionResult {
   readonly workRefs: readonly HistoryRecordReference[];
   readonly presentationRefs: readonly HistoryRecordReference[];
   readonly bytes: number;
+}
+
+const TASK_ATTEMPT_ADMISSION_SCHEMA =
+  'agent-lcars.task-attempt-admission-history/v1' as const;
+
+/**
+ * The Task-side admission mirror is deliberately a pointer record.  Attempt
+ * registration is owned by the Attempt aggregate; this record only proves
+ * that the Task relation was advanced to that already-registered Attempt.
+ */
+export const taskAttemptAdmissionHistoryPayloadSchema = z
+  .strictObject({
+    schema: z.literal(TASK_ATTEMPT_ADMISSION_SCHEMA),
+    version: z.literal(1),
+    tenant: tenantRefSchema,
+    task: canonicalTaskIdentitySchema,
+    intentId: opaqueIdSchema,
+    intentRevision: positiveSafeIntegerSchema,
+    attemptId: attemptIdSchema,
+    admissionRevision: nonnegativeSafeIntegerSchema,
+    admittedAt: utcDateTimeSchema,
+    taskSnapshotDigest: sha256Schema,
+    inputDigest: sha256Schema,
+    specDigest: sha256Schema,
+    attemptRegistrationRef: historyRecordReferenceSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.task.tenantId !== value.tenant.tenantId ||
+      value.task.repositoryId !== value.tenant.repositoryId
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['task'],
+        message: 'Task tenant mismatch',
+      });
+    }
+    const ref = value.attemptRegistrationRef;
+    if (
+      ref.tenantId !== value.tenant.tenantId ||
+      ref.aggregateKind !== 'attempt' ||
+      ref.aggregateId !== value.attemptId ||
+      ref.streamKind !== 'command' ||
+      ref.sequence !== 1
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['attemptRegistrationRef'],
+        message: 'Reference must identify the Attempt genesis registration',
+      });
+    }
+  });
+export type TaskAttemptAdmissionHistoryPayload = z.infer<
+  typeof taskAttemptAdmissionHistoryPayloadSchema
+>;
+
+export interface TaskAttemptAdmissionHistoryTransitionInput {
+  readonly head: TaskHistoryHead;
+  /** The Task command/work stream head, kept separately from the Task head. */
+  readonly workHead: HistoryHead;
+  readonly payload: unknown;
+}
+
+export interface TaskAttemptAdmissionHistoryTransitionResult {
+  readonly head: TaskHistoryHead;
+  readonly workHead: HistoryHead;
+  readonly workRecord: HistoryRecord;
+  readonly workRecordRef: HistoryRecordReference;
+  readonly bytes: number;
+}
+
+function parseTaskAttemptAdmissionPayload(
+  input: unknown,
+): TaskAttemptAdmissionHistoryPayload {
+  return parse(
+    taskAttemptAdmissionHistoryPayloadSchema,
+    input,
+    'invalid-record',
+  );
+}
+
+/**
+ * Validate and derive the one-record Task admission transition.  This is a
+ * pure contract operation: callers commit the returned head, work head, and
+ * record together with the legacy admission transaction.
+ */
+export function validateTaskAttemptAdmissionHistoryTransition(
+  input: TaskAttemptAdmissionHistoryTransitionInput,
+): TaskAttemptAdmissionHistoryTransitionResult {
+  const head = verifyHead(input.head);
+  const workHead = parse(historyHeadSchema, input.workHead, 'invalid-head');
+  const payload = parseTaskAttemptAdmissionPayload(input.payload);
+  if (
+    workHead.tenantId !== head.tenant.tenantId ||
+    workHead.aggregateKind !== 'task' ||
+    workHead.aggregateId !== head.aggregateId ||
+    workHead.streamKind !== 'command'
+  ) {
+    throw new HistoryIntegrityError('wrong-identity');
+  }
+  if (
+    !sameTask(payload.task, head.task) ||
+    !sameValue(payload.tenant, head.tenant) ||
+    payload.admissionRevision !== head.aggregateRevision ||
+    head.aggregateRevision === Number.MAX_SAFE_INTEGER ||
+    head.attempt.kind !== 'unlaunched' ||
+    head.desired === undefined ||
+    head.desired.intentId !== payload.intentId ||
+    head.desired.intentRevision !== payload.intentRevision ||
+    head.attempt.intentId !== payload.intentId
+  ) {
+    throw new HistoryIntegrityError('wrong-sequence');
+  }
+
+  const nextRevision = head.aggregateRevision + 1;
+  const nextAttempt: TaskAttemptRelation = {
+    kind: 'launched',
+    intentId: payload.intentId,
+    intentRevision: payload.intentRevision,
+    attemptId: payload.attemptId,
+    admissionRevision: payload.admissionRevision,
+    admittedAt: payload.admittedAt,
+    staleForDesiredState: false,
+    cancellationRequested: false,
+  };
+  const nextHead = verifyHead({
+    ...head,
+    aggregateRevision: nextRevision,
+    attempt: nextAttempt,
+    updatedAt: payload.admittedAt,
+  });
+  const appended = appendHistoryRecord({
+    head: workHead,
+    payload,
+    appliedRevision: nextRevision,
+  });
+  const workRecordRef = historyRecordReference(appended.record);
+  const transition = validateDurableTransition({
+    effects: [],
+    historyRecords: [{ record: appended.record, payload }],
+    workRecords: [workRecordRef],
+  });
+  return deepFreeze({
+    head: nextHead,
+    workHead: appended.head,
+    workRecord: appended.record,
+    workRecordRef,
+    bytes: transition.bytes,
+  });
+}
+
+/** Alias emphasizing that the returned record is the append to the command stream. */
+export function appendTaskAttemptAdmissionHistoryTransition(
+  input: TaskAttemptAdmissionHistoryTransitionInput,
+): TaskAttemptAdmissionHistoryTransitionResult {
+  return validateTaskAttemptAdmissionHistoryTransition(input);
 }
 
 export function validateTaskHistoryTransition(

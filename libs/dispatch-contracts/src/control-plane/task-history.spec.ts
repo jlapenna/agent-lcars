@@ -6,7 +6,11 @@ import {
   LIFECYCLE_DURABILITY_LIMITS,
 } from './durability';
 import { HistoryRecordReference } from './history';
-import { createHistoryRecord, historyRecordReference } from './history';
+import {
+  createGenesisHistoryHead,
+  createHistoryRecord,
+  historyRecordReference,
+} from './history';
 import { CanonicalTaskIdentity, TenantRef } from './identity';
 import {
   LegacyTaskIntentState,
@@ -15,14 +19,17 @@ import {
   TaskIntentHistoryPayload,
 } from './task-history';
 import {
+  appendTaskAttemptAdmissionHistoryTransition,
   createGenesisTaskHistoryHead,
   createTaskFactHistoryRecord,
   createTaskIntentHistoryRecord,
+  taskAttemptAdmissionHistoryPayloadSchema,
   taskFactHistoryPayloadSchema,
   taskHistoryAggregateId,
   taskHistoryHeadSchema,
   taskIntentHistoryPayloadSchema,
   upgradeLegacyTaskIntentState,
+  validateTaskAttemptAdmissionHistoryTransition,
   validateTaskHistoryTransition,
   verifyTaskFactHistoryRecord,
   verifyTaskIntentHistoryRecord,
@@ -153,7 +160,171 @@ function outputRefs(
   ];
 }
 
+const admissionAttemptId = 'attempt-admission-1234567890123456';
+
+function attemptRegistrationRef(
+  attemptId = admissionAttemptId,
+): HistoryRecordReference {
+  return historyRecordReference(
+    createHistoryRecord({
+      tenantId: tenant.tenantId,
+      aggregateKind: 'attempt',
+      aggregateId: attemptId,
+      streamKind: 'command',
+      sequence: 1,
+      previousRecordDigest: null,
+      payload: {
+        schema: 'agent-lcars.attempt-command/v1',
+        version: 1,
+        payload: {
+          kind: 'attempt-registered',
+          commandId: attemptId,
+          specDigest: sha,
+        },
+      },
+      appliedRevision: 1,
+    }),
+  );
+}
+
+function admissionPayload(
+  overrides: Partial<{
+    tenant: TenantRef;
+    task: CanonicalTaskIdentity;
+    intentId: string;
+    intentRevision: number;
+    attemptId: string;
+    admissionRevision: number;
+    admittedAt: string;
+    inputDigest: string;
+    specDigest: string;
+    attemptRegistrationRef: HistoryRecordReference;
+  }> = {},
+) {
+  const attemptId = overrides.attemptId ?? admissionAttemptId;
+  return {
+    schema: 'agent-lcars.task-attempt-admission-history/v1' as const,
+    version: 1 as const,
+    tenant: overrides.tenant ?? tenant,
+    task: overrides.task ?? task,
+    intentId: overrides.intentId ?? 'intent-fact-1',
+    intentRevision: overrides.intentRevision ?? 1,
+    attemptId,
+    admissionRevision: overrides.admissionRevision ?? 1,
+    admittedAt: overrides.admittedAt ?? timestamp,
+    taskSnapshotDigest: sha,
+    inputDigest: overrides.inputDigest ?? sha,
+    specDigest: overrides.specDigest ?? sha,
+    attemptRegistrationRef:
+      overrides.attemptRegistrationRef ?? attemptRegistrationRef(attemptId),
+  };
+}
+
 describe('bounded Task history contracts', () => {
+  it('atomically advances admission by a pointer-only Task command record', () => {
+    const selected = validateTaskHistoryTransition({
+      head: head(),
+      fact: fact('fact-1', 1),
+      intents: [intent('intent-fact-1', 'fact-1')],
+      appliedRevision: 1,
+      desired: {
+        task,
+        intentId: 'intent-fact-1',
+        intentRevision: 1,
+        selectedAt: timestamp,
+      },
+      attempt: { kind: 'unlaunched', intentId: 'intent-fact-1' },
+      updatedAt: timestamp,
+      effectRefs: [],
+      workRefs: [],
+      presentationRefs: [],
+    });
+    const workHead = createGenesisHistoryHead({
+      tenantId: tenant.tenantId,
+      aggregateKind: 'task',
+      aggregateId: selected.head.aggregateId,
+      streamKind: 'command',
+    });
+    const payload = admissionPayload();
+    expect(
+      taskAttemptAdmissionHistoryPayloadSchema.safeParse({
+        ...payload,
+        providerFact: { provider: 'must-not-be-accepted' },
+      }).success,
+    ).toBe(false);
+
+    const result = appendTaskAttemptAdmissionHistoryTransition({
+      head: selected.head,
+      workHead,
+      payload,
+    });
+    expect(result.head.aggregateRevision).toBe(2);
+    expect(result.head.factHead).toEqual(selected.head.factHead);
+    expect(result.head.intentHead).toEqual(selected.head.intentHead);
+    expect(result.head.desired).toEqual(selected.head.desired);
+    expect(result.head.attempt).toEqual({
+      kind: 'launched',
+      intentId: 'intent-fact-1',
+      intentRevision: 1,
+      attemptId: admissionAttemptId,
+      admissionRevision: 1,
+      admittedAt: timestamp,
+      staleForDesiredState: false,
+      cancellationRequested: false,
+    });
+    expect(result.workRecord.sequence).toBe(1);
+    expect(result.workRecord.appliedRevision).toBe(2);
+    expect(result.workRecordRef).toEqual(
+      historyRecordReference(result.workRecord),
+    );
+    expect(result.workHead.lastSequence).toBe(1);
+    expect(result.workHead.lastAppliedRevision).toBe(2);
+
+    expect(() =>
+      validateTaskAttemptAdmissionHistoryTransition({
+        head: selected.head,
+        workHead,
+        payload: admissionPayload({ admissionRevision: 0 }),
+      }),
+    ).toThrow();
+    expect(() =>
+      validateTaskAttemptAdmissionHistoryTransition({
+        head: selected.head,
+        workHead,
+        payload: admissionPayload({
+          attemptRegistrationRef: attemptRegistrationRef(
+            'other-attempt-123456789012345',
+          ),
+        }),
+      }),
+    ).toThrow();
+    expect(() =>
+      validateTaskAttemptAdmissionHistoryTransition({
+        head: selected.head,
+        workHead,
+        payload: admissionPayload({
+          tenant: { ...tenant, installationId: tenant.installationId + 1 },
+        }),
+      }),
+    ).toThrow();
+    expect(() =>
+      validateTaskAttemptAdmissionHistoryTransition({
+        head: selected.head,
+        workHead,
+        payload: admissionPayload({
+          tenant: { ...tenant, repository: 'octo/other' },
+        }),
+      }),
+    ).toThrow();
+    expect(() =>
+      validateTaskAttemptAdmissionHistoryTransition({
+        head: result.head,
+        workHead: result.workHead,
+        payload,
+      }),
+    ).toThrow();
+  });
+
   it('creates strict payloads, stream-bound entries, and frozen heads', () => {
     const current = head();
     const factRecord = createTaskFactHistoryRecord({

@@ -15,6 +15,7 @@ import {
   sha256Digest,
 } from './history';
 import {
+  attemptIdSchema,
   nonnegativeSafeIntegerSchema,
   opaqueIdSchema,
   positiveSafeIntegerSchema,
@@ -41,7 +42,7 @@ const taskSubjectSchema = z.strictObject({
 });
 const attemptSubjectSchema = z.strictObject({
   kind: z.literal('attempt'),
-  attemptId: opaqueIdSchema,
+  attemptId: attemptIdSchema,
 });
 const tenantSubjectSchema = z.strictObject({ kind: z.literal('tenant') });
 export const paginationSubjectSchema = z.discriminatedUnion('kind', [
@@ -667,7 +668,7 @@ const currentDeliveryPointerSchema = z.discriminatedUnion('source', [
     kind: z.literal('delivery'),
     source: z.literal('attempt'),
     subject: taskSubjectSchema,
-    attemptId: opaqueIdSchema,
+    attemptId: attemptIdSchema,
     operationId: opaqueIdSchema,
   }),
 ]);

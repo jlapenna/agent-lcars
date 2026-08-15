@@ -21,7 +21,10 @@ import { runVerifiedRunBindingStorageContract } from './launch-binding.spec.supp
 import { runLaunchResolutionStorageContract } from './launch-resolution.spec.support';
 import type { PresentationDeliveryStorageHooks } from './presentation-delivery.spec.support';
 import { runPresentationDeliveryStorageContract } from './presentation-delivery.spec.support';
-import { runTaskAttemptAdmissionStorageContract } from './task-attempt-admission.spec.support';
+import {
+  type AttemptAdmissionHistoryStorageHooks,
+  runTaskAttemptAdmissionStorageContract,
+} from './task-attempt-admission.spec.support';
 import {
   runCancellationEffectStorageContract,
   runTaskEffectStorageContract,
@@ -46,6 +49,7 @@ export interface LifecycleAuthorityBackendFactory {
     clock: AuthorityClock & { set(value: string): void },
     evidenceResolver: PolicyEvidenceResolver,
   ): IngressPolicyInbox | Promise<IngressPolicyInbox>;
+  admissionHistory: AttemptAdmissionHistoryStorageHooks;
 }
 /**
  * Stable aggregate entrypoint for every provider-neutral storage contract.
@@ -71,8 +75,9 @@ export function runLifecycleAuthorityBackendContract(
     create,
     hydrateAttempt: factory.hydrateAttempt,
   });
-  runTaskAttemptAdmissionStorageContract((clock, attemptIds) =>
-    factory.create(clock, attemptIds),
+  runTaskAttemptAdmissionStorageContract(
+    (clock, attemptIds) => factory.create(clock, attemptIds),
+    factory.admissionHistory,
   );
   runLaunchResolutionStorageContract({ create });
   runVerifiedRunBindingStorageContract(() =>
