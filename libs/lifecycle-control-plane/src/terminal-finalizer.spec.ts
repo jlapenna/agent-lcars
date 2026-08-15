@@ -8,6 +8,7 @@ import {
   AuthorityConflict,
   InMemoryLifecycleAuthorityStorage,
 } from './authority-storage';
+import { inMemoryTerminalClaimHistoryHooks } from './terminal-claim-history.in-memory.spec.support';
 import {
   AttemptFinalizer,
   ClaimObservationBoundary,
@@ -240,4 +241,5 @@ runAttemptFinalizerStorageContract(
     new InMemoryLifecycleAuthorityStorage(clock, {
       mint: () => 'A'.repeat(22),
     }),
+  inMemoryTerminalClaimHistoryHooks(),
 );

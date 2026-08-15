@@ -7,7 +7,12 @@ import { runtimeObservationPayloadSha256 } from '@agent-lcars/dispatch-contracts
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AttemptState } from './attempt-reducer';
-import { attemptSpecDigest } from './attempt-reducer';
+import {
+  attemptSpecDigest,
+  attemptTransitionDigest,
+  reduceAttempt,
+} from './attempt-reducer';
+import { hydrateAttemptForTest } from './attempt-test-hydration';
 import {
   type AuthorityClock,
   AuthorityConflict,
@@ -24,6 +29,10 @@ import {
   ingestVerifiedRunBinding,
   RunBindingIngressVerifier,
 } from './launch-binding';
+import type {
+  TerminalClaimHistoryCorruption,
+  TerminalClaimHistoryStorageHooks,
+} from './terminal-claim-history.in-memory.spec.support';
 import {
   AttemptFinalizer,
   ClaimObservationBoundary,
@@ -191,6 +200,23 @@ export async function activeFixture(
   return { lease, spec: value.spec };
 }
 
+/** Admission-only fixture used by rows that exercise pending pre-binding facts. */
+export async function admittedFixture(
+  storage: LifecycleAuthorityStorage,
+): Promise<{
+  lease: TaskAuthorityLease;
+  spec: AcceptedAttemptSpec;
+}> {
+  const value = finalizerFixture();
+  const admitted = await admitAcceptedSpecForTest({
+    storage,
+    activation: value.activation,
+    spec: value.spec,
+    ownerId: 'owner-1',
+  });
+  return { lease: admitted.lease, spec: value.spec };
+}
+
 export function evidenceVerifier() {
   return {
     verifyTerminal(): Promise<{
@@ -213,6 +239,7 @@ export function runAttemptFinalizerStorageContract(
   makeStorage: (
     clock: AuthorityClock,
   ) => LifecycleAuthorityStorage | Promise<LifecycleAuthorityStorage>,
+  historyHooks: TerminalClaimHistoryStorageHooks,
 ): void {
   describe('attempt finalizer storage contract', () => {
     it('atomically validates one exact claim and commits one immutable outcome', async () => {
@@ -663,6 +690,763 @@ export function runAttemptFinalizerStorageContract(
           })
         )?.finalization?.evidence,
       ).toEqual([]);
+    });
+
+    it('shadows a bound terminal observation with an exact private reference', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease } = await activeFixture(storage);
+      const before = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: 'A'.repeat(22),
+      });
+      if (before === undefined) throw new Error('missing Attempt history');
+      const verifier = evidenceVerifier();
+      const terminal = await new TerminalObservationBoundary(verifier).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-history-terminal',
+            factId: 'fact-history-terminal',
+          },
+        ),
+      });
+      expect(
+        await new AttemptFinalizer(storage, clock, {
+          resolve: vi.fn(),
+        }).recordObservation(lease, terminal),
+      ).toBe('applied');
+      const after = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: 'A'.repeat(22),
+      });
+      if (after === undefined) throw new Error('missing Attempt history');
+      expect(after.records.fact.length).toBe(before.records.fact.length + 1);
+      expect(after.records.claim).toHaveLength(before.records.claim.length);
+      expect(after.records.validation).toHaveLength(0);
+      expect(after.records.evidence).toHaveLength(0);
+      const fact = after.records.fact.at(-1);
+      if (fact === undefined) throw new Error('missing terminal history fact');
+      expect(fact.payload).toMatchObject({
+        payload: {
+          kind: 'run-terminal',
+          binding,
+          conclusion: 'success',
+        },
+      });
+      expect(after.head.finalization?.terminalFactRef.recordDigest).toBe(
+        fact.record.recordDigest,
+      );
+      expect(after.head.pendingTerminal).toBeUndefined();
+      expect(after.head.pendingClaimRefs).toEqual([]);
+    });
+
+    it('keeps pre-binding claim and terminal facts, then promotes exact refs once', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await admittedFixture(storage);
+      const verifier = evidenceVerifier();
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const claim = await new ClaimObservationBoundary(verifier).parse({
+        envelope: await envelope(
+          {
+            kind: 'agent-result-claim',
+            claim: {
+              kind: 'comment',
+              commentId: 'comment-pre-binding',
+              localAttemptMarker: spec.local.attemptMarker,
+            },
+          },
+          { requestId: 'request-pre-claim', factId: 'fact-pre-claim' },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, claim)).toBe('applied');
+      const terminal = await new TerminalObservationBoundary(verifier).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          { requestId: 'request-pre-terminal', factId: 'fact-pre-terminal' },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, terminal)).toBe(
+        'applied',
+      );
+      const pending = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (pending === undefined) throw new Error('missing pending history');
+      expect(pending.head.pendingTerminal).toMatchObject({
+        conclusion: 'success',
+        binding,
+      });
+      expect(pending.head.pendingClaimRefs).toHaveLength(1);
+      expect(pending.head.finalization).toBeUndefined();
+      const factsBeforeBinding = pending.records.fact.length;
+      const claimsBeforeBinding = pending.records.claim.length;
+      const runBindingVerifier = new RunBindingIngressVerifier({
+        verifyExactRunBinding(): Promise<void> {
+          return Promise.resolve();
+        },
+      });
+      const verifiedBinding = await runBindingVerifier.verify({
+        envelope: await envelope(
+          { kind: 'run-bound', binding },
+          {
+            requestId: 'request-promotion-binding',
+            factId: 'fact-promotion-binding',
+          },
+        ),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      expect(
+        await ingestVerifiedRunBinding(storage, lease, verifiedBinding),
+      ).toBe('applied');
+      const promoted = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (promoted === undefined) throw new Error('missing promoted history');
+      expect(promoted.records.fact.length).toBe(factsBeforeBinding + 1);
+      expect(promoted.records.claim.length).toBe(claimsBeforeBinding);
+      expect(promoted.head.pendingTerminal).toBeUndefined();
+      expect(promoted.head.pendingClaimRefs).toEqual([]);
+      expect(promoted.head.finalization?.claimRefs).toHaveLength(1);
+      expect(promoted.head.finalization?.terminalFactRef.recordDigest).toBe(
+        pending.head.pendingTerminal?.terminalFactRef.recordDigest,
+      );
+    });
+
+    it('records a post-terminal claim as one fact plus one linked claim record', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await activeFixture(storage);
+      const verifier = evidenceVerifier();
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const terminal = await new TerminalObservationBoundary(verifier).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-linked-terminal',
+            factId: 'fact-linked-terminal',
+          },
+        ),
+      });
+      await finalizer.recordObservation(lease, terminal);
+      const before = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (before === undefined) throw new Error('missing terminal history');
+      const claim = await new ClaimObservationBoundary(verifier).parse({
+        envelope: await envelope(
+          {
+            kind: 'agent-result-claim',
+            claim: {
+              kind: 'pull-request',
+              number: 44,
+              localAttemptMarker: spec.local.attemptMarker,
+            },
+          },
+          { requestId: 'request-linked-claim', factId: 'fact-linked-claim' },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, claim)).toBe('applied');
+      const after = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (after === undefined) throw new Error('missing claim history');
+      expect(after.records.fact.length).toBe(before.records.fact.length + 1);
+      expect(after.records.claim.length).toBe(before.records.claim.length + 1);
+      expect(after.head.finalization?.claimRefs).toHaveLength(1);
+      const fact = after.records.fact.at(-1);
+      const claimRecord = after.records.claim.at(-1);
+      if (fact === undefined || claimRecord === undefined)
+        throw new Error('missing claim records');
+      expect(claimRecord.payload.factRef.recordDigest).toBe(
+        fact.record.recordDigest,
+      );
+      expect(after.head.finalization?.claimRefs[0]?.recordDigest).toBe(
+        claimRecord.record.recordDigest,
+      );
+    });
+
+    it('replays after later legacy progress without appending history or effects', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await activeFixture(storage);
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const terminal = await new TerminalObservationBoundary(
+        evidenceVerifier(),
+      ).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-replay-terminal',
+            factId: 'fact-replay-terminal',
+          },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, terminal)).toBe(
+        'applied',
+      );
+      const before = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (before === undefined) throw new Error('missing history');
+      const current = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (current === undefined) throw new Error('missing Attempt');
+      const heartbeatEnvelope = await envelope({
+        kind: 'heartbeat',
+        grantId: 'grant-replay-later',
+        at: '2026-08-16T00:01:00.000Z',
+        phase: 'agent-execution',
+      });
+      const heartbeat = reduceAttempt(current, {
+        kind: 'transition',
+        expectedRevision: current.revision,
+        transitionedAt: '2026-08-16T00:01:00.000Z',
+        canonicalDigest: attemptTransitionDigest({
+          kind: 'observation',
+          envelope: heartbeatEnvelope,
+        }),
+        event: { kind: 'observation', envelope: heartbeatEnvelope },
+      });
+      if (heartbeat.status !== 'applied')
+        throw new Error('heartbeat progress was not applied');
+      await hydrateAttemptForTest(storage, {
+        lease,
+        expectedRevision: current.revision,
+        next: heartbeat.state,
+      });
+      const replay = await finalizer.recordObservation(lease, terminal);
+      expect(replay).toBe('replay');
+      const after = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(after).toEqual(before);
+      expect(
+        await storage.listValidationWork({
+          tenantId: tenant.tenantId,
+          state: 'pending',
+        }),
+      ).toEqual([]);
+      expect(
+        await storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: spec.attemptId,
+        }),
+      ).toEqual([]);
+    });
+
+    it.each([
+      'head',
+      'missing-terminal-record',
+      'terminal-record',
+      'terminal-payload',
+      'terminal-digest',
+      'terminal-private-ref',
+    ] as TerminalClaimHistoryCorruption[])(
+      'fails closed before mutation for corrupted terminal history: %s',
+      async (corruption) => {
+        const clock = new ManualClock();
+        const storage = await makeStorage(clock);
+        const { lease } = await activeFixture(storage);
+        const finalizer = new AttemptFinalizer(storage, clock, {
+          resolve: vi.fn(),
+        });
+        const terminal = await new TerminalObservationBoundary(
+          evidenceVerifier(),
+        ).verify({
+          envelope: await envelope(
+            {
+              kind: 'run-terminal',
+              binding,
+              conclusion: 'success',
+              observedAt: '2026-08-16T00:00:00.000Z',
+            },
+            {
+              requestId: `request-corrupt-${corruption}`,
+              factId: `fact-corrupt-${corruption}`,
+            },
+          ),
+        });
+        await finalizer.recordObservation(lease, terminal);
+        const attemptBefore = await storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: 'A'.repeat(22),
+        });
+        historyHooks.corruptAttemptHistory(storage, corruption);
+        await expect(
+          finalizer.recordObservation(lease, terminal),
+        ).rejects.toBeInstanceOf(AuthorityConflict);
+        await expect(
+          storage.readAttempt({
+            tenantId: tenant.tenantId,
+            attemptId: 'A'.repeat(22),
+          }),
+        ).resolves.toEqual(attemptBefore);
+      },
+    );
+
+    it.each([
+      'missing-claim-record',
+      'claim-record',
+      'claim-payload',
+      'claim-digest',
+      'claim-private-ref',
+    ] as TerminalClaimHistoryCorruption[])(
+      'fails closed before mutation for corrupted claim history: %s',
+      async (corruption) => {
+        const clock = new ManualClock();
+        const storage = await makeStorage(clock);
+        const { lease, spec } = await activeFixture(storage);
+        const finalizer = new AttemptFinalizer(storage, clock, {
+          resolve: vi.fn(),
+        });
+        const verifier = evidenceVerifier();
+        const terminal = await new TerminalObservationBoundary(verifier).verify(
+          {
+            envelope: await envelope(
+              {
+                kind: 'run-terminal',
+                binding,
+                conclusion: 'success',
+                observedAt: '2026-08-16T00:00:00.000Z',
+              },
+              {
+                requestId: `request-claim-corrupt-terminal-${corruption}`,
+                factId: `fact-claim-corrupt-terminal-${corruption}`,
+              },
+            ),
+          },
+        );
+        await finalizer.recordObservation(lease, terminal);
+        const claim = await new ClaimObservationBoundary(verifier).parse({
+          envelope: await envelope(
+            {
+              kind: 'agent-result-claim',
+              claim: {
+                kind: 'comment',
+                commentId: `comment-corrupt-${corruption}`,
+                localAttemptMarker: spec.local.attemptMarker,
+              },
+            },
+            {
+              requestId: `request-claim-corrupt-${corruption}`,
+              factId: `fact-claim-corrupt-${corruption}`,
+            },
+          ),
+        });
+        await finalizer.recordObservation(lease, claim);
+        const attemptBefore = await storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: spec.attemptId,
+        });
+        historyHooks.corruptAttemptHistory(storage, corruption);
+        await expect(
+          finalizer.recordObservation(lease, claim),
+        ).rejects.toBeInstanceOf(AuthorityConflict);
+        await expect(
+          storage.readAttempt({
+            tenantId: tenant.tenantId,
+            attemptId: spec.attemptId,
+          }),
+        ).resolves.toEqual(attemptBefore);
+      },
+    );
+
+    it('rolls back Attempt and idempotency state when the final history write fails', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease } = await activeFixture(storage);
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const before = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: 'A'.repeat(22),
+      });
+      const attemptBefore = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: 'A'.repeat(22),
+      });
+      const terminal = await new TerminalObservationBoundary(
+        evidenceVerifier(),
+      ).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-history-rollback',
+            factId: 'fact-history-rollback',
+          },
+        ),
+      });
+      const restore = historyHooks.failAttemptHistoryCommit(storage);
+      try {
+        await expect(
+          finalizer.recordObservation(lease, terminal),
+        ).rejects.toThrow('history');
+      } finally {
+        restore();
+      }
+      expect(
+        await storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: 'A'.repeat(22),
+        }),
+      ).toEqual(attemptBefore);
+      expect(
+        await historyHooks.readAttemptHistory(storage, {
+          lease,
+          tenantId: tenant.tenantId,
+          attemptId: 'A'.repeat(22),
+        }),
+      ).toEqual(before);
+    });
+
+    it('fails closed when the legacy Attempt has admission lineage but its history head is missing', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease } = await activeFixture(storage);
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const terminal = await new TerminalObservationBoundary(
+        evidenceVerifier(),
+      ).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-missing-history',
+            factId: 'fact-missing-history',
+          },
+        ),
+      });
+      historyHooks.deleteAttemptHistory(storage);
+      const attemptBefore = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: 'A'.repeat(22),
+      });
+      await expect(
+        finalizer.recordObservation(lease, terminal),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+      await expect(
+        storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: 'A'.repeat(22),
+        }),
+      ).resolves.toEqual(attemptBefore);
+    });
+
+    it('preserves cancellation truth while promoting pending terminal and claim observations', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await admittedFixture(storage);
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const verifier = evidenceVerifier();
+      const claim = await new ClaimObservationBoundary(verifier).parse({
+        envelope: await envelope(
+          {
+            kind: 'agent-result-claim',
+            claim: {
+              kind: 'comment',
+              commentId: 'comment-cancel-preserve',
+              localAttemptMarker: spec.local.attemptMarker,
+            },
+          },
+          { requestId: 'request-cancel-claim', factId: 'fact-cancel-claim' },
+        ),
+      });
+      await finalizer.recordObservation(lease, claim);
+      const terminal = await new TerminalObservationBoundary(verifier).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'cancelled',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-cancel-terminal',
+            factId: 'fact-cancel-terminal',
+          },
+        ),
+      });
+      await finalizer.recordObservation(lease, terminal);
+      await historyHooks.prepareAwaitingBindingCancellation(
+        storage,
+        lease,
+        spec,
+      );
+      const beforeBinding = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (beforeBinding === undefined)
+        throw new Error('missing cancelled Attempt');
+      expect(beforeBinding.cancellation).toBeDefined();
+      expect(beforeBinding.futureGrantsDenied).toBe(true);
+      const runBindingVerifier = new RunBindingIngressVerifier({
+        verifyExactRunBinding(): Promise<void> {
+          return Promise.resolve();
+        },
+      });
+      const verifiedBinding = await runBindingVerifier.verify({
+        envelope: await envelope(
+          { kind: 'run-bound', binding },
+          {
+            requestId: 'request-cancel-binding',
+            factId: 'fact-cancel-binding',
+          },
+        ),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      expect(
+        await ingestVerifiedRunBinding(storage, lease, verifiedBinding),
+      ).toBe('applied');
+      const promoted = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(promoted).toMatchObject({
+        cancellation: beforeBinding.cancellation,
+        futureGrantsDenied: true,
+      });
+    });
+
+    it('keeps a pre-terminal late claim immutable but excludes it from bound finalization evidence and refs', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await activeFixture(storage);
+      const baseVerifier = evidenceVerifier();
+      const lateVerifier = {
+        verifyTerminal: baseVerifier.verifyTerminal,
+        async verifyClaim(): Promise<{ observedAt: string }> {
+          return { observedAt: '2026-08-16T00:06:00.000Z' };
+        },
+      };
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const lateClaim = await new ClaimObservationBoundary(lateVerifier).parse({
+        envelope: await envelope(
+          {
+            kind: 'agent-result-claim',
+            claim: {
+              kind: 'comment',
+              commentId: 'comment-late-before-terminal',
+              localAttemptMarker: spec.local.attemptMarker,
+            },
+          },
+          {
+            requestId: 'request-late-before-terminal',
+            factId: 'fact-late-before-terminal',
+          },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, lateClaim)).toBe(
+        'applied',
+      );
+      const terminal = await new TerminalObservationBoundary(
+        lateVerifier,
+      ).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-late-bound-terminal',
+            factId: 'fact-late-bound-terminal',
+          },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, terminal)).toBe(
+        'applied',
+      );
+      const attempt = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(attempt?.finalization?.evidence).toEqual([]);
+      const history = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (history === undefined) throw new Error('missing late-claim history');
+      expect(history.records.fact).toHaveLength(3);
+      expect(history.records.claim).toHaveLength(1);
+      expect(history.head.finalization?.claimRefs).toEqual([]);
+      const snapshot = structuredClone(history);
+      expect(await finalizer.recordObservation(lease, terminal)).toBe('replay');
+      expect(await finalizer.recordObservation(lease, lateClaim)).toBe(
+        'replay',
+      );
+      await expect(
+        historyHooks.readAttemptHistory(storage, {
+          lease,
+          tenantId: tenant.tenantId,
+          attemptId: spec.attemptId,
+        }),
+      ).resolves.toEqual(snapshot);
+      const attemptBeforeForgedReplay = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      historyHooks.corruptAttemptHistory(storage, 'late-claim-head-ref');
+      await expect(
+        finalizer.recordObservation(lease, terminal),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+      await expect(
+        storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: spec.attemptId,
+        }),
+      ).resolves.toEqual(attemptBeforeForgedReplay);
+    });
+
+    it('keeps a pre-binding late claim immutable but excludes it from promoted finalization evidence and refs', async () => {
+      const clock = new ManualClock();
+      const storage = await makeStorage(clock);
+      const { lease, spec } = await admittedFixture(storage);
+      const baseVerifier = evidenceVerifier();
+      const lateVerifier = {
+        verifyTerminal: baseVerifier.verifyTerminal,
+        async verifyClaim(): Promise<{ observedAt: string }> {
+          return { observedAt: '2026-08-16T00:06:00.000Z' };
+        },
+      };
+      const finalizer = new AttemptFinalizer(storage, clock, {
+        resolve: vi.fn(),
+      });
+      const lateClaim = await new ClaimObservationBoundary(lateVerifier).parse({
+        envelope: await envelope(
+          {
+            kind: 'agent-result-claim',
+            claim: {
+              kind: 'comment',
+              commentId: 'comment-late-before-binding',
+              localAttemptMarker: spec.local.attemptMarker,
+            },
+          },
+          {
+            requestId: 'request-late-before-binding',
+            factId: 'fact-late-before-binding',
+          },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, lateClaim)).toBe(
+        'applied',
+      );
+      const terminal = await new TerminalObservationBoundary(
+        lateVerifier,
+      ).verify({
+        envelope: await envelope(
+          {
+            kind: 'run-terminal',
+            binding,
+            conclusion: 'success',
+            observedAt: '2026-08-16T00:00:00.000Z',
+          },
+          {
+            requestId: 'request-late-pending-terminal',
+            factId: 'fact-late-pending-terminal',
+          },
+        ),
+      });
+      expect(await finalizer.recordObservation(lease, terminal)).toBe(
+        'applied',
+      );
+      const runBindingVerifier = new RunBindingIngressVerifier({
+        verifyExactRunBinding(): Promise<void> {
+          return Promise.resolve();
+        },
+      });
+      const verifiedBinding = await runBindingVerifier.verify({
+        envelope: await envelope(
+          { kind: 'run-bound', binding },
+          {
+            requestId: 'request-late-promotion-binding',
+            factId: 'fact-late-promotion-binding',
+          },
+        ),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      expect(
+        await ingestVerifiedRunBinding(storage, lease, verifiedBinding),
+      ).toBe('applied');
+      const attempt = await storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      expect(attempt?.finalization?.evidence).toEqual([]);
+      const history = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: spec.attemptId,
+      });
+      if (history === undefined)
+        throw new Error('missing promoted late-claim history');
+      expect(history.records.fact).toHaveLength(3);
+      expect(history.records.claim).toHaveLength(1);
+      expect(history.head.finalization?.claimRefs).toEqual([]);
+      expect(history.head.pendingClaimRefs).toEqual([]);
     });
   });
 }
