@@ -1447,6 +1447,22 @@ describe('createQuickTask', () => {
     expect(deleteRef).toHaveBeenCalledTimes(1);
   });
 
+  it('retains the claim when definitive-failure evidence rollback is uncertain', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const { deleteRef } = mockOctokit({ createIssue });
+    const rollback = vi.fn().mockRejectedValue(new Error('delete timed out'));
+    const { lifecycle } = evidenceLifecycle({ rollback });
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'delete timed out',
+    );
+    expect(deleteRef).not.toHaveBeenCalled();
+  });
+
   it('retains prepared evidence and its claim after an ambiguous GitHub failure', async () => {
     const createIssue = vi
       .fn()

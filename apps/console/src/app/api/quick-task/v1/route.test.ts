@@ -33,7 +33,10 @@ const intent = {
   },
 };
 
-function request(file = true) {
+function request(
+  file = true,
+  suppliedEntries?: Array<[string, FormDataEntryValue]>,
+) {
   const request = new Request('https://lcars.test/api/quick-task/v1', {
     method: 'POST',
   });
@@ -43,12 +46,19 @@ function request(file = true) {
         arrayBuffer: async () => new TextEncoder().encode('png').buffer,
       }
     : null;
+  const entries =
+    suppliedEntries ??
+    ([
+      ['intent', JSON.stringify(intent)],
+      ...(evidence
+        ? [['evidence', evidence] as [string, FormDataEntryValue]]
+        : []),
+    ] as Array<[string, FormDataEntryValue]>);
   vi.spyOn(request, 'formData').mockResolvedValue({
     get(name: string) {
-      if (name === 'intent') return JSON.stringify(intent);
-      if (name === 'evidence') return evidence;
-      return null;
+      return entries.find(([entryName]) => entryName === name)?.[1] ?? null;
     },
+    entries: () => entries[Symbol.iterator](),
   } as FormData);
   return request;
 }
@@ -95,5 +105,24 @@ describe('POST /api/quick-task/v1', () => {
       }),
       expect.objectContaining({ intent }),
     );
+  });
+
+  it('rejects duplicate or unknown multipart fields before creating a task', async () => {
+    const duplicateIntent = await POST(
+      request(true, [
+        ['intent', JSON.stringify(intent)],
+        ['intent', JSON.stringify(intent)],
+      ]),
+    );
+    expect(duplicateIntent.status).toBe(400);
+
+    const unknownField = await POST(
+      request(true, [
+        ['intent', JSON.stringify(intent)],
+        ['unexpected', 'value'],
+      ]),
+    );
+    expect(unknownField.status).toBe(400);
+    expect(createQuickTask).not.toHaveBeenCalled();
   });
 });

@@ -133,7 +133,8 @@ export function QuickTaskScreenshotField({
             <Button
               size="compact-xs"
               variant="light"
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation();
                 setError(undefined);
                 onChange(undefined);
               }}

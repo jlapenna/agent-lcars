@@ -34,6 +34,22 @@ function isCreatePreconditionFailure(error: unknown): boolean {
   );
 }
 
+/** An ambiguous write is recoverable only when it produced this exact object. */
+function hasExactBinding(
+  metadata: Record<string, unknown> | undefined,
+  binding: QuickTaskEvidenceBinding,
+): boolean {
+  return (
+    metadata?.schemaVersion === binding.schemaVersion &&
+    metadata.evidenceId === binding.evidenceId &&
+    metadata.requestId === binding.requestId &&
+    metadata.repositoryId === String(binding.repositoryId) &&
+    metadata.normalizedSha256 === binding.normalizedSha256 &&
+    metadata.visibilityAtUpload === binding.visibilityAtUpload &&
+    metadata.createdAt === binding.createdAt
+  );
+}
+
 export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
   constructor(private readonly bucket: Bucket) {}
   async create(
@@ -55,6 +71,20 @@ export class GcsQuickTaskEvidenceStore implements QuickTaskEvidenceStore {
     } catch (error) {
       if (isCreatePreconditionFailure(error)) {
         throw new QuickTaskEvidenceError(409, 'Evidence binding conflict');
+      }
+      // A network failure can arrive after GCS has committed the write. Do
+      // not release the Quick Task claim in that case: recover only the exact
+      // object we meant to create, including its immutable binding.
+      try {
+        const [metadata] = await file.getMetadata();
+        if (
+          metadata.generation &&
+          hasExactBinding(metadata.metadata, binding)
+        ) {
+          return { binding, generation: String(metadata.generation) };
+        }
+      } catch {
+        // The original storage error remains the safe public result.
       }
       throw new QuickTaskEvidenceError(503, 'Evidence storage is unavailable');
     }

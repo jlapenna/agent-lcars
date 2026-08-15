@@ -1204,17 +1204,14 @@ async function createQuickTaskOnce(
   } catch (error) {
     if (isDefinitiveCreateFailure(error)) {
       if (preparedEvidence && evidenceLifecycle) {
-        try {
-          await evidenceLifecycle.hook.rollbackDefinitiveCreateFailure(
-            preparedEvidence,
-          );
-        } finally {
-          // A definitive GitHub response proves this request did not create
-          // an issue. Always attempt both parts of the frozen cleanup
-          // disposition, even when storage rollback itself needs operator
-          // reconciliation.
-          await releaseQuickTaskClaim(request, digest, claim.claimantId);
-        }
+        await evidenceLifecycle.hook.rollbackDefinitiveCreateFailure(
+          preparedEvidence,
+        );
+        // A definitive GitHub response proves this request did not create an
+        // issue. Release the claim only after the generation-matched evidence
+        // deletion succeeded; otherwise retain it for reconciliation instead
+        // of stranding publicly retrievable bytes behind a fresh retry.
+        await releaseQuickTaskClaim(request, digest, claim.claimantId);
         throw error;
       }
       // A 4xx proves GitHub did not create the issue, so releasing the claim

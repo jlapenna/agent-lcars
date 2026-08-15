@@ -53,15 +53,41 @@ function parseIntent(
   }
 }
 
+function parseMultipart(form: FormData): {
+  intent: FormDataEntryValue;
+  evidence: FormDataEntryValue | undefined;
+} {
+  const entries = Array.from(form.entries());
+  const allowed = new Set<string>(Object.values(QUICK_TASK_MULTIPART_FIELDS));
+  if (entries.some(([name]) => !allowed.has(name)))
+    throw new QuickTaskEvidenceError(
+      400,
+      'Quick Task multipart fields are invalid',
+    );
+  const intents = entries
+    .filter(([name]) => name === QUICK_TASK_MULTIPART_FIELDS.intent)
+    .map(([, value]) => value);
+  const evidence = entries
+    .filter(([name]) => name === QUICK_TASK_MULTIPART_FIELDS.evidence)
+    .map(([, value]) => value);
+  if (intents.length !== 1 || evidence.length > 1)
+    throw new QuickTaskEvidenceError(
+      400,
+      'Quick Task multipart fields are invalid',
+    );
+  return { intent: intents[0], evidence: evidence[0] };
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.isAdmin)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const form = await request.formData();
-    const intent = parseIntent(form.get(QUICK_TASK_MULTIPART_FIELDS.intent));
-    const file = form.get(QUICK_TASK_MULTIPART_FIELDS.evidence);
-    if (file !== null && typeof file === 'string')
+    const multipart = parseMultipart(form);
+    const intent = parseIntent(multipart.intent);
+    const file = multipart.evidence;
+    if (file !== undefined && typeof file === 'string')
       throw new QuickTaskEvidenceError(400, 'Evidence file is invalid');
     if (file && file.size > QUICK_TASK_EVIDENCE_MAX_INPUT_BYTES)
       throw new QuickTaskEvidenceError(413, 'Evidence exceeds the input limit');

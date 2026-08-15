@@ -31,6 +31,23 @@ function bucketThatFailsSave(code: number) {
 }
 
 describe('GcsQuickTaskEvidenceStore.create', () => {
+  it('recovers an ambiguous write only when its full immutable binding exists', async () => {
+    const getMetadata = async () => [
+      { generation: '7', metadata: { ...binding, repositoryId: '42' } },
+    ];
+    const store = new GcsQuickTaskEvidenceStore({
+      file: () => ({
+        save: async () => Promise.reject(new Error('connection reset')),
+        getMetadata,
+      }),
+    } as never);
+
+    await expect(store.create(evidence, binding)).resolves.toEqual({
+      binding,
+      generation: '7',
+    });
+  });
+
   it('maps only a create-only precondition failure to a binding conflict', async () => {
     const store = new GcsQuickTaskEvidenceStore(
       bucketThatFailsSave(412) as never,

@@ -54,8 +54,13 @@ describe('QuickTaskScreenshotField', () => {
     expect(
       screen.getByAltText('Screenshot preview: screenshot.png'),
     ).toHaveAttribute('src', 'blob:preview');
+    const inputClick = vi.spyOn(
+      screen.getByLabelText('Screenshot (optional)'),
+      'click',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Remove screenshot' }));
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview');
+    expect(inputClick).not.toHaveBeenCalled();
   });
 
   it('accepts a pasted or dropped image and replaces the prior file', () => {
