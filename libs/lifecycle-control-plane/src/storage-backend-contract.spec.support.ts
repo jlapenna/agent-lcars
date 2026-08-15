@@ -26,8 +26,10 @@ import {
   type AttemptAdmissionHistoryStorageHooks,
   runTaskAttemptAdmissionStorageContract,
 } from './task-attempt-admission.spec.support';
+import type { CancellationHistoryStorageHooks } from './task-effects.spec.support';
 import {
   runCancellationEffectStorageContract,
+  runCancellationHistoryStorageContract,
   runTaskEffectStorageContract,
   runTaskPresentationStorageContract,
 } from './task-effects.spec.support';
@@ -52,6 +54,7 @@ export interface LifecycleAuthorityBackendFactory {
   ): IngressPolicyInbox | Promise<IngressPolicyInbox>;
   admissionHistory: AttemptAdmissionHistoryStorageHooks;
   bindingHistory: BindingHistoryStorageHooks;
+  cancellationHistory: CancellationHistoryStorageHooks;
 }
 /**
  * Stable aggregate entrypoint for every provider-neutral storage contract.
@@ -76,6 +79,11 @@ export function runLifecycleAuthorityBackendContract(
   runCancellationEffectStorageContract({
     create,
     hydrateAttempt: factory.hydrateAttempt,
+  });
+  runCancellationHistoryStorageContract({
+    create,
+    hydrateAttempt: factory.hydrateAttempt,
+    historyHooks: factory.cancellationHistory,
   });
   runTaskAttemptAdmissionStorageContract(
     (clock, attemptIds) => factory.create(clock, attemptIds),

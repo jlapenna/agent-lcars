@@ -14,6 +14,7 @@ import {
   type TaskEffectRecord,
 } from './authority-storage';
 import { CancellationTaskEffectCoordinator } from './cancellation-effects';
+import { inMemoryCancellationHistoryStorageHooks } from './cancellation-history.in-memory.spec.support';
 import { writeAttemptForTest } from './launch-resolution-test-support';
 import { TaskAttemptAdmissionCoordinator } from './task-attempt-admission';
 import { mintTaskEffectTransition } from './task-effect-capability';
@@ -132,6 +133,7 @@ function transition(
 import {
   launchedCancellationEffect,
   runCancellationEffectStorageContract,
+  runCancellationHistoryStorageContract,
   runTaskEffectStorageContract,
   runTaskPresentationStorageContract,
 } from './task-effects.spec.support';
@@ -145,6 +147,11 @@ runTaskPresentationStorageContract({
 runCancellationEffectStorageContract({
   create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
   hydrateAttempt: writeAttemptForTest,
+});
+runCancellationHistoryStorageContract({
+  create: (clock) => new InMemoryLifecycleAuthorityStorage(clock),
+  hydrateAttempt: writeAttemptForTest,
+  historyHooks: inMemoryCancellationHistoryStorageHooks(),
 });
 
 describe('cancelled Attempt presentation replay integrity', () => {

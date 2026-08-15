@@ -5,6 +5,7 @@ import {
   InMemoryLifecycleAuthorityStorage,
   type LifecycleAuthorityStorage,
 } from './authority-storage';
+import { inMemoryCancellationHistoryStorageHooks } from './cancellation-history.in-memory.spec.support';
 import { InMemoryIngressPolicyInbox } from './ingress-policy';
 import { inMemoryBindingHistoryHooks } from './launch-binding-history-test-support';
 import { writeAttemptForTest } from './launch-resolution-test-support';
@@ -133,4 +134,5 @@ runLifecycleAuthorityBackendContract({
     new InMemoryIngressPolicyInbox(clock, evidenceResolver),
   admissionHistory,
   bindingHistory: inMemoryBindingHistoryHooks(),
+  cancellationHistory: inMemoryCancellationHistoryStorageHooks(),
 });
