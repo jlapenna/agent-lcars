@@ -1539,6 +1539,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         head.launch.operationId !== attempt.spec.attemptId ||
         head.executionEpoch !== 1 ||
         head.launch.executionEpoch !== head.executionEpoch ||
+        head.launch.state !==
+          (head.binding === undefined ? 'recorded' : 'accepted') ||
         head.aggregateRevision > attempt.revision ||
         (head.binding === undefined && attempt.binding !== undefined) ||
         (head.binding !== undefined &&

@@ -602,6 +602,9 @@ export interface CancellationHistoryStorageHooks {
     kind: 'payload' | 'digest' | 'reference',
   ): void;
   corruptCancellationHistoryHead(storage: LifecycleAuthorityStorage): void;
+  corruptCancellationHistoryLaunchState(
+    storage: LifecycleAuthorityStorage,
+  ): void;
   corruptCancellationAdmission(storage: LifecycleAuthorityStorage): void;
   deleteCancellationHistoryLineage(storage: LifecycleAuthorityStorage): void;
   failCancellationHistoryCommit(storage: LifecycleAuthorityStorage): () => void;
@@ -1518,6 +1521,7 @@ export function runCancellationHistoryStorageContract(
       ['history digest', 'record', 'digest'],
       ['history reference', 'record', 'reference'],
       ['history head', 'head', undefined],
+      ['history launch state', 'launch-state', undefined],
     ] as const)(
       'fails closed when %s is corrupted',
       async (_label, kind, detail) => {
@@ -1527,8 +1531,10 @@ export function runCancellationHistoryStorageContract(
           hooks.corruptCancellationReceipt(value.storage, detail);
         } else if (kind === 'record') {
           hooks.corruptCancellationHistoryRecord(value.storage, detail);
-        } else {
+        } else if (kind === 'head') {
           hooks.corruptCancellationHistoryHead(value.storage);
+        } else {
+          hooks.corruptCancellationHistoryLaunchState(value.storage);
         }
         await expect(value.worker.reconcile(value.input)).rejects.toThrow(
           AuthorityConflict,

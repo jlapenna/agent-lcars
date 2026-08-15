@@ -79,6 +79,19 @@ export const inMemoryCancellationHistoryStorageHooks =
       if (history === undefined) throw new Error('missing Attempt history');
       history.head.aggregateRevision = 99;
     },
+    corruptCancellationHistoryLaunchState: (storage) => {
+      const histories = (
+        storage as unknown as {
+          attemptHistories: Map<
+            string,
+            { head: { launch: { state: string } } }
+          >;
+        }
+      ).attemptHistories;
+      const history = histories.values().next().value;
+      if (history === undefined) throw new Error('missing Attempt history');
+      history.head.launch.state = 'accepted';
+    },
     corruptCancellationAdmission: (storage) => {
       const receipts = (
         storage as unknown as {
