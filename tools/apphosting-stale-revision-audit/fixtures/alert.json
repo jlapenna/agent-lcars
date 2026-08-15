@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "apphosting-stale-revision/v1",
+  "capturedAt": "2026-08-15T17:00:00Z",
+  "backend": {
+    "name": "projects/agent-lcars/locations/us-central1/backends/agent-lcars",
+    "status": {
+      "conditions": [
+        {
+          "type": "Ready",
+          "status": "False",
+          "reason": "RolloutFailed",
+          "message": "The latest rollout did not become healthy."
+        }
+      ]
+    },
+    "latestRollout": {
+      "name": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/rollouts/rollout-009",
+      "build": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/builds/build-009"
+    }
+  },
+  "cloudRun": {
+    "revisions": [
+      {
+        "metadata": {
+          "name": "agent-lcars-00009-abc",
+          "creationTimestamp": "2026-08-15T16:59:00Z",
+          "labels": {
+            "apphosting.build": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/builds/build-009",
+            "apphosting.rollout": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/rollouts/rollout-009"
+          }
+        },
+        "status": {
+          "conditions": [{ "type": "Ready", "status": "True" }],
+          "traffic": [{ "percent": 100 }]
+        }
+      },
+      {
+        "metadata": {
+          "name": "agent-lcars-00008-def",
+          "creationTimestamp": "2026-08-15T16:58:00Z",
+          "annotations": {
+            "firebase.google.com/apphosting-build": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/builds/build-008",
+            "firebase.google.com/apphosting-rollout": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/rollouts/rollout-008"
+          }
+        },
+        "status": {
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "BuildFailed",
+              "message": "The build exited with a non-zero status."
+            }
+          ],
+          "traffic": []
+        }
+      },
+      {
+        "metadata": {
+          "name": "agent-lcars-00007-ghi",
+          "creationTimestamp": "2026-08-15T16:57:00Z",
+          "labels": {
+            "apphosting.build": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/builds/build-007",
+            "apphosting.rollout": "projects/agent-lcars/locations/us-central1/backends/agent-lcars/rollouts/rollout-007"
+          }
+        },
+        "status": {
+          "conditions": [{ "type": "Ready", "status": "False" }],
+          "traffic": [{ "percent": 5 }]
+        }
+      },
+      {
+        "metadata": {
+          "name": "agent-lcars-00006-jkl",
+          "creationTimestamp": "2026-08-15T16:56:00Z"
+        },
+        "status": {
+          "conditions": [{ "type": "Ready", "status": "True" }],
+          "traffic": []
+        }
+      }
+    ]
+  }
+}
