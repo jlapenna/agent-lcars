@@ -1,4 +1,9 @@
-import type { AcceptedAttemptSpec } from '@agent-lcars/dispatch-contracts';
+import {
+  type AcceptedAttemptSpec,
+  attemptHistoryRecordReference,
+  type HistoryRecord,
+  type HistoryRecordReference,
+} from '@agent-lcars/dispatch-contracts';
 
 import { readAttemptHistoryForTest } from './attempt-history-test-support';
 import {
@@ -24,7 +29,8 @@ export type TerminalClaimHistoryCorruption =
   | 'terminal-digest'
   | 'claim-digest'
   | 'terminal-private-ref'
-  | 'claim-private-ref';
+  | 'claim-private-ref'
+  | 'late-claim-head-ref';
 
 export interface TerminalClaimHistoryStorageHooks {
   readAttemptHistory: typeof readAttemptHistoryForTest;
@@ -56,7 +62,10 @@ interface StoredHistoryEntry {
 }
 
 interface StoredHistory {
-  head: { aggregateRevision: number };
+  head: {
+    aggregateRevision: number;
+    finalization?: { claimRefs: HistoryRecordReference[] };
+  };
   records: Map<string, StoredHistoryEntry[]>;
 }
 
@@ -207,6 +216,20 @@ export const inMemoryTerminalClaimHistoryHooks =
           privateRef(storage, fact.factId).historyRecordRef = {
             recordDigest: 'a'.repeat(64),
           };
+          return;
+        }
+        case 'late-claim-head-ref': {
+          const finalization = value.head.finalization;
+          if (finalization === undefined)
+            throw new Error('missing finalization history');
+          const claim = firstRecord(value, 'claim', 'agent-result-claim');
+          finalization.claimRefs.push(
+            attemptHistoryRecordReference(
+              claim.record as HistoryRecord,
+              { tenantId: 'tenant-1', attemptId: 'A'.repeat(22) },
+              'claim',
+            ),
+          );
           return;
         }
       }

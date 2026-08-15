@@ -1927,20 +1927,46 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       ) {
         throw new AuthorityConflict('Attempt terminal history is invalid');
       }
-      const legacyClaimIds = [
-        ...attempt.pendingClaims.map((claim) => claim.factId),
-        ...(attempt.finalization?.evidence.map((claim) => claim.factId) ?? []),
-      ].sort();
-      const historicalClaimIds = claimFactRecords
-        .map(({ payload }) => (payload as { factId?: string }).factId)
-        .filter((value): value is string => value !== undefined)
+      const trackedClaimRefs = [
+        ...head.pendingClaimRefs,
+        ...(head.finalization?.claimRefs ?? []),
+      ];
+      const trackedClaimIds = trackedClaimRefs
+        .map((ref) => {
+          const matches = claimRecords.filter(({ record }) =>
+            same(attemptHistoryRecordReference(record, identity, 'claim'), ref),
+          );
+          if (matches.length !== 1) {
+            throw new AuthorityConflict(
+              'Attempt claim history reference is invalid',
+            );
+          }
+          const claimFactId = (matches[0]?.payload as { claimFactId?: string })
+            .claimFactId;
+          if (claimFactId === undefined) {
+            throw new AuthorityConflict(
+              'Attempt claim history payload is invalid',
+            );
+          }
+          return claimFactId;
+        })
         .sort();
-      // Pre-history Attempts may already be in finalization when this shadow
-      // feature is introduced. Once any claim is mirrored, however, the
-      // tracked prefix must be exact and complete.
+      const legacyClaimIds = (
+        head.finalization === undefined
+          ? attempt.pendingClaims
+          : (attempt.finalization?.evidence ?? [])
+      )
+        .map((claim) => claim.factId)
+        .sort();
+      // A pre-history Attempt can have legacy claims without any mirrored
+      // claim refs. Once a ref is tracked — or terminal history exists — it
+      // must mirror the reducer's selected prefix exactly. Late claims stay
+      // in fact/claim streams but are omitted only after finalization opens.
       if (
-        claimFactRecords.length !== 0 &&
-        !same(legacyClaimIds, historicalClaimIds)
+        (trackedClaimRefs.length !== 0 ||
+          head.pendingTerminal !== undefined ||
+          head.finalization !== undefined) &&
+        !same(legacyClaimIds, trackedClaimIds)
       ) {
         throw new AuthorityConflict(
           'Attempt claim history conflicts with legacy state',
@@ -5628,6 +5654,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         nextRevision: input.next.revision,
         transitionedAt: input.transitionedAt,
         emitted,
+        priorRecords: [...existing.records.values()].flatMap((entries) =>
+          entries.map(({ record, payload }) => ({ record, payload })),
+        ),
       });
       const payloadsByStream = new Map<AttemptHistoryStream, unknown[]>();
       for (const emission of emitted) {
@@ -6694,6 +6723,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           nextRevision: nextAttempt.revision,
           transitionedAt: envelope.observedAt,
           emitted: [{ stream: 'fact', payload: bindingFact }],
+          priorRecords: [...existingHistory.records.values()].flatMap(
+            (entries) =>
+              entries.map(({ record, payload }) => ({ record, payload })),
+          ),
         });
       }
     } catch {

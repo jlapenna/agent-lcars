@@ -2261,12 +2261,19 @@ export function appendAttemptHistoryTransition(input: {
       throw new HistoryIntegrityError('invalid-record');
     }
     if (patch.finalization === undefined) {
+      const deadline = base.pendingTerminal.finalizationDeadline;
+      const claimRefs = base.pendingClaimRefs.filter((ref) => {
+        const claim = attemptClaimPayloadSchema.parse(
+          resolveKnownRecord(ref, identity, 'claim', known).payload,
+        );
+        return Date.parse(claim.observedAt) <= Date.parse(deadline);
+      });
       patch.finalization = {
         terminalFactRef: base.pendingTerminal.terminalFactRef,
         terminalConclusion: base.pendingTerminal.conclusion,
         openedAt: patch.updatedAt,
-        closesAt: base.pendingTerminal.finalizationDeadline,
-        claimRefs: base.pendingClaimRefs,
+        closesAt: deadline,
+        claimRefs,
         validationRefs: [],
       };
     }
@@ -2302,11 +2309,21 @@ export function appendAttemptHistoryTransition(input: {
     if (terminalPayload.payload.kind !== 'run-terminal') {
       throw new HistoryIntegrityError('invalid-record');
     }
+    const terminal = terminalPayload.payload;
     const terminalRecord = records.find(
       (record) => record.streamKind === 'fact',
     );
     if (terminalRecord === undefined)
       throw new HistoryIntegrityError('missing-reference');
+    const claimRefs = base.pendingClaimRefs.filter((ref) => {
+      const claim = attemptClaimPayloadSchema.parse(
+        resolveKnownRecord(ref, identity, 'claim', known).payload,
+      );
+      return (
+        Date.parse(claim.observedAt) <=
+        Date.parse(terminal.finalizationDeadline)
+      );
+    });
     patch.finalization = {
       terminalFactRef: attemptHistoryRecordReference(
         terminalRecord,
@@ -2316,18 +2333,19 @@ export function appendAttemptHistoryTransition(input: {
         },
         'fact',
       ),
-      terminalConclusion: terminalPayload.payload.conclusion,
+      terminalConclusion: terminal.conclusion,
       openedAt: patch.updatedAt,
-      closesAt: terminalPayload.payload.finalizationDeadline,
-      claimRefs: base.pendingClaimRefs,
+      closesAt: terminal.finalizationDeadline,
+      claimRefs,
       validationRefs: [],
     };
     patch.pendingClaimRefs = [];
     patch.phase = 'result-observed';
   }
   if (
+    patch.finalization === undefined &&
     canonicalDurableJson(patch.pendingClaimRefs) ===
-    canonicalDurableJson(base.pendingClaimRefs)
+      canonicalDurableJson(base.pendingClaimRefs)
   ) {
     patch.pendingClaimRefs = [
       ...base.pendingClaimRefs,
