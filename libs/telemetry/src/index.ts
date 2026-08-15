@@ -11,4 +11,4 @@ export * from './lib/tokens';
 export * from './lib/transcript-adapter';
 export * from './lib/transcript-timeline';
 export * from './lib/types';
-export { isSafeIdentifier } from './lib/unknown-value';
+export { isSafeIdentifier, truncateTitle } from './lib/unknown-value';
