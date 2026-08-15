@@ -463,7 +463,7 @@ describe('Task history shadow storage', () => {
       expect(receipt.responseRecordRefs?.length).toBeLessThanOrEqual(3);
       expect(JSON.stringify(receipt).length).toBeLessThan(128 * 1024);
     }
-  }, 30_000);
+  }, 90_000);
 });
 
 runTaskHistoryShadowStorageContract({

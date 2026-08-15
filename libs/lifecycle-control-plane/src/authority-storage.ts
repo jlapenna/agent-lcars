@@ -1411,27 +1411,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     };
   }
 
-  private historyRecordForReference(
-    history: StoredTaskHistory,
-    reference: HistoryRecordReference,
-  ): StoredTaskHistoryRecord | undefined {
-    return [
-      ...history.factRecords,
-      ...history.intentRecords,
-      ...history.effectRecords,
-      ...history.workRecords,
-      ...history.presentationRecords,
-    ].find(
-      ({ record }) =>
-        taskHistoryRecordKey(record) ===
-        taskHistoryRecordReferenceKey(reference),
-    );
-  }
-
   private assertStoredTaskHistoryIntegrity(
     task: TaskAuthorityScope,
     history: StoredTaskHistory,
-  ): void {
+  ): Map<string, StoredTaskHistoryRecord> {
     const legacy = this.tasks.get(canonicalTaskKey(task));
     if (legacy === undefined) {
       throw new AuthorityConflict('Task history exists without legacy Task');
@@ -1481,6 +1464,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const valid = verifyHistoryRecord(entry.record);
       verifyHistoryRecordPayload(valid, entry.payload);
     };
+    const recordIndex = new Map<string, StoredTaskHistoryRecord>();
     for (const entry of [
       ...history.factRecords,
       ...history.intentRecords,
@@ -1490,6 +1474,11 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     ]) {
       try {
         assertRecord(entry);
+        const key = taskHistoryRecordKey(entry.record);
+        if (recordIndex.has(key)) {
+          throw new AuthorityConflict('Task history record key collision');
+        }
+        recordIndex.set(key, entry);
       } catch {
         throw new AuthorityConflict('Task history record integrity failed');
       }
@@ -1547,7 +1536,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     for (const receipt of history.replayReceipts.values()) {
       try {
         verifyReplayReceiptReferences(receipt, (reference) => {
-          const entry = this.historyRecordForReference(history, reference);
+          const entry = recordIndex.get(
+            taskHistoryRecordReferenceKey(reference),
+          );
           if (entry === undefined) return undefined;
           verifyHistoryRecordPayload(entry.record, entry.payload);
           return entry.record;
@@ -1558,6 +1549,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         );
       }
     }
+    return recordIndex;
   }
 
   private makeLegacyTaskHistory(task: TaskIntentState): StoredTaskHistory {
@@ -1723,7 +1715,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       if (history === undefined || historyReceipt === undefined) {
         throw new AuthorityConflict('Task history replay receipt is missing');
       }
-      this.assertStoredTaskHistoryIntegrity(scope, history);
+      const recordIndex = this.assertStoredTaskHistoryIntegrity(scope, history);
       try {
         if (historyReceipt.canonicalInputDigest !== command.canonicalDigest) {
           throw new AuthorityConflict('Task history replay input conflicts');
@@ -1732,7 +1724,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           throw new AuthorityConflict('Task history replay revision conflicts');
         }
         verifyReplayReceiptReferences(historyReceipt, (reference) => {
-          const entry = this.historyRecordForReference(history, reference);
+          const entry = recordIndex.get(
+            taskHistoryRecordReferenceKey(reference),
+          );
           if (entry === undefined) return undefined;
           verifyHistoryRecordPayload(entry.record, entry.payload);
           return entry.record;
