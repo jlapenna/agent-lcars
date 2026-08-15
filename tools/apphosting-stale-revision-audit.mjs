@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 
 const SCHEMA_VERSION = 'apphosting-stale-revision/v1';
 const REMEDIATION_REFERENCE =
@@ -276,6 +276,16 @@ export function parseArgs(args) {
   return { fixture, format, output };
 }
 
+export async function writePrivateReport(path, content) {
+  const file = await open(path, 'w', 0o600);
+  try {
+    await file.chmod(0o600);
+    await file.writeFile(`${content.trimEnd()}\n`);
+  } finally {
+    await file.close();
+  }
+}
+
 async function main() {
   const input = parseArgs(process.argv.slice(2));
   const report = auditSnapshot(
@@ -285,8 +295,7 @@ async function main() {
     input.format === 'json'
       ? JSON.stringify(report, null, 2)
       : renderMarkdown(report);
-  if (input.output)
-    await writeFile(input.output, `${content.trimEnd()}\n`, { mode: 0o600 });
+  if (input.output) await writePrivateReport(input.output, content);
   else process.stdout.write(content);
 }
 

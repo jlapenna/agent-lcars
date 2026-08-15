@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { describe, test } from 'vitest';
@@ -8,6 +9,7 @@ import {
   auditSnapshot,
   parseArgs,
   renderMarkdown,
+  writePrivateReport,
 } from '../apphosting-stale-revision-audit.mjs';
 
 const fixtureRoot = path.resolve(
@@ -187,5 +189,20 @@ describe('App Hosting stale-revision audit', () => {
       () => parseArgs(['--fixture', 'fixture.json', '--format', 'html']),
       /Usage/u,
     );
+  });
+
+  test('forces an overwritten report to owner-only permissions', async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), 'apphosting-stale-audit-'),
+    );
+    const output = path.join(directory, 'report.md');
+    try {
+      await writeFile(output, 'old report\n', { mode: 0o644 });
+      await writePrivateReport(output, 'new report');
+      assert.equal((await stat(output)).mode & 0o777, 0o600);
+      assert.equal(await readFile(output, 'utf8'), 'new report\n');
+    } finally {
+      await rm(directory, { recursive: true });
+    }
   });
 });
