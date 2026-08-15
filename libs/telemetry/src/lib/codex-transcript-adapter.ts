@@ -141,7 +141,7 @@ export const codexAdapter: TranscriptAdapter = {
         toolCallCounts,
         tokens,
         ...(lastToolCall && { lastToolCall }),
-        ...(title && { title }),
+        ...(title && { title, titleSource: 'inferred' as const }),
         deliverables: {
           prNumbers: Array.from(prNumbers),
           commitShas: Array.from(commitShas),
