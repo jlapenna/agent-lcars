@@ -138,6 +138,70 @@ describe('session-title annotation writer adversarial durability', () => {
     expect(fs.lstatSync(finalPath(homeDirectory)).isSymbolicLink()).toBe(true);
   });
 
+  it('never deletes a nonregular entry raced into place before clear captures it', () => {
+    const homeDirectory = home();
+    makeState(homeDirectory);
+    fs.writeFileSync(finalPath(homeDirectory), 'old regular annotation');
+    let replaced = false;
+    const renameSync: SessionTitleAnnotationWriterFileSystem['renameSync'] = (
+      from,
+      to,
+    ) => {
+      if (
+        !replaced &&
+        String(from).endsWith(`/${SESSION_ID}.json`) &&
+        String(to).endsWith('.clear.tmp')
+      ) {
+        replaced = true;
+        fs.unlinkSync(from);
+        execFileSync('mkfifo', [finalPath(homeDirectory)]);
+      }
+      fs.renameSync(from, to);
+    };
+
+    expect(
+      clearSessionTitleAnnotation(SESSION_ID, {
+        ...deps(homeDirectory, { renameSync }),
+        randomBytes: () => Buffer.alloc(16, 0x33),
+      }),
+    ).toEqual({ ok: false });
+    expect(replaced).toBe(true);
+    expect(fs.lstatSync(finalPath(homeDirectory)).isFIFO()).toBe(true);
+    expect(fs.readdirSync(directory(homeDirectory))).toEqual([
+      `${SESSION_ID}.json`,
+    ]);
+  });
+
+  it('does not delete a new final published after clear captures the old file', () => {
+    const homeDirectory = home();
+    makeState(homeDirectory);
+    fs.writeFileSync(finalPath(homeDirectory), 'old regular annotation');
+    let published = false;
+    const lstatSync: SessionTitleAnnotationWriterFileSystem['lstatSync'] = (
+      target,
+    ) => {
+      if (!published && String(target).endsWith('.clear.tmp')) {
+        published = writeSessionTitleAnnotation(
+          SESSION_ID,
+          'new concurrent annotation',
+          deps(homeDirectory),
+        ).ok;
+      }
+      return fs.lstatSync(target);
+    };
+
+    expect(
+      clearSessionTitleAnnotation(
+        SESSION_ID,
+        deps(homeDirectory, { lstatSync }),
+      ),
+    ).toEqual({ ok: true });
+    expect(published).toBe(true);
+    expect(readAnnotation(homeDirectory).title).toBe(
+      'new concurrent annotation',
+    );
+  });
+
   it('treats an absent final as an idempotent clear and refuses nonregular finals', () => {
     const absentHome = home();
     makeState(absentHome);
@@ -567,10 +631,15 @@ describe('session-title annotation writer adversarial durability', () => {
     fs.writeFileSync(finalPath(homeDirectory), 'old complete value');
     let nested = false;
     let nestedResult = false;
-    const unlinkSync: SessionTitleAnnotationWriterFileSystem['unlinkSync'] = (
-      target,
+    const renameSync: SessionTitleAnnotationWriterFileSystem['renameSync'] = (
+      from,
+      to,
     ) => {
-      if (String(target).endsWith(`/${SESSION_ID}.json`) && !nested) {
+      if (
+        String(from).endsWith(`/${SESSION_ID}.json`) &&
+        String(to).endsWith('.clear.tmp') &&
+        !nested
+      ) {
         nested = true;
         nestedResult = writeSessionTitleAnnotation(
           SESSION_ID,
@@ -578,13 +647,13 @@ describe('session-title annotation writer adversarial durability', () => {
           deps(homeDirectory),
         ).ok;
       }
-      return fs.unlinkSync(target);
+      return fs.renameSync(from, to);
     };
 
     expect(
       clearSessionTitleAnnotation(
         SESSION_ID,
-        deps(homeDirectory, { unlinkSync }),
+        deps(homeDirectory, { renameSync }),
       ),
     ).toEqual({ ok: true });
     expect(nestedResult).toBe(true);

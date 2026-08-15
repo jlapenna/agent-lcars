@@ -19,17 +19,19 @@ type PinnedWriteSync = (
   position: number | null,
 ) => number;
 type PinnedStatSync = (filePath: string) => fs.Stats;
+type PinnedLstatSync = (filePath: string) => fs.Stats;
 
 export interface SessionTitleAnnotationWriterFileSystem {
   mkdirSync: typeof fs.mkdirSync;
   openSync: typeof fs.openSync;
   fstatSync: typeof fs.fstatSync;
   fchmodSync: typeof fs.fchmodSync;
-  lstatSync: typeof fs.lstatSync;
+  lstatSync: PinnedLstatSync;
   statSync: PinnedStatSync;
   writeSync: PinnedWriteSync;
   fsyncSync: typeof fs.fsyncSync;
   closeSync: typeof fs.closeSync;
+  linkSync: typeof fs.linkSync;
   renameSync: typeof fs.renameSync;
   unlinkSync: typeof fs.unlinkSync;
   readlinkSync: typeof fs.readlinkSync;
@@ -61,12 +63,13 @@ const defaultFileSystem: SessionTitleAnnotationWriterFileSystem = {
   openSync: fs.openSync,
   fstatSync: fs.fstatSync,
   fchmodSync: fs.fchmodSync,
-  lstatSync: fs.lstatSync,
+  lstatSync: (filePath) => fs.lstatSync(filePath),
   statSync: (filePath) => fs.statSync(filePath),
   writeSync: (fd, buffer, offset, length, position) =>
     fs.writeSync(fd, buffer, offset, length, position),
   fsyncSync: fs.fsyncSync,
   closeSync: fs.closeSync,
+  linkSync: fs.linkSync,
   renameSync: fs.renameSync,
   unlinkSync: fs.unlinkSync,
   readlinkSync: fs.readlinkSync,
@@ -134,6 +137,13 @@ function makeTemporaryName(
   return `.${sessionId}.${randomBytes(16).toString('hex')}.tmp`;
 }
 
+function makeClearCaptureName(
+  sessionId: string,
+  randomBytes: (size: number) => Buffer,
+): string {
+  return `.${sessionId}.${randomBytes(16).toString('hex')}.clear.tmp`;
+}
+
 function writeFully(
   fileSystem: SessionTitleAnnotationWriterFileSystem,
   descriptor: number,
@@ -192,30 +202,83 @@ export function clearSessionTitleAnnotation(
   }
 
   let directoryDescriptor: number | undefined;
+  let captureDescriptor: number | undefined;
+  let capturePath: string | undefined;
+  let ownsPlaceholder = false;
   try {
     directoryDescriptor = openPinnedDirectory(fileSystem, dependencies);
     const procfdDirectory = procfdPath(directoryDescriptor, fileSystem);
     const finalPath = path.join(procfdDirectory, `${sessionId}.json`);
-    let target: fs.Stats;
+    capturePath = path.join(
+      procfdDirectory,
+      makeClearCaptureName(
+        sessionId,
+        dependencies.randomBytes ?? crypto.randomBytes,
+      ),
+    );
+
+    // Reserve an invocation-unique capture name before touching the final
+    // entry. Renaming the final over this placeholder atomically selects the
+    // exact directory entry that clear will inspect; a later writer can safely
+    // publish a new final without becoming the object deleted below.
+    captureDescriptor = fileSystem.openSync(
+      capturePath,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    ownsPlaceholder = true;
+    fileSystem.fchmodSync(captureDescriptor, 0o600);
+    fileSystem.closeSync(captureDescriptor);
+    captureDescriptor = undefined;
+
     try {
-      target = fileSystem.lstatSync(finalPath);
+      fileSystem.renameSync(finalPath, capturePath);
     } catch (error) {
       if (isMissingFile(error)) {
+        removeOwnTempQuietly(fileSystem, capturePath);
+        capturePath = undefined;
+        ownsPlaceholder = false;
         fileSystem.fsyncSync(directoryDescriptor);
         return { ok: true };
       }
       throw error;
     }
+    ownsPlaceholder = false;
 
-    // Refuse links and non-files. unlinkSync itself does not follow a symlink,
-    // but refusing it here makes the regular-file contract explicit.
-    if (target.isSymbolicLink() || !target.isFile()) return { ok: false };
-    fileSystem.unlinkSync(finalPath);
+    const target = fileSystem.lstatSync(capturePath);
+    if (target.isFile()) {
+      fileSystem.unlinkSync(capturePath);
+      capturePath = undefined;
+      fileSystem.fsyncSync(directoryDescriptor);
+      return { ok: true };
+    }
+
+    // `link` is an atomic no-overwrite restore. On Linux it hard-links a
+    // symlink or special inode itself rather than following it. If a concurrent
+    // writer already recreated the final, EEXIST leaves both that new final and
+    // the captured nonregular node intact; clear never deletes either one.
+    try {
+      fileSystem.linkSync(capturePath, finalPath);
+      fileSystem.unlinkSync(capturePath);
+      capturePath = undefined;
+    } catch {
+      // Preserve the captured nonregular object under its ignored private name
+      // rather than overwrite a concurrent final or delete an unverified node.
+    }
     fileSystem.fsyncSync(directoryDescriptor);
-    return { ok: true };
+    return { ok: false };
   } catch {
+    if (ownsPlaceholder) {
+      closeQuietly(fileSystem, captureDescriptor);
+      captureDescriptor = undefined;
+      removeOwnTempQuietly(fileSystem, capturePath);
+    }
     return { ok: false };
   } finally {
+    closeQuietly(fileSystem, captureDescriptor);
     closeQuietly(fileSystem, directoryDescriptor);
   }
 }
