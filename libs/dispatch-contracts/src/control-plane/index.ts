@@ -188,5 +188,44 @@ export {
 } from './primitives';
 export type { ProjectionIntent, ProjectionStatusV1 } from './projection';
 export { projectionIntentSchema, projectionStatusV1Schema } from './projection';
+export type {
+  LegacyTaskFact,
+  LegacyTaskHistoryUpgradeInput,
+  LegacyTaskHistoryUpgradeResult,
+  LegacyTaskIntent,
+  LegacyTaskIntentState,
+  TaskAttemptRelation,
+  TaskFactHistoryPayload,
+  TaskFactSituation,
+  TaskHistoryHead,
+  TaskHistoryHeadInput,
+  TaskHistoryRecordInput,
+  TaskHistoryTransitionInput,
+  TaskHistoryTransitionResult,
+  TaskIntentHistoryPayload,
+  TaskIntentResolution,
+} from './task-history';
+export {
+  createGenesisTaskHistoryHead,
+  createTaskFactHistoryRecord,
+  createTaskFactRecord,
+  createTaskIntentHistoryRecord,
+  createTaskIntentRecord,
+  taskAttemptRelationSchema,
+  taskFactHistoryPayloadSchema,
+  taskFactPayloadSchema,
+  taskFactSituationSchema,
+  taskHistoryAggregateId,
+  taskHistoryHeadSchema,
+  taskHistoryHeadSchemaV1,
+  taskIntentHistoryPayloadSchema,
+  taskIntentPayloadSchema,
+  taskIntentResolutionSchema,
+  upgradeLegacyTaskIntentState,
+  upgradeTaskIntentState,
+  validateTaskHistoryTransition,
+  verifyTaskFactHistoryRecord,
+  verifyTaskIntentHistoryRecord,
+} from './task-history';
 export type { TaskPresentationPlan } from './task-projection';
 export { taskPresentationPlanSchema } from './task-projection';
