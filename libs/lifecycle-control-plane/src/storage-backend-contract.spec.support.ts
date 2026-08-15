@@ -21,6 +21,8 @@ import type {
 import { runIngressPolicyInboxContract } from './ingress-policy.spec.support';
 import { runVerifiedRunBindingStorageContract } from './launch-binding.spec.support';
 import type { BindingHistoryStorageHooks } from './launch-binding-history-test-support';
+import type { LaunchRejectionCompositionFactory } from './launch-rejection-history.spec.support';
+import { runLaunchRejectionHistoryStorageContract } from './launch-rejection-history.spec.support';
 import type { LaunchResolutionHistoryStorageHooks } from './launch-resolution.spec.support';
 import {
   runLaunchResolutionHistoryStorageContract,
@@ -68,6 +70,7 @@ export interface LifecycleAuthorityBackendFactory {
   terminalClaimHistory: TerminalClaimHistoryStorageHooks;
   validationHistory: ValidationHistoryStorageHooks;
   finalizationHistory: FinalizationHistoryStorageHooks;
+  launchRejectionHistory: LaunchRejectionCompositionFactory;
 }
 /**
  * Stable aggregate entrypoint for every provider-neutral storage contract.
@@ -123,6 +126,7 @@ export function runLifecycleAuthorityBackendContract(
     (clock) => factory.create(clock, { mint: () => 'A'.repeat(22) }),
     factory.finalizationHistory,
   );
+  runLaunchRejectionHistoryStorageContract(factory.launchRejectionHistory);
   runPresentationDeliveryStorageContract({ create, ...factory.presentation });
   runIngressPolicyInboxContract((clock, evidenceResolver) =>
     factory.createInbox(clock, evidenceResolver),

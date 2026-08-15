@@ -40,6 +40,7 @@ export const lifecycleAuthorityStorageMethodChecklist = {
   listLaunches: true,
   claimLaunchWork: true,
   resolveVerifiedLaunch: true,
+  rejectVerifiedLaunch: true,
   recordObservation: true,
   recordBindingObservationAndResolveLaunch: true,
   lookupOrReserveMint: true,

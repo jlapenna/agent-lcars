@@ -9,6 +9,8 @@ import { inMemoryCancellationHistoryStorageHooks } from './cancellation-history.
 import { inMemoryFinalizationHistoryHooks } from './finalization-history.in-memory.spec.support';
 import { InMemoryIngressPolicyInbox } from './ingress-policy';
 import { inMemoryBindingHistoryHooks } from './launch-binding-history-test-support';
+import { LaunchRejectionComposition } from './launch-rejection-composition';
+import { inMemoryLaunchRejectionHistoryHooks } from './launch-rejection-history.in-memory.spec.support';
 import { inMemoryLaunchResolutionHistoryStorageHooks } from './launch-resolution-history.in-memory.spec.support';
 import { writeAttemptForTest } from './launch-resolution-test-support';
 import { inMemoryPresentationDeliveryStorageHooks } from './presentation-delivery.in-memory.spec.support';
@@ -143,4 +145,19 @@ runLifecycleAuthorityBackendContract({
   terminalClaimHistory: inMemoryTerminalClaimHistoryHooks(),
   validationHistory: inMemoryValidationHistoryHooks(),
   finalizationHistory: inMemoryFinalizationHistoryHooks(),
+  launchRejectionHistory: {
+    create: (clock) =>
+      new InMemoryLifecycleAuthorityStorage(clock, {
+        mint: () => 'A'.repeat(22),
+      }),
+    historyHooks: inMemoryLaunchRejectionHistoryHooks(),
+    reject: ({ storage, lease, proof, expectedAttemptRevision }) =>
+      new LaunchRejectionComposition({
+        storage,
+        clock: { now: () => '2026-08-22T00:01:00.000Z' },
+        verifier: {
+          verify: async (candidate) => candidate as never,
+        },
+      }).reject({ lease, proof, expectedAttemptRevision }),
+  },
 });

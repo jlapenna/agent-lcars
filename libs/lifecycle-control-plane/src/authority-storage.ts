@@ -83,6 +83,11 @@ import {
   type VerifiedFinalizationTransition,
 } from './finalization-capability';
 import {
+  isVerifiedLaunchRejection,
+  launchRejectionEventId,
+  type VerifiedLaunchRejection,
+} from './launch-rejection-capability';
+import {
   isVerifiedLaunchResolution,
   launchResolutionEventId,
   mintClaimedLaunchWork,
@@ -481,6 +486,11 @@ export interface LifecycleAuthorityStorage {
   resolveVerifiedLaunch(input: {
     lease: TaskAuthorityLease;
     resolution: VerifiedLaunchResolution;
+  }): Promise<WriteResult>;
+  /** Server-minted definitive no-run terminal decision; no provider call. */
+  rejectVerifiedLaunch(input: {
+    lease: TaskAuthorityLease;
+    rejection: VerifiedLaunchRejection;
   }): Promise<WriteResult>;
 
   recordObservation(identity: ObservationIdentity): Promise<WriteResult>;
@@ -1150,6 +1160,18 @@ interface StoredLaunchResolutionReceipt {
   history?: { commandRef: HistoryRecordReference };
 }
 
+/** Private exact replay material for a definitive no-run terminal decision. */
+interface StoredLaunchRejectionReceipt {
+  proofSha256: string;
+  rejectedAt: string;
+  canonicalDigest: string;
+  outcomeDigest: string;
+  history?: {
+    commandRef: HistoryRecordReference;
+    evidenceRef: HistoryRecordReference;
+  };
+}
+
 /**
  * Private exact history pointers for finalization commands.  They are kept
  * beside the mutable work queue rather than exposed as part of its public
@@ -1213,6 +1235,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly launchResolutionReceipts = new Map<
     string,
     StoredLaunchResolutionReceipt
+  >();
+  private readonly launchRejectionReceipts = new Map<
+    string,
+    StoredLaunchRejectionReceipt
   >();
   private readonly validationHistoryReceipts = new Map<
     string,
@@ -1707,6 +1733,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           ![
             'request-cancel',
             'cancel-unlaunched',
+            'launch-rejected',
             'launch-accepted',
             'launch-response-unknown',
             'start-validation',
@@ -1779,6 +1806,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const finalizeCommands = transitionCommands.filter(
         ({ value }) => value.payload?.kind === 'finalize',
       );
+      const launchRejectionCommands = transitionCommands.filter(
+        ({ value }) => value.payload?.kind === 'launch-rejected',
+      );
+      if (launchRejectionCommands.length > 1) {
+        throw new AuthorityConflict(
+          'Attempt launch rejection history is duplicated',
+        );
+      }
       if (launchCommands.length > 1) {
         throw new AuthorityConflict('Attempt launch history is duplicated');
       }
@@ -2217,9 +2252,11 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const directCancellation = cancellationCommands.find(
         ({ value }) => value.payload?.kind === 'cancel-unlaunched',
       );
+      const directLaunchRejection = launchRejectionCommands[0];
       const finalizeCommand = finalizeCommands[0];
       if (
         directCancellation === undefined &&
+        directLaunchRejection === undefined &&
         finalizeCommand === undefined &&
         evidenceRecords.length !== 0
       )
@@ -2267,6 +2304,52 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ) {
           throw new AuthorityConflict(
             'Attempt cancellation evidence is invalid',
+          );
+        }
+      }
+      if (directLaunchRejection !== undefined) {
+        const evidence = evidenceRecords[0];
+        const value = evidence?.payload as
+          | {
+              finalizeCommandRef?: HistoryRecordReference;
+              outcomeDigest?: string;
+              outcome?: unknown;
+            }
+          | undefined;
+        const commandId = directLaunchRejection.value.payload?.commandId;
+        const expectedEventId = launchRejectionEventId({
+          attemptId: attempt.spec.attemptId,
+          operationId: attempt.launch.operationId,
+          executionEpoch: attempt.executionEpoch,
+        });
+        if (
+          commandId !== expectedEventId ||
+          evidence === undefined ||
+          value?.finalizeCommandRef === undefined ||
+          !same(
+            value.finalizeCommandRef,
+            attemptHistoryRecordReference(
+              directLaunchRejection.entry.record,
+              identity,
+              'command',
+            ),
+          ) ||
+          head.outcomeRef === undefined ||
+          !same(
+            head.outcomeRef,
+            attemptHistoryRecordReference(
+              evidence.record,
+              identity,
+              'evidence',
+            ),
+          ) ||
+          head.outcomeDigest !== value.outcomeDigest ||
+          value.outcomeDigest !==
+            attemptHistoryPayloadDigest(attempt.outcome) ||
+          !same(value.outcome, attempt.outcome)
+        ) {
+          throw new AuthorityConflict(
+            'Attempt launch rejection evidence is invalid',
           );
         }
       }
@@ -4236,6 +4319,118 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         'Launch resolution history reference conflicts with legacy state',
       );
     }
+  }
+
+  private assertLaunchRejectionReplay(input: {
+    attempt: AttemptState;
+    launch: LaunchOutboxRecord;
+    event: Extract<AttemptEvent, { kind: 'launch-rejected' }>;
+    rejection: VerifiedLaunchRejection;
+    receipt: StoredLaunchRejectionReceipt;
+  }): void {
+    const { attempt, launch, event, rejection, receipt } = input;
+    const outcome = attempt.outcome;
+    if (
+      attempt.phase !== 'terminal' ||
+      launch.state !== 'suppressed' ||
+      outcome === undefined ||
+      receipt.proofSha256 !== rejection.proof.proofSha256 ||
+      receipt.rejectedAt !== rejection.rejectedAt ||
+      rejection.expectedAttemptRevision + 1 !== attempt.revision ||
+      receipt.canonicalDigest !== attemptTransitionDigest(event) ||
+      !same(event.outcome, outcome) ||
+      receipt.outcomeDigest !== attemptHistoryPayloadDigest(outcome) ||
+      this.outcomes.get(attempt.spec.attemptId) !== canonicalJson(outcome) ||
+      !attempt.commands.some(
+        (command) =>
+          command.eventId === event.eventId &&
+          command.canonicalDigest === receipt.canonicalDigest,
+      )
+    ) {
+      throw new AuthorityConflict('Launch rejection replay conflicts');
+    }
+    const history = this.attemptHistories.get(attempt.spec.attemptId);
+    if (history === undefined) {
+      if (receipt.history !== undefined)
+        throw new AuthorityConflict(
+          'Launch rejection history receipt is orphaned',
+        );
+    } else {
+      if (receipt.history === undefined)
+        throw new AuthorityConflict(
+          'Launch rejection history receipt is missing',
+        );
+      this.assertStoredAttemptHistoryIntegrity(history, attempt);
+      const identity = {
+        tenantId: attempt.spec.tenant.tenantId,
+        attemptId: attempt.spec.attemptId,
+      };
+      const command = history.records
+        .get('command')
+        ?.find(({ record }) =>
+          same(
+            attemptHistoryRecordReference(record, identity, 'command'),
+            receipt.history?.commandRef,
+          ),
+        );
+      const evidence = history.records
+        .get('evidence')
+        ?.find(({ record }) =>
+          same(
+            attemptHistoryRecordReference(record, identity, 'evidence'),
+            receipt.history?.evidenceRef,
+          ),
+        );
+      if (command === undefined || evidence === undefined) {
+        throw new AuthorityConflict(
+          'Launch rejection history record is missing',
+        );
+      }
+      const commandPayload = verifyAttemptHistoryPayload(
+        'command',
+        command.record,
+        command.payload,
+        identity,
+      ).payload as {
+        canonicalDigest?: string;
+        payload?: {
+          kind?: string;
+          commandId?: string;
+          outcomeDigest?: string;
+          outcome?: unknown;
+        };
+      };
+      const evidencePayload = verifyAttemptHistoryPayload(
+        'evidence',
+        evidence.record,
+        evidence.payload,
+        identity,
+      ).payload as {
+        finalizeCommandRef?: HistoryRecordReference;
+        outcomeDigest?: string;
+        outcome?: unknown;
+      };
+      if (
+        commandPayload.payload?.kind !== 'launch-rejected' ||
+        commandPayload.payload.commandId !== event.eventId ||
+        commandPayload.canonicalDigest !== attemptTransitionDigest(event) ||
+        commandPayload.payload.outcomeDigest !== receipt.outcomeDigest ||
+        !same(commandPayload.payload.outcome, outcome) ||
+        !same(evidencePayload.finalizeCommandRef, receipt.history.commandRef) ||
+        evidencePayload.outcomeDigest !== receipt.outcomeDigest ||
+        !same(evidencePayload.outcome, outcome)
+      ) {
+        throw new AuthorityConflict(
+          'Launch rejection history replay conflicts',
+        );
+      }
+    }
+    const presentation = deriveAttemptPresentation(attempt, {
+      kind: 'lifecycle-decision',
+      commandId: event.eventId,
+      decision: 'launch-rejected',
+    });
+    this.assertAttemptPresentationReplay(presentation);
   }
 
   async readTaskEffect(input: {
@@ -7485,6 +7680,335 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       restore(this.launches, work.attemptId, previousLaunch);
       restore(this.launchResolutionReceipts, receiptKey, previousReceipt);
       restore(this.attemptHistories, work.attemptId, previousHistory);
+      throw error;
+    }
+    return 'applied';
+  }
+
+  async rejectVerifiedLaunch(input: {
+    lease: TaskAuthorityLease;
+    rejection: VerifiedLaunchRejection;
+  }): Promise<WriteResult> {
+    if (!isVerifiedLaunchRejection(input.rejection)) {
+      throw new AuthorityConflict(
+        'Launch rejection was not verified at its boundary',
+      );
+    }
+    const rejection = input.rejection;
+    const proof = rejection.proof;
+    const attempt = this.attempts.get(proof.attemptId);
+    const launch = this.launches.get(proof.attemptId);
+    if (attempt === undefined || launch === undefined) {
+      throw new AuthorityConflict('Launch operation is unknown');
+    }
+    this.assertLease(input.lease, attempt.spec.task, this.now());
+    if (
+      attempt.spec.activation.mode !== 'central-authoritative' ||
+      !this.mayWriteEffectsSync({
+        scope: {
+          ...attempt.spec.task,
+          taskClassId: attempt.spec.activation.taskClassId,
+        },
+        activation: attempt.spec.activation,
+        boundary: attempt.spec.local.admissionRevision,
+      }) ||
+      proof.tenantId !== attempt.spec.tenant.tenantId ||
+      proof.repositoryId !== attempt.spec.tenant.repositoryId ||
+      !same(proof.task, attempt.spec.task) ||
+      proof.attemptId !== attempt.spec.attemptId ||
+      proof.operationId !== attempt.launch.operationId ||
+      proof.executionEpoch !== attempt.executionEpoch ||
+      launch.operationId !== proof.operationId ||
+      launch.executionEpoch !== proof.executionEpoch ||
+      launch.tenantId !== proof.tenantId ||
+      launch.repositoryId !== proof.repositoryId ||
+      launch.attemptId !== proof.attemptId ||
+      launch.issueNumber !== proof.task.issueNumber
+    ) {
+      throw new AuthorityConflict(
+        'Launch rejection identity or authority is invalid',
+      );
+    }
+    const eventId = launchRejectionEventId({
+      attemptId: proof.attemptId,
+      operationId: proof.operationId,
+      executionEpoch: proof.executionEpoch,
+    });
+    const receiptKey = tupleKey(proof.attemptId, eventId);
+    const priorReceipt = this.launchRejectionReceipts.get(receiptKey);
+    if (
+      priorReceipt !== undefined &&
+      priorReceipt.proofSha256 !== proof.proofSha256
+    ) {
+      throw new AuthorityConflict(
+        'Launch rejection identity was reused differently',
+      );
+    }
+    // A response-lost retry is a replay of one durable decision, not a new
+    // clock-derived decision. The stored receipt is authoritative only after
+    // the proof identity/digest above has matched exactly.
+    const canonicalRejection =
+      priorReceipt === undefined
+        ? rejection
+        : { ...rejection, rejectedAt: priorReceipt.rejectedAt };
+    const event: Extract<AttemptEvent, { kind: 'launch-rejected' }> = {
+      kind: 'launch-rejected',
+      eventId,
+      outcome: {
+        schema: 'agent-lcars.attempt-outcome/v1',
+        version: 1,
+        attemptId: proof.attemptId,
+        terminalState: 'failed',
+        execution: 'not_started',
+        result: 'startup-failure',
+        failure: {
+          owningSystem: 'controller',
+          phase: 'launch',
+          reason: 'launch_rejected',
+          retryDisposition: 'never',
+          evidenceRef: eventId,
+        },
+        evidence: { kind: 'lifecycle-decision', decisionFactId: eventId },
+        evidenceValidation: { status: 'not-applicable' },
+        finalizedAt: canonicalRejection.rejectedAt,
+      },
+    };
+    this.assertFinalizationHistoryLineage(attempt);
+    if (attempt.phase === 'terminal') {
+      if (priorReceipt === undefined) {
+        throw new AuthorityConflict(
+          'Terminal Attempt has no launch rejection receipt',
+        );
+      }
+      this.assertLaunchRejectionReplay({
+        attempt,
+        launch,
+        event,
+        rejection: canonicalRejection,
+        receipt: priorReceipt,
+      });
+      return 'replay';
+    }
+    if (
+      priorReceipt !== undefined ||
+      attempt.commands.some((command) => command.eventId === event.eventId)
+    ) {
+      throw new AuthorityConflict(
+        'Launch rejection identity was reused differently',
+      );
+    }
+    if (
+      attempt.revision !== canonicalRejection.expectedAttemptRevision ||
+      !['launch-pending', 'launch-response-unknown'].includes(attempt.phase) ||
+      attempt.binding !== undefined ||
+      attempt.pendingTerminal !== undefined ||
+      attempt.finalization !== undefined ||
+      attempt.outcome !== undefined ||
+      attempt.cancellation !== undefined ||
+      attempt.launch.operationId !== launch.operationId ||
+      attempt.executionEpoch !== launch.executionEpoch ||
+      !['pending', 'dispatching', 'unknown'].includes(launch.state)
+    ) {
+      throw new AuthorityConflict(
+        'Launch rejection contradicts current Attempt',
+      );
+    }
+    const reduced = reduceAttempt(attempt, {
+      kind: 'transition',
+      expectedRevision: canonicalRejection.expectedAttemptRevision,
+      transitionedAt: canonicalRejection.rejectedAt,
+      canonicalDigest: attemptTransitionDigest(event),
+      event,
+    });
+    if (reduced.status !== 'applied' || reduced.state.phase !== 'terminal') {
+      throw new AuthorityConflict('Launch rejection was not reducer-derived');
+    }
+    const presentation = deriveAttemptPresentation(reduced.state, {
+      kind: 'lifecycle-decision',
+      commandId: event.eventId,
+      decision: 'launch-rejected',
+    });
+    this.preflightNewAttemptPresentation(presentation);
+    const existingHistory = this.attemptHistories.get(proof.attemptId);
+    let nextHistory: StoredAttemptHistory | undefined;
+    let historyReceipt: StoredLaunchRejectionReceipt['history'] | undefined;
+    if (existingHistory !== undefined) {
+      const identity = { tenantId: proof.tenantId, attemptId: proof.attemptId };
+      const commandPayload = {
+        schema: 'agent-lcars.attempt-command/v1' as const,
+        version: 1 as const,
+        transitionedAt: canonicalRejection.rejectedAt,
+        canonicalDigest: attemptTransitionDigest(event),
+        payload: {
+          kind: 'launch-rejected' as const,
+          commandId: event.eventId,
+          outcomeDigest: attemptHistoryPayloadDigest(reduced.state.outcome),
+          outcome: reduced.state.outcome as NonNullable<
+            AttemptState['outcome']
+          >,
+        },
+      };
+      try {
+        const preview = appendHistoryRecord({
+          head: existingHistory.head.streams.command,
+          payload: commandPayload,
+          appliedRevision: reduced.state.revision,
+        }).record;
+        const commandRef = attemptHistoryRecordReference(
+          preview,
+          identity,
+          'command',
+        );
+        const evidencePayload = {
+          schema: 'agent-lcars.attempt-evidence/v1' as const,
+          version: 1 as const,
+          finalizeCommandRef: commandRef,
+          claimRefs: [],
+          validationRefs: [],
+          outcomeDigest: attemptHistoryPayloadDigest(reduced.state.outcome),
+          outcome: reduced.state.outcome as NonNullable<
+            AttemptState['outcome']
+          >,
+          transitionedAt: canonicalRejection.rejectedAt,
+        };
+        const emitted: Array<{
+          stream: AttemptHistoryStream;
+          payload: unknown;
+        }> = [
+          { stream: 'command', payload: commandPayload },
+          { stream: 'evidence', payload: evidencePayload },
+        ];
+        const transition = appendAttemptHistoryTransition({
+          head: existingHistory.head,
+          nextRevision: reduced.state.revision,
+          transitionedAt: canonicalRejection.rejectedAt,
+          emitted,
+          priorRecords: [...existingHistory.records.values()].flatMap(
+            (records) =>
+              records.map(({ record, payload }) => ({ record, payload })),
+          ),
+        });
+        const records = new Map(existingHistory.records);
+        for (const stream of ['command', 'evidence'] as const) {
+          const record = transition.records.find(
+            (candidate) => candidate.streamKind === stream,
+          );
+          const payload = emitted.find(
+            (candidate) => candidate.stream === stream,
+          )?.payload;
+          if (record === undefined || payload === undefined) {
+            throw new AuthorityConflict(
+              'Launch rejection history record is missing',
+            );
+          }
+          records.set(stream, [
+            ...(existingHistory.records.get(stream) ?? []),
+            { record: clone(record), payload: clone(payload) },
+          ]);
+        }
+        const commandRecord = transition.records.find(
+          (record) => record.streamKind === 'command',
+        );
+        const evidenceRecord = transition.records.find(
+          (record) => record.streamKind === 'evidence',
+        );
+        if (commandRecord === undefined || evidenceRecord === undefined) {
+          throw new AuthorityConflict(
+            'Launch rejection history receipt is missing',
+          );
+        }
+        nextHistory = { head: clone(transition.head), records };
+        this.assertStoredAttemptHistoryIntegrity(
+          nextHistory,
+          reduced.state,
+          false,
+        );
+        historyReceipt = {
+          commandRef: attemptHistoryRecordReference(
+            commandRecord,
+            identity,
+            'command',
+          ),
+          evidenceRef: attemptHistoryRecordReference(
+            evidenceRecord,
+            identity,
+            'evidence',
+          ),
+        };
+      } catch (error) {
+        if (error instanceof AuthorityConflict) throw error;
+        throw new AuthorityConflict(
+          'Launch rejection history transition is invalid',
+        );
+      }
+    }
+    const previousAttempt = this.attempts.get(proof.attemptId);
+    const previousLaunch = this.launches.get(proof.attemptId);
+    const previousOutcome = this.outcomes.get(proof.attemptId);
+    const previousHistory = this.attemptHistories.get(proof.attemptId);
+    const previousReceipt = this.launchRejectionReceipts.get(receiptKey);
+    const previousPresentation = this.attemptPresentations.get(
+      presentation.key,
+    );
+    const previousPresentationReceipt = this.attemptPresentationReceipts.get(
+      presentation.receiptKey,
+    );
+    const deliveryKey = presentationDeliveryKey(
+      attemptDeliveryTarget(presentation.record),
+    );
+    const previousDelivery = this.presentationDeliveries.get(deliveryKey);
+    const restore = <T>(
+      map: Map<string, T>,
+      key: string,
+      value: T | undefined,
+    ): void => {
+      if (value === undefined) Map.prototype.delete.call(map, key);
+      else Map.prototype.set.call(map, key, value);
+    };
+    try {
+      this.writeAttemptTransaction({
+        lease: input.lease,
+        expectedRevision: canonicalRejection.expectedAttemptRevision,
+        next: reduced.state,
+      });
+      const {
+        claimedFence: _claimedFence,
+        claimToken: _claimToken,
+        ...suppressed
+      } = launch;
+      this.launches.set(proof.attemptId, {
+        ...suppressed,
+        state: 'suppressed',
+      });
+      this.persistAttemptPresentation(presentation);
+      this.launchRejectionReceipts.set(receiptKey, {
+        proofSha256: proof.proofSha256,
+        rejectedAt: canonicalRejection.rejectedAt,
+        canonicalDigest: attemptTransitionDigest(event),
+        outcomeDigest: attemptHistoryPayloadDigest(reduced.state.outcome),
+        ...(historyReceipt === undefined
+          ? {}
+          : { history: clone(historyReceipt) }),
+      });
+      if (nextHistory !== undefined)
+        this.attemptHistories.set(proof.attemptId, nextHistory);
+    } catch (error) {
+      restore(this.attempts, proof.attemptId, previousAttempt);
+      restore(this.launches, proof.attemptId, previousLaunch);
+      restore(this.outcomes, proof.attemptId, previousOutcome);
+      restore(this.attemptHistories, proof.attemptId, previousHistory);
+      restore(this.launchRejectionReceipts, receiptKey, previousReceipt);
+      restore(
+        this.attemptPresentations,
+        presentation.key,
+        previousPresentation,
+      );
+      restore(
+        this.attemptPresentationReceipts,
+        presentation.receiptKey,
+        previousPresentationReceipt,
+      );
+      restore(this.presentationDeliveries, deliveryKey, previousDelivery);
       throw error;
     }
     return 'applied';
