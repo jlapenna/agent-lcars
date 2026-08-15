@@ -60,6 +60,27 @@ describe('reduceTranscript', () => {
     expect(summary.title?.endsWith('…')).toBe(true);
   });
 
+  it('treats a whitespace-only native title as absent', () => {
+    const content = [
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u-whitespace-title',
+        timestamp: '2026-07-01T00:00:00.000Z',
+        sessionId: 'session-whitespace-title',
+        aiTitle: ' \n\t ',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Use the inferred prompt' }],
+        },
+      }),
+    ].join('\n');
+
+    expect(reduceTranscript(content)[0]).toMatchObject({
+      title: 'Use the inferred prompt',
+      titleSource: 'inferred',
+    });
+  });
+
   it('ignores unknown line types and malformed JSON instead of throwing', () => {
     expect(() =>
       reduceTranscript(readFixture('session-unknown-line-type.jsonl')),

@@ -3,6 +3,7 @@ import {
   ReduceTranscriptOptions,
   SessionResult,
   SessionSummary,
+  SessionTitleSource,
   TokenUsage,
 } from './types';
 import {
@@ -14,7 +15,6 @@ import {
   isSafeIdentifier,
   truncateTitle,
 } from './unknown-value';
-
 const ISSUE_AGENT_ENTRYPOINT = 'claude-code-github-action';
 
 interface SessionState {
@@ -244,7 +244,7 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
 }
 
 function finalizeState(state: SessionState): SessionSummary {
-  const title = resolveTitle(state);
+  const titleSelection = resolveTitle(state);
   return {
     sessionId: state.sessionId,
     source: state.source,
@@ -266,7 +266,10 @@ function finalizeState(state: SessionState): SessionSummary {
     toolCallCounts: state.toolCallCounts,
     tokens: state.tokens,
     ...(state.lastToolCall && { lastToolCall: state.lastToolCall }),
-    ...(title && { title }),
+    ...(titleSelection && {
+      title: titleSelection.title,
+      titleSource: titleSelection.source,
+    }),
     // Claude Code occasionally emits a negative `costUSD` correction line
     // (e.g. netting out a retried/cancelled turn's earlier charge); summing
     // those against genuine charges can drive the running total below zero
@@ -284,13 +287,18 @@ function finalizeState(state: SessionState): SessionSummary {
   };
 }
 
-function resolveTitle(state: SessionState): string | undefined {
+function resolveTitle(
+  state: SessionState,
+): { title: string; source: SessionTitleSource } | undefined {
   if (state.aiTitle) {
-    return state.aiTitle;
+    const title = truncateTitle(state.aiTitle);
+    if (title) return { title, source: 'explicit' };
   }
-  return state.firstUserPrompt
-    ? truncateTitle(state.firstUserPrompt)
-    : undefined;
+  if (state.firstUserPrompt) {
+    const title = truncateTitle(state.firstUserPrompt);
+    if (title) return { title, source: 'inferred' };
+  }
+  return undefined;
 }
 
 /**

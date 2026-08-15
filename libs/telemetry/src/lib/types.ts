@@ -60,6 +60,10 @@ export interface SessionResult {
   isError: boolean;
 }
 
+/** In-memory provenance for a selected session title. This is deliberately
+ * not part of the persisted SessionDoc contract. */
+export type SessionTitleSource = 'explicit' | 'annotation' | 'inferred';
+
 export interface SessionSummary {
   sessionId: string;
   source: SessionSource;
@@ -87,6 +91,8 @@ export interface SessionSummary {
   tokens: TokenUsage;
   lastToolCall?: ToolCallDigest;
   title?: string;
+  /** In-memory only; buildSessionDoc intentionally does not persist this. */
+  titleSource?: SessionTitleSource;
   deliverables: SessionDeliverables;
   /** Filenames the share-media hook has written under this session's share
    * dir on its host (see `discoverSessionArtifacts` in the watcher). */
