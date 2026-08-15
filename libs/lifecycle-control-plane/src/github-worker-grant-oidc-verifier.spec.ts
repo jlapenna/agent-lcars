@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
+import {
+  DURABLE_SCALAR_BYTE_LIMITS,
+  utf8ByteLength,
+} from '@agent-lcars/dispatch-contracts';
 import { errors, generateKeyPair, SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 
@@ -45,6 +49,42 @@ async function signedToken(
 }
 
 describe('GitHub WorkerGrant JWT verifier', () => {
+  it('enforces UTF-8 repository/workflow claim boundaries', () => {
+    const repository = `${'a'.repeat(127)}/${'b'.repeat(128)}`;
+    const workflowRef = 'r'.repeat(DURABLE_SCALAR_BYTE_LIMITS.workflowRef);
+    expect(utf8ByteLength(repository)).toBe(
+      DURABLE_SCALAR_BYTE_LIMITS.repository,
+    );
+    expect(
+      workerGrantClaimsFromJwtPayload({
+        ...payload(Math.floor(Date.now() / 1_000) + 300),
+        repository,
+        workflow_ref: workflowRef,
+      }),
+    ).toMatchObject({ repository, workflowRef });
+    expect(() =>
+      workerGrantClaimsFromJwtPayload({
+        ...payload(Math.floor(Date.now() / 1_000) + 300),
+        repository: `${repository}a`,
+      }),
+    ).toThrow('repository');
+    expect(() =>
+      workerGrantClaimsFromJwtPayload({
+        ...payload(Math.floor(Date.now() / 1_000) + 300),
+        workflow_ref: `${workflowRef}a`,
+      }),
+    ).toThrow('workflow_ref');
+    expect(() =>
+      workerGrantClaimsFromJwtPayload({
+        ...payload(Math.floor(Date.now() / 1_000) + 300),
+        job_workflow_ref: 'j'.repeat(
+          DURABLE_SCALAR_BYTE_LIMITS.jobWorkflowRef + 1,
+        ),
+        job_workflow_sha: 'd'.repeat(40),
+      }),
+    ).toThrow('job_workflow_ref');
+  });
+
   it('shares the published worker client fixed audience', async () => {
     const clientSource = await readFile(
       new URL(
