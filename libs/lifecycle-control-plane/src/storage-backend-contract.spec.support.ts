@@ -12,6 +12,8 @@ import type {
   WriteResult,
 } from './authority-storage';
 import { runLifecycleAuthorityStorageContract } from './authority-storage.spec.support';
+import type { FinalizationHistoryStorageHooks } from './finalization-history.in-memory.spec.support';
+import { runFinalizationHistoryStorageContract } from './finalization-history.spec.support';
 import type {
   IngressPolicyInbox,
   PolicyEvidenceResolver,
@@ -65,6 +67,7 @@ export interface LifecycleAuthorityBackendFactory {
   cancellationHistory: CancellationHistoryStorageHooks;
   terminalClaimHistory: TerminalClaimHistoryStorageHooks;
   validationHistory: ValidationHistoryStorageHooks;
+  finalizationHistory: FinalizationHistoryStorageHooks;
 }
 /**
  * Stable aggregate entrypoint for every provider-neutral storage contract.
@@ -115,6 +118,10 @@ export function runLifecycleAuthorityBackendContract(
   runValidationHistoryStorageContract(
     (clock) => factory.create(clock, { mint: () => 'A'.repeat(22) }),
     factory.validationHistory,
+  );
+  runFinalizationHistoryStorageContract(
+    (clock) => factory.create(clock, { mint: () => 'A'.repeat(22) }),
+    factory.finalizationHistory,
   );
   runPresentationDeliveryStorageContract({ create, ...factory.presentation });
   runIngressPolicyInboxContract((clock, evidenceResolver) =>

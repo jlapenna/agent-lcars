@@ -8,6 +8,8 @@ import {
   AuthorityConflict,
   InMemoryLifecycleAuthorityStorage,
 } from './authority-storage';
+import { inMemoryFinalizationHistoryHooks } from './finalization-history.in-memory.spec.support';
+import { runFinalizationHistoryStorageContract } from './finalization-history.spec.support';
 import { inMemoryTerminalClaimHistoryHooks } from './terminal-claim-history.in-memory.spec.support';
 import {
   AttemptFinalizer,
@@ -244,4 +246,12 @@ runAttemptFinalizerStorageContract(
     }),
   inMemoryTerminalClaimHistoryHooks(),
   inMemoryValidationHistoryHooks(),
+);
+
+runFinalizationHistoryStorageContract(
+  (clock) =>
+    new InMemoryLifecycleAuthorityStorage(clock, {
+      mint: () => 'A'.repeat(22),
+    }),
+  inMemoryFinalizationHistoryHooks(),
 );

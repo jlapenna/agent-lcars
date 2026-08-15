@@ -839,9 +839,10 @@ function deriveAttemptPresentation(
       'Final outcome presentation provenance is invalid',
     );
   }
-  const outcomeDigest = createHash('sha256')
-    .update(canonicalJson(outcome))
-    .digest('hex');
+  const outcomeDigest =
+    terminal.kind === 'finalization'
+      ? attemptHistoryPayloadDigest(outcome)
+      : createHash('sha256').update(canonicalJson(outcome)).digest('hex');
   const operationId = `attempt-final:${createHash('sha256')
     .update(
       canonicalJson({
@@ -1161,6 +1162,14 @@ interface StoredValidationHistoryReceipt {
   validationRef?: HistoryRecordReference;
 }
 
+/** Private exact refs for the one terminal finalization outcome. */
+interface StoredFinalizationHistoryReceipt {
+  attemptId: string;
+  commandId: string;
+  commandRef: HistoryRecordReference;
+  evidenceRef: HistoryRecordReference;
+}
+
 interface StoredPresentationDeliveryRecord extends PresentationDeliveryRecord {
   /** One-way proof for the opaque work capability; never returned or logged. */
   claimTokenSha256?: string;
@@ -1207,6 +1216,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly validationHistoryReceipts = new Map<
     string,
     StoredValidationHistoryReceipt
+  >();
+  private readonly finalizationHistoryReceipts = new Map<
+    string,
+    StoredFinalizationHistoryReceipt
   >();
   private readonly activations = new Map<string, ActivationRecord>();
   private readonly taskEffects = new Map<string, TaskEffectRecord>();
@@ -1592,6 +1605,11 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         (head.cancellation !== undefined && !attempt.futureGrantsDenied) ||
         (head.outcomeRef !== undefined && attempt.outcome === undefined) ||
         (head.outcomeDigest !== undefined && attempt.outcome === undefined) ||
+        (requireValidationReceipts &&
+          (attempt.outcome === undefined
+            ? this.outcomes.has(attempt.spec.attemptId)
+            : this.outcomes.get(attempt.spec.attemptId) !==
+              canonicalJson(attempt.outcome))) ||
         (attempt.outcome !== undefined &&
           head.outcomeRef !== undefined &&
           head.outcomeDigest !==
@@ -1692,6 +1710,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
             'launch-response-unknown',
             'start-validation',
             'validate-claim-requested',
+            'finalize',
           ].includes(value.payload?.kind ?? '') ||
           value.payload?.commandId === undefined
         ) {
@@ -1755,6 +1774,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       );
       const validateClaimCommands = transitionCommands.filter(
         ({ value }) => value.payload?.kind === 'validate-claim-requested',
+      );
+      const finalizeCommands = transitionCommands.filter(
+        ({ value }) => value.payload?.kind === 'finalize',
       );
       if (launchCommands.length > 1) {
         throw new AuthorityConflict('Attempt launch history is duplicated');
@@ -1852,10 +1874,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         // its start-validation command is a partial history prefix.
         if (
           attempt.phase === 'terminal' &&
-          startValidationCommands.length !== 1
+          (startValidationCommands.length !== 1 ||
+            finalizeCommands.length !== 1 ||
+            head.phase !== 'terminal')
         ) {
           throw new AuthorityConflict(
-            'Attempt terminal validation history is incomplete',
+            'Attempt terminal finalization history is incomplete',
           );
         }
         if (
@@ -2192,7 +2216,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const directCancellation = cancellationCommands.find(
         ({ value }) => value.payload?.kind === 'cancel-unlaunched',
       );
-      if (directCancellation === undefined && evidenceRecords.length !== 0)
+      const finalizeCommand = finalizeCommands[0];
+      if (
+        directCancellation === undefined &&
+        finalizeCommand === undefined &&
+        evidenceRecords.length !== 0
+      )
         throw new AuthorityConflict(
           'Attempt history has an outcome without legacy truth',
         );
@@ -2240,6 +2269,55 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           );
         }
       }
+      if (finalizeCommand !== undefined) {
+        const evidence = evidenceRecords[0];
+        const value = evidence?.payload as
+          | {
+              finalizeCommandRef?: HistoryRecordReference;
+              terminalFactRef?: HistoryRecordReference;
+              claimRefs?: HistoryRecordReference[];
+              validationRefs?: HistoryRecordReference[];
+              outcomeDigest?: string;
+              outcome?: unknown;
+            }
+          | undefined;
+        const finalization = head.finalization;
+        if (
+          finalizeCommands.length !== 1 ||
+          evidence === undefined ||
+          value?.finalizeCommandRef === undefined ||
+          finalization === undefined ||
+          attempt.outcome === undefined ||
+          !same(
+            value.finalizeCommandRef,
+            attemptHistoryRecordReference(
+              finalizeCommand.entry.record,
+              identity,
+              'command',
+            ),
+          ) ||
+          !same(value.terminalFactRef, finalization.terminalFactRef) ||
+          !same(value.claimRefs, finalization.claimRefs) ||
+          !same(value.validationRefs, finalization.validationRefs) ||
+          head.outcomeRef === undefined ||
+          !same(
+            head.outcomeRef,
+            attemptHistoryRecordReference(
+              evidence.record,
+              identity,
+              'evidence',
+            ),
+          ) ||
+          head.outcomeDigest !== value.outcomeDigest ||
+          value.outcomeDigest !==
+            attemptHistoryPayloadDigest(attempt.outcome) ||
+          !same(value.outcome, attempt.outcome)
+        ) {
+          throw new AuthorityConflict(
+            'Attempt final outcome evidence is invalid',
+          );
+        }
+      }
       if (head.binding !== undefined) {
         const bindingRecord = bindingRecords[0];
         const payload = bindingRecord?.payload as {
@@ -2265,6 +2343,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       }
       if (requireValidationReceipts) {
         this.assertValidationHistoryReceiptBijection(history, attempt);
+        this.assertFinalizationHistoryReceiptBijection(history, attempt);
       }
     } catch (error) {
       if (error instanceof AuthorityConflict) throw error;
@@ -3825,9 +3904,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         'Final outcome presentation receipt conflicts',
       );
     }
-    this.assertPresentationDeliveryPlan(
-      attemptDeliveryTarget(expected.record),
+    const target = attemptDeliveryTarget(expected.record);
+    const delivery = this.assertPresentationDeliveryPlan(
+      target,
       expected.record.plan,
+    );
+    this.assertPresentationDeliveryReceipt(
+      presentationDeliveryKey(target),
+      delivery,
     );
   }
 
@@ -5465,6 +5549,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           throw new AuthorityConflict('Final outcome replay conflicts');
         }
         this.assertCommandReplay(current, event);
+        this.assertFinalizationOutcomeHistoryReplay(current, event);
         const expected = deriveAttemptPresentation(
           current,
           finalizationPresentationProvenance(current, event.eventId),
@@ -5489,6 +5574,15 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     const validationHistory =
       event.kind === 'start-validation' || event.kind === 'validate-claim'
         ? this.appendValidationCommandHistory({
+            attempt: current,
+            next: reduced.state,
+            event,
+            transitionedAt: transition.at,
+          })
+        : undefined;
+    const finalizationHistory =
+      event.kind === 'finalize'
+        ? this.appendFinalizationOutcomeHistory({
             attempt: current,
             next: reduced.state,
             event,
@@ -5557,6 +5651,14 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     const previousAttempt = this.attempts.get(current.spec.attemptId);
     const previousOutcome = this.outcomes.get(current.spec.attemptId);
     const previousHistory = this.attemptHistories.get(current.spec.attemptId);
+    const finalizationReceiptKey =
+      event.kind === 'finalize'
+        ? tupleKey(current.spec.attemptId, event.eventId)
+        : undefined;
+    const previousFinalizationReceipt =
+      finalizationReceiptKey === undefined
+        ? undefined
+        : this.finalizationHistoryReceipts.get(finalizationReceiptKey);
     const validationReceiptKey =
       event.kind === 'start-validation' || event.kind === 'validate-claim'
         ? tupleKey(current.spec.attemptId, event.eventId)
@@ -5695,10 +5797,38 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       ) {
         throw new AuthorityConflict('Validation history receipt is orphaned');
       }
+      if (finalizationHistory !== undefined) {
+        this.attemptHistories.set(
+          current.spec.attemptId,
+          finalizationHistory.history,
+        );
+        if (finalizationReceiptKey === undefined) {
+          throw new AuthorityConflict(
+            'Final outcome history receipt key is absent',
+          );
+        }
+        this.finalizationHistoryReceipts.set(
+          finalizationReceiptKey,
+          clone(finalizationHistory.receipt),
+        );
+      } else if (
+        finalizationReceiptKey !== undefined &&
+        previousFinalizationReceipt !== undefined
+      ) {
+        throw new AuthorityConflict(
+          'Final outcome history receipt is orphaned',
+        );
+      }
     } catch (error) {
       restore(this.attempts, current.spec.attemptId, previousAttempt);
       restore(this.outcomes, current.spec.attemptId, previousOutcome);
       restore(this.attemptHistories, current.spec.attemptId, previousHistory);
+      if (finalizationReceiptKey !== undefined)
+        restore(
+          this.finalizationHistoryReceipts,
+          finalizationReceiptKey,
+          previousFinalizationReceipt,
+        );
       if (validationReceiptKey !== undefined)
         restore(
           this.validationHistoryReceipts,
@@ -6117,6 +6247,137 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
   }
 
+  /** Atomically mirrors the reducer-derived terminal outcome and its proof. */
+  private appendFinalizationOutcomeHistory(input: {
+    attempt: AttemptState;
+    next: AttemptState;
+    event: Extract<AttemptEvent, { kind: 'finalize' }>;
+    transitionedAt: string;
+  }):
+    | {
+        history: StoredAttemptHistory;
+        receipt: StoredFinalizationHistoryReceipt;
+      }
+    | undefined {
+    const existing = this.attemptHistories.get(input.attempt.spec.attemptId);
+    if (existing === undefined) return undefined;
+    this.assertStoredAttemptHistoryIntegrity(existing, input.attempt);
+    const finalization = existing.head.finalization;
+    if (finalization === undefined || input.next.outcome === undefined) {
+      throw new AuthorityConflict(
+        'Final outcome history lineage is incomplete',
+      );
+    }
+    const identity = {
+      tenantId: input.attempt.spec.tenant.tenantId,
+      attemptId: input.attempt.spec.attemptId,
+    };
+    const commandPayload = {
+      schema: 'agent-lcars.attempt-command/v1' as const,
+      version: 1 as const,
+      transitionedAt: input.transitionedAt,
+      canonicalDigest: attemptTransitionDigest(input.event),
+      payload: {
+        kind: 'finalize' as const,
+        commandId: input.event.eventId,
+        outcomeDigest: attemptHistoryPayloadDigest(input.next.outcome),
+        outcome: input.next.outcome,
+      },
+    };
+    try {
+      const commandPreview = appendHistoryRecord({
+        head: existing.head.streams.command,
+        payload: commandPayload,
+        appliedRevision: input.next.revision,
+      }).record;
+      const commandRef = attemptHistoryRecordReference(
+        commandPreview,
+        identity,
+        'command',
+      );
+      const evidencePayload = {
+        schema: 'agent-lcars.attempt-evidence/v1' as const,
+        version: 1 as const,
+        finalizeCommandRef: commandRef,
+        terminalFactRef: finalization.terminalFactRef,
+        claimRefs: finalization.claimRefs,
+        validationRefs: finalization.validationRefs,
+        outcomeDigest: attemptHistoryPayloadDigest(input.next.outcome),
+        outcome: input.next.outcome,
+        transitionedAt: input.transitionedAt,
+      };
+      const emitted: Array<{
+        stream: AttemptHistoryStream;
+        payload: unknown;
+      }> = [
+        { stream: 'command', payload: commandPayload },
+        { stream: 'evidence', payload: evidencePayload },
+      ];
+      const transition = appendAttemptHistoryTransition({
+        head: existing.head,
+        nextRevision: input.next.revision,
+        transitionedAt: input.transitionedAt,
+        emitted,
+        priorRecords: [...existing.records.values()].flatMap((entries) =>
+          entries.map(({ record, payload }) => ({ record, payload })),
+        ),
+      });
+      const records = new Map(existing.records);
+      const payloadsByStream = new Map<AttemptHistoryStream, unknown[]>();
+      for (const emission of emitted) {
+        const values = payloadsByStream.get(emission.stream) ?? [];
+        values.push(emission.payload);
+        payloadsByStream.set(emission.stream, values);
+      }
+      for (const record of transition.records) {
+        const stream = record.streamKind as AttemptHistoryStream;
+        const payload = payloadsByStream.get(stream)?.shift();
+        if (payload === undefined) {
+          throw new AuthorityConflict(
+            'Final outcome history payload is missing',
+          );
+        }
+        records.set(stream, [
+          ...(existing.records.get(stream) ?? []),
+          { record: clone(record), payload: clone(payload) },
+        ]);
+      }
+      const commandRecord = transition.records.find(
+        (record) => record.streamKind === 'command',
+      );
+      const evidenceRecord = transition.records.find(
+        (record) => record.streamKind === 'evidence',
+      );
+      if (commandRecord === undefined || evidenceRecord === undefined) {
+        throw new AuthorityConflict('Final outcome history receipt is missing');
+      }
+      const stored = { head: clone(transition.head), records };
+      this.assertStoredAttemptHistoryIntegrity(stored, input.next, false);
+      return {
+        history: stored,
+        receipt: {
+          attemptId: input.attempt.spec.attemptId,
+          commandId: input.event.eventId,
+          commandRef: attemptHistoryRecordReference(
+            commandRecord,
+            identity,
+            'command',
+          ),
+          evidenceRef: attemptHistoryRecordReference(
+            evidenceRecord,
+            identity,
+            'evidence',
+          ),
+        },
+      };
+    } catch (error) {
+      if (error instanceof AuthorityConflict) throw error;
+      throw new AuthorityConflict(
+        'Final outcome history transition is invalid',
+      );
+    }
+  }
+
   private assertValidationHistoryReplay(
     attempt: AttemptState,
     event: Extract<
@@ -6319,6 +6580,156 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       if (!receiptIds.has(receipt.commandId)) {
         throw new AuthorityConflict('Validation history receipt is orphaned');
       }
+    }
+  }
+
+  private assertFinalizationHistoryReceiptBijection(
+    history: StoredAttemptHistory,
+    attempt: AttemptState,
+  ): void {
+    const identity = {
+      tenantId: attempt.spec.tenant.tenantId,
+      attemptId: attempt.spec.attemptId,
+    };
+    const commands = (history.records.get('command') ?? []).filter(
+      ({ payload }) =>
+        (payload as { payload?: { kind?: string } }).payload?.kind ===
+        'finalize',
+    );
+    const receipts = [...this.finalizationHistoryReceipts.values()].filter(
+      (receipt) => receipt.attemptId === attempt.spec.attemptId,
+    );
+    if (receipts.length !== commands.length) {
+      throw new AuthorityConflict(
+        'Final outcome history receipt bijection is invalid',
+      );
+    }
+    for (const { record, payload } of commands) {
+      const command = payload as {
+        canonicalDigest?: string;
+        payload?: {
+          commandId?: string;
+          outcome?: unknown;
+          outcomeDigest?: string;
+        };
+      };
+      const commandId = command.payload?.commandId;
+      const receipt =
+        commandId === undefined
+          ? undefined
+          : this.finalizationHistoryReceipts.get(
+              tupleKey(attempt.spec.attemptId, commandId),
+            );
+      const evidence =
+        receipt === undefined
+          ? undefined
+          : (history.records.get('evidence') ?? []).find(({ record }) =>
+              same(
+                attemptHistoryRecordReference(record, identity, 'evidence'),
+                receipt.evidenceRef,
+              ),
+            );
+      if (
+        commandId === undefined ||
+        receipt === undefined ||
+        receipt.commandId !== commandId ||
+        !same(
+          receipt.commandRef,
+          attemptHistoryRecordReference(record, identity, 'command'),
+        ) ||
+        evidence === undefined ||
+        attempt.outcome === undefined ||
+        command.canonicalDigest !==
+          attemptTransitionDigest({
+            kind: 'finalize',
+            eventId: commandId,
+            outcome: attempt.outcome,
+          }) ||
+        command.payload?.outcomeDigest !==
+          attemptHistoryPayloadDigest(attempt.outcome) ||
+        !same(command.payload?.outcome, attempt.outcome)
+      ) {
+        throw new AuthorityConflict('Final outcome history receipt is invalid');
+      }
+    }
+  }
+
+  private assertFinalizationOutcomeHistoryReplay(
+    attempt: AttemptState,
+    event: Extract<AttemptEvent, { kind: 'finalize' }>,
+  ): void {
+    const history = this.attemptHistories.get(attempt.spec.attemptId);
+    const receipt = this.finalizationHistoryReceipts.get(
+      tupleKey(attempt.spec.attemptId, event.eventId),
+    );
+    if (history === undefined) {
+      if (receipt !== undefined) {
+        throw new AuthorityConflict(
+          'Final outcome history receipt is orphaned',
+        );
+      }
+      return;
+    }
+    if (receipt === undefined) {
+      throw new AuthorityConflict('Final outcome history receipt is missing');
+    }
+    this.assertStoredAttemptHistoryIntegrity(history, attempt);
+    const identity = {
+      tenantId: attempt.spec.tenant.tenantId,
+      attemptId: attempt.spec.attemptId,
+    };
+    const command = history.records
+      .get('command')
+      ?.find(({ record }) =>
+        same(
+          attemptHistoryRecordReference(record, identity, 'command'),
+          receipt.commandRef,
+        ),
+      );
+    const evidence = history.records
+      .get('evidence')
+      ?.find(({ record }) =>
+        same(
+          attemptHistoryRecordReference(record, identity, 'evidence'),
+          receipt.evidenceRef,
+        ),
+      );
+    if (command === undefined || evidence === undefined) {
+      throw new AuthorityConflict('Final outcome history record is missing');
+    }
+    const commandPayload = verifyAttemptHistoryPayload(
+      'command',
+      command.record,
+      command.payload,
+      identity,
+    ).payload as {
+      canonicalDigest?: string;
+      payload?: { kind?: string; commandId?: string; outcome?: unknown };
+    };
+    const evidencePayload = verifyAttemptHistoryPayload(
+      'evidence',
+      evidence.record,
+      evidence.payload,
+      identity,
+    ).payload as {
+      finalizeCommandRef?: HistoryRecordReference;
+      outcome?: unknown;
+      outcomeDigest?: string;
+    };
+    if (
+      commandPayload.payload?.kind !== 'finalize' ||
+      commandPayload.payload.commandId !== event.eventId ||
+      commandPayload.canonicalDigest !== attemptTransitionDigest(event) ||
+      !same(commandPayload.payload.outcome, event.outcome) ||
+      !same(evidencePayload.outcome, event.outcome) ||
+      evidencePayload.outcomeDigest !==
+        attemptHistoryPayloadDigest(event.outcome) ||
+      !same(
+        evidencePayload.finalizeCommandRef,
+        attemptHistoryRecordReference(command.record, identity, 'command'),
+      )
+    ) {
+      throw new AuthorityConflict('Final outcome history replay conflicts');
     }
   }
 
