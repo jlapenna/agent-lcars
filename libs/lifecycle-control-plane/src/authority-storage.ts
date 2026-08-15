@@ -4,6 +4,8 @@ import type {
   AcceptedAttemptSpec,
   ActivationProvenance,
   ActivationRecord,
+  AttemptHistoryHead,
+  AttemptHistoryStream,
   AttemptPresentationPlan,
   CredentialGrantIssuance,
   HistoryHead,
@@ -20,7 +22,11 @@ import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
   acceptedAttemptSpecSchema,
   appendHistoryRecord,
+  appendTaskAttemptAdmissionHistoryTransition,
+  attemptHistoryRecordReference,
+  attemptHistoryTransitionDigest,
   attemptPresentationPlanSchema,
+  canonicalDurableJson,
   createGenesisHistoryHead,
   createGenesisTaskHistoryHead,
   createReplayReceipt,
@@ -30,12 +36,16 @@ import {
   historyRecordReference,
   inferTaskFactSituation,
   localAttemptMarkerSchema,
+  registerAttemptHistory,
   runtimeObservationEnvelopeSchema,
+  sha256Digest,
   taskHistoryHeadSchema,
   taskPresentationPlanSchema,
   upgradeLegacyTaskIntentState,
   validateDurableTransition,
   validateTaskHistoryTransition,
+  verifyAttemptHistoryHead,
+  verifyAttemptHistoryPayload,
   verifyHistoryAppend,
   verifyHistoryRecord,
   verifyHistoryRecordPayload,
@@ -46,6 +56,10 @@ import {
   isVerifiedAttemptAdmission,
   type VerifiedAttemptAdmission,
 } from './admission-capability';
+import {
+  type AttemptHistoryInspection,
+  registerAttemptHistoryInspector,
+} from './attempt-history-test-support';
 import type { AttemptState } from './attempt-reducer';
 import {
   type AttemptEvent,
@@ -524,6 +538,10 @@ function canonicalValue(value: unknown): unknown {
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalValue(value));
+}
+
+function taskSnapshotDigest(task: TaskIntentState): string {
+  return sha256Digest(canonicalDurableJson(canonicalValue(task)));
 }
 
 function same(left: unknown, right: unknown): boolean {
@@ -1014,7 +1032,24 @@ interface StoredAcceptance {
   attemptId: string;
   specDigest: string;
   admissionDigest: string;
+  taskSnapshotDigest: string;
   task: TaskIntentState;
+}
+
+interface StoredAttemptAdmissionHistoryReceipt {
+  tenantId: string;
+  tenant: AcceptedAttemptSpec['tenant'];
+  task: TaskAuthorityScope;
+  intentId: string;
+  intentRevision: number;
+  taskRevision: number;
+  attemptId: string;
+  admittedAt: string;
+  specDigest: string;
+  admissionDigest: string;
+  taskSnapshotDigest: string;
+  taskAdmissionRecordRef: HistoryRecordReference;
+  attemptRegistrationRecordRef: HistoryRecordReference;
 }
 
 interface StoredIdempotency {
@@ -1073,6 +1108,17 @@ interface StoredTaskHistory {
   auxHeads: Map<'effect' | 'command' | 'presentation', HistoryHead>;
 }
 
+interface StoredAttemptHistoryRecord {
+  record: HistoryRecord;
+  payload: unknown;
+}
+
+/** Shadow-only Attempt history. Legacy Attempt state remains authoritative. */
+interface StoredAttemptHistory {
+  head: AttemptHistoryHead;
+  records: Map<AttemptHistoryStream, StoredAttemptHistoryRecord[]>;
+}
+
 interface StoredPresentationDeliveryRecord extends PresentationDeliveryRecord {
   /** One-way proof for the opaque work capability; never returned or logged. */
   claimTokenSha256?: string;
@@ -1096,6 +1142,10 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly tasks = new Map<string, TaskIntentState>();
   private readonly attempts = new Map<string, AttemptState>();
   private readonly acceptances = new Map<string, StoredAcceptance>();
+  private readonly attemptAdmissionHistoryReceipts = new Map<
+    string,
+    StoredAttemptAdmissionHistoryReceipt
+  >();
   private readonly launches = new Map<string, LaunchOutboxRecord>();
   private readonly bindings = new Map<string, string>();
   private readonly outcomes = new Map<string, string>();
@@ -1142,6 +1192,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   >();
   /** Shadow-only history; `tasks` remains the sole reducer authority. */
   private readonly taskHistories = new Map<string, StoredTaskHistory>();
+  /** Shadow-only history; `attempts` remains the sole reducer authority. */
+  private readonly attemptHistories = new Map<string, StoredAttemptHistory>();
   private readonly cancellationWork = new Map<string, CancellationWorkRecord>();
   private readonly cancellationReceipts = new Map<
     string,
@@ -1157,6 +1209,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     );
     registerAttemptTestHydrator(this, (input) =>
       this.#hydrateAttemptForTest(input),
+    );
+    registerAttemptHistoryInspector(this, async (input) =>
+      this.#inspectAttemptHistoryForTest(input),
     );
     registerTaskHistoryInspector(this, async (input) =>
       this.#inspectTaskHistoryForTest(input),
@@ -1373,9 +1428,27 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     ) {
       throw new AuthorityConflict('Task test bootstrap CAS failed');
     }
-    const rebuiltHistory = this.taskHistories.has(key)
-      ? this.makeLegacyTaskHistory(input.next)
-      : undefined;
+    const priorHistory = this.taskHistories.get(key);
+    const rebuiltHistory =
+      priorHistory === undefined
+        ? undefined
+        : this.makeLegacyTaskHistory(input.next);
+    if (rebuiltHistory !== undefined && priorHistory !== undefined) {
+      // Structural hydration may replace the legacy reducer snapshot, but it
+      // cannot invent or discard the shadow-only auxiliary command/effect
+      // chains. Preserve those immutable chains and their heads so admission
+      // pointers remain resolvable after a test advances the Task revision.
+      rebuiltHistory.effectRecords = priorHistory.effectRecords.map(clone);
+      rebuiltHistory.workRecords = priorHistory.workRecords.map(clone);
+      rebuiltHistory.presentationRecords =
+        priorHistory.presentationRecords.map(clone);
+      rebuiltHistory.auxHeads = new Map(
+        [...priorHistory.auxHeads.entries()].map(([stream, head]) => [
+          stream,
+          clone(head),
+        ]),
+      );
+    }
     this.tasks.set(key, clone(input.next));
     // Test-only structural hydration may seed a Task after history has been
     // created. Rebuild the inactive mirror from the new legacy authority so a
@@ -1408,7 +1481,216 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         clone(record),
       ),
       replayReceipts: [...history.replayReceipts.values()].map(clone),
+      workRecordEntries: history.workRecords.map(clone),
     };
+  }
+
+  #inspectAttemptHistoryForTest(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    attemptId: string;
+  }): AttemptHistoryInspection | undefined {
+    const attempt = this.attempts.get(input.attemptId);
+    if (attempt === undefined) return undefined;
+    this.assertLease(input.lease, attempt.spec.task, this.now());
+    if (input.tenantId !== attempt.spec.tenant.tenantId) {
+      throw new AuthorityConflict('Attempt history tenant scope is invalid');
+    }
+    const history = this.attemptHistories.get(input.attemptId);
+    if (history === undefined) return undefined;
+    this.assertStoredAttemptHistoryIntegrity(history, attempt);
+    const records = {
+      fact: history.records.get('fact')?.map(clone) ?? [],
+      command: history.records.get('command')?.map(clone) ?? [],
+      claim: history.records.get('claim')?.map(clone) ?? [],
+      validation: history.records.get('validation')?.map(clone) ?? [],
+      evidence: history.records.get('evidence')?.map(clone) ?? [],
+    } as const;
+    return {
+      head: clone(history.head),
+      records,
+    };
+  }
+
+  private assertStoredAttemptHistoryIntegrity(
+    history: StoredAttemptHistory,
+    attempt: AttemptState,
+  ): void {
+    try {
+      const head = verifyAttemptHistoryHead(history.head);
+      if (
+        head.tenantId !== attempt.spec.tenant.tenantId ||
+        head.attemptId !== attempt.spec.attemptId ||
+        head.specDigest !== attempt.specDigest ||
+        !same(head.spec, attempt.spec) ||
+        head.aggregateRevision !== 1 ||
+        head.phase !== 'launch-pending' ||
+        head.launch.state !== 'recorded' ||
+        head.launch.operationId !== head.attemptId ||
+        head.launch.operationId !== attempt.spec.attemptId ||
+        head.launch.executionEpoch !== 1 ||
+        head.executionEpoch !== 1 ||
+        head.launch.executionEpoch !== head.executionEpoch ||
+        head.binding !== undefined ||
+        head.pendingTerminal !== undefined ||
+        head.pendingClaimRefs.length !== 0 ||
+        head.finalization !== undefined ||
+        head.cancellation !== undefined ||
+        head.outcomeRef !== undefined ||
+        head.outcomeDigest !== undefined ||
+        head.futureGrantsDenied
+      ) {
+        throw new AuthorityConflict(
+          'Attempt history head conflicts with legacy Attempt',
+        );
+      }
+      const identity = {
+        tenantId: head.tenantId,
+        attemptId: head.attemptId,
+      };
+      for (const stream of [
+        'fact',
+        'command',
+        'claim',
+        'validation',
+        'evidence',
+      ] as const) {
+        const entries = history.records.get(stream);
+        if (entries === undefined) {
+          throw new AuthorityConflict('Attempt history stream is missing');
+        }
+        let expected = createGenesisHistoryHead({
+          tenantId: identity.tenantId,
+          aggregateKind: 'attempt',
+          aggregateId: identity.attemptId,
+          streamKind: stream,
+        });
+        // Stored records are ordered by append sequence. Verify each payload,
+        // chain predecessor, and the exact stream head rather than trusting
+        // the pointer alone.
+        let previous: HistoryRecord | undefined;
+        for (const entry of entries) {
+          const verified = verifyAttemptHistoryPayload(
+            stream,
+            entry.record,
+            entry.payload,
+            identity,
+          );
+          if (
+            previous !== undefined &&
+            (verified.record.sequence !== previous.sequence + 1 ||
+              verified.record.previousRecordDigest !== previous.recordDigest)
+          ) {
+            throw new AuthorityConflict(
+              'Attempt history predecessor is invalid',
+            );
+          }
+          expected = verifyHistoryAppend({
+            head: expected,
+            record: verified.record,
+          }).head;
+          previous = verified.record;
+        }
+        if (!same(expected, head.streams[stream])) {
+          throw new AuthorityConflict('Attempt history stream head is invalid');
+        }
+      }
+      const commands = history.records.get('command') ?? [];
+      if (commands.length !== 1) {
+        throw new AuthorityConflict(
+          'Attempt registration history is incomplete',
+        );
+      }
+      const registration = commands[0];
+      const command = (
+        registration?.payload as {
+          payload?: { kind?: string; commandId?: string; specDigest?: string };
+        }
+      )?.payload;
+      if (
+        command?.kind !== 'attempt-registered' ||
+        command.commandId !== attempt.spec.attemptId ||
+        command.specDigest !== attempt.specDigest ||
+        registration?.record.sequence !== 1
+      ) {
+        throw new AuthorityConflict('Attempt registration history is invalid');
+      }
+    } catch (error) {
+      if (error instanceof AuthorityConflict) throw error;
+      throw new AuthorityConflict('Attempt history integrity failed');
+    }
+  }
+
+  private assertStoredAttemptAdmissionHistoryReceipt(input: {
+    receipt: StoredAttemptAdmissionHistoryReceipt;
+    taskHistory: StoredTaskHistory;
+    attemptHistory: StoredAttemptHistory;
+    attempt: AttemptState;
+  }): void {
+    const { receipt, taskHistory, attemptHistory, attempt } = input;
+    const taskRecord = taskHistory.workRecords.find(({ record }) =>
+      same(historyRecordReference(record), receipt.taskAdmissionRecordRef),
+    );
+    if (taskRecord === undefined) {
+      throw new AuthorityConflict('Task admission history pointer is missing');
+    }
+    try {
+      const verifiedTaskRecord = verifyHistoryRecordPayload(
+        taskRecord.record,
+        taskRecord.payload,
+      );
+      if (
+        !same(verifiedTaskRecord.payload, {
+          schema: 'agent-lcars.task-attempt-admission-history/v1',
+          version: 1,
+          tenant: receipt.tenant,
+          task: receipt.task,
+          intentId: receipt.intentId,
+          intentRevision: receipt.intentRevision,
+          attemptId: receipt.attemptId,
+          admissionRevision: receipt.taskRevision - 1,
+          admittedAt: receipt.admittedAt,
+          taskSnapshotDigest: receipt.taskSnapshotDigest,
+          inputDigest: receipt.admissionDigest,
+          specDigest: receipt.specDigest,
+          attemptRegistrationRef: receipt.attemptRegistrationRecordRef,
+        })
+      ) {
+        throw new AuthorityConflict('Task admission history pointer conflicts');
+      }
+    } catch (error) {
+      if (error instanceof AuthorityConflict) throw error;
+      throw new AuthorityConflict('Task admission history pointer is corrupt');
+    }
+    const attemptRecord = attemptHistory.records
+      .get('command')
+      ?.find(({ record }) =>
+        same(
+          historyRecordReference(record),
+          receipt.attemptRegistrationRecordRef,
+        ),
+      );
+    if (attemptRecord === undefined) {
+      throw new AuthorityConflict('Attempt registration pointer is missing');
+    }
+    const verifiedAttemptRecord = verifyAttemptHistoryPayload(
+      'command',
+      attemptRecord.record,
+      attemptRecord.payload,
+      {
+        tenantId: attempt.spec.tenant.tenantId,
+        attemptId: attempt.spec.attemptId,
+      },
+    );
+    if (
+      verifiedAttemptRecord.record.sequence !== 1 ||
+      !same(
+        historyRecordReference(verifiedAttemptRecord.record),
+        receipt.attemptRegistrationRecordRef,
+      )
+    ) {
+      throw new AuthorityConflict('Attempt registration pointer conflicts');
+    }
   }
 
   private assertStoredTaskHistoryIntegrity(
@@ -3443,8 +3725,16 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const launch = this.launches.get(accepted.attemptId);
       if (
         accepted.admissionDigest !== commandDigest ||
+        accepted.specDigest !== (attempt?.specDigest ?? '') ||
+        accepted.taskSnapshotDigest !== taskSnapshotDigest(accepted.task) ||
         attempt === undefined ||
         launch === undefined ||
+        launch.tenantId !== attempt.spec.tenant.tenantId ||
+        launch.repositoryId !== attempt.spec.tenant.repositoryId ||
+        launch.issueNumber !== attempt.spec.task.issueNumber ||
+        launch.attemptId !== attempt.spec.attemptId ||
+        launch.operationId !== attempt.launch.operationId ||
+        launch.executionEpoch !== attempt.executionEpoch ||
         !same(attempt.spec.tenant, admission.tenant) ||
         !same(attempt.spec.task, admission.task) ||
         !same(attempt.spec.activation, admission.activation) ||
@@ -3463,6 +3753,42 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         );
       }
       this.assertStoredTaskHistoryIntegrity(admission.task, history);
+      const attemptHistory = this.attemptHistories.get(accepted.attemptId);
+      if (attemptHistory === undefined) {
+        throw new AuthorityConflict(
+          'Attempt history admission receipt is missing',
+        );
+      }
+      this.assertStoredAttemptHistoryIntegrity(
+        attemptHistory,
+        attempt as AttemptState,
+      );
+      const historyReceipt = this.attemptAdmissionHistoryReceipts.get(localKey);
+      if (
+        historyReceipt === undefined ||
+        historyReceipt.attemptId !== accepted.attemptId ||
+        historyReceipt.tenantId !== admission.tenant.tenantId ||
+        !same(historyReceipt.task, admission.task) ||
+        historyReceipt.intentId !== admission.intentId ||
+        historyReceipt.intentRevision !== admission.intentRevision ||
+        historyReceipt.taskRevision !== accepted.task.revision ||
+        historyReceipt.specDigest !== attempt.specDigest ||
+        accepted.specDigest !== attempt.specDigest ||
+        historyReceipt.taskSnapshotDigest !==
+          taskSnapshotDigest(accepted.task) ||
+        historyReceipt.admissionDigest !== commandDigest ||
+        attemptHistory.head.updatedAt !== historyReceipt.admittedAt
+      ) {
+        throw new AuthorityConflict(
+          'Task admission history receipt is invalid',
+        );
+      }
+      this.assertStoredAttemptAdmissionHistoryReceipt({
+        receipt: historyReceipt,
+        taskHistory: history,
+        attemptHistory,
+        attempt,
+      });
       const acceptedAttempt = accepted.task.attempt;
       const headAttempt = history.head.attempt;
       if (
@@ -3593,6 +3919,60 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       executionEpoch: 1,
       state: 'pending',
     };
+    let attemptHistory: StoredAttemptHistory;
+    try {
+      const registration = registerAttemptHistory({
+        tenantId: spec.tenant.tenantId,
+        attemptId: spec.attemptId,
+        spec,
+        specDigest,
+        updatedAt: now,
+      });
+      const records = new Map<
+        AttemptHistoryStream,
+        StoredAttemptHistoryRecord[]
+      >();
+      for (const stream of [
+        'fact',
+        'command',
+        'claim',
+        'validation',
+        'evidence',
+      ] as const) {
+        records.set(stream, []);
+      }
+      const commandRecord = registration.records[0];
+      if (commandRecord === undefined) {
+        throw new AuthorityConflict('Attempt registration history is empty');
+      }
+      records.set('command', [
+        {
+          record: clone(commandRecord),
+          payload: clone({
+            schema: 'agent-lcars.attempt-command/v1',
+            version: 1,
+            transitionedAt: now,
+            canonicalDigest: attemptHistoryTransitionDigest({
+              kind: 'register',
+              expectedRevision: 0,
+              transitionedAt: now,
+              spec,
+              specDigest,
+            }),
+            payload: {
+              kind: 'attempt-registered',
+              commandId: spec.attemptId,
+              specDigest,
+            },
+          }),
+        },
+      ]);
+      attemptHistory = { head: clone(registration.head), records };
+      this.assertStoredAttemptHistoryIntegrity(attemptHistory, attempt.state);
+    } catch (error) {
+      if (error instanceof AuthorityConflict) throw error;
+      throw new AuthorityConflict('Attempt registration history is invalid');
+    }
     const taskKey = canonicalTaskKey(admission.task);
     const existingHistory = this.taskHistories.get(taskKey);
     if (existingHistory !== undefined) {
@@ -3602,22 +3982,61 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       existingHistory === undefined
         ? this.makeLegacyTaskHistory(current)
         : clone(existingHistory);
+    const registrationRecord = attemptHistory.records.get('command')?.[0];
+    const commandHead = admissionHistory.auxHeads.get('command');
+    if (registrationRecord === undefined || commandHead === undefined) {
+      throw new AuthorityConflict(
+        'Admission history command stream is missing',
+      );
+    }
+    let admissionTransition: ReturnType<
+      typeof appendTaskAttemptAdmissionHistoryTransition
+    >;
+    const admissionPayload = {
+      schema: 'agent-lcars.task-attempt-admission-history/v1' as const,
+      version: 1 as const,
+      tenant: clone(admission.tenant),
+      task: clone(admission.task),
+      intentId: admission.intentId,
+      intentRevision: admission.intentRevision,
+      attemptId,
+      admissionRevision: admission.expectedTaskRevision,
+      admittedAt: now,
+      taskSnapshotDigest: taskSnapshotDigest(task.state),
+      inputDigest: commandDigest,
+      specDigest,
+      attemptRegistrationRef: attemptHistoryRecordReference(
+        registrationRecord.record,
+        { tenantId: admission.tenant.tenantId, attemptId },
+        'command',
+      ),
+    };
     try {
-      admissionHistory.head = taskHistoryHeadSchema.parse({
-        ...admissionHistory.head,
-        aggregateRevision: task.state.revision,
-        attempt: task.state.attempt,
-        updatedAt: task.state.updatedAt,
+      admissionTransition = appendTaskAttemptAdmissionHistoryTransition({
+        head: admissionHistory.head,
+        workHead: commandHead,
+        payload: admissionPayload,
+      });
+      admissionHistory.head = admissionTransition.head;
+      admissionHistory.auxHeads.set('command', admissionTransition.workHead);
+      admissionHistory.workRecords.push({
+        record: admissionTransition.workRecord,
+        payload: clone(admissionPayload),
       });
     } catch {
-      throw new AuthorityConflict('Task history admission head is invalid');
+      throw new AuthorityConflict(
+        'Task admission history transition is invalid',
+      );
     }
     // All validation completed above; this contiguous body is the transaction.
     const previousTask = this.tasks.get(taskKey);
     const previousAttempt = this.attempts.get(attemptId);
     const previousAcceptance = this.acceptances.get(localKey);
+    const previousAdmissionHistoryReceipt =
+      this.attemptAdmissionHistoryReceipts.get(localKey);
     const previousLaunch = this.launches.get(attemptId);
     const previousHistory = this.taskHistories.get(taskKey);
+    const previousAttemptHistory = this.attemptHistories.get(attemptId);
     const restore = <T>(
       map: Map<string, T>,
       key: string,
@@ -3633,16 +4052,41 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         attemptId,
         specDigest,
         admissionDigest: commandDigest,
+        taskSnapshotDigest: taskSnapshotDigest(task.state),
         task: clone(task.state),
+      });
+      this.attemptAdmissionHistoryReceipts.set(localKey, {
+        tenantId: admission.tenant.tenantId,
+        tenant: clone(admission.tenant),
+        task: clone(admission.task),
+        intentId: admission.intentId,
+        intentRevision: admission.intentRevision,
+        taskRevision: task.state.revision,
+        attemptId,
+        admittedAt: now,
+        specDigest,
+        admissionDigest: commandDigest,
+        taskSnapshotDigest: taskSnapshotDigest(task.state),
+        taskAdmissionRecordRef: clone(admissionTransition.workRecordRef),
+        attemptRegistrationRecordRef: clone(
+          admissionPayload.attemptRegistrationRef,
+        ),
       });
       this.launches.set(attemptId, clone(launch));
       this.taskHistories.set(taskKey, clone(admissionHistory));
+      this.attemptHistories.set(attemptId, clone(attemptHistory));
     } catch (error) {
       restore(this.tasks, taskKey, previousTask);
       restore(this.attempts, attemptId, previousAttempt);
       restore(this.acceptances, localKey, previousAcceptance);
+      restore(
+        this.attemptAdmissionHistoryReceipts,
+        localKey,
+        previousAdmissionHistoryReceipt,
+      );
       restore(this.launches, attemptId, previousLaunch);
       restore(this.taskHistories, taskKey, previousHistory);
+      restore(this.attemptHistories, attemptId, previousAttemptHistory);
       throw error;
     }
     return {
@@ -3678,10 +4122,64 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       attempt.spec.tenant.tenantId !== input.tenantId ||
       !same(attempt.spec.task, input.task) ||
       attempt.spec.local.intentId !== input.intentId ||
-      attempt.spec.local.generation !== input.intentRevision
+      attempt.spec.local.generation !== input.intentRevision ||
+      launch.tenantId !== attempt.spec.tenant.tenantId ||
+      launch.repositoryId !== attempt.spec.tenant.repositoryId ||
+      launch.issueNumber !== attempt.spec.task.issueNumber ||
+      launch.attemptId !== attempt.spec.attemptId ||
+      launch.operationId !== attempt.launch.operationId ||
+      launch.executionEpoch !== attempt.executionEpoch
     ) {
       throw new AuthorityConflict('Admission replay receipt is inconsistent');
     }
+    const taskHistory = this.taskHistories.get(canonicalTaskKey(input.task));
+    if (taskHistory === undefined) {
+      throw new AuthorityConflict('Task history replay receipt is missing');
+    }
+    this.assertStoredTaskHistoryIntegrity(input.task, taskHistory);
+    if (
+      accepted.task.attempt.kind !== 'launched' ||
+      accepted.task.attempt.attemptId !== accepted.attemptId ||
+      accepted.task.attempt.intentId !== input.intentId ||
+      accepted.task.attempt.intentRevision !== input.intentRevision ||
+      accepted.task.attempt.admissionRevision !==
+        (this.attemptAdmissionHistoryReceipts.get(key)?.taskRevision ?? 0) -
+          1 ||
+      accepted.task.attempt.admittedAt !==
+        this.attemptAdmissionHistoryReceipts.get(key)?.admittedAt ||
+      launch.operationId !== accepted.attemptId ||
+      launch.attemptId !== accepted.attemptId
+    ) {
+      throw new AuthorityConflict('Task admission replay pointer is invalid');
+    }
+    const attemptHistory = this.attemptHistories.get(accepted.attemptId);
+    if (attemptHistory === undefined) {
+      throw new AuthorityConflict('Attempt history replay receipt is missing');
+    }
+    this.assertStoredAttemptHistoryIntegrity(attemptHistory, attempt);
+    const historyReceipt = this.attemptAdmissionHistoryReceipts.get(key);
+    if (
+      historyReceipt === undefined ||
+      historyReceipt.attemptId !== accepted.attemptId ||
+      historyReceipt.tenantId !== input.tenantId ||
+      !same(historyReceipt.task, input.task) ||
+      historyReceipt.intentId !== input.intentId ||
+      historyReceipt.intentRevision !== input.intentRevision ||
+      historyReceipt.specDigest !== attempt.specDigest ||
+      accepted.specDigest !== attempt.specDigest ||
+      accepted.taskSnapshotDigest !== taskSnapshotDigest(accepted.task) ||
+      historyReceipt.taskSnapshotDigest !== taskSnapshotDigest(accepted.task) ||
+      historyReceipt.admissionDigest !== accepted.admissionDigest ||
+      attemptHistory.head.updatedAt !== historyReceipt.admittedAt
+    ) {
+      throw new AuthorityConflict('Task admission history receipt is invalid');
+    }
+    this.assertStoredAttemptAdmissionHistoryReceipt({
+      receipt: historyReceipt,
+      taskHistory,
+      attemptHistory,
+      attempt,
+    });
     return {
       replay: true,
       task: clone(accepted.task),

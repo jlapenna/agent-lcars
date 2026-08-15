@@ -6,6 +6,7 @@ import {
 import { boundedPaginationContractSuite } from './pagination-contract.spec.support';
 
 type Item = { id: string; value: string };
+const attemptSubjectId = `_${'A'.repeat(21)}`;
 
 function createOpaqueCodec() {
   const payloads = new Map<string, unknown>();
@@ -34,7 +35,7 @@ const filters = [
   {
     tenantId: 'tenant-a',
     collection: 'attempt-presentations' as const,
-    subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
+    subject: { kind: 'attempt' as const, attemptId: attemptSubjectId },
   },
   {
     tenantId: 'tenant-a',

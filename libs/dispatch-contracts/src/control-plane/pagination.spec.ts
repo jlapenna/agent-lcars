@@ -12,11 +12,22 @@ import {
   PaginationCursorError,
   paginationFilterSchema,
   paginationPageSchema,
+  paginationSubjectSchema,
   ReferencePaginator,
   validateCurrentPointer,
 } from './pagination';
 
 type Item = { id: string; value: string };
+const paginationAttemptId = `_${'A'.repeat(21)}`;
+
+it('accepts a minted AttemptId with a leading underscore as a pagination subject', () => {
+  expect(
+    paginationSubjectSchema.safeParse({
+      kind: 'attempt',
+      attemptId: `_${'A'.repeat(21)}`,
+    }).success,
+  ).toBe(true);
+});
 
 function codec() {
   const payloads = new Map<string, unknown>();
@@ -443,7 +454,7 @@ describe('bounded keyset pagination', () => {
       },
       {
         kind: 'attempt' as const,
-        subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
+        subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
         attemptKey: 'attempt-current',
       },
       {
@@ -453,7 +464,7 @@ describe('bounded keyset pagination', () => {
       },
       {
         kind: 'attempt-presentation' as const,
-        subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
+        subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
         operationId: 'operation-1',
       },
       {
@@ -466,7 +477,7 @@ describe('bounded keyset pagination', () => {
         kind: 'delivery' as const,
         source: 'attempt' as const,
         subject: filter.subject,
-        attemptId: 'attempt-1',
+        attemptId: paginationAttemptId,
         operationId: 'operation-1',
       },
       {
@@ -477,19 +488,19 @@ describe('bounded keyset pagination', () => {
       },
       {
         kind: 'cancellation-work' as const,
-        subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
+        subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
         eventId: 'event-1',
       },
       {
         kind: 'validation-work' as const,
-        subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
+        subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
         terminalFactId: 'terminal-1',
         claimFactId: 'claim-1',
       },
       {
         kind: 'launch-work' as const,
-        subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
-        operationId: 'operation-1',
+        subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
+        operationId: paginationAttemptId,
       },
     ];
     for (const pointer of pointers) {
@@ -523,7 +534,7 @@ describe('bounded keyset pagination', () => {
       {
         tenantId: 'tenant-a',
         collection: 'attempt-presentations' as const,
-        subject: { kind: 'attempt' as const, attemptId: 'attempt-1' },
+        subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
       },
       {
         tenantId: 'tenant-a',

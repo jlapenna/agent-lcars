@@ -8,6 +8,7 @@ import {
   validateDurableValue,
 } from './durability';
 import {
+  attemptIdSchema,
   nonnegativeSafeIntegerSchema,
   opaqueIdSchema,
   positiveSafeIntegerSchema,
@@ -60,10 +61,15 @@ export const HISTORY_DOMAINS = Object.freeze({
 } as const);
 
 const digestOrGenesisSchema = z.union([z.literal(null), sha256Schema]);
+/** Aggregate ids include opaque Task hashes and the base64url Attempt ids. */
+export const historyAggregateIdSchema = z.union([
+  opaqueIdSchema,
+  attemptIdSchema,
+]);
 const _identitySchema = z.strictObject({
   tenantId: opaqueIdSchema,
   aggregateKind: historyAggregateKindSchema,
-  aggregateId: opaqueIdSchema,
+  aggregateId: historyAggregateIdSchema,
   streamKind: historyStreamKindSchema,
 });
 export const historyIdentitySchema = _identitySchema;
@@ -75,7 +81,7 @@ export const historyRecordReferenceSchema = z.strictObject({
   version: z.literal(1),
   tenantId: opaqueIdSchema,
   aggregateKind: historyAggregateKindSchema,
-  aggregateId: opaqueIdSchema,
+  aggregateId: historyAggregateIdSchema,
   streamKind: historyStreamKindSchema,
   sequence: positiveSafeIntegerSchema,
   recordDigest: sha256Schema,
@@ -95,7 +101,7 @@ export const historyRecordSchema = z.strictObject({
   domain: z.literal(HISTORY_DOMAINS.record),
   tenantId: opaqueIdSchema,
   aggregateKind: historyAggregateKindSchema,
-  aggregateId: opaqueIdSchema,
+  aggregateId: historyAggregateIdSchema,
   streamKind: historyStreamKindSchema,
   sequence: positiveSafeIntegerSchema,
   previousRecordDigest: digestOrGenesisSchema,
@@ -113,7 +119,7 @@ export const historyHeadSchema = z
     domain: z.literal(HISTORY_DOMAINS.genesis),
     tenantId: opaqueIdSchema,
     aggregateKind: historyAggregateKindSchema,
-    aggregateId: opaqueIdSchema,
+    aggregateId: historyAggregateIdSchema,
     streamKind: historyStreamKindSchema,
     count: nonnegativeSafeIntegerSchema,
     lastSequence: nonnegativeSafeIntegerSchema,
@@ -179,7 +185,7 @@ export const replayReceiptSchema = z
     replayKey: opaqueIdSchema,
     tenantId: opaqueIdSchema,
     aggregateKind: historyAggregateKindSchema,
-    aggregateId: opaqueIdSchema,
+    aggregateId: historyAggregateIdSchema,
     canonicalInputDigest: sha256Schema,
     appliedRevision: nonnegativeSafeIntegerSchema,
     responseDigest: sha256Schema,
@@ -230,7 +236,7 @@ export const idempotencyTombstoneSchema = z.strictObject({
   version: z.literal(1),
   tenantId: opaqueIdSchema,
   aggregateKind: historyAggregateKindSchema,
-  aggregateId: opaqueIdSchema,
+  aggregateId: historyAggregateIdSchema,
   replayKey: opaqueIdSchema,
   canonicalInputDigest: sha256Schema,
   receiptPointer: opaqueIdSchema.nullable(),

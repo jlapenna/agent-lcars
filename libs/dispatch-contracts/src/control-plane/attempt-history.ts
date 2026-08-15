@@ -41,6 +41,7 @@ import {
   type RuntimeObservationPayload,
 } from './observation';
 import {
+  attemptIdSchema,
   nonnegativeSafeIntegerSchema,
   opaqueIdSchema,
   positiveSafeIntegerSchema,
@@ -60,7 +61,7 @@ export const attemptHistoryStreamSchema = z.enum(ATTEMPT_HISTORY_STREAMS);
 
 export const attemptHistoryIdentitySchema = z.strictObject({
   tenantId: opaqueIdSchema,
-  attemptId: opaqueIdSchema,
+  attemptId: attemptIdSchema,
 });
 export type AttemptHistoryIdentity = z.infer<
   typeof attemptHistoryIdentitySchema
@@ -71,7 +72,7 @@ const recordReferenceSchema = z.strictObject({
   version: z.literal(1),
   tenantId: opaqueIdSchema,
   aggregateKind: z.literal('attempt'),
-  aggregateId: opaqueIdSchema,
+  aggregateId: attemptIdSchema,
   streamKind: attemptHistoryStreamSchema,
   sequence: positiveSafeIntegerSchema,
   recordDigest: sha256Schema,
@@ -167,7 +168,7 @@ export type AttemptFactRecordPayload = z.infer<typeof attemptFactPayloadSchema>;
 const commandPayloadSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('attempt-registered'),
-    commandId: opaqueIdSchema,
+    commandId: attemptIdSchema,
     specDigest: sha256Schema,
   }),
   z.strictObject({
@@ -391,14 +392,14 @@ export const attemptHistoryHeadSchema = z.strictObject({
   version: z.literal(1),
   tenantId: opaqueIdSchema,
   aggregateKind: z.literal('attempt'),
-  attemptId: opaqueIdSchema,
+  attemptId: attemptIdSchema,
   aggregateRevision: nonnegativeSafeIntegerSchema,
   phase: attemptPhaseSchema,
   updatedAt: utcDateTimeSchema,
   spec: acceptedAttemptSpecSchema,
   specDigest: sha256Schema,
   launch: z.strictObject({
-    operationId: opaqueIdSchema,
+    operationId: attemptIdSchema,
     executionEpoch: positiveSafeIntegerSchema,
     state: launchStateSchema,
   }),
@@ -1321,7 +1322,7 @@ const attemptHistoryIdentityReceiptSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('fact'),
     tenantId: opaqueIdSchema,
-    attemptId: opaqueIdSchema,
+    attemptId: attemptIdSchema,
     factId: opaqueIdSchema,
     requestId: opaqueIdSchema,
     canonicalDigest: sha256Schema,
@@ -1329,21 +1330,21 @@ const attemptHistoryIdentityReceiptSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('command'),
     tenantId: opaqueIdSchema,
-    attemptId: opaqueIdSchema,
+    attemptId: attemptIdSchema,
     commandId: opaqueIdSchema,
     canonicalDigest: sha256Schema,
   }),
   z.strictObject({
     kind: z.literal('claim'),
     tenantId: opaqueIdSchema,
-    attemptId: opaqueIdSchema,
+    attemptId: attemptIdSchema,
     claimFactId: opaqueIdSchema,
     canonicalDigest: sha256Schema,
   }),
   z.strictObject({
     kind: z.literal('validation'),
     tenantId: opaqueIdSchema,
-    attemptId: opaqueIdSchema,
+    attemptId: attemptIdSchema,
     validationFactId: opaqueIdSchema,
     canonicalDigest: sha256Schema,
   }),
@@ -1353,7 +1354,7 @@ const attemptHistoryIdentityReceiptSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('outcome'),
     tenantId: opaqueIdSchema,
-    attemptId: opaqueIdSchema,
+    attemptId: attemptIdSchema,
     canonicalDigest: sha256Schema,
   }),
 ]);

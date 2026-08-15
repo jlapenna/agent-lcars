@@ -1,8 +1,12 @@
-import type { ActivationRecord } from '@agent-lcars/dispatch-contracts';
+import {
+  type ActivationRecord,
+  historyRecordReference,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
 import type { VerifiedAttemptAdmission } from './admission-capability';
 import { mintAttemptAdmission } from './admission-capability';
+import { readAttemptHistoryForTest } from './attempt-history-test-support';
 import {
   type AttemptIdFactory,
   type AuthorityClock,
@@ -11,6 +15,7 @@ import {
   type TaskAuthorityScope,
 } from './authority-storage';
 import { seedTaskForTest } from './authority-storage-test-support';
+import { readTaskHistoryForTest } from './task-history-test-support';
 import type { TaskIntentState } from './task-intent-reducer';
 
 const TIME = '2026-08-20T00:00:00.000Z';
@@ -127,6 +132,24 @@ interface CountingAttemptIds extends AttemptIdFactory {
   calls: number;
 }
 
+export interface AttemptAdmissionHistoryStorageHooks {
+  readAttemptHistory: typeof readAttemptHistoryForTest;
+  readTaskHistory: typeof readTaskHistoryForTest;
+  corruptAttemptHistory(storage: LifecycleAuthorityStorage): void;
+  corruptAttemptHistoryLaunch(
+    storage: LifecycleAuthorityStorage,
+    kind: 'operation' | 'epoch',
+  ): void;
+  corruptLaunch(
+    storage: LifecycleAuthorityStorage,
+    kind: 'repository' | 'epoch',
+  ): void;
+  corruptTaskAdmissionHistory(storage: LifecycleAuthorityStorage): void;
+  corruptAcceptanceSpecDigest(storage: LifecycleAuthorityStorage): void;
+  corruptAcceptanceTaskSnapshot(storage: LifecycleAuthorityStorage): void;
+  failAttemptHistoryCommit(storage: LifecycleAuthorityStorage): () => void;
+}
+
 function admissionCapability(
   taskState: TaskIntentState,
   execution = plan,
@@ -188,6 +211,7 @@ export function runTaskAttemptAdmissionStorageContract(
     clock: TaskAttemptAdmissionContractClock,
     attemptIds: AttemptIdFactory,
   ) => LifecycleAuthorityStorage | Promise<LifecycleAuthorityStorage>,
+  historyHooks: AttemptAdmissionHistoryStorageHooks,
 ): void {
   const makeHarness = async (values = ['A'.repeat(22), 'B'.repeat(22)]) => {
     let current = TIME;
@@ -448,6 +472,264 @@ export function runTaskAttemptAdmissionStorageContract(
           state: 'pending',
         }),
       ).toHaveLength(1);
+    });
+
+    it('persists one exact Task pointer, Attempt registration, and launch mirror', async () => {
+      const { storage } = await makeHarness();
+      const taskState = state();
+      const lease = await prepareAdmissionTask({
+        storage,
+        activation,
+        taskState,
+      });
+      const result = await storage.admitVerifiedAttemptAndRecordLaunch({
+        lease,
+        admission: admissionCapability(taskState),
+      });
+      if (result.attempt === undefined) throw new Error('missing Attempt');
+      const attemptHistory = await historyHooks.readAttemptHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        attemptId: result.attempt.spec.attemptId,
+      });
+      const taskHistory = await historyHooks.readTaskHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        task,
+      });
+      expect(attemptHistory?.head).toMatchObject({
+        aggregateRevision: 1,
+        phase: 'launch-pending',
+        specDigest: result.attempt.specDigest,
+      });
+      expect(attemptHistory?.records.command).toHaveLength(1);
+      expect(taskHistory?.workRecords).toHaveLength(1);
+      const registration = attemptHistory?.records.command[0];
+      const pointer = taskHistory?.workRecordEntries?.[0];
+      expect(pointer?.payload).toMatchObject({
+        attemptId: result.attempt.spec.attemptId,
+        specDigest: result.attempt.specDigest,
+        attemptRegistrationRef:
+          registration === undefined
+            ? undefined
+            : historyRecordReference(registration.record),
+      });
+      expect(result.launch.state).toBe('pending');
+    });
+
+    it('fails closed when either admission history mirror is corrupted', async () => {
+      const { storage } = await makeHarness();
+      const taskState = state();
+      const lease = await prepareAdmissionTask({
+        storage,
+        activation,
+        taskState,
+      });
+      await storage.admitVerifiedAttemptAndRecordLaunch({
+        lease,
+        admission: admissionCapability(taskState),
+      });
+      historyHooks.corruptAttemptHistory(storage);
+      await expect(
+        storage.readAttemptAdmission({
+          lease,
+          tenantId: tenant.tenantId,
+          task,
+          intentId: 'intent-1',
+          intentRevision: 1,
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+      await expect(
+        storage.admitVerifiedAttemptAndRecordLaunch({
+          lease,
+          admission: admissionCapability(taskState),
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+    });
+
+    for (const kind of ['operation', 'epoch'] as const) {
+      it(`fails closed when the immutable registration ${kind} is corrupted`, async () => {
+        const { storage } = await makeHarness();
+        const taskState = state();
+        const lease = await prepareAdmissionTask({
+          storage,
+          activation,
+          taskState,
+        });
+        await storage.admitVerifiedAttemptAndRecordLaunch({
+          lease,
+          admission: admissionCapability(taskState),
+        });
+        historyHooks.corruptAttemptHistoryLaunch(storage, kind);
+        await expect(
+          storage.readAttemptAdmission({
+            lease,
+            tenantId: tenant.tenantId,
+            task,
+            intentId: 'intent-1',
+            intentRevision: 1,
+          }),
+        ).rejects.toBeInstanceOf(AuthorityConflict);
+      });
+    }
+
+    for (const kind of ['repository', 'epoch'] as const) {
+      it(`fails closed when the live launch ${kind} is corrupted`, async () => {
+        const { storage } = await makeHarness();
+        const taskState = state();
+        const lease = await prepareAdmissionTask({
+          storage,
+          activation,
+          taskState,
+        });
+        const admitted = await storage.admitVerifiedAttemptAndRecordLaunch({
+          lease,
+          admission: admissionCapability(taskState),
+        });
+        historyHooks.corruptLaunch(storage, kind);
+        await expect(
+          storage.readAttemptAdmission({
+            lease,
+            tenantId: tenant.tenantId,
+            task,
+            intentId: 'intent-1',
+            intentRevision: 1,
+          }),
+        ).rejects.toBeInstanceOf(AuthorityConflict);
+        expect(admitted.attempt?.spec.attemptId).toBeDefined();
+      });
+    }
+
+    it('fails closed when the acceptance spec digest is corrupted', async () => {
+      const { storage } = await makeHarness();
+      const taskState = state();
+      const lease = await prepareAdmissionTask({
+        storage,
+        activation,
+        taskState,
+      });
+      await storage.admitVerifiedAttemptAndRecordLaunch({
+        lease,
+        admission: admissionCapability(taskState),
+      });
+      historyHooks.corruptAcceptanceSpecDigest(storage);
+      await expect(
+        storage.readAttemptAdmission({
+          lease,
+          tenantId: tenant.tenantId,
+          task,
+          intentId: 'intent-1',
+          intentRevision: 1,
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+      await expect(
+        storage.admitVerifiedAttemptAndRecordLaunch({
+          lease,
+          admission: admissionCapability(taskState),
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+    });
+
+    it('fails closed when the accepted Task snapshot changes outside its relation tuple', async () => {
+      const { storage } = await makeHarness();
+      const taskState = state();
+      const lease = await prepareAdmissionTask({
+        storage,
+        activation,
+        taskState,
+      });
+      await storage.admitVerifiedAttemptAndRecordLaunch({
+        lease,
+        admission: admissionCapability(taskState),
+      });
+      historyHooks.corruptAcceptanceTaskSnapshot(storage);
+      await expect(
+        storage.readAttemptAdmission({
+          lease,
+          tenantId: tenant.tenantId,
+          task,
+          intentId: 'intent-1',
+          intentRevision: 1,
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+    });
+
+    it('fails closed when the Task admission pointer payload is corrupted', async () => {
+      const { storage } = await makeHarness();
+      const taskState = state();
+      const lease = await prepareAdmissionTask({
+        storage,
+        activation,
+        taskState,
+      });
+      await storage.admitVerifiedAttemptAndRecordLaunch({
+        lease,
+        admission: admissionCapability(taskState),
+      });
+      historyHooks.corruptTaskAdmissionHistory(storage);
+      await expect(
+        storage.readAttemptAdmission({
+          lease,
+          tenantId: tenant.tenantId,
+          task,
+          intentId: 'intent-1',
+          intentRevision: 1,
+        }),
+      ).rejects.toBeInstanceOf(AuthorityConflict);
+    });
+
+    it('rolls back every legacy and shadow admission write on history failure', async () => {
+      const { storage, attemptIds } = await makeHarness();
+      const taskState = state();
+      const lease = await prepareAdmissionTask({
+        storage,
+        activation,
+        taskState,
+      });
+      const restore = historyHooks.failAttemptHistoryCommit(storage);
+      await expect(
+        storage.admitVerifiedAttemptAndRecordLaunch({
+          lease,
+          admission: admissionCapability(taskState),
+        }),
+      ).rejects.toThrow();
+      restore();
+      expect((await storage.readTask(task))?.attempt.kind).toBe('unlaunched');
+      expect(
+        await storage.listLaunches({
+          tenantId: tenant.tenantId,
+          state: 'pending',
+        }),
+      ).toEqual([]);
+      expect(
+        await storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: 'A'.repeat(22),
+        }),
+      ).toBeUndefined();
+      expect(
+        await historyHooks.readAttemptHistory(storage, {
+          lease,
+          tenantId: tenant.tenantId,
+          attemptId: 'A'.repeat(22),
+        }),
+      ).toBeUndefined();
+      const taskHistory = await historyHooks.readTaskHistory(storage, {
+        lease,
+        tenantId: tenant.tenantId,
+        task,
+      });
+      expect(taskHistory).toBeUndefined();
+      expect(attemptIds.calls).toBe(1);
+      await expect(
+        storage.readAttemptAdmission({
+          lease,
+          tenantId: tenant.tenantId,
+          task,
+          intentId: 'intent-1',
+          intentRevision: 1,
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 }

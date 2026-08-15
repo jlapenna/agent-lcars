@@ -1,15 +1,31 @@
-import type { ActivationRecord } from '@agent-lcars/dispatch-contracts';
+import {
+  type ActivationRecord,
+  runtimeObservationPayloadSha256,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { readAttemptHistoryForTest } from './attempt-history-test-support';
 import {
   InMemoryLifecycleAuthorityStorage,
   type TaskAuthorityScope,
 } from './authority-storage';
-import { seedTaskForTest } from './authority-storage-test-support';
+import {
+  readTaskHistoryForTest,
+  seedTaskForTest,
+} from './authority-storage-test-support';
+import {
+  ingestVerifiedRunBinding,
+  RunBindingIngressVerifier,
+} from './launch-binding';
+import { LaunchResponseBoundary } from './launch-resolution-capability';
 import {
   type AdmissionPlanResolver,
   TaskAttemptAdmissionCoordinator,
 } from './task-attempt-admission';
+import {
+  type AttemptAdmissionHistoryStorageHooks,
+  runTaskAttemptAdmissionStorageContract,
+} from './task-attempt-admission.spec.support';
 import type { TaskIntentState } from './task-intent-reducer';
 
 const TIME = '2026-08-20T00:00:00.000Z';
@@ -193,11 +209,173 @@ describe('TaskAttemptAdmissionCoordinator', () => {
       }),
     ).toEqual([]);
   });
+
+  it('replays the admission receipt after launch progress without requiring mutable Attempt parity', async () => {
+    const resolver = { resolve: vi.fn(async () => plan) };
+    const { coordinator, storage, lease } = await setup(resolver);
+    const input = {
+      lease,
+      tenantId: tenant.tenantId,
+      task,
+      intentId: 'intent-1',
+      intentRevision: 1,
+    };
+    const first = await coordinator.admit(input);
+    if (first.attempt === undefined) throw new Error('missing Attempt');
+    const claimed = await storage.claimLaunchWork({
+      lease,
+      tenantId: tenant.tenantId,
+      attemptId: first.attempt.spec.attemptId,
+    });
+    if (claimed.work === undefined) throw new Error('missing launch work');
+    const resolution = await new LaunchResponseBoundary(
+      {
+        resolve: async () => ({
+          kind: 'accepted' as const,
+          responseSha256: SHA,
+        }),
+      },
+      { now: () => TIME },
+    ).resolve(claimed.work);
+    await storage.resolveVerifiedLaunch({ lease, resolution });
+    const binding = {
+      runId: 10,
+      runAttempt: 1,
+      checkRunId: 11,
+      workflowPath: plan.workflowPath,
+      workflowRef: plan.workflowRef,
+      workflowSha: plan.workflowSha,
+    };
+    const bindingEnvelope = {
+      schema: 'agent-lcars.runtime-observation/v1' as const,
+      version: 1 as const,
+      requestId: 'binding-request-1',
+      factId: 'binding-fact-1',
+      attemptId: first.attempt.spec.attemptId,
+      tenant: first.attempt.spec.tenant,
+      task: first.attempt.spec.task,
+      source: { kind: 'github-provider' as const, sourceId: 'provider-1' },
+      observedAt: TIME,
+      payload: { kind: 'run-bound' as const, binding },
+      payloadSha256: await runtimeObservationPayloadSha256({
+        kind: 'run-bound' as const,
+        binding,
+      }),
+    };
+    const verifiedBinding = await new RunBindingIngressVerifier({
+      verifyExactRunBinding: async () => undefined,
+    }).verify({
+      envelope: bindingEnvelope,
+      localAttemptMarker: first.attempt.spec.local.attemptMarker,
+    });
+    await ingestVerifiedRunBinding(storage, lease, verifiedBinding);
+    const replay = await coordinator.admit(input);
+    expect(replay.replay).toBe(true);
+    expect(replay.attempt).toMatchObject({
+      revision: 3,
+      phase: 'active',
+      binding,
+    });
+    expect(replay.launch).toMatchObject({
+      attemptId: first.attempt.spec.attemptId,
+      state: 'accepted',
+    });
+  });
 });
 
-import { runTaskAttemptAdmissionStorageContract } from './task-attempt-admission.spec.support';
+const historyHooks: AttemptAdmissionHistoryStorageHooks = {
+  readAttemptHistory: readAttemptHistoryForTest,
+  readTaskHistory: readTaskHistoryForTest,
+  corruptAttemptHistory: (storage) => {
+    const histories = (
+      storage as unknown as {
+        attemptHistories: Map<string, { head: { aggregateRevision: number } }>;
+      }
+    ).attemptHistories;
+    const history = histories.values().next().value;
+    if (history === undefined) throw new Error('missing Attempt history');
+    history.head.aggregateRevision = 99;
+  },
+  corruptAttemptHistoryLaunch: (storage, kind) => {
+    const histories = (
+      storage as unknown as {
+        attemptHistories: Map<
+          string,
+          {
+            head: {
+              attemptId: string;
+              launch: { operationId: string; executionEpoch: number };
+            };
+          }
+        >;
+      }
+    ).attemptHistories;
+    const history = histories.values().next().value;
+    if (history === undefined) throw new Error('missing Attempt history');
+    if (kind === 'operation') history.head.launch.operationId = 'B'.repeat(22);
+    else history.head.launch.executionEpoch = 2;
+  },
+  corruptLaunch: (storage, kind) => {
+    const launches = (
+      storage as unknown as {
+        launches: Map<string, { repositoryId: number; executionEpoch: number }>;
+      }
+    ).launches;
+    const launch = launches.values().next().value;
+    if (launch === undefined) throw new Error('missing launch');
+    if (kind === 'repository') launch.repositoryId = 999;
+    else launch.executionEpoch = 2;
+  },
+  corruptAcceptanceSpecDigest: (storage) => {
+    const acceptances = (
+      storage as unknown as {
+        acceptances: Map<string, { specDigest: string }>;
+      }
+    ).acceptances;
+    const acceptance = acceptances.values().next().value;
+    if (acceptance === undefined) throw new Error('missing acceptance');
+    acceptance.specDigest = 'b'.repeat(64);
+  },
+  corruptAcceptanceTaskSnapshot: (storage) => {
+    const acceptances = (
+      storage as unknown as {
+        acceptances: Map<string, { task: { updatedAt: string } }>;
+      }
+    ).acceptances;
+    const acceptance = acceptances.values().next().value;
+    if (acceptance === undefined) throw new Error('missing acceptance');
+    acceptance.task.updatedAt = '2026-08-20T00:00:01.000Z';
+  },
+  corruptTaskAdmissionHistory: (storage) => {
+    const histories = (
+      storage as unknown as {
+        taskHistories: Map<
+          string,
+          { workRecords: Array<{ payload: { inputDigest: string } }> }
+        >;
+      }
+    ).taskHistories;
+    const history = histories.values().next().value;
+    const record = history?.workRecords[0];
+    if (record === undefined) throw new Error('missing Task admission history');
+    record.payload.inputDigest = 'b'.repeat(64);
+  },
+  failAttemptHistoryCommit: (storage) => {
+    const histories = (
+      storage as unknown as { attemptHistories: Map<string, unknown> }
+    ).attemptHistories;
+    const originalSet = histories.set;
+    histories.set = (() => {
+      throw new Error('injected Attempt history commit failure');
+    }) as typeof originalSet;
+    return () => {
+      histories.set = originalSet;
+    };
+  },
+};
 
 runTaskAttemptAdmissionStorageContract(
   (clock, attemptIds) =>
     new InMemoryLifecycleAuthorityStorage(clock, attemptIds),
+  historyHooks,
 );

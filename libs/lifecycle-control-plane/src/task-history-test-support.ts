@@ -17,6 +17,8 @@ export interface TaskHistoryInspection {
   workRecords: readonly HistoryRecord[];
   presentationRecords: readonly HistoryRecord[];
   replayReceipts: readonly ReplayReceipt[];
+  /** Payload-bearing seam for exact admission pointer assertions. */
+  workRecordEntries?: readonly { record: HistoryRecord; payload: unknown }[];
 }
 
 type Inspector = (input: {

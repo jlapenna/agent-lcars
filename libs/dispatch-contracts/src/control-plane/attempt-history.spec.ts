@@ -334,6 +334,22 @@ function appendClaim(
 }
 
 describe('bounded Attempt history contracts', () => {
+  it('accepts every minted AttemptId shape, including a leading underscore', () => {
+    const leading = {
+      ...spec,
+      attemptId: `_${'A'.repeat(21)}`,
+    };
+    const registeredLeading = registerAttemptHistory({
+      tenantId: leading.tenant.tenantId,
+      attemptId: leading.attemptId,
+      spec: leading,
+      specDigest: attemptSpecDigest(leading),
+      updatedAt: at,
+    });
+    expect(registeredLeading.head.attemptId).toBe(leading.attemptId);
+    expect(registeredLeading.records).toHaveLength(1);
+  });
+
   it('uses every external identity helper for scoped replay and conflicts', () => {
     const receipt = {
       kind: 'fact' as const,
