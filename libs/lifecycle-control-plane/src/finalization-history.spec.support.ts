@@ -3,7 +3,10 @@ import type {
   AgentResultClaimV1,
   RuntimeObservationEnvelope,
 } from '@agent-lcars/dispatch-contracts';
-import { runtimeObservationPayloadSha256 } from '@agent-lcars/dispatch-contracts';
+import {
+  attemptHistoryPayloadDigest,
+  runtimeObservationPayloadSha256,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -595,6 +598,15 @@ export function runFinalizationHistoryStorageContract(
       expect(inspection.history).toBeUndefined();
       expect(inspection.finalizationReceipt).toBeUndefined();
       expect(inspection.presentation?.deliveryState).toBe('pending');
+      expect(inspection.presentation?.plan.outcomeDigest).not.toBe(
+        attemptHistoryPayloadDigest(inspection.attempt?.outcome),
+      );
+      expect(
+        await finalizer.finalize(lease, tenant.tenantId, spec.attemptId),
+      ).toBe('replay');
+      expect(hooks.inspectFinalization(storage, spec.attemptId)).toEqual(
+        inspection,
+      );
     });
 
     it.each<FinalizationHistoryCorruption>([

@@ -820,6 +820,7 @@ function finalizationPresentationProvenance(
 function deriveAttemptPresentation(
   state: AttemptState,
   terminal: AttemptPresentationPlan['terminal'],
+  historyBoundFinalization = false,
 ): DerivedAttemptPresentation {
   const outcome = state.outcome;
   const activation = state.spec.activation;
@@ -840,7 +841,7 @@ function deriveAttemptPresentation(
     );
   }
   const outcomeDigest =
-    terminal.kind === 'finalization'
+    terminal.kind === 'finalization' && historyBoundFinalization
       ? attemptHistoryPayloadDigest(outcome)
       : createHash('sha256').update(canonicalJson(outcome)).digest('hex');
   const operationId = `attempt-final:${createHash('sha256')
@@ -5553,6 +5554,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         const expected = deriveAttemptPresentation(
           current,
           finalizationPresentationProvenance(current, event.eventId),
+          this.attemptHistories.has(current.spec.attemptId),
         );
         this.assertAttemptPresentationReplay(expected);
         return 'replay';
@@ -5635,6 +5637,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ? deriveAttemptPresentation(
             reduced.state,
             finalizationPresentationProvenance(reduced.state, event.eventId),
+            finalizationHistory !== undefined,
           )
         : undefined;
     if (presentation !== undefined)
