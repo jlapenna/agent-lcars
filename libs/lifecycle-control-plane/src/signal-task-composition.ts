@@ -12,6 +12,7 @@ import type {
   LifecycleAuthorityStorage,
   TaskAuthorityLease,
   TaskAuthorityScope,
+  TaskEffectRecord,
   TaskEffectTransitionResult,
 } from './authority-storage';
 import {
@@ -60,12 +61,26 @@ export interface SignalTaskCompositionDependencies {
   clock: AuthorityClock;
 }
 
+/** Public effect receipt; storage claim fences/tokens stay private. */
+export type SanitizedTaskEffectRecord = Omit<
+  TaskEffectRecord,
+  'claimedFence' | 'claimToken'
+>;
+
+/** Public task transition receipt with no raw storage capabilities. */
+export type SanitizedTaskEffectTransitionResult = Omit<
+  TaskEffectTransitionResult,
+  'effects'
+> & {
+  effects: SanitizedTaskEffectRecord[];
+};
+
 export interface SignalTaskTransitionMetadata {
   delivery: Pick<
     IngressInboxRecord,
     'tenantId' | 'deliveryId' | 'requestId' | 'factId' | 'repositoryId'
   > & { status: IngressRecordResult['status'] };
-  transition: TaskEffectTransitionResult;
+  transition: SanitizedTaskEffectTransitionResult;
 }
 
 export class SignalTaskCompositionConflict extends Error {
@@ -113,6 +128,25 @@ function sameTenantTask(
     envelope.task.tenantId === envelope.tenant.tenantId &&
     envelope.task.repositoryId === envelope.tenant.repositoryId
   );
+}
+
+function sanitizeTransition(
+  transition: TaskEffectTransitionResult,
+): SanitizedTaskEffectTransitionResult {
+  const sanitizeEffect = (
+    effect: TaskEffectRecord,
+  ): SanitizedTaskEffectRecord => {
+    const {
+      claimedFence: _claimedFence,
+      claimToken: _claimToken,
+      ...safe
+    } = effect;
+    return structuredClone(safe);
+  };
+  return {
+    ...structuredClone(transition),
+    effects: transition.effects.map(sanitizeEffect),
+  };
 }
 
 /**
@@ -210,7 +244,7 @@ export class SignalTaskComposition {
         factId: recorded.record.factId,
         repositoryId: recorded.record.repositoryId,
       },
-      transition,
+      transition: sanitizeTransition(transition),
     };
   }
 }
