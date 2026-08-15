@@ -500,7 +500,7 @@ describe('bounded keyset pagination', () => {
       {
         kind: 'launch-work' as const,
         subject: { kind: 'attempt' as const, attemptId: paginationAttemptId },
-        operationId: 'operation-1',
+        operationId: paginationAttemptId,
       },
     ];
     for (const pointer of pointers) {

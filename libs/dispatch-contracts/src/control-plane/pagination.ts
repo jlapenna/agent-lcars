@@ -696,7 +696,7 @@ const currentLaunchPointerSchema = z.strictObject({
   ...currentPointerCommon,
   kind: z.literal('launch-work'),
   subject: attemptSubjectSchema,
-  operationId: opaqueIdSchema,
+  operationId: attemptIdSchema,
 });
 export const currentPointerSchema = z.discriminatedUnion('kind', [
   currentTaskPointerSchema,
