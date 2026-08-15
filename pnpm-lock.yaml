@@ -261,17 +261,13 @@ importers:
 
   libs/env-vars: {}
 
-  libs/lifecycle-control-plane:
-    dependencies:
-      '@agent-lcars/dispatch-contracts':
-        specifier: workspace:*
-        version: link:../dispatch-contracts
-
   libs/logging:
     dependencies:
       '@agent-lcars/env':
         specifier: workspace:*
         version: link:../env-vars
+
+  libs/orchestrator: {}
 
   libs/telemetry:
     dependencies:

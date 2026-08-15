@@ -22,6 +22,7 @@
     "paths": {
       "@agent-lcars/util": ["libs/util/src/index.ts"],
       "@agent-lcars/util/*": ["libs/util/src/*"],
+      "@agent-lcars/orchestrator": ["libs/orchestrator/src/index.ts"],
       "@agent-lcars/logging": ["libs/logging/src/index.ts"],
       "@agent-lcars/logging/browser": ["libs/logging/src/browser/index.ts"],
       "@agent-lcars/logging/error-reporting": [
@@ -38,9 +39,6 @@
       ],
       "@agent-lcars/dispatch-reconcile": [
         "libs/dispatch-reconcile/src/index.ts"
-      ],
-      "@agent-lcars/lifecycle-control-plane": [
-        "libs/lifecycle-control-plane/src/index.ts"
       ],
       "@agent-lcars/dispatch-controller/*": ["apps/dispatch-broker/src/*"],
       "@agent-lcars/telemetry": ["libs/telemetry/src/index.ts"],

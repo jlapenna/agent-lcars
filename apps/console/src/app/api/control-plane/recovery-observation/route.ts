@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 
-import { controlPlaneRepository } from '@/lib/deployment';
-import { verifyRecoveryObservationOidcToken } from '@/lib/github-actions-oidc';
 import {
   assertHostedRecoveryObservationAuthority,
   type HostedRecoveryObservationRequestBody,
   parseHostedBearerToken,
   parseHostedJsonBody,
   parseHostedRecoveryObservationRequestBody,
-} from '@/lib/hosted-lifecycle/hosted-route-contract';
+} from '@/lib/control-plane-request';
+import { controlPlaneRepository } from '@/lib/deployment';
+import { verifyRecoveryObservationOidcToken } from '@/lib/github-actions-oidc';
 import {
   HostedRecoveryObservationInputError,
   recordHostedRecoveryObservation,
