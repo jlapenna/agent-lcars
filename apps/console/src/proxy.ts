@@ -43,5 +43,9 @@ export default createAuthProxy({
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page
   // that carries the X-e2e-auth-user header.
-  publicPrefixes: ['/api/e2e/', '/api/control-plane/task-state/'],
+  publicPrefixes: [
+    '/api/e2e/',
+    '/api/control-plane/task-state/',
+    '/api/quick-task-evidence/v1/',
+  ],
 });

@@ -1195,6 +1195,7 @@ describe('createQuickTask', () => {
       createTag?: Mock;
       createRef?: Mock;
       deleteRef?: Mock;
+      getRepository?: Mock;
     } = {},
   ) {
     const createIssue =
@@ -1252,12 +1253,17 @@ describe('createQuickTask', () => {
         claimRefs.delete(ref);
         return { data: {} };
       });
+    const getRepository =
+      overrides.getRepository ??
+      vi.fn().mockResolvedValue({
+        data: { default_branch: 'main', id: 123, visibility: 'private' },
+      });
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: { create: createIssue, listForRepo },
         search: { issuesAndPullRequests: searchIssues },
         repos: {
-          get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }),
+          get: getRepository,
         },
         git: { getRef, getTag, createTag, createRef, deleteRef },
       },
@@ -1271,8 +1277,47 @@ describe('createQuickTask', () => {
       createTag,
       createRef,
       deleteRef,
+      getRepository,
     };
   }
+
+  const evidenceLifecycle = (
+    overrides: {
+      prepare?: Mock;
+      rollback?: Mock;
+    } = {},
+  ) => {
+    const prepare =
+      overrides.prepare ??
+      vi.fn().mockResolvedValue({
+        binding: {
+          schemaVersion: 'v1',
+          evidenceId: '22222222-2222-4222-8222-222222222222',
+          requestId: request.requestId,
+          repositoryId: 123,
+          normalizedSha256: 'a'.repeat(64),
+          visibilityAtUpload: 'private',
+          createdAt: '2026-08-14T00:00:00.000Z',
+        },
+        generation: '1',
+      });
+    const rollback = overrides.rollback ?? vi.fn().mockResolvedValue(undefined);
+    return {
+      lifecycle: {
+        intent: {
+          ...request,
+          evidenceId: '22222222-2222-4222-8222-222222222222',
+          source: { route: '/', identities: '', capturedAt: '' },
+        },
+        hook: {
+          prepare,
+          rollbackDefinitiveCreateFailure: rollback,
+        },
+      },
+      prepare,
+      rollback,
+    };
+  };
 
   it('rejects a blank description without calling GitHub', async () => {
     const { createIssue } = mockOctokit({});
@@ -1340,6 +1385,118 @@ describe('createQuickTask', () => {
         labels: ['intake:quick-task', 'agent:opencode'],
       }),
     );
+  });
+
+  it('prepares evidence only after winning the claim and resolving immutable repository metadata', async () => {
+    const { createIssue, getRepository } = mockOctokit();
+    const { lifecycle, prepare } = evidenceLifecycle();
+
+    await createQuickTask(request, lifecycle);
+
+    expect(getRepository).toHaveBeenCalledWith({
+      owner: request.repository.owner,
+      repo: request.repository.name,
+    });
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: 123, visibility: 'private' }),
+    );
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not prepare evidence after losing the claim race', async () => {
+    const { createIssue } = mockOctokit();
+    await createQuickTask(request);
+    const { lifecycle, prepare } = evidenceLifecycle();
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task creation is already claimed',
+    );
+    expect(prepare).not.toHaveBeenCalled();
+    expect(createIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the claim when evidence preparation fails before issue creation', async () => {
+    const prepare = vi
+      .fn()
+      .mockRejectedValue(new Error('decoder rejected image'));
+    const { deleteRef, createIssue } = mockOctokit();
+    const { lifecycle } = evidenceLifecycle({ prepare });
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'decoder rejected image',
+    );
+    expect(deleteRef).toHaveBeenCalledTimes(1);
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the exact prepared evidence and releases the claim after a definitive GitHub rejection', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const { deleteRef } = mockOctokit({ createIssue });
+    const { lifecycle, rollback } = evidenceLifecycle();
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Validation Failed',
+    );
+    expect(rollback).toHaveBeenCalledWith(
+      expect.objectContaining({ generation: '1' }),
+    );
+    expect(deleteRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the claim when definitive-failure evidence rollback is uncertain', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Validation Failed'), { status: 422 }),
+      );
+    const { deleteRef } = mockOctokit({ createIssue });
+    const rollback = vi.fn().mockRejectedValue(new Error('delete timed out'));
+    const { lifecycle } = evidenceLifecycle({ rollback });
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'delete timed out',
+    );
+    expect(deleteRef).not.toHaveBeenCalled();
+  });
+
+  it('retains prepared evidence and its claim after an ambiguous GitHub failure', async () => {
+    const createIssue = vi
+      .fn()
+      .mockRejectedValue(new Error('socket timed out'));
+    const { deleteRef } = mockOctokit({ createIssue });
+    const { lifecycle, rollback } = evidenceLifecycle();
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'socket timed out',
+    );
+    expect(rollback).not.toHaveBeenCalled();
+    expect(deleteRef).not.toHaveBeenCalled();
+  });
+
+  it('rejects a distinct concurrent evidence lifecycle instead of sharing an unvalidated upload', async () => {
+    let resolveCreate: (() => void) | undefined;
+    const createIssue = vi.fn(
+      () =>
+        new Promise<{ data: { number: number } }>((resolve) => {
+          resolveCreate = () => resolve({ data: { number: 99 } });
+        }),
+    );
+    mockOctokit({ createIssue });
+    const first = evidenceLifecycle();
+    const second = evidenceLifecycle();
+
+    const firstCall = createQuickTask(request, first.lifecycle);
+    await expect(createQuickTask(request, second.lifecycle)).rejects.toThrow(
+      'Quick Task evidence is already in flight',
+    );
+    await vi.waitFor(() => expect(resolveCreate).toBeTypeOf('function'));
+    resolveCreate();
+    await firstCall;
+    expect(second.prepare).not.toHaveBeenCalled();
   });
 
   it('returns the original issue when the same request is retried', async () => {

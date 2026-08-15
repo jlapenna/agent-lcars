@@ -46,6 +46,7 @@ export default defineConfig({
       'tools/contract-tests/**/*.test.ts',
       'tools/saved-session/**/*.test.mjs',
       'tools/trajectory-evaluation/**/*.test.mjs',
+      'tools/quick-task-evidence-*.test.mjs',
     ],
     watch: false,
     globals: false,

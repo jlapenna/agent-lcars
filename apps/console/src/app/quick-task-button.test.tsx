@@ -391,7 +391,7 @@ describe('QuickTaskButton', () => {
     });
   });
 
-  it('previews and submits an optional screenshot link plus captured canonical source identity', async () => {
+  it('submits a screenshot file with captured canonical source identity', async () => {
     window.history.replaceState(
       null,
       '',
@@ -413,8 +413,18 @@ describe('QuickTaskButton', () => {
     );
     await openDialog();
     enterDescription('The task page hangs after refresh');
-    fireEvent.change(screen.getByLabelText('Screenshot'), {
-      target: { value: 'https://example.invalid/screenshot' },
+    const screenshot = new File(['pixels'], 'screenshot.png', {
+      type: 'image/png',
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => receipt(),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const input = document.querySelector('input[type="file"]');
+    expect(input).toBeTruthy();
+    fireEvent.change(input!, {
+      target: { files: [screenshot] },
     });
 
     expect(screen.queryByLabelText('Console route')).toBeNull();
@@ -426,19 +436,20 @@ describe('QuickTaskButton', () => {
       'quick-task-preview-body',
     ).textContent;
     expect(previewBody).toContain(
-      '## Screenshot\nhttps://example.invalid/screenshot',
-    );
-    expect(previewBody).toContain(
       '- Console route: `/task/supersprinklesracing/sprinkles/42`',
     );
     expect(previewBody).toContain('- Task: supersprinklesracing/sprinkles#42');
     expect(previewBody).not.toContain('token=secret');
 
     submit();
-    await waitFor(() => expect(createQuickTask).toHaveBeenCalledTimes(1));
-    expect((createQuickTask as Mock).mock.calls[0][0].description).toBe(
-      previewBody,
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, options] = fetchMock.mock.calls[0];
+    const intent = JSON.parse(
+      (options.body as FormData).get('intent') as string,
     );
+    expect(intent.description).toBe('The task page hangs after refresh');
+    expect(intent.evidenceId).toMatch(UUID_PATTERN);
+    expect((options.body as FormData).get('evidence')).toBe(screenshot);
   });
 
   it('keeps low-information guidance advisory', async () => {
