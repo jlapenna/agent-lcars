@@ -24,6 +24,7 @@ import {
   appendAttemptHistoryTransition,
   appendHistoryRecord,
   appendTaskAttemptAdmissionHistoryTransition,
+  attemptHistoryPayloadDigest,
   attemptHistoryRecordReference,
   attemptHistoryTransitionDigest,
   attemptPresentationPlanSchema,
@@ -1121,6 +1122,15 @@ interface StoredAttemptHistory {
   records: Map<AttemptHistoryStream, StoredAttemptHistoryRecord[]>;
 }
 
+interface StoredCancellationReceipt {
+  result: CancellationEffectResult;
+  /** Private exact refs; never exposed through the authority API. */
+  history?: {
+    commandRef: HistoryRecordReference;
+    evidenceRef?: HistoryRecordReference;
+  };
+}
+
 interface StoredPresentationDeliveryRecord extends PresentationDeliveryRecord {
   /** One-way proof for the opaque work capability; never returned or logged. */
   claimTokenSha256?: string;
@@ -1199,7 +1209,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
   private readonly cancellationWork = new Map<string, CancellationWorkRecord>();
   private readonly cancellationReceipts = new Map<
     string,
-    CancellationEffectResult
+    StoredCancellationReceipt
   >();
 
   constructor(
@@ -1529,30 +1539,35 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         head.launch.operationId !== attempt.spec.attemptId ||
         head.executionEpoch !== 1 ||
         head.launch.executionEpoch !== head.executionEpoch ||
-        (head.binding === undefined &&
-          (head.aggregateRevision !== 1 ||
-            head.phase !== 'launch-pending' ||
-            head.launch.state !== 'recorded' ||
-            head.pendingTerminal !== undefined ||
-            head.pendingClaimRefs.length !== 0 ||
-            head.finalization !== undefined ||
-            head.cancellation !== undefined ||
-            head.outcomeRef !== undefined ||
-            head.outcomeDigest !== undefined ||
-            head.futureGrantsDenied)) ||
+        head.launch.state !==
+          (head.binding === undefined ? 'recorded' : 'accepted') ||
+        head.aggregateRevision > attempt.revision ||
+        (head.binding === undefined && attempt.binding !== undefined) ||
         (head.binding !== undefined &&
-          (head.aggregateRevision < 2 ||
-            head.launch.state !== 'accepted' ||
-            head.phase !== 'active' ||
-            head.pendingTerminal !== undefined ||
-            head.pendingClaimRefs.length !== 0 ||
-            head.finalization !== undefined ||
-            head.cancellation !== undefined ||
-            head.outcomeRef !== undefined ||
-            head.outcomeDigest !== undefined ||
-            head.futureGrantsDenied ||
-            attempt.binding === undefined ||
-            !same(head.binding, attempt.binding)))
+          (attempt.binding === undefined ||
+            !same(head.binding, attempt.binding))) ||
+        (head.cancellation !== undefined &&
+          (head.cancellation.supersededByIntentId !==
+            attempt.cancellation?.supersededByIntentId ||
+            attempt.cancellation === undefined ||
+            !attempt.commands.some(
+              (command) => command.eventId === attempt.cancellation?.eventId,
+            ))) ||
+        (head.cancellation !== undefined && !attempt.futureGrantsDenied) ||
+        (head.outcomeRef !== undefined && attempt.outcome === undefined) ||
+        (head.outcomeDigest !== undefined && attempt.outcome === undefined) ||
+        (attempt.outcome !== undefined &&
+          head.outcomeRef !== undefined &&
+          head.outcomeDigest !==
+            attemptHistoryPayloadDigest(attempt.outcome)) ||
+        (head.outcomeRef !== undefined && head.phase !== 'terminal') ||
+        (head.cancellation !== undefined &&
+          attempt.outcome === undefined &&
+          head.phase !== 'cancelling') ||
+        (attempt.outcome === undefined &&
+          attempt.cancellation === undefined &&
+          head.phase !==
+            (head.binding === undefined ? 'launch-pending' : 'active'))
       ) {
         throw new AuthorityConflict(
           'Attempt history head conflicts with legacy Attempt',
@@ -1610,7 +1625,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         }
       }
       const commands = history.records.get('command') ?? [];
-      if (commands.length !== 1) {
+      if (commands.length < 1) {
         throw new AuthorityConflict(
           'Attempt registration history is incomplete',
         );
@@ -1628,6 +1643,76 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         registration?.record.sequence !== 1
       ) {
         throw new AuthorityConflict('Attempt registration history is invalid');
+      }
+      const cancellationCommands = commands.slice(1).map((entry) => {
+        const value = entry.payload as {
+          schema?: string;
+          payload?: {
+            kind?: string;
+            commandId?: string;
+            supersededByIntentId?: string;
+          };
+          canonicalDigest?: string;
+        };
+        if (
+          value.schema !== 'agent-lcars.attempt-command/v1' ||
+          !['request-cancel', 'cancel-unlaunched'].includes(
+            value.payload?.kind ?? '',
+          ) ||
+          value.payload?.commandId === undefined
+        ) {
+          throw new AuthorityConflict(
+            'Attempt history contains an unsupported command',
+          );
+        }
+        const legacy = attempt.commands.find(
+          (candidate) => candidate.eventId === value.payload?.commandId,
+        );
+        if (
+          legacy === undefined ||
+          legacy.canonicalDigest !== value.canonicalDigest
+        ) {
+          throw new AuthorityConflict(
+            'Attempt cancellation command does not match legacy state',
+          );
+        }
+        return { entry, value };
+      });
+      if (
+        attempt.cancellation !== undefined &&
+        head.cancellation !== undefined
+      ) {
+        const cancellation = cancellationCommands.find(
+          ({ value }) =>
+            value.payload?.commandId === attempt.cancellation?.eventId,
+        );
+        if (
+          cancellation === undefined ||
+          cancellation.value.payload?.supersededByIntentId !==
+            attempt.cancellation.supersededByIntentId
+        ) {
+          throw new AuthorityConflict(
+            'Attempt cancellation command history is missing',
+          );
+        }
+        if (
+          !same(
+            head.cancellation.commandRef,
+            attemptHistoryRecordReference(
+              cancellation.entry.record,
+              identity,
+              'command',
+            ),
+          )
+        ) {
+          throw new AuthorityConflict(
+            'Attempt cancellation head pointer is invalid',
+          );
+        }
+      } else if (cancellationCommands.length !== 0) {
+        throw new AuthorityConflict(
+          'Attempt cancellation history exists without legacy cancellation',
+        );
       }
       const bindingRecords = (history.records.get('fact') ?? []).filter(
         ({ payload }) =>
@@ -1655,10 +1740,64 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       if (facts.length !== (head.binding === undefined ? 0 : 1)) {
         throw new AuthorityConflict('Attempt history fact mirror is invalid');
       }
-      for (const stream of ['claim', 'validation', 'evidence'] as const) {
-        if ((history.records.get(stream) ?? []).length !== 0) {
+      const evidenceRecords = history.records.get('evidence') ?? [];
+      if (evidenceRecords.length > 1) {
+        throw new AuthorityConflict('Attempt history evidence is duplicated');
+      }
+      for (const stream of ['claim', 'validation'] as const) {
+        if ((history.records.get(stream) ?? []).length !== 0)
           throw new AuthorityConflict(
             'Attempt history auxiliary mirror is invalid',
+          );
+      }
+      const directCancellation = cancellationCommands.find(
+        ({ value }) => value.payload?.kind === 'cancel-unlaunched',
+      );
+      if (directCancellation === undefined && evidenceRecords.length !== 0)
+        throw new AuthorityConflict(
+          'Attempt history has an outcome without legacy truth',
+        );
+      if (directCancellation !== undefined) {
+        const evidence = evidenceRecords[0];
+        const value = evidence?.payload as
+          | {
+              finalizeCommandRef?: HistoryRecordReference;
+              outcomeDigest?: string;
+              outcome?: unknown;
+            }
+          | undefined;
+        const commandRecord = cancellationCommands.find(
+          ({ value: candidate }) =>
+            candidate.payload?.commandId === attempt.cancellation?.eventId,
+        );
+        if (
+          evidence === undefined ||
+          value?.finalizeCommandRef === undefined ||
+          commandRecord === undefined ||
+          !same(
+            value.finalizeCommandRef,
+            attemptHistoryRecordReference(
+              commandRecord.entry.record,
+              identity,
+              'command',
+            ),
+          ) ||
+          head.outcomeRef === undefined ||
+          !same(
+            head.outcomeRef,
+            attemptHistoryRecordReference(
+              evidence.record,
+              identity,
+              'evidence',
+            ),
+          ) ||
+          head.outcomeDigest !== value.outcomeDigest ||
+          value.outcomeDigest !==
+            attemptHistoryPayloadDigest(attempt.outcome) ||
+          !same(value.outcome, attempt.outcome)
+        ) {
+          throw new AuthorityConflict(
+            'Attempt cancellation evidence is invalid',
           );
         }
       }
@@ -1672,7 +1811,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         };
         if (
           bindingRecord === undefined ||
-          bindingRecord.record.appliedRevision !== head.aggregateRevision ||
+          bindingRecord.record.appliedRevision > head.aggregateRevision ||
           payload.payload?.kind !== 'run-bound' ||
           !same(payload.payload.binding, head.binding) ||
           !attempt.facts.some(
@@ -3256,16 +3395,17 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       'tenantId' | 'task' | 'sourceFactId' | 'effectKey'
     >,
     effect: TaskEffectRecord,
-    receipt: CancellationEffectResult,
+    receipt: StoredCancellationReceipt,
   ): void {
-    if (!same(receipt.effect, effect)) {
+    const result = receipt.result;
+    if (!same(result.effect, effect)) {
       throw new AuthorityConflict('Cancellation effect receipt conflicts');
     }
     if (effect.payload.kind !== 'cancel-or-drain') {
       if (
-        receipt.attempt !== undefined ||
-        receipt.work !== undefined ||
-        receipt.presentation !== undefined
+        result.attempt !== undefined ||
+        result.work !== undefined ||
+        result.presentation !== undefined
       ) {
         throw new AuthorityConflict(
           'No-Attempt cancellation receipt contains Attempt state',
@@ -3279,12 +3419,12 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     if (
       liveAttempt === undefined ||
       liveLaunch === undefined ||
-      receipt.attempt === undefined ||
+      result.attempt === undefined ||
       liveAttempt.spec.tenant.tenantId !== identity.tenantId ||
       !same(liveAttempt.spec.task, identity.task) ||
       liveAttempt.spec.local.intentId !== effect.payload.intentId ||
       liveAttempt.spec.local.generation !== effect.payload.intentRevision ||
-      !same(receipt.attempt.spec, liveAttempt.spec) ||
+      !same(result.attempt.spec, liveAttempt.spec) ||
       liveLaunch.tenantId !== identity.tenantId ||
       liveLaunch.attemptId !== effect.payload.attemptId ||
       liveLaunch.executionEpoch !== liveAttempt.executionEpoch ||
@@ -3296,40 +3436,177 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     }
 
     const eventId = cancellationEventId(identity, effect.payload);
+    const history = this.attemptHistories.get(effect.payload.attemptId);
+    const storedHistoryReceipt = receipt.history;
+    const resultCommand = result.attempt?.commands.find(
+      (candidate) => candidate.eventId === eventId,
+    );
+    if (history !== undefined)
+      this.assertStoredAttemptHistoryIntegrity(history, liveAttempt);
+    if (
+      history !== undefined &&
+      resultCommand !== undefined &&
+      storedHistoryReceipt === undefined
+    ) {
+      throw new AuthorityConflict(
+        'Cancellation receipt is missing history references',
+      );
+    }
+    if (storedHistoryReceipt !== undefined) {
+      if (history === undefined) {
+        throw new AuthorityConflict('Cancellation history receipt is orphaned');
+      }
+      const historyIdentity = {
+        tenantId:
+          effect.payload.attemptId === liveAttempt.spec.attemptId
+            ? liveAttempt.spec.tenant.tenantId
+            : identity.tenantId,
+        attemptId: effect.payload.attemptId,
+      };
+      const commandEntry = history.records
+        .get('command')
+        ?.find(({ record }) =>
+          same(
+            attemptHistoryRecordReference(record, historyIdentity, 'command'),
+            storedHistoryReceipt.commandRef,
+          ),
+        );
+      if (commandEntry === undefined || resultCommand === undefined) {
+        throw new AuthorityConflict(
+          'Cancellation command reference is missing',
+        );
+      }
+      const payload = verifyAttemptHistoryPayload(
+        'command',
+        commandEntry.record,
+        commandEntry.payload,
+        historyIdentity,
+      ).payload as {
+        canonicalDigest: string;
+        payload: {
+          kind: 'request-cancel' | 'cancel-unlaunched';
+          commandId: string;
+          supersededByIntentId?: string;
+          outcome?: AttemptState['outcome'];
+        };
+      };
+      const expectedEvent =
+        payload.payload.kind === 'cancel-unlaunched'
+          ? {
+              kind: 'cancel-unlaunched' as const,
+              eventId,
+              ...(payload.payload.supersededByIntentId === undefined
+                ? {}
+                : {
+                    supersededByIntentId: payload.payload.supersededByIntentId,
+                  }),
+              outcome: payload.payload.outcome as NonNullable<
+                AttemptState['outcome']
+              >,
+            }
+          : {
+              kind: 'request-cancel' as const,
+              eventId,
+              ...(payload.payload.supersededByIntentId === undefined
+                ? {}
+                : {
+                    supersededByIntentId: payload.payload.supersededByIntentId,
+                  }),
+            };
+      if (
+        payload.payload.commandId !== eventId ||
+        payload.canonicalDigest !== attemptTransitionDigest(expectedEvent)
+      ) {
+        throw new AuthorityConflict('Cancellation command reference conflicts');
+      }
+      const evidenceRef = storedHistoryReceipt.evidenceRef;
+      if (
+        payload.payload.kind === 'request-cancel' &&
+        evidenceRef !== undefined
+      ) {
+        throw new AuthorityConflict(
+          'Request cancellation receipt contains outcome reference',
+        );
+      }
+      if (
+        payload.payload.kind === 'cancel-unlaunched' &&
+        evidenceRef === undefined
+      ) {
+        throw new AuthorityConflict(
+          'Cancellation receipt is missing outcome reference',
+        );
+      }
+      if (evidenceRef !== undefined) {
+        const evidenceEntry = history.records
+          .get('evidence')
+          ?.find(({ record }) =>
+            same(
+              attemptHistoryRecordReference(
+                record,
+                historyIdentity,
+                'evidence',
+              ),
+              evidenceRef,
+            ),
+          );
+        const evidence =
+          evidenceEntry === undefined
+            ? undefined
+            : (verifyAttemptHistoryPayload(
+                'evidence',
+                evidenceEntry.record,
+                evidenceEntry.payload,
+                historyIdentity,
+              ).payload as {
+                finalizeCommandRef: HistoryRecordReference;
+                outcomeDigest: string;
+              });
+        if (
+          evidence === undefined ||
+          !same(evidence.finalizeCommandRef, storedHistoryReceipt.commandRef) ||
+          evidence.outcomeDigest !==
+            attemptHistoryPayloadDigest(result.attempt?.outcome)
+        ) {
+          throw new AuthorityConflict(
+            'Cancellation evidence reference conflicts',
+          );
+        }
+      }
+    }
     const receiptIsDirectTerminal =
-      receipt.attempt.phase === 'terminal' &&
-      receipt.attempt.outcome?.execution === 'not_started' &&
-      receipt.attempt.outcome.evidence.kind === 'lifecycle-decision' &&
-      receipt.attempt.outcome.evidence.decisionFactId === eventId;
+      result.attempt.phase === 'terminal' &&
+      result.attempt.outcome?.execution === 'not_started' &&
+      result.attempt.outcome.evidence.kind === 'lifecycle-decision' &&
+      result.attempt.outcome.evidence.decisionFactId === eventId;
     const liveIsDirectTerminal =
       liveAttempt.phase === 'terminal' &&
       liveAttempt.outcome?.execution === 'not_started' &&
       liveAttempt.outcome.evidence.kind === 'lifecycle-decision' &&
       liveAttempt.outcome.evidence.decisionFactId === eventId;
-    if (receipt.presentation === undefined) {
+    if (result.presentation === undefined) {
       if (receiptIsDirectTerminal) {
         throw new AuthorityConflict(
           'Direct cancellation terminal receipt is missing its presentation',
         );
       }
-      if (receipt.attempt.phase === 'terminal') {
-        if (!same(receipt.attempt, liveAttempt)) {
+      if (result.attempt.phase === 'terminal') {
+        if (!same(result.attempt, liveAttempt)) {
           throw new AuthorityConflict(
             'Terminal cancellation no-op receipt conflicts with the live Attempt',
           );
         }
         return;
       }
-      const receiptCommand = receipt.attempt.commands.find(
+      const receiptCommand = result.attempt.commands.find(
         (command) => command.eventId === eventId,
       );
       const liveCommand = liveAttempt.commands.find(
         (command) => command.eventId === eventId,
       );
       if (
-        receipt.attempt.cancellation?.eventId !== eventId ||
+        result.attempt.cancellation?.eventId !== eventId ||
         liveAttempt.cancellation?.eventId !== eventId ||
-        !receipt.attempt.futureGrantsDenied ||
+        !result.attempt.futureGrantsDenied ||
         !liveAttempt.futureGrantsDenied ||
         receiptCommand === undefined ||
         liveCommand === undefined ||
@@ -3344,7 +3621,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     if (
       !receiptIsDirectTerminal ||
       !liveIsDirectTerminal ||
-      !same(receipt.attempt, liveAttempt) ||
+      !same(result.attempt, liveAttempt) ||
       liveLaunch.state !== 'suppressed'
     ) {
       throw new AuthorityConflict(
@@ -3357,7 +3634,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       decision: 'cancel-unlaunched',
     });
     this.assertAttemptPresentationReplay(expected);
-    if (!same(receipt.presentation, expected.record)) {
+    if (!same(result.presentation, expected.record)) {
       throw new AuthorityConflict(
         'Cancellation presentation snapshot conflicts',
       );
@@ -3575,7 +3852,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       effect.claimToken === command.claimToken
     ) {
       this.assertCancellationReceiptIntegrity(command, effect, receipt);
-      return clone(receipt);
+      return clone(receipt.result);
     }
     if (
       effect === undefined ||
@@ -3606,7 +3883,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const next = { ...effect, deliveryState: 'complete' as const };
       this.taskEffects.set(taskEffectKey(command), clone(next));
       const result = { effect: clone(next) };
-      this.cancellationReceipts.set(taskEffectKey(command), clone(result));
+      this.cancellationReceipts.set(taskEffectKey(command), {
+        result: clone(result),
+      });
       return result;
     }
     const target = effect.payload;
@@ -3624,12 +3903,66 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       throw new AuthorityConflict(
         'Cancellation target is not the pinned Attempt',
       );
+    const localKey = tupleKey(
+      attempt.spec.task.tenantId,
+      attempt.spec.task.repositoryId,
+      attempt.spec.task.issueNumber,
+      attempt.spec.local.intentId,
+      attempt.spec.local.generation,
+    );
+    const existingHistory = this.attemptHistories.get(target.attemptId);
+    const admissionHistoryReceipt =
+      this.attemptAdmissionHistoryReceipts.get(localKey);
+    const hasAdmissionLineage =
+      admissionHistoryReceipt !== undefined || existingHistory !== undefined;
+    if (hasAdmissionLineage) {
+      const acceptance = this.acceptances.get(localKey);
+      const taskHistory = this.taskHistories.get(
+        canonicalTaskKey(attempt.spec.task),
+      );
+      if (
+        acceptance === undefined ||
+        admissionHistoryReceipt === undefined ||
+        existingHistory === undefined ||
+        taskHistory === undefined ||
+        acceptance.attemptId !== target.attemptId ||
+        acceptance.specDigest !== attempt.specDigest ||
+        admissionHistoryReceipt.attemptId !== target.attemptId ||
+        admissionHistoryReceipt.tenantId !== attempt.spec.tenant.tenantId ||
+        !same(admissionHistoryReceipt.task, attempt.spec.task) ||
+        admissionHistoryReceipt.specDigest !== attempt.specDigest
+      ) {
+        throw new AuthorityConflict(
+          'Attempt admission history lineage is invalid',
+        );
+      }
+      this.assertStoredTaskHistoryIntegrity(attempt.spec.task, taskHistory);
+      this.assertStoredAttemptHistoryIntegrity(existingHistory, attempt);
+      this.assertStoredAttemptAdmissionHistoryReceipt({
+        receipt: admissionHistoryReceipt,
+        taskHistory,
+        attemptHistory: existingHistory,
+        attempt,
+      });
+    }
+    if (
+      existingHistory !== undefined &&
+      existingHistory.head.cancellation === undefined &&
+      attempt.cancellation !== undefined &&
+      attempt.phase !== 'terminal'
+    ) {
+      throw new AuthorityConflict(
+        'Attempt cancellation history is missing before a new cancellation',
+      );
+    }
     const eventId = cancellationEventId(command, target);
     if (attempt.phase === 'terminal') {
       const next = { ...effect, deliveryState: 'complete' as const };
       this.taskEffects.set(taskEffectKey(command), clone(next));
       const result = { effect: clone(next), attempt: clone(attempt) };
-      this.cancellationReceipts.set(taskEffectKey(command), clone(result));
+      this.cancellationReceipts.set(taskEffectKey(command), {
+        result: clone(result),
+      });
       return result;
     }
     let event: AttemptEvent;
@@ -3708,23 +4041,171 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
               ? {}
               : { supersededByIntentId: target.supersededByIntentId }),
           };
-    this.writeAttemptTransaction({
-      lease: input.lease,
-      expectedRevision: attempt.revision,
-      next: reduced.state,
-    });
-    if (presentation !== undefined)
-      this.persistAttemptPresentation(presentation);
-    if (suppressed)
-      this.launches.set(target.attemptId, { ...launch, state: 'suppressed' });
-    if (work !== undefined)
-      this.cancellationWork.set(
-        tupleKey(command.tenantId, target.attemptId, eventId),
-        clone(work),
-      );
+    let nextHistory: StoredAttemptHistory | undefined;
+    let historyReceipt: StoredCancellationReceipt['history'] | undefined;
+    if (existingHistory !== undefined) {
+      const commandPayload = {
+        schema: 'agent-lcars.attempt-command/v1' as const,
+        version: 1 as const,
+        transitionedAt: command.at,
+        canonicalDigest: attemptTransitionDigest(event),
+        payload:
+          event.kind === 'cancel-unlaunched'
+            ? {
+                kind: 'cancel-unlaunched' as const,
+                commandId: event.eventId,
+                ...(event.supersededByIntentId === undefined
+                  ? {}
+                  : { supersededByIntentId: event.supersededByIntentId }),
+                outcomeDigest: attemptHistoryPayloadDigest(
+                  reduced.state.outcome,
+                ),
+                outcome: reduced.state.outcome as NonNullable<
+                  AttemptState['outcome']
+                >,
+              }
+            : {
+                kind: 'request-cancel' as const,
+                commandId: event.eventId,
+                ...(event.supersededByIntentId === undefined
+                  ? {}
+                  : { supersededByIntentId: event.supersededByIntentId }),
+              },
+      };
+      try {
+        const commandRecord = appendHistoryRecord({
+          head: existingHistory.head.streams.command,
+          payload: commandPayload,
+          appliedRevision: reduced.state.revision,
+        }).record;
+        const emitted: Array<{
+          stream: AttemptHistoryStream;
+          payload: unknown;
+        }> = [{ stream: 'command', payload: commandPayload }];
+        let evidencePayload: unknown;
+        if (event.kind === 'cancel-unlaunched') {
+          evidencePayload = {
+            schema: 'agent-lcars.attempt-evidence/v1' as const,
+            version: 1 as const,
+            finalizeCommandRef: attemptHistoryRecordReference(
+              commandRecord,
+              {
+                tenantId: attempt.spec.tenant.tenantId,
+                attemptId: attempt.spec.attemptId,
+              },
+              'command',
+            ),
+            claimRefs: [],
+            validationRefs: [],
+            outcomeDigest: attemptHistoryPayloadDigest(reduced.state.outcome),
+            outcome: reduced.state.outcome as NonNullable<
+              AttemptState['outcome']
+            >,
+            transitionedAt: command.at,
+          };
+          emitted.push({ stream: 'evidence', payload: evidencePayload });
+        }
+        const transition = appendAttemptHistoryTransition({
+          head: existingHistory.head,
+          nextRevision: reduced.state.revision,
+          transitionedAt: command.at,
+          emitted,
+        });
+        const records = new Map(existingHistory.records);
+        const payloadsByStream = new Map<AttemptHistoryStream, unknown[]>();
+        for (const emission of emitted) {
+          const payloads = payloadsByStream.get(emission.stream) ?? [];
+          payloads.push(emission.payload);
+          payloadsByStream.set(emission.stream, payloads);
+        }
+        for (const entry of transition.records) {
+          const stream = entry.streamKind as AttemptHistoryStream;
+          const payloads = payloadsByStream.get(stream);
+          const payload = payloads?.shift();
+          if (payload === undefined) {
+            throw new AuthorityConflict(
+              'Cancellation history record payload is missing',
+            );
+          }
+          records.set(stream, [
+            ...(existingHistory.records.get(stream) ?? []),
+            { record: clone(entry), payload: clone(payload) },
+          ]);
+        }
+        const commandRef = attemptHistoryRecordReference(
+          transition.records.find(
+            (record) => record.streamKind === 'command',
+          ) as HistoryRecord,
+          {
+            tenantId: attempt.spec.tenant.tenantId,
+            attemptId: attempt.spec.attemptId,
+          },
+          'command',
+        );
+        const evidenceRecord = transition.records.find(
+          (record) => record.streamKind === 'evidence',
+        );
+        historyReceipt = {
+          commandRef,
+          ...(evidenceRecord === undefined
+            ? {}
+            : {
+                evidenceRef: attemptHistoryRecordReference(
+                  evidenceRecord,
+                  {
+                    tenantId: attempt.spec.tenant.tenantId,
+                    attemptId: attempt.spec.attemptId,
+                  },
+                  'evidence',
+                ),
+              }),
+        };
+        nextHistory = {
+          head: clone(transition.head),
+          records,
+        };
+      } catch {
+        throw new AuthorityConflict(
+          'Cancellation history transition is invalid',
+        );
+      }
+    }
+    const effectKey = taskEffectKey(command);
+    const workKey = tupleKey(command.tenantId, target.attemptId, eventId);
+    const presentationKey = presentation?.key;
+    const presentationReceiptKey = presentation?.receiptKey;
+    const deliveryKey = presentation
+      ? presentationDeliveryKey(attemptDeliveryTarget(presentation.record))
+      : undefined;
+    const restore = <T>(
+      map: Map<string, T>,
+      key: string,
+      value: T | undefined,
+    ): void => {
+      if (value === undefined) Map.prototype.delete.call(map, key);
+      else Map.prototype.set.call(map, key, value);
+    };
+    const previousAttempt = this.attempts.get(target.attemptId);
+    const previousLaunch = this.launches.get(target.attemptId);
+    const previousWork = this.cancellationWork.get(workKey);
+    const previousEffect = this.taskEffects.get(effectKey);
+    const previousReceipt = this.cancellationReceipts.get(effectKey);
+    const previousHistory = this.attemptHistories.get(target.attemptId);
+    const previousOutcome = this.outcomes.get(target.attemptId);
+    const previousPresentation =
+      presentationKey === undefined
+        ? undefined
+        : this.attemptPresentations.get(presentationKey);
+    const previousPresentationReceipt =
+      presentationReceiptKey === undefined
+        ? undefined
+        : this.attemptPresentationReceipts.get(presentationReceiptKey);
+    const previousDelivery =
+      deliveryKey === undefined
+        ? undefined
+        : this.presentationDeliveries.get(deliveryKey);
     const completed = { ...effect, deliveryState: 'complete' as const };
-    this.taskEffects.set(taskEffectKey(command), clone(completed));
-    const result = {
+    const result: CancellationEffectResult = {
       effect: clone(completed),
       attempt: clone(reduced.state),
       ...(work === undefined ? {} : { work: clone(work) }),
@@ -3732,8 +4213,51 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         ? {}
         : { presentation: clone(presentation.record) }),
     };
-    this.cancellationReceipts.set(taskEffectKey(command), clone(result));
-    return result;
+    try {
+      this.writeAttemptTransaction({
+        lease: input.lease,
+        expectedRevision: attempt.revision,
+        next: reduced.state,
+      });
+      if (presentation !== undefined)
+        this.persistAttemptPresentation(presentation);
+      if (suppressed)
+        this.launches.set(target.attemptId, { ...launch, state: 'suppressed' });
+      if (work !== undefined) this.cancellationWork.set(workKey, clone(work));
+      this.taskEffects.set(effectKey, clone(completed));
+      this.cancellationReceipts.set(effectKey, {
+        result: clone(result),
+        ...(historyReceipt === undefined
+          ? {}
+          : { history: clone(historyReceipt) }),
+      });
+      if (nextHistory !== undefined)
+        this.attemptHistories.set(target.attemptId, nextHistory);
+      return result;
+    } catch (error) {
+      restore(this.attempts, target.attemptId, previousAttempt);
+      restore(this.launches, target.attemptId, previousLaunch);
+      restore(this.cancellationWork, workKey, previousWork);
+      restore(this.taskEffects, effectKey, previousEffect);
+      restore(this.cancellationReceipts, effectKey, previousReceipt);
+      restore(this.attemptHistories, target.attemptId, previousHistory);
+      restore(this.outcomes, target.attemptId, previousOutcome);
+      if (presentationKey !== undefined)
+        restore(
+          this.attemptPresentations,
+          presentationKey,
+          previousPresentation,
+        );
+      if (presentationReceiptKey !== undefined)
+        restore(
+          this.attemptPresentationReceipts,
+          presentationReceiptKey,
+          previousPresentationReceipt,
+        );
+      if (deliveryKey !== undefined)
+        restore(this.presentationDeliveries, deliveryKey, previousDelivery);
+      throw error;
+    }
   }
 
   async readCancellationReceipt(input: {
@@ -3758,7 +4282,7 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     const receipt = this.cancellationReceipts.get(key);
     if (receipt !== undefined)
       this.assertCancellationReceiptIntegrity(input, effect, receipt);
-    return receipt === undefined ? undefined : clone(receipt);
+    return receipt === undefined ? undefined : clone(receipt.result);
   }
 
   async listCancellationWork(input: {

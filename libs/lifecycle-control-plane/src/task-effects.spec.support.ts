@@ -6,6 +6,8 @@ import type {
 import { runtimeObservationPayloadSha256 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { AttemptHistoryInspection } from './attempt-history-test-support';
+import { readAttemptHistoryForTest } from './attempt-history-test-support';
 import type { AttemptState } from './attempt-reducer';
 import {
   type AuthorityClock,
@@ -582,6 +584,34 @@ export interface CancellationEffectStorageFactory {
     expectedRevision: number;
     next: AttemptState;
   }): Promise<WriteResult>;
+}
+
+/**
+ * Test-only seams required by the provider-neutral cancellation-history
+ * contract.  These are deliberately unbarreled: production adapters expose
+ * no history writer or corruption API.
+ */
+export interface CancellationHistoryStorageHooks {
+  readAttemptHistory: typeof readAttemptHistoryForTest;
+  corruptCancellationReceipt(
+    storage: LifecycleAuthorityStorage,
+    kind: 'command-ref' | 'evidence-ref',
+  ): void;
+  corruptCancellationHistoryRecord(
+    storage: LifecycleAuthorityStorage,
+    kind: 'payload' | 'digest' | 'reference',
+  ): void;
+  corruptCancellationHistoryHead(storage: LifecycleAuthorityStorage): void;
+  corruptCancellationHistoryLaunchState(
+    storage: LifecycleAuthorityStorage,
+  ): void;
+  corruptCancellationAdmission(storage: LifecycleAuthorityStorage): void;
+  deleteCancellationHistoryLineage(storage: LifecycleAuthorityStorage): void;
+  failCancellationHistoryCommit(storage: LifecycleAuthorityStorage): () => void;
+}
+
+export interface CancellationHistoryStorageFactory extends CancellationEffectStorageFactory {
+  historyHooks: CancellationHistoryStorageHooks;
 }
 
 export async function launchedCancellationEffect(
@@ -1231,6 +1261,388 @@ export function runCancellationEffectStorageContract(
           effectKey: value.effect.effectKey,
         }),
       ).rejects.toThrow(AuthorityConflict);
+    });
+  });
+}
+
+async function cancellationHistoryFixture(
+  factory: CancellationHistoryStorageFactory,
+  options: { supersede?: boolean } = {},
+) {
+  const clock = new Clock();
+  const storage = await factory.create(clock);
+  const value = await launchedCancellationEffect(storage, clock, options);
+  const input = {
+    lease: value.lease,
+    tenantId: tenant.tenantId,
+    task,
+    sourceFactId: value.effect.sourceFactId,
+    effectKey: value.effect.effectKey,
+  };
+  const worker = new CancellationTaskEffectCoordinator(storage, clock);
+  return { clock, storage, value, input, worker };
+}
+
+async function cancellationHistory(
+  hooks: CancellationHistoryStorageHooks,
+  storage: LifecycleAuthorityStorage,
+  lease: TaskAuthorityLease,
+  attemptId: string,
+): Promise<AttemptHistoryInspection> {
+  const history = await hooks.readAttemptHistory(storage, {
+    lease,
+    tenantId: tenant.tenantId,
+    attemptId,
+  });
+  if (history === undefined) throw new Error('missing Attempt history');
+  return history;
+}
+
+/** Reusable async backend contract for #1139 cancellation history shadowing. */
+export function runCancellationHistoryStorageContract(
+  factory: CancellationHistoryStorageFactory,
+): void {
+  const hooks = factory.historyHooks;
+
+  describe('cancellation history storage contract', () => {
+    it('appends direct cancellation command/evidence and replays exact receipt', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      const committed = await value.worker.reconcile(value.input);
+      const history = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(history.records.command).toHaveLength(2);
+      expect(history.records.evidence).toHaveLength(1);
+      expect(history.head.aggregateRevision).toBe(committed.attempt?.revision);
+      expect(
+        (history.records.command[1]?.payload as { payload?: { kind?: string } })
+          .payload?.kind,
+      ).toBe('cancel-unlaunched');
+      expect(await value.worker.reconcile(value.input)).toEqual(committed);
+      const replayed = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(replayed.records.command).toHaveLength(2);
+      expect(replayed.records.evidence).toHaveLength(1);
+    });
+
+    it('preserves supersession across command, outcome, and presentation history', async () => {
+      const value = await cancellationHistoryFixture(factory, {
+        supersede: true,
+      });
+      const committed = await value.worker.reconcile(value.input);
+      const history = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      const command = history.records.command[1]?.payload as {
+        payload?: { supersededByIntentId?: string };
+      };
+      expect(command.payload?.supersededByIntentId).toBe(
+        committed.attempt?.cancellation?.supersededByIntentId,
+      );
+      expect(command.payload?.supersededByIntentId).toBeDefined();
+      expect(committed.attempt?.outcome?.terminalState).toBe('superseded');
+      expect(committed.presentation?.plan.presentation.terminalState).toBe(
+        'superseded',
+      );
+      expect(history.records.evidence).toHaveLength(1);
+    });
+
+    it('records request-cancel without terminal evidence and preserves late binding', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      const launch = await value.storage.claimLaunchWork({
+        lease: value.value.lease,
+        tenantId: tenant.tenantId,
+        attemptId: value.value.attemptId,
+      });
+      if (launch.work === undefined) throw new Error('missing launch work');
+      const committed = await value.worker.reconcile(value.input);
+      expect(committed.attempt?.phase).toBe('cancelling');
+      expect(committed.presentation).toBeUndefined();
+      const before = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(before.records.command).toHaveLength(2);
+      expect(before.records.evidence).toHaveLength(0);
+      await value.storage.resolveVerifiedLaunch({
+        lease: value.value.lease,
+        resolution: await new LaunchResponseBoundary(
+          {
+            resolve: async () => ({
+              kind: 'accepted' as const,
+              responseSha256: SHA,
+            }),
+          },
+          value.clock,
+        ).resolve(launch.work),
+      });
+      const accepted = await value.storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.value.attemptId,
+      });
+      if (accepted === undefined) throw new Error('missing accepted Attempt');
+      const bindingPayload = {
+        kind: 'run-bound' as const,
+        binding: {
+          runId: 901,
+          runAttempt: 1,
+          checkRunId: 902,
+          workflowPath: accepted.spec.execution.workflowPath,
+          workflowRef: accepted.spec.execution.workflowRef,
+          workflowSha: accepted.spec.execution.workflowSha,
+        },
+      };
+      const verifier = new RunBindingIngressVerifier({
+        async verifyExactRunBinding() {
+          return undefined;
+        },
+      });
+      await ingestVerifiedRunBinding(
+        value.storage,
+        value.value.lease,
+        await verifier.verify({
+          localAttemptMarker: accepted.spec.local.attemptMarker,
+          envelope: {
+            schema: 'agent-lcars.runtime-observation/v1',
+            version: 1,
+            requestId: 'request-history-binding',
+            factId: 'fact-history-binding',
+            attemptId: accepted.spec.attemptId,
+            tenant: accepted.spec.tenant,
+            task: accepted.spec.task,
+            source: { kind: 'github-provider', sourceId: 'history-provider' },
+            observedAt: T0,
+            payloadSha256:
+              await runtimeObservationPayloadSha256(bindingPayload),
+            payload: bindingPayload,
+          },
+        }),
+      );
+      expect(
+        await value.storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toMatchObject([{ attemptId: value.value.attemptId, state: 'pending' }]);
+      const after = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(after.records.command).toHaveLength(2);
+      expect(after.records.evidence).toHaveLength(0);
+      expect(after.head.aggregateRevision).toBeGreaterThanOrEqual(
+        before.head.aggregateRevision,
+      );
+      expect(await value.worker.reconcile(value.input)).toEqual(committed);
+      const replayHistory = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(replayHistory.records.command.map(({ record }) => record)).toEqual(
+        before.records.command.map(({ record }) => record),
+      );
+    });
+
+    it('records cancellation during finalization without inventing evidence or drain work', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      const attempt = await value.storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.value.attemptId,
+      });
+      if (attempt === undefined) throw new Error('missing admitted attempt');
+      await factory.hydrateAttempt({
+        storage: value.storage,
+        lease: value.value.lease,
+        expectedRevision: attempt.revision,
+        next: {
+          ...attempt,
+          revision: attempt.revision + 1,
+          phase: 'result-observed',
+          finalization: {
+            terminalFactId: 'terminal-finalizing-history',
+            terminalConclusion: 'success',
+            openedAt: T0,
+            closesAt: T1,
+            evidence: [],
+          },
+        },
+      });
+      const result = await value.worker.reconcile(value.input);
+      expect(result.work).toBeUndefined();
+      const history = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(history.records.command).toHaveLength(2);
+      expect(history.records.evidence).toHaveLength(0);
+    });
+
+    it('keeps an already-terminal cancellation as an exact no-op', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      const first = await value.worker.reconcile(value.input);
+      const before = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(await value.worker.reconcile(value.input)).toEqual(first);
+      const after = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      expect(after.records.command).toHaveLength(before.records.command.length);
+      expect(after.records.evidence).toHaveLength(
+        before.records.evidence.length,
+      );
+    });
+
+    it.each([
+      ['receipt command ref', 'receipt', 'command-ref'],
+      ['receipt evidence ref', 'receipt', 'evidence-ref'],
+      ['history payload', 'record', 'payload'],
+      ['history digest', 'record', 'digest'],
+      ['history reference', 'record', 'reference'],
+      ['history head', 'head', undefined],
+      ['history launch state', 'launch-state', undefined],
+    ] as const)(
+      'fails closed when %s is corrupted',
+      async (_label, kind, detail) => {
+        const value = await cancellationHistoryFixture(factory);
+        await value.worker.reconcile(value.input);
+        if (kind === 'receipt') {
+          hooks.corruptCancellationReceipt(value.storage, detail);
+        } else if (kind === 'record') {
+          hooks.corruptCancellationHistoryRecord(value.storage, detail);
+        } else if (kind === 'head') {
+          hooks.corruptCancellationHistoryHead(value.storage);
+        } else {
+          hooks.corruptCancellationHistoryLaunchState(value.storage);
+        }
+        await expect(value.worker.reconcile(value.input)).rejects.toThrow(
+          AuthorityConflict,
+        );
+      },
+    );
+
+    it('fails closed before mutation when admission lineage is corrupted', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      hooks.corruptCancellationAdmission(value.storage);
+      await value.storage.claimTaskEffect(value.input);
+      const before = await value.storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.value.attemptId,
+      });
+      await expect(value.worker.reconcile(value.input)).rejects.toThrow(
+        AuthorityConflict,
+      );
+      expect(
+        await value.storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: value.value.attemptId,
+        }),
+      ).toEqual(before);
+      expect(await value.storage.readTaskEffect(value.input)).toMatchObject({
+        deliveryState: 'working',
+      });
+    });
+
+    it('keeps pre-history Attempts legacy-only', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      hooks.deleteCancellationHistoryLineage(value.storage);
+      const result = await value.worker.reconcile(value.input);
+      expect(result.attempt?.phase).toBe('terminal');
+      await expect(
+        hooks.readAttemptHistory(value.storage, {
+          lease: value.value.lease,
+          tenantId: tenant.tenantId,
+          attemptId: value.value.attemptId,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('rolls back legacy, cancellation, presentation, and history maps on commit failure', async () => {
+      const value = await cancellationHistoryFixture(factory);
+      await value.storage.claimTaskEffect(value.input);
+      const before = await value.storage.readAttempt({
+        tenantId: tenant.tenantId,
+        attemptId: value.value.attemptId,
+      });
+      const beforeEffect = await value.storage.readTaskEffect(value.input);
+      const beforeLaunch = await value.storage.readLaunch({
+        tenantId: tenant.tenantId,
+        attemptId: value.value.attemptId,
+      });
+      const beforeHistory = await cancellationHistory(
+        hooks,
+        value.storage,
+        value.value.lease,
+        value.value.attemptId,
+      );
+      const restore = hooks.failCancellationHistoryCommit(value.storage);
+      await expect(value.worker.reconcile(value.input)).rejects.toThrow();
+      restore();
+      expect(
+        await value.storage.readAttempt({
+          tenantId: tenant.tenantId,
+          attemptId: value.value.attemptId,
+        }),
+      ).toEqual(before);
+      expect(
+        await value.storage.listCancellationWork({ tenantId: tenant.tenantId }),
+      ).toEqual([]);
+      expect(await value.storage.readTaskEffect(value.input)).toEqual(
+        beforeEffect,
+      );
+      expect(
+        await value.storage.readLaunch({
+          tenantId: tenant.tenantId,
+          attemptId: value.value.attemptId,
+        }),
+      ).toEqual(beforeLaunch);
+      expect(
+        await value.storage.listAttemptPresentations({
+          tenantId: tenant.tenantId,
+          attemptId: value.value.attemptId,
+        }),
+      ).toEqual([]);
+      expect(
+        await value.storage.readCancellationReceipt(value.input),
+      ).toBeUndefined();
+      expect(
+        await cancellationHistory(
+          hooks,
+          value.storage,
+          value.value.lease,
+          value.value.attemptId,
+        ),
+      ).toEqual(beforeHistory);
+      await expect(
+        hooks.readAttemptHistory(value.storage, {
+          lease: value.value.lease,
+          tenantId: tenant.tenantId,
+          attemptId: value.value.attemptId,
+        }),
+      ).resolves.toEqual(beforeHistory);
+      const retried = await value.worker.reconcile(value.input);
+      expect(retried.attempt?.phase).toBe('terminal');
     });
   });
 }
