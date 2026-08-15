@@ -177,14 +177,10 @@ describe('inactive task admission-effect composition', () => {
     expect(test.leases).toHaveBeenCalledTimes(2);
     if (first.status !== 'completed')
       throw new Error('admission did not complete');
-    expect(first.admission.attempt?.spec.attemptId).toMatch(
-      /^[A-Za-z0-9_-]{22,64}$/u,
-    );
-    const attempt = first.admission.attempt;
-    if (attempt === undefined) throw new Error('missing Attempt receipt');
+    expect(first.attemptId).toMatch(/^[A-Za-z0-9_-]{22,64}$/u);
     const launch = await test.storage.readLaunch({
       tenantId: tenant.tenantId,
-      attemptId: attempt.spec.attemptId,
+      attemptId: first.attemptId,
     });
     expect(launch?.state).toBe('pending');
     const effects = await test.storage.listTaskEffects({
@@ -220,21 +216,18 @@ describe('inactive task admission-effect composition', () => {
     });
 
     expect(Object.keys(test)).not.toContain('provider');
-    if (
-      result.status !== 'completed' ||
-      result.admission.attempt === undefined
-    ) {
+    if (result.status !== 'completed') {
       throw new Error('admission did not complete');
     }
     const attempt = await test.storage.readAttempt({
       tenantId: tenant.tenantId,
-      attemptId: result.admission.attempt.spec.attemptId,
+      attemptId: result.attemptId,
     });
     expect(attempt?.binding).toBeUndefined();
     expect(
       await test.storage.readLaunch({
         tenantId: tenant.tenantId,
-        attemptId: result.admission.attempt.spec.attemptId,
+        attemptId: result.attemptId,
       }),
     ).toMatchObject({ state: 'pending' });
   });
@@ -357,9 +350,10 @@ describe('inactive task admission-effect composition', () => {
 
     expect(recovered.status).toBe('completed');
     expect(test.plans.resolve).toHaveBeenCalledTimes(2);
-    expect(
-      recovered.status === 'completed' && recovered.admission.attempt,
-    ).toBeDefined();
+    expect(recovered).toMatchObject({
+      status: 'completed',
+      attemptId: expect.stringMatching(/^[A-Za-z0-9_-]{22,64}$/u),
+    });
   });
 
   it('obsoletes a pending admission when activation switches to shadow', async () => {
@@ -440,7 +434,7 @@ describe('inactive task admission-effect composition', () => {
       effectKey: test.effect.effectKey,
     });
 
-    expect(result.effect.payload.kind).toBe('cancel-unlaunched');
+    expect(result).toEqual({ status: 'deferred', deliveryState: 'pending' });
     expect(test.plans.resolve).not.toHaveBeenCalled();
   });
 });
