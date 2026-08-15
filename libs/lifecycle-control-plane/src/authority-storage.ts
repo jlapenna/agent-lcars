@@ -6,19 +6,39 @@ import type {
   ActivationRecord,
   AttemptPresentationPlan,
   CredentialGrantIssuance,
+  HistoryHead,
+  HistoryRecord,
+  HistoryRecordReference,
+  ReplayReceipt,
   RunBinding,
+  TaskFactHistoryPayload,
+  TaskHistoryHead,
+  TaskIntentHistoryPayload,
   TaskPresentationPlan,
 } from '@agent-lcars/dispatch-contracts';
 import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
   acceptedAttemptSpecSchema,
+  appendHistoryRecord,
   attemptPresentationPlanSchema,
+  createGenesisHistoryHead,
+  createGenesisTaskHistoryHead,
+  createReplayReceipt,
   credentialGrantIssuanceSchema,
   formatAttemptId,
   hasValidRuntimeObservationPayloadDigest,
+  historyRecordReference,
   localAttemptMarkerSchema,
   runtimeObservationEnvelopeSchema,
+  taskHistoryHeadSchema,
   taskPresentationPlanSchema,
+  upgradeLegacyTaskIntentState,
+  validateDurableTransition,
+  validateTaskHistoryTransition,
+  verifyHistoryAppend,
+  verifyHistoryRecord,
+  verifyHistoryRecordPayload,
+  verifyReplayReceiptReferences,
 } from '@agent-lcars/dispatch-contracts';
 
 import {
@@ -74,6 +94,10 @@ import {
   type VerifiedTaskEffectObsoletion,
   type VerifiedTaskEffectTransition,
 } from './task-effect-capability';
+import {
+  registerTaskHistoryInspector,
+  type TaskHistoryInspection,
+} from './task-history-test-support';
 import {
   admitTaskAttempt,
   reduceTaskIntent,
@@ -927,6 +951,32 @@ function taskTransitionReceiptKey(input: {
   );
 }
 
+function taskHistoryKey(task: TaskAuthorityScope): string {
+  return canonicalTaskKey(task);
+}
+
+function taskHistoryRecordKey(record: HistoryRecord): string {
+  return tupleKey(
+    record.tenantId,
+    record.aggregateKind,
+    record.aggregateId,
+    record.streamKind,
+    record.sequence,
+  );
+}
+
+function taskHistoryRecordReferenceKey(
+  reference: HistoryRecordReference,
+): string {
+  return tupleKey(
+    reference.tenantId,
+    reference.aggregateKind,
+    reference.aggregateId,
+    reference.streamKind,
+    reference.sequence,
+  );
+}
+
 function mintKeys(
   identity: MintIdentity,
   credentialProfileId: string,
@@ -1006,6 +1056,22 @@ interface StoredPresentationDeliveryReceipt {
   snapshot: PresentationDeliveryRecord;
 }
 
+interface StoredTaskHistoryRecord {
+  record: HistoryRecord;
+  payload: unknown;
+}
+
+interface StoredTaskHistory {
+  head: TaskHistoryHead;
+  factRecords: StoredTaskHistoryRecord[];
+  intentRecords: StoredTaskHistoryRecord[];
+  effectRecords: StoredTaskHistoryRecord[];
+  workRecords: StoredTaskHistoryRecord[];
+  presentationRecords: StoredTaskHistoryRecord[];
+  replayReceipts: Map<string, ReplayReceipt>;
+  auxHeads: Map<'effect' | 'command' | 'presentation', HistoryHead>;
+}
+
 interface StoredPresentationDeliveryRecord extends PresentationDeliveryRecord {
   /** One-way proof for the opaque work capability; never returned or logged. */
   claimTokenSha256?: string;
@@ -1073,6 +1139,8 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     string,
     StoredTaskEffectReceipt
   >();
+  /** Shadow-only history; `tasks` remains the sole reducer authority. */
+  private readonly taskHistories = new Map<string, StoredTaskHistory>();
   private readonly cancellationWork = new Map<string, CancellationWorkRecord>();
   private readonly cancellationReceipts = new Map<
     string,
@@ -1088,6 +1156,9 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     );
     registerAttemptTestHydrator(this, (input) =>
       this.#hydrateAttemptForTest(input),
+    );
+    registerTaskHistoryInspector(this, async (input) =>
+      this.#inspectTaskHistoryForTest(input),
     );
   }
 
@@ -1301,8 +1372,308 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     ) {
       throw new AuthorityConflict('Task test bootstrap CAS failed');
     }
+    const rebuiltHistory = this.taskHistories.has(key)
+      ? this.makeLegacyTaskHistory(input.next)
+      : undefined;
     this.tasks.set(key, clone(input.next));
+    // Test-only structural hydration may seed a Task after history has been
+    // created. Rebuild the inactive mirror from the new legacy authority so a
+    // later real transition never observes a stale head. Production has no
+    // equivalent raw writer.
+    if (rebuiltHistory !== undefined)
+      this.taskHistories.set(key, rebuiltHistory);
     return 'applied';
+  }
+
+  #inspectTaskHistoryForTest(input: {
+    lease: TaskAuthorityLease;
+    tenantId: string;
+    task: TaskAuthorityScope;
+  }): TaskHistoryInspection | undefined {
+    this.assertLease(input.lease, input.task, this.now());
+    if (input.tenantId !== input.task.tenantId) {
+      throw new AuthorityConflict('Task history tenant scope is invalid');
+    }
+    const history = this.taskHistories.get(taskHistoryKey(input.task));
+    if (history === undefined) return undefined;
+    this.assertStoredTaskHistoryIntegrity(input.task, history);
+    return {
+      head: clone(history.head),
+      factRecords: history.factRecords.map(({ record }) => clone(record)),
+      intentRecords: history.intentRecords.map(({ record }) => clone(record)),
+      effectRecords: history.effectRecords.map(({ record }) => clone(record)),
+      workRecords: history.workRecords.map(({ record }) => clone(record)),
+      presentationRecords: history.presentationRecords.map(({ record }) =>
+        clone(record),
+      ),
+      replayReceipts: [...history.replayReceipts.values()].map(clone),
+    };
+  }
+
+  private historyRecordForReference(
+    history: StoredTaskHistory,
+    reference: HistoryRecordReference,
+  ): StoredTaskHistoryRecord | undefined {
+    return [
+      ...history.factRecords,
+      ...history.intentRecords,
+      ...history.effectRecords,
+      ...history.workRecords,
+      ...history.presentationRecords,
+    ].find(
+      ({ record }) =>
+        taskHistoryRecordKey(record) ===
+        taskHistoryRecordReferenceKey(reference),
+    );
+  }
+
+  private assertStoredTaskHistoryIntegrity(
+    task: TaskAuthorityScope,
+    history: StoredTaskHistory,
+  ): void {
+    const legacy = this.tasks.get(canonicalTaskKey(task));
+    if (legacy === undefined) {
+      throw new AuthorityConflict('Task history exists without legacy Task');
+    }
+    let upgraded;
+    try {
+      const { desired: legacyDesired, ...legacyFields } = legacy;
+      const upgradeState = {
+        ...legacyFields,
+        ...(legacyDesired === undefined ? {} : { desired: legacyDesired }),
+        revision: history.head.aggregateRevision,
+        updatedAt: history.head.updatedAt,
+        attempt:
+          history.head.desired === undefined
+            ? { kind: 'none' }
+            : {
+                kind: 'unlaunched',
+                intentId: history.head.desired.intentId,
+              },
+        intents: legacy.intents.map((intent) => {
+          const { schema: _schema, version: _version, ...fields } = intent;
+          return fields;
+        }),
+      };
+      upgraded = upgradeLegacyTaskIntentState({
+        state: JSON.parse(JSON.stringify(upgradeState)),
+      });
+    } catch {
+      throw new AuthorityConflict('Legacy Task cannot be upgraded to history');
+    }
+    if (
+      history.head.aggregateRevision !== legacy.revision ||
+      !same(history.head.task, legacy.task) ||
+      !same(history.head.tenant, legacy.tenant) ||
+      !same(history.head.activation, legacy.activation) ||
+      !same(history.head.desired, legacy.desired) ||
+      !same(history.head.attempt, legacy.attempt) ||
+      history.head.updatedAt !== legacy.updatedAt ||
+      !same(history.head.factHead, upgraded.head.factHead) ||
+      !same(history.head.intentHead, upgraded.head.intentHead)
+    ) {
+      throw new AuthorityConflict(
+        'Task history head conflicts with legacy Task',
+      );
+    }
+    const assertRecord = (entry: StoredTaskHistoryRecord): void => {
+      const valid = verifyHistoryRecord(entry.record);
+      verifyHistoryRecordPayload(valid, entry.payload);
+    };
+    for (const entry of [
+      ...history.factRecords,
+      ...history.intentRecords,
+      ...history.effectRecords,
+      ...history.workRecords,
+      ...history.presentationRecords,
+    ]) {
+      try {
+        assertRecord(entry);
+      } catch {
+        throw new AuthorityConflict('Task history record integrity failed');
+      }
+    }
+    const compareRecords = (
+      actual: readonly StoredTaskHistoryRecord[],
+      expected: readonly HistoryRecord[],
+    ): void => {
+      if (
+        actual.length !== expected.length ||
+        actual.some(({ record }, index) => !same(record, expected[index]))
+      ) {
+        throw new AuthorityConflict(
+          'Task history records conflict with legacy Task',
+        );
+      }
+    };
+    compareRecords(history.factRecords, upgraded.factRecords);
+    compareRecords(history.intentRecords, upgraded.intentRecords);
+    const auxiliaryStreams = ['effect', 'command', 'presentation'] as const;
+    if (
+      history.auxHeads.size !== auxiliaryStreams.length ||
+      [...history.auxHeads.keys()].some(
+        (stream) => !auxiliaryStreams.includes(stream),
+      )
+    ) {
+      throw new AuthorityConflict(
+        'Task auxiliary history heads are incomplete or unexpected',
+      );
+    }
+    for (const stream of auxiliaryStreams) {
+      const head = history.auxHeads.get(stream);
+      if (head === undefined) {
+        throw new AuthorityConflict('Task auxiliary history head is missing');
+      }
+      const records =
+        stream === 'effect'
+          ? history.effectRecords
+          : stream === 'command'
+            ? history.workRecords
+            : history.presentationRecords;
+      let expected = createGenesisHistoryHead({
+        tenantId: history.head.tenant.tenantId,
+        aggregateKind: 'task',
+        aggregateId: history.head.aggregateId,
+        streamKind: stream,
+      });
+      for (const { record } of records) {
+        expected = verifyHistoryAppend({ head: expected, record }).head;
+      }
+      if (!same(expected, head)) {
+        throw new AuthorityConflict('Task auxiliary history head is invalid');
+      }
+    }
+    for (const receipt of history.replayReceipts.values()) {
+      try {
+        verifyReplayReceiptReferences(receipt, (reference) => {
+          const entry = this.historyRecordForReference(history, reference);
+          if (entry === undefined) return undefined;
+          verifyHistoryRecordPayload(entry.record, entry.payload);
+          return entry.record;
+        });
+      } catch {
+        throw new AuthorityConflict(
+          'Task history replay receipt integrity failed',
+        );
+      }
+    }
+  }
+
+  private makeLegacyTaskHistory(task: TaskIntentState): StoredTaskHistory {
+    let upgraded;
+    try {
+      const { desired: taskDesired, ...taskFields } = task;
+      const upgradeState = {
+        ...taskFields,
+        ...(taskDesired === undefined ? {} : { desired: taskDesired }),
+        attempt:
+          taskDesired === undefined
+            ? { kind: 'none' as const }
+            : { kind: 'unlaunched' as const, intentId: taskDesired.intentId },
+        facts: task.facts.map((fact) => ({ ...fact })),
+        intents: task.intents.map((intent) => {
+          const { schema: _schema, version: _version, ...fields } = intent;
+          return fields;
+        }),
+      };
+      upgraded = upgradeLegacyTaskIntentState({
+        state: JSON.parse(JSON.stringify(upgradeState)),
+      });
+    } catch {
+      throw new AuthorityConflict('Legacy Task cannot be upgraded to history');
+    }
+    const factPayloads = task.facts.map((fact) => ({
+      schema: 'agent-lcars.task-fact-history/v1' as const,
+      version: 1 as const,
+      task: task.task,
+      ...fact,
+      situation:
+        fact.resolution.kind === 'cancelled'
+          ? 'cancel'
+          : fact.resolution.kind === 'parked' &&
+              fact.policyDecision.decision === 'accepted'
+            ? 'park'
+            : fact.resolution.kind === 'observed'
+              ? 'reconcile'
+              : 'requested-work',
+    }));
+    const intentPayloads = task.intents.map((intent) => {
+      const { schema: _schema, version: _version, ...intentFields } = intent;
+      return {
+        schema: 'agent-lcars.task-intent-history/v1' as const,
+        version: 1 as const,
+        ...intentFields,
+      };
+    });
+    const auxHeads = new Map<
+      'effect' | 'command' | 'presentation',
+      HistoryHead
+    >();
+    for (const stream of ['effect', 'command', 'presentation'] as const) {
+      auxHeads.set(
+        stream,
+        createGenesisHistoryHead({
+          tenantId: task.tenant.tenantId,
+          aggregateKind: 'task',
+          aggregateId: upgraded.head.aggregateId,
+          streamKind: stream,
+        }),
+      );
+    }
+    return {
+      head: taskHistoryHeadSchema.parse({
+        ...upgraded.head,
+        aggregateRevision: task.revision,
+        attempt: task.attempt,
+        updatedAt: task.updatedAt,
+      }),
+      factRecords: upgraded.factRecords.map((record, index) => ({
+        record: clone(record),
+        payload: clone(factPayloads[index] as TaskFactHistoryPayload),
+      })),
+      intentRecords: upgraded.intentRecords.map((record, index) => ({
+        record: clone(record),
+        payload: clone(intentPayloads[index] as TaskIntentHistoryPayload),
+      })),
+      effectRecords: [],
+      workRecords: [],
+      presentationRecords: [],
+      replayReceipts: new Map(),
+      auxHeads,
+    };
+  }
+
+  private appendAuxiliaryHistoryRecord(
+    history: StoredTaskHistory,
+    stream: 'effect' | 'command' | 'presentation',
+    payload: unknown,
+    appliedRevision: number,
+  ): { record: HistoryRecord; reference: HistoryRecordReference } {
+    const head = history.auxHeads.get(stream);
+    if (head === undefined)
+      throw new AuthorityConflict('Task history stream is absent');
+    let appended;
+    try {
+      appended = appendHistoryRecord({ head, payload, appliedRevision });
+    } catch {
+      throw new AuthorityConflict('Task auxiliary history append failed');
+    }
+    const entry = { record: appended.record, payload: clone(payload) };
+    const target =
+      stream === 'effect'
+        ? history.effectRecords
+        : stream === 'command'
+          ? history.workRecords
+          : history.presentationRecords;
+    if (target.some(({ record }) => same(record, appended.record))) {
+      throw new AuthorityConflict('Task auxiliary history record collision');
+    }
+    target.push(entry);
+    history.auxHeads.set(stream, appended.head);
+    return {
+      record: appended.record,
+      reference: historyRecordReference(appended.record),
+    };
   }
 
   async applyTaskEffectTransition(input: {
@@ -1354,6 +1725,92 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       const obsoletedPlans = prior.obsoletedPlans.map(({ key }) =>
         this.taskPresentations.get(key),
       );
+      const history = this.taskHistories.get(taskHistoryKey(scope));
+      const historyReceipt = history?.replayReceipts.get(receiptKey);
+      if (history === undefined || historyReceipt === undefined) {
+        throw new AuthorityConflict('Task history replay receipt is missing');
+      }
+      this.assertStoredTaskHistoryIntegrity(scope, history);
+      try {
+        if (historyReceipt.canonicalInputDigest !== command.canonicalDigest) {
+          throw new AuthorityConflict('Task history replay input conflicts');
+        }
+        if (historyReceipt.appliedRevision !== prior.task.revision) {
+          throw new AuthorityConflict('Task history replay revision conflicts');
+        }
+        verifyReplayReceiptReferences(historyReceipt, (reference) => {
+          const entry = this.historyRecordForReference(history, reference);
+          if (entry === undefined) return undefined;
+          verifyHistoryRecordPayload(entry.record, entry.payload);
+          return entry.record;
+        });
+        const expectedResponseRefs = [
+          ...history.factRecords.filter(
+            ({ payload }) =>
+              (payload as { factId?: string }).factId ===
+              command.envelope.factId,
+          ),
+          ...history.intentRecords.filter(
+            ({ payload }) =>
+              (payload as { sourceFactId?: string }).sourceFactId ===
+              command.envelope.factId,
+          ),
+        ].map(({ record }) => historyRecordReference(record));
+        if (!same(historyReceipt.responseRecordRefs, expectedResponseRefs)) {
+          throw new AuthorityConflict(
+            'Task history response references conflict',
+          );
+        }
+        const expectedEffectRefs = prior.effects.map((expected) => {
+          const entry = history.effectRecords.find(
+            ({ payload }) =>
+              (payload as TaskEffectRecord).sourceFactId ===
+                command.envelope.factId &&
+              (payload as TaskEffectRecord).effectKey ===
+                this.taskEffects.get(expected.key)?.effectKey &&
+              (payload as TaskEffectRecord).canonicalDigest ===
+                expected.canonicalDigest,
+          );
+          if (entry === undefined)
+            throw new AuthorityConflict(
+              'Task history effect reference is missing',
+            );
+          return historyRecordReference(entry.record);
+        });
+        const expectedPresentationRefs = [
+          ...prior.plans,
+          ...prior.obsoletedPlans,
+        ].map((expected) => {
+          const entry = [...history.presentationRecords]
+            .reverse()
+            .find(
+              ({ payload }) =>
+                (payload as TaskPresentationRecord).plan.operationId ===
+                  expected.snapshot.plan.operationId &&
+                same(payload, expected.snapshot),
+            );
+          if (entry === undefined)
+            throw new AuthorityConflict(
+              'Task history presentation reference is missing',
+            );
+          return historyRecordReference(entry.record);
+        });
+        if (
+          !same(historyReceipt.emittedEffectRefs, expectedEffectRefs) ||
+          !same(
+            historyReceipt.emittedPresentationRefs,
+            expectedPresentationRefs,
+          ) ||
+          (historyReceipt.emittedWorkRefs?.length ?? 0) !== 0
+        ) {
+          throw new AuthorityConflict(
+            'Task history output references conflict',
+          );
+        }
+      } catch (error) {
+        if (error instanceof AuthorityConflict) throw error;
+        throw new AuthorityConflict('Task history replay receipt is corrupt');
+      }
       if (
         effects.some(
           (effect, index) =>
@@ -1469,6 +1926,55 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         'Task effects require the pinned active authority',
       );
     }
+    const existingHistory = this.taskHistories.get(taskHistoryKey(scope));
+    if (current === undefined && existingHistory !== undefined) {
+      throw new AuthorityConflict('Task history exists without legacy Task');
+    }
+    if (existingHistory !== undefined) {
+      this.assertStoredTaskHistoryIntegrity(scope, existingHistory);
+    }
+    const history: StoredTaskHistory =
+      existingHistory === undefined
+        ? current === undefined
+          ? (() => {
+              const head = createGenesisTaskHistoryHead({
+                tenant: reduced.state.tenant,
+                task: reduced.state.task,
+                activation: reduced.state.activation,
+                updatedAt: reduced.state.updatedAt,
+              });
+              const auxHeads = new Map<
+                'effect' | 'command' | 'presentation',
+                HistoryHead
+              >();
+              for (const stream of [
+                'effect',
+                'command',
+                'presentation',
+              ] as const) {
+                auxHeads.set(
+                  stream,
+                  createGenesisHistoryHead({
+                    tenantId: head.tenant.tenantId,
+                    aggregateKind: 'task',
+                    aggregateId: head.aggregateId,
+                    streamKind: stream,
+                  }),
+                );
+              }
+              return {
+                head,
+                factRecords: [],
+                intentRecords: [],
+                effectRecords: [],
+                workRecords: [],
+                presentationRecords: [],
+                replayReceipts: new Map(),
+                auxHeads,
+              };
+            })()
+          : this.makeLegacyTaskHistory(current)
+        : clone(existingHistory);
     const records = reduced.effects.map((effect): TaskEffectRecord => {
       const key = taskEffectKey({
         tenantId: scope.tenantId,
@@ -1581,62 +2087,250 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         });
       }
     }
-    // All checks above occur before the contiguous in-memory transaction body.
-    this.tasks.set(canonicalTaskKey(scope), clone(reduced.state));
+    const fact = reduced.state.facts.find(
+      (candidate) => candidate.factId === command.envelope.factId,
+    );
+    if (fact === undefined) {
+      throw new AuthorityConflict('Task reducer fact is absent');
+    }
+    const situation =
+      command.envelope.signal.kind === 'park'
+        ? 'park'
+        : command.envelope.signal.kind === 'cancel'
+          ? 'cancel'
+          : command.envelope.signal.kind === 'reconcile'
+            ? 'reconcile'
+            : 'requested-work';
+    const factPayload: TaskFactHistoryPayload = {
+      schema: 'agent-lcars.task-fact-history/v1',
+      version: 1,
+      task: clone(reduced.state.task),
+      factId: fact.factId,
+      requestId: fact.requestId,
+      sourceKey: fact.sourceKey,
+      canonicalDigest: fact.canonicalDigest,
+      situation,
+      policyDecision: clone(fact.policyDecision),
+      resolution: clone(fact.resolution),
+      acceptedAt: fact.acceptedAt,
+    };
+    const intentPayloads: TaskIntentHistoryPayload[] = reduced.state.intents
+      .filter((intent) => intent.sourceFactId === fact.factId)
+      .map((intent) => ({
+        schema: 'agent-lcars.task-intent-history/v1' as const,
+        version: 1 as const,
+        task: clone(intent.task),
+        intentId: intent.intentId,
+        revision: intent.revision,
+        status: intent.status,
+        sourceFactId: intent.sourceFactId,
+        policyDecision: clone(intent.policyDecision),
+        activation: clone(intent.activation),
+        createdAt: intent.createdAt,
+        semanticKey: intent.semanticKey,
+        semanticDigest: intent.semanticDigest,
+        orderingKey: clone(intent.orderingKey),
+      }));
+    const effectRefs: HistoryRecordReference[] = [];
+    const workRefs: HistoryRecordReference[] = [];
+    const presentationRefs: HistoryRecordReference[] = [];
+    const newAuxiliaryRecords: HistoryRecord[] = [];
     for (const record of records) {
-      this.taskEffects.set(taskEffectKey(record), clone(record));
-    }
-    for (const obsolete of pendingObsoletions) {
-      this.taskPresentations.set(obsolete.planKey, clone(obsolete.plan));
-      this.presentationDeliveries.set(
-        obsolete.deliveryKey,
-        clone(obsolete.delivery),
+      effectRefs.push(
+        this.appendAuxiliaryHistoryRecord(
+          history,
+          'effect',
+          record,
+          reduced.state.revision,
+        ).reference,
       );
+      const effectRecord = history.effectRecords.at(-1)?.record;
+      if (effectRecord !== undefined) newAuxiliaryRecords.push(effectRecord);
     }
-    for (const plan of plans) {
-      this.taskPresentations.set(
+    for (const plan of [
+      ...plans,
+      ...pendingObsoletions.map(({ plan }) => plan),
+    ]) {
+      presentationRefs.push(
+        this.appendAuxiliaryHistoryRecord(
+          history,
+          'presentation',
+          plan,
+          reduced.state.revision,
+        ).reference,
+      );
+      const presentationRecord = history.presentationRecords.at(-1)?.record;
+      if (presentationRecord !== undefined)
+        newAuxiliaryRecords.push(presentationRecord);
+    }
+    let historyTransition: ReturnType<typeof validateTaskHistoryTransition>;
+    try {
+      historyTransition = validateTaskHistoryTransition({
+        head: history.head,
+        fact: factPayload,
+        intents: intentPayloads,
+        appliedRevision: reduced.state.revision,
+        desired: reduced.state.desired,
+        attempt: reduced.state.attempt,
+        updatedAt: reduced.state.updatedAt,
+        effectRefs,
+        workRefs,
+        presentationRefs,
+      });
+      validateDurableTransition({
+        effects: [...effectRefs, ...presentationRefs],
+        historyRecords: [
+          historyTransition.factRecord,
+          ...historyTransition.intentRecords,
+          ...newAuxiliaryRecords,
+        ],
+        workRecords: workRefs,
+      });
+    } catch {
+      throw new AuthorityConflict('Task history transition is invalid');
+    }
+    history.factRecords.push({
+      record: historyTransition.factRecord,
+      payload: factPayload,
+    });
+    history.intentRecords.push(
+      ...historyTransition.intentRecords.map((record, index) => ({
+        record,
+        payload: intentPayloads[index] as TaskIntentHistoryPayload,
+      })),
+    );
+    history.head = historyTransition.head;
+    let historyReceipt: ReplayReceipt;
+    try {
+      historyReceipt = createReplayReceipt({
+        operationId: `task-transition:${command.envelope.factId}`,
+        replayKey: command.envelope.factId,
+        tenantId: scope.tenantId,
+        aggregateKind: 'task',
+        aggregateId: history.head.aggregateId,
+        canonicalInputDigest: command.canonicalDigest,
+        appliedRevision: reduced.state.revision,
+        responseRecordRefs: [
+          historyTransition.factRecord,
+          ...historyTransition.intentRecords,
+        ].map(historyRecordReference),
+        emittedEffectRefs: effectRefs,
+        emittedWorkRefs: workRefs,
+        emittedPresentationRefs: presentationRefs,
+      });
+    } catch {
+      throw new AuthorityConflict('Task history replay receipt is invalid');
+    }
+    if (history.replayReceipts.has(receiptKey)) {
+      throw new AuthorityConflict('Task history replay receipt collision');
+    }
+    history.replayReceipts.set(receiptKey, historyReceipt);
+    // All checks above occur before the contiguous in-memory transaction body.
+    const obsoletedPlans = pendingObsoletions.map(({ plan }) => plan);
+    const taskKey = canonicalTaskKey(scope);
+    const previousTask = this.tasks.get(taskKey);
+    const previousHistory = this.taskHistories.get(taskKey);
+    const effectKeys = records.map((record) => taskEffectKey(record));
+    const previousEffects = effectKeys.map((key) => this.taskEffects.get(key));
+    const planKeys = [
+      ...pendingObsoletions.map(({ planKey }) => planKey),
+      ...plans.map((plan) =>
         taskPresentationKey({
           tenantId: plan.tenantId,
           task: scope,
           operationId: plan.plan.operationId,
         }),
-        clone(plan),
+      ),
+    ];
+    const previousPlans = planKeys.map((key) =>
+      this.taskPresentations.get(key),
+    );
+    const deliveryKeys = [
+      ...pendingObsoletions.map(({ deliveryKey }) => deliveryKey),
+      ...newPlanDeliveries.map(({ key }) => key),
+    ];
+    const previousDeliveries = deliveryKeys.map((key) =>
+      this.presentationDeliveries.get(key),
+    );
+    try {
+      this.tasks.set(taskKey, clone(reduced.state));
+      for (const record of records) {
+        this.taskEffects.set(taskEffectKey(record), clone(record));
+      }
+      for (const obsolete of pendingObsoletions) {
+        this.taskPresentations.set(obsolete.planKey, clone(obsolete.plan));
+        this.presentationDeliveries.set(
+          obsolete.deliveryKey,
+          clone(obsolete.delivery),
+        );
+      }
+      for (const plan of plans) {
+        this.taskPresentations.set(
+          taskPresentationKey({
+            tenantId: plan.tenantId,
+            task: scope,
+            operationId: plan.plan.operationId,
+          }),
+          clone(plan),
+        );
+      }
+      for (const delivery of newPlanDeliveries) {
+        this.presentationDeliveries.set(delivery.key, clone(delivery.record));
+      }
+      this.taskHistories.set(taskKey, clone(history));
+      this.taskEffectReceipts.set(receiptKey, {
+        canonicalDigest: command.canonicalDigest,
+        task: clone(reduced.state),
+        effects: records.map((record) => ({
+          key: taskEffectKey(record),
+          canonicalDigest: record.canonicalDigest,
+        })),
+        plans: plans.map((plan) => ({
+          key: taskPresentationKey({
+            tenantId: plan.tenantId,
+            task: scope,
+            operationId: plan.plan.operationId,
+          }),
+          canonicalDigest: taskPresentationDigest(plan),
+          snapshot: clone(plan),
+        })),
+        obsoletedPlans: obsoletedPlans.map((plan) => ({
+          key: taskPresentationKey({
+            tenantId: plan.tenantId,
+            task: scope,
+            operationId: plan.plan.operationId,
+          }),
+          canonicalDigest: taskPresentationDigest(plan),
+          obsoleteAtTaskRevision: plan.obsoleteAtTaskRevision as number,
+          obsoleteReason: plan.obsoleteReason as NonNullable<
+            TaskPresentationRecord['obsoleteReason']
+          >,
+          snapshot: clone(plan),
+        })),
+      });
+    } catch (error) {
+      const restore = <T>(
+        map: Map<string, T>,
+        key: string,
+        value: T | undefined,
+      ): void => {
+        if (value === undefined) Map.prototype.delete.call(map, key);
+        else Map.prototype.set.call(map, key, value);
+      };
+      restore(this.tasks, taskKey, previousTask);
+      effectKeys.forEach((key, index) =>
+        restore(this.taskEffects, key, previousEffects[index]),
       );
+      planKeys.forEach((key, index) =>
+        restore(this.taskPresentations, key, previousPlans[index]),
+      );
+      deliveryKeys.forEach((key, index) =>
+        restore(this.presentationDeliveries, key, previousDeliveries[index]),
+      );
+      restore(this.taskHistories, taskKey, previousHistory);
+      this.taskEffectReceipts.delete(receiptKey);
+      throw error;
     }
-    for (const delivery of newPlanDeliveries) {
-      this.presentationDeliveries.set(delivery.key, clone(delivery.record));
-    }
-    const obsoletedPlans = pendingObsoletions.map(({ plan }) => plan);
-    this.taskEffectReceipts.set(receiptKey, {
-      canonicalDigest: command.canonicalDigest,
-      task: clone(reduced.state),
-      effects: records.map((record) => ({
-        key: taskEffectKey(record),
-        canonicalDigest: record.canonicalDigest,
-      })),
-      plans: plans.map((plan) => ({
-        key: taskPresentationKey({
-          tenantId: plan.tenantId,
-          task: scope,
-          operationId: plan.plan.operationId,
-        }),
-        canonicalDigest: taskPresentationDigest(plan),
-        snapshot: clone(plan),
-      })),
-      obsoletedPlans: obsoletedPlans.map((plan) => ({
-        key: taskPresentationKey({
-          tenantId: plan.tenantId,
-          task: scope,
-          operationId: plan.plan.operationId,
-        }),
-        canonicalDigest: taskPresentationDigest(plan),
-        obsoleteAtTaskRevision: plan.obsoleteAtTaskRevision as number,
-        obsoleteReason: plan.obsoleteReason as NonNullable<
-          TaskPresentationRecord['obsoleteReason']
-        >,
-        snapshot: clone(plan),
-      })),
-    });
     return {
       status: 'applied',
       task: clone(reduced.state),
@@ -2775,6 +3469,29 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
           'Local acceptance tuple was reused differently',
         );
       }
+      const history = this.taskHistories.get(canonicalTaskKey(admission.task));
+      if (history === undefined) {
+        throw new AuthorityConflict(
+          'Task history admission receipt is missing',
+        );
+      }
+      this.assertStoredTaskHistoryIntegrity(admission.task, history);
+      const acceptedAttempt = accepted.task.attempt;
+      const headAttempt = history.head.attempt;
+      if (
+        history.head.aggregateRevision < accepted.task.revision ||
+        (history.head.aggregateRevision === accepted.task.revision &&
+          (acceptedAttempt.kind !== 'launched' ||
+            headAttempt.kind !== 'launched' ||
+            headAttempt.attemptId !== acceptedAttempt.attemptId ||
+            headAttempt.intentId !== acceptedAttempt.intentId ||
+            headAttempt.intentRevision !== acceptedAttempt.intentRevision ||
+            headAttempt.admissionRevision !==
+              acceptedAttempt.admissionRevision ||
+            headAttempt.admittedAt !== acceptedAttempt.admittedAt))
+      ) {
+        throw new AuthorityConflict('Task history admission attempt conflicts');
+      }
       return {
         replay: true,
         task: clone(accepted.task),
@@ -2889,16 +3606,58 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       executionEpoch: 1,
       state: 'pending',
     };
+    const taskKey = canonicalTaskKey(admission.task);
+    const existingHistory = this.taskHistories.get(taskKey);
+    if (existingHistory !== undefined) {
+      this.assertStoredTaskHistoryIntegrity(admission.task, existingHistory);
+    }
+    const admissionHistory =
+      existingHistory === undefined
+        ? this.makeLegacyTaskHistory(current)
+        : clone(existingHistory);
+    try {
+      admissionHistory.head = taskHistoryHeadSchema.parse({
+        ...admissionHistory.head,
+        aggregateRevision: task.state.revision,
+        attempt: task.state.attempt,
+        updatedAt: task.state.updatedAt,
+      });
+    } catch {
+      throw new AuthorityConflict('Task history admission head is invalid');
+    }
     // All validation completed above; this contiguous body is the transaction.
-    this.tasks.set(canonicalTaskKey(admission.task), clone(task.state));
-    this.attempts.set(attemptId, clone(attempt.state));
-    this.acceptances.set(localKey, {
-      attemptId,
-      specDigest,
-      admissionDigest: commandDigest,
-      task: clone(task.state),
-    });
-    this.launches.set(attemptId, clone(launch));
+    const previousTask = this.tasks.get(taskKey);
+    const previousAttempt = this.attempts.get(attemptId);
+    const previousAcceptance = this.acceptances.get(localKey);
+    const previousLaunch = this.launches.get(attemptId);
+    const previousHistory = this.taskHistories.get(taskKey);
+    const restore = <T>(
+      map: Map<string, T>,
+      key: string,
+      value: T | undefined,
+    ): void => {
+      if (value === undefined) Map.prototype.delete.call(map, key);
+      else Map.prototype.set.call(map, key, value);
+    };
+    try {
+      this.tasks.set(taskKey, clone(task.state));
+      this.attempts.set(attemptId, clone(attempt.state));
+      this.acceptances.set(localKey, {
+        attemptId,
+        specDigest,
+        admissionDigest: commandDigest,
+        task: clone(task.state),
+      });
+      this.launches.set(attemptId, clone(launch));
+      this.taskHistories.set(taskKey, clone(admissionHistory));
+    } catch (error) {
+      restore(this.tasks, taskKey, previousTask);
+      restore(this.attempts, attemptId, previousAttempt);
+      restore(this.acceptances, localKey, previousAcceptance);
+      restore(this.launches, attemptId, previousLaunch);
+      restore(this.taskHistories, taskKey, previousHistory);
+      throw error;
+    }
     return {
       replay: false,
       task: clone(task.state),
