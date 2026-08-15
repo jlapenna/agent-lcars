@@ -5162,7 +5162,6 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
       envelope.attemptId,
     );
     const hasAdmissionLineage =
-      acceptance !== undefined ||
       admissionHistoryReceipt !== undefined ||
       existingAttemptHistory !== undefined;
     const envelopeBinding = envelope.payload.binding;

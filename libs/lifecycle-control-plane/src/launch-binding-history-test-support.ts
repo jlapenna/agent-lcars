@@ -12,6 +12,9 @@ export interface BindingHistoryStorageHooks {
   readAttemptHistory: typeof readAttemptHistoryForTest;
   deleteAttemptHistory(storage: LifecycleAuthorityStorage): void;
   deleteAdmissionLineage(storage: LifecycleAuthorityStorage): void;
+  deleteAdmissionHistoryArtifactsRetainAcceptance(
+    storage: LifecycleAuthorityStorage,
+  ): void;
   corruptAttemptHistoryHead(storage: LifecycleAuthorityStorage): void;
   corruptAttemptHistoryRecord(
     storage: LifecycleAuthorityStorage,
@@ -53,6 +56,14 @@ export const inMemoryBindingHistoryHooks = (): BindingHistoryStorageHooks => ({
     value.attemptHistories.clear();
     value.taskHistories.clear();
     value.acceptances.clear();
+    value.attemptAdmissionHistoryReceipts.clear();
+  },
+  deleteAdmissionHistoryArtifactsRetainAcceptance: (storage) => {
+    const value = storage as unknown as {
+      attemptHistories: Map<string, unknown>;
+      attemptAdmissionHistoryReceipts: Map<string, unknown>;
+    };
+    value.attemptHistories.clear();
     value.attemptAdmissionHistoryReceipts.clear();
   },
   corruptAttemptHistoryHead: (storage) => {

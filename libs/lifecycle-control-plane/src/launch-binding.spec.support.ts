@@ -438,6 +438,21 @@ export function runVerifiedRunBindingStorageContract(
       ).resolves.toBeUndefined();
     });
 
+    it('treats an acceptance without new history artifacts as legacy binding', async () => {
+      const { storage, lease, spec } = await admittedInto(await makeStorage());
+      hooks.deleteAdmissionHistoryArtifactsRetainAcceptance(storage);
+      const verified = await verifier.verify({
+        envelope: await envelope(spec),
+        localAttemptMarker: spec.local.attemptMarker,
+      });
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('applied');
+      await expect(
+        ingestVerifiedRunBinding(storage, lease, verified),
+      ).resolves.toBe('replay');
+    });
+
     it('rolls back all binding state when the history commit fails', async () => {
       const { storage, lease, spec } = await admittedInto(await makeStorage());
       await hooks.prepareAwaitingBindingCancellation(storage, lease, spec);
