@@ -19,7 +19,11 @@ import type {
 import { runIngressPolicyInboxContract } from './ingress-policy.spec.support';
 import { runVerifiedRunBindingStorageContract } from './launch-binding.spec.support';
 import type { BindingHistoryStorageHooks } from './launch-binding-history-test-support';
-import { runLaunchResolutionStorageContract } from './launch-resolution.spec.support';
+import type { LaunchResolutionHistoryStorageHooks } from './launch-resolution.spec.support';
+import {
+  runLaunchResolutionHistoryStorageContract,
+  runLaunchResolutionStorageContract,
+} from './launch-resolution.spec.support';
 import type { PresentationDeliveryStorageHooks } from './presentation-delivery.spec.support';
 import { runPresentationDeliveryStorageContract } from './presentation-delivery.spec.support';
 import {
@@ -54,6 +58,7 @@ export interface LifecycleAuthorityBackendFactory {
   ): IngressPolicyInbox | Promise<IngressPolicyInbox>;
   admissionHistory: AttemptAdmissionHistoryStorageHooks;
   bindingHistory: BindingHistoryStorageHooks;
+  launchResolutionHistory: LaunchResolutionHistoryStorageHooks;
   cancellationHistory: CancellationHistoryStorageHooks;
 }
 /**
@@ -90,6 +95,10 @@ export function runLifecycleAuthorityBackendContract(
     factory.admissionHistory,
   );
   runLaunchResolutionStorageContract({ create });
+  runLaunchResolutionHistoryStorageContract({
+    create,
+    historyHooks: factory.launchResolutionHistory,
+  });
   runVerifiedRunBindingStorageContract(
     () => create({ now: () => '2026-08-01T00:00:00.000Z' }),
     factory.bindingHistory,

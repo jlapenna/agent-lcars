@@ -8,6 +8,7 @@ import {
 import { inMemoryCancellationHistoryStorageHooks } from './cancellation-history.in-memory.spec.support';
 import { InMemoryIngressPolicyInbox } from './ingress-policy';
 import { inMemoryBindingHistoryHooks } from './launch-binding-history-test-support';
+import { inMemoryLaunchResolutionHistoryStorageHooks } from './launch-resolution-history.in-memory.spec.support';
 import { writeAttemptForTest } from './launch-resolution-test-support';
 import { inMemoryPresentationDeliveryStorageHooks } from './presentation-delivery.in-memory.spec.support';
 import { runLifecycleAuthorityBackendContract } from './storage-backend-contract.spec.support';
@@ -134,5 +135,6 @@ runLifecycleAuthorityBackendContract({
     new InMemoryIngressPolicyInbox(clock, evidenceResolver),
   admissionHistory,
   bindingHistory: inMemoryBindingHistoryHooks(),
+  launchResolutionHistory: inMemoryLaunchResolutionHistoryStorageHooks(),
   cancellationHistory: inMemoryCancellationHistoryStorageHooks(),
 });
