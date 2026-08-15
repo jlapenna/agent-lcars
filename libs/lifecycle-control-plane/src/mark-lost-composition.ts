@@ -27,8 +27,13 @@ export interface MarkLostCompositionDependencies {
  * No provider client, route, or scheduler is activated here. A future trusted
  * server caller supplies the current head, its fact history, and candidate
  * run-stuck evidence; the boundaries mint the only capabilities the storage
- * transaction accepts, and storage still re-checks all of it against its own
- * durable state.
+ * transaction accepts.
+ *
+ * Storage re-derives the receipt's *authority* half from its own durable
+ * state: task, binding, epochs, revision, phase, launch state, the stored
+ * head, and the exact run-bound baseline fact. Its *evidence* half is only as
+ * trustworthy as the `RunStuckVerifier` adapter until each observation is a
+ * durable record the transaction can resolve against.
  */
 export class MarkLostComposition {
   private readonly observations: RunStuckObservationBoundary;

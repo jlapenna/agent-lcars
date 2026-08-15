@@ -16,6 +16,7 @@ import type {
   TaskAuthorityLease,
   WriteResult,
 } from './authority-storage';
+import { RunStuckObservationBoundary } from './mark-lost-eligibility';
 import { activeFixture } from './terminal-finalizer.spec.support';
 
 const GRACE_MS = 4 * 60 * 60 * 1_000;
@@ -123,6 +124,26 @@ function domainDigest(domain: string, value: unknown): string {
 }
 
 /**
+ * Compute payloadDigest/canonicalDigest for an unsigned observation body
+ * exactly as the observation boundary itself does, then attach them. Shared
+ * by `runStuckCandidate` and `divergeRunStuckCandidate` so a mutation helper
+ * never duplicates the digest recipe.
+ */
+export function signRunStuckObservation(
+  unsigned: Record<string, unknown>,
+): Record<string, unknown> {
+  const payloadDigest = domainDigest(OBSERVATION_PAYLOAD_DOMAIN, unsigned);
+  return {
+    ...unsigned,
+    payloadDigest,
+    canonicalDigest: domainDigest(OBSERVATION_DOMAIN, {
+      ...unsigned,
+      payloadDigest,
+    }),
+  };
+}
+
+/**
  * Build one candidate run-stuck observation exactly as a trusted adapter would
  * return it. The digests are the module's own domain digests, so the
  * observation boundary accepts it without any privileged access.
@@ -141,8 +162,8 @@ export function runStuckCandidate(input: {
   const unsigned = {
     schema: 'agent-lcars.run-stuck-observation/v1' as const,
     version: 1 as const,
-    factId: `stuck-fact-${input.number}`,
-    requestId: `stuck-request-${input.number}`,
+    factId: `stuck-fact-${input.number}${input.proofSalt ?? ''}`,
+    requestId: `stuck-request-${input.number}${input.proofSalt ?? ''}`,
     source: {
       kind: 'control-plane-reconciler' as const,
       sourceId: 'reconciler-1',
@@ -152,15 +173,25 @@ export function runStuckCandidate(input: {
     observedAt: input.observedAt,
     proofDigest: sha256Digest(`proof-${input.number}-${input.proofSalt ?? ''}`),
   };
-  const payloadDigest = domainDigest(OBSERVATION_PAYLOAD_DOMAIN, unsigned);
-  return {
-    ...unsigned,
-    payloadDigest,
-    canonicalDigest: domainDigest(OBSERVATION_DOMAIN, {
-      ...unsigned,
-      payloadDigest,
-    }),
-  };
+  return signRunStuckObservation(unsigned);
+}
+
+/**
+ * Diverge one field of an already-recorded candidate while keeping it
+ * internally digest-consistent, so `RunStuckObservationBoundary` still
+ * accepts it. The resulting mismatch against the ledger entry banked under
+ * the original candidate is then visible only to the storage cross-check.
+ */
+export function divergeRunStuckCandidate(
+  candidate: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const {
+    payloadDigest: _payloadDigest,
+    canonicalDigest: _canonicalDigest,
+    ...unsigned
+  } = candidate;
+  return signRunStuckObservation({ ...unsigned, ...patch });
 }
 
 /**
@@ -168,6 +199,24 @@ export function runStuckCandidate(input: {
  * durable history. Nothing here is privileged: the same reads a hosted
  * reconciler would perform produce the same evidence.
  */
+export async function recordRunStuckCandidates(input: {
+  storage: LifecycleAuthorityStorage;
+  lease: TaskAuthorityLease;
+  spec: AcceptedAttemptSpec;
+  candidates: readonly unknown[];
+}): Promise<void> {
+  for (const candidate of input.candidates) {
+    await input.storage.recordRunStuckObservation({
+      lease: input.lease,
+      tenantId: input.spec.tenant.tenantId,
+      attemptId: input.spec.attemptId,
+      observation: new RunStuckObservationBoundary({
+        verifyRunStuck: () => candidate,
+      }).verify({ candidate }),
+    });
+  }
+}
+
 export async function markLostRequest(input: {
   storage: LifecycleAuthorityStorage;
   lease: TaskAuthorityLease;
@@ -175,6 +224,18 @@ export async function markLostRequest(input: {
   receiptId?: string;
   idempotencyKey?: string;
   proofSalt?: string;
+  /** Skip banking the evidence, to exercise the unrecorded-evidence path. */
+  record?: boolean;
+  /**
+   * Applied after the candidates are recorded under the lease but before
+   * they are returned in the request, so a test can bank one evidence set
+   * and build a receipt from a divergent one. Mutated candidates must stay
+   * digest-consistent themselves (see `divergeRunStuckCandidate`) or
+   * `RunStuckObservationBoundary` rejects them before storage is reached.
+   */
+  mutateCandidates?: (
+    candidates: Record<string, unknown>[],
+  ) => Record<string, unknown>[];
 }): Promise<MarkLostTerminationRequest> {
   const identity = {
     tenantId: input.spec.tenant.tenantId,
@@ -203,6 +264,22 @@ export async function markLostRequest(input: {
   const baselineAt = Date.parse(payload.observedAt);
   const observedAt = (index: number): string =>
     new Date(baselineAt + GRACE_MS + index * INTERVAL_MS).toISOString();
+  const candidates = [0, 1, 2].map((index) =>
+    runStuckCandidate({
+      number: index + 1,
+      observedAt: observedAt(index),
+      binding: payload.payload.binding,
+      proofSalt: input.proofSalt,
+    }),
+  );
+  if (input.record !== false) {
+    await recordRunStuckCandidates({
+      storage: input.storage,
+      lease: input.lease,
+      spec: input.spec,
+      candidates,
+    });
+  }
   return {
     receiptId: input.receiptId ?? 'mark-lost-receipt-1',
     idempotencyKey: input.idempotencyKey ?? 'mark-lost-key-1',
@@ -218,14 +295,9 @@ export async function markLostRequest(input: {
     factHistory: [
       { reference, record: baseline.record, payload: baseline.payload },
     ],
-    candidates: [0, 1, 2].map((index) =>
-      runStuckCandidate({
-        number: index + 1,
-        observedAt: observedAt(index),
-        binding: payload.payload.binding,
-        proofSalt: input.proofSalt,
-      }),
-    ),
+    candidates: input.mutateCandidates
+      ? input.mutateCandidates(candidates)
+      : candidates,
   };
 }
 
@@ -302,23 +374,153 @@ export function runMarkLostHistoryStorageContract(
 
     it('rejects reusing one receipt identity for different evidence', async () => {
       const { storage, lease, spec, request } = await prepare();
+      // Both evidence sets are banked while the Attempt is still eligible, so
+      // the conflict proves receipt identity is checked, not recordability.
+      const changed = await markLostRequest({
+        storage,
+        lease,
+        spec,
+        proofSalt: '-alternate',
+      });
       await factory.terminate({ storage, lease, now: NOW, request });
       const before = factory.historyHooks.inspectMarkLost(
         storage,
         spec.attemptId,
       );
-      const changed = await markLostRequest({
-        storage,
-        lease,
-        spec,
-        proofSalt: 'different',
-      });
       await expect(
         factory.terminate({ storage, lease, now: NOW, request: changed }),
       ).rejects.toThrow();
       expect(
         factory.historyHooks.inspectMarkLost(storage, spec.attemptId),
       ).toEqual(before);
+    });
+
+    it('refuses evidence that was never recorded under the lease', async () => {
+      const storage = await factory.create({ now: () => NOW });
+      const { lease, spec } = await activeFixture(storage);
+      const request = await markLostRequest({
+        storage,
+        lease,
+        spec,
+        record: false,
+      });
+      await expect(
+        factory.terminate({ storage, lease, now: NOW, request }),
+      ).rejects.toThrow();
+      const inspection = factory.historyHooks.inspectMarkLost(
+        storage,
+        spec.attemptId,
+      );
+      expect(inspection.attempt?.phase).toBe('active');
+      expect(inspection.markLostReceipt).toBeUndefined();
+      expect(inspection.presentation).toBeUndefined();
+    });
+
+    // Per-axis coverage of the ledger cross-check in
+    // `assertMarkLostObservations`. Two axes it also matches on --
+    // `observedAt` and `binding` -- are intentionally absent here:
+    // `validateMarkLostEligibility` pins every observation's `observedAt` to
+    // one exact instant per index (baseline+4h, +4h30m, +5h, with zero legal
+    // slack) and requires every observation's `binding` to already equal the
+    // baseline binding, so any divergent value on either axis is rejected by
+    // eligibility before a request naming it ever reaches storage -- there is
+    // no way to construct a case that would isolate the storage check.
+    // Confirmed empirically: with `assertMarkLostObservations` temporarily
+    // disabled, cases for those two axes still rejected (proving an earlier
+    // gate catches them), while the axes below started being accepted
+    // (proving they exercise only the storage check).
+    it.each<{
+      axis: string;
+      mutate: (
+        candidates: Record<string, unknown>[],
+      ) => Record<string, unknown>[];
+    }>([
+      {
+        axis: 'proofDigest',
+        mutate: ([first, ...rest]) => [
+          divergeRunStuckCandidate(first, {
+            proofDigest: sha256Digest('divergent-proof'),
+          }),
+          ...rest,
+        ],
+      },
+      {
+        axis: 'source.sourceId',
+        mutate: ([first, ...rest]) => [
+          divergeRunStuckCandidate(first, {
+            source: {
+              ...(first.source as Record<string, unknown>),
+              sourceId: 'reconciler-2',
+            },
+          }),
+          ...rest,
+        ],
+      },
+      {
+        axis: 'requestId',
+        mutate: ([first, ...rest]) => [
+          divergeRunStuckCandidate(first, {
+            requestId: `${first.requestId as string}-divergent`,
+          }),
+          ...rest,
+        ],
+      },
+    ])(
+      'refuses a receipt whose $axis diverges from the recorded ledger entry',
+      async ({ mutate }) => {
+        const storage = await factory.create({ now: () => NOW });
+        const { lease, spec } = await activeFixture(storage);
+        const request = await markLostRequest({
+          storage,
+          lease,
+          spec,
+          mutateCandidates: mutate,
+        });
+        await expect(
+          factory.terminate({ storage, lease, now: NOW, request }),
+        ).rejects.toThrow();
+        const inspection = factory.historyHooks.inspectMarkLost(
+          storage,
+          spec.attemptId,
+        );
+        expect(inspection.attempt?.phase).toBe('active');
+        expect(inspection.markLostReceipt).toBeUndefined();
+        expect(inspection.presentation).toBeUndefined();
+      },
+    );
+
+    // A receipt naming only two of the three recorded observations is not
+    // covered here: `validateMarkLostEligibility`'s `exactObservations` guard
+    // requires the observations array to have exactly three dense own
+    // properties before the storage cross-check is ever reached, so a
+    // two-entry receipt is rejected by eligibility, not by the ledger check.
+
+    it('accepts a receipt naming three of four genuinely recorded observations', async () => {
+      const storage = await factory.create({ now: () => NOW });
+      const { lease, spec } = await activeFixture(storage);
+      const request = await markLostRequest({ storage, lease, spec });
+      const binding = (request.candidates[0] as { binding: RunBinding })
+        .binding;
+      // A fourth observation is banked under the same lease but never named
+      // in the receipt. Extra genuine ledger entries are legitimate, so this
+      // must still succeed -- it proves the cross-check is not secretly "the
+      // ledger must contain exactly these three observations."
+      await recordRunStuckCandidates({
+        storage,
+        lease,
+        spec,
+        candidates: [
+          runStuckCandidate({ number: 4, observedAt: NOW, binding }),
+        ],
+      });
+      await expect(
+        factory.terminate({ storage, lease, now: NOW, request }),
+      ).resolves.toBe('applied');
+      const inspection = factory.historyHooks.inspectMarkLost(
+        storage,
+        spec.attemptId,
+      );
+      expect(inspection.markLostReceipt).toBeDefined();
     });
 
     it('refuses an Attempt with no bounded history instead of fabricating a lineage', async () => {
