@@ -79,7 +79,9 @@ const characterizationFixtures = {
     task: taskFixture,
     attempt: attemptFixture,
     attemptId: 'A'.repeat(22),
-    activation,
+    // Durable JSON has value semantics; avoid giving the characterization
+    // fixture an in-memory alias between this snapshot and task.activation.
+    activation: { ...activation },
   },
   cancellation: {
     eventId: 'cancel-1',
