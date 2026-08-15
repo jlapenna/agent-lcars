@@ -62,6 +62,31 @@ export type {
 } from './launch-resolution-capability';
 export { LaunchResponseBoundary } from './launch-resolution-capability';
 export type {
+  MarkLostEligibilityConflictReason,
+  MarkLostEligibilityInput,
+  MarkLostEligibilityReceipt,
+  RunStuckPolicy,
+  RunStuckVerifier,
+  RunStuckVerifierObservation,
+  RunStuckVerifierStatus,
+  VerifiedRunStuckObservation,
+} from './mark-lost-eligibility';
+export {
+  assertMarkLostReceiptReplay,
+  hasMarkLostEligibilityFence,
+  isMarkLostEligibilityReceipt,
+  isVerifiedRunStuckObservation,
+  MarkLostEligibilityConflict,
+  markLostEligibilityRequestSchema,
+  markLostReceiptReplayMatches,
+  RUN_STUCK_POLICY_V1,
+  RunStuckObservationBoundary,
+  runStuckPolicySchema,
+  runStuckVerifierObservationSchema,
+  runStuckVerifierStatusSchema,
+  validateMarkLostEligibility,
+} from './mark-lost-eligibility';
+export type {
   InstallationTokenMinter,
   InstallationTokenMintPlan,
   MintResponse,
