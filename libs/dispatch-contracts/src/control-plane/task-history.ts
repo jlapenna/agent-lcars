@@ -641,6 +641,26 @@ function sameValue(left: unknown, right: unknown): boolean {
   return canonicalDurableJson(left) === canonicalDurableJson(right);
 }
 
+/**
+ * Derive the provider-neutral situation retained by Task fact history from
+ * the reducer's durable decision. Legacy Task facts predate this field, so
+ * every migration and projection of those facts must use this same parity
+ * rule.
+ */
+export function inferTaskFactSituation(input: {
+  policyDecision: Pick<PolicyDecision, 'decision'>;
+  resolution: Pick<TaskIntentResolution, 'kind'>;
+}): TaskFactSituation {
+  return input.resolution.kind === 'cancelled'
+    ? 'cancel'
+    : input.resolution.kind === 'parked' &&
+        input.policyDecision.decision === 'accepted'
+      ? 'park'
+      : input.resolution.kind === 'observed'
+        ? 'reconcile'
+        : 'requested-work';
+}
+
 function assertIntentMatch(
   intent: TaskIntentHistoryPayload | undefined,
   identity: { intentId?: string; intentRevision?: number },
@@ -1052,14 +1072,7 @@ export function upgradeLegacyTaskIntentState(
       version: 1,
       task: state.task,
       ...legacyFact,
-      situation:
-        legacyFact.situation ??
-        (legacyFact.resolution.kind === 'cancelled'
-          ? 'cancel'
-          : legacyFact.resolution.kind === 'parked' &&
-              legacyFact.policyDecision.decision === 'accepted'
-            ? 'park'
-            : 'requested-work'),
+      situation: legacyFact.situation ?? inferTaskFactSituation(legacyFact),
     });
     assertFactSituation(payload);
     if (factRevisions.has(payload.factId))

@@ -12,6 +12,10 @@ import type {
 } from './authority-storage';
 import type { TaskIntentState } from './task-intent-reducer';
 import { hydrateTaskForTest } from './task-test-hydration';
+export {
+  readTaskHistoryForTest,
+  type TaskHistoryInspection,
+} from './task-history-test-support';
 
 /** Test-only compatibility setup; production cannot call a structural writer. */
 export async function seedTaskForTest(

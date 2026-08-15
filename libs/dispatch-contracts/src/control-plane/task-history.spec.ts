@@ -646,6 +646,33 @@ describe('bounded Task history contracts', () => {
     expect(upgraded.head.desired?.intentId).toBe('new');
   });
 
+  it('infers reconcile situation for legacy observed facts during upgrade', () => {
+    const {
+      schema: _schema,
+      version: _version,
+      task: _task,
+      situation: _situation,
+      ...legacyFact
+    } = {
+      ...fact('observed', 1),
+      resolution: { kind: 'observed' as const, taskRevision: 1 },
+    };
+    const state: LegacyTaskIntentState = {
+      schema: 'agent-lcars.task-intent-state/v1',
+      version: 1,
+      tenant,
+      task,
+      intents: [],
+      revision: 1,
+      activation,
+      facts: [legacyFact],
+      attempt: { kind: 'none' },
+      updatedAt: timestamp,
+    };
+    const upgraded = upgradeLegacyTaskIntentState({ state });
+    expect(upgraded.factRecords).toHaveLength(1);
+  });
+
   it('rejects missing source facts and never truncates over-budget history', () => {
     const state: LegacyTaskIntentState = {
       schema: 'agent-lcars.task-intent-state/v1',

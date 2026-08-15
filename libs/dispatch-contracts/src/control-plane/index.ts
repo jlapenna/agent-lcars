@@ -304,6 +304,7 @@ export {
   createTaskFactRecord,
   createTaskIntentHistoryRecord,
   createTaskIntentRecord,
+  inferTaskFactSituation,
   taskAttemptRelationSchema,
   taskFactHistoryPayloadSchema,
   taskFactPayloadSchema,
