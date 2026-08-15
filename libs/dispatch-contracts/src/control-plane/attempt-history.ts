@@ -1879,7 +1879,7 @@ function validateAttemptHistoryTransition(
   const head = parseHead(input.head);
   const nextHead = parseHead(input.nextHead);
   if (
-    input.nextRevision !== head.aggregateRevision + 1 ||
+    input.nextRevision <= head.aggregateRevision ||
     nextHead.aggregateRevision !== input.nextRevision ||
     nextHead.updatedAt !== input.transitionedAt
   ) {

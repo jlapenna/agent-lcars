@@ -21,6 +21,7 @@ import type {
 import type { AgentResultClaimV1 } from '@agent-lcars/dispatch-contracts';
 import {
   acceptedAttemptSpecSchema,
+  appendAttemptHistoryTransition,
   appendHistoryRecord,
   appendTaskAttemptAdmissionHistoryTransition,
   attemptHistoryRecordReference,
@@ -1057,6 +1058,7 @@ interface StoredIdempotency {
   canonicalDigest: string;
   payloadSha256?: string;
   resourceId: string;
+  historyRecordRef?: HistoryRecordReference;
 }
 
 interface StoredMint {
@@ -1523,22 +1525,34 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         head.attemptId !== attempt.spec.attemptId ||
         head.specDigest !== attempt.specDigest ||
         !same(head.spec, attempt.spec) ||
-        head.aggregateRevision !== 1 ||
-        head.phase !== 'launch-pending' ||
-        head.launch.state !== 'recorded' ||
         head.launch.operationId !== head.attemptId ||
         head.launch.operationId !== attempt.spec.attemptId ||
-        head.launch.executionEpoch !== 1 ||
         head.executionEpoch !== 1 ||
         head.launch.executionEpoch !== head.executionEpoch ||
-        head.binding !== undefined ||
-        head.pendingTerminal !== undefined ||
-        head.pendingClaimRefs.length !== 0 ||
-        head.finalization !== undefined ||
-        head.cancellation !== undefined ||
-        head.outcomeRef !== undefined ||
-        head.outcomeDigest !== undefined ||
-        head.futureGrantsDenied
+        (head.binding === undefined &&
+          (head.aggregateRevision !== 1 ||
+            head.phase !== 'launch-pending' ||
+            head.launch.state !== 'recorded' ||
+            head.pendingTerminal !== undefined ||
+            head.pendingClaimRefs.length !== 0 ||
+            head.finalization !== undefined ||
+            head.cancellation !== undefined ||
+            head.outcomeRef !== undefined ||
+            head.outcomeDigest !== undefined ||
+            head.futureGrantsDenied)) ||
+        (head.binding !== undefined &&
+          (head.aggregateRevision < 2 ||
+            head.launch.state !== 'accepted' ||
+            head.phase !== 'active' ||
+            head.pendingTerminal !== undefined ||
+            head.pendingClaimRefs.length !== 0 ||
+            head.finalization !== undefined ||
+            head.cancellation !== undefined ||
+            head.outcomeRef !== undefined ||
+            head.outcomeDigest !== undefined ||
+            head.futureGrantsDenied ||
+            attempt.binding === undefined ||
+            !same(head.binding, attempt.binding)))
       ) {
         throw new AuthorityConflict(
           'Attempt history head conflicts with legacy Attempt',
@@ -1614,6 +1628,62 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         registration?.record.sequence !== 1
       ) {
         throw new AuthorityConflict('Attempt registration history is invalid');
+      }
+      const bindingRecords = (history.records.get('fact') ?? []).filter(
+        ({ payload }) =>
+          (payload as { payload?: { kind?: string } }).payload?.kind ===
+          'run-bound',
+      );
+      if (bindingRecords.length > 1) {
+        throw new AuthorityConflict('Attempt binding history is duplicated');
+      }
+      if (head.binding === undefined && bindingRecords.length !== 0) {
+        throw new AuthorityConflict(
+          'Unbound Attempt history contains a binding fact',
+        );
+      }
+      const facts = history.records.get('fact') ?? [];
+      const unsupportedFact = facts.some(({ payload }) => {
+        const kind = (payload as { payload?: { kind?: string } }).payload?.kind;
+        return kind !== 'run-bound';
+      });
+      if (unsupportedFact) {
+        throw new AuthorityConflict(
+          'Attempt history fact mirror contains unsupported data',
+        );
+      }
+      if (facts.length !== (head.binding === undefined ? 0 : 1)) {
+        throw new AuthorityConflict('Attempt history fact mirror is invalid');
+      }
+      for (const stream of ['claim', 'validation', 'evidence'] as const) {
+        if ((history.records.get(stream) ?? []).length !== 0) {
+          throw new AuthorityConflict(
+            'Attempt history auxiliary mirror is invalid',
+          );
+        }
+      }
+      if (head.binding !== undefined) {
+        const bindingRecord = bindingRecords[0];
+        const payload = bindingRecord?.payload as {
+          factId?: string;
+          requestId?: string;
+          canonicalDigest?: string;
+          payload?: { kind?: string; binding?: RunBinding };
+        };
+        if (
+          bindingRecord === undefined ||
+          bindingRecord.record.appliedRevision !== head.aggregateRevision ||
+          payload.payload?.kind !== 'run-bound' ||
+          !same(payload.payload.binding, head.binding) ||
+          !attempt.facts.some(
+            (fact) =>
+              fact.factId === payload.factId &&
+              fact.requestId === payload.requestId &&
+              fact.canonicalDigest === payload.canonicalDigest,
+          )
+        ) {
+          throw new AuthorityConflict('Attempt binding history is invalid');
+        }
       }
     } catch (error) {
       if (error instanceof AuthorityConflict) throw error;
@@ -5078,12 +5148,128 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
     };
     const priorFact = this.factKeys.get(factKey);
     const priorRequest = this.requestKeys.get(requestKey);
+    const localKey = tupleKey(
+      attempt.spec.task.tenantId,
+      attempt.spec.task.repositoryId,
+      attempt.spec.task.issueNumber,
+      attempt.spec.local.intentId,
+      attempt.spec.local.generation,
+    );
+    const acceptance = this.acceptances.get(localKey);
+    const admissionHistoryReceipt =
+      this.attemptAdmissionHistoryReceipts.get(localKey);
+    const existingAttemptHistory = this.attemptHistories.get(
+      envelope.attemptId,
+    );
+    const hasAdmissionLineage =
+      acceptance !== undefined ||
+      admissionHistoryReceipt !== undefined ||
+      existingAttemptHistory !== undefined;
+    const envelopeBinding = envelope.payload.binding;
+    if (hasAdmissionLineage) {
+      const admissionHistory = this.taskHistories.get(
+        canonicalTaskKey(attempt.spec.task),
+      );
+      if (
+        acceptance === undefined ||
+        admissionHistoryReceipt === undefined ||
+        acceptance.attemptId !== envelope.attemptId ||
+        acceptance.specDigest !== attempt.specDigest ||
+        !same(acceptance.task.task, attempt.spec.task) ||
+        admissionHistory === undefined ||
+        admissionHistoryReceipt.attemptId !== envelope.attemptId ||
+        admissionHistoryReceipt.tenantId !== attempt.spec.tenant.tenantId ||
+        !same(admissionHistoryReceipt.task, attempt.spec.task) ||
+        admissionHistoryReceipt.specDigest !== attempt.specDigest ||
+        admissionHistoryReceipt.admissionDigest !== acceptance.admissionDigest
+      ) {
+        throw new AuthorityConflict(
+          'Attempt admission history lineage is invalid',
+        );
+      }
+      this.assertStoredTaskHistoryIntegrity(
+        attempt.spec.task,
+        admissionHistory,
+      );
+      const admissionAttemptHistory = this.attemptHistories.get(
+        envelope.attemptId,
+      );
+      if (admissionAttemptHistory === undefined)
+        throw new AuthorityConflict('Binding attempt history is missing');
+      this.assertStoredAttemptHistoryIntegrity(
+        admissionAttemptHistory,
+        attempt,
+      );
+      this.assertStoredAttemptAdmissionHistoryReceipt({
+        receipt: admissionHistoryReceipt,
+        taskHistory: admissionHistory,
+        attemptHistory: admissionAttemptHistory,
+        attempt,
+      });
+    }
     if (priorFact !== undefined || priorRequest !== undefined) {
+      const history = this.attemptHistories.get(envelope.attemptId);
+      if (history !== undefined)
+        this.assertStoredAttemptHistoryIntegrity(history, attempt);
+      const storedRef =
+        priorFact?.historyRecordRef ?? priorRequest?.historyRecordRef;
+      if (storedRef !== undefined) {
+        fact.historyRecordRef = storedRef;
+        request.historyRecordRef = storedRef;
+      }
+      const storedRecord =
+        storedRef === undefined || history === undefined
+          ? undefined
+          : history.records.get('fact')?.find(({ record }) =>
+              same(
+                attemptHistoryRecordReference(
+                  record,
+                  {
+                    tenantId: attempt.spec.tenant.tenantId,
+                    attemptId: attempt.spec.attemptId,
+                  },
+                  'fact',
+                ),
+                storedRef,
+              ),
+            );
+      let historicalBinding = false;
+      if (storedRecord !== undefined) {
+        try {
+          const verified = verifyAttemptHistoryPayload(
+            'fact',
+            storedRecord.record,
+            storedRecord.payload,
+            {
+              tenantId: attempt.spec.tenant.tenantId,
+              attemptId: attempt.spec.attemptId,
+            },
+          );
+          const value = verified.payload as {
+            factId: string;
+            requestId: string;
+            payloadSha256: string;
+            canonicalDigest: string;
+            payload: { kind: string; binding?: RunBinding };
+          };
+          historicalBinding =
+            value.payload.kind === 'run-bound' &&
+            value.factId === envelope.factId &&
+            value.requestId === envelope.requestId &&
+            value.payloadSha256 === envelope.payloadSha256 &&
+            value.canonicalDigest === canonicalDigest &&
+            same(value.payload.binding, envelopeBinding);
+        } catch {
+          historicalBinding = false;
+        }
+      }
       const converged =
         attempt.launch.state === 'accepted' &&
         launch.state === 'accepted' &&
         attempt.binding !== undefined &&
-        same(attempt.binding, envelope.payload.binding) &&
+        same(attempt.binding, envelopeBinding) &&
+        ((historicalBinding && storedRecord !== undefined) ||
+          !hasAdmissionLineage) &&
         attempt.facts.some(
           (receipt) =>
             receipt.factId === envelope.factId &&
@@ -5136,21 +5322,151 @@ export class InMemoryLifecycleAuthorityStorage implements LifecycleAuthorityStor
         'Exact run binding belongs to another attempt',
       );
     }
-    this.writeAttemptTransaction({
-      lease: input.lease,
-      expectedRevision: input.expectedAttemptRevision,
-      next: nextAttempt,
-    });
-    this.factKeys.set(factKey, fact);
-    this.requestKeys.set(requestKey, request);
-    this.launches.set(envelope.attemptId, { ...launch, state: 'accepted' });
-    for (const [key, work] of this.cancellationWork) {
-      if (
-        work.attemptId === envelope.attemptId &&
-        work.state === 'awaiting-binding'
-      ) {
-        this.cancellationWork.set(key, { ...work, state: 'pending' });
+    const existingHistory = this.attemptHistories.get(envelope.attemptId);
+    if (existingHistory === undefined && hasAdmissionLineage) {
+      throw new AuthorityConflict('Binding attempt history is missing');
+    }
+    if (hasAdmissionLineage && existingHistory !== undefined) {
+      const taskHistory = this.taskHistories.get(
+        canonicalTaskKey(attempt.spec.task),
+      );
+      const receipt = this.attemptAdmissionHistoryReceipts.get(localKey);
+      if (taskHistory === undefined || receipt === undefined)
+        throw new AuthorityConflict(
+          'Attempt admission history lineage is missing',
+        );
+      this.assertStoredTaskHistoryIntegrity(attempt.spec.task, taskHistory);
+      this.assertStoredAttemptAdmissionHistoryReceipt({
+        receipt,
+        taskHistory,
+        attemptHistory: existingHistory,
+        attempt,
+      });
+    }
+    const bindingFact = {
+      schema: 'agent-lcars.attempt-fact/v1' as const,
+      version: 1 as const,
+      factId: envelope.factId,
+      requestId: envelope.requestId,
+      source: envelope.source,
+      observedAt: envelope.observedAt,
+      transitionedAt: envelope.observedAt,
+      payloadSha256: envelope.payloadSha256,
+      canonicalDigest,
+      payload: {
+        kind: 'run-bound' as const,
+        binding: envelope.payload.binding,
+      },
+    };
+    let historyTransition:
+      ReturnType<typeof appendAttemptHistoryTransition> | undefined;
+    try {
+      if (existingHistory !== undefined) {
+        this.assertStoredAttemptHistoryIntegrity(existingHistory, attempt);
+        historyTransition = appendAttemptHistoryTransition({
+          head: existingHistory.head,
+          nextRevision: nextAttempt.revision,
+          transitionedAt: envelope.observedAt,
+          emitted: [{ stream: 'fact', payload: bindingFact }],
+        });
       }
+    } catch {
+      throw new AuthorityConflict('Binding history transition is invalid');
+    }
+    const nextHistory =
+      existingHistory === undefined || historyTransition === undefined
+        ? undefined
+        : {
+            head: clone(historyTransition.head),
+            records: new Map(existingHistory.records),
+          };
+    if (
+      nextHistory !== undefined &&
+      existingHistory !== undefined &&
+      historyTransition !== undefined
+    ) {
+      const bindingRecord = historyTransition.records[0];
+      if (bindingRecord === undefined)
+        throw new AuthorityConflict('Binding history record is missing');
+      nextHistory.records.set('fact', [
+        ...(existingHistory.records.get('fact') ?? []),
+        { record: clone(bindingRecord), payload: clone(bindingFact) },
+      ]);
+      const historyRecordRef = attemptHistoryRecordReference(
+        bindingRecord,
+        { tenantId: envelope.tenant.tenantId, attemptId: envelope.attemptId },
+        'fact',
+      );
+      fact.historyRecordRef = historyRecordRef;
+      request.historyRecordRef = historyRecordRef;
+    }
+    const previousAttempt = this.attempts.get(envelope.attemptId);
+    const previousFact = this.factKeys.get(factKey);
+    const previousRequest = this.requestKeys.get(requestKey);
+    const previousLaunch = this.launches.get(envelope.attemptId);
+    const previousHistory = this.attemptHistories.get(envelope.attemptId);
+    const previousBinding = this.bindings.get(nextBindingKey);
+    const promotedCancellation = [...this.cancellationWork.entries()]
+      .filter(
+        ([, work]) =>
+          work.attemptId === envelope.attemptId &&
+          work.state === 'awaiting-binding',
+      )
+      .map(([key, work]) => [key, work] as const);
+    try {
+      this.writeAttemptTransaction({
+        lease: input.lease,
+        expectedRevision: input.expectedAttemptRevision,
+        next: nextAttempt,
+      });
+      this.factKeys.set(factKey, fact);
+      this.requestKeys.set(requestKey, request);
+      this.launches.set(envelope.attemptId, { ...launch, state: 'accepted' });
+      for (const [key, work] of this.cancellationWork) {
+        if (
+          work.attemptId === envelope.attemptId &&
+          work.state === 'awaiting-binding'
+        ) {
+          this.cancellationWork.set(key, { ...work, state: 'pending' });
+        }
+      }
+      if (nextHistory !== undefined)
+        this.attemptHistories.set(envelope.attemptId, nextHistory);
+    } catch (error) {
+      if (previousAttempt !== undefined)
+        Map.prototype.set.call(
+          this.attempts,
+          envelope.attemptId,
+          previousAttempt,
+        );
+      if (previousFact === undefined) this.factKeys.delete(factKey);
+      else Map.prototype.set.call(this.factKeys, factKey, previousFact);
+      if (previousRequest === undefined) this.requestKeys.delete(requestKey);
+      else
+        Map.prototype.set.call(this.requestKeys, requestKey, previousRequest);
+      if (previousLaunch === undefined)
+        this.launches.delete(envelope.attemptId);
+      else
+        Map.prototype.set.call(
+          this.launches,
+          envelope.attemptId,
+          previousLaunch,
+        );
+      if (previousHistory === undefined)
+        Map.prototype.delete.call(this.attemptHistories, envelope.attemptId);
+      else
+        Map.prototype.set.call(
+          this.attemptHistories,
+          envelope.attemptId,
+          previousHistory,
+        );
+      if (previousBinding === undefined)
+        Map.prototype.delete.call(this.bindings, nextBindingKey);
+      else
+        Map.prototype.set.call(this.bindings, nextBindingKey, previousBinding);
+      for (const [key, work] of promotedCancellation)
+        Map.prototype.set.call(this.cancellationWork, key, work);
+      throw error;
     }
     return 'applied';
   }
