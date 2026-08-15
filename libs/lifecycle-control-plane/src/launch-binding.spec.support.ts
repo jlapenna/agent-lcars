@@ -341,7 +341,7 @@ export function runVerifiedRunBindingStorageContract(
           attemptId: spec.attemptId,
         });
         expect(history?.head.aggregateRevision).toBe(3);
-        expect(history?.records.command).toHaveLength(1);
+        expect(history?.records.command).toHaveLength(2);
         expect(history?.records.fact).toHaveLength(1);
         expect(history?.records.claim).toHaveLength(0);
         expect(history?.records.validation).toHaveLength(0);

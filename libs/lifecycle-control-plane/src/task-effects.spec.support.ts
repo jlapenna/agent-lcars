@@ -1439,7 +1439,7 @@ export function runCancellationHistoryStorageContract(
         value.value.lease,
         value.value.attemptId,
       );
-      expect(after.records.command).toHaveLength(2);
+      expect(after.records.command).toHaveLength(3);
       expect(after.records.evidence).toHaveLength(0);
       expect(after.head.aggregateRevision).toBeGreaterThanOrEqual(
         before.head.aggregateRevision,
@@ -1452,7 +1452,7 @@ export function runCancellationHistoryStorageContract(
         value.value.attemptId,
       );
       expect(replayHistory.records.command.map(({ record }) => record)).toEqual(
-        before.records.command.map(({ record }) => record),
+        after.records.command.map(({ record }) => record),
       );
     });
 
