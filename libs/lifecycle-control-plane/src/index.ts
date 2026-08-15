@@ -55,6 +55,7 @@ export {
   NodeWebhookHmacSha256,
 } from './ingress-policy';
 export * from './launch-outbox-composition';
+export * from './launch-rejection-composition';
 export type {
   LaunchResolutionClock,
   TrustedLaunchResponseVerifier,

@@ -274,8 +274,11 @@ export {
   policyRevisionSchema,
 } from './policy';
 export {
+  attemptIdSchema,
   DURABLE_SCALAR_BYTE_LIMITS,
   gitCommitShaSchema,
+  positiveSafeIntegerSchema,
+  sha256Schema,
   utcDateTimeSchema,
   utf8ByteLength,
   utf8ByteLimitedStringSchema,
