@@ -16,7 +16,7 @@ import {
   primaryWatchedRepo,
   type WatchedRepo,
 } from './github-client';
-import { executeHostedControllerCommand } from './hosted-controller-command';
+import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
 import type { QuickTaskReceipt, QuickTaskRequest } from './quick-task-contract';
@@ -132,13 +132,15 @@ export async function clearNeedsHumanLabel(
       );
     }
     // Either way, the label write itself did not happen (already absent, or
-    // failed outright) - the park state the ledger cares about is
-    // unchanged, so there is nothing new for the controller to converge.
+    // failed outright) - nothing changed for the orchestrator to catch up
+    // on.
     return;
   }
-  // The park state the ledger tracks just changed on GitHub - nudge the
-  // controller to pick it up now instead of on the next scheduled sweep.
-  await notifyReconcile(repo, issueNumber);
+  // A label write is invisible to the orchestrator (it tracks no GitHub
+  // label state at all - see model.ts), but it may be running behind on an
+  // unrelated expired lease. Catch it up now rather than waiting on the
+  // next scheduled sweep (dispatch-reconcile.yml).
+  await notifyReconcile(issueNumber);
 }
 
 // Server-action API compatibility; the GitHub label itself is
@@ -189,15 +191,12 @@ export async function approveAndMergePr(
     merge_method: 'squash',
   });
 
-  // Reconcile the PR anchor the console actually knows. A `Fixes #N` in the
-  // PR body can also auto-close a *linked issue* as a side effect of this
-  // merge - a second anchor this function was never given and has no
-  // reliable way to identify from prNumber alone (the PR body would have to
-  // be parsed for closing keywords, which is exactly the kind of guessing
-  // this ping is meant to avoid). That anchor is left to
-  // dispatch-reconcile.yml's scheduled sweep, which #715 already taught to
-  // converge a closed anchor's `control.closed` on its own.
-  await notifyReconcile(repo, prNumber);
+  // The orchestrator has no notion of a merged PR either (#1183 - see
+  // model.ts). What still helps is catching up any unrelated run whose
+  // lease has already silently expired, same as every other mutation below
+  // that used to ping the legacy controller - do it now instead of waiting
+  // on dispatch-reconcile.yml's next scheduled sweep.
+  await notifyReconcile(prNumber);
 }
 
 // Resolves the `behind` mergeable_state ("Base branch has moved" in
@@ -286,11 +285,13 @@ export async function closeIssue(
     issue_number: issueNumber,
     state: 'closed',
   });
-  // `control.closed` just changed on GitHub without the router ever seeing
-  // an `issues: closed` event (this console action, not a webhook, wrote
-  // it) - nudge the controller to converge now instead of waiting on
-  // dispatch-reconcile.yml's next scheduled sweep.
-  await notifyReconcile(repo, issueNumber);
+  // The orchestrator tracks no GitHub issue-state field at all (#1183 - see
+  // model.ts's doc comment: a durable per-task mutex, not a projection of
+  // GitHub state), so this close does not change anything it needs to
+  // learn about. It may still be running behind on an unrelated expired
+  // lease elsewhere, though - catch it up now rather than waiting on the
+  // next scheduled sweep (dispatch-reconcile.yml).
+  await notifyReconcile(issueNumber);
 }
 
 /** Updates the human-authored issue content without changing any dispatch
@@ -403,11 +404,10 @@ export async function cancelWorkflowRun(
     repo: repo.name,
     run_id: runId,
   });
-  // The run just killed may be the attempt.runId the ledger has bound as an
-  // active generation - reconcile it now rather than waiting on the
-  // scheduled sweep. cancelWorkflowRun's own signature carries no anchor
-  // number, so notifyReconcileForCancelledRun looks one up from the run
-  // itself before pinging.
+  // The run just killed may be the task's own live orchestrator run -
+  // reflect that into the orchestrator now rather than waiting out its
+  // lease. cancelWorkflowRun's own signature carries no anchor number, so
+  // notifyReconcileForCancelledRun looks one up from the run itself first.
   await notifyReconcileForCancelledRun(repo, runId);
 }
 
@@ -415,35 +415,37 @@ const DEFAULT_BRANCH = 'main';
 const DISPATCH_CALLER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-// After a console action mutates a fact the dispatch ledger tracks (a
-// park-state label, `control.closed`, a merge, a cancelled active-
-// generation run), ask the hosted controller to reconcile the affected
-// anchor so the controller
-// converges immediately instead of only picking up the change on
-// dispatch-reconcile.yml's next scheduled sweep (up to 30 minutes later).
-// #715 taught that scheduled sweep to eventually repair a diverged
-// `control.closed`; this closes the latency gap at the source instead of
-// relying solely on that backstop.
+// After a console action mutates a GitHub-side fact (a park-state label, an
+// issue close, a merge, a cancelled workflow run), catch the orchestrator up
+// immediately rather than only on dispatch-reconcile.yml's next scheduled
+// sweep (up to ~30 minutes later - see that workflow's cron). #1183: unlike
+// the legacy dispatch controller this replaced, the orchestrator tracks no
+// GitHub-side state to reconcile *toward* (see model.ts's doc comment - a
+// durable per-task mutex over runs, not a projection of issue/PR fields), so
+// there is no anchor-scoped "reconcile #N" operation left to call. Sweeping
+// every expired lease and draining the outbox is the actual mechanism the
+// scheduled sweep itself runs (`orchestrator-routes.ts`'s `handleReconcile`,
+// invoked by `/api/control-plane/reconcile`); reusing it here just runs that
+// same catch-up early instead of waiting for the next tick.
 //
 // The mutation this follows has already landed on GitHub by the time this
-// runs, so any controller failure is logged and swallowed rather
-// than surfaced to the caller. A red toast over a best-effort follow-up
-// ping would be a worse bug than the stale ledger entry this exists to
-// shrink; the scheduled sweep remains the backstop either way.
-async function notifyReconcile(
-  repo: WatchedRepo,
-  anchorNumber: number,
-): Promise<void> {
+// runs, so any failure here is logged and swallowed rather than surfaced to
+// the caller - a red toast over a best-effort follow-up sweep would be a
+// worse bug than the latency this exists to shrink; the scheduled sweep
+// remains the backstop either way.
+async function notifyReconcile(anchorNumber: number): Promise<void> {
   try {
-    await executeHostedControllerCommand({
-      kind: 'reconcile',
-      repository: repo,
-      issueNumber: anchorNumber,
-      requestId: randomUUID(),
-    });
+    const result = await handleReconcile(createOrchestratorRuntime());
+    if (result.status !== 200) {
+      console.error(
+        'agent-lcars: orchestrator reconcile sweep failed after #%s:',
+        anchorNumber,
+        result.body,
+      );
+    }
   } catch (error) {
     console.error(
-      'agent-lcars: failed to notify the dispatch controller to reconcile #%s:',
+      'agent-lcars: failed to sweep the orchestrator after #%s:',
       anchorNumber,
       error,
     );
@@ -457,10 +459,11 @@ async function notifyReconcile(
 // the run's `display_title`, the same field agent-activity.ts's
 // issueNumberFromDisplayTitle already trusts to join a live run back to
 // its issue for the dashboard. A run whose title doesn't parse (predates
-// the run-name rollout, or was dispatched by hand outside the broker) has
-// no anchor this console can identify from the run alone - reconcile is
-// skipped for it and left to the scheduled sweep, the same "don't guess"
-// posture approveAndMergePr takes for a merge's linked-issue anchor.
+// the run-name rollout, or was dispatched by hand outside the fleet) has no
+// anchor this console can identify from the run alone - reflection and the
+// sweep are both skipped for it and left to the scheduled sweep, the same
+// "don't guess" posture approveAndMergePr takes for a merge's linked-issue
+// anchor.
 async function notifyReconcileForCancelledRun(
   repo: WatchedRepo,
   runId: number,
@@ -494,7 +497,8 @@ async function notifyReconcileForCancelledRun(
       return;
     }
     if (anchorNumber !== undefined) {
-      await notifyReconcile(repo, anchorNumber);
+      await reflectCancelledRunInOrchestrator(anchorNumber);
+      await notifyReconcile(anchorNumber);
     }
     return;
   }
@@ -503,6 +507,40 @@ async function notifyReconcileForCancelledRun(
     'agent-lcars: cancelled run #%s did not become terminal before the reconcile wait expired; the scheduled sweep will converge it',
     runId,
   );
+}
+
+// cancelWorkflowRun's own GitHub Actions run id has no orchestrator
+// equivalent recorded anywhere - a `Run` only ever carries the orchestrator's
+// own minted `runId`, never a GitHub Actions numeric run id (see model.ts's
+// runSchema). The anchor issue number resolved above is the only honest join
+// available: if the control-plane task for that anchor currently has a live
+// run, the orchestrator's own one-live-run-per-task invariant means that run
+// can only be the one this GitHub Actions cancellation was acting on, so its
+// lock is released now instead of waiting out its lease. When there is no
+// live run (already settled, or was never one to begin with - e.g. a
+// manually dispatched run outside the orchestrator), there is nothing to
+// reflect; the mismatch is simply left alone, same "don't guess" posture as
+// everywhere else in this file.
+async function reflectCancelledRunInOrchestrator(
+  anchorNumber: number,
+): Promise<void> {
+  try {
+    const { store, orchestrator } = createOrchestratorRuntime();
+    const taskId = { repo: controlPlaneRepository(), issue: anchorNumber };
+    const activeRun = await store.readActiveRun(taskId);
+    if (activeRun === undefined) return;
+    // `cancel` only ever refuses `unknown-run`/`run-not-live` - both mean
+    // the run already stopped being live between this read and the call,
+    // which is exactly the outcome this reflection wants anyway (mirrors
+    // reassignPipeline's identical guard elsewhere in this file).
+    await orchestrator.cancel(activeRun.runId, 'canceled from console');
+  } catch (error) {
+    console.error(
+      'agent-lcars: failed to reflect the cancelled run into the orchestrator for #%s:',
+      anchorNumber,
+      error,
+    );
+  }
 }
 
 // dispatchUnstickPrs is console-level ops. A caller with a concrete item

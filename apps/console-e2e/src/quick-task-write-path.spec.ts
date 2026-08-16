@@ -6,6 +6,7 @@ import {
   useCliSessionFixtures,
 } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { seedOrchestratorTask } from './util/orchestrator-seed';
 
 /**
  * agent-lcars#307 (part A).
@@ -177,6 +178,22 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     );
     await expect(page.getByRole('dialog')).toBeHidden();
 
+    // #1183/#1187: this fixture's quick-task creation still only simulates
+    // the legacy dispatch-broker's Firestore ledger write (a GitHub-comment
+    // fixture, not something the console reads any more), so seed a real
+    // `@agent-lcars/orchestrator` task directly against the emulator for
+    // this dynamically-created issue - same as populated-dashboard.spec.ts's
+    // #9008 case (see orchestrator-seed.ts's own doc comment for why a
+    // direct emulator write here is safe). The exact pipeline value doesn't
+    // matter: only the LogicalWork provenance line reads it exists at all -
+    // state/attempts/anomalies below all come from the GitHub-side fixture,
+    // never from the orchestrator seed.
+    await seedOrchestratorTask({
+      issue: Number(issueNumber),
+      pipeline: 'claude',
+      requestId: `e2e-fixture-seed:quick-task-write-path:${issueNumber}`,
+    });
+
     // Canonical task detail page (agent-lcars#306's route) - the real read
     // path (task-detail.ts -> deriveLogicalWork -> LogicalWorkCard), not a
     // mock. Reaching this page at all proves the fixture's stateful
@@ -187,15 +204,14 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await expect(card.getByTestId('logical-work-state')).toHaveText('active');
     await expect(card).toContainText(`#${issueNumber}`);
 
-    // #1183: this fixture's quick-task creation still simulates the legacy
-    // dispatch-broker's Firestore ledger write, not an
-    // `@agent-lcars/orchestrator` task/run write - task-detail.ts's
-    // authoritative read no longer sees it (see authoritative-task-state.ts's
-    // own doc comment), so the page falls back to its attempts-only
-    // provenance and the ledger-generation-only "Dispatch intents" list this
-    // used to also assert on no longer renders at all (empty
-    // `work.intents` - see logical-work-card.tsx's own conditional guard).
-    await expect(card).not.toContainText('authoritative state rev');
+    // The orchestrator task seeded above gives the page a real authoritative
+    // revision to render - stays at rev 1 even under Nx's CI test retries
+    // (seedOrchestratorTask's own idempotent-by-requestId contract). The
+    // ledger-generation-only "Dispatch intents" list this used to also
+    // assert on still never renders: the orchestrator has no such concept at
+    // all, so `work.intents` stays empty regardless of provenance - see
+    // logical-work-card.tsx's own conditional guard.
+    await expect(card).toContainText('authoritative state rev 1');
     await expect(card.getByTestId('logical-work-intents')).toHaveCount(0);
 
     // Attempt presentation (#306's ExecutionAttempt UI): one running attempt

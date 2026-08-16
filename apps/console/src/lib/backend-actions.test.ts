@@ -26,7 +26,6 @@ import {
   updatePrBranch,
 } from './backend-actions';
 import { getGithubClient } from './github-client';
-import { executeHostedControllerCommand } from './hosted-controller-command';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
@@ -47,17 +46,11 @@ vi.mock('./github-client', async (importOriginal) => {
   };
 });
 
-vi.mock('./hosted-controller-command', () => ({
-  executeHostedControllerCommand: vi.fn().mockResolvedValue({ ok: true }),
-}));
-
 vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: vi.fn(),
 }));
 
 beforeEach(() => {
-  (executeHostedControllerCommand as Mock).mockReset();
-  (executeHostedControllerCommand as Mock).mockResolvedValue({ ok: true });
   (createOrchestratorRuntime as Mock).mockReset();
 });
 
@@ -97,15 +90,15 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
 describe('closeIssue', () => {
   function mockOctokit() {
     const update = vi.fn().mockResolvedValue({});
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { update }, actions: { createWorkflowDispatch } },
+      rest: { issues: { update } },
     });
-    return { update, createWorkflowDispatch };
+    return { update };
   }
 
   it('closes the given issue on the console repo', async () => {
     const { update } = mockOctokit();
+    fixtureOrchestratorRuntime();
 
     await closeIssue(DEFAULT_REPO, 2709);
 
@@ -117,21 +110,17 @@ describe('closeIssue', () => {
     });
   });
 
-  it('notifies the hosted controller to reconcile the closed issue', async () => {
+  it('sweeps the orchestrator to catch up any expired lease after closing (#1183)', async () => {
     mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await closeIssue(DEFAULT_REPO, 2709);
 
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'reconcile',
-      repository: DEFAULT_REPO,
-      issueNumber: 2709,
-      requestId: expect.any(String),
-    });
+    expect(sweepSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('propagates a GitHub API error and never notifies', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+  it('propagates a GitHub API error and never sweeps the orchestrator', async () => {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -141,29 +130,20 @@ describe('closeIssue', () => {
               Object.assign(new Error('Not Found'), { status: 404 }),
             ),
         },
-        actions: { createWorkflowDispatch },
       },
     });
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await expect(closeIssue(DEFAULT_REPO, 2709)).rejects.toThrow('Not Found');
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 
-  it("does not fail the close when the reconcile ping's dispatch fails outright", async () => {
-    const { update, createWorkflowDispatch } = mockOctokit();
-    createWorkflowDispatch.mockRejectedValue(
-      Object.assign(new Error('Server Error'), { status: 500 }),
-    );
-
-    await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
-    expect(update).toHaveBeenCalled();
-  });
-
-  it('still does not fail the close when the hosted reconcile command fails', async () => {
+  it('still resolves the close when the orchestrator runtime cannot be constructed', async () => {
     const { update } = mockOctokit();
-    (executeHostedControllerCommand as Mock).mockRejectedValueOnce(
-      new Error('controller unavailable'),
-    );
+    (createOrchestratorRuntime as Mock).mockImplementation(() => {
+      throw new Error('orchestrator unavailable');
+    });
 
     await expect(closeIssue(DEFAULT_REPO, 2709)).resolves.toBeUndefined();
     expect(update).toHaveBeenCalled();
@@ -314,15 +294,15 @@ describe('updatePrBranch', () => {
 describe('clearHumanNeededLabel', () => {
   function mockOctokit() {
     const removeLabel = vi.fn().mockResolvedValue({});
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { removeLabel }, actions: { createWorkflowDispatch } },
+      rest: { issues: { removeLabel } },
     });
-    return { removeLabel, createWorkflowDispatch };
+    return { removeLabel };
   }
 
   it('removes the needs-human status label from the given issue', async () => {
     const { removeLabel } = mockOctokit();
+    fixtureOrchestratorRuntime();
 
     await clearHumanNeededLabel(DEFAULT_REPO, 2709);
 
@@ -334,21 +314,17 @@ describe('clearHumanNeededLabel', () => {
     });
   });
 
-  it('notifies the hosted controller to reconcile after clearing the park state', async () => {
+  it('sweeps the orchestrator after clearing the park state (#1183)', async () => {
     mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await clearHumanNeededLabel(DEFAULT_REPO, 2709);
 
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'reconcile',
-      repository: DEFAULT_REPO,
-      issueNumber: 2709,
-      requestId: expect.any(String),
-    });
+    expect(sweepSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('swallows a 404 (label was already absent) and does not notify', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+  it('swallows a 404 (label was already absent) and does not sweep', async () => {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -358,33 +334,34 @@ describe('clearHumanNeededLabel', () => {
               Object.assign(new Error('Not Found'), { status: 404 }),
             ),
         },
-        actions: { createWorkflowDispatch },
       },
     });
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await expect(
       clearHumanNeededLabel(DEFAULT_REPO, 2709),
     ).resolves.toBeUndefined();
-    // The label write never happened - nothing changed for the ledger to
-    // learn about.
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    // The label write never happened - nothing changed for the orchestrator
+    // to catch up on.
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 });
 
 describe('postComment (mention routing)', () => {
   function mockOctokit() {
+    // clearNeedsHumanLabel's own sweep-the-orchestrator follow-up (#1183)
+    // fires on every successful removeLabel below - give it somewhere real
+    // to land instead of a bare unmocked createOrchestratorRuntime().
+    fixtureOrchestratorRuntime();
     const createComment = vi.fn().mockResolvedValue({
       data: { html_url: 'https://github.com/o/r/issues/1#issuecomment-1' },
     });
     const removeLabel = vi.fn().mockResolvedValue({});
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: {
-        issues: { createComment, removeLabel },
-        actions: { createWorkflowDispatch },
-      },
+      rest: { issues: { createComment, removeLabel } },
     });
-    return { createComment, removeLabel, createWorkflowDispatch };
+    return { createComment, removeLabel };
   }
 
   it('rejects a blank body without calling GitHub', async () => {
@@ -483,8 +460,7 @@ describe('postComment (mention routing)', () => {
     );
   });
 
-  it('posting a comment alone (no label actually cleared) does not notify the dispatch controller', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+  it('posting a comment alone (no label actually cleared) does not sweep the orchestrator', async () => {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -493,22 +469,23 @@ describe('postComment (mention routing)', () => {
               html_url: 'https://github.com/o/r/issues/1#issuecomment-1',
             },
           }),
-          // 404: nothing to clear, so clearNeedsHumanLabel's own notify never
+          // 404: nothing to clear, so clearNeedsHumanLabel's own sweep never
           // fires either - isolates that createComment itself is inert from
-          // the ledger's perspective, per the seam's own analysis.
+          // the orchestrator's perspective, per the seam's own analysis.
           removeLabel: vi
             .fn()
             .mockRejectedValue(
               Object.assign(new Error('Not Found'), { status: 404 }),
             ),
         },
-        actions: { createWorkflowDispatch },
       },
     });
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await postComment(DEFAULT_REPO, 2709, 'hi', ['agent:claude']);
 
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -579,18 +556,15 @@ describe('approveAndMergePr', () => {
   function mockOctokit() {
     const createReview = vi.fn().mockResolvedValue({});
     const merge = vi.fn().mockResolvedValue({});
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: {
-        pulls: { createReview, merge },
-        actions: { createWorkflowDispatch },
-      },
+      rest: { pulls: { createReview, merge } },
     });
-    return { createReview, merge, createWorkflowDispatch };
+    return { createReview, merge };
   }
 
   it('approves then squash-merges the PR', async () => {
     const { createReview, merge } = mockOctokit();
+    fixtureOrchestratorRuntime();
 
     await approveAndMergePr(DEFAULT_REPO, 42);
 
@@ -608,51 +582,52 @@ describe('approveAndMergePr', () => {
     });
   });
 
-  it('notifies the hosted controller to reconcile the merged PR anchor', async () => {
+  it('sweeps the orchestrator to catch up after the merge (#1183)', async () => {
     mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await approveAndMergePr(DEFAULT_REPO, 42);
 
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'reconcile',
-      repository: DEFAULT_REPO,
-      issueNumber: 42,
-      requestId: expect.any(String),
-    });
+    expect(sweepSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('propagates a GitHub API error from the approval step and never merges or notifies', async () => {
-    const { createReview, merge, createWorkflowDispatch } = mockOctokit();
+  it('propagates a GitHub API error from the approval step and never merges or sweeps', async () => {
+    const { createReview, merge } = mockOctokit();
     createReview.mockRejectedValue(
       Object.assign(new Error('Review already submitted'), { status: 422 }),
     );
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await expect(approveAndMergePr(DEFAULT_REPO, 42)).rejects.toThrow(
       'Review already submitted',
     );
     expect(merge).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 
-  it('propagates a GitHub API error from the merge step and never notifies', async () => {
-    const { merge, createWorkflowDispatch } = mockOctokit();
+  it('propagates a GitHub API error from the merge step and never sweeps', async () => {
+    const { merge } = mockOctokit();
     merge.mockRejectedValue(
       Object.assign(new Error('Pull Request is not mergeable'), {
         status: 405,
       }),
     );
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await expect(approveAndMergePr(DEFAULT_REPO, 42)).rejects.toThrow(
       'Pull Request is not mergeable',
     );
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 
-  it('still resolves the merge when the reconcile ping fails outright', async () => {
-    const { merge, createWorkflowDispatch } = mockOctokit();
-    createWorkflowDispatch.mockRejectedValue(
-      Object.assign(new Error('Server Error'), { status: 500 }),
-    );
+  it('still resolves the merge when the orchestrator runtime cannot be constructed', async () => {
+    const { merge } = mockOctokit();
+    (createOrchestratorRuntime as Mock).mockImplementation(() => {
+      throw new Error('orchestrator unavailable');
+    });
 
     await expect(approveAndMergePr(DEFAULT_REPO, 42)).resolves.toBeUndefined();
     expect(merge).toHaveBeenCalled();
@@ -671,21 +646,17 @@ describe('cancelWorkflowRun', () => {
         status: runStatuses.shift() ?? 'completed',
       },
     }));
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
       rest: {
-        actions: {
-          cancelWorkflowRun: cancelWorkflowRun_,
-          getWorkflowRun,
-          createWorkflowDispatch,
-        },
+        actions: { cancelWorkflowRun: cancelWorkflowRun_, getWorkflowRun },
       },
     });
-    return { cancelWorkflowRun_, getWorkflowRun, createWorkflowDispatch };
+    return { cancelWorkflowRun_, getWorkflowRun };
   }
 
   it('cancels the given run on the console repo', async () => {
     const { cancelWorkflowRun_ } = mockOctokit();
+    fixtureOrchestratorRuntime();
 
     await cancelWorkflowRun(DEFAULT_REPO, 12345);
 
@@ -696,10 +667,24 @@ describe('cancelWorkflowRun', () => {
     });
   });
 
-  it("notifies the hosted controller to reconcile the run's anchor issue", async () => {
+  // #1183: cancelWorkflowRun's own GitHub Actions run id has no orchestrator
+  // equivalent recorded anywhere (Run only ever carries the orchestrator's
+  // own minted runId - see model.ts). The anchor issue number parsed from
+  // the run's display_title is the only honest join available; the
+  // orchestrator's one-live-run-per-task invariant means a live run found
+  // under that anchor can only be the one this cancellation was acting on.
+  it("cancels the anchor's live orchestrator run so its mutex releases immediately", async () => {
     const { getWorkflowRun } = mockOctokit({
       displayTitle: '#4242: Fix the flaky test',
     });
+    const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
+    const taskId = { repo: CONTROL_PLANE_REPO, issue: 4242 };
+    const requested = await orchestrator.request({
+      taskId,
+      requestId: 'live-run',
+      pipeline: 'claude',
+    });
+    if ('refused' in requested) throw new Error('seed request was refused');
 
     await cancelWorkflowRun(DEFAULT_REPO, 12345);
 
@@ -708,54 +693,63 @@ describe('cancelWorkflowRun', () => {
       repo: 'sprinkles',
       run_id: 12345,
     });
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'reconcile',
-      repository: DEFAULT_REPO,
-      issueNumber: 4242,
-      requestId: expect.any(String),
-    });
+    const run = await store.readRun(requested.run.runId);
+    expect(run?.state).toBe('canceled');
+    // The cancellation's own report-outcome outbox entry gets drained as
+    // part of the same sweep+drain notifyReconcile always runs afterward.
+    expect(calls.some((c) => c.url.includes('/issues/4242/comments'))).toBe(
+      true,
+    );
   });
 
-  it('waits for GitHub to finish cancellation before reconciling the run', async () => {
+  it('leaves the orchestrator alone when the anchor has no live run', async () => {
+    mockOctokit({ displayTitle: '#4242: Fix the flaky test' });
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const cancelSpy = vi.spyOn(orchestrator, 'cancel');
+
+    await cancelWorkflowRun(DEFAULT_REPO, 12345);
+
+    expect(cancelSpy).not.toHaveBeenCalled();
+  });
+
+  it('waits for GitHub to finish cancellation before reflecting into the orchestrator', async () => {
     vi.useFakeTimers();
     try {
       const { getWorkflowRun } = mockOctokit({
         runStatuses: ['in_progress', 'completed'],
       });
+      const { orchestrator } = fixtureOrchestratorRuntime();
+      const cancelSpy = vi.spyOn(orchestrator, 'cancel');
 
       const cancellation = cancelWorkflowRun(DEFAULT_REPO, 12345);
       await vi.advanceTimersByTimeAsync(0);
       expect(getWorkflowRun).toHaveBeenCalledTimes(1);
-      expect(executeHostedControllerCommand).not.toHaveBeenCalled();
+      expect(cancelSpy).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(250);
       await cancellation;
       expect(getWorkflowRun).toHaveBeenCalledTimes(2);
-      expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-        kind: 'reconcile',
-        repository: DEFAULT_REPO,
-        issueNumber: 4242,
-        requestId: expect.any(String),
-      });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('leaves a slow cancellation to the scheduled sweep without reconciling early', async () => {
+  it('leaves a slow cancellation to the scheduled sweep without reflecting early', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      const { getWorkflowRun, createWorkflowDispatch } = mockOctokit({
+      const { getWorkflowRun } = mockOctokit({
         runStatuses: Array.from({ length: 6 }, () => 'in_progress'),
       });
+      const { orchestrator } = fixtureOrchestratorRuntime();
+      const cancelSpy = vi.spyOn(orchestrator, 'cancel');
 
       const cancellation = cancelWorkflowRun(DEFAULT_REPO, 12345);
       await vi.runAllTimersAsync();
       await cancellation;
 
       expect(getWorkflowRun).toHaveBeenCalledTimes(6);
-      expect(createWorkflowDispatch).not.toHaveBeenCalled();
+      expect(cancelSpy).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('scheduled sweep will converge it'),
         12345,
@@ -767,33 +761,37 @@ describe('cancelWorkflowRun', () => {
   });
 
   it('parses the anchor from an opencode-prefixed display title the same way the dashboard does', async () => {
-    mockOctokit({
-      displayTitle: 'opencode #777: Investigate the outage',
+    mockOctokit({ displayTitle: 'opencode #777: Investigate the outage' });
+    const { store, orchestrator } = fixtureOrchestratorRuntime();
+    const taskId = { repo: CONTROL_PLANE_REPO, issue: 777 };
+    const requested = await orchestrator.request({
+      taskId,
+      requestId: 'live-run',
+      pipeline: 'opencode',
     });
+    if ('refused' in requested) throw new Error('seed request was refused');
 
     await cancelWorkflowRun(DEFAULT_REPO, 12345);
 
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'reconcile',
-      repository: DEFAULT_REPO,
-      issueNumber: 777,
-      requestId: expect.any(String),
-    });
+    const run = await store.readRun(requested.run.runId);
+    expect(run?.state).toBe('canceled');
   });
 
-  it('skips the reconcile ping when the title carries no anchor number', async () => {
-    const { createWorkflowDispatch } = mockOctokit({
-      displayTitle: 'Manually dispatched run',
-    });
+  it('skips reflection and the sweep when the title carries no anchor number', async () => {
+    mockOctokit({ displayTitle: 'Manually dispatched run' });
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
+    const cancelSpy = vi.spyOn(orchestrator, 'cancel');
 
     await expect(
       cancelWorkflowRun(DEFAULT_REPO, 12345),
     ).resolves.toBeUndefined();
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
+    expect(cancelSpy).not.toHaveBeenCalled();
+    expect(sweepSpy).not.toHaveBeenCalled();
   });
 
   it('still resolves the cancel when looking up the anchor fails', async () => {
-    const { cancelWorkflowRun_, createWorkflowDispatch } = mockOctokit();
+    const { cancelWorkflowRun_ } = mockOctokit();
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         actions: {
@@ -803,21 +801,19 @@ describe('cancelWorkflowRun', () => {
             .mockRejectedValue(
               Object.assign(new Error('Not Found'), { status: 404 }),
             ),
-          createWorkflowDispatch,
         },
       },
     });
+    fixtureOrchestratorRuntime();
 
     await expect(
       cancelWorkflowRun(DEFAULT_REPO, 12345),
     ).resolves.toBeUndefined();
     expect(cancelWorkflowRun_).toHaveBeenCalled();
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 
   it('propagates a GitHub API error (e.g. the run already completed) and never looks up an anchor', async () => {
     const getWorkflowRun = vi.fn();
-    const createWorkflowDispatch = vi.fn();
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         actions: {
@@ -827,7 +823,6 @@ describe('cancelWorkflowRun', () => {
               Object.assign(new Error('Conflict'), { status: 409 }),
             ),
           getWorkflowRun,
-          createWorkflowDispatch,
         },
       },
     });
@@ -836,7 +831,6 @@ describe('cancelWorkflowRun', () => {
       'Conflict',
     );
     expect(getWorkflowRun).not.toHaveBeenCalled();
-    expect(createWorkflowDispatch).not.toHaveBeenCalled();
   });
 });
 
