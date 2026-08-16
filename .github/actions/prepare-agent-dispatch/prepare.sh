@@ -45,6 +45,15 @@ if [ ! -f "$protocol_path" ]; then
   exit 1
 fi
 
+# Install the layer-1 skill surface into the agent's own skills directory
+# (#1269). HOME, not GITHUB_WORKSPACE: the runner's home has no skills of
+# its own, the agent auto-discovers them there exactly as a workstation
+# session does, and it cannot collide with a consumer repo's .claude/skills
+# -- which in agent-lcars is a symlink into the checkout.
+skills_dest="${HOME:-/root}/.claude/skills"
+skills_digest="$(bash "$GITHUB_ACTION_PATH/install-skills.sh" \
+  "$GITHUB_ACTION_PATH/../../../.agents/skills" "$skills_dest" || true)"
+
 mkdir -p "$dispatch_dir"
 
 anchor_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
@@ -178,6 +187,8 @@ jq -n \
 {
   echo "path=$context_path"
   echo "protocol-path=$protocol_path"
+  echo "skills-path=$skills_dest"
+  echo "skills-digest=$skills_digest"
 } >> "$GITHUB_OUTPUT"
 
 {

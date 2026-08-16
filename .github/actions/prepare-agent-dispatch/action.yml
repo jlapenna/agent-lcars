@@ -51,6 +51,12 @@ outputs:
   protocol-path:
     description: Path to the shared agent protocol document bundled with this action revision.
     value: ${{ steps.prepare.outputs['protocol-path'] }}
+  skills-path:
+    description: Directory the layer-1 agent skill surface was installed into for this run.
+    value: ${{ steps.prepare.outputs['skills-path'] }}
+  skills-digest:
+    description: sha256 of the installed skill tree, recording exactly which guidance this run's agent received.
+    value: ${{ steps.prepare.outputs['skills-digest'] }}
 
 runs:
   using: composite
