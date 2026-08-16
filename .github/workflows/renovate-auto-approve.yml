@@ -1,0 +1,71 @@
+name: Renovate Auto Approve
+
+# Fleet-published reusable workflow (docs/published-actions.md) that
+# approves a renovate[bot] pull request via the Agent LCARS App
+# installation token. Retires the one-off "super-sprinkles-auto-approver"
+# GitHub App that used to live only in sprinkles: renovate PRs are authored
+# by renovate[bot], so agent-lcars[bot] approving them is not a
+# self-approval, and the Agent LCARS App already carries
+# pull_requests:write and is installed on every fleet repo (agent-lcars,
+# sprinkles, homelab).
+#
+# The actor guard on the job below is server-side, not caller-trust-only:
+# `github.actor` inside a `workflow_call` reusable workflow reflects the
+# actual triggering actor of the calling run (workflow_call shares the
+# caller's run/event context -- it is not a caller-supplied input a
+# misconfigured or malicious caller could spoof). A caller should still
+# guard its own trigger too (belt), but this job's own `if:` is the
+# backstop (suspenders) a fleet-wide surface needs.
+#
+# Deliberately no secrets.GITHUB_TOKEN fallback: PR-approval via
+# GITHUB_TOKEN is blocked by default org settings on these repos, so a
+# silent fallback would be a vacuous no-op path that looks green while
+# approving nothing. Fail loud on a mint failure instead of falling back.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          Runner labels as a JSON array string -- pass the caller's own
+          already-defaulted CI_RUNS_ON repo variable (falling back to a
+          literal JSON array if that variable is unset). Passed straight
+          to fromJSON().
+        required: true
+        type: string
+    secrets:
+      APP_PRIVATE_KEY:
+        description: >-
+          Agent LCARS App private key -- the fleet's shared
+          AGENT_LCARS_PRIVATE_KEY repo secret.
+        required: true
+
+permissions: {}
+
+jobs:
+  auto-approve:
+    # Server-side backstop -- see header comment.
+    if: github.actor == 'renovate[bot]'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Mint Agent LCARS identity token
+        id: mint_identity_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          # Agent LCARS App client ID -- public (see AGENTS.md and
+          # docs/published-actions.md), safe to hardcode: it identifies the
+          # App, it does not authenticate as it. Not sourced from a repo
+          # variable because every calling repo would otherwise need its
+          # own copy of the same constant.
+          client-id: Iv23liO6X8pLJLcTFzyv
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+
+      - name: Approve PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ steps.mint_identity_token.outputs.token }}
