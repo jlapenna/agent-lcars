@@ -54,10 +54,17 @@
 #     structured runtime result for supplementary failure signals --
 #     claude.yml only, see claude-log-scan.sh; codex.yml/opencode.yml leave
 #     this unset and get none of claude's extra signals, exactly as before).
-#   #813: MAINTAINER is no longer required here -- report-failure.sh stopped
-#     writing GitHub state (and therefore stopped needing the maintainer
-#     login) once the hosted finalizer's completion callback took over
-#     status:needs-human/assignment through the projector's one writer.
+#   #813/#1208: MAINTAINER is report-failure.sh's own standalone-mode
+#     toggle, pass-through here. LCARS's hosted workers leave it unset:
+#     report-failure.sh gets GH_TOKEN/ISSUE_NUM/MAINTAINER all blanked,
+#     byte-identical to the pre-#1208 hardcoded behavior, and stays
+#     log-only while the hosted finalizer's completion callback remains
+#     the one writer through the projector. A standalone consumer without
+#     that coupled finalizer sets MAINTAINER (e.g. `vars.MAINTAINER_LOGIN`)
+#     and this script forwards its own ambient GH_TOKEN plus ISSUE (as
+#     ISSUE_NUM) alongside it, so report-failure.sh takes its compatibility
+#     path and posts/parks the failure directly (#4388's contract, now
+#     reachable without hand-copying the step).
 set -uo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
@@ -72,6 +79,7 @@ NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
 AGENT_STEP_OUTCOME="${AGENT_STEP_OUTCOME:-}"
 READINESS_FAILURE="${READINESS_FAILURE:-}"
+MAINTAINER="${MAINTAINER:-}"
 
 case "$READINESS_FAILURE" in
   ''|credential|provider|bootstrap) ;;
@@ -105,8 +113,17 @@ fi
 trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Finalize telemetry sidecar: was if: always(), continue-on-error: true -
-WRITER_CREDENTIALS_FILE="$WRITER_CREDENTIALS_FILE" RUN_ID="$RUN_ID" NUM="$ISSUE" \
-  bash "$trusted_dir/telemetry-finalize/telemetry-finalize.sh" || true
+# telemetry-finalize is Coupled (baked-in sidecar-lifecycle.sh, see
+# docs/published-actions.md), so a standalone consumer that snapshots this
+# script without it is expected, not an error -- skip cleanly rather than
+# letting the "|| true" below merely swallow a raw "No such file or
+# directory" from bash itself.
+if [ -f "$trusted_dir/telemetry-finalize/telemetry-finalize.sh" ]; then
+  WRITER_CREDENTIALS_FILE="$WRITER_CREDENTIALS_FILE" RUN_ID="$RUN_ID" NUM="$ISSUE" \
+    bash "$trusted_dir/telemetry-finalize/telemetry-finalize.sh" || true
+else
+  echo "::notice::telemetry-finalize not snapshotted; skipping (standalone consumer without the coupled runner image)."
+fi
 
 # --- Verify a deliverable exists: was if: success() -------------------------
 deliverable_failed=0
@@ -151,10 +168,21 @@ elif [ -n "$FAILURE_LOG_SCAN_SCRIPT" ] && [ -f "$FAILURE_LOG_SCAN_SCRIPT" ]; the
 fi
 
 # --- Report failure on the issue: was if: failure() || cancelled() ---------
-# #813: explicitly blank the standalone compatibility tuple. GH_TOKEN is
-# otherwise ambient here for deliverable lookups, but this hosted path must
-# remain log-only while the finalizer/projector owns GitHub state writes.
-GH_TOKEN='' ISSUE_NUM='' MAINTAINER='' \
+# #813/#1208: MAINTAINER presence is report-failure.sh's own standalone-mode
+# toggle -- forward it unchanged. Absent (LCARS's hosted workers), blank the
+# compatibility tuple exactly as before: GH_TOKEN is otherwise ambient here
+# for deliverable lookups, but this hosted path must remain log-only while
+# the finalizer/projector owns GitHub state writes. Present (a standalone
+# consumer), forward the same ambient GH_TOKEN and ISSUE (as ISSUE_NUM)
+# alongside it so report-failure.sh takes its compatibility path.
+report_failure_gh_token=''
+report_failure_issue_num=''
+if [ -n "$MAINTAINER" ]; then
+  report_failure_gh_token="$GH_TOKEN"
+  report_failure_issue_num="$ISSUE"
+fi
+
+GH_TOKEN="$report_failure_gh_token" ISSUE_NUM="$report_failure_issue_num" MAINTAINER="$MAINTAINER" \
   AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
   RUN_ID="$RUN_ID" REASON="$reason" JOB_STATUS="$JOB_STATUS" \
   bash "$trusted_dir/report-failure/report-failure.sh"

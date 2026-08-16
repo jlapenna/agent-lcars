@@ -18,20 +18,21 @@ workflows, no separate actions repo, and no Marketplace listing.
 
 ### Published
 
-| Action                         | Purpose                                                                                         |
-| ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `mint-agent-token`             | Mint a scoped Agent LCARS App installation token (owner/repositories/permission-\* passthrough) |
-| `claim-issue`                  | Assign the fleet-claim login, optionally posting a pickup comment                               |
-| `agent-setup`                  | Agent git identity, run-start timestamp, optional shared Nx cache                               |
-| `verify-agent-identity`        | Assert the minted token's App identity and the push credential                                  |
-| `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                     |
-| `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                            |
-| `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                  |
-| `report-failure`               | Log failure; optionally park an anchor for standalone consumers (run from snapshot)             |
-| `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                    |
-| `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                           |
-| `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                          |
-| `scan-image`                   | Trivy scan + SARIF upload + fail on fixable CRITICALs                                           |
+| Action                         | Purpose                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `mint-agent-token`             | Mint a scoped Agent LCARS App installation token (owner/repositories/permission-\* passthrough)                      |
+| `claim-issue`                  | Assign the fleet-claim login, optionally posting a pickup comment                                                    |
+| `agent-setup`                  | Agent git identity, run-start timestamp, optional shared Nx cache                                                    |
+| `verify-agent-identity`        | Assert the minted token's App identity and the push credential                                                       |
+| `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                                          |
+| `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                                                 |
+| `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                                       |
+| `report-failure`               | Log failure; optionally park an anchor for standalone consumers (run from snapshot)                                  |
+| `post-agent-gates`             | Single post-agent step driving verify-deliverable/report-failure/telemetry-finalize (script only, run from snapshot) |
+| `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                         |
+| `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
+| `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
+| `scan-image`                   | Trivy scan + SARIF upload + fail on fixable CRITICALs                                                                |
 
 ### Internal
 
@@ -106,6 +107,22 @@ add `status:needs-human`, and assign the maintainer directly. When running the
 script from `snapshot-enforcement-scripts`, the equivalent opt-in is the
 `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only part of
 that tuple fails closed instead of silently losing the report (#4388).
+
+`post-agent-gates` (script only — see "Security: post-agent gates run from a
+pre-agent snapshot" below; there is deliberately no `action.yml`, since a
+`uses:`-callable surface would invite invoking it post-agent, defeating the
+snapshot invariant) carries the same dual-mode contract one level up (#1208).
+It already required `GH_TOKEN` and `ISSUE` for its own verify-deliverable
+lookups, so the only new input is `MAINTAINER`: absent, it forwards
+`report-failure.sh`'s `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` all blank —
+byte-identical to LCARS's hosted, log-only behavior. Set, it forwards its own
+ambient `GH_TOKEN` and `ISSUE` (as `ISSUE_NUM`) alongside it, so
+`report-failure.sh` takes its standalone compatibility path and posts/parks
+the failure directly. This is what lets sprinkles/homelab collapse their
+hand-copied telemetry-finalize/verify-deliverable/failure-reason/report-failure
+steps into the one snapshot-run step LCARS's own workers already use, without
+losing their existing visible-failure reporting (issue #1208; the consumer-side
+rewiring is tracked as a follow-up, not part of this change).
 
 `verify-deliverable`'s exact-marker clause additionally requires the matching
 artifact to be **bot-authored** (`.user.type == "Bot"`, agent-lcars#1223).
