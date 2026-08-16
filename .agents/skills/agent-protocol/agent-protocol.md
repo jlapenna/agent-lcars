@@ -226,11 +226,14 @@ converging and is indistinguishable, from the outside, from a stuck run.
   opaque `gh` error rather than a clear permission message.
 - **What that credential deliberately is not:** it is never the workflow's
   own `GITHUB_TOKEN`. That token carries the job's full
-  contents/issues/pull-requests write grant and is the same credential the
-  dispatch broker uses to read and write the ledger comment, so handing it
-  to an agent would let agent-authored code rewrite the control plane's own
-  state (agent-lcars#645). It is a separate, independently revocable
-  credential granted the narrowest scope that can still rerun a workflow.
+  contents/issues/pull-requests write grant — the same class of credential
+  a repo's own dispatch control plane uses to admit, complete, and
+  reconcile work (in agent-lcars, `libs/orchestrator`'s Firestore-backed
+  mutex; in a repo whose broker still authenticates a comment-based ledger,
+  that comment) — so handing it to an agent would let agent-authored code
+  rewrite the control plane's own state (agent-lcars#645). It is a
+  separate, independently revocable credential granted the narrowest scope
+  that can still rerun a workflow.
   Depending on what the platform can express, that scope may still be wider
   than "rerun only" — treat it as a credential you were given for one
   purpose, and use it for that purpose.

@@ -38,42 +38,38 @@ jlapenna`), and use as the assignee in the parking recipe
   (agent-protocol.md §4). The console reads this exact login as
   `MAINTAINER_LOGIN`.
 
-- **Dispatch:** the hosted dispatch controller normalizes every trigger into
-  an intent for exactly one
-  of `claude.yml`, `codex.yml`, or `opencode.yml`. There is no precedence
-  order and no pipeline "stands down": an issue carrying more than one
-  `agent:*` label makes the broker throw a contradictory-agent-labels error
-  instead of picking a winner, and a comment matching more than one
-  recognized command is rejected outright — not dispatched at all — rather
-  than resolved in favor of one pipeline (`parseExactCommand` in
-  `apps/dispatch-broker/src/normalize.ts`). One narrow self-heal exception:
-  a `labeled` event whose
-  own label disambiguates against exactly one other stale `agent:*` label
-  (the transient window a manual GitHub UI relabel opens) makes the newest
-  label win, removing the stale one via the API with ledger evidence before
-  dispatching — comment-path ambiguity, three or more coexisting labels, and
-  a label missing from the current issue snapshot still throw.
+- **Dispatch (current, #1015):** a webhook delivery is interpreted by
+  `apps/console/src/lib/orchestrator-ingest.ts`'s `interpretDelivery`, pure
+  and stateless: an `issues`/`pull_request` `labeled` event whose label is
+  `agent:claude`/`agent:codex`/`agent:opencode` requests mode `implement`
+  (issue or PR); the same on a PR with `review:claude`/`review:codex`/
+  `review:opencode` requests mode `review`. Each delivery is evaluated on
+  its own — there is no cross-check against the anchor's full current label
+  set, no contradictory-multi-label detection, and no stale-label cleanup.
+  What actually prevents two runs is `libs/orchestrator`'s per-task mutex:
+  a request while a run is already live is refused (`task-busy`); a retried
+  delivery (same GitHub delivery ID) maps back to the run it already
+  created instead of starting a second one (`duplicate-request`). Your
+  attempt identity, `$ATTEMPT_ID`, is `g<generation>:<intentId>`, where
+  `intentId` is literally the orchestrator's run ID
+  (`<repo>#<issue>/r<generation>`) — passed to your workflow as the
+  `broker_intent_id`/`broker_generation` `workflow_dispatch` inputs by the
+  orchestrator's outbox drain, not re-derived or re-verified by you.
 - **Reply triggers:** `@claude`, `/codex`, `/opencode`/`/oc`, or the generic
-  `@agent` (#573), but only when the command is the sole first token of its
-  own line (trailing text after it is fine, e.g. `@claude please retry`); a
-  command embedded mid-prose, inside a fenced code block, or on a quoted
-  (`>`) line does not count (`parseExactCommand` in
-  `apps/dispatch-broker/src/normalize.ts`). The
-  pipeline-specific commands' pipeline must match the issue's single
-  selected `agent:*` label — except `@claude` on a pull request, which
-  dispatches regardless of label. `@agent` names no pipeline at all; it
-  resolves to whatever that single selected label already is, and fails
-  closed (no dispatch) if the label is absent or ambiguous — it does not
-  get the pull-request default `@claude` gets. A plain reply with no
-  recognized command, or a comment carrying more than one, is silently
-  ignored — always end a parking comment with the correct trigger for
-  whichever pipeline dispatched you. `@agent` is safe there ONLY when an
-  `agent:*` label is actually set (Codex review on #574): a PR dispatched
-  via `@claude`'s label-free default, or an issue dispatched via a manual
-  `workflow_dispatch` intent that named a pipeline without ever adding a
-  label, has nothing for `@agent` to resolve against — it throws instead of
-  redispatching. Keep recommending the pipeline-specific trigger for any
-  run that could be label-free.
+  `@agent` (#573), matched by `orchestrator-ingest.ts`'s `matchReplyCommand`
+  against an `issue_comment` `created` event from an `OWNER`/`MEMBER`
+  author — anyone else's comment is ignored outright. The command must be
+  the first token of the (whitespace-trimmed) comment body — not merely on
+  its own line anywhere in a longer comment — followed by whitespace or
+  end-of-string; trailing text after it is fine (`@claude please retry`),
+  but a command appearing mid-comment does not count. There is no
+  cross-check against the issue's current `agent:*` label: any recognized
+  command at the top of a trusted reply requests that exact pipeline,
+  live-run mutex permitting. **`@agent` is a fixed alias for `claude`**, not
+  "whatever pipeline is currently labeled" — that resolve-from-label
+  behavior belonged to the deleted dispatch-broker parser and has no
+  replacement today. Always end a parking comment with the
+  pipeline-specific trigger you actually want.
 
 - **Bot login format:** `claude[bot]` (REST) / `app/claude` (GraphQL), and
   `agent-lcars[bot]` / `app/agent-lcars`, are the same App installations
@@ -130,95 +126,50 @@ a real blocker; a review dispatch pushes nothing (there is nothing to push
 on a pure review).
 
 The GitHub App subscribes to issue, issue-comment, and pull-request events.
-Hosted admission normalizes pull-request `labeled`/`unlabeled` actions in
-addition to `closed`/`reopened`, so both label families reach the same shared
-controller path (#565).
-`apps/dispatch-broker/src/normalize.ts`, hosted timeline fetches, and
-`verify-deliverable.sh` keep transport, authorization, and deliverable
-contracts aligned for both modes.
+`orchestrator-ingest.ts` acts only on the `labeled` action for both label
+families (#565) and on `issue_comment`'s `created` action for reply
+commands; `unlabeled`, `closed`, `reopened`, and any other action are
+received but ignored today (`ignore('unhandled-action')` /
+`ignore('unhandled-event')`) — there is no relabel/close-driven cleanup in
+the current design. `verify-deliverable.sh` keeps the deliverable contract
+aligned for both modes regardless of how the run was requested.
 
-## Dispatch ledger reconciliation
+## Reconciliation and lease recovery
 
-The hosted reconciliation endpoint lists every currently open issue/PR carrying
-an `agent:*` or `review:*` label, unioned with every open issue/PR assigned to
-`vars.AGENT_FLEET_LOGIN` (`jclaw-bot`) — the durable, label-independent
-signal `claim-issue` already sets at the start of every worker dispatch and
-never clears, which is what still finds a ledger whose last `agent:*` label
-was removed while its generation was active
-(`libs/dispatch-reconcile/src/scan.ts`'s `discoverReconcileCandidates`) —
-then normalizes and processes each candidate
-directly through the shared controller under the Firestore authority lease.
-It does not create one Actions workflow run per candidate; that removes the
-repair path's dependency on the self-hosted control-plane pool. Every hosted
-invocation uses a request-unique lease owner so overlapping scheduled/manual
-calls serialize through Firestore instead of bypassing the live lease as the
-same owner. Manual and scheduled reconciliation both use the hosted endpoint;
-the self-hosted `action-fallback` transport is retired. See
-`apps/dispatch-broker/src/main.ts`'s `reconcileLedger` and `trackMissingRun`
-for the pure repair logic and
-`apps/dispatch-broker/src/main.spec.ts` for its interruption/
-idempotency test coverage.
+There is no ledger to reconcile today. `.github/workflows/dispatch-reconcile.yml`
+calls `/api/control-plane/reconcile` every 30 minutes (also
+`workflow_dispatch`-able); that handler is `Orchestrator.sweepExpired()`
+(`libs/orchestrator/src/orchestrator.ts`) followed by an outbox drain
+(`apps/console/src/lib/orchestrator-dispatch.ts`). What it actually does:
 
-What it repairs, reusing the broker's own existing machinery wherever
-possible:
+- **Lease expiry, not liveness polling.** A live run holds a 2-hour lease
+  (`decide.ts`'s `LEASE_MS`) that only your own dispatch/report/renew calls
+  extend. If your job dies silently — runner loss, a timeout with no
+  completion callback, anything that never reaches `expireLease` on its
+  own — the sweep is what eventually notices: once the lease is past due,
+  the run is marked `lost` and the task's mutex is released. There is
+  nothing for you to hand-repair here; you do not need to reconstruct or
+  edit any state.
+- **Bounded, automatic retry.** Immediately after marking a run `lost`, the
+  sweep requests a fresh run for the same task with the same
+  pipeline/params — unless the task has gone `lost` more than
+  `MAX_AUTO_RETRIES` (2) times in a row since its last `finished`/
+  `canceled` settlement, in which case it's left parked instead
+  (`status:needs-human`, via the outcome comment the outbox drain posts).
+  A manual reply/label request still works on a parked task at any time —
+  it is not blocked by the exhausted auto-retry budget, only unattempted by
+  the sweep itself.
+- **The outbox drain also retries stuck deliveries.** A `dispatch-run` or
+  `report-outcome` entry that failed a prior GitHub call (rate limit,
+  transient 5xx) stays `pending` and is retried on the next drain — dispatch
+  or completion, or this scheduled sweep, whichever runs next. This is why
+  an outcome comment can appear on the issue noticeably after your run
+  actually finished.
 
-- **Hosted completion finalization, or an observation lost to a crashed
-  run.** The worker's OIDC callback records `completion-observed` and returns
-  before polling because its own run cannot become terminal until that HTTP
-  request finishes. `reconcileActive()` re-fetches the bound run after it is
-  terminal and applies the idempotent `completeRun` transition. The same path
-  repairs a timeout or force-cancel that skipped the callback entirely.
-- **A dispatch whose outcome was genuinely lost** (a queue-evicted intent
-  #345/#347 deliberately failed red for, or a worker that crashed before any
-  run ever registered): a generation stuck `dispatching`/`dispatch-unknown`
-  with no matching run gets a bounded number of interval-separated
-  observations (`reconcile-missing-run` anomalies, evidence recorded in the
-  ledger every time) before parking `status:needs-human` at the bound
-  (`reconcile-parked`). A generation still within its grace period, or
-  re-observed sooner than the minimum interval, is a silent no-op — this is
-  what makes overlapping/duplicate scans idempotent.
-- **A current-label intent evicted before the ledger recorded it**: an
-  unambiguous live agent/review label is repaired from its real most-recent
-  maintainer-authored `timeline:<event-id>` source, even after earlier
-  generations completed (#639). That identity makes repeated scans and a
-  delayed original webhook harmless duplicates. The narrow creation-time
-  exception is a digest-valid Quick Task authored by the configured
-  maintainer, because GitHub emits no separate timeline event for labels
-  included in an issue's creation request (#634). A real later label event
-  always takes precedence, so its non-maintainer actor can never fall back to
-  the original author.
-- **Stale pending intents**: queued behind either repair above, they are
-  promoted when their blocking generation resolves (`completeRun`'s
-  existing promotion), but promotion is not unconditional launch:
-  `dispatchAccepted()` reads the anchor's live `status:needs-human` label and
-  holds ordinary work while parked. Removing the label emits serialized
-  control evidence and resumes the preserved intent through the same broker;
-  scheduled reconciliation is the lost-webhook backstop. The no-op canary is
-  exempt so a parked failed canary can probe and prove recovery. There is no
-  separate "stale pending" mechanism and no dropped authorization.
-- **Concurrent duplicate attempts**: `reconcileActive()` already records a
-  `duplicate-attempt` anomaly naming every matching run and fails closed
-  (parked, never silently resolved or auto-canceled) the moment more than
-  one worker run matches a single dispatch generation.
-
-A **recently closed** anchor is now in scope, but only to converge control
-state — never to dispatch. Discovery adds a bounded `state=closed` sweep
-(24h window) alongside the open lanes, because a closed anchor otherwise
-drops off the candidate list the moment it closes and its ledger can never
-be repaired again. That matters on the success path: GitHub does not trigger
-workflow runs from events created by `GITHUB_TOKEN`, so when the fleet's own
-auto-merge closes an anchor — via a PR's `Fixes #N` keyword or
-`agent-automerge.yml`'s own `gh issue close` calls — no `issues: closed`
-event ever reaches the router, and `control.closed` stays `false` forever.
-Reconciling such an anchor writes control state through the same
-`applyAnchorControl` a live close event uses, and returns before the only
-branch that can create a generation.
-
-Out of scope for this pass (documented, not silently dropped): anchors closed
-longer ago than that window, cross-repository discovery, and a run that is
-genuinely still in-progress well past its worker timeout — the worker's own
-`timeout-minutes` bound already forces those to a terminal GitHub Actions
-conclusion well inside any reasonable reconcile cadence.
+None of this involves a ledger comment, a `generation` counter, or a
+Firestore authority lease on a shared document that a headless agent could
+inspect or contend with directly — `libs/orchestrator/README.md` is the
+whole contract if you need more than this summary.
 
 ## Auto-merge
 

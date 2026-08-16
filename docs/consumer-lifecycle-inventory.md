@@ -5,12 +5,28 @@
 > `libs/dispatch-contracts/src/recovery-observation.ts` and the hosted
 > ingestion endpoint this document's "What this lands" section describes as
 > future follow-up work were both removed in #1015 Wave 4 — the endpoint
-> never gained consumer-repo OIDC trust (see #870) and the primary
-> admission/completion/reconciliation path moved to `libs/orchestrator`
-> instead. This document's own inventory of the eleven consumer workflows
-> remains accurate as a historical snapshot; treat any reference to a
+> never gained consumer-repo OIDC trust (see #870) and this repo's own
+> primary admission/completion/reconciliation path moved to
+> [`libs/orchestrator`](../libs/orchestrator) instead (see
+> [`docs/lifecycle-systems.md`](lifecycle-systems.md)). This document's own
+> inventory of the eleven consumer workflows remains accurate as a
+> historical snapshot; treat any reference to a
 > `RecoveryObservation`/`recovery/v1:...` contract landing "in this same
 > change" as describing work that was later un-landed, not current state.
+>
+> **What's still live in the consumer repos, unchanged by #1015.** Group A
+> (`jlapenna/homelab`'s `agent-router.yml` + `dispatch-reconcile.yml`) is
+> still the forked, pre-cutover copy of this repo's dispatch broker
+> described below — it does not talk to `libs/orchestrator` and did not
+> retire when this repo's own decision loop did. Group C
+> (`rerun-infra-killed-runs.yml` in both `homelab` and `sprinkles`) is still
+> a thin consumer of the published `.github/actions/rerun-infra-killed-runs`
+> action, which #1015 Wave 4 deliberately kept building and publishing for
+> exactly this reason (this repo's own local use of that action was
+> deleted; the action itself was not). Neither loop retires on its own —
+> each retires only if and when that lane's dispatch is migrated onto the
+> central orchestrator, which is a real design decision (see Group A below)
+> that has not been made or scheduled.
 
 [#864](https://github.com/jlapenna/agent-lcars/issues/864) proposes making the
 hosted controller (see [`lifecycle-systems.md`](lifecycle-systems.md)) the

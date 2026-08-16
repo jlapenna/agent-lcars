@@ -6,7 +6,7 @@ Project-specific workflows and guardrails (worktree/git safety, PRs,
 verification) are defined by the **agent-lcars-dev** skill — it is the
 single source of truth; do not duplicate its guardrail text elsewhere in
 this file. Headless-CI-dispatch conventions (takeover comment, parking,
-identity, dispatch ledger) are defined by the **agent-protocol** and
+identity, dispatch/reconciliation) are defined by the **agent-protocol** and
 **lcars** skills instead — read those when dispatched as a headless agent.
 
 The project skills live in `.agents/skills/`. Depending on your agent
