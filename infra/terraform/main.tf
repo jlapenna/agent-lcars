@@ -567,6 +567,28 @@ resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_
   member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
 }
 
+# The App Hosting BUILD preparer resolves every apphosting.yaml secret
+# reference at rollout time and needs secret METADATA access
+# (secretmanager.versions.get, in roles/secretmanager.viewer) on top of the
+# runtime accessor above; without it every rollout fails at the preparer with
+# fah/misconfigured-secret (observed live 2026-08-16 after #1245 wired this
+# secret). The older App Hosting secrets carry the same pair of grants, but
+# theirs were made out-of-band by `firebase apphosting:secrets:grantaccess`;
+# this one is codified here instead.
+resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.agent_lcars_app_private_key.secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.agent_lcars_app_private_key.secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
+}
+
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
   display_name    = "Agent LCARS monthly budget"
