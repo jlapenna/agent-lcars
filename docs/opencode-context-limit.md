@@ -74,8 +74,32 @@ Fewer than one compaction per ~15 steps means the agent keeps its working
 memory across a task. Zero compactions across a long run means the limit is
 too high and you are heading for the 64k cliff instead.
 
-`limit.output` (2048) is deliberately left alone here — it was not implicated
-in either failure, and one variable at a time.
+## `limit.output` = 8192
+
+2048 was the same Gemma-era leftover as the context value, and it is the cap
+on what the model may emit in a single turn. A 300-line TSX component is
+roughly 4,000 tokens, so 2048 could not have written one — the agent would
+have been truncated mid-file at the exact step that matters.
+
+There is **no measured evidence it was ever hit**, and that is worth stating
+plainly: across every run examined, the agent never reached a file write, so
+nothing in the logs shows a truncated edit. This is a constraint removed
+before it bites, not a diagnosed failure.
+
+8192 is derived from the step budget rather than picked. With thinking
+disabled and the prompt under the 64k cliff, `ds4-serve` decodes at roughly
+48ms/token (its own tuning note; deep prompts run 146–177ms/token). A
+maximal 8192-token turn therefore costs ~6.5 minutes — about 11% of the
+60-minute agent step (#1226). At 16384 a single runaway turn would eat 22% of
+the run, which is a worse failure than a truncated write.
+
+If a real edit is ever truncated, the log will show it and this should go up.
+Do not raise it on the theory that bigger is safer: the cost is paid in
+minutes of a bounded budget.
+
+`default-nothink` carries the identical budget and rationale. It is the route
+this repo actually dispatches on (#1227); `default` keeps its entry because
+the two share a backend and must not drift apart on this number.
 
 Related: agent-lcars#1210 cut the fixed pre-work reading that this budget is
 mostly spent on, and agent-lcars#1217 covers the separate 60-minute push
