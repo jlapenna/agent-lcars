@@ -237,6 +237,13 @@ jobs:
             --secret=CODEX_AUTH_JSON > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           codex login status
+          # #1192: fingerprint the credential as-restored, before Codex gets
+          # a chance to rotate it. "Persist refreshed subscription
+          # authentication" below compares this against the end-of-run
+          # file, so a run that never actually rotated the token (nothing
+          # to persist) doesn't burn a new secret version identical to the
+          # one already stored.
+          echo "restored-sha256=$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       # A second, narrower mint - deliberately not the "Mint agent token"
       # step above and not github.token. The App token minted above is the
@@ -346,6 +353,77 @@ jobs:
             echo "::error::Codex auth.json is missing or empty; refusing to replace the stored credential"
             exit 1
           fi
+
+          # #1192 — do not write back a burned credential lineage.
+          #
+          # Incident (2026-08-15): the restored OAuth refresh token had
+          # already been rotated out from under this run ("refresh token
+          # was already used"). Codex failed in ~40s with hundreds of
+          # codex_login::auth::manager refresh errors, and this step —
+          # deliberately `if: always()`, so a genuinely rotated token
+          # survives an unrelated agent failure — still ran and wrote the
+          # now-burned auth.json back as CODEX_AUTH_JSON version 49. That
+          # destroyed the version history a human would need to find the
+          # last-good credential, and re-armed the identical failure for
+          # the very next dispatch.
+          #
+          # This guard is deliberately narrow: it skips the write ONLY
+          # when the captured codex output
+          # ($RUNNER_TEMP/codex-output.jsonl, produced by the `tee` in
+          # "Run Codex") carries positive evidence that THIS run's auth
+          # was the problem. A run that failed for any other reason may
+          # still have legitimately rotated the token before failing, and
+          # losing that rotation would burn the lineage just the same —
+          # so this must never become a blanket "skip persist on any
+          # failure" guard.
+          #
+          # Fixed-string greps only, not a broad pattern: agent output
+          # routinely discusses HTTP status codes and auth as the SUBJECT
+          # of its work (e.g. debugging someone else's 401), and a regex
+          # loose enough to catch every phrasing would misclassify that as
+          # this run's own auth failure. Each signature is either copied
+          # verbatim from today's incident log or anchored to the
+          # codex_login source module that actually emits the refresh
+          # error, so a bare mention of "401" elsewhere in agent output
+          # cannot trip it.
+          codex_output="$RUNNER_TEMP/codex-output.jsonl"
+          auth_failure_reason=""
+          if [ -s "$codex_output" ]; then
+            if grep -qF -- 'Your access token could not be refreshed' "$codex_output"; then
+              # Covers both the plain CLI message and the structured
+              # {"type":"turn.failed","error":{"message":"Your access
+              # token could not be refreshed..."}} shape codex emits on
+              # --json runs: that JSON's error.message value IS this
+              # exact string, so one fixed-string match catches both
+              # forms without needing to parse the JSON.
+              auth_failure_reason='codex reported "Your access token could not be refreshed"'
+            elif grep -qF -- 'refresh token was already used' "$codex_output"; then
+              auth_failure_reason='codex reported "refresh token was already used" (today'"'"'s incident signature)'
+            elif grep -F -- 'codex_login' "$codex_output" | grep -qF -- '401 Unauthorized'; then
+              # Anchored to the codex_login logger, not a bare "401" —
+              # see the false-positive note above.
+              auth_failure_reason='codex_login logged a 401 Unauthorized refresh error'
+            fi
+          fi
+
+          if [ -n "$auth_failure_reason" ]; then
+            echo "::warning::Skipping credential persist: $auth_failure_reason. The restored credential lineage is burned; a human must re-seed CODEX_AUTH_JSON (see #1192). Not writing auth.json back as a new secret version."
+            exit 0
+          fi
+
+          # Cheap no-op guard: if nothing rotated, writing the same bytes
+          # back only adds version noise (and would still, per the
+          # incident above, mask that no useful rotation happened this
+          # run).
+          restored_sha256="${{ steps.restore-auth.outputs.restored-sha256 }}"
+          if [ -n "$restored_sha256" ]; then
+            end_of_run_sha256="$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')"
+            if [ "$end_of_run_sha256" = "$restored_sha256" ]; then
+              echo "::notice::Skipping credential persist: auth.json is byte-identical to the restored credential; nothing rotated this run"
+              exit 0
+            fi
+          fi
+
           gcloud secrets versions add CODEX_AUTH_JSON \
             --project="${{ vars.GCP_PROJECT_ID }}" \
             --data-file="$HOME/.codex/auth.json"
