@@ -29,10 +29,16 @@ name: agent-lcars-telemetry-watcher
 # a different uid cannot read them even through read-only mounts.
 services:
   agent-lcars-telemetry-watcher:
-    # agent-lcars 799ff0b contains the explicit multi-root privacy scope and
-    # Prometheus endpoint from #434. Keep tag and digest immutable together:
-    # the healthcheck below requires the endpoint provided by this image.
-    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:799ff0b25d5cc4388af98aebb7b89983b97000f9@sha256:a6f797208cef0453891bd854cef04c73772da43fdae0ad805e3c3c6fd6b586cc
+    # agent-lcars 6b6638d is the first revision whose daemon actually reads
+    # the session-title overlay (#1212 activation, plus the #1224/#1230
+    # bounding fixes). The mount and AGENT_TELEMETRY_SESSION_STATE_DIR below
+    # are inert without it -- an older image ignores both, silently, so the
+    # tag and this file's overlay config have to move together.
+    #
+    # Keep tag and digest immutable together: the healthcheck below requires
+    # the Prometheus endpoint this image provides (#434's multi-root privacy
+    # scope came with it).
+    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:6b6638d8355c31cbfa99bebe39fbb3d8ca484534@sha256:1861b2911d11d547469444e236a756d0d91a25dba068a2d8faec2a96cbd43d29
     container_name: agent-lcars-telemetry-watcher
     user: '${WATCHER_UID:?deploy.sh must export WATCHER_UID}:${WATCHER_GID:?deploy.sh must export WATCHER_GID}'
     # Shares the host PID namespace so isProcessAliveForCwd's /proc/<pid>/cwd
