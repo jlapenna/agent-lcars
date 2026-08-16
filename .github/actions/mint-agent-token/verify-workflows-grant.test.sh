@@ -83,6 +83,12 @@ run_case() {
   PRIVATE_KEY="$(cat "$test_root/fake-key.pem")"
   export INSTALLATION_ID=123456
   export REQUESTED_LEVEL="$requested"
+  # Every real invocation runs inside a GitHub Actions job, where
+  # GITHUB_REPOSITORY is always set - the ambient default OWNER/REPOSITORIES
+  # scope down to. Tests exercising an explicit owner/repositories input set
+  # OWNER/REPOSITORIES themselves (inherited from the caller's own
+  # environment, not reset here), which take precedence over this default.
+  export GITHUB_REPOSITORY=jlapenna/agent-lcars
   export RUNNER_TEMP="$case_dir"
   set +e
   output="$(bash "$action_dir/verify-workflows-grant.sh" 2>&1)"
@@ -92,8 +98,9 @@ run_case() {
 }
 
 # Match: a probe token minted with this call's own permissions carries
-# workflows:write, exactly what was requested.
-run_case granted 201 '{"token":"ghs_fake","permissions":{"workflows":"write","contents":"write"}}' write
+# workflows:write, exactly what was requested, and (blank owner/repositories
+# - the default scope) its repository scope matches GITHUB_REPOSITORY.
+run_case granted 201 '{"token":"ghs_fake","permissions":{"workflows":"write","contents":"write"},"repositories":[{"name":"agent-lcars"}]}' write
 test "$status_code" = 0
 grep -q 'has granted' "$test_root/granted/output"
 
@@ -110,6 +117,12 @@ done
 # The probe token was revoked afterward (best-effort DELETE, using the
 # probe token itself as bearer - never the App JWT).
 grep -q 'Authorization: Bearer ghs_fake' "$test_root/granted/last-delete-authorization-header"
+
+# Scoped-to-default: blank owner/repositories means the probe's own request
+# defaults to GITHUB_REPOSITORY's bare name, exactly like
+# create-github-app-token defaults the real mint step (jlapenna/homelab#622).
+sent_body="$(cat "$test_root/granted/last-request-body")"
+jq -e '.repositories == ["agent-lcars"]' <<<"$sent_body" >/dev/null
 
 # Mismatch: installation has not approved workflows at all.
 run_case narrowed 201 '{"token":"ghs_fake","permissions":{"contents":"write"}}' write
@@ -134,7 +147,7 @@ grep -q 'Could not mint a probe token' "$test_root/http-error/output"
 # pattern) and whose installation genuinely has no `workflows` grant passes
 # quietly - no error, no notice (the common, unremarkable case must not add
 # log noise to every existing caller fleet-wide).
-run_case unrequested-and-absent 201 '{"token":"ghs_fake","permissions":{"contents":"write"}}' ''
+run_case unrequested-and-absent 201 '{"token":"ghs_fake","permissions":{"contents":"write"},"repositories":[{"name":"agent-lcars"}]}' ''
 test "$status_code" = 0
 test -z "$(cat "$test_root/unrequested-and-absent/output")"
 
@@ -160,13 +173,56 @@ export PERMISSION_CONTENTS=write
 export PERMISSION_PULL_REQUESTS=write
 export PERMISSION_ACTIONS=write
 export PERMISSION_METADATA=read
-run_case narrow-allowlist-excludes-workflows 201 '{"token":"ghs_fake","permissions":{"issues":"write","contents":"write","pull_requests":"write","actions":"write","metadata":"read"}}' ''
+run_case narrow-allowlist-excludes-workflows 201 '{"token":"ghs_fake","permissions":{"issues":"write","contents":"write","pull_requests":"write","actions":"write","metadata":"read"},"repositories":[{"name":"agent-lcars"}]}' ''
 test "$status_code" = 0
 test -z "$(cat "$test_root/narrow-allowlist-excludes-workflows/output")"
 sent_body="$(cat "$test_root/narrow-allowlist-excludes-workflows/last-request-body")"
 jq -e '.permissions | has("workflows") | not' <<<"$sent_body" >/dev/null
 jq -e '.permissions.issues == "write" and .permissions.metadata == "read"' <<<"$sent_body" >/dev/null
+jq -e '.repositories == ["agent-lcars"]' <<<"$sent_body" >/dev/null
 unset PERMISSION_ISSUES PERMISSION_CONTENTS PERMISSION_PULL_REQUESTS PERMISSION_ACTIONS PERMISSION_METADATA
+
+# --- Repository-scope verification (jlapenna/homelab#622) ---
+#
+# Scoped-to-requested: an explicit `repositories` input (comma/newline
+# separated, mixing bare names and owner/name entries) is mirrored into the
+# probe's own request, and a response granting exactly those repositories
+# passes. Also covers OWNER's comma/newline splitting and owner/name
+# stripping, ported unchanged from jlapenna/homelab's fork.
+export OWNER=jlapenna
+export REPOSITORIES=$'agent-lcars, jlapenna/other-repo\nthird-repo'
+run_case scoped-to-requested 201 '{"token":"ghs_fake","permissions":{"contents":"write"},"repositories":[{"name":"agent-lcars"},{"name":"other-repo"},{"name":"third-repo"}]}' ''
+test "$status_code" = 0
+test -z "$(cat "$test_root/scoped-to-requested/output")"
+sent_body="$(cat "$test_root/scoped-to-requested/last-request-body")"
+jq -e '.repositories == ["agent-lcars", "other-repo", "third-repo"]' <<<"$sent_body" >/dev/null
+unset OWNER REPOSITORIES
+
+# Owner-wide: an explicit `owner` with no `repositories` means "every
+# repository for that owner" in the upstream action - there is no fixed
+# list to compare against, so the probe omits `repositories` from its own
+# request and the repository-scope check is skipped (any response passes).
+export OWNER=jlapenna
+run_case owner-wide 201 '{"token":"ghs_fake","permissions":{"contents":"write"}}' ''
+test "$status_code" = 0
+sent_body="$(cat "$test_root/owner-wide/last-request-body")"
+jq -e 'has("repositories") | not' <<<"$sent_body" >/dev/null
+unset OWNER
+
+# Broader-than-requested: this call asked for exactly one repository, but a
+# token minted with these same inputs would carry a second one too (e.g. a
+# bug in the real mint step's repositories handling, or the installation
+# silently widening access) - must fail closed rather than trust a token
+# scoped more broadly than requested, and the error must name the expected
+# and actual repository sets while never echoing the probe token itself.
+export REPOSITORIES=agent-lcars
+run_case broader-than-requested 201 '{"token":"ghs_super_secret_fake","permissions":{"contents":"write"},"repositories":[{"name":"agent-lcars"},{"name":"other-repo"}]}' ''
+test "$status_code" = 1
+grep -q 'broader (or narrower) repository access' "$test_root/broader-than-requested/output"
+grep -q 'agent-lcars' "$test_root/broader-than-requested/output"
+grep -q 'other-repo' "$test_root/broader-than-requested/output"
+! grep -q 'ghs_super_secret_fake' "$test_root/broader-than-requested/output"
+unset REPOSITORIES
 
 # curl_retry() (agent-lcars#956): the mint call's first two attempts hit a
 # transient transport failure (the fake curl's simulated non-zero exit,
@@ -182,7 +238,7 @@ unset PERMISSION_ISSUES PERMISSION_CONTENTS PERMISSION_PULL_REQUESTS PERMISSION_
 # probe token" instead of reaching "has granted" - the fake curl not
 # emitting `000` on failure at all is exactly why the original PR's tests
 # did not catch this.
-run_case transient-then-recovers 201 '{"token":"ghs_fake","permissions":{"workflows":"write","contents":"write"}}' write 2
+run_case transient-then-recovers 201 '{"token":"ghs_fake","permissions":{"workflows":"write","contents":"write"},"repositories":[{"name":"agent-lcars"}]}' write 2
 test "$status_code" = 0
 grep -q 'has granted' "$test_root/transient-then-recovers/output"
 # Proves the retry loop actually ran rather than the mint call happening to

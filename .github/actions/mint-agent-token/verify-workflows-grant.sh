@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Verify that a token minted with this call's own permission-* inputs would
-# actually carry exactly the `workflows` permission this caller asked for -
-# no more, no less - before any later step (including an agent's own model
+# Verify that a token minted with this call's own permission-* and
+# owner/repositories inputs would actually carry exactly the `workflows`
+# permission and exactly the repository scope this caller asked for - no
+# more, no less - before any later step (including an agent's own model
 # turn) trusts the token above.
 #
 # Runs unconditionally, for EVERY mint-agent-token call, not just ones that
@@ -33,11 +34,24 @@
 # mint call internally but does not expose the response's `permissions`
 # object as a step output. This script re-derives a short-lived App JWT
 # (the standard RS256-over-HTTP recipe GitHub's own docs describe), mints
-# its OWN probe token via the identical permissions object the real "Mint
-# Agent LCARS installation token" step above just requested, inspects that
-# response, and revokes the probe token immediately (best-effort - it is
-# scoped no more broadly than the real token already in use, and expires
-# within the hour regardless).
+# its OWN probe token via the identical permissions object AND repository
+# selection the real "Mint Agent LCARS installation token" step above just
+# requested, inspects that response, and revokes the probe token immediately
+# (best-effort - it is scoped no more broadly than the real token already in
+# use, and expires within the hour regardless).
+#
+# The repository-scope half of this check exists for the same reason as the
+# permissions half (jlapenna/homelab#622): posting the probe mint with no
+# `repositories` field at all - the pre-port behavior - hits the raw GitHub
+# REST API's own default, which is installation-WIDE, not "whatever the real
+# token was scoped to". A probe minted that way can verify permissions but
+# can never distinguish a correctly repository-scoped real token from one
+# that silently ended up scoped to every repository the installation can
+# see. create-github-app-token instead defaults an all-blank
+# owner/repositories pair to the current workflow repository (see the
+# owner/repositories inputs' own description in action.yml), so this probe
+# reproduces that same default - not the raw API's - and then checks the
+# response's actual `repositories` list against exactly what was requested.
 set -euo pipefail
 
 : "${CLIENT_ID:?CLIENT_ID is required}"
@@ -136,11 +150,44 @@ permissions_json="$(jq -cn \
   '{issues:$issues, contents:$contents, pull_requests:$pull_requests, actions:$actions, metadata:$metadata, workflows:$workflows}
    | with_entries(select(.value != ""))')"
 
-if [ "$permissions_json" = '{}' ]; then
-  request_body='{}'
-else
-  request_body="$(jq -cn --argjson permissions "$permissions_json" '{permissions: $permissions}')"
+# Mirror the same repository selection the real mint step just requested
+# (jlapenna/homelab#622), so the probe below can verify the REAL token's
+# repository scope too - not only its permissions. `expected_repositories`
+# is the bare-name list this probe requires the response to match exactly;
+# left `[]` for the one case that has no fixed list to compare against - an
+# explicit `owner` with no `repositories`, which (like
+# create-github-app-token's own OWNER-only input combination) legitimately
+# means "every repository the installation can see for that owner", not a
+# fixed set.
+OWNER="${OWNER:-}"
+REPOSITORIES="${REPOSITORIES:-}"
+expected_repositories='[]'
+if [ -z "$OWNER" ] && [ -z "$REPOSITORIES" ]; then
+  # Blank owner and repositories: create-github-app-token defaults this to
+  # the current workflow repository, not an installation-wide token - the
+  # probe must request (and expect back) that same single repository.
+  : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required when owner and repositories are unset}"
+  expected_repositories="$(jq -cn --arg repository "${GITHUB_REPOSITORY#*/}" '[$repository]')"
+elif [ -n "$REPOSITORIES" ]; then
+  # Match create-github-app-token's comma/newline splitting and accept
+  # either bare names or owner/name. The real mint step already validated
+  # owner agreement for any owner/name entries.
+  expected_repositories="$(jq -cn --arg raw "$REPOSITORIES" '
+    $raw
+    | gsub(","; "\n")
+    | split("\n")
+    | map(gsub("^\\s+|\\s+$"; ""))
+    | map(select(length > 0))
+    | map(split("/") | if length == 1 then .[0] elif length == 2 then .[1] else error("invalid repository input") end)
+  ')"
 fi
+
+request_body="$(jq -cn \
+  --argjson permissions "$permissions_json" \
+  --argjson repositories "$expected_repositories" \
+  '{}
+   + (if ($permissions | length) > 0 then {permissions:$permissions} else {} end)
+   + (if ($repositories | length) > 0 then {repositories:$repositories} else {} end)')"
 
 http_status="$(curl_retry -sS -o "$response_file" -w '%{http_code}' \
   -X POST \
@@ -159,6 +206,7 @@ fi
 
 probe_token="$(printf '%s' "$response" | jq -r '.token')"
 granted="$(printf '%s' "$response" | jq -r '.permissions.workflows // "none"')"
+granted_repositories="$(printf '%s' "$response" | jq -cS '[(.repositories // [])[].name]')"
 
 # Best-effort revoke - never let a revoke failure mask (or be confused
 # with) the permission check itself, and never echo the probe token.
@@ -177,6 +225,21 @@ if [ "$granted" != "$expected_level" ]; then
     echo "::error::Installation ${INSTALLATION_ID} has not granted the requested 'workflows: ${REQUESTED_LEVEL}' permission (currently: ${granted}). The Agent LCARS App declares this permission, but each installation must separately approve it: https://github.com/settings/installations (personal-account installations) or the organization's installation-settings page. A workflow-file push with this token would be rejected at push time. See jlapenna/agent-lcars#868." >&2
   fi
   exit 1
+fi
+
+# Repository-scope check (jlapenna/homelab#622): only meaningful when this
+# call has a fixed expected list - the owner-only ("every repository for
+# this owner") combination above deliberately leaves expected_repositories
+# empty and has nothing fixed to compare against. Compares sorted name
+# lists so ordering never causes a spurious mismatch. Never echoes the
+# probe token - only repository names, which are not secret.
+if [ "$expected_repositories" != '[]' ]; then
+  expected_sorted="$(printf '%s' "$expected_repositories" | jq -cS 'sort')"
+  granted_sorted="$(printf '%s' "$granted_repositories" | jq -cS 'sort')"
+  if [ "$granted_sorted" != "$expected_sorted" ]; then
+    echo "::error::A token minted with installation ${INSTALLATION_ID}'s own owner/repositories inputs would be scoped to repositories ${granted_sorted}, not the expected ${expected_sorted} - it would carry broader (or narrower) repository access than this call requested. See jlapenna/homelab#622." >&2
+    exit 1
+  fi
 fi
 
 if [ -n "$REQUESTED_LEVEL" ]; then

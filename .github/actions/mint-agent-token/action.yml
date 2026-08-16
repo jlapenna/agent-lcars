@@ -2,7 +2,8 @@ name: Mint agent token
 description: >-
   Mint a short-lived Agent LCARS GitHub App installation token, used for the
   agent fleet's claim/comment/label gh operations and, where a workflow
-  passes it to checkout, its push credential.
+  passes it to checkout, its push credential. The verification probe below
+  checks the token's repository scope in addition to its permissions.
 
 inputs:
   client-id:
@@ -116,12 +117,20 @@ runs:
     # call can influence at runtime. The check only ever reads what its own
     # probe token actually receives; it never widens what the real token
     # above was minted with.
+    #
+    # Also verifies repository scope (jlapenna/homelab#622): OWNER/
+    # REPOSITORIES are forwarded so the probe mints against the same
+    # owner/repositories selection the real mint step above just requested
+    # - see verify-workflows-grant.sh for why an unscoped probe cannot
+    # catch a token that ends up broader than the caller asked for.
     - name: Verify workflows permission was actually granted
       shell: bash
       env:
         CLIENT_ID: ${{ inputs.client-id }}
         PRIVATE_KEY: ${{ inputs.private-key }}
         INSTALLATION_ID: ${{ steps.mint.outputs.installation-id }}
+        OWNER: ${{ inputs.owner }}
+        REPOSITORIES: ${{ inputs.repositories }}
         PERMISSION_ISSUES: ${{ inputs.permission-issues }}
         PERMISSION_CONTENTS: ${{ inputs.permission-contents }}
         PERMISSION_PULL_REQUESTS: ${{ inputs.permission-pull-requests }}
