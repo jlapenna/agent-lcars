@@ -44,6 +44,10 @@ workflows, no separate actions repo, and no Marketplace listing.
   orchestration convenience local to this repo's own three lane workflows;
   a consumer repo should call the wrapped `agent-setup`/
   `verify-agent-identity` actions directly instead, which remain Published.
+- `archive-opencode-trajectory` — export sanitized OpenCode sessions from
+  this run for durable trajectory diagnosis.
+- `setup-nx-remote-cache` — points trusted Nx jobs at the self-hosted L2
+  remote cache.
 
 ### Coupled — do not consume
 
