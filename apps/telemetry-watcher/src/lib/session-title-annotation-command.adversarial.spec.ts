@@ -13,6 +13,14 @@ import { SessionTitleAnnotationWriterFileSystem } from './session-title-annotati
 
 const SESSION_ID = 'command-session-1';
 const TITLE = 'title must never be echoed in an error';
+/** Pinned clock every `import-native` test below passes as `now` (issue
+ * #1224's recency-windowed query needs a deterministic "now" to compare
+ * `updated_at` fixture values against). Also backs `fixtureCodexDb`'s
+ * default `updated_at`, so a caller that doesn't care about recency at all
+ * still lands comfortably inside the window. */
+const IMPORT_WHEN = new Date('2026-08-15T00:00:00.000Z');
+const DEFAULT_FIXTURE_UPDATED_AT =
+  Math.floor(IMPORT_WHEN.getTime() / 1000) - 3600;
 const homes: string[] = [];
 
 afterEach(() => {
@@ -55,6 +63,10 @@ function fixtureCodexDb(
     rollout_path: string;
     name: string | null;
     title: string | null;
+    /** Defaults to `DEFAULT_FIXTURE_UPDATED_AT` -- comfortably inside the
+     * importer's recency window relative to `IMPORT_WHEN` -- for callers
+     * that don't care about recency and just want a plain usable row. */
+    updated_at?: number;
   }[],
 ): void {
   const codexDir = path.join(homeDirectory, '.codex');
@@ -72,11 +84,28 @@ function fixtureCodexDb(
       )`,
     );
     const insert = db.prepare(
-      'INSERT INTO threads (id, rollout_path, name, title) VALUES (?, ?, ?, ?)',
+      'INSERT INTO threads (id, rollout_path, name, title, updated_at) VALUES (?, ?, ?, ?, ?)',
     );
+    // A single explicit transaction, not one implicit commit per `run()` --
+    // every call site here only ever passes a handful of rows, so this
+    // never showed up as a timeout in this particular file, but the same
+    // per-row-fsync exposure exists in principle (issue #1224 CI
+    // follow-up: `codex-native-title-source.spec.ts` and
+    // `session-title-overlay.integration.spec.ts` both did time out on a
+    // slow-disk CI runner from exactly this pattern at higher row counts).
+    // Kept consistent here rather than left as a latent trap for the next
+    // caller that grows this fixture into a bulk one.
+    db.exec('BEGIN');
     for (const row of rows) {
-      insert.run(row.id, row.rollout_path, row.name, row.title ?? '');
+      insert.run(
+        row.id,
+        row.rollout_path,
+        row.name,
+        row.title ?? '',
+        row.updated_at ?? DEFAULT_FIXTURE_UPDATED_AT,
+      );
     }
+    db.exec('COMMIT');
   } finally {
     db.close();
   }
@@ -291,7 +320,7 @@ describe('session import-native dispatch', () => {
       executeSessionTitleAnnotationCommand(['session', 'import-native'], {
         env: {},
         homeDirectory,
-        now: () => new Date('2026-08-15T00:00:00.000Z'),
+        now: () => IMPORT_WHEN,
       }),
     ).toEqual({ ok: true });
 
@@ -332,7 +361,7 @@ describe('session import-native dispatch', () => {
     const dependencies = {
       env: {},
       homeDirectory,
-      now: () => new Date('2026-08-15T00:00:00.000Z'),
+      now: () => IMPORT_WHEN,
     };
 
     executeSessionTitleAnnotationCommand(

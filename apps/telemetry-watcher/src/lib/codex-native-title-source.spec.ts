@@ -6,9 +6,24 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  CODEX_NATIVE_TITLE_IMPORT_CAP,
+  CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS,
   pollCodexNativeTitles,
   resolveCodexStateDbPath,
 } from './codex-native-title-source';
+
+/** Pinned "now" for every recency-window computation below -- deterministic
+ * tests, matching the writer's own `now?: () => Date` seam. */
+const WHEN = new Date('2026-08-15T12:00:00.000Z');
+const WHEN_SECONDS = Math.floor(WHEN.getTime() / 1000);
+
+/** `updated_at` `secondsAgo` before `WHEN`, in the unix-seconds units the
+ * real `threads.updated_at` column uses. Defaults to "1 minute ago" -- well
+ * inside the 14-day window, but distinct enough from `WHEN_SECONDS` itself
+ * to catch an accidental strict `>` where the query means `>=`. */
+function recentUpdatedAt(secondsAgo = 60): number {
+  return WHEN_SECONDS - secondsAgo;
+}
 
 interface ThreadFixtureRow {
   id: string;
@@ -70,6 +85,14 @@ function fixtureDb(
         .map(() => '?')
         .join(', ')})`,
     );
+    // A single explicit transaction, not one implicit commit per `run()` --
+    // outside a transaction, SQLite's default journal mode fsyncs on every
+    // statement, so an unwrapped loop pays one fsync per row. That's near-
+    // free on this workstation's disk but measured at ~29s in CI for ~200
+    // rows (issue #1224 CI follow-up) -- a fixture-builder cost, not
+    // anything to do with the code under test, which never showed up
+    // locally only because local disk latency hid it.
+    db.exec('BEGIN');
     for (const row of rows) {
       const values = columns.map((column) => {
         const value = (row as unknown as Record<string, unknown>)[column];
@@ -77,6 +100,7 @@ function fixtureDb(
       });
       insert.run(...(values as never[]));
     }
+    db.exec('COMMIT');
   } finally {
     db.close();
   }
@@ -93,11 +117,11 @@ describe('pollCodexNativeTitles', () => {
         name: null,
         title: 'Fix the flaky test',
         cwd: '/home/user/p/agent-lcars',
-        updated_at: 1_700_000_000,
+        updated_at: recentUpdatedAt(),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'codex-session-1', title: 'Fix the flaky test' },
     ]);
   });
@@ -112,11 +136,11 @@ describe('pollCodexNativeTitles', () => {
         name: 'My deliberate rename',
         title: 'Auto-generated title nobody chose',
         cwd: '/home/user/p/agent-lcars',
-        updated_at: 1,
+        updated_at: recentUpdatedAt(),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'codex-session-2', title: 'My deliberate rename' },
     ]);
   });
@@ -129,16 +153,20 @@ describe('pollCodexNativeTitles', () => {
         rollout_path: '/rollouts/a.jsonl',
         name: null,
         title: 'Generated only',
+        // Newer than the row below -- `ORDER BY updated_at DESC` must keep
+        // this one first, matching the order asserted below.
+        updated_at: recentUpdatedAt(60),
       },
       {
         id: 'codex-session-blank-name',
         rollout_path: '/rollouts/b.jsonl',
         name: '   ',
         title: 'Generated fallback for blank name',
+        updated_at: recentUpdatedAt(120),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'codex-session-null-name', title: 'Generated only' },
       {
         sessionId: 'codex-session-blank-name',
@@ -155,22 +183,25 @@ describe('pollCodexNativeTitles', () => {
         rollout_path: '/rollouts/a.jsonl',
         name: null,
         title: 'x',
+        updated_at: recentUpdatedAt(),
       },
       {
         id: 'unsafe/id',
         rollout_path: '/rollouts/b.jsonl',
         name: null,
         title: 'x',
+        updated_at: recentUpdatedAt(),
       },
       {
         id: 'safe-id-1',
         rollout_path: '/rollouts/c.jsonl',
         name: null,
         title: 'kept',
+        updated_at: recentUpdatedAt(),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'safe-id-1', title: 'kept' },
     ]);
   });
@@ -183,22 +214,25 @@ describe('pollCodexNativeTitles', () => {
         rollout_path: '/rollouts/a.jsonl',
         name: '   ',
         title: '   ',
+        updated_at: recentUpdatedAt(),
       },
       {
         id: 'empty-both',
         rollout_path: '/rollouts/b.jsonl',
         name: '',
         title: '',
+        updated_at: recentUpdatedAt(),
       },
       {
         id: 'kept',
         rollout_path: '/rollouts/c.jsonl',
         name: null,
         title: 'kept',
+        updated_at: recentUpdatedAt(),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'kept', title: 'kept' },
     ]);
   });
@@ -206,17 +240,30 @@ describe('pollCodexNativeTitles', () => {
   it('skips a row with a missing or blank rollout_path', () => {
     const dbPath = path.join(tempDir(), 'state_5.sqlite');
     fixtureDb(dbPath, [
-      { id: 'no-rollout', rollout_path: null, name: null, title: 'x' },
-      { id: 'blank-rollout', rollout_path: '   ', name: null, title: 'x' },
+      {
+        id: 'no-rollout',
+        rollout_path: null,
+        name: null,
+        title: 'x',
+        updated_at: recentUpdatedAt(),
+      },
+      {
+        id: 'blank-rollout',
+        rollout_path: '   ',
+        name: null,
+        title: 'x',
+        updated_at: recentUpdatedAt(),
+      },
       {
         id: 'kept',
         rollout_path: '/rollouts/c.jsonl',
         name: null,
         title: 'kept',
+        updated_at: recentUpdatedAt(),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'kept', title: 'kept' },
     ]);
   });
@@ -229,12 +276,72 @@ describe('pollCodexNativeTitles', () => {
         rollout_path: '/rollouts/a.jsonl',
         name: null,
         title: 'x'.repeat(100),
+        updated_at: recentUpdatedAt(),
       },
     ]);
 
-    expect(pollCodexNativeTitles(dbPath)).toEqual([
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'long-title', title: `${'x'.repeat(79)}…` },
     ]);
+  });
+
+  it('excludes a row outside the recency window, keeps one just inside it', () => {
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    const windowSeconds = CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS * 24 * 60 * 60;
+    fixtureDb(dbPath, [
+      {
+        id: 'just-outside',
+        rollout_path: '/rollouts/a.jsonl',
+        name: null,
+        title: 'too old',
+        // One second older than the cutoff -- excluded.
+        updated_at: WHEN_SECONDS - windowSeconds - 1,
+      },
+      {
+        id: 'just-inside',
+        rollout_path: '/rollouts/b.jsonl',
+        name: null,
+        title: 'kept',
+        // Exactly at the cutoff -- the query is `>=`, so this is included.
+        updated_at: WHEN_SECONDS - windowSeconds,
+      },
+    ]);
+
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
+      { sessionId: 'just-inside', title: 'kept' },
+    ]);
+  });
+
+  it('caps a single import at CODEX_NATIVE_TITLE_IMPORT_CAP, keeping the newest rows', () => {
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    const total = CODEX_NATIVE_TITLE_IMPORT_CAP + 10;
+    const rows: ThreadFixtureRow[] = [];
+    for (let index = 0; index < total; index += 1) {
+      rows.push({
+        id: `session-${String(index).padStart(4, '0')}`,
+        rollout_path: `/rollouts/${index}.jsonl`,
+        name: null,
+        title: `title ${index}`,
+        // Higher index == more recently updated, all well inside the
+        // window -- the cap, not the window, is what's under test here.
+        updated_at: recentUpdatedAt(total - index),
+      });
+    }
+    fixtureDb(dbPath, rows);
+
+    const result = pollCodexNativeTitles(dbPath, { now: () => WHEN });
+
+    expect(result).toHaveLength(CODEX_NATIVE_TITLE_IMPORT_CAP);
+    // Newest first: the last `CAP` rows inserted (highest indices), in
+    // descending order.
+    const expectedIds = Array.from(
+      { length: CODEX_NATIVE_TITLE_IMPORT_CAP },
+      (_, position) => {
+        const index = total - 1 - position;
+        return `session-${String(index).padStart(4, '0')}`;
+      },
+    );
+    expect(result.map((candidate) => candidate.sessionId)).toEqual(expectedIds);
   });
 
   it('fails soft and reports unavailability on a missing file', () => {
@@ -263,7 +370,13 @@ describe('pollCodexNativeTitles', () => {
   it('fails soft and reports unavailability on a locked database', () => {
     const dbPath = path.join(tempDir(), 'state_5.sqlite');
     fixtureDb(dbPath, [
-      { id: 'x', rollout_path: '/rollouts/a.jsonl', name: null, title: 'kept' },
+      {
+        id: 'x',
+        rollout_path: '/rollouts/a.jsonl',
+        name: null,
+        title: 'kept',
+        updated_at: recentUpdatedAt(),
+      },
     ]);
     const writer = new DatabaseSync(dbPath);
     writer.exec('BEGIN EXCLUSIVE');
@@ -280,6 +393,27 @@ describe('pollCodexNativeTitles', () => {
       writer.exec('ROLLBACK');
       writer.close();
     }
+  });
+
+  it('fails soft and reports unavailability when the injected clock is invalid', () => {
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    fixtureDb(dbPath, [
+      {
+        id: 'x',
+        rollout_path: '/rollouts/a.jsonl',
+        name: null,
+        title: 'kept',
+        updated_at: recentUpdatedAt(),
+      },
+    ]);
+    const errors: unknown[] = [];
+    expect(
+      pollCodexNativeTitles(dbPath, {
+        now: () => new Date(Number.NaN),
+        onUnavailable: (e) => errors.push(e),
+      }),
+    ).toEqual([]);
+    expect(errors).toHaveLength(1);
   });
 });
 

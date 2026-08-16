@@ -5,6 +5,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { MAX_SESSION_TITLE_ANNOTATION_FILES } from './session-title-annotation-source';
+
 /**
  * Codex's own thread-store SQLite DB (`~/.codex/state_*.sqlite`) -- the
  * only place a Codex session's own title lives. Codex's rollout `.jsonl`
@@ -29,6 +31,71 @@ const COL_ID = 'id';
 const COL_ROLLOUT_PATH = 'rollout_path';
 const COL_NAME = 'name';
 const COL_TITLE = 'title';
+const COL_UPDATED_AT = 'updated_at';
+
+const SECONDS_PER_DAY = 24 * 60 * 60;
+
+/**
+ * How many days back an import looks, keyed off `threads.updated_at` (a
+ * unix-seconds integer -- verified against the real 560-row DB, not
+ * milliseconds). Chosen to match the console's own archive-tier default
+ * lookback (`DEFAULT_ARCHIVE_DAYS`, `apps/console/src/lib/
+ * archive-window.ts`, also 14) so an imported native title never claims
+ * to cover sessions the console's own session-archive page has already
+ * stopped surfacing by default. `apps/telemetry-watcher` cannot import
+ * that constant directly (it lives in a different app, not a shared lib),
+ * so the two are kept in sync by value and by this comment rather than by
+ * a shared import -- if the console's default ever moves, revisit this.
+ *
+ * Measured against the real 560-row store behind issue #1224 (`cli_version`
+ * 0.147.0): 1 usable row in the last day, 45 in 7, 95 in 14, 342 in 30, 342
+ * total. 14 days keeps today's import comfortably under
+ * `CODEX_NATIVE_TITLE_IMPORT_CAP` below (95 < 192) while the unbounded
+ * "all time" figure (342) shows why a window is load-bearing on its own,
+ * independent of the cap: without one, the selected set could grow
+ * forever even before the cap kicks in.
+ */
+export const CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS = 14;
+
+/**
+ * Headroom reserved below the reader's hard per-directory cap,
+ * `MAX_SESSION_TITLE_ANNOTATION_FILES` (256, `session-title-annotation-
+ * source.ts` -- imported, never redefined or raised here). A quarter of
+ * that cap, rather than a fixed handful of files, so the reserve scales if
+ * the reader's own limit is ever revisited.
+ *
+ * This exists because `readSessionTitleDirectory` counts every raw
+ * directory entry -- including the writer's own in-flight
+ * `.<sessionId>.<random>.tmp` temp file -- BEFORE filtering down to valid
+ * finals, so writing exactly 256 finals is already one write away from
+ * tripping the reader's `available: false` fail-closed path (see that
+ * function's doc comment). A one-file margin would only cover that single
+ * in-flight temp; this reserves enough to also absorb an orphaned temp a
+ * crashed prior run failed to clean up, or two overlapping invocations (a
+ * slow run still executing when the next scheduled tick fires -- see
+ * `deploy/systemd/agent-lcars-session-title-import.timer`'s own comment on
+ * why 2 minutes was judged safe in the common case, not as a hard
+ * exclusion guarantee).
+ */
+export const CODEX_NATIVE_TITLE_IMPORT_HEADROOM = Math.floor(
+  MAX_SESSION_TITLE_ANNOTATION_FILES / 4,
+);
+
+/**
+ * Hard cap on how many rows a single import selects (256 - 64 = 192 today),
+ * independent of the recency window above -- the window bounds by time, this
+ * bounds by count, and the importer needs both: the window alone still grew
+ * without limit before this fix (342 rows with no cutoff at all, per the
+ * measurement in `CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS`'s comment), and a
+ * count cap with no window would retain arbitrarily stale rows forever
+ * merely because nothing newer had shown up to evict them.
+ *
+ * 192 clears today's real 14-day count (95) with more than 2x room to grow
+ * before this cap -- rather than the window -- becomes the constraining
+ * factor, while still sitting a full quarter of the reader's cap below 256.
+ */
+export const CODEX_NATIVE_TITLE_IMPORT_CAP =
+  MAX_SESSION_TITLE_ANNOTATION_FILES - CODEX_NATIVE_TITLE_IMPORT_HEADROOM;
 
 /** Importer-only env var -- there is no in-container watcher config that
  * needs this path, so (unlike `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB`,
@@ -163,19 +230,36 @@ export interface PollCodexNativeTitlesOptions {
    * `toCandidate`). Same contract as
    * `antigravity-summary-source.ts`'s `PollAntigravitySummariesOptions`. */
   onUnavailable?: (error: unknown) => void;
+  /** Test seam for deterministic "now", matching the writer's own seam of
+   * the same name (`SessionTitleAnnotationWriterDependencies.now`). Real
+   * callers get the wall clock. Drives the recency cutoff below --
+   * `threads.updated_at` is unix seconds, so this is converted to seconds
+   * before comparison, never milliseconds. */
+  now?: () => Date;
 }
 
 /**
- * Reads every usable row out of Codex's `threads` table as a title
- * candidate. Opens read-only (`new DatabaseSync(path, { readOnly: true })`
- * -- Codex itself owns writes to this DB) and fails soft on any whole-DB
- * problem, returning `[]` and invoking `onUnavailable` rather than
- * throwing. Unlike `pollAntigravitySummaries`, this opens and closes its
- * own connection on every call rather than keeping one open across polls:
- * this module's only caller is a one-shot CLI invocation
+ * Reads the most recently updated usable rows out of Codex's `threads`
+ * table as title candidates, newest first. Opens read-only
+ * (`new DatabaseSync(path, { readOnly: true })` -- Codex itself owns writes
+ * to this DB) and fails soft on any whole-DB problem, returning `[]` and
+ * invoking `onUnavailable` rather than throwing. Unlike
+ * `pollAntigravitySummaries`, this opens and closes its own connection on
+ * every call rather than keeping one open across polls: this module's only
+ * caller is a one-shot CLI invocation
  * (`session-title-annotation-command.ts`'s `import-native` subcommand)
  * that runs once per process and exits, so there is no "next tick" to
  * amortize a kept-open connection across.
+ *
+ * Bounded at the SQL layer, not in application code, by both a recency
+ * window and a hard count cap (`CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS` /
+ * `CODEX_NATIVE_TITLE_IMPORT_CAP` above) -- see issue #1224: an unbounded
+ * `SELECT ... FROM threads` here is exactly what let a single import write
+ * more files than the reader's `MAX_SESSION_TITLE_ANNOTATION_FILES` cap
+ * tolerates, silently disabling the whole `generated` channel it exists to
+ * feed. `LIMIT` applies before `toCandidate`'s per-row filtering (unsafe
+ * id, blank `rollout_path`, empty title after normalization), so the
+ * returned candidate count can be lower than the cap but never higher.
  */
 export function pollCodexNativeTitles(
   dbPath: string,
@@ -190,11 +274,29 @@ export function pollCodexNativeTitles(
   }
 
   try {
+    const now = options.now ?? (() => new Date());
+    const nowMs = now().getTime();
+    if (!Number.isFinite(nowMs)) {
+      // An invalid/throwing clock has no principled cutoff to compute --
+      // same fail-soft posture as everywhere else in this module, reported
+      // through the same `onUnavailable` channel a bad DB uses.
+      throw new Error('invalid clock: cannot compute a recency cutoff');
+    }
+    const cutoffSeconds =
+      Math.floor(nowMs / 1000) -
+      CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS * SECONDS_PER_DAY;
+
     const rows = db
       .prepare(
-        `SELECT ${COL_ID}, ${COL_ROLLOUT_PATH}, ${COL_NAME}, ${COL_TITLE} FROM ${TABLE}`,
+        `SELECT ${COL_ID}, ${COL_ROLLOUT_PATH}, ${COL_NAME}, ${COL_TITLE} FROM ${TABLE}
+         WHERE ${COL_UPDATED_AT} >= ?
+         ORDER BY ${COL_UPDATED_AT} DESC
+         LIMIT ?`,
       )
-      .all() as unknown as ThreadRow[];
+      .all(
+        cutoffSeconds,
+        CODEX_NATIVE_TITLE_IMPORT_CAP,
+      ) as unknown as ThreadRow[];
 
     const candidates: CodexNativeTitleCandidate[] = [];
     for (const row of rows) {
