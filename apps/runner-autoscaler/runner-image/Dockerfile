@@ -72,10 +72,11 @@ ARG GO_VERSION=1.26.5
 # it cannot, rather than shipping a broken tool or rebuilding locally.
 # --platform=$BUILDPLATFORM pins this stage to the machine doing the
 # building instead of letting it be rebuilt once per *target* platform.
-# Everything it produces -- sidecar.cjs (a JavaScript bundle) and
-# sidecar-lifecycle.sh (a shell script) -- is architecture-independent, so
-# the arm64 rebuild recomputed a byte-identical artifact while running the
-# whole `pnpm install` + nx dependency chain under QEMU emulation.
+# Everything it produces -- sidecar.cjs (a JavaScript bundle) and the
+# job-daemon.sh/sidecar-lifecycle.sh shell scripts -- is
+# architecture-independent, so the arm64 rebuild recomputed a
+# byte-identical artifact while running the whole `pnpm install` + nx
+# dependency chain under QEMU emulation.
 #
 # That emulated pass was the dominant cost of this image: publish runs were
 # landing at 16-24 minutes against a 20-minute job timeout and had started
@@ -297,25 +298,37 @@ RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh
 
 # agent-lcars#30: baked-in telemetry sidecar/finalize tool (built above).
 # Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-# start|finalize — a thin process-management wrapper (background+PID-file
-# for start, kill+bounded-wait+synchronous run for finalize) baked in
-# alongside the binary itself, so every consuming claude.yml's telemetry
-# step is one line instead of duplicating that ~30-60 lines of bash
-# inline. That duplication is exactly how members drifted out of sync
-# with agent-lcars for an unknown stretch of time (it was missing the
-# finalize half entirely) — see apps/telemetry-watcher's own
-# runner-config.ts for the underlying CLI's flags, and
-# apps/telemetry-watcher/bin/sidecar-lifecycle.sh for the wrapper's own
-# source. No legacy ride-along.cjs fallback here (retired — the
-# agent-lcars#49 rename is old enough that every live image has been
-# rebuilt with the new name since).
+# start|finalize — a thin telemetry-specific wrapper (credential/RUN_ID
+# guards, sidecar.cjs argument assembly) baked in alongside the binary
+# itself, so every consuming claude.yml's telemetry step is one line
+# instead of duplicating that ~30-60 lines of bash inline. That
+# duplication is exactly how members drifted out of sync with agent-lcars
+# for an unknown stretch of time (it was missing the finalize half
+# entirely) — see apps/telemetry-watcher's own runner-config.ts for the
+# underlying CLI's flags, and apps/telemetry-watcher/bin/sidecar-lifecycle.sh
+# for the wrapper's own source. No legacy ride-along.cjs fallback here
+# (retired — the agent-lcars#49 rename is old enough that every live image
+# has been rebuilt with the new name since).
+#
+# agent-lcars#1246: the actual process-management mechanics (background +
+# PID-file for start, kill + bounded-wait for stop, never-fail-exit-0)
+# used to live inside sidecar-lifecycle.sh itself. They're now factored out
+# into the generic job-daemon.sh <start|stop> <name>, installed here
+# alongside it with the same ownership/permissions, so a second in-job
+# daemon (agent-lcars#1240's log shipper) can reuse that lifecycle instead
+# of hand-copying it a second time. sidecar-lifecycle.sh calls job-daemon.sh
+# rather than managing its own PID file now — see job-daemon.sh's own
+# header for why its --log defaults to /dev/null (fleet disk headroom).
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher/sidecar.cjs \
     /usr/local/lib/agent-lcars/sidecar.cjs
 COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/apps/telemetry-watcher/bin/job-daemon.sh \
+    /usr/local/lib/agent-lcars/job-daemon.sh
+COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/apps/telemetry-watcher/bin/sidecar-lifecycle.sh \
     /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-RUN chmod +x /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
 USER runner
 
