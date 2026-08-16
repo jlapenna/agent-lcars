@@ -243,6 +243,13 @@ jobs:
         # dispatch first).
         uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1.0.191
         env:
+          # Turns on the marker-stamping gh wrapper agent-handoff installed:
+          # every PR or comment this step creates carries this run's
+          # attempt-claim marker whether or not the model remembers to write
+          # it (agent-lcars#1213). Deliberately set ONLY here - the
+          # post-agent gates use the same gh, and stamping their reports
+          # would let the deliverable gate satisfy itself.
+          AGENT_MARKER_STAMPING: '1'
           # The app token the action vends to the agent maxes out at
           # actions:read (the token exchange supports nothing higher), so
           # re-running workflows needs a second token. NOT the workflow's

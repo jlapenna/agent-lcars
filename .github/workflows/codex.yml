@@ -313,6 +313,13 @@ jobs:
         # and the issue was never told.
         timeout-minutes: 60
         env:
+          # Turns on the marker-stamping gh wrapper agent-handoff installed:
+          # every PR or comment this step creates carries this run's
+          # attempt-claim marker whether or not the model remembers to write
+          # it (agent-lcars#1213). Deliberately set ONLY here - the
+          # post-agent gates use the same gh, and stamping their reports
+          # would let the deliverable gate satisfy itself.
+          AGENT_MARKER_STAMPING: '1'
           GH_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}
           GITHUB_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}
           # Same CI-rerun affordance claude.yml grants its agent (see

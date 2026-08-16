@@ -3,9 +3,9 @@ description: >-
   Shared trusted finalization handoff common to claude.yml, codex.yml, and
   opencode.yml (agent-lcars#823): configure the agent git identity, record
   the run-start timestamp, point Nx at the shared host cache when present,
-  and verify the minted App token's identity and the checkout's push
-  credential - the last trusted gate before the caller's own untrusted
-  model-invocation step runs. Internal dedup only (no stability promise;
+  verify the minted App token's identity and the checkout's push credential,
+  and install the marker-stamping `gh` wrapper - the last trusted gate before
+  the caller's own untrusted model-invocation step runs. Internal dedup only (no stability promise;
   see docs/published-actions.md's "Internal" tier) - the wrapped
   agent-setup/verify-agent-identity actions remain the Published surface a
   consumer repo should reference directly.
@@ -47,3 +47,11 @@ runs:
         token: ${{ inputs.token }}
         agent: ${{ inputs.agent }}
         app-slug: ${{ inputs.app-slug }}
+
+    # Last, because it is the only step here that prepares the UNTRUSTED step
+    # rather than gating it. Installed once for all three lanes so the
+    # clause-0 evidence contract cannot drift between them - the same reason
+    # dispatch-bootstrap owns the claim sequence. Inert until a step opts in
+    # with AGENT_MARKER_STAMPING; see the action's own description.
+    - name: Install the attempt-marker stamping gh wrapper
+      uses: ./.github/actions/stamp-attempt-marker
