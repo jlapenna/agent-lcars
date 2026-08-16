@@ -258,6 +258,13 @@ jobs:
         timeout-minutes: 120
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+          # Turns on the marker-stamping gh wrapper agent-handoff installed:
+          # every PR or comment this step creates carries this run's
+          # attempt-claim marker whether or not the model remembers to write
+          # it (agent-lcars#1213). Deliberately set ONLY here - the
+          # post-agent gates use the same gh, and stamping their reports
+          # would let the deliverable gate satisfy itself.
+          AGENT_MARKER_STAMPING: '1'
           # use_github_token needs this passed explicitly - it does not
           # fall back to the job's ambient token.
           GITHUB_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}

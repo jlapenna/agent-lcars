@@ -37,6 +37,7 @@ workflows, no separate actions repo, and no Marketplace listing.
 ### Internal
 
 - `setup-node-pnpm` — this repo's pnpm/Node/frozen-lockfile block.
+- `stamp-attempt-marker` — installs the marker-stamping `gh` wrapper (see below).
   Consumers have their own setup actions; do not adopt.
 - `agent-handoff` — claude.yml/codex.yml/opencode.yml's shared
   agent-setup + verify-agent-identity pairing (agent-lcars#823). Purely an
@@ -164,6 +165,41 @@ carries every installation permission. `permission-workflows` in
 particular is opt-in only and verified before the action returns a token
 (agent-lcars#868) — see
 [docs/agent-workflow-write-permission.md](agent-workflow-write-permission.md).
+
+## Security: the marker-stamping `gh` wrapper is opt-in per step
+
+`stamp-attempt-marker` (installed by `agent-handoff`, so all three lanes get
+it identically) puts a `gh` wrapper on PATH that appends this run's
+`<!-- attempt-claim:<id> -->` marker to any pull request or comment the
+command just created. It exists because `verify-deliverable`'s clause 0
+passes a broker-bound run only on that exact marker, and until #1213 the only
+thing producing it was the model transcribing a literal out of its prompt —
+which it demonstrably forgets. Run 31906618728 opened PR #1175, which was
+reviewed and **merged**, and the gate still reported "no verifiable
+deliverable was found" because the body had no marker.
+
+This is not the time-window/login inference #815 refused. The marker is
+stamped by the agent's own command, on the artifact that command created,
+inside the attempt that owns `ATTEMPT_ID` — nothing is inferred about
+pre-existing artifacts.
+
+**The wrapper is inert unless a step sets `AGENT_MARKER_STAMPING: '1'` in its
+own `env:`, and only the untrusted model-invocation step does.** That flag is
+the entire safety boundary, so treat it the way you would a permission grant:
+
+- The post-agent gates must never set it. They post their failure reports
+  with this same `gh`, so a stamped gate report would satisfy clause 0 with
+  the gate's own output — the deliverable gate would pass itself, on every
+  run, silently.
+- A job-wide PATH entry that does nothing without a per-step flag is
+  deliberate. Actions has no clean way to scope PATH to one step, and an
+  inert-by-default wrapper is easier to reason about than a PATH that is
+  rewritten around the agent step.
+
+Stamping is best effort and never changes the exit status the agent sees: the
+agent's command has already succeeded by then, and failing it afterwards
+would turn a created artifact into a failed command. A stamping failure is a
+`::warning::` naming the artifact URL.
 
 ## Contract test
 

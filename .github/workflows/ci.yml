@@ -110,6 +110,9 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
+      - name: Test attempt-marker stamping
+        run: bash .github/actions/stamp-attempt-marker/stamp.test.sh
+
       - name: Test issue claiming
         run: bash .github/actions/claim-issue/claim.test.sh
 
