@@ -39,6 +39,7 @@ export class Orchestrator {
     taskId: TaskId;
     requestId: string;
     pipeline: string;
+    params?: Record<string, string>;
   }): Promise<Decision | Refusal> {
     return this.transact(input.taskId, async (task, activeRun) =>
       requestRun({
@@ -48,6 +49,7 @@ export class Orchestrator {
         activeRun,
         requestId: input.requestId,
         pipeline: input.pipeline,
+        ...(input.params === undefined ? {} : { params: input.params }),
       }),
     );
   }

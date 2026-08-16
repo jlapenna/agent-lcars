@@ -66,6 +66,7 @@ export function requestRun(input: {
   activeRun: Run | undefined;
   requestId: string;
   pipeline: string;
+  params?: Record<string, string>;
 }): Decision | Refusal {
   const { now, taskId, activeRun, requestId } = input;
   if (activeRun !== undefined && isLive(activeRun.state)) {
@@ -82,6 +83,7 @@ export function requestRun(input: {
     state: 'pending',
     pipeline: input.pipeline,
     requestId,
+    ...(input.params === undefined ? {} : { params: input.params }),
     leaseExpiresAt: lease(now),
     events: [{ at: now, to: 'pending', by: 'request' }],
     createdAt: now,

@@ -77,6 +77,9 @@ export const runSchema = z.strictObject({
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
   requestId: z.string().min(1).max(128),
+  /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
+   *  time and handed verbatim to the executor. Never interpreted here. */
+  params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
   /** A live run must renew before this instant or it is presumed lost. */
   leaseExpiresAt: isoUtc,
   result: runResultSchema.optional(),

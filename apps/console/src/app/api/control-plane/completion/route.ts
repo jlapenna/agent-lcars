@@ -7,15 +7,12 @@ import {
 } from '@/lib/control-plane-request';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyCompletionOidcToken } from '@/lib/github-actions-oidc';
-import {
-  completeHostedWorker,
-  HostedCompletionInputError,
-} from '@/lib/hosted-completion';
+import { handleCompletion } from '@/lib/orchestrator-routes';
+import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 export async function POST(request: Request): Promise<NextResponse> {
-  let identity;
   try {
-    identity = await verifyCompletionOidcToken(
+    await verifyCompletionOidcToken(
       parseHostedBearerToken(request.headers.get('authorization')),
       controlPlaneRepository(),
     );
@@ -24,7 +21,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: unknown;
+  let body;
   try {
     body = parseHostedJsonBody(
       await request.text(),
@@ -38,26 +35,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await completeHostedWorker({
-      identity,
-      body,
-    });
-    console.info('agent-lcars: hosted completion processed', result);
-    return NextResponse.json(result, {
-      status: 200,
+    const result = await handleCompletion(createOrchestratorRuntime(), body);
+    console.info('agent-lcars: orchestrator completion processed', result);
+    return NextResponse.json(result.body, {
+      status: result.status,
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    if (error instanceof HostedCompletionInputError) {
-      return NextResponse.json(
-        { error: 'Invalid completion request' },
-        { status: 400 },
-      );
-    }
-    console.error('agent-lcars: hosted completion failed', error);
-    return NextResponse.json(
-      { error: 'Hosted completion failed' },
-      { status: 500 },
-    );
+    console.error('agent-lcars: orchestrator completion failed', error);
+    return NextResponse.json({ error: 'internal' }, { status: 500 });
   }
 }

@@ -2,11 +2,9 @@ import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
-import {
-  admitGitHubWebhook,
-  type GitHubWebhookPayload,
-  PermanentAdmissionError,
-} from '@/lib/hosted-admission';
+import { PermanentAdmissionError } from '@/lib/hosted-admission';
+import { handleWebhookDelivery } from '@/lib/orchestrator-routes';
+import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();
@@ -56,22 +54,25 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     deliveryId = header(request, 'x-github-delivery');
     eventName = header(request, 'x-github-event');
-    let payload: GitHubWebhookPayload;
+    let payload: unknown;
     try {
-      payload = JSON.parse(rawBody.toString('utf8')) as GitHubWebhookPayload;
+      payload = JSON.parse(rawBody.toString('utf8'));
     } catch (error) {
       throw new PermanentAdmissionError('Webhook payload is not valid JSON', {
         cause: error,
       });
     }
-    const result = await admitGitHubWebhook({
+    const result = await handleWebhookDelivery(createOrchestratorRuntime(), {
+      event: eventName,
       deliveryId,
-      eventName,
       payload,
     });
-    console.info('agent-lcars: hosted admission completed', result);
-    return NextResponse.json(result, {
-      status: 200,
+    console.info(
+      'agent-lcars: orchestrator webhook delivery processed',
+      result,
+    );
+    return NextResponse.json(result.body, {
+      status: result.status,
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
@@ -107,7 +108,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 200, headers: { 'Cache-Control': 'no-store' } },
       );
     }
-    console.error('agent-lcars: hosted admission failed', error);
+    console.error('agent-lcars: orchestrator webhook delivery failed', error);
     return NextResponse.json(
       { error: 'Hosted admission failed' },
       { status: 500 },
