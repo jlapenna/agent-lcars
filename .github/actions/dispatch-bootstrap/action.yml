@@ -19,9 +19,11 @@ description: >-
   re-prove against Firestore. This action used to wrap
   `./.github/actions/dispatch-broker`'s `preflight` operation (a legacy
   Firestore broker-binding read/write via WIF) to do exactly that; #1015
-  retired the wrapped call along with the WIF auth step it needed. The
-  `dispatch-broker` action itself is untouched and still backs the
-  independent Claude-lane-readiness probe in agent-fallback-finalize.yml.
+  retired the wrapped call along with the WIF auth step it needed, and
+  retired the `dispatch-broker` action and the independent Claude-lane-
+  readiness probe in agent-fallback-finalize.yml it backed in the same
+  cutover. `apps/dispatch-broker` itself (the action's implementation) was
+  later deleted outright in #1199 once nothing else depended on it either.
 
   Requires the caller to have already checked out the repository: every
   wrapped step below resolves a local composite action

@@ -12,12 +12,6 @@
 # by apps/dispatch-broker's `build-canary` target instead of `build`.
 .github/actions/run-dispatch-canary/dist
 
-# Same generated-bundle exemption as dispatch-broker/dist above, produced
-# by apps/rerun-infra-killed-runs's `build` target (agent-lcars#1183: moved
-# out of apps/dispatch-broker so the published action no longer depends on
-# that app's fate).
-.github/actions/rerun-infra-killed-runs/dist
-
 # Same generated-bundle exemption as the sibling operational actions above,
 # produced by apps/dispatch-broker's `build-deliverable-watchdog` target.
 .github/actions/deliverable-watchdog/dist

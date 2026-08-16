@@ -18,15 +18,17 @@
 > (`jlapenna/homelab`'s `agent-router.yml` + `dispatch-reconcile.yml`) is
 > still the forked, pre-cutover copy of this repo's dispatch broker
 > described below — it does not talk to `libs/orchestrator` and did not
-> retire when this repo's own decision loop did. Group C
-> (`rerun-infra-killed-runs.yml` in both `homelab` and `sprinkles`) is still
-> a thin consumer of the published `.github/actions/rerun-infra-killed-runs`
-> action, which #1015 Wave 4 deliberately kept building and publishing for
-> exactly this reason (this repo's own local use of that action was
-> deleted; the action itself was not). Neither loop retires on its own —
-> each retires only if and when that lane's dispatch is migrated onto the
-> central orchestrator, which is a real design decision (see Group A below)
-> that has not been made or scheduled.
+> retire when this repo's own decision loop did; that loop retires only if
+> and when that lane's dispatch is migrated onto the central orchestrator,
+> which is a real design decision that has not been made or scheduled.
+> **Group C no longer applies as described below**: both `homelab` and
+> `sprinkles` have since migrated their `rerun-infra-killed-runs.yml` crons
+> onto the central orchestrator's own lease sweep and bounded auto-retry
+> (sprinkles#4453, homelab#660), so agent-lcars#1201 deleted the
+> now-consumerless `.github/actions/rerun-infra-killed-runs` action and its
+> `apps/rerun-infra-killed-runs` source project outright. Treat the Group C
+> description and table omission-note below as describing the arrangement
+> as it stood on 2026-08-09, not current state.
 
 [#864](https://github.com/jlapenna/agent-lcars/issues/864) proposes making the
 hosted controller (see [`lifecycle-systems.md`](lifecycle-systems.md)) the

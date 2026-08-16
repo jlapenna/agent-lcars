@@ -31,7 +31,6 @@ workflows, no separate actions repo, and no Marketplace listing.
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                    |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                           |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                          |
-| `rerun-infra-killed-runs`      | Detect and rerun runner-evicted runs of a named workflow                                        |
 | `scan-image`                   | Trivy scan + SARIF upload + fail on fixable CRITICALs                                           |
 
 ### Internal
@@ -86,6 +85,17 @@ deliberately inactive since it landed (no workflow ever called it — the
 server route, durable backend, App policy, and activation epoch it was
 built for never shipped), so fleet consumers lose nothing live by its
 removal.
+
+`rerun-infra-killed-runs` was removed in #1201: it stayed published after
+#1015 Wave 4 retired this repo's own local use of it
+(`rerun-infra-killed-runs.yml`, subsumed by the orchestrator's lease sweep)
+specifically for `jlapenna/homelab` and `supersprinklesracing/sprinkles`'s
+own `rerun-infra-killed-runs.yml` crons, which still called it directly.
+Both consumers have since migrated onto the central orchestrator's own lease
+sweep and bounded auto-retry (sprinkles#4453, homelab#660) and no repo's
+`.github` references the action anymore, so it and its source project
+(`apps/rerun-infra-killed-runs`) were deleted outright rather than carved
+further.
 
 `report-failure` keeps LCARS's #813 architecture and a standalone-consumer
 compatibility path. LCARS workers omit `maintainer`, so the action only logs;
