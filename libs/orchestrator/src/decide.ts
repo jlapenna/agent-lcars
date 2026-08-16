@@ -52,6 +52,13 @@ function lease(now: string): string {
   return new Date(Date.parse(now) + LEASE_MS).toISOString();
 }
 
+/** A task whose runs go `lost` this many times in a row stops auto-retrying
+ *  and parks instead -- see `expireLease` (which bumps the counter) and
+ *  `Orchestrator.sweepExpired` (which reads it to decide whether to
+ *  retry). A task's total attempts before parking is `MAX_AUTO_RETRIES + 1`
+ *  (the original request plus this many retries). */
+export const MAX_AUTO_RETRIES = 2;
+
 /**
  * A request to work a task.
  *
@@ -93,6 +100,13 @@ export function requestRun(input: {
     task: taskId,
     activeRunId: runId,
     runCount,
+    // Carried over, not reset: only a `finished`/`canceled` report resets
+    // the auto-retry streak (see `resetConsecutiveLost`). A request -- manual
+    // or the auto-retry itself -- must not accidentally clear the budget
+    // `expireLease` just spent computing.
+    ...(input.task?.consecutiveLost === undefined
+      ? {}
+      : { consecutiveLost: input.task.consecutiveLost }),
     updatedAt: now,
   };
   return {
@@ -176,7 +190,7 @@ export function reportResult(input: {
     updatedAt: now,
   };
   return {
-    task: releaseLock(task, run.runId, now),
+    task: resetConsecutiveLost(releaseLock(task, run.runId, now)),
     run: settled,
     outbox: [outcomeEntry(settled, now)],
   };
@@ -206,7 +220,7 @@ export function cancelRun(input: {
     updatedAt: now,
   };
   return {
-    task: releaseLock(task, run.runId, now),
+    task: resetConsecutiveLost(releaseLock(task, run.runId, now)),
     run: settled,
     outbox: [outcomeEntry(settled, now)],
   };
@@ -215,9 +229,12 @@ export function cancelRun(input: {
 /**
  * A live run whose lease has expired is presumed lost. This is the only
  * judgement the orchestrator makes about execution, and its only meaning is
- * that the lock is released so the task is not wedged forever. No new run is
- * started automatically: a lost run may have half-finished work behind it,
- * so the next run is a fresh, explicit request.
+ * that the lock is released so the task is not wedged forever. This
+ * function itself never starts a new run -- a lost run may have
+ * half-finished work behind it -- but it does bump the task's
+ * `consecutiveLost` streak; `Orchestrator.sweepExpired` reads that back to
+ * decide whether to auto-retry (bounded by `MAX_AUTO_RETRIES`) or leave the
+ * task parked for a manual request.
  */
 export function expireLease(input: {
   now: string;
@@ -236,7 +253,10 @@ export function expireLease(input: {
     updatedAt: now,
   };
   return {
-    task: releaseLock(task, run.runId, now),
+    task: {
+      ...releaseLock(task, run.runId, now),
+      consecutiveLost: (task.consecutiveLost ?? 0) + 1,
+    },
     run: settled,
     outbox: [outcomeEntry(settled, now)],
   };
@@ -247,6 +267,14 @@ function releaseLock(task: Task, runId: string, now: string): Task {
   return activeRunId === runId
     ? { ...rest, updatedAt: now }
     : { ...task, updatedAt: now };
+}
+
+/** Drops `consecutiveLost` (equivalent to resetting the auto-retry budget
+ *  to 0) after a run settles into a state where retrying makes no sense:
+ *  `finished` or `canceled`. */
+function resetConsecutiveLost(task: Task): Task {
+  const { consecutiveLost, ...rest } = task;
+  return rest;
 }
 
 function outcomeEntry(run: Run, now: string): OutboxEntry {

@@ -256,7 +256,7 @@ describe('handleCompletion', () => {
 });
 
 describe('handleReconcile', () => {
-  it('marks an expired run lost and drains its outcome comment', async () => {
+  it('marks an expired run lost, auto-retries it, dispatches the retry, and drains the outcome comment', async () => {
     const { deps, clock, calls, store } = fixture();
     const runId = await dispatchedRun(deps);
     calls.length = 0;
@@ -266,15 +266,36 @@ describe('handleReconcile', () => {
 
     expect(result.status).toBe(200);
     expect(result.body['lost']).toEqual([runId]);
-    expect(result.body['dispatched']).toEqual([]);
+    const retried = result.body['retried'] as {
+      lostRunId: string;
+      newRunId: string;
+    }[];
+    expect(retried).toHaveLength(1);
+    expect(retried[0]?.lostRunId).toBe(runId);
+    const newRunId = retried[0]?.newRunId as string;
+    expect(result.body['dispatched']).toEqual([newRunId]);
     expect(result.body['reported']).toEqual([runId]);
 
     const run = await store.readRun(runId);
     expect(run?.state).toBe('lost');
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(
-      `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
+    const newRun = await store.readRun(newRunId);
+    expect(newRun?.state).toBe('running'); // confirmed by the drain's dispatch
+    expect(newRun?.requestId).toBe(`retry:${runId}`);
+    expect(newRun?.pipeline).toBe('claude');
+
+    expect(calls).toHaveLength(2);
+    expect(calls.map((c) => c.url).sort()).toEqual(
+      [
+        `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
+        `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
+      ].sort(),
     );
+    const commentCall = calls.find((c) => c.url.includes('/comments'));
+    const commentBody = JSON.parse(String(commentCall?.init.body)) as {
+      body: string;
+    };
+    expect(commentBody.body).toContain(newRunId);
+    expect(commentBody.body).toContain('attempt 2 of 3');
   });
 });
 

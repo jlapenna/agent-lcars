@@ -1,5 +1,7 @@
 import {
+  expireLease,
   isRefusal,
+  MAX_AUTO_RETRIES,
   MemoryStore,
   Orchestrator,
   type TaskId,
@@ -67,6 +69,36 @@ function fakeFetch(status: number): {
 
 function callBody(call: FetchCall): Record<string, unknown> {
   return JSON.parse(String(call.init.body)) as Record<string, unknown>;
+}
+
+/** A URL-aware fake fetch: dispatch calls (`/actions/workflows/...`)
+ *  succeed with 204, comment and label calls succeed with 201/200 -- so a
+ *  single drain that both dispatches an auto-retry and posts an outcome
+ *  comment (or a needs-human label) doesn't need multiple fixtures. */
+function routedFetch(
+  overrides: {
+    dispatchStatus?: number;
+    commentStatus?: number;
+    labelStatus?: number;
+  } = {},
+): { fetchImpl: typeof fetch; calls: FetchCall[] } {
+  const {
+    dispatchStatus = 204,
+    commentStatus = 201,
+    labelStatus = 200,
+  } = overrides;
+  const calls: FetchCall[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init: init ?? {} });
+    const status = url.includes('/actions/workflows/')
+      ? dispatchStatus
+      : url.endsWith('/labels')
+        ? labelStatus
+        : commentStatus;
+    return new Response(null, { status });
+  }) as typeof fetch;
+  return { fetchImpl, calls };
 }
 
 describe('drainOutbox: dispatch-run', () => {
@@ -265,7 +297,7 @@ describe('drainOutbox: report-outcome', () => {
     expect(calls).toHaveLength(1); // no additional fetch call
   });
 
-  it('posts the lost-run comment body after a lease-expiry sweep', async () => {
+  it('posts the lost-run comment naming the auto-retried run, and dispatches that retry', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
     await drainOutbox({
@@ -277,9 +309,11 @@ describe('drainOutbox: report-outcome', () => {
 
     clock.advanceMinutes(121);
     const settled = await orchestrator.sweepExpired();
-    expect(settled.map((r) => r.state)).toEqual(['lost']);
+    expect(settled.lost.map((r) => r.state)).toEqual(['lost']);
+    expect(settled.retried).toHaveLength(1);
+    const newRunId = settled.retried[0]!.newRunId;
 
-    const { fetchImpl, calls } = fakeFetch(201);
+    const { fetchImpl, calls } = routedFetch();
     const result = await drainOutbox({
       store,
       orchestrator,
@@ -287,15 +321,121 @@ describe('drainOutbox: report-outcome', () => {
       fetchImpl,
     });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(
+    expect(calls).toHaveLength(2); // the retry's dispatch + the lost comment
+    const commentCall = calls.find((c) => c.url.endsWith('/comments'));
+    expect(commentCall?.url).toBe(
       'https://api.github.com/repos/octo/example/issues/7/comments',
     );
-    const body = callBody(calls[0]!).body as string;
+    const body = callBody(commentCall!).body as string;
     expect(body).toBe(
       `⚠️ Run ${run.runId} was lost (no report before its lease expired). ` +
-        `The task is unlocked; re-request to try again.`,
+        `Retrying automatically as run ${newRunId} ` +
+        `(attempt 2 of ${MAX_AUTO_RETRIES + 1}).`,
     );
+
+    expect(result.reported).toEqual([run.runId]);
+    expect(result.dispatched).toEqual([newRunId]);
+  });
+
+  it('exhausts the auto-retry budget after 3 consecutive losses: exhausted comment + best-effort needs-human label', async () => {
+    const { clock, store, orchestrator } = fixture();
+    await started(orchestrator);
+    await drainOutbox({
+      store,
+      orchestrator,
+      githubToken: TOKEN,
+      fetchImpl: routedFetch().fetchImpl,
+    });
+
+    // Two losses that each auto-retry (dispatched so the next iteration has
+    // a fresh live run to expire); the third loss exceeds MAX_AUTO_RETRIES
+    // (2) and is left parked.
+    for (let i = 0; i < 2; i++) {
+      clock.advanceMinutes(121);
+      const swept = await orchestrator.sweepExpired();
+      expect(swept.retried).toHaveLength(1);
+      await drainOutbox({
+        store,
+        orchestrator,
+        githubToken: TOKEN,
+        fetchImpl: routedFetch().fetchImpl,
+      });
+    }
+    clock.advanceMinutes(121);
+    const finalSweep = await orchestrator.sweepExpired();
+    expect(finalSweep.retried).toEqual([]); // budget exhausted, no fourth run
+    const exhaustedRunId = finalSweep.lost[0]!.runId;
+
+    const { fetchImpl, calls } = routedFetch();
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      githubToken: TOKEN,
+      fetchImpl,
+    });
+
+    const commentCall = calls.find((c) => c.url.endsWith('/comments'));
+    expect(commentCall?.url).toBe(
+      'https://api.github.com/repos/octo/example/issues/7/comments',
+    );
+    const commentBody = callBody(commentCall!).body as string;
+    expect(commentBody).toBe(
+      `⚠️ Run ${exhaustedRunId} was lost (no report before its lease expired). ` +
+        `Auto-retry budget exhausted -- re-request manually (re-add the ` +
+        `agent label) when ready.`,
+    );
+
+    const labelCall = calls.find((c) => c.url.endsWith('/labels'));
+    expect(labelCall?.url).toBe(
+      'https://api.github.com/repos/octo/example/issues/7/labels',
+    );
+    expect(labelCall?.init.method).toBe('POST');
+    expect(JSON.parse(String(labelCall?.init.body))).toEqual({
+      labels: ['status:needs-human'],
+    });
+
+    expect(result.reported).toEqual([exhaustedRunId]);
+  });
+
+  it('falls back to naming the live run when no auto-retry exists for this loss (e.g. a manual re-request raced it)', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator, 'req-1');
+    const task = await store.readTask(TASK);
+    if (task === undefined) throw new Error('expected task to exist');
+
+    clock.advanceMinutes(121);
+    const now = clock.now();
+    // Apply the raw expire decision directly, bypassing
+    // `orchestrator.sweepExpired()` (which would auto-retry this exact
+    // run). This simulates the end state a race would leave behind: the
+    // run is lost, but no `retry:<lostRunId>`-requestId successor exists,
+    // because an operator's manual re-request landed first instead.
+    const decision = expireLease({ now, task: task.task, run });
+    if (isRefusal(decision)) throw new Error('unexpected refusal');
+    await store.apply({ decision, expectedRevision: task.revision });
+
+    const manual = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'manual-race',
+      pipeline: 'claude',
+    });
+    if (isRefusal(manual)) throw new Error('unexpected refusal');
+
+    const { fetchImpl, calls } = routedFetch();
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      githubToken: TOKEN,
+      fetchImpl,
+    });
+
+    const commentCall = calls.find((c) => c.url.endsWith('/comments'));
+    const body = callBody(commentCall!).body as string;
+    expect(body).toBe(
+      `⚠️ Run ${run.runId} was lost (no report before its lease expired). ` +
+        `Run ${manual.run.runId} is already in progress.`,
+    );
+    expect(calls.some((c) => c.url.endsWith('/labels'))).toBe(false);
     expect(result.reported).toEqual([run.runId]);
   });
 });
