@@ -104,3 +104,27 @@ the two share a backend and must not drift apart on this number.
 Related: agent-lcars#1210 cut the fixed pre-work reading that this budget is
 mostly spent on, and agent-lcars#1217 covers the separate 60-minute push
 credential expiry.
+
+## Where OpenCode's standing orders live, and why not in `agent.*.prompt`
+
+`opencode.json`'s `instructions` points at `.agents/opencode-standing-orders.md`.
+Measured 2026-08-16 against opencode 1.18.18, by pointing the provider
+`baseURL` at a local server and reading the request off the wire:
+
+| config                | system message | stock build prompt |
+| --------------------- | -------------: | ------------------ |
+| `agent.build.prompt`  |   10,929 chars | **destroyed**      |
+| `instructions: [...]` |   19,602 chars | intact             |
+
+`agent.*.prompt` **replaces** OpenCode's built-in system prompt instead of
+appending to it — the override cost ~8.7KB of stock tool guidance and the
+opening line `"You are opencode, an interactive CLI tool..."` went with it.
+`instructions` is additive and lands in the _same system message_, which is
+the property that matters: the system message is re-sent on every request and
+survives compaction, while a turn-0 user prompt is competing with a hundred
+summary lines by the second compaction.
+
+That distinction is the whole reason the commit rule kept being ignored. It
+was stated in the dispatch prompt, in `agent-protocol.md` §6, and in the
+brief's checkpoints — all turn-0 or tool-read content. `tools/opencode-config.test.sh`
+fails the build if `agent.*.prompt` is ever set again.
