@@ -160,3 +160,14 @@ env:
     secret: AGENT_LCARS_WEBHOOK_SECRET
     availability:
       - RUNTIME
+  # Setting BOTH of these switches outbound dispatch from the ambient PAT to
+  # per-repo App installation tokens (createDispatchTokenProvider in
+  # github-app-tokens.ts); with either absent the ambient path stays active.
+  - variable: AGENT_LCARS_APP_CLIENT_ID
+    value: 'Iv23liO6X8pLJLcTFzyv'
+    availability:
+      - RUNTIME
+  - variable: AGENT_LCARS_APP_PRIVATE_KEY
+    secret: AGENT_LCARS_APP_PRIVATE_KEY
+    availability:
+      - RUNTIME
