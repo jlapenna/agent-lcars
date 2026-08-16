@@ -1,12 +1,6 @@
 import 'server-only';
 
-import {
-  type RecoveryObservation,
-  recoveryObservationSchema,
-} from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
-
-import type { RecoveryObservationOidcIdentity } from './github-actions-oidc';
 
 /**
  * A control-plane request failed to parse or was not authoritative for what
@@ -91,51 +85,5 @@ export function parseHostedCompletionRequestBody(
 export function parseHostedReconcileRequestBody(text: string): void {
   if (text.trim().length > 0) {
     throw new HostedRouteRequestError('Reconcile request must have no body');
-  }
-}
-
-const strictRecoveryObservationSchema = recoveryObservationSchema.strict();
-
-export type HostedRecoveryObservationRequestBody = RecoveryObservation;
-
-/**
- * Validate a recovery observation body against the shared
- * `recoveryObservationSchema`, additionally rejecting unrecognized fields --
- * the shared schema silently strips those (right for a durable record, wrong
- * for a request whose caller could fix and resend it).
- */
-export function parseHostedRecoveryObservationRequestBody(
-  value: unknown,
-): HostedRecoveryObservationRequestBody {
-  const result = strictRecoveryObservationSchema.safeParse(value);
-  if (!result.success) {
-    throw new HostedRouteRequestError('Invalid recovery-observation body');
-  }
-  return result.data;
-}
-
-/**
- * Confirm the caller's signed OIDC identity is authoritative for the
- * observation it is reporting, before the request reaches the storage
- * boundary. `recordHostedRecoveryObservation` re-checks the same facts
- * immediately before its write (see that module's header for why); this
- * earlier check exists so a request that fails it is rejected as a plain
- * 400 without ever reaching that boundary.
- */
-export function assertHostedRecoveryObservationAuthority(
-  body: HostedRecoveryObservationRequestBody,
-  identity: RecoveryObservationOidcIdentity,
-): void {
-  if (body.target.repository !== identity.repository) {
-    throw new HostedRouteRequestError(
-      "Recovery observation target.repository does not match the caller's " +
-        'signed OIDC identity',
-    );
-  }
-  if (body.target.repositoryId !== identity.repositoryId) {
-    throw new HostedRouteRequestError(
-      'Recovery observation target.repositoryId does not match the ' +
-        "caller's signed OIDC identity",
-    );
   }
 }

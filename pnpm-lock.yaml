@@ -253,12 +253,6 @@ importers:
 
   libs/dispatch-contracts: {}
 
-  libs/dispatch-reconcile:
-    dependencies:
-      '@agent-lcars/dispatch-contracts':
-        specifier: workspace:*
-        version: link:../dispatch-contracts
-
   libs/env-vars: {}
 
   libs/logging:

@@ -20,7 +20,6 @@ workflows, no separate actions repo, and no Marketplace listing.
 
 | Action                         | Purpose                                                                                         |
 | ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `credential-grant`             | Inactive exact-run OIDC exchange for one server-authorized ephemeral credential                 |
 | `mint-agent-token`             | Mint a scoped Agent LCARS App installation token (owner/repositories/permission-\* passthrough) |
 | `claim-issue`                  | Assign the fleet-claim login, optionally posting a pickup comment                               |
 | `agent-setup`                  | Agent git identity, run-start timestamp, optional shared Nx cache                               |
@@ -47,8 +46,6 @@ workflows, no separate actions repo, and no Marketplace listing.
 
 ### Coupled — do not consume
 
-- `dispatch-broker` — hardcodes this repo's label→workflow maps and the
-  `agent-lcars-dispatch-v1` ledger/concurrency namespace.
 - `dispatch-bootstrap` — claude.yml/codex.yml/opencode.yml's shared
   snapshot/assert-vars/attempt-identity/mint-token/claim sequence
   (agent-lcars#823). A thin executor (agent-lcars#1015): it derives this
@@ -83,16 +80,11 @@ release, and a removed or renamed input or a changed default requires a major
 release. The contract-test manifest diff in review is the "this needs a major
 bump" signal.
 
-`credential-grant` is published but deliberately inactive: no workflow calls
-it until the separately reviewed server route, durable backend, App policy,
-and activation epoch exist. A future caller grants `id-token: write`, passes
-only the server-minted global `attempt-id` and its unique `request-id`, and
-pins the Action to an immutable Agent LCARS commit for the first live lane.
-The Action owns its OIDC audience and LCARS HTTPS endpoint; callers cannot
-choose repository, installation, credential profile, scope, workflow SHA, or
-fallback behavior. It performs one POST and never retries an ambiguous send.
-The server validates the signed workflow commit SHA and exact stored run
-binding; a caller-provided SHA is not part of the interface.
+`credential-grant` was removed in #1015 Wave 4: it was published but had been
+deliberately inactive since it landed (no workflow ever called it — the
+server route, durable backend, App policy, and activation epoch it was
+built for never shipped), so fleet consumers lose nothing live by its
+removal.
 
 `report-failure` keeps LCARS's #813 architecture and a standalone-consumer
 compatibility path. LCARS workers omit `maintainer`, so the action only logs;
@@ -126,12 +118,10 @@ into the runner's `_actions` directory — not just the action directory.
 That is load-bearing, not incidental: `prepare-agent-dispatch` resolves
 the fleet protocol document via
 `$GITHUB_ACTION_PATH/../../../.agents/skills/agent-protocol/agent-protocol.md`,
-`snapshot-enforcement-scripts` copies sibling action directories from
-`$GITHUB_ACTION_PATH/..`, and `dispatch-broker` imports the shared
-[`libs/dispatch-contracts`](../libs/dispatch-contracts/) package from the
-repo root. Repo-relative paths above the action directory are a supported
-pattern here, but each action that relies on one must say so in its
-`action.yml`.
+and `snapshot-enforcement-scripts` copies sibling action directories from
+`$GITHUB_ACTION_PATH/..`. Repo-relative paths above the action directory are
+a supported pattern here, but each action that relies on one must say so in
+its `action.yml`.
 
 ## Security: post-agent gates run from a pre-agent snapshot
 

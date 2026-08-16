@@ -1,19 +1,18 @@
 import {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
-  RECOVERY_OBSERVATION_OIDC_AUDIENCE,
 } from '@agent-lcars/dispatch-contracts';
-import {
-  RECONCILE_OIDC_AUDIENCE,
-  RECONCILE_WORKFLOW_PATH,
-} from '@agent-lcars/dispatch-reconcile';
 import { describe, expect, it } from 'vitest';
 
 import {
   assertCompletionOidcClaims,
   assertReconcileOidcClaims,
-  assertRecoveryObservationOidcClaims,
 } from './github-actions-oidc';
+
+// Matches the constants inlined into github-actions-oidc.ts (formerly
+// @agent-lcars/dispatch-reconcile, deleted in #1015 Wave 4).
+const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
+const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
 
 const repository = 'jlapenna/agent-lcars';
 const validClaims = {
@@ -107,49 +106,5 @@ describe('GitHub Actions completion OIDC claims', () => {
     [{ ...completionClaims, run_id: '0' }, 'run_id'],
   ])('rejects a completion caller with the wrong %s claim', (claims, field) => {
     expect(() => assertCompletionOidcClaims(claims, repository)).toThrow(field);
-  });
-});
-
-describe('GitHub Actions recovery-observation OIDC claims', () => {
-  const recoveryClaims = {
-    aud: RECOVERY_OBSERVATION_OIDC_AUDIENCE,
-    repository,
-    repository_id: '1307149765',
-    run_id: '93099054125',
-    ref: 'refs/heads/main',
-  };
-
-  it('accepts any workflow in the control-plane repo on main', () => {
-    expect(
-      assertRecoveryObservationOidcClaims(recoveryClaims, repository),
-    ).toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-    });
-    expect(
-      assertRecoveryObservationOidcClaims(
-        {
-          ...recoveryClaims,
-          workflow_ref: `${repository}/.github/workflows/anything.yml@refs/heads/main`,
-        },
-        repository,
-      ),
-    ).toMatchObject({ runId: 93_099_054_125 });
-  });
-
-  it.each([
-    [{ ...recoveryClaims, repository: 'attacker/fork' }, 'repository'],
-    [
-      { ...recoveryClaims, repository: 'supersprinklesracing/sprinkles' },
-      'repository',
-    ],
-    [{ ...recoveryClaims, ref: 'refs/heads/feature' }, 'ref'],
-    [{ ...recoveryClaims, repository_id: 'not-a-number' }, 'repository_id'],
-    [{ ...recoveryClaims, run_id: '0' }, 'run_id'],
-  ])('rejects a caller with the wrong %s claim', (claims, field) => {
-    expect(() =>
-      assertRecoveryObservationOidcClaims(claims, repository),
-    ).toThrow(field);
   });
 });

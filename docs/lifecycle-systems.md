@@ -25,6 +25,28 @@ production authority until a separately approved lane activation occurs.
 > remaining first-stop signals are Cloud Run logs (hosted controller),
 > scheduled-workflow run history, and the dispatch ledger itself.
 
+> [!IMPORTANT]
+> **Legacy decision loops retired (2026-08-15, #1015 Wave 4).** The new
+> `libs/orchestrator` + `apps/console` control-plane routes are now the live
+> production path for webhook admission, worker completion, and reconciliation
+> (verified end-to-end in #1178: webhook → mutex → dispatch → thin worker →
+> completion → outcome comment). `apps/console/src/lib/hosted-admission.ts`,
+> `hosted-completion.ts`, `hosted-completion-reconcile.ts`,
+> `hosted-reconciler.ts`, `hosted-recovery-observation.ts`, the
+> `/api/control-plane/recovery-observation` and `/api/control-plane/completion/
+reconcile` routes, `.github/actions/dispatch-broker`,
+> `.github/actions/deliverable-watchdog` + `deliverable-watchdog.yml`, and this
+> repo's own local `rerun-infra-killed-runs.yml` (subsumed by the
+> orchestrator's lease sweep) were all deleted. `apps/dispatch-broker` and
+> `apps/console/src/lib/hosted-controller.ts` survive only as a narrow,
+> console-triggered-command path (the Retry/Reassign-pipeline UI actions in
+> `backend-actions.ts`) and as the source of the still externally-published
+> `rerun-infra-killed-runs` action bundle — they are no longer the primary
+> admission/completion/reconciliation transport this document describes below.
+> See `libs/orchestrator/src` for the current design; the sections below are
+> retained as historical/narrowed-scope context, not current production
+> topology for the primary path.
+
 The Firestore task aggregate is the dispatch controller's authority under a
 compare-and-swap lease. The pinned
 `<!-- agent-lcars:dispatch-ledger:v1 -->` comment is a human-readable
@@ -141,19 +163,26 @@ and the dispatch ledger itself.
 - `apps/console/src/app/api/control-plane/completion/route.ts` — hosted
   completion observation; accepts only OIDC from an allowed worker workflow
   on this repository's `main`.
-- `apps/console/src/lib/hosted-controller.ts`, `hosted-admission.ts`,
-  `hosted-completion.ts`, `hosted-reconciler.ts` — the hosted transport
-  adapters around the shared controller transition path.
+- `apps/console/src/lib/hosted-controller.ts` — the hosted transport adapter
+  around the shared controller transition path. Its siblings
+  (`hosted-admission.ts`, `hosted-completion.ts`, `hosted-completion-reconcile.ts`,
+  `hosted-reconciler.ts`, `hosted-recovery-observation.ts`) were deleted in
+  #1015 Wave 4; `hosted-controller.ts` itself now only backs the
+  console-triggered Retry/Reassign-pipeline/reconcile-ping commands in
+  `apps/console/src/lib/backend-actions.ts` (`hosted-controller-command.ts`),
+  not the primary webhook/completion/reconcile transport (`libs/orchestrator`).
 - `libs/dispatch-contracts/src/` — the shared schema every consumer now
   imports instead of hand-mirroring: `ledger.ts` (ledger shape/marker),
   `marker.ts` (the `[dispatch:g<n>:<id>]` run-title marker and the
   attempt-claim marker), `pipelines.ts` (pipeline/bot identity registry),
   `failure.ts` (owning-system/phase/reason/retry-disposition vocabulary),
   `projection.ts`, `quick-task.ts`.
-- `.github/actions/dispatch-broker` — the composite wrapping the esbuild
-  bundle at `dist/main.mjs` (source: `apps/dispatch-broker/src/main.ts`). It
-  retains preflight/manual broker operations and supplies the trusted thin
-  OIDC completion client; it is no longer the production event queue.
+- `.github/actions/dispatch-broker` — deleted in #1015 Wave 4 (its last live
+  use, the Claude-lane-readiness probe in `agent-fallback-finalize.yml`, was
+  retired alongside it). `apps/dispatch-broker/src/main.ts` itself remains as
+  a library import (`@agent-lcars/dispatch-controller/main`) for the
+  console-triggered commands above and as the source for the still
+  externally-published `.github/actions/rerun-infra-killed-runs` bundle.
 - `.github/workflows/agent-router.yml` — a GitHub-hosted,
   `workflow_dispatch`-only canary transport. Its public input surface accepts
   only the canonical canary request; the legacy production/manual transport

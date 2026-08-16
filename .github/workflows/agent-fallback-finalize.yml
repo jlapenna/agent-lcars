@@ -11,27 +11,29 @@ name: Agent Bootstrap-Independent Finalizer
 # exact attempt markers, then calls the hosted server without checking out
 # worker-controlled repository state.
 #
-# #813 centralized failure reporting: the dispatch controller's projector
-# (apps/dispatch-broker/src/modules/projector.ts's projectWorkerFailure) is
-# now the ONE idempotent writer of the failure comment and the
-# status:needs-human park, driven by this workflow's own completion
-# callback below ("Return completion observation to the broker"). This
-# workflow's own direct GitHub write ("Report and park bootstrap-independent
-# failure") is the minimum bootstrap-safe fallback: it fires ONLY when that
-# callback itself could not reach the hosted control plane, not on every
-# non-success worker result.
+# #813 centralized failure reporting: the orchestrator (libs/orchestrator,
+# driven through apps/console's /api/control-plane/completion route -- see
+# apps/console/src/lib/orchestrator-dispatch.ts) is now the primary writer
+# of the outcome comment, driven by this workflow's own completion callback
+# below ("Return completion observation to the broker"). This workflow's own
+# direct GitHub write ("Report and park bootstrap-independent failure") is
+# the minimum bootstrap-safe fallback: it fires ONLY when that callback
+# itself could not reach the hosted control plane, not on every non-success
+# worker result. (Before #1015 Wave 4's cutover, the callback's authoritative
+# writer was the legacy dispatch controller's projector,
+# apps/dispatch-broker/src/modules/projector.ts's projectWorkerFailure --
+# retired along with the rest of the legacy admission/completion/reconcile
+# decision loop it drove.)
 #
 # The filename is retained because it is part of the hosted completion OIDC
 # trust contract. The workflow is the authoritative completion finalizer, not
-# the retired Action router/reconcile fallback. Its additional Claude probe
-# keeps the model credential in a distinct read-only job and projects only a
-# classified result from a separate secretless job.
+# the retired Action router/reconcile fallback. Its former Claude-lane-
+# readiness probe (an isolated read-only job that classified a Claude
+# failure as infra-vs-agent via .github/actions/dispatch-broker) was deleted
+# in #1015 Wave 4 along with that action; the probe's own purpose was
+# exactly the kind of legacy decision loop that Wave 4 retires.
 
 on:
-  schedule:
-    # Recovery probes are admitted only while a Claude lane incident is open,
-    # so this cadence does not spend a model turn during healthy operation.
-    - cron: '29 * * * *'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -83,7 +85,8 @@ jobs:
     # dispatched by workflow_dispatch, so checking for workflow_call here
     # skips the authoritative completion callback in production. Required
     # call input `issue` is populated only for the reusable-worker path and
-    # remains empty for this workflow's schedule/manual probe entry points.
+    # remains empty for this workflow's own manual workflow_dispatch entry
+    # point.
     if: inputs.issue != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -377,11 +380,10 @@ jobs:
       #     completion-sent can be 'true' with nothing for the projector to
       #     act on (Codex review on #923).
       # In every other case (the callback succeeded AND carried a typed
-      # outcome), the dispatch controller's projector already converged the
-      # failure comment and the needs-human park through that same callback
-      # (apps/dispatch-broker/src/modules/projector.ts's
-      # projectWorkerFailure) -- writing it again here, unconditionally,
-      # would be exactly the second uncoordinated write path #813 retired.
+      # outcome), the orchestrator already posted the outcome comment through
+      # that same callback (apps/console/src/lib/orchestrator-dispatch.ts) --
+      # writing it again here, unconditionally, would be exactly the second
+      # uncoordinated write path #813 retired.
       #
       # `always()` is load-bearing, not decoration: this step runs AFTER
       # the callback step, and an `if:` with no explicit status-check
@@ -469,118 +471,3 @@ jobs:
           done
           echo "::error::Could not preserve callback failure for scheduled reconciliation"
           exit 1
-
-  claude-probe-admission:
-    if: >-
-      github.event_name != 'workflow_call' ||
-      (inputs.worker-workflow == 'claude.yml' && inputs.worker-result != 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      issues: read
-    outputs:
-      should-probe: ${{ steps.admit.outputs.should-probe }}
-    steps:
-      - name: Admit only a failed Claude worker or an open lane incident
-        id: admit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
-          WORKER_RESULT: ${{ inputs.worker-result }}
-          MARKER: '<!-- agent-lcars:lane-readiness:v1:claude -->'
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = 'workflow_call' ] && \
-            [ "$WORKER_WORKFLOW" = 'claude.yml' ] && \
-            [ "$WORKER_RESULT" != 'success' ]; then
-            echo 'should-probe=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          open_incidents="$(gh api --paginate --slurp \
-            "repos/$REPO/issues?state=open&per_page=100" | \
-            jq --arg marker "$MARKER" \
-              '[.[][] | select(.pull_request == null) | select((.body // "") | contains($marker))] | length')"
-          if [ "$open_incidents" -gt 0 ]; then
-            echo 'should-probe=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'should-probe=false' >> "$GITHUB_OUTPUT"
-            echo '::notice::Claude readiness probe skipped: no open lane incident'
-          fi
-
-  claude-probe:
-    needs: claude-probe-admission
-    if: needs.claude-probe-admission.outputs.should-probe == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: claude-readiness-probe-${{ github.repository_id }}
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    outputs:
-      readiness-state: ${{ steps.classify.outputs.readiness-state }}
-    steps:
-      - name: Prepare isolated probe workspace
-        run: mkdir -p "$RUNNER_TEMP/claude-readiness-probe"
-
-      - name: Run one isolated Claude harness turn
-        id: probe
-        continue-on-error: true
-        uses: anthropics/claude-code-action/base-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1.0.191
-        env:
-          CLAUDE_WORKING_DIR: ${{ runner.temp }}/claude-readiness-probe
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: 'Reply with exactly READY. Do not inspect files or use tools.'
-          claude_args: >-
-            --max-turns 1
-            --setting-sources user
-            --tools ""
-            --disable-slash-commands
-
-      - name: Checkout trusted classifier revision
-        if: always()
-        uses: actions/checkout@v7
-
-      - name: Classify isolated Claude readiness
-        id: classify
-        if: always()
-        uses: ./.github/actions/dispatch-broker
-        with:
-          operation: classify-claude-readiness
-          execution-file: ${{ steps.probe.outputs.execution_file }}
-          probe-conclusion: ${{ steps.probe.outcome }}
-
-      - name: Fail closed on unknown probe evidence
-        if: always() && steps.classify.outputs.readiness-state == 'unknown'
-        run: |
-          echo '::error::Claude readiness evidence was missing, malformed, or contradictory'
-          exit 1
-
-  claude-probe-project:
-    needs: claude-probe
-    if: >-
-      always() &&
-      (needs.claude-probe.outputs.readiness-state == 'credential-failure' ||
-       needs.claude-probe.outputs.readiness-state == 'healthy')
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout trusted projection revision
-        uses: actions/checkout@v7
-
-      - name: Project trusted Claude readiness
-        uses: ./.github/actions/dispatch-broker
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          MAINTAINER_LOGIN: ${{ vars.MAINTAINER_LOGIN }}
-        with:
-          operation: claude-readiness
-          readiness-state: ${{ needs.claude-probe.outputs.readiness-state }}
-          evidence-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -73,11 +73,8 @@ export {
   COMPLETION_OIDC_AUDIENCE,
   HOSTED_COMPLETION_PATH,
   HOSTED_COMPLETION_URL,
-  HOSTED_RECOVERY_OBSERVATION_PATH,
-  HOSTED_RECOVERY_OBSERVATION_URL,
   HOSTED_TASK_STATE_PATH,
   HOSTED_TASK_STATE_URL,
-  RECOVERY_OBSERVATION_OIDC_AUDIENCE,
 } from './oidc';
 export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
 export {
@@ -128,27 +125,6 @@ export {
 } from './quick-task';
 export type { LaneReadinessFailure } from './readiness';
 export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
-export type {
-  ParsedRecoveryOperationKey,
-  RecoveryDomain,
-  RecoveryObservation,
-  RecoveryOperationTarget,
-  RecoverySourceKind,
-} from './recovery-observation';
-export {
-  buildRecoveryObservation,
-  formatOperationKey,
-  isRecoveryDomain,
-  isRecoverySourceKind,
-  isWellFormedRecoveryObservation,
-  parseOperationKey,
-  RECOVERY_DOMAINS,
-  RECOVERY_SOURCE_KINDS,
-  recoveryDomainSchema,
-  recoveryObservationSchema,
-  recoveryOperationTargetSchema,
-  recoverySourceKindSchema,
-} from './recovery-observation';
 export type { AuthoritativeTaskState } from './task-state';
 export {
   AUTHORITATIVE_TASK_STATE_SCHEMA,
