@@ -38,6 +38,15 @@ const { privateKey: PRIVATE_KEY_PEM } = generateKeyPairSync('rsa', {
   publicKeyEncoding: { type: 'spki', format: 'pem' },
 });
 
+// A second throwaway keypair, encoded as PKCS1 (`BEGIN RSA PRIVATE KEY`) --
+// the format GitHub's App settings page's "Generate a private key" button
+// actually downloads (#1276), and which `importPKCS8` used to reject.
+const { privateKey: PRIVATE_KEY_PEM_PKCS1 } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+});
+
 interface FetchCall {
   url: string;
   method: string;
@@ -124,6 +133,26 @@ describe('AppInstallationTokenProvider', () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
     expect(payload.iat).toBeLessThanOrEqual(nowSeconds - 59);
     expect(payload.iat).toBeGreaterThanOrEqual(nowSeconds - 65);
+  });
+
+  it('mints a well-formed App JWT from a PKCS1-encoded key (the format GitHub downloads, #1276)', async () => {
+    const { fetchImpl, calls } = fakeAppFetch();
+    const provider = new AppInstallationTokenProvider({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM_PKCS1,
+      fetchImpl,
+    });
+
+    const token = await provider.tokenFor(REPO);
+    expect(token).toBe('ghs_minted-token');
+
+    const authHeader = calls[0]?.headers['Authorization'];
+    expect(authHeader).toMatch(/^Bearer /);
+    const jwt = authHeader!.slice('Bearer '.length);
+    const header = decodeProtectedHeader(jwt);
+    expect(header.alg).toBe('RS256');
+    const payload = decodeJwt(jwt);
+    expect(payload.iss).toBe(CLIENT_ID);
   });
 
   it('resolves the installation id before minting a scoped access token', async () => {
@@ -283,7 +312,7 @@ describe('AppInstallationTokenProvider', () => {
       );
     });
 
-    it('fails clearly, without leaking the PEM, when the private key is not valid PKCS8', async () => {
+    it('fails clearly, without leaking the PEM, when the private key is not a valid PEM at all', async () => {
       const { fetchImpl } = fakeAppFetch();
       const provider = new AppInstallationTokenProvider({
         clientId: CLIENT_ID,
@@ -300,7 +329,7 @@ describe('AppInstallationTokenProvider', () => {
       expect(error).toBeInstanceOf(Error);
       const message = (error as Error).message;
       expect(message).toBe(
-        'GitHub App private key is not a valid PKCS8 RSA PEM',
+        'GitHub App private key is not a valid PEM-encoded RSA private key (PKCS1 or PKCS8)',
       );
       expect(message).not.toContain('not-a-real-pem');
     });
@@ -396,5 +425,35 @@ describe('createDispatchTokenProvider', () => {
         c.url.endsWith('/repos/sprinkles/some-repo/installation'),
       ),
     ).toBe(true);
+  });
+
+  it('#1276: throws at construction time (not first dispatch) when the App private key does not parse, without ever touching fetch', () => {
+    const neverCalled = vi.fn();
+    vi.stubGlobal('fetch', neverCalled);
+
+    expect(() =>
+      createDispatchTokenProvider({
+        AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
+        AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
+        AGENT_LCARS_APP_PRIVATE_KEY: 'not-a-real-pem',
+      }),
+    ).toThrow(
+      'GitHub App private key is not a valid PEM-encoded RSA private key (PKCS1 or PKCS8)',
+    );
+    // The failure is synchronous, during construction -- no attempt to
+    // resolve an installation or mint a token was ever made, unlike the
+    // pre-#1276 behavior where this only surfaced on the first foreign-repo
+    // `tokenFor` call.
+    expect(neverCalled).not.toHaveBeenCalled();
+  });
+
+  it('#1276: a PKCS1-encoded App private key (the format GitHub downloads) does NOT throw at construction', () => {
+    expect(() =>
+      createDispatchTokenProvider({
+        AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
+        AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
+        AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM_PKCS1,
+      }),
+    ).not.toThrow();
   });
 });

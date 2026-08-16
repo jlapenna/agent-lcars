@@ -534,17 +534,20 @@ resource "google_service_account_iam_member" "homelab_codex_agent_impersonation"
 }
 
 # Per-repo GitHub App installation tokens for the orchestrator drain (#1204,
-# enabling the dormant `DispatchTokenProvider` seam #1197 shipped). Terraform
-# owns the container only - there is no value here, and none belongs in this
-# repo or in GitHub Actions secrets. A maintainer populates it by hand, once
-# a dedicated App private key exists (kept a separate lineage from the
-# Actions-secrets one on purpose):
+# enabling the dormant `DispatchTokenProvider` seam #1197 shipped; #1245
+# wired AGENT_LCARS_APP_CLIENT_ID and this secret into apphosting.yaml, live
+# since 2026-08-16). Terraform owns the container only - there is no value
+# here, and none belongs in this repo or in GitHub Actions secrets. A
+# maintainer populates it by hand, once a dedicated App private key exists
+# (kept a separate lineage from the Actions-secrets one on purpose):
 #
 #   gcloud secrets versions add AGENT_LCARS_APP_PRIVATE_KEY --data-file=<key.pem>
 #
-# apphosting.yaml is deliberately left unwired here - an empty secret would
-# break deploys. Wiring AGENT_LCARS_APP_CLIENT_ID (plain var) and this secret
-# into apphosting.yaml is a follow-up PR, after the value above exists.
+# <key.pem> may be either PEM format GitHub hands you: PKCS1
+# (`-----BEGIN RSA PRIVATE KEY-----`, what the App settings page's "Generate
+# a private key" button downloads) or PKCS8 (`-----BEGIN PRIVATE KEY-----`).
+# github-app-tokens.ts's `parsePrivateKey` accepts both directly (#1276) -- no
+# conversion needed before upload.
 resource "google_secret_manager_secret" "agent_lcars_app_private_key" {
   secret_id = "AGENT_LCARS_APP_PRIVATE_KEY"
   replication {
@@ -555,11 +558,12 @@ resource "google_secret_manager_secret" "agent_lcars_app_private_key" {
 
 # Scoped to this ONE secret rather than folded into the apphosting_secrets
 # for_each above: that for_each mirrors google_secret_manager_secret.runtime,
-# which apphosting.yaml wires as env vars today, and this secret is
-# deliberately not wired yet (see comment above). Same grant shape
-# apphosting_secrets uses for AGENT_LCARS_GITHUB_TOKEN (project + secret_id +
-# secretAccessor on the App Hosting compute SA); the wiring follow-up can
-# fold this into that for_each once apphosting.yaml references it.
+# which apphosting.yaml wires as env vars today, and this secret was added
+# before apphosting.yaml referenced it. Now that #1245 has wired it in, this
+# could be folded into that for_each; kept separate here since nothing else
+# requires the refactor. Same grant shape apphosting_secrets uses for
+# AGENT_LCARS_GITHUB_TOKEN (project + secret_id + secretAccessor on the App
+# Hosting compute SA).
 resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_accessor" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.agent_lcars_app_private_key.secret_id
