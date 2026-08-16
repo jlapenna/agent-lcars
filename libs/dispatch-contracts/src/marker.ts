@@ -18,14 +18,22 @@
 /**
  * Anchored to the marker's own delimiters rather than to the end of the title,
  * because `run-name:` puts the issue number and role text in front of it.
- * The intent-ID character class matches what the broker mints plus the `:` and
- * `.` separators older intent IDs used.
+ * The intent-ID character class matches what the legacy broker minted (the
+ * `:` and `.` separators older intent IDs used) plus `/` and `#`, which
+ * `@agent-lcars/orchestrator`'s run IDs (`{repo}#{issue}/r{generation}`,
+ * e.g. `jlapenna/agent-lcars#1178/r1`) require -- the outbox drain
+ * (`orchestrator-dispatch.ts`) passes that runId verbatim as
+ * `broker_intent_id`, which becomes this marker's intentId unchanged.
+ * `]` is deliberately excluded (not merely unlisted): it is the marker's own
+ * closing delimiter, so admitting it into the class would let a
+ * pathological intentId absorb the `]` and defeat the anchor below rather
+ * than simply fail to match past it.
  */
-const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:-]+)\]/u;
+const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:/#-]+)\]/u;
 
 /** The same shape as the marker's interior, anchored so a bare attempt ID is
  * matched in full rather than found inside a longer string. */
-const ATTEMPT_ID_RE = /^g(\d+):([A-Za-z0-9._:-]+)$/u;
+const ATTEMPT_ID_RE = /^g(\d+):([A-Za-z0-9._:/#-]+)$/u;
 
 export interface AttemptMarker {
   generation: number;
@@ -145,8 +153,14 @@ export function displayTitleMatchesAttempt(
  * `attemptId` is `formatAttemptId`'s output — there is no second identity
  * here, only a second surface (artifact bodies, not run titles) the same
  * identity gets embedded into.
+ *
+ * The intentId portion of the character class matches `DISPATCH_MARKER_RE`
+ * exactly, for the same reason: the same `attemptId` string is embedded on
+ * both surfaces (`formatAttemptId`), so the same set of legal characters —
+ * including `/` and `#` for an orchestrator run ID — must parse back out of
+ * both.
  */
-const CLAIM_MARKER_RE = /<!--\s*attempt-claim:([A-Za-z0-9._:-]+)\s*-->/u;
+const CLAIM_MARKER_RE = /<!--\s*attempt-claim:([A-Za-z0-9._:/#-]+)\s*-->/u;
 
 /**
  * The kinds of artifact a claim can name — the deliverable shapes

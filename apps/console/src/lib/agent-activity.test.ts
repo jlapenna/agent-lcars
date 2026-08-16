@@ -109,6 +109,20 @@ describe('attemptMarkerFromDisplayTitle', () => {
     ).toEqual({ generation: 2, intentId: 'intent-oc' });
   });
 
+  it('parses an orchestrator run-name, whose intent id is the runId (owner/repo#issue/rN)', () => {
+    // @agent-lcars/orchestrator's outbox drain (orchestrator-dispatch.ts)
+    // passes run.runId verbatim as broker_intent_id, so claude.yml's
+    // run-name embeds it unchanged: `/` and `#` included. Before widening
+    // DISPATCH_MARKER_RE's charset, this fell back to weaker title/issue
+    // attribution instead of the exact marker (found during the console
+    // migration, PR #1187).
+    expect(
+      attemptMarkerFromDisplayTitle(
+        '#1178: Claude issue agent [dispatch:g1:jlapenna/agent-lcars#1178/r1]',
+      ),
+    ).toEqual({ generation: 1, intentId: 'jlapenna/agent-lcars#1178/r1' });
+  });
+
   it('returns undefined for a title with no marker (pre-broker run)', () => {
     expect(attemptMarkerFromDisplayTitle('#42: Fix the thing')).toBeUndefined();
   });
