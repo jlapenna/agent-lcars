@@ -1,6 +1,6 @@
 ---
 name: lcars
-description: agent-lcars repo-specific delta on top of agent-protocol — fleet-claim identity (jclaw-bot), maintainer/reviewer login, dispatch broker and reconcile-ledger behavior, auto-merge, session-resume script, and hard limits unique to this repo. Use when dispatched as a headless CI agent in agent-lcars, when changing dispatch-broker/reconcile/auto-merge workflows, or when asked how this repo's own agent identity or dispatch ledger works.
+description: agent-lcars repo-specific delta on top of agent-protocol — fleet-claim identity (jclaw-bot), maintainer/reviewer login, how dispatch and reconciliation actually work today (libs/orchestrator's per-task mutex, lease-based loss recovery, bounded auto-retry — there is no ledger), auto-merge, session-resume script, and hard limits unique to this repo. Use when dispatched as a headless CI agent in agent-lcars, when changing orchestrator/reconcile/auto-merge workflows, or when asked how this repo's own agent identity or dispatch/reconciliation works.
 ---
 
 # LCARS Protocol

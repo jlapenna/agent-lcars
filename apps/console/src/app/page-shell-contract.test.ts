@@ -1,9 +1,17 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const APP_DIRECTORY = resolve(process.cwd(), 'src/app');
+// Anchor to this file's own location rather than process.cwd() so the test
+// passes whether vitest runs from the workspace root or from apps/console.
+// Note: the global `URL` constructor is jsdom's shim in this project's
+// jsdom test environment and mis-resolves `new URL('.', import.meta.url)`
+// for file: URLs, so fileURLToPath() is applied directly to the string
+// import.meta.url (Node's own implementation) rather than to a `URL`
+// instance built from it.
+const APP_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const LOGIN_PAGE = 'login/page.tsx';
 
 function pageFiles(directory: string): string[] {
