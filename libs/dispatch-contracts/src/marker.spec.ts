@@ -44,6 +44,35 @@ describe('parseDispatchMarker', () => {
     });
   });
 
+  it('round-trips an orchestrator run ID intent, which carries a repo and issue path', () => {
+    // @agent-lcars/orchestrator mints run IDs as `{repo}#{issue}/r{generation}`
+    // (e.g. `jlapenna/agent-lcars#1178/r1`); orchestrator-dispatch.ts's
+    // outbox drain passes that runId verbatim as `broker_intent_id`, so it
+    // becomes this marker's intentId unchanged, `/` and `#` included.
+    const marker = formatDispatchMarker({
+      generation: 1,
+      intentId: 'jlapenna/agent-lcars#1178/r1',
+    });
+    expect(marker).toBe('[dispatch:g1:jlapenna/agent-lcars#1178/r1]');
+    expect(parseDispatchMarker(`#1178: Claude issue agent ${marker}`)).toEqual({
+      generation: 1,
+      intentId: 'jlapenna/agent-lcars#1178/r1',
+    });
+  });
+
+  it("stops the intent ID at the marker's own closing bracket rather than absorbing a `]` inside it", () => {
+    // A pathological intentId containing `]` must not let the captured
+    // group swallow the marker's own closing delimiter -- `]` is excluded
+    // from the character class specifically so this fails safe (captures
+    // only up to the first `]`) instead of over-capturing into whatever
+    // text follows.
+    expect(
+      parseDispatchMarker(
+        '#7: Claude issue agent [dispatch:g1:owner/repo#7]-trailing-noise]',
+      ),
+    ).toEqual({ generation: 1, intentId: 'owner/repo#7' });
+  });
+
   it('ignores a hand-dispatched run with blank broker inputs', () => {
     // A manual workflow_dispatch leaves the inputs empty, which Actions
     // renders as `[dispatch:g:]`. Attributing that to generation 0 of an
@@ -126,6 +155,12 @@ describe('the attempt ID', () => {
     );
   });
 
+  it('round-trips an orchestrator run ID (owner/repo#issue/rN), not just the legacy charset', () => {
+    const attempt = { generation: 1, intentId: 'jlapenna/agent-lcars#1178/r1' };
+    expect(formatAttemptId(attempt)).toBe('g1:jlapenna/agent-lcars#1178/r1');
+    expect(parseAttemptId(formatAttemptId(attempt))).toEqual(attempt);
+  });
+
   it('rejects the empty ID a hand-triggered dispatch produces', () => {
     // Actions renders blank inputs as `g:`; treating that as generation 0 of
     // an empty intent would bind an unrelated run to a real ledger entry.
@@ -134,6 +169,15 @@ describe('the attempt ID', () => {
 
   it('is anchored, so it does not match an ID embedded in other text', () => {
     expect(parseAttemptId('#645: agent [dispatch:g3:abc]')).toBe(undefined);
+  });
+
+  it('is anchored to the whole string, so a `]` in the id fails the match entirely rather than matching a prefix', () => {
+    // Unlike the run-title marker (which can stop early at a literal `]`
+    // delimiter), a bare attempt ID has no closing delimiter to stop at --
+    // `^...$` means a `]` anywhere in the candidate breaks the character
+    // class and the WHOLE string fails to match, rather than silently
+    // succeeding on a truncated prefix.
+    expect(parseAttemptId('g1:owner/repo#7]evil')).toBe(undefined);
   });
 
   it('tolerates a missing ID', () => {
@@ -155,6 +199,24 @@ describe('parseClaimMarker', () => {
     const marker = formatClaimMarker('g7:issue-645.g7');
     expect(parseClaimMarker(`Fixed the widget.\n\n${marker}\n`)).toBe(
       'g7:issue-645.g7',
+    );
+  });
+
+  it('recovers an orchestrator attempt ID, `/` and `#` included', () => {
+    const marker = formatClaimMarker('g1:jlapenna/agent-lcars#1178/r1');
+    expect(parseClaimMarker(`Fixed the widget.\n\n${marker}\n`)).toBe(
+      'g1:jlapenna/agent-lcars#1178/r1',
+    );
+  });
+
+  it('stops at the closing `-->` even with trailing content directly abutting it', () => {
+    // No newline or space between `-->` and what follows -- the greedy
+    // character class must still back off exactly at the delimiter rather
+    // than either swallowing part of it or leaking trailing text into the
+    // captured id.
+    const marker = formatClaimMarker('g1:jlapenna/agent-lcars#1178/r1');
+    expect(parseClaimMarker(`${marker}P.S. also fixed the docs.`)).toBe(
+      'g1:jlapenna/agent-lcars#1178/r1',
     );
   });
 
