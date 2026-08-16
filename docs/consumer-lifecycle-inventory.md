@@ -1,5 +1,17 @@
 # Consumer recovery workflow inventory
 
+> [!NOTE]
+> **Point-in-time inventory (2026-08-09), not a current contract.**
+> `libs/dispatch-contracts/src/recovery-observation.ts` and the hosted
+> ingestion endpoint this document's "What this lands" section describes as
+> future follow-up work were both removed in #1015 Wave 4 — the endpoint
+> never gained consumer-repo OIDC trust (see #870) and the primary
+> admission/completion/reconciliation path moved to `libs/orchestrator`
+> instead. This document's own inventory of the eleven consumer workflows
+> remains accurate as a historical snapshot; treat any reference to a
+> `RecoveryObservation`/`recovery/v1:...` contract landing "in this same
+> change" as describing work that was later un-landed, not current state.
+
 [#864](https://github.com/jlapenna/agent-lcars/issues/864) proposes making the
 hosted controller (see [`lifecycle-systems.md`](lifecycle-systems.md)) the
 sole decision-maker for lifecycle recovery in consumer repositories, and its

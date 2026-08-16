@@ -3,10 +3,17 @@ import { NextResponse } from 'next/server';
 
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
-import type { GitHubWebhookPayload } from '@/lib/hosted-admission';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
 const ADMITTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
+
+// Only the field this route actually reads. The legacy admission decision
+// loop's fuller WebhookEvent shape (apps/dispatch-broker/src/normalize.ts)
+// was retired in #1015 Wave 4; this route only needs to know which
+// repository a delivery is for before enqueueing it.
+interface GitHubWebhookPayload {
+  repository?: { id?: number; full_name?: string };
+}
 
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();

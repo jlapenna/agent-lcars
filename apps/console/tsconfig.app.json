@@ -36,9 +36,6 @@
       "path": "../../libs/orchestrator/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/dispatch-reconcile/tsconfig.lib.json"
-    },
-    {
       "path": "../../libs/app-providers/tsconfig.lib.json"
     },
     {

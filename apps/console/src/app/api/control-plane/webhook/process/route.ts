@@ -2,9 +2,23 @@ import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
-import { PermanentAdmissionError } from '@/lib/hosted-admission';
 import { handleWebhookDelivery } from '@/lib/orchestrator-routes';
 import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
+
+/**
+ * Thrown for admission failures that are deterministic given the delivered
+ * request -- a missing header, malformed JSON. Retrying buys nothing, so
+ * the handler below acks these immediately instead of letting Cloud Tasks
+ * hammer the same poisoned delivery forever (agent-lcars#958). Contrast
+ * with an unwrapped `Error` (orchestrator/Firestore/GitHub API failures),
+ * which stays on the retryable 5xx path.
+ */
+class PermanentAdmissionError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'PermanentAdmissionError';
+  }
+}
 
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();

@@ -17,11 +17,21 @@ re-derive it.**
 
 Covered today:
 
-| Contract                                            | Previously hand-copied in                                                                                                                                                                                                                                                                                  |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pipeline identity registry                          | `normalize.mjs`, `github-api.mjs` (twice), `broker.mjs`, console `watched-repo.ts`, console `action-items.ts`, and the four worker workflows' `env:` blocks                                                                                                                                                |
-| Dispatch marker `[dispatch:g<n>:<id>]`              | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                                                                                                                                                               |
-| Recovery operation key (`recovery/v1:<domain>:...`) | Never shared before — `pr-heal.yml`'s `pr-heal-ledger:v1` comment and `post-deploy-verify.yml`'s `post-deploy-verify-dispatch:<sha>` marker in `supersprinklesracing/sprinkles` each independently invented an equivalent idempotency key (see [#864](https://github.com/jlapenna/agent-lcars/issues/864)) |
+| Contract                               | Previously hand-copied in                                                                                                                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pipeline identity registry             | `normalize.mjs`, `github-api.mjs` (twice), `broker.mjs`, console `watched-repo.ts`, console `action-items.ts`, and the four worker workflows' `env:` blocks |
+| Dispatch marker `[dispatch:g<n>:<id>]` | `main.mjs`, `github-api.mjs`, console `agent-activity.ts`, and four `run-name:` YAML strings                                                                |
+
+`recovery-observation.ts` (the `recovery/v1:<domain>:...` operation-key
+contract) was removed in #1015 Wave 4: its only consumer,
+`apps/console/src/lib/hosted-recovery-observation.ts`, was deleted along
+with the console ingestion endpoint it backed (no workflow in this repo or
+a consumer repo ever gained trust to call it — see #870). `pr-heal.yml`'s
+`pr-heal-ledger:v1` comment and `post-deploy-verify.yml`'s
+`post-deploy-verify-dispatch:<sha>` marker in
+`supersprinklesracing/sprinkles` remain their own independently-invented
+idempotency keys (see [#864](https://github.com/jlapenna/agent-lcars/issues/864));
+sharing a contract for them is unbuilt, not landed here.
 
 The provider-neutral Lifecycle Control Plane v1 boundary lives under
 `src/control-plane/`. It defines strict, versioned facts for central task,

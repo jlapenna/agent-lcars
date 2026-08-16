@@ -4,7 +4,7 @@
   "sourceRoot": "apps/dispatch-broker/src",
   "projectType": "application",
   "tags": ["platform:server", "scope:shared"],
-  "// why": "The source lives here rather than under .github/actions because that directory is deployment surface: it holds action.yml and the committed bundle this target produces, and nothing else. Keeping the source in a normal Nx app is what gives it lint, typecheck, test and build targets on the same terms as every other project.",
+  "// why": "The source lives here rather than under .github/actions because that directory is deployment surface: it holds action.yml and the committed bundle this target produces, and nothing else. Keeping the source in a normal Nx app is what gives it lint, typecheck, test and build targets on the same terms as every other project. #1015 Wave 4 deleted .github/actions/dispatch-broker (its last live use, the Claude-lane-readiness probe, was retired) and .github/actions/deliverable-watchdog, so their `build`/`build-deliverable-watchdog` targets went too -- see apps/dispatch-broker/README.md for why this app itself is kept: apps/console's hosted-controller.ts still imports main.ts/normalize.ts/storage/services as a library for the console-triggered Retry/Reassign-pipeline commands, and build-rerun-infra-killed-runs below still produces the externally-published rerun-infra-killed-runs bundle.",
   "targets": {
     "test": {
       "// why": "workflow-contract.spec.ts reads .github/workflows/*.yml at runtime, so those files are real inputs to this target even though nothing imports them. Without declaring them, Nx hashes only this project's own sources and happily serves a cached pass after a workflow changes -- meaning the suite whose entire job is catching workflow drift would be the one thing that never notices it. Verified: editing a worker workflow used to leave `pnpm nx test` green from cache.",
@@ -14,29 +14,6 @@
         "{workspaceRoot}/.github/workflows/*.yml",
         "{workspaceRoot}/.github/actions/**/action.yml"
       ]
-    },
-    "build": {
-      "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "platform": "node",
-        "target": "node24",
-        "format": ["esm"],
-        "bundle": true,
-        "thirdParty": true,
-        "outputPath": ".github/actions/dispatch-broker/dist",
-        "outputFileName": "main.mjs",
-        "main": "apps/dispatch-broker/src/main.ts",
-        "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
-        "generatePackageJson": false,
-        "skipTypeCheck": false,
-        "esbuildOptions": {
-          "sourcemap": false,
-          "outExtension": {
-            ".js": ".mjs"
-          }
-        }
-      }
     },
     "build-rerun-infra-killed-runs": {
       "// why": "Same committed-dependency-free-bundle pattern as `build` above, for the sibling rerun-infra-killed-runs action. rerun-infra-killed-runs/main.mjs used to import ../dispatch-broker/github-api.mjs directly, a path #695 deleted; that broke this action outright (five straight scheduled-run failures, silently killing the self-healing path that reruns infra-killed CI runs) with nothing to catch it. This target plus the drift check in ci.yml is the fix.",
@@ -51,30 +28,6 @@
         "outputPath": ".github/actions/rerun-infra-killed-runs/dist",
         "outputFileName": "main.mjs",
         "main": "apps/dispatch-broker/src/rerun-infra-killed-runs/main.ts",
-        "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
-        "generatePackageJson": false,
-        "skipTypeCheck": false,
-        "esbuildOptions": {
-          "sourcemap": false,
-          "outExtension": {
-            ".js": ".mjs"
-          }
-        }
-      }
-    },
-    "build-deliverable-watchdog": {
-      "// why": "Same committed dependency-free bundle pattern as the sibling scheduled actions. #721's watchdog is operational recovery code, so CI rebuilds and diffs its bundle instead of trusting a manually updated artifact.",
-      "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "platform": "node",
-        "target": "node24",
-        "format": ["esm"],
-        "bundle": true,
-        "thirdParty": true,
-        "outputPath": ".github/actions/deliverable-watchdog/dist",
-        "outputFileName": "main.mjs",
-        "main": "apps/dispatch-broker/src/deliverable-watchdog/main.ts",
         "tsConfig": "apps/dispatch-broker/tsconfig.build.json",
         "generatePackageJson": false,
         "skipTypeCheck": false,
