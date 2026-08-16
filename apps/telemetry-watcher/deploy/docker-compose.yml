@@ -29,16 +29,16 @@ name: agent-lcars-telemetry-watcher
 # a different uid cannot read them even through read-only mounts.
 services:
   agent-lcars-telemetry-watcher:
-    # agent-lcars 6b6638d is the first revision whose daemon actually reads
-    # the session-title overlay (#1212 activation, plus the #1224/#1230
-    # bounding fixes). The mount and AGENT_TELEMETRY_SESSION_STATE_DIR below
-    # are inert without it -- an older image ignores both, silently, so the
-    # tag and this file's overlay config have to move together.
+    # agent-lcars f6ad50c carries the session STATUS line (#1257) on top of
+    # the title overlay this file's mount already served (#1212, #1224,
+    # #1230). The daemon reads session-status/ alongside the other two
+    # channels; an older image ignores that directory silently, so the status
+    # an agent declares would sit on disk reaching nothing.
     #
     # Keep tag and digest immutable together: the healthcheck below requires
     # the Prometheus endpoint this image provides (#434's multi-root privacy
     # scope came with it).
-    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:6b6638d8355c31cbfa99bebe39fbb3d8ca484534@sha256:1861b2911d11d547469444e236a756d0d91a25dba068a2d8faec2a96cbd43d29
+    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:f6ad50cf565d96a7485ff958bb422088c1821720@sha256:7842bb1215644c5a6fb84b74e8d7ae4ae47878e2e7a51e36a5c37e9bab53e871
     container_name: agent-lcars-telemetry-watcher
     user: '${WATCHER_UID:?deploy.sh must export WATCHER_UID}:${WATCHER_GID:?deploy.sh must export WATCHER_GID}'
     # Shares the host PID namespace so isProcessAliveForCwd's /proc/<pid>/cwd
