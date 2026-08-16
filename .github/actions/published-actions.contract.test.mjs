@@ -296,9 +296,13 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'RUN_ID',
       'ISSUE',
       'JOB_STATUS',
-      // Required only when JOB_STATUS is "success" (#815).
+      // Required only when JOB_STATUS is "success" (#815). MODE always;
+      // then either ATTEMPT_ID (optional, see below) or this legacy
+      // inference pair when ATTEMPT_ID is unset (#1208 Phase 2) -- mirrors
+      // verify-deliverable.sh's own `if [ -z "$ATTEMPT_ID" ]` contract.
       'MODE',
-      'ATTEMPT_ID',
+      'STARTED_AT',
+      'EXPECTED_COMMENT_LOGIN',
     ].sort(),
     'post-agent-gates.sh: required env-var set changed',
   );
@@ -312,6 +316,12 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'READINESS_FAILURE',
       // #1208: report-failure.sh's own standalone-mode toggle, forwarded.
       'MAINTAINER',
+      // #1208 Phase 2: optional -- a standalone consumer without broker
+      // attempt identity leaves this unset and relies on the
+      // STARTED_AT/EXPECTED_COMMENT_LOGIN legacy inference pair above
+      // instead (both become unconditionally required only in that case,
+      // enforced inside the script itself, not by this static contract).
+      'ATTEMPT_ID',
     ].sort(),
     'post-agent-gates.sh: optional env-var set changed',
   );

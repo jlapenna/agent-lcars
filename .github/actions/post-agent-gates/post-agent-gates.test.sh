@@ -459,4 +459,45 @@ SCAN
   grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed standalone report must suppress the hosted fallback"
 )
 
+# --- Case 15: #1208 Phase 2 - a standalone consumer with no broker attempt
+# identity at all (sprinkles, homelab) leaves ATTEMPT_ID unset and relies on
+# verify-deliverable.sh's own legacy time-window/login inference instead
+# (clause (a): a PR referencing #NUM, authored by EXPECTED_COMMENT_LOGIN,
+# updated since STARTED_AT). Before this fix, base_env's own ATTEMPT_ID was
+# the only thing standing between every such consumer and an unconditional
+# "ATTEMPT_ID is required" failure on every successful run - this proves
+# the legacy branch now actually reaches verify-deliverable.sh instead. ---
+(
+  base_env
+  unset ATTEMPT_ID
+  export STARTED_AT=2024-01-01T00:00:00Z
+  export EXPECTED_COMMENT_LOGIN='agent-lcars[bot]'
+  case_dir="$test_root/legacy-inference-deliverable-found"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":9,"title":"Fix widget (#42)","body":"","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
+JSON
+  run_case legacy-inference-deliverable-found
+  test "$status" = 0 || fail "a legacy-inference deliverable must exit 0 with no ATTEMPT_ID set"
+  assert_telemetry_finalize_ran "telemetry-finalize must still always run on the legacy-inference path"
+  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a clean legacy-inference finalizer must suppress the fallback"
+  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its outcome kind"
+  grep -qx 'outcome-reference=9' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its exact reference"
+)
+
+# --- Case 16: neither ATTEMPT_ID nor the legacy inference pair is present -
+# must still fail closed with a named diagnostic instead of silently
+# skipping the deliverable gate, exactly as the unconditional
+# "ATTEMPT_ID is required" check did before this fix. ---
+(
+  base_env
+  unset ATTEMPT_ID
+  unset STARTED_AT
+  unset EXPECTED_COMMENT_LOGIN
+  run_case legacy-inference-missing-inputs
+  test "$status" != 0 || fail "missing both ATTEMPT_ID and the legacy inference pair must fail closed"
+  grep -q 'STARTED_AT is required' <<<"$output" || \
+    fail "expected a named diagnostic naming the missing legacy-inference input"
+)
+
 echo "post-agent-gates.test.sh: all cases passed"

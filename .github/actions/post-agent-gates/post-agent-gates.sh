@@ -43,7 +43,13 @@
 #   Always required: GH_TOKEN, AGENT, REPO, SERVER_URL, RUN_ID, ISSUE,
 #     JOB_STATUS.
 #   Required only when JOB_STATUS is "success" (verify-deliverable's own
-#     inputs at that point, #815): MODE, ATTEMPT_ID.
+#     inputs at that point, #815): MODE always; then either ATTEMPT_ID, or
+#     the legacy inference pair STARTED_AT + EXPECTED_COMMENT_LOGIN when
+#     ATTEMPT_ID is unset -- mirrors verify-deliverable.sh's own
+#     `if [ -z "$ATTEMPT_ID" ]` contract exactly (#1208 Phase 2). A
+#     standalone consumer without broker attempt identity (sprinkles,
+#     homelab) always takes the legacy branch; hosted LCARS workers always
+#     set ATTEMPT_ID and never touch it.
 #   Optional: WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
 #     path; empty is valid, matching telemetry-start being best-effort);
 #     NO_DELIVERABLE_REASON (each lane's own no-deliverable wording,
@@ -80,6 +86,7 @@ FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
 AGENT_STEP_OUTCOME="${AGENT_STEP_OUTCOME:-}"
 READINESS_FAILURE="${READINESS_FAILURE:-}"
 MAINTAINER="${MAINTAINER:-}"
+ATTEMPT_ID="${ATTEMPT_ID:-}"
 
 case "$READINESS_FAILURE" in
   ''|credential|provider|bootstrap) ;;
@@ -130,7 +137,18 @@ deliverable_failed=0
 no_deliverable=0
 if [ "$JOB_STATUS" = "success" ]; then
   : "${MODE:?MODE is required when JOB_STATUS is success}"
-  : "${ATTEMPT_ID:?ATTEMPT_ID is required when JOB_STATUS is success}"
+  # #1208 Phase 2: ATTEMPT_ID is optional here, exactly like
+  # verify-deliverable.sh's own contract -- a standalone consumer without
+  # broker attempt identity (sprinkles, homelab) leaves it unset and must
+  # provide the legacy inference pair instead. Forwarding an ATTEMPT_ID
+  # value (even a synthetic one) to verify-deliverable.sh would force it
+  # into exact-marker-only mode, silently disabling the legacy inference
+  # clauses such a consumer actually relies on -- so this check has to
+  # mirror the sub-script's own optionality, not just require *something*.
+  if [ -z "$ATTEMPT_ID" ]; then
+    : "${STARTED_AT:?STARTED_AT is required when JOB_STATUS is success and ATTEMPT_ID is unset}"
+    : "${EXPECTED_COMMENT_LOGIN:?EXPECTED_COMMENT_LOGIN is required when JOB_STATUS is success and ATTEMPT_ID is unset}"
+  fi
   if ! NUM="$ISSUE" bash "$trusted_dir/verify-deliverable/verify-deliverable.sh"; then
     deliverable_failed=1
     if [ -n "${GITHUB_ENV:-}" ] && [ -f "$GITHUB_ENV" ] && \

@@ -124,6 +124,18 @@ steps into the one snapshot-run step LCARS's own workers already use, without
 losing their existing visible-failure reporting (issue #1208; the consumer-side
 rewiring is tracked as a follow-up, not part of this change).
 
+`post-agent-gates`'s own `ATTEMPT_ID` requirement is likewise optional
+(#1208 Phase 2, found while wiring sprinkles onto this script): when
+`JOB_STATUS` is `success`, it forwards straight to `verify-deliverable.sh`
+and mirrors that script's own `if [ -z "$ATTEMPT_ID" ]` contract exactly —
+`ATTEMPT_ID` set, or the legacy inference pair `STARTED_AT` +
+`EXPECTED_COMMENT_LOGIN` when it is unset. Passing a synthetic `ATTEMPT_ID`
+just to satisfy an unconditional requirement was never a safe workaround:
+any non-empty value forces `verify-deliverable.sh` into exact-marker-only
+mode, which silently disables the legacy inference clauses a standalone
+consumer without broker attempt identity (sprinkles, homelab) actually
+relies on.
+
 `verify-deliverable`'s exact-marker clause additionally requires the matching
 artifact to be **bot-authored** (`.user.type == "Bot"`, agent-lcars#1223).
 The marker was treated as unforgeable identity, but it is a plain string —
