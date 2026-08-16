@@ -106,6 +106,13 @@ function orchestratorRun(
     state: 'pending' | 'running' | 'finished' | 'canceled' | 'lost';
     pipeline: string;
     result: { ok: boolean; ref?: string; summary?: string };
+    leaseExpiresAt: string;
+    events: {
+      at: string;
+      to: 'pending' | 'running' | 'finished' | 'canceled' | 'lost';
+      by: 'request' | 'dispatch' | 'report' | 'operator' | 'expiry';
+      note?: string;
+    }[];
   }> = {},
 ) {
   return {
@@ -310,6 +317,66 @@ describe('getTaskDetail', () => {
     // itself is already fully represented in `attempts` above.
     expect(result.work.intents).toEqual([]);
     expect(result.work.state).toBe('active');
+  });
+
+  it("exposes the task's own orchestrator run history verbatim as `runs`, for the native runs view (#1015)", async () => {
+    const lostRun = orchestratorRun({
+      runId: 'run-lost',
+      state: 'lost',
+      events: [
+        { at: '2026-07-07T00:00:00Z', to: 'pending', by: 'request' },
+        { at: '2026-07-07T00:05:00Z', to: 'running', by: 'dispatch' },
+        {
+          at: '2026-07-07T02:05:00Z',
+          to: 'lost',
+          by: 'expiry',
+          note: 'lease expired with no report; auto-retry 1/3',
+        },
+      ],
+    });
+    const finishedRun = orchestratorRun({
+      runId: 'run-finished',
+      state: 'finished',
+      result: {
+        ok: true,
+        ref: 'https://github.com/supersprinklesracing/sprinkles/pull/77',
+      },
+    });
+    const livePendingRun = orchestratorRun({
+      runId: 'run-live',
+      state: 'pending',
+      leaseExpiresAt: '2026-07-07T05:00:00Z',
+    });
+    useAuthoritativeState([lostRun, finishedRun, livePendingRun], {
+      activeRunId: 'run-live',
+    });
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+    cachedActivity = EMPTY_ACTIVITY;
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.runs).toEqual([lostRun, finishedRun, livePendingRun]);
+  });
+
+  it('exposes an empty `runs` array for a task with no authoritative state, so the page falls back to legacy attempts', async () => {
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+    cachedActivity = EMPTY_ACTIVITY;
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.runs).toEqual([]);
   });
 
   it('reports a closed task as merged only for its attempt-persisted PR number', async () => {

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { ActionItem } from '../../lib/action-items';
+import type { AuthoritativeTaskState } from '../../lib/authoritative-task-state';
 import type { CliSession } from '../../lib/cli-sessions';
 import { ClaimedIdleSection } from './claimed-idle-section';
 
@@ -34,10 +35,31 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
   };
 }
 
-function renderSection(items: ActionItem[], cliSessions: CliSession[] = []) {
+function makeAuthoritativeState(
+  overrides: Partial<AuthoritativeTaskState> = {},
+): AuthoritativeTaskState {
+  return {
+    schema: 'agent-lcars.authoritative-task-state/v2',
+    task: { repo: 'supersprinklesracing/sprinkles', issue: 5 },
+    storageRevision: 1,
+    updatedAt: '2026-07-18T00:00:00Z',
+    runs: [],
+    ...overrides,
+  };
+}
+
+function renderSection(
+  items: ActionItem[],
+  cliSessions: CliSession[] = [],
+  authoritativeStates?: Map<string, AuthoritativeTaskState>,
+) {
   render(
     <MantineProvider>
-      <ClaimedIdleSection items={items} cliSessions={cliSessions} />
+      <ClaimedIdleSection
+        items={items}
+        cliSessions={cliSessions}
+        authoritativeStates={authoritativeStates}
+      />
     </MantineProvider>,
   );
 }
@@ -99,5 +121,46 @@ describe('ClaimedIdleSection', () => {
       [makeSession({ pr: { number: 999, url: 'u' } })],
     );
     expect(screen.queryByTestId('claimed-idle-session-link')).toBeNull();
+  });
+
+  it('flags a stale-looking claim as actually locked when the orchestrator still shows a live run (#1015)', () => {
+    const authoritativeStates = new Map([
+      [
+        'supersprinklesracing/sprinkles#5',
+        makeAuthoritativeState({
+          activeRunId: 'supersprinklesracing/sprinkles#5/r1',
+          runs: [
+            {
+              runId: 'supersprinklesracing/sprinkles#5/r1',
+              task: { repo: 'supersprinklesracing/sprinkles', issue: 5 },
+              state: 'running',
+              pipeline: 'claude',
+              requestId: 'req-1',
+              leaseExpiresAt: '2026-07-18T01:00:00Z',
+              events: [],
+              createdAt: '2026-07-18T00:00:00Z',
+              updatedAt: '2026-07-18T00:00:00Z',
+            },
+          ],
+        }),
+      ],
+    ]);
+    renderSection([makeItem({ number: 5 })], [], authoritativeStates);
+
+    const badge = screen.getByTestId('claimed-idle-active-run');
+    expect(badge.textContent).toBe('locked · running');
+  });
+
+  it('renders no lock badge when the orchestrator has no active run for the item', () => {
+    const authoritativeStates = new Map([
+      ['supersprinklesracing/sprinkles#5', makeAuthoritativeState()],
+    ]);
+    renderSection([makeItem({ number: 5 })], [], authoritativeStates);
+    expect(screen.queryByTestId('claimed-idle-active-run')).toBeNull();
+  });
+
+  it('renders no lock badge when no authoritative state was fetched at all', () => {
+    renderSection([makeItem({ number: 5 })]);
+    expect(screen.queryByTestId('claimed-idle-active-run')).toBeNull();
   });
 });

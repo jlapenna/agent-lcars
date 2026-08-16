@@ -1,3 +1,4 @@
+import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -74,13 +75,29 @@ function makeWork(overrides: Partial<LogicalWork> = {}): LogicalWork {
   };
 }
 
+function makeRun(overrides: Partial<OrchestratorRun> = {}): OrchestratorRun {
+  return {
+    runId: 'supersprinklesracing/sprinkles#42/r1',
+    task: { repo: 'supersprinklesracing/sprinkles', issue: 42 },
+    state: 'running',
+    pipeline: 'claude',
+    requestId: 'req-1',
+    leaseExpiresAt: '2026-07-07T02:00:00Z',
+    events: [{ at: '2026-07-07T00:00:00Z', to: 'pending', by: 'request' }],
+    createdAt: '2026-07-07T00:00:00Z',
+    updatedAt: '2026-07-07T00:00:00Z',
+    ...overrides,
+  };
+}
+
 function renderCard(
   work: LogicalWork = makeWork(),
   anchorState: 'open' | 'closed' = 'open',
+  runs: OrchestratorRun[] = [],
 ) {
   render(
     <MantineProvider>
-      <LogicalWorkCard work={work} anchorState={anchorState} />
+      <LogicalWorkCard work={work} runs={runs} anchorState={anchorState} />
     </MantineProvider>,
   );
 }
@@ -257,5 +274,29 @@ describe('LogicalWorkCard', () => {
     expect(
       screen.getByText('No workflow runs attributed to this task yet.'),
     ).toBeTruthy();
+  });
+
+  it('renders the native runs section alongside a real, still-visible GitHub Actions attempt (#1015)', () => {
+    // A seeded orchestrator run does not retroactively prove every visible
+    // GitHub Actions attempt is that same run - see logical-work-card.tsx's
+    // own comment on why the legacy list stays up whenever it has content.
+    renderCard(makeWork(), 'open', [makeRun()]);
+    expect(screen.getByTestId('runs-section')).toBeTruthy();
+    expect(screen.getByTestId('logical-work-attempts')).toBeTruthy();
+    expect(
+      screen.getByTestId('logical-work-attempts').textContent,
+    ).not.toContain('No workflow runs attributed');
+  });
+
+  it('renders only the runs section, no empty-attempts placeholder, when orchestrator history exists but no attempt does', () => {
+    renderCard(makeWork({ attempts: [] }), 'open', [makeRun()]);
+    expect(screen.getByTestId('runs-section')).toBeTruthy();
+    expect(screen.queryByTestId('logical-work-attempts')).toBeNull();
+  });
+
+  it('falls back to the legacy attempts list when the orchestrator has no run history for this task', () => {
+    renderCard(makeWork(), 'open', []);
+    expect(screen.queryByTestId('runs-section')).toBeNull();
+    expect(screen.getByTestId('logical-work-attempts')).toBeTruthy();
   });
 });

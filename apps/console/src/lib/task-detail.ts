@@ -1,4 +1,5 @@
 import { type DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
+import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { cacheLife, cacheTag } from 'next/cache';
 
@@ -36,6 +37,14 @@ export type TaskDetailResult =
   | {
       status: 'ok';
       work: LogicalWork;
+      /** This task's own orchestrator run history, verbatim - order not
+       * guaranteed (see `AuthoritativeTaskState.runs`'s own doc comment).
+       * Empty for a task with no orchestrator state (pre-cutover history,
+       * or a repo the orchestrator never covers); `LogicalWorkCard` renders
+       * this natively (#1015) alongside `work.attempts`'s legacy list
+       * whenever non-empty, and falls back to the legacy list alone when
+       * it's empty. */
+      runs: OrchestratorRun[];
       item: ActionItem;
       repo: WatchedRepo;
       anchorState: 'open' | 'closed';
@@ -261,6 +270,7 @@ export async function getTaskDetail(
   return {
     status: 'ok',
     work: task,
+    runs: authoritative.states.get(key)?.runs ?? [],
     item,
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',

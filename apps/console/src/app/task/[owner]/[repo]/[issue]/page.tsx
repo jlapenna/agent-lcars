@@ -110,7 +110,11 @@ async function TaskDetailPageContent({ params }: PageProps) {
       )}
 
       {detail.status === 'ok' && (
-        <LogicalWorkCard work={detail.work} anchorState={detail.anchorState} />
+        <LogicalWorkCard
+          work={detail.work}
+          runs={detail.runs}
+          anchorState={detail.anchorState}
+        />
       )}
     </ConsoleAppShell>
   );
