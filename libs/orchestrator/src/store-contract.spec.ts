@@ -1,10 +1,29 @@
-import { describe } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { FirestoreStore } from './firestore-store';
 import { MemoryStore } from './memory-store';
+import { taskSchema } from './model';
 import { runOrchestratorStoreContract } from './store-contract';
 
 runOrchestratorStoreContract('MemoryStore', () => new MemoryStore());
+
+describe('taskSchema', () => {
+  it('reads a legacy task document that predates pendingRequest (and consecutiveLost) fine', () => {
+    // No `apply()`/store round trip needed here -- this is the schema
+    // itself proving it accepts documents written before this field (or
+    // `consecutiveLost`) existed, exactly as `FirestoreStore.readTask`
+    // would parse one off a real, older document.
+    const legacyDoc: unknown = {
+      task: { repo: 'octo/example', issue: 7 },
+      activeRunId: 'octo/example#7/r1',
+      runCount: 1,
+      updatedAt: '2026-08-15T12:00:00.000Z',
+    };
+    const parsed = taskSchema.parse(legacyDoc);
+    expect(parsed.pendingRequest).toBeUndefined();
+    expect(parsed.consecutiveLost).toBeUndefined();
+  });
+});
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 

@@ -5,7 +5,7 @@ import {
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
-import type { Decision } from './decide';
+import { type Decision, isQueued, type Queued } from './decide';
 import {
   isLive,
   type OutboxEntry,
@@ -101,18 +101,16 @@ export class FirestoreStore implements OrchestratorStore {
   }
 
   async apply(input: {
-    decision: Decision;
+    decision: Decision | Queued;
     expectedRevision: number | undefined;
   }): Promise<void> {
     const { decision, expectedRevision } = input;
     const taskRef = this.#taskRef(decision.task.task);
-    const runRef = this.#runRef(decision.run.runId);
-    const outboxRefs = decision.outbox.map((entry) =>
-      this.#outboxRef(entry.entryId),
-    );
 
     await this.#firestore.runTransaction(async (tx) => {
-      // All reads before all writes, per Firestore transaction rules.
+      // All reads before all writes, per Firestore transaction rules. Run/
+      // outbox refs are computed below, after the read -- ref construction
+      // isn't itself a read, so this still respects that ordering.
       const taskSnapshot = await tx.get(taskRef);
       const currentRevision = taskSnapshot.exists
         ? taskDocSchema.parse(taskSnapshot.data()).revision
@@ -126,10 +124,16 @@ export class FirestoreStore implements OrchestratorStore {
         revision: (expectedRevision ?? 0) + 1,
       };
       tx.set(taskRef, nextTaskDoc);
-      tx.set(runRef, decision.run);
-      decision.outbox.forEach((entry, index) => {
-        tx.set(outboxRefs[index], entry);
-      });
+
+      if (isQueued(decision)) return; // task-only write: no run, no outbox
+
+      tx.set(this.#runRef(decision.run.runId), decision.run);
+      if (decision.followUpRun !== undefined) {
+        tx.set(this.#runRef(decision.followUpRun.runId), decision.followUpRun);
+      }
+      for (const entry of decision.outbox) {
+        tx.set(this.#outboxRef(entry.entryId), entry);
+      }
     });
   }
 

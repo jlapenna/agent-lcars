@@ -8,9 +8,16 @@ import { z } from 'zod';
  * live runs at once. It takes no view of what a run produced — results are
  * opaque, and judging them belongs to the task, not the orchestrator.
  *
- * A task may be worked any number of times, sequentially. A request while a
- * run is live is refused, never queued (queueing is a possible follow-up,
- * not a v1 behavior).
+ * A task may be worked any number of times, sequentially. By default, a
+ * request while a run is live is refused. A caller may opt in to queueing
+ * instead (`requestRun`'s `queueIfBusy`): the request is recorded on the
+ * task as `pendingRequest` and consumed -- minted into a fresh run,
+ * atomically -- by whichever settle path next releases the lock. At most
+ * one request is ever queued per task; a later queued request replaces an
+ * earlier one outright (last-write-wins), it does not accumulate a queue of
+ * queues. Nothing in this repo sets the flag yet -- see `decide.ts`'s
+ * `requestRun` for the decision and `orchestrator.ts` for how a settle path
+ * consumes it.
  */
 
 const isoUtc = z.iso.datetime({ offset: false });
@@ -89,6 +96,17 @@ export const runSchema = z.strictObject({
 });
 export type Run = z.infer<typeof runSchema>;
 
+/** A request queued against a busy task (`requestRun`'s `queueIfBusy`),
+ *  waiting for the live run to settle. Mirrors the subset of a request's
+ *  fields needed to mint its follow-up run later; bounded the same way
+ *  `Run`'s own `pipeline`/`requestId`/`params` are. */
+export const pendingRequestSchema = z.strictObject({
+  requestId: z.string().min(1).max(128),
+  pipeline: z.string().min(1).max(128),
+  params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
+});
+export type PendingRequest = z.infer<typeof pendingRequestSchema>;
+
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
   /** The mutex. Set iff a run is live. */
@@ -101,6 +119,13 @@ export const taskSchema = z.strictObject({
    *  `FirestoreStore`'s zod validation). Drives the bounded auto-retry
    *  budget in `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
   consecutiveLost: z.number().int().nonnegative().optional(),
+  /** Set iff a `queueIfBusy` request arrived while a run was live and
+   *  hasn't yet been consumed. Cleared -- and minted into a fresh run, in
+   *  the same decision -- by whichever settle path next releases the lock
+   *  (`reportResult`, `cancelRun`, `expireLease`). Optional: absent means
+   *  no queued request, and existing task documents predate this field and
+   *  are read that way by `FirestoreStore`'s zod validation. */
+  pendingRequest: pendingRequestSchema.optional(),
   updatedAt: isoUtc,
 });
 export type Task = z.infer<typeof taskSchema>;
