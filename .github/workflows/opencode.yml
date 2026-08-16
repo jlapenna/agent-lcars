@@ -117,11 +117,6 @@ jobs:
           issue: ${{ inputs.issue }}
           broker-generation: ${{ inputs.broker_generation }}
           broker-intent-id: ${{ inputs.broker_intent_id }}
-          broker-dispatch-token: ${{ inputs.broker_dispatch_token }}
-          gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
-          gcp-dispatch-preflight-sa: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
-          dispatch-firestore-database-id: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
-          gcp-project-id: ${{ vars.GCP_PROJECT_ID }}
           agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
           maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
           agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
@@ -232,7 +227,6 @@ jobs:
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
           context: ${{ inputs.context }}
-          prior-terminal-state: ${{ steps.dispatch-bootstrap.outputs.prior-terminal-state }}
           budget-minutes: '120'
           artifact-checkpoint-minutes: '30'
           finalize-checkpoint-minutes: '90'
@@ -309,6 +303,30 @@ jobs:
             retrying the same approach. End your response with exactly one
             of: PR <url>, REVIEW <evidence>, PARK <blocker and resume
             trigger>, or NO-OP <evidence>.
+
+            CRITICAL and non-negotiable: the PR description, comment, or
+            review body that IS your deliverable must contain this exact
+            literal line, verbatim, byte for byte (it is a hidden HTML
+            comment, not visible prose - this run's real attempt id is
+            already substituted in below, do not alter it or invent a
+            different value):
+
+            <!-- attempt-claim:${{ env.ATTEMPT_ID }} -->
+
+            Without this exact marker on the artifact, the automated
+            finalizer that decides whether this run's work survives treats
+            it as lost even if you pushed a working PR - this has happened
+            on this repo: work was completed and a PR opened, but with no
+            marker, so it was discarded. Stamp it into the PR description
+            itself (not only a separate comment) for implement work, or into
+            the comment/review body for the other outcomes above.
+
+            Before ending your turn, leave the working tree completely
+            clean: every change committed and pushed, or explicitly
+            discarded - never left uncommitted or stashed in the workspace.
+            Leftover local changes at session end cause this harness to
+            auto-open a second, junk pull request after your turn finishes,
+            duplicating the real deliverable.
 
       - name: Export sanitized OpenCode trajectory
         id: opencode-trajectory

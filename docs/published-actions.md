@@ -50,9 +50,14 @@ workflows, no separate actions repo, and no Marketplace listing.
 - `dispatch-broker` — hardcodes this repo's label→workflow maps and the
   `agent-lcars-dispatch-v1` ledger/concurrency namespace.
 - `dispatch-bootstrap` — claude.yml/codex.yml/opencode.yml's shared
-  snapshot/assert-vars/broker-preflight/mint-token/claim sequence
-  (agent-lcars#823). Wraps a call to `dispatch-broker` (above), so it
-  inherits the same repo-specific dispatch-ledger coupling.
+  snapshot/assert-vars/attempt-identity/mint-token/claim sequence
+  (agent-lcars#823). A thin executor (agent-lcars#1015): it derives this
+  attempt's stable identity directly from the trusted `broker-generation`/
+  `broker-intent-id` workflow inputs instead of re-verifying them against
+  `dispatch-broker`'s ledger, but it is still Coupled - the
+  `AGENT_FLEET_LOGIN`/`MAINTAINER_LOGIN` repo-variable vocabulary and the
+  attempt-identity format it publishes are this repo's own dispatch
+  contract, not a general-purpose interface.
 - `telemetry-start` / `telemetry-finalize` — depend on
   `/usr/local/lib/agent-lcars/sidecar-lifecycle.sh`, baked into the shared
   runner image (consumers on that image may still call them; the coupling

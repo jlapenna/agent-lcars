@@ -96,8 +96,8 @@ there.
   `agent-fallback-finalize.yml` machinery (agent-protocol.md §5: a failed
   worker is itself a machine-authored parking path) turns that into a
   `status:needs-human` park with the maintainer assigned, the same as any
-  other early-step failure (e.g. `assert-repo-vars` or `dispatch-broker`
-  preflight already behave this way).
+  other early-step failure (e.g. `assert-repo-vars` already behaves this
+  way).
 - **What stays separate**: `AGENT_CI_RERUN_TOKEN` (a classic PAT scoped to
   `public_repo`, used only for `gh run rerun`) never touches this App at
   all and gains nothing from this change — it was never a
@@ -124,11 +124,6 @@ unchanged):
     issue: ${{ inputs.issue }}
     broker-generation: ${{ inputs.broker_generation }}
     broker-intent-id: ${{ inputs.broker_intent_id }}
-    broker-dispatch-token: ${{ inputs.broker_dispatch_token }}
-    gcp-wif-provider: ${{ vars.GCP_WIF_PROVIDER }}
-    gcp-dispatch-preflight-sa: ${{ vars.GCP_DISPATCH_PREFLIGHT_SA }}
-    dispatch-firestore-database-id: ${{ vars.DISPATCH_FIRESTORE_DATABASE_ID }}
-    gcp-project-id: ${{ vars.GCP_PROJECT_ID }}
     agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
     maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
     agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}

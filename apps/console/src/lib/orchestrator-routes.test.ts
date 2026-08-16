@@ -260,7 +260,7 @@ describe('handleReconcile', () => {
     const { deps, clock, calls, store } = fixture();
     const runId = await dispatchedRun(deps);
     calls.length = 0;
-    clock.advanceMinutes(31); // past the 30-minute lease
+    clock.advanceMinutes(121); // past the 2-hour lease
 
     const result = await handleReconcile(deps);
 

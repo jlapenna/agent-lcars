@@ -100,7 +100,7 @@ export function runOrchestratorStoreContract(
         await orchestrator.cancel(second.run.runId, 'operator said stop');
         const third = await started(orchestrator, 'req-3');
         // lost -> free
-        clock.advanceMinutes(31);
+        clock.advanceMinutes(121);
         await orchestrator.sweepExpired();
         const fourth = await started(orchestrator, 'req-4');
         expect(fourth.run.runId).not.toBe(third.run.runId);
@@ -214,12 +214,12 @@ export function runOrchestratorStoreContract(
         const { clock, store, orchestrator } = await fixture();
         const kept = await started(orchestrator, 'req-1');
         await orchestrator.confirmDispatch(kept.run.runId);
-        clock.advanceMinutes(20);
+        clock.advanceMinutes(80);
         await orchestrator.renew(kept.run.runId);
-        clock.advanceMinutes(20); // 40m total; renewal at 20m covers to 50m
+        clock.advanceMinutes(80); // 160m total; renewal at 80m covers to 200m
         expect(await store.listExpiredRuns(clock.now())).toEqual([]);
 
-        clock.advanceMinutes(11); // 51m total; renewed lease covered only to 50m
+        clock.advanceMinutes(44); // 204m total; renewed lease covered only to 200m
         const expired = await store.listExpiredRuns(clock.now());
         expect(expired.map((run) => run.runId)).toEqual([kept.run.runId]);
       });
@@ -229,7 +229,7 @@ export function runOrchestratorStoreContract(
       it('refuses a renew from a run that already lost the lock, after a fresh run took it', async () => {
         const { clock, store, orchestrator } = await fixture();
         const stale = await started(orchestrator, 'req-1');
-        clock.advanceMinutes(31);
+        clock.advanceMinutes(121);
         await orchestrator.sweepExpired();
         const fresh = await started(orchestrator, 'req-2');
         const late = await orchestrator.renew(stale.run.runId);

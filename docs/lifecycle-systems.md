@@ -367,10 +367,16 @@ invoking the requested agent/provider combination.
   completed (#639). This is a bootstrap-independent safety path, not yet a
   full extraction of every normal finalization into the second job. All
   three share the same sequence: checkout → snapshot enforcement scripts →
-  authority-storage auth → broker preflight → mint
-  agent token → claim issue → agent setup → verify agent identity → prepare
-  dispatch context → start telemetry sidecar → run the agent → run
-  post-agent gates.
+  publish attempt identity → mint agent token → claim issue → agent setup →
+  verify agent identity → prepare dispatch context → start telemetry
+  sidecar → run the agent → run post-agent gates. Thin executor
+  (agent-lcars#1015): there is no worker-side re-verification of admission
+  or ledger binding in this sequence - the hosted orchestrator
+  (`libs/orchestrator` + `apps/console`) already authenticated and admitted
+  the dispatch before `workflow_dispatch` fired, so the worker derives its
+  attempt identity directly from the trusted `broker-generation`/
+  `broker-intent-id` inputs instead of authenticating to Firestore and
+  re-proving a binding the server already holds.
 - `.github/actions/agent-setup`, `mint-agent-token`, `verify-agent-identity`,
   `prepare-agent-dispatch`, `setup-opencode`, `telemetry-start` — the shared
   bootstrap pieces (Phase 3's "replace duplicated Claude/Codex/OpenCode
