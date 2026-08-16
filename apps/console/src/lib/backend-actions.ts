@@ -11,6 +11,7 @@ import { isRefusal } from '@agent-lcars/orchestrator';
 
 import { issueNumberFromDisplayTitle } from './agent-activity';
 import { controlPlaneRepository } from './deployment';
+import { REPO_HEADER } from './github-app-tokens';
 import {
   getGithubClient,
   primaryWatchedRepo,
@@ -265,9 +266,17 @@ export async function approveAndRebasePr(
   // Squash, matching approveAndMergePr's own merge_method - the two buttons
   // should produce the same merge shape, differing only in whether the
   // branch needed catching up first.
+  //
+  // This mutation is keyed entirely by `pr.node_id` (an opaque GraphQL node
+  // id) - unlike every other GitHub call in this file, no owner/repo
+  // parameter or variable names the target repo, so getGithubClient()'s
+  // per-request auth routing (github-app-tokens.ts's
+  // `resolveRequestRepo`) cannot recover it structurally. The REPO_HEADER
+  // header is the documented escape hatch for exactly this case.
   await octokit.graphql(ENABLE_AUTO_MERGE_MUTATION, {
     pullRequestId: pr.node_id,
     mergeMethod: 'SQUASH',
+    headers: { [REPO_HEADER]: repoKey(repo) },
   });
 }
 
@@ -1005,9 +1014,18 @@ async function findExistingQuickTask(
   // The direct issue list is preferable for a just-created issue because it
   // does not depend on search indexing. Search is only needed for a retry old
   // enough to have fallen beyond the recent window.
+  //
+  // The `repo:` qualifier above scopes results to this one repo (search
+  // results are further bounded to whatever repos the request's own
+  // installation token can see - see #1284's audit), but it lives inside
+  // the free-text `q` string, not a structured `owner`/`repo` parameter -
+  // getGithubClient()'s per-request auth routing cannot recover a repo from
+  // that without re-parsing the query string, so the REPO_HEADER header
+  // names it explicitly instead.
   const { data: search } = await octokit.rest.search.issuesAndPullRequests({
     q: `"agent-lcars:quick-task-request:v1 id=${request.requestId}" in:body repo:${repoKey(request.repository)} is:issue`,
     per_page: 10,
+    headers: { [REPO_HEADER]: repoKey(request.repository) },
   });
   return resolveExistingQuickTask(request, digest, search.items);
 }

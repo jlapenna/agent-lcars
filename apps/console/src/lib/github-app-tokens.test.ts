@@ -15,9 +15,11 @@ import { decodeJwt, decodeProtectedHeader } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AmbientTokenProvider,
   AppInstallationTokenProvider,
   createDispatchTokenProvider,
+  createGithubClientAuthStrategy,
+  REPO_HEADER,
+  resolveRequestRepo,
 } from './github-app-tokens';
 
 const CLIENT_ID = 'Iv1.test0123456789ab';
@@ -27,7 +29,6 @@ const REPO = 'octo/example';
 // deployment's default -- see deployment.ts/.test.ts and
 // github-actions-oidc.test.ts's identical convention.
 const HOME_REPO = 'jlapenna/agent-lcars';
-const AMBIENT_TOKEN = 'gh-ambient-token-0123456789';
 
 // Real RS256 keypair, generated once for the whole file: `SignJWT` needs a
 // real key to sign against, and the JWT-shape tests decode (never verify)
@@ -94,14 +95,6 @@ function fakeAppFetch(overrides?: {
   }) as typeof fetch;
   return { fetchImpl, calls };
 }
-
-describe('AmbientTokenProvider', () => {
-  it('returns the same static token regardless of repo', async () => {
-    const provider = new AmbientTokenProvider(AMBIENT_TOKEN);
-    await expect(provider.tokenFor(REPO)).resolves.toBe(AMBIENT_TOKEN);
-    await expect(provider.tokenFor('other/repo')).resolves.toBe(AMBIENT_TOKEN);
-  });
-});
 
 describe('AppInstallationTokenProvider', () => {
   it('mints a well-formed App JWT: RS256, iss = clientId, 9-minute expiry with a 60s clock-skew backdated iat', async () => {
@@ -195,6 +188,33 @@ describe('AppInstallationTokenProvider', () => {
     });
   });
 
+  it('requests a caller-supplied permission set instead of the default, when given one', async () => {
+    const { fetchImpl, calls } = fakeAppFetch();
+    const provider = new AppInstallationTokenProvider({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+      permissions: {
+        actions: 'write',
+        contents: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+      },
+    });
+
+    await provider.tokenFor(REPO);
+
+    expect(calls[1]?.body).toEqual({
+      repositories: ['example'],
+      permissions: {
+        actions: 'write',
+        contents: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+      },
+    });
+  });
+
   it('caches the minted token: a second call within its expiry window does not re-fetch', async () => {
     const { fetchImpl, calls } = fakeAppFetch();
     const provider = new AppInstallationTokenProvider({
@@ -248,6 +268,56 @@ describe('AppInstallationTokenProvider', () => {
     await provider.tokenFor('octo/example');
     await provider.tokenFor('octo/other');
     expect(calls).toHaveLength(4); // both served from cache
+  });
+
+  describe('invalidate', () => {
+    it('forces the next tokenFor(repo) call to re-mint instead of serving the cache', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      await provider.tokenFor(REPO);
+      expect(calls).toHaveLength(2);
+
+      provider.invalidate(REPO);
+      await provider.tokenFor(REPO);
+      expect(calls).toHaveLength(4); // re-minted, not served from cache
+    });
+
+    it('only drops the invalidated repo, leaving other repos cached', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      await provider.tokenFor('octo/example');
+      await provider.tokenFor('octo/other');
+      expect(calls).toHaveLength(4);
+
+      provider.invalidate('octo/example');
+      await provider.tokenFor('octo/other');
+      expect(calls).toHaveLength(4); // still cached, no new fetch
+
+      await provider.tokenFor('octo/example');
+      expect(calls).toHaveLength(6); // re-minted
+    });
+
+    it('is a no-op for a repo that was never cached', async () => {
+      const { fetchImpl, calls } = fakeAppFetch();
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      expect(() => provider.invalidate('never/cached')).not.toThrow();
+      expect(calls).toHaveLength(0);
+    });
   });
 
   describe('error paths leak no secrets', () => {
@@ -341,68 +411,59 @@ describe('createDispatchTokenProvider', () => {
     vi.unstubAllGlobals();
   });
 
-  it('throws when AGENT_LCARS_GITHUB_TOKEN is unset, App envs unset', () => {
+  it('throws when AGENT_LCARS_APP_CLIENT_ID is unset', () => {
+    expect(() =>
+      createDispatchTokenProvider({
+        AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
+      }),
+    ).toThrow('process.env.AGENT_LCARS_APP_CLIENT_ID not defined');
+  });
+
+  it('throws when AGENT_LCARS_APP_CLIENT_ID is unset even with nothing else set', () => {
     expect(() => createDispatchTokenProvider({})).toThrow(
-      'process.env.AGENT_LCARS_GITHUB_TOKEN not defined',
+      'process.env.AGENT_LCARS_APP_CLIENT_ID not defined',
     );
   });
 
-  it('throws when AGENT_LCARS_GITHUB_TOKEN is unset even with App envs set (home repo still needs it)', () => {
+  it('throws when AGENT_LCARS_APP_PRIVATE_KEY is unset', () => {
     expect(() =>
       createDispatchTokenProvider({
         AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
-        AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
       }),
-    ).toThrow('process.env.AGENT_LCARS_GITHUB_TOKEN not defined');
+    ).toThrow('process.env.AGENT_LCARS_APP_PRIVATE_KEY not defined');
   });
 
-  it('INERTNESS: with both App envs unset, returns an AmbientTokenProvider used for every repo -- byte-identical to pre-#1190 behavior', async () => {
+  it('#1284: returns an AppInstallationTokenProvider -- there is no more ambient-token fallback for any repo, home included', () => {
     const provider = createDispatchTokenProvider({
-      AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
-    });
-
-    expect(provider).toBeInstanceOf(AmbientTokenProvider);
-    await expect(provider.tokenFor(HOME_REPO)).resolves.toBe(AMBIENT_TOKEN);
-    await expect(provider.tokenFor('sprinkles/some-repo')).resolves.toBe(
-      AMBIENT_TOKEN,
-    );
-  });
-
-  it('INERTNESS: with only one of the two App envs set, still falls back to the ambient token for every repo', async () => {
-    const clientIdOnly = createDispatchTokenProvider({
-      AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
-      AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
-    });
-    expect(clientIdOnly).toBeInstanceOf(AmbientTokenProvider);
-    await expect(clientIdOnly.tokenFor('sprinkles/some-repo')).resolves.toBe(
-      AMBIENT_TOKEN,
-    );
-
-    const privateKeyOnly = createDispatchTokenProvider({
-      AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
-      AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
-    });
-    expect(privateKeyOnly).toBeInstanceOf(AmbientTokenProvider);
-    await expect(privateKeyOnly.tokenFor('sprinkles/some-repo')).resolves.toBe(
-      AMBIENT_TOKEN,
-    );
-  });
-
-  it('with both App envs set, routes the home repo to the ambient token without ever touching fetch', async () => {
-    const neverCalled = vi.fn();
-    vi.stubGlobal('fetch', neverCalled);
-
-    const provider = createDispatchTokenProvider({
-      AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
       AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
       AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
     });
 
-    await expect(provider.tokenFor(HOME_REPO)).resolves.toBe(AMBIENT_TOKEN);
-    expect(neverCalled).not.toHaveBeenCalled();
+    expect(provider).toBeInstanceOf(AppInstallationTokenProvider);
   });
 
-  it('with both App envs set, routes a foreign repo through the App installation-token flow', async () => {
+  it('#1284: routes the home repo through the App installation-token flow, same as any other repo', async () => {
+    const { fetchImpl, calls } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_home-repo-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const provider = createDispatchTokenProvider({
+      AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
+      AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
+    });
+
+    const token = await provider.tokenFor(HOME_REPO);
+    expect(token).toBe('ghs_home-repo-token');
+    expect(
+      calls.some((c) => c.url.endsWith(`/repos/${HOME_REPO}/installation`)),
+    ).toBe(true);
+  });
+
+  it('routes a foreign repo through the same App installation-token flow', async () => {
     const { fetchImpl, calls } = fakeAppFetch({
       tokenBody: {
         token: 'ghs_foreign-repo-token',
@@ -412,14 +473,12 @@ describe('createDispatchTokenProvider', () => {
     vi.stubGlobal('fetch', fetchImpl);
 
     const provider = createDispatchTokenProvider({
-      AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
       AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
       AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
     });
 
     const token = await provider.tokenFor('sprinkles/some-repo');
     expect(token).toBe('ghs_foreign-repo-token');
-    expect(token).not.toBe(AMBIENT_TOKEN);
     expect(
       calls.some((c) =>
         c.url.endsWith('/repos/sprinkles/some-repo/installation'),
@@ -433,7 +492,6 @@ describe('createDispatchTokenProvider', () => {
 
     expect(() =>
       createDispatchTokenProvider({
-        AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
         AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
         AGENT_LCARS_APP_PRIVATE_KEY: 'not-a-real-pem',
       }),
@@ -450,10 +508,289 @@ describe('createDispatchTokenProvider', () => {
   it('#1276: a PKCS1-encoded App private key (the format GitHub downloads) does NOT throw at construction', () => {
     expect(() =>
       createDispatchTokenProvider({
-        AGENT_LCARS_GITHUB_TOKEN: AMBIENT_TOKEN,
         AGENT_LCARS_APP_CLIENT_ID: CLIENT_ID,
         AGENT_LCARS_APP_PRIVATE_KEY: PRIVATE_KEY_PEM_PKCS1,
       }),
     ).not.toThrow();
+  });
+});
+
+describe('resolveRequestRepo', () => {
+  it('derives owner/repo from REST-shaped structured parameters', () => {
+    expect(resolveRequestRepo({ owner: 'octo', repo: 'example' })).toBe(
+      'octo/example',
+    );
+  });
+
+  it('derives owner/name from GraphQL variables (item-enrichment.ts convention)', () => {
+    expect(
+      resolveRequestRepo({
+        variables: { owner: 'octo', name: 'example' },
+      }),
+    ).toBe('octo/example');
+  });
+
+  it('prefers the explicit REPO_HEADER override over structured owner/repo', () => {
+    expect(
+      resolveRequestRepo({
+        owner: 'wrong-owner',
+        repo: 'wrong-repo',
+        headers: { [REPO_HEADER]: 'octo/example' },
+      }),
+    ).toBe('octo/example');
+  });
+
+  it('falls back to the header when no structured owner/repo or variables are present (the search/GraphQL-mutation case)', () => {
+    expect(
+      resolveRequestRepo({
+        headers: { [REPO_HEADER]: 'octo/example' },
+      }),
+    ).toBe('octo/example');
+  });
+
+  it('returns undefined when nothing resolves', () => {
+    expect(resolveRequestRepo({})).toBeUndefined();
+    expect(resolveRequestRepo({ owner: 'octo' })).toBeUndefined();
+    expect(
+      resolveRequestRepo({ variables: { owner: 'octo' } }),
+    ).toBeUndefined();
+  });
+});
+
+describe('createGithubClientAuthStrategy', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A minimal fake matching the shape `createGithubClientAuthStrategy`'s
+   *  hook actually calls: `request.endpoint.merge(route, parameters)` plus
+   *  `request(options)` itself. Captures every `request(options)` call so
+   *  tests can assert on the Authorization header actually sent. */
+  function fakeOctokitRequest(responses: (Record<string, unknown> | Error)[]) {
+    const calls: Record<string, unknown>[] = [];
+    let callIndex = 0;
+    const request = Object.assign(
+      async (options: Record<string, unknown>) => {
+        calls.push(options);
+        const response = responses[Math.min(callIndex, responses.length - 1)];
+        callIndex += 1;
+        if (response instanceof Error) throw response;
+        return response;
+      },
+      {
+        endpoint: {
+          merge: (
+            route: unknown,
+            parameters?: Record<string, unknown>,
+          ): Record<string, unknown> =>
+            typeof route === 'string'
+              ? {
+                  method: route.split(' ')[0],
+                  url: route.split(' ')[1],
+                  ...parameters,
+                }
+              : { ...(route as Record<string, unknown>), ...parameters },
+        },
+      },
+    );
+    return { request, calls };
+  }
+
+  it('routes a REST-shaped request to a token minted for its owner/repo', async () => {
+    const { fetchImpl } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_routed-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+    });
+    const { request, calls } = fakeOctokitRequest([{ status: 200 }]);
+
+    await strategy.hook(request, {
+      method: 'GET',
+      url: '/repos/{owner}/{repo}',
+      owner: 'octo',
+      repo: 'example',
+      headers: {},
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.headers).toMatchObject({
+      authorization: 'token ghs_routed-token',
+    });
+  });
+
+  it('routes a GraphQL request via its owner/name variables', async () => {
+    const { fetchImpl } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_graphql-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+    });
+    const { request, calls } = fakeOctokitRequest([{ status: 200 }]);
+
+    await strategy.hook(request, {
+      method: 'POST',
+      url: '/graphql',
+      variables: { owner: 'octo', name: 'example' },
+      headers: {},
+    });
+
+    expect(calls[0]?.headers).toMatchObject({
+      authorization: 'token ghs_graphql-token',
+    });
+  });
+
+  it('routes via an explicit REPO_HEADER override and strips the header before sending', async () => {
+    const { fetchImpl } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_header-routed-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+    });
+    const { request, calls } = fakeOctokitRequest([{ status: 200 }]);
+
+    await strategy.hook(request, {
+      method: 'POST',
+      url: '/graphql',
+      variables: { pullRequestId: 'PR_kwabc' },
+      headers: { [REPO_HEADER]: 'octo/example' },
+    });
+
+    expect(calls[0]?.headers).toMatchObject({
+      authorization: 'token ghs_header-routed-token',
+    });
+    expect(calls[0]?.headers).not.toHaveProperty(REPO_HEADER);
+  });
+
+  it('throws a clear error, without ever calling fetch, when no repo can be resolved', async () => {
+    const neverCalled = vi.fn();
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl: neverCalled as unknown as typeof fetch,
+    });
+    const { request } = fakeOctokitRequest([{ status: 200 }]);
+
+    await expect(
+      strategy.hook(request, {
+        method: 'GET',
+        url: '/user',
+        headers: {},
+      }),
+    ).rejects.toThrow(/cannot determine the target repo/);
+    expect(neverCalled).not.toHaveBeenCalled();
+  });
+
+  it('retries exactly once with a freshly minted token after a 401, then succeeds', async () => {
+    const { fetchImpl } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_first-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+    });
+    const unauthorized = Object.assign(new Error('Bad credentials'), {
+      status: 401,
+    });
+    const { request, calls } = fakeOctokitRequest([
+      unauthorized,
+      { status: 200 },
+    ]);
+
+    const result = await strategy.hook(request, {
+      method: 'GET',
+      url: '/repos/{owner}/{repo}',
+      owner: 'octo',
+      repo: 'example',
+      headers: {},
+    });
+
+    expect(result).toEqual({ status: 200 });
+    expect(calls).toHaveLength(2);
+    // Both attempts carry the same token here (fakeAppFetch always mints
+    // the same fixed response) - what matters is that a fresh mint was
+    // actually attempted (provider.invalidate + a second tokenFor), not
+    // that the retried request just replayed the first failed attempt.
+    expect(calls[0]?.headers).toMatchObject({
+      authorization: 'token ghs_first-token',
+    });
+    expect(calls[1]?.headers).toMatchObject({
+      authorization: 'token ghs_first-token',
+    });
+  });
+
+  it('does not retry a non-401 failure', async () => {
+    const { fetchImpl } = fakeAppFetch({
+      tokenBody: {
+        token: 'ghs_token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    });
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+    });
+    const serverError = Object.assign(new Error('Internal Server Error'), {
+      status: 500,
+    });
+    const { request, calls } = fakeOctokitRequest([
+      serverError,
+      { status: 200 },
+    ]);
+
+    await expect(
+      strategy.hook(request, {
+        method: 'GET',
+        url: '/repos/{owner}/{repo}',
+        owner: 'octo',
+        repo: 'example',
+        headers: {},
+      }),
+    ).rejects.toThrow('Internal Server Error');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('forwards a caller-supplied permission set to the underlying provider mint', async () => {
+    const { fetchImpl, calls: appCalls } = fakeAppFetch();
+    const strategy = createGithubClientAuthStrategy({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+      permissions: { issues: 'write', pull_requests: 'write' },
+    });
+    const { request } = fakeOctokitRequest([{ status: 200 }]);
+
+    await strategy.hook(request, {
+      method: 'GET',
+      url: '/repos/{owner}/{repo}',
+      owner: 'octo',
+      repo: 'example',
+      headers: {},
+    });
+
+    expect(appCalls[1]?.body).toEqual({
+      repositories: ['example'],
+      permissions: { issues: 'write', pull_requests: 'write' },
+    });
   });
 });

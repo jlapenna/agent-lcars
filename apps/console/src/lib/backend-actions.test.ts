@@ -25,7 +25,7 @@ import {
   updateIssueContent,
   updatePrBranch,
 } from './backend-actions';
-import { AmbientTokenProvider } from './github-app-tokens';
+import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -73,11 +73,16 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
     const status = url.includes('/actions/workflows/') ? 204 : 201;
     return new Response(null, { status });
   }) as typeof fetch;
+  // Trivial fixed-token stub (`AmbientTokenProvider` itself was retired in
+  // #1284 - see github-app-tokens.ts).
+  const tokens: DispatchTokenProvider = {
+    tokenFor: async () => 'gh-test-token-0123456789',
+  };
   const drain = () =>
     drainOutbox({
       store,
       orchestrator,
-      tokens: new AmbientTokenProvider('gh-test-token-0123456789'),
+      tokens,
       fetchImpl,
     });
   (createOrchestratorRuntime as Mock).mockReturnValue({
@@ -531,7 +536,11 @@ describe('approveAndRebasePr', () => {
     });
     expect(graphql).toHaveBeenCalledWith(
       expect.stringContaining('enablePullRequestAutoMerge'),
-      { pullRequestId: 'PR_kwAB', mergeMethod: 'SQUASH' },
+      {
+        pullRequestId: 'PR_kwAB',
+        mergeMethod: 'SQUASH',
+        headers: { [REPO_HEADER]: 'supersprinklesracing/sprinkles' },
+      },
     );
     // Approving, updating the branch, and merely *enabling* auto-merge
     // write no ledger-tracked fact themselves - the eventual merge is a

@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 const CANONICAL_ENV = fileURLToPath(new URL('./ci.env', import.meta.url));
 
 const SAFE_CREDENTIAL_VALUES = new Map([
-  ['AGENT_LCARS_GITHUB_TOKEN', 'dummy-secret'],
   ['AUTH_SECRET', 'dummy-secret'],
   ['NEXT_PUBLIC_FIREBASE_API_KEY', 'demo-api-key'],
 ]);

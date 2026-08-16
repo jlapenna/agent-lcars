@@ -4,29 +4,34 @@ import { createPrivateKey, type KeyObject } from 'node:crypto';
 
 import { SignJWT } from 'jose';
 
-import { controlPlaneRepository } from './deployment';
-
 /**
- * Per-repo GitHub token resolution for the outbox drain (`orchestrator-
- * dispatch.ts`).
+ * Per-repo GitHub token resolution for both the outbox drain
+ * (`orchestrator-dispatch.ts`) and the console's own singleton Octokit
+ * client (`github-client.ts`'s `getGithubClient()`).
  *
- * Today every GitHub effect the drain performs -- `workflow_dispatch`,
- * issue comments, the `needs-human` label -- uses one ambient token
- * (`AGENT_LCARS_GITHUB_TOKEN`), which is only ever proven installed against
- * the home repo. Issue #1190 generalizes dispatch to foreign repos (the
- * `supersprinklesracing` fleet, eventually homelab); an ambient PAT scoped
- * to the home repo cannot act there. `DispatchTokenProvider` is the seam
- * that lets the drain ask for "a token good for this repo" without caring
- * whether that means the one static ambient token or a freshly minted,
- * narrowly scoped GitHub App installation token.
+ * Through #1245 every GitHub effect either caller performed rode one
+ * long-lived ambient token (`AGENT_LCARS_GITHUB_TOKEN`, a classic PAT
+ * scoped `repo` against the whole `jlapenna` account) -- installed only
+ * against the home repo for the drain, and used unconditionally by
+ * `getGithubClient()`. #1190 generalized outbox dispatch to foreign repos
+ * (the `supersprinklesracing` fleet, `jlapenna/homelab`); an ambient PAT
+ * cannot act there. #1284 finishes the retirement the 2026-08-16 PAT audit
+ * (#1204) deferred: `AGENT_LCARS_GITHUB_TOKEN` is gone from both call
+ * sites, every repo (home included) now mints a short-lived, per-repo
+ * GitHub App installation token, and `AmbientTokenProvider` /
+ * `CompositeTokenProvider` -- the byte-identical-fallback and home/foreign
+ * routing machinery that made the cutover gradual and reversible -- are
+ * deleted now that nothing selects the ambient path anymore.
  *
- * `createDispatchTokenProvider` is wired into `orchestrator-runtime.ts` and
- * has been live in production since 2026-08-16 (#1245 wired the two
- * `AGENT_LCARS_APP_*` env vars into `apphosting.yaml`): with both set, the
- * home repo (`controlPlaneRepository()`) keeps using the ambient token and
- * every other repo mints a scoped GitHub App installation token. With
- * either unset it still returns exactly the same `AmbientTokenProvider`
- * this repo has always used, for every repo, so nothing observably changes.
+ * `DispatchTokenProvider` remains the seam that lets a caller ask for "a
+ * token good for this repo" without caring how it's minted.
+ * `createDispatchTokenProvider` (below) builds the drain's own narrowly
+ * scoped (`actions:write`, `issues:write`) provider;
+ * `createGithubClientAuthStrategy` (below) wraps a second, more broadly
+ * scoped provider in the shape Octokit's own `authStrategy` constructor
+ * option expects, for `getGithubClient()`'s singleton client, which serves
+ * requests across every watched repo/owner from one Octokit instance and so
+ * must resolve auth per-request rather than once at construction.
  */
 
 /** GitHub's REST API base for both the installation lookup and the
@@ -57,15 +62,19 @@ export interface DispatchTokenProvider {
   tokenFor(repo: string): Promise<string>;
 }
 
-/** Today's behavior: one static token, good for every repo it's actually
- * installed against. */
-export class AmbientTokenProvider implements DispatchTokenProvider {
-  constructor(private readonly token: string) {}
-
-  tokenFor(): Promise<string> {
-    return Promise.resolve(this.token);
-  }
-}
+/** The permission set `AppInstallationTokenProvider` requests when minting
+ * a repo's installation token, absent an explicit `permissions` option --
+ * exactly what the outbox drain needs (`workflow_dispatch`, issue
+ * comments, the `needs-human` label) and nothing more. `github-client.ts`
+ * passes its own, broader set instead (see `createGithubClientAuthStrategy`
+ * below): a token's `permissions` is a request for a *subset* of the App's
+ * own granted permissions, never a way to exceed them, so each caller
+ * requesting only what it actually uses keeps every minted token as
+ * narrowly scoped as its purpose allows. */
+const DEFAULT_PERMISSIONS: Record<string, string> = {
+  actions: 'write',
+  issues: 'write',
+};
 
 export interface AppInstallationTokenProviderOptions {
   /** The GitHub App's client ID -- used as the JWT `iss` claim. */
@@ -75,6 +84,15 @@ export interface AppInstallationTokenProviderOptions {
    *  download) and PKCS8 (`-----BEGIN PRIVATE KEY-----`) are accepted --
    *  see `parsePrivateKey`. Never logged or included in any thrown error. */
   privateKeyPem: string;
+  /** The permission set requested for every token this instance mints --
+   *  see {@link DEFAULT_PERMISSIONS}'s doc comment for why this is
+   *  injectable rather than a single fleet-wide constant. Requesting a
+   *  permission the App itself was never granted fails the mint call
+   *  outright (for every repo, not just the one call site that needed it),
+   *  so this must stay a subset of the App's actual manifest -- see
+   *  `github-client.ts`'s own `CONSOLE_GITHUB_CLIENT_PERMISSIONS` for the
+   *  audit trail behind that specific set. */
+  permissions?: Record<string, string>;
   /** Injectable for tests; defaults to the ambient `fetch`. */
   fetchImpl?: typeof fetch;
 }
@@ -85,12 +103,12 @@ interface CachedInstallationToken {
 }
 
 /**
- * Mints short-lived, narrowly-scoped GitHub App installation tokens, one
- * per repo, on demand: sign an App JWT, resolve that repo's installation
- * id, exchange it for an access token scoped to just that repository with
- * `actions:write` + `issues:write` (exactly what the drain needs and
- * nothing more). Tokens are cached per repo until close to their expiry, so
- * a burst of drains against the same repo mints once, not once per call.
+ * Mints short-lived GitHub App installation tokens, one per repo, on
+ * demand: sign an App JWT, resolve that repo's installation id, exchange
+ * it for an access token scoped to just that repository with this
+ * instance's `permissions` (see {@link DEFAULT_PERMISSIONS}). Tokens are
+ * cached per repo until close to their expiry, so a burst of calls against
+ * the same repo mints once, not once per call.
  *
  * `tokenFor` throws (never returns a partial/placeholder token) on any
  * failure, with a message describing what step failed and against which
@@ -121,88 +139,67 @@ export class AppInstallationTokenProvider implements DispatchTokenProvider {
       jwt,
       installationId,
       repo,
+      this.options.permissions ?? DEFAULT_PERMISSIONS,
     );
     this.cache.set(repo, minted);
     return minted.token;
   }
-}
 
-/** Routes to `home`'s provider for the control plane's own repo and to
- * `foreign`'s provider for everything else. */
-class CompositeTokenProvider implements DispatchTokenProvider {
-  constructor(
-    private readonly homeRepo: string,
-    private readonly home: DispatchTokenProvider,
-    private readonly foreign: DispatchTokenProvider,
-  ) {}
-
-  tokenFor(repo: string): Promise<string> {
-    return (repo === this.homeRepo ? this.home : this.foreign).tokenFor(repo);
+  /** Drops `repo`'s cached token, forcing the next `tokenFor(repo)` call to
+   *  mint fresh rather than serve a token GitHub has already rejected --
+   *  `createGithubClientAuthStrategy`'s sole use, on a 401 response (see its
+   *  doc comment for why that's the one response code safe to retry
+   *  regardless of HTTP method). A no-op when `repo` isn't cached, so a
+   *  caller never needs to check first. */
+  invalidate(repo: string): void {
+    this.cache.delete(repo);
   }
 }
 
 /**
  * Builds the token provider the outbox drain should use, from environment
- * configuration:
- *
- * - `AGENT_LCARS_APP_CLIENT_ID` and `AGENT_LCARS_APP_PRIVATE_KEY` both set
- *   -> a composite: the home repo (`controlPlaneRepository()`) keeps using
- *   the ambient token exactly as before, every other repo mints a scoped
- *   GitHub App installation token. The private key is parse-validated
- *   *here*, eagerly, before either provider is constructed -- see the
- *   note below.
- * - either unset -> `AmbientTokenProvider` for every repo, byte-identical
- *   to the pre-#1190 behavior.
- *
- * `AGENT_LCARS_GITHUB_TOKEN` is required in both cases -- the home repo
- * always uses it, App-mode or not.
+ * configuration: `AGENT_LCARS_APP_CLIENT_ID` and `AGENT_LCARS_APP_PRIVATE_KEY`
+ * must both be set -- every repo, including the home repo
+ * (`controlPlaneRepository()`), mints a scoped GitHub App installation
+ * token. There is no more ambient-token fallback (see this file's top
+ * comment): #1284 retired `AmbientTokenProvider`/`CompositeTokenProvider`
+ * once nothing selected the ambient path in production anymore.
  *
  * This function is called lazily, once per outbox drain (see
  * `orchestrator-runtime.ts`'s `drain: () => drainOutbox({ ...,
  * tokens: createDispatchTokenProvider(process.env) })`), not once at
- * process startup. Validating the key here still fails far earlier than
- * the pre-#1276 behavior: `AppInstallationTokenProvider.tokenFor` only
- * ever parsed the key lazily, inside `mintAppJwt`, the first time a
- * *foreign*-repo dispatch actually drained -- home-repo traffic never
- * touches the App path, so a malformed key (e.g. GitHub's own PKCS1
- * download format, before #1276) was a silent, foreign-repo-only outage.
- * Throwing here instead means the very first drain after a bad key is
- * deployed fails loudly and immediately, for every repo, before any
- * dispatch is attempted -- surfaced via each HTTP route's `internalError`
- * `console.error` (`orchestrator-routes.ts`) or the console server
- * action's own error path, whichever reaches a drain first. In practice
- * that is within `dispatch-reconcile.yml`'s cron window (`7,37 * * * *`,
- * so at most ~30 minutes after deploy) if nothing else drains sooner.
+ * process startup. The private key is still parse-validated *here*,
+ * eagerly, before the provider is constructed: `AppInstallationTokenProvider
+ * .tokenFor` only ever parses the key lazily, inside `mintAppJwt`, the
+ * first time some repo's dispatch actually drains, so a malformed key
+ * (e.g. GitHub's own PKCS1 download format, before #1276) would otherwise
+ * be a silent outage until the first drain attempt. Throwing here instead
+ * means the very first drain after a bad key is deployed fails loudly and
+ * immediately, for every repo, before any dispatch is attempted --
+ * surfaced via each HTTP route's `internalError` `console.error`
+ * (`orchestrator-routes.ts`) or the console server action's own error
+ * path, whichever reaches a drain first. In practice that is within
+ * `dispatch-reconcile.yml`'s cron window (`7,37 * * * *`, so at most ~30
+ * minutes after deploy) if nothing else drains sooner.
  */
 export function createDispatchTokenProvider(
   env: Record<string, string | undefined>,
 ): DispatchTokenProvider {
-  const ambientToken = env['AGENT_LCARS_GITHUB_TOKEN'];
-  if (ambientToken === undefined) {
-    throw new Error('process.env.AGENT_LCARS_GITHUB_TOKEN not defined');
-  }
-  const ambient = new AmbientTokenProvider(ambientToken);
-
   const clientId = env['AGENT_LCARS_APP_CLIENT_ID'];
+  if (clientId === undefined) {
+    throw new Error('process.env.AGENT_LCARS_APP_CLIENT_ID not defined');
+  }
   const privateKeyPem = env['AGENT_LCARS_APP_PRIVATE_KEY'];
-  if (clientId === undefined || privateKeyPem === undefined) {
-    return ambient;
+  if (privateKeyPem === undefined) {
+    throw new Error('process.env.AGENT_LCARS_APP_PRIVATE_KEY not defined');
   }
 
   // Eagerly parse-validate: throws the same redacted error `mintAppJwt`
   // would throw on first use, but at construction time instead of at the
-  // first foreign-repo dispatch. See the doc comment above.
+  // first dispatch. See the doc comment above.
   parsePrivateKey(privateKeyPem);
 
-  const appProvider = new AppInstallationTokenProvider({
-    clientId,
-    privateKeyPem,
-  });
-  return new CompositeTokenProvider(
-    controlPlaneRepository(),
-    ambient,
-    appProvider,
-  );
+  return new AppInstallationTokenProvider({ clientId, privateKeyPem });
 }
 
 /**
@@ -305,6 +302,7 @@ async function mintInstallationAccessToken(
   jwt: string,
   installationId: number,
   repo: string,
+  permissions: Record<string, string>,
 ): Promise<CachedInstallationToken> {
   const { name } = splitRepo(repo);
 
@@ -317,7 +315,7 @@ async function mintInstallationAccessToken(
         headers: appAuthHeaders(jwt),
         body: JSON.stringify({
           repositories: [name],
-          permissions: { actions: 'write', issues: 'write' },
+          permissions,
         }),
       },
     );
@@ -353,4 +351,215 @@ async function mintInstallationAccessToken(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// --- getGithubClient()'s Octokit authStrategy -----------------------------
+//
+// Everything below wires an `AppInstallationTokenProvider` into Octokit's
+// own `authStrategy` constructor option, for `github-client.ts`'s singleton
+// `getGithubClient()`. Unlike the outbox drain (every `tokenFor(repo)` call
+// site above already knows its target repo directly), one Octokit instance
+// here serves reads and mutations across every watched repo -- multiple
+// owners -- so auth must be resolved per request, inside an Octokit `auth`
+// hook, not once at construction.
+
+/** The subset of an Octokit request's merged endpoint options this module
+ *  actually reads. Deliberately not `@octokit/types`' `EndpointDefaults`:
+ *  that type isn't a direct dependency of this workspace (only reachable
+ *  transitively through `@octokit/rest`), and every field this file touches
+ *  is untyped/optional there anyway (`RequestParameters`' own index
+ *  signature is `[parameter: string]: unknown`) -- a local, minimal shape
+ *  is both accurate and dependency-clean. */
+interface RequestEndpointOptions {
+  method?: unknown;
+  url?: unknown;
+  headers?: Record<string, unknown>;
+  owner?: unknown;
+  repo?: unknown;
+  variables?: unknown;
+  [key: string]: unknown;
+}
+
+/** Custom request header a call site sets to declare which repo a request
+ *  targets, for the rare Octokit call whose GitHub endpoint carries no
+ *  owner/repo in its structured request parameters -- see
+ *  `resolveRequestRepo`'s doc comment for the two call sites that need it
+ *  today. Always lowercase: `@octokit/endpoint`'s own `merge()` lowercases
+ *  every header key before this module's auth hook ever sees the merged
+ *  options, so a mixed-case constant here would simply never match. */
+export const REPO_HEADER = 'x-agent-lcars-repo';
+
+/**
+ * Derives the `owner/name` repo an Octokit request targets, for
+ * `createGithubClientAuthStrategy`'s per-request token routing below.
+ * `getGithubClient()` is one singleton Octokit instance serving reads and
+ * mutations across every watched repo (multiple owners) -- unlike the
+ * outbox drain's `DispatchTokenProvider.tokenFor(repo)` call sites, which
+ * always know their target repo directly, an Octokit auth hook only sees
+ * the request's own merged options and must recover it structurally:
+ *
+ * 1. REST endpoint methods (`octokit.rest.*`) always pass `owner`/`repo` as
+ *    named parameters -- `@octokit/endpoint`'s `merge()` puts them directly
+ *    on the merged options object (verified against the installed
+ *    `@octokit/endpoint` source: the URL template itself stays unexpanded
+ *    at hook time, but the substitution parameters are already present, so
+ *    parsing the URL string itself is unnecessary and would be strictly
+ *    more fragile).
+ * 2. GraphQL requests (`octokit.graphql(query, variables)`) carry no
+ *    owner/repo in their URL at all (`POST /graphql` always) -- `variables`
+ *    is where a query's own `$owner`/`$name` arguments land, so a query
+ *    that declares and passes them (see `item-enrichment.ts`'s
+ *    `buildQuery`, called with `{owner: repo.owner, name: repo.name}`) is
+ *    still recoverable this way with no call-site change.
+ * 3. Neither shape fits `search.issuesAndPullRequests` (the repo lives
+ *    inside a `repo:owner/name` qualifier embedded in the free-text `q`
+ *    string, not a structured parameter) or a GraphQL mutation keyed by an
+ *    opaque node id alone (`backend-actions.ts`'s
+ *    `ENABLE_AUTO_MERGE_MUTATION`, keyed by `pullRequestId`). Both call
+ *    sites instead set the {@link REPO_HEADER} header explicitly -- the one
+ *    deliberate escape hatch, rather than something this function guesses
+ *    at (e.g. parsing `q` back apart, or decoding the GraphQL node id, both
+ *    far more fragile than the caller just saying so).
+ *
+ * Returns `undefined` when none of the above resolves. The caller treats
+ * that as a hard failure: silently sending a request with the wrong repo's
+ * token, or none, is worse than a loud error naming the unresolvable
+ * request.
+ */
+export function resolveRequestRepo(
+  options: RequestEndpointOptions,
+): string | undefined {
+  const headerValue = options.headers?.[REPO_HEADER];
+  if (typeof headerValue === 'string' && headerValue.length > 0) {
+    return headerValue;
+  }
+  if (typeof options.owner === 'string' && typeof options.repo === 'string') {
+    return `${options.owner}/${options.repo}`;
+  }
+  const variables = options.variables as Record<string, unknown> | undefined;
+  if (
+    typeof variables?.['owner'] === 'string' &&
+    typeof variables['name'] === 'string'
+  ) {
+    return `${variables['owner']}/${variables['name']}`;
+  }
+  return undefined;
+}
+
+function isUnauthorized(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status: unknown }).status === 401
+  );
+}
+
+export interface CreateGithubClientAuthStrategyOptions {
+  /** The GitHub App's client ID -- forwarded to `AppInstallationTokenProvider`. */
+  clientId: string;
+  /** The GitHub App's private key, PEM-encoded -- forwarded to
+   *  `AppInstallationTokenProvider`. */
+  privateKeyPem: string;
+  /** The permission set requested for every token this strategy mints --
+   *  forwarded to `AppInstallationTokenProvider`. */
+  permissions?: Record<string, string>;
+  /** Injectable for tests; forwarded to `AppInstallationTokenProvider`. */
+  fetchImpl?: typeof fetch;
+  /** Every other field Octokit's constructor merges into the options object
+   *  passed to an `authStrategy` function (`request`, `log`, `octokit`,
+   *  `octokitOptions`) -- unread here, but present at runtime. */
+  [key: string]: unknown;
+}
+
+/**
+ * The Octokit `authStrategy` `getGithubClient()` wires in (see
+ * `github-client.ts`): resolves each request's target repo
+ * (`resolveRequestRepo` above), mints/caches a per-repo installation token
+ * through an owned `AppInstallationTokenProvider` (constructed once, for
+ * the lifetime of the singleton Octokit client -- see `getGithubClient()`),
+ * and retries exactly once with a freshly minted token on a 401. A 401
+ * means the bearer token itself was rejected before GitHub executed
+ * anything -- unlike a 5xx/network error, there is no ambiguity about
+ * whether a mutation already landed, so retrying is safe regardless of
+ * HTTP method (contrast `github-client.ts`'s `disableRetryForMutations`,
+ * which forces mutating requests' *generic* retry budget to zero for
+ * exactly that ambiguity, and is unaffected by this: this retry runs
+ * inside the auth hook, upstream of plugin-retry entirely).
+ *
+ * Matches the `authStrategy` contract Octokit's own `@octokit/auth-token`
+ * uses (see its installed `hook.js`): called once at construction with
+ * `options.auth` merged in, returns `{ hook }`; `hook` is wrapped around
+ * every subsequent request/graphql call, and is invoked with the request
+ * function plus either an already-merged options object (how Octokit's own
+ * request/graphql pipeline actually calls it) or a route string and a
+ * separate parameters object -- `request.endpoint.merge(route, parameters)`
+ * normalizes both shapes into one, mirroring `@octokit/auth-token` exactly
+ * rather than assuming only one calling convention.
+ */
+export function createGithubClientAuthStrategy(
+  strategyOptions: CreateGithubClientAuthStrategyOptions,
+): {
+  hook: (
+    request: ((options: RequestEndpointOptions) => Promise<unknown>) & {
+      endpoint: {
+        merge: (route: unknown, parameters: unknown) => RequestEndpointOptions;
+      };
+    },
+    route: unknown,
+    parameters?: unknown,
+  ) => Promise<unknown>;
+} {
+  // Eagerly parse-validate, same reasoning as `createDispatchTokenProvider`'s
+  // own eager call: `AppInstallationTokenProvider.tokenFor` only parses the
+  // key lazily, inside `mintAppJwt`, the first time some request actually
+  // reaches this hook. Octokit calls `authStrategy` synchronously inside
+  // its own constructor, so throwing here surfaces a malformed
+  // `AGENT_LCARS_APP_PRIVATE_KEY` at `getGithubClient()`'s very first call
+  // post-deploy (in practice, the first page load) rather than only once
+  // some request happens to need a fresh mint.
+  parsePrivateKey(strategyOptions.privateKeyPem);
+
+  const provider = new AppInstallationTokenProvider({
+    clientId: strategyOptions.clientId,
+    privateKeyPem: strategyOptions.privateKeyPem,
+    fetchImpl: strategyOptions.fetchImpl,
+    permissions: strategyOptions.permissions,
+  });
+
+  return {
+    hook: async (request, route, parameters) => {
+      const options = request.endpoint.merge(route, parameters);
+
+      const repo = resolveRequestRepo(options);
+      if (repo === undefined) {
+        throw new Error(
+          `agent-lcars: cannot determine the target repo for ${String(options.method)} ${String(options.url)} - pass an explicit ${REPO_HEADER} header naming it`,
+        );
+      }
+
+      const headers = { ...options.headers };
+      delete headers[REPO_HEADER];
+
+      const token = await provider.tokenFor(repo);
+      const authorized: RequestEndpointOptions = {
+        ...options,
+        headers: { ...headers, authorization: `token ${token}` },
+      };
+      try {
+        return await request(authorized);
+      } catch (error) {
+        if (!isUnauthorized(error)) throw error;
+        provider.invalidate(repo);
+        const freshToken = await provider.tokenFor(repo);
+        return await request({
+          ...authorized,
+          headers: {
+            ...authorized.headers,
+            authorization: `token ${freshToken}`,
+          },
+        });
+      }
+    },
+  };
 }

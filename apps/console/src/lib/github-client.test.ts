@@ -1,3 +1,5 @@
+import { generateKeyPairSync } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -39,22 +41,25 @@ vi.mock('@octokit/rest', async (importOriginal) => {
 });
 
 describe('getGithubClient', () => {
-  const TOKEN_ENV_KEY = 'AGENT_LCARS_GITHUB_TOKEN';
-  // Hoisted to beforeEach/afterEach (rather than set up and torn down
-  // inline in each test) so a failed assertion mid-test can never skip
-  // `mockRestore`/`unstubAllGlobals` and leak console.warn/fetch mock state
-  // into a later test.
+  const BASE_URL_ENV_KEY = 'AGENT_CONSOLE_GITHUB_API_BASE_URL';
+  // None of these tests are about auth (that's `describe('getGithubClient
+  // auth')` below) - they exercise the retry/throttle/timeout mechanics
+  // that are identical regardless of which auth branch getGithubClient()
+  // takes. Setting the e2e fixture base URL selects the static-token
+  // branch (see getGithubClient()'s own comment), which needs no App
+  // credentials and never mints a real token, keeping these tests decoupled
+  // from #1284's App-token machinery entirely.
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetModules();
     octokitConstructorSpy.mockClear();
-    process.env[TOKEN_ENV_KEY] = 'test-token';
+    process.env[BASE_URL_ENV_KEY] = 'https://example.invalid/e2e-fixture';
     warnSpy = vi.spyOn(console, 'warn').mockReturnValue(undefined);
   });
 
   afterEach(() => {
-    delete process.env[TOKEN_ENV_KEY];
+    delete process.env[BASE_URL_ENV_KEY];
     warnSpy.mockRestore();
     vi.unstubAllGlobals();
   });
@@ -234,6 +239,98 @@ describe('getGithubClient', () => {
 
     const init = fetchSpy.mock.calls[0][1];
     expect(init.signal).toBe(controller.signal);
+  });
+});
+
+describe('getGithubClient auth', () => {
+  const CLIENT_ID_ENV_KEY = 'AGENT_LCARS_APP_CLIENT_ID';
+  const PRIVATE_KEY_ENV_KEY = 'AGENT_LCARS_APP_PRIVATE_KEY';
+  const BASE_URL_ENV_KEY = 'AGENT_CONSOLE_GITHUB_API_BASE_URL';
+  // A real key: construction eagerly parse-validates it (mirroring
+  // createDispatchTokenProvider's own fail-fast construction - see
+  // createGithubClientAuthStrategy's doc comment), so a syntactically
+  // invalid placeholder would throw before any of these tests reached
+  // their own assertions.
+  const { privateKey: FAKE_PRIVATE_KEY_PEM } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  });
+
+  beforeEach(() => {
+    vi.resetModules();
+    octokitConstructorSpy.mockClear();
+    delete process.env[CLIENT_ID_ENV_KEY];
+    delete process.env[PRIVATE_KEY_ENV_KEY];
+    delete process.env[BASE_URL_ENV_KEY];
+  });
+
+  afterEach(() => {
+    delete process.env[CLIENT_ID_ENV_KEY];
+    delete process.env[PRIVATE_KEY_ENV_KEY];
+    delete process.env[BASE_URL_ENV_KEY];
+  });
+
+  it('#1284: throws when AGENT_LCARS_APP_CLIENT_ID is unset', async () => {
+    process.env[PRIVATE_KEY_ENV_KEY] = FAKE_PRIVATE_KEY_PEM;
+    const { getGithubClient } = await import('./github-client');
+    expect(() => getGithubClient()).toThrow(
+      'process.env.AGENT_LCARS_APP_CLIENT_ID not defined',
+    );
+  });
+
+  it('#1284: throws when AGENT_LCARS_APP_PRIVATE_KEY is unset', async () => {
+    process.env[CLIENT_ID_ENV_KEY] = 'Iv1.test0123456789ab';
+    const { getGithubClient } = await import('./github-client');
+    expect(() => getGithubClient()).toThrow(
+      'process.env.AGENT_LCARS_APP_PRIVATE_KEY not defined',
+    );
+  });
+
+  it("#1284: wires the App authStrategy with both env vars and this client's own permission set", async () => {
+    process.env[CLIENT_ID_ENV_KEY] = 'Iv1.test0123456789ab';
+    process.env[PRIVATE_KEY_ENV_KEY] = FAKE_PRIVATE_KEY_PEM;
+    const { getGithubClient } = await import('./github-client');
+
+    getGithubClient();
+
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    expect(typeof options.authStrategy).toBe('function');
+    expect(options.auth).toEqual({
+      clientId: 'Iv1.test0123456789ab',
+      privateKeyPem: FAKE_PRIVATE_KEY_PEM,
+      permissions: {
+        actions: 'write',
+        contents: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+      },
+    });
+    expect(options.baseUrl).toBeUndefined();
+  });
+
+  it('#1284: e2e mode (AGENT_CONSOLE_GITHUB_API_BASE_URL set) needs no App credentials and skips the authStrategy entirely', async () => {
+    process.env[BASE_URL_ENV_KEY] = 'http://localhost:4200/api/e2e/github';
+    const { getGithubClient } = await import('./github-client');
+
+    // Would throw ('AGENT_LCARS_APP_CLIENT_ID not defined') if the e2e
+    // branch fell through to the App path - it doesn't.
+    expect(() => getGithubClient()).not.toThrow();
+
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    expect(options.authStrategy).toBeUndefined();
+    expect(options.auth).toBe('e2e-fixture-token');
+    expect(options.baseUrl).toBe('http://localhost:4200/api/e2e/github');
+  });
+
+  it('#1284: throws at construction time (not first request) when the App private key does not parse', async () => {
+    process.env[CLIENT_ID_ENV_KEY] = 'Iv1.test0123456789ab';
+    process.env[PRIVATE_KEY_ENV_KEY] = 'not-a-real-pem';
+    const { getGithubClient } = await import('./github-client');
+
+    expect(() => getGithubClient()).toThrow(
+      'GitHub App private key is not a valid PEM-encoded RSA private key (PKCS1 or PKCS8)',
+    );
   });
 });
 

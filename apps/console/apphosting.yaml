@@ -149,20 +149,19 @@ env:
     secret: AUTH_GITHUB_SECRET
     availability:
       - RUNTIME
-  # Calls the GitHub API directly from server actions - there's no separate
-  # backend service (single consumer, no shared/Firestore state, so the
-  # split wasn't earning its keep).
-  - variable: AGENT_LCARS_GITHUB_TOKEN
-    secret: AGENT_LCARS_GITHUB_TOKEN
-    availability:
-      - RUNTIME
   - variable: AGENT_LCARS_WEBHOOK_SECRET
     secret: AGENT_LCARS_WEBHOOK_SECRET
     availability:
       - RUNTIME
-  # Setting BOTH of these switches outbound dispatch from the ambient PAT to
-  # per-repo App installation tokens (createDispatchTokenProvider in
-  # github-app-tokens.ts); with either absent the ambient path stays active.
+  # #1284: both of these are now required, everywhere the console calls
+  # GitHub - the singleton Octokit client (getGithubClient() in
+  # github-client.ts) and the outbox drain's dispatch provider
+  # (createDispatchTokenProvider in github-app-tokens.ts). Every request,
+  # home repo included, mints a short-lived per-repo GitHub App installation
+  # token; there is no more ambient long-lived PAT fallback
+  # (AGENT_LCARS_GITHUB_TOKEN, formerly wired here, is retired - the
+  # Terraform secret container and its Secret Manager value are the
+  # maintainer's own post-merge cleanup, see infra/terraform/main.tf).
   - variable: AGENT_LCARS_APP_CLIENT_ID
     value: 'Iv23liO6X8pLJLcTFzyv'
     availability:

@@ -366,11 +366,22 @@ resource "google_service_account_iam_member" "homelab_writer_impersonation" {
 }
 
 resource "google_secret_manager_secret" "runtime" {
+  # #1284: AGENT_LCARS_GITHUB_TOKEN's container is retired here (the console
+  # runtime no longer references it - see apps/console/apphosting.yaml and
+  # apps/console/src/lib/github-{client,app-tokens}.ts, both now on
+  # AGENT_LCARS_APP_CLIENT_ID/AGENT_LCARS_APP_PRIVATE_KEY for every request).
+  # Removing this container also drops its
+  # google_secret_manager_secret_iam_member.apphosting_secrets grant below,
+  # since that resource's for_each mirrors this one. This does NOT delete the
+  # secret's stored VALUE or revoke the classic PAT it holds - Terraform owns
+  # secret containers, never secret values (see AGENTS.md's guardrails), and
+  # revocation must happen only after a maintainer verifies the App-token
+  # cutover live (reads, a mutation, and home-repo dispatch). That is
+  # deliberately left as manual maintainer cleanup, not part of this PR/apply.
   for_each = toset([
     "AUTH_SECRET",
     "AUTH_GITHUB_ID",
     "AUTH_GITHUB_SECRET",
-    "AGENT_LCARS_GITHUB_TOKEN",
     "AGENT_LCARS_WEBHOOK_SECRET",
   ])
   secret_id = each.value
@@ -561,9 +572,9 @@ resource "google_secret_manager_secret" "agent_lcars_app_private_key" {
 # which apphosting.yaml wires as env vars today, and this secret was added
 # before apphosting.yaml referenced it. Now that #1245 has wired it in, this
 # could be folded into that for_each; kept separate here since nothing else
-# requires the refactor. Same grant shape apphosting_secrets uses for
-# AGENT_LCARS_GITHUB_TOKEN (project + secret_id + secretAccessor on the App
-# Hosting compute SA).
+# requires the refactor. Same grant shape apphosting_secrets uses for e.g.
+# AUTH_SECRET (project + secret_id + secretAccessor on the App Hosting
+# compute SA).
 resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_accessor" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.agent_lcars_app_private_key.secret_id

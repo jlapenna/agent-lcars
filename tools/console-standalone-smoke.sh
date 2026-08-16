@@ -34,7 +34,6 @@ AUTH_URL="$smoke_url" \
 AUTH_SECRET=standalone-smoke-auth-secret \
 AUTH_GITHUB_ID=standalone-smoke-client \
 AUTH_GITHUB_SECRET=standalone-smoke-client-secret \
-AGENT_LCARS_GITHUB_TOKEN=standalone-smoke-token \
 AGENT_LCARS_WEBHOOK_SECRET=standalone-smoke-webhook-secret \
 PROJECT_ID=standalone-smoke \
 AGENT_LCARS_WEBHOOK_QUEUE_LOCATION=us-central1 \
