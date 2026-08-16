@@ -291,6 +291,7 @@ async function AgentsPageBody({
           <ClaimedIdleSection
             items={filteredClaimedIdle}
             cliSessions={filteredCliSessions}
+            authoritativeStates={authoritative.states}
           />
         ) : null
       }

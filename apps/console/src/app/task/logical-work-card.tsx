@@ -1,3 +1,4 @@
+import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import {
   Alert,
   Anchor,
@@ -28,6 +29,7 @@ import { formatDuration } from '../format';
 import { lcarsPanelStyle } from '../lcars';
 import { PersistedDetails } from '../persisted-details';
 import { RelativeTime } from '../relative-time';
+import { RunsSection } from './runs-section';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
   unavailable: 'Unavailable',
@@ -89,17 +91,29 @@ function attemptStatusBadge(attempt: ExecutionAttempt): {
 
 /**
  * The canonical logical-task card (#306): task identity, current state, the
- * intent (ledger generation) history, and every execution attempt with
- * nothing collapsed away. Anomalies render as visible alerts, never a
+ * intent (ledger generation) history, the orchestrator's own run history
+ * (when any exists), and every legacy execution attempt with nothing
+ * collapsed away. Anomalies render as visible alerts, never a
  * silently-chosen representative row - this is the "operators can explain
  * why every visible run exists" surface the /task/<owner>/<repo>/<issue>
- * route (task-detail.ts's `getTaskDetail`) exists to provide.
+ * route (task-detail.ts's `getTaskDetail`) exists to provide - which is also
+ * why the native Runs section (#1015) is additive rather than a replacement:
+ * it never hides a real GitHub Actions attempt the legacy list would
+ * otherwise have shown (see this component's own attempts-block comment).
  */
 export function LogicalWorkCard({
   work,
+  runs,
   anchorState,
 }: {
   work: LogicalWork;
+  /** This task's own `@agent-lcars/orchestrator` run history (#1015),
+   * verbatim from `task-detail.ts`'s `getTaskDetail`. Renders as a native
+   * `RunsSection` above the legacy "Execution attempts" list whenever
+   * non-empty; an empty array (pre-cutover history, or a repo the
+   * orchestrator never covers) leaves the page exactly as it rendered
+   * before #1015. */
+  runs: OrchestratorRun[];
   anchorState: 'open' | 'closed';
 }) {
   return (
@@ -201,64 +215,79 @@ export function LogicalWorkCard({
           </PersistedDetails>
         )}
 
-        <Stack gap={6} data-testid="logical-work-attempts">
-          <Text size="sm" fw={600}>
-            Execution attempts ({work.attempts.length})
-          </Text>
-          {work.attempts.length === 0 && (
-            <Text size="sm" c="dimmed">
-              No workflow runs attributed to this task yet.
+        {runs.length > 0 && <RunsSection runs={runs} />}
+
+        {/* The legacy attempts list stays visible whenever it has real
+         * content (#1015): a GitHub Actions attempt carries live-CI facts
+         * (its own URL, elapsed time, queued-vs-running) `RunsSection`
+         * above cannot show, and today's `intentId`/`runId` attribution join
+         * does not yet reliably fold every attempt into the orchestrator's
+         * own run history (see task-detail.ts's `attributeAttemptsToOrchestrator`
+         * doc comment) - so this never disappears out from under a real,
+         * currently-visible attempt, anomaly included. Only its empty-state
+         * placeholder retires once real run history exists: "no workflow
+         * runs attributed" reads as wrong sitting directly under a populated
+         * Runs section. */}
+        {(work.attempts.length > 0 || runs.length === 0) && (
+          <Stack gap={6} data-testid="logical-work-attempts">
+            <Text size="sm" fw={600}>
+              Execution attempts ({work.attempts.length})
             </Text>
-          )}
-          {work.attempts.map((attempt) => {
-            const badge = attemptStatusBadge(attempt);
-            return (
-              <Group
-                key={attempt.id}
-                gap="xs"
-                wrap="wrap"
-                data-testid={`logical-work-attempt-${attempt.id}`}
-              >
-                <Badge variant="filled" color={badge.color} size="xs">
-                  {badge.label}
-                </Badge>
-                <PipelineBadge pipeline={attempt.pipeline} />
-                {attempt.outcome && (
-                  <DispatchOutcomeBadge outcome={attempt.outcome} />
-                )}
-                {attempt.generation !== undefined && (
-                  <Badge variant="outline" size="xs" color="gray">
-                    g{attempt.generation}
+            {work.attempts.length === 0 && (
+              <Text size="sm" c="dimmed">
+                No workflow runs attributed to this task yet.
+              </Text>
+            )}
+            {work.attempts.map((attempt) => {
+              const badge = attemptStatusBadge(attempt);
+              return (
+                <Group
+                  key={attempt.id}
+                  gap="xs"
+                  wrap="wrap"
+                  data-testid={`logical-work-attempt-${attempt.id}`}
+                >
+                  <Badge variant="filled" color={badge.color} size="xs">
+                    {badge.label}
                   </Badge>
-                )}
-                <Badge variant="outline" size="xs" color="gray">
-                  {ATTRIBUTION_LABELS[attempt.attribution]}
-                </Badge>
-                <Anchor
-                  href={issueUrlForRun(attempt) ?? attempt.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="xs"
-                  truncate
-                >
-                  {displayRunTitle(attempt)}
-                </Anchor>
-                <Text size="xs" c="dimmed">
-                  {formatDuration(attempt.elapsedSeconds)}
-                </Text>
-                <Anchor
-                  href={attempt.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="xs"
-                  c="dimmed"
-                >
-                  View run ↗
-                </Anchor>
-              </Group>
-            );
-          })}
-        </Stack>
+                  <PipelineBadge pipeline={attempt.pipeline} />
+                  {attempt.outcome && (
+                    <DispatchOutcomeBadge outcome={attempt.outcome} />
+                  )}
+                  {attempt.generation !== undefined && (
+                    <Badge variant="outline" size="xs" color="gray">
+                      g{attempt.generation}
+                    </Badge>
+                  )}
+                  <Badge variant="outline" size="xs" color="gray">
+                    {ATTRIBUTION_LABELS[attempt.attribution]}
+                  </Badge>
+                  <Anchor
+                    href={issueUrlForRun(attempt) ?? attempt.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    size="xs"
+                    truncate
+                  >
+                    {displayRunTitle(attempt)}
+                  </Anchor>
+                  <Text size="xs" c="dimmed">
+                    {formatDuration(attempt.elapsedSeconds)}
+                  </Text>
+                  <Anchor
+                    href={attempt.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    size="xs"
+                    c="dimmed"
+                  >
+                    View run ↗
+                  </Anchor>
+                </Group>
+              );
+            })}
+          </Stack>
+        )}
       </Stack>
     </Card>
   );
