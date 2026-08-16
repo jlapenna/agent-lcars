@@ -344,6 +344,199 @@ describe('pollCodexNativeTitles', () => {
     expect(result.map((candidate) => candidate.sessionId)).toEqual(expectedIds);
   });
 
+  it('imports every titled row in the window even when untitled subagent rows dominate recency (issue #1230)', () => {
+    // Shaped after the real store measured in issue #1230: Codex writes
+    // one `threads` row per SUBAGENT thread too, and those rows always
+    // have `title = ''` and `name = NULL` -- they can never yield a title,
+    // but they are numerous and recent, so a query that bounds raw rows
+    // (rather than qualifying ones) lets them dominate the window and
+    // starve out the real titles. The row counts below are the issue's own
+    // measured numbers, not rounded/illustrative ones: 302 rows in the
+    // window (207 untitled, 95 titled), and of the naive top-192-by-
+    // recency, exactly 184 are untitled and only 8 titled -- reproduced
+    // here by rank, not by chance.
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    const rows: ThreadFixtureRow[] = [];
+    let rank = 0;
+    const pushUntitled = (count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        rank += 1;
+        rows.push({
+          id: `subagent-${String(rank).padStart(4, '0')}`,
+          rollout_path: `/rollouts/subagent-${rank}.jsonl`,
+          name: null,
+          title: '',
+          updated_at: recentUpdatedAt(rank * 60),
+        });
+      }
+    };
+    const pushTitled = (count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        rank += 1;
+        rows.push({
+          id: `titled-${String(rank).padStart(4, '0')}`,
+          rollout_path: `/rollouts/titled-${rank}.jsonl`,
+          name: null,
+          title: `Title for session ${rank}`,
+          updated_at: recentUpdatedAt(rank * 60),
+        });
+      }
+    };
+    // Ranks 1-184 (newest): untitled. Ranks 185-192: titled -- the 8 that
+    // survive even the pre-#1230 raw-LIMIT query. Ranks 193-215: more
+    // untitled, past the cap either way. Ranks 216-302 (oldest): the
+    // remaining 87 titled rows -- inside the recency window, but past the
+    // raw cap under the old query.
+    pushUntitled(184);
+    pushTitled(8);
+    pushUntitled(23);
+    pushTitled(87);
+    expect(rows).toHaveLength(302);
+    expect(rows.filter((row) => row.title === '')).toHaveLength(207);
+    expect(rows.filter((row) => row.title !== '')).toHaveLength(95);
+    fixtureDb(dbPath, rows);
+
+    const result = pollCodexNativeTitles(dbPath, { now: () => WHEN });
+
+    // Every titled row in the window imports -- not just the 8 that would
+    // survive a raw-row `LIMIT`.
+    expect(result).toHaveLength(95);
+    const ids = new Set(result.map((candidate) => candidate.sessionId));
+    expect(ids.size).toBe(95);
+    for (const id of ids) {
+      expect(id.startsWith('titled-')).toBe(true);
+    }
+  });
+
+  it('excludes a row with a NULL updated_at, even with an otherwise-valid title', () => {
+    // `updated_at >= ?` compares against SQL NULL, which always evaluates
+    // to NULL -- never TRUE -- so a row with no recorded update time is
+    // excluded regardless of how permissive the rest of the predicate is.
+    // This is intentional (see the doc comment on the query in
+    // `codex-native-title-source.ts`): a row with no recency signal has no
+    // principled place inside a recency-bounded window, so it is dropped
+    // rather than guessed into either side. Pinned here so that stays a
+    // deliberate, tested choice rather than an unexamined side effect.
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    fixtureDb(dbPath, [
+      {
+        id: 'no-updated-at',
+        rollout_path: '/rollouts/a.jsonl',
+        name: null,
+        title: 'Would otherwise qualify',
+        updated_at: null,
+      },
+      {
+        id: 'kept',
+        rollout_path: '/rollouts/b.jsonl',
+        name: null,
+        title: 'kept',
+        updated_at: recentUpdatedAt(),
+      },
+    ]);
+
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
+      { sessionId: 'kept', title: 'kept' },
+    ]);
+  });
+
+  it('still bounds the selection at the cap when qualifying rows outnumber it, amid untitled noise', () => {
+    // The cap must keep doing its job -- bounding count -- once it is
+    // bounding qualifying rows instead of raw ones. Critically, some noise
+    // sits ahead of (more recent than) the titled block: if the noise were
+    // only ever older than every titled row, a raw-row `LIMIT` would
+    // happen to return the right titled rows anyway and this test would
+    // pass against the pre-#1230 query too, proving nothing. With 50 newer
+    // noise rows in front, the pre-fix query's raw top-192 is 50 noise +
+    // 142 titled -- fewer titled rows than the cap allows, even though
+    // `titledCount` (212) comfortably exceeds it.
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    const titledCount = CODEX_NATIVE_TITLE_IMPORT_CAP + 20;
+    const rows: ThreadFixtureRow[] = [];
+    let rank = 0;
+    const pushUntitled = (count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        rank += 1;
+        rows.push({
+          id: `noise-${String(rank).padStart(4, '0')}`,
+          rollout_path: `/rollouts/noise-${rank}.jsonl`,
+          name: null,
+          title: '',
+          updated_at: recentUpdatedAt(rank * 60),
+        });
+      }
+    };
+    pushUntitled(50);
+    const titledRankStart = rank + 1;
+    for (let i = 0; i < titledCount; i += 1) {
+      rank += 1;
+      rows.push({
+        id: `titled-${String(rank).padStart(4, '0')}`,
+        rollout_path: `/rollouts/titled-${rank}.jsonl`,
+        name: null,
+        title: `Title for session ${rank}`,
+        updated_at: recentUpdatedAt(rank * 60),
+      });
+    }
+    const titledRankEnd = rank;
+    pushUntitled(200);
+    fixtureDb(dbPath, rows);
+
+    const result = pollCodexNativeTitles(dbPath, { now: () => WHEN });
+
+    expect(result).toHaveLength(CODEX_NATIVE_TITLE_IMPORT_CAP);
+    // The newest `CAP` of the `titledCount` titled rows -- the lowest-rank
+    // (most recent) `CAP` ids in the titled block -- not the oldest, and
+    // none of the surrounding noise.
+    const expectedIds = new Set(
+      Array.from(
+        { length: CODEX_NATIVE_TITLE_IMPORT_CAP },
+        (_, position) =>
+          `titled-${String(titledRankStart + position).padStart(4, '0')}`,
+      ),
+    );
+    expect(new Set(result.map((candidate) => candidate.sessionId))).toEqual(
+      expectedIds,
+    );
+    // Sanity on the fixture itself: confirms the 20 oldest titled rows
+    // really were excluded by the cap, not accidentally absent from the
+    // fixture or swallowed by an off-by-one.
+    const droppedTitledId = `titled-${String(titledRankEnd).padStart(4, '0')}`;
+    expect(result.some((c) => c.sessionId === droppedTitledId)).toBe(false);
+  });
+
+  it('lets a whitespace-only name/title through the SQL predicate, then drops it in toCandidate (never stricter than toCandidate)', () => {
+    // SQLite's `trim()` strips only ASCII space (0x20); a `name`/`title`
+    // that is a single tab is "non-blank" by that measure and therefore
+    // passes the SQL qualifying predicate -- consuming a query row -- but
+    // `truncateTitle`'s `\s+`-collapse-and-trim (matching JS's broader
+    // Unicode whitespace class) still reduces it to "" in `toCandidate`,
+    // which is where it must actually be dropped. This is the acceptance
+    // criterion from issue #1230: whitespace-only variants still reach
+    // `toCandidate` and are dropped there, not filtered out in SQL.
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    fixtureDb(dbPath, [
+      {
+        id: 'whitespace-only',
+        rollout_path: '/rollouts/a.jsonl',
+        name: '	',
+        title: '',
+        updated_at: recentUpdatedAt(60),
+      },
+      {
+        id: 'kept',
+        rollout_path: '/rollouts/b.jsonl',
+        name: null,
+        title: 'kept',
+        updated_at: recentUpdatedAt(120),
+      },
+    ]);
+
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
+      { sessionId: 'kept', title: 'kept' },
+    ]);
+  });
+
   it('fails soft and reports unavailability on a missing file', () => {
     const missing = path.join(tempDir(), 'does-not-exist.sqlite');
     const errors: unknown[] = [];

@@ -257,9 +257,18 @@ export interface PollCodexNativeTitlesOptions {
  * `SELECT ... FROM threads` here is exactly what let a single import write
  * more files than the reader's `MAX_SESSION_TITLE_ANNOTATION_FILES` cap
  * tolerates, silently disabling the whole `generated` channel it exists to
- * feed. `LIMIT` applies before `toCandidate`'s per-row filtering (unsafe
- * id, blank `rollout_path`, empty title after normalization), so the
- * returned candidate count can be lower than the cap but never higher.
+ * feed.
+ *
+ * `LIMIT` is bounded over a query that already carries a cheap qualifying
+ * pre-filter (see the inline comment right above it), not the raw table --
+ * see issue #1230: bounding raw rows let Codex's numerous, always-untitled
+ * per-subagent-thread rows dominate the window and starve out the real
+ * titles the cap was meant to hold, so a single import could satisfy the
+ * count cap while importing almost nothing. `toCandidate`'s per-row
+ * filtering (`isSafeIdentifier`, `truncateTitle`) still runs after, and is
+ * still the sole authority on whether a row is usable -- the SQL
+ * pre-filter is strictly looser, never stricter, so the returned candidate
+ * count can be lower than the cap but never higher.
  */
 export function pollCodexNativeTitles(
   dbPath: string,
@@ -286,10 +295,62 @@ export function pollCodexNativeTitles(
       Math.floor(nowMs / 1000) -
       CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS * SECONDS_PER_DAY;
 
+    // The qualifying predicate below (rollout_path present, name-or-title
+    // present) is pushed into SQL so `LIMIT` bounds rows that can actually
+    // produce a title -- see issue #1230. Earlier, `LIMIT` bounded the raw,
+    // unfiltered `threads` table: Codex writes one row per SUBAGENT thread
+    // too, and those rows always have `title = ''` and `name = NULL` (they
+    // can never yield a title) but are numerous and recent, so they
+    // dominated any recency-ordered window. Measured on a real store: of
+    // the top `CODEX_NATIVE_TITLE_IMPORT_CAP` (192) rows by recency, 184
+    // were untitled subagent rows and only 8 actually imported, against 95
+    // rows in the same window that genuinely qualify. The cap was being
+    // spent on rows that could never produce a title.
+    //
+    // `toCandidate` below remains the sole authority on whether a row is
+    // usable (`isSafeIdentifier`, `truncateTitle`) -- this predicate is not
+    // a reimplementation of it, only a cheap pre-filter over the two
+    // columns `toCandidate` also inspects (`rollout_path`, `name`/`title`).
+    // The load-bearing invariant is that this predicate must never be
+    // STRICTER than `toCandidate`: over-selecting here is harmless (the
+    // strays just get dropped, same as before this predicate existed),
+    // but under-selecting would silently discard a valid title before
+    // `toCandidate` ever saw it -- the exact class of bug #1230 itself is.
+    // Two deliberate slack points keep it on the loose side:
+    //   - SQLite's `trim()` strips only ASCII space (0x20) from each end,
+    //     never the broader Unicode whitespace class JS's `\s` (and so
+    //     `truncateTitle`'s collapse-and-trim) matches -- a `name`/`title`
+    //     of e.g. a single tab or U+3000 reads as "non-blank" here but
+    //     still reduces to "" in `toCandidate`, and is dropped there
+    //     instead of here. Keep it that way; do not "fix" this trim to
+    //     match JS more closely, or a row this predicate excludes could
+    //     stop being a strict superset of what `toCandidate` accepts.
+    //   - `isSafeIdentifier`'s id-shape check is deliberately NOT
+    //     reimplemented in SQL at all -- getting an equivalent SQL
+    //     predicate exactly as strict (never stricter) as that regex isn't
+    //     worth the risk; `toCandidate` alone gates it.
+    //
+    // `updated_at >= ?` also silently excludes any row with a NULL
+    // `updated_at`: SQL comparisons against NULL evaluate to NULL, which
+    // WHERE treats as not-matching, regardless of how permissive the rest
+    // of the predicate is. This is intentional, not a #1230-shaped
+    // dropout: a row with no recorded update time has no recency signal
+    // to place it inside or outside the window at all, so there is no
+    // "correct" side to err on the way there is for the qualifying
+    // predicate above -- treating it as in-window would mean guessing an
+    // unbounded age for it, which the whole point of a recency window is
+    // to avoid (see `CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS`'s doc
+    // comment). See `excludes a row with a NULL updated_at` in the spec
+    // for the pinned regression.
     const rows = db
       .prepare(
         `SELECT ${COL_ID}, ${COL_ROLLOUT_PATH}, ${COL_NAME}, ${COL_TITLE} FROM ${TABLE}
          WHERE ${COL_UPDATED_AT} >= ?
+           AND trim(coalesce(${COL_ROLLOUT_PATH}, '')) <> ''
+           AND (
+             trim(coalesce(${COL_NAME}, '')) <> ''
+             OR trim(coalesce(${COL_TITLE}, '')) <> ''
+           )
          ORDER BY ${COL_UPDATED_AT} DESC
          LIMIT ?`,
       )
