@@ -42,9 +42,6 @@
       "path": "../../libs/logging/tsconfig.lib.json"
     },
     {
-      "path": "../dispatch-broker/tsconfig.app.json"
-    },
-    {
       "path": "../../libs/util-server/tsconfig.lib.json"
     },
     {

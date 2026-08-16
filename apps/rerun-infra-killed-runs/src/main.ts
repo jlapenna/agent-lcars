@@ -6,18 +6,29 @@
 // the same rerun-failed-jobs call `gh run rerun --failed` makes, and post
 // an audit-trail comment on the run's associated pull request.
 //
-// Reuses the SAME hardened GitHub API client ../github-api.ts already
+// Reuses the SAME hardened GitHub API client ./github-api.ts already
 // provides (createGitHubApi, repositoryPath) rather than a parallel
 // implementation -- the same convention the sibling bundled actions follow.
 // same reason.
+//
+// agent-lcars#1183: this file (and everything it transitively imports --
+// ./github-api.ts, ./broker.ts, ./modules/*) used to live under
+// apps/dispatch-broker/src/rerun-infra-killed-runs/ and import ../github-api
+// from one directory up. It moved here as its own minimal Nx project so the
+// published action's source no longer depends on apps/dispatch-broker,
+// which is now deleted outright (its only other live reason -- the
+// console's post-mutation reconcile ping through
+// apps/console/src/lib/hosted-controller.ts -- was itself retired in
+// #1195). ./github-api.ts, ./broker.ts, and ./modules/{intent,ledger-core,
+// scheduler}.ts are this project's own copies of what those dispatch-broker
+// files used to be: only createGitHubApi/mapWithConcurrency/repositoryPath
+// are actually reachable from this file, so esbuild tree-shakes the rest
+// (including every bit of broker.ts's ledger machinery) out of the bundle,
+// same as it always did. They stay as full files rather than a trimmed-down
+// rewrite so this remains provably the same logic dispatch-broker shipped.
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-import {
-  createGitHubApi,
-  mapWithConcurrency,
-  repositoryPath,
-} from '../github-api';
 import type { PullRequestSummary, WorkflowJob } from './detect';
 import {
   buildRerunCommentBody,
@@ -25,6 +36,11 @@ import {
   runLooksInfraKilled,
   selectAssociatedPullRequest,
 } from './detect';
+import {
+  createGitHubApi,
+  mapWithConcurrency,
+  repositoryPath,
+} from './github-api';
 
 // `createGitHubApi()`'s return shape -- see github-api.ts. Derived via
 // ReturnType rather than a hand-copied local interface because GitHubApi
