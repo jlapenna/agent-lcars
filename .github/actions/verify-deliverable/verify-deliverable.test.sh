@@ -135,7 +135,7 @@ fail() {
   case_dir="$test_root/claim-marker-on-pr"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   run_case claim-marker-on-pr
   test "$status" = 0 || fail "an exact attempt-claim marker on a PR should pass"
@@ -159,7 +159,7 @@ JSON
   case_dir="$test_root/claim-marker-on-two-prs"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":99,"title":"One","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}},{"number":100,"title":"Two","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":99,"title":"One","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}},{"number":100,"title":"Two","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   run_case claim-marker-on-two-prs
   test "$status" = 0 || fail "duplicate exact PR markers still prove a PR deliverable"
@@ -169,16 +169,64 @@ JSON
   fi
 )
 
+# --- #1223: a HUMAN-authored artifact carrying the marker must NOT count ---
+# The marker was treated as unforgeable identity, but it is a plain string
+# derivable from public issue state and printed in logs, comments, and docs.
+# A human PR that merely QUOTED a live marker while documenting this
+# mechanism satisfied that run's gate and marked it success with nothing
+# produced. Same shape as #711, which clause (a) already had to close.
+(
+  base_env
+  case_dir="$test_root/claim-marker-quoted-by-human-pr"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":1222,"title":"fix: stop the wrapper stamping takeover comments","body":"Quoting the marker to explain the bug:\n\n<!-- attempt-claim:g1:test-intent -->\n","updated_at":"2023-12-01T00:00:00Z","user":{"login":"jlapenna","type":"User"}}]
+JSON
+  run_case claim-marker-quoted-by-human-pr
+  test "$status" != 0 || fail "a human PR quoting the marker must not satisfy the gate"
+  case "$output" in
+    *"produced no deliverable"*) ;;
+    *) fail "expected the no-deliverable error for a human-quoted marker" ;;
+  esac
+)
+
+(
+  base_env
+  case_dir="$test_root/claim-marker-quoted-by-human-comment"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":901,"user":{"login":"jlapenna","type":"User"},"body":"For the record this run's marker was <!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  run_case claim-marker-quoted-by-human-comment
+  test "$status" != 0 || fail "a human comment quoting the marker must not satisfy the gate"
+)
+
+# A human-quoted marker must not rescue a run even when a real bot artifact
+# exists elsewhere for a DIFFERENT attempt - the gate must key on this run's
+# own bot-authored evidence, nothing else.
+(
+  base_env
+  case_dir="$test_root/claim-marker-human-plus-other-attempt"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":1222,"title":"docs","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"jlapenna","type":"User"}},{"number":98,"title":"other run","body":"<!-- attempt-claim:g9:someone-elses-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
+JSON
+  run_case claim-marker-human-plus-other-attempt
+  test "$status" != 0 || fail "a human-quoted marker plus another attempt's bot PR must not pass"
+)
+
 # --- Case 2: an exact attempt-claim marker on a comment passes, in implement
-# mode, from ANY commenter - the marker itself is the identity check, not
-# the retired reply-mode-only bot-login inference. ---
+# mode, from ANY BOT commenter - clause 0 is not scoped to one lane's login
+# (codex and opencode share agent-lcars[bot]; claude's PRs and comments use
+# different identities), only to bot authorship. It is still not the retired
+# reply-mode-only bot-login inference. ---
 (
   base_env
   export MODE=implement
   case_dir="$test_root/claim-marker-on-comment"
   mkdir -p "$case_dir"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
+[{"id":701,"user":{"login":"someone-else[bot]","type":"Bot"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
   run_case claim-marker-on-comment
   test "$status" = 0 || fail "an exact attempt-claim marker on a comment should pass, even in implement mode"
@@ -199,7 +247,7 @@ JSON
   case_dir="$test_root/structured-no-op"
   mkdir -p "$case_dir"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":702,"user":{"login":"agent-lcars[bot]"},"body":"NO-OP: PR #99 already contains the requested fix and check run 123 is green.\n<!-- agent-result:v1:no-op -->\n<!-- attempt-claim:g1:test-intent -->"}]
+[{"id":702,"user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"NO-OP: PR #99 already contains the requested fix and check run 123 is green.\n<!-- agent-result:v1:no-op -->\n<!-- attempt-claim:g1:test-intent -->"}]
 JSON
   run_case structured-no-op
   test "$status" = 0 || fail "an evidence-backed structured no-op should pass"
@@ -218,7 +266,7 @@ JSON
   case_dir="$test_root/no-op-marker-without-claim"
   mkdir -p "$case_dir"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":703,"user":{"login":"agent-lcars[bot]"},"body":"NO-OP: already fixed.\n<!-- agent-result:v1:no-op -->"}]
+[{"id":703,"user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"NO-OP: already fixed.\n<!-- agent-result:v1:no-op -->"}]
 JSON
   run_case no-op-marker-without-claim
   test "$status" = 1 || fail "a no-op marker without this run's own claim marker must not satisfy the gate"
@@ -233,7 +281,7 @@ JSON
   case_dir="$test_root/claim-marker-on-review"
   mkdir -p "$case_dir"
   cat > "$case_dir/reviews.json" <<'JSON'
-[{"user":{"login":"someone-else"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
+[{"user":{"login":"someone-else[bot]","type":"Bot"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
   run_case claim-marker-on-review
   test "$status" = 0 || fail "an exact attempt-claim marker on a review should pass"
@@ -256,7 +304,7 @@ JSON
   case_dir="$test_root/review-marker-ignored-outside-review-mode"
   mkdir -p "$case_dir"
   cat > "$case_dir/reviews.json" <<'JSON'
-[{"user":{"login":"someone-else"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
+[{"user":{"login":"someone-else[bot]","type":"Bot"},"submitted_at":"2020-01-01T00:00:00Z","body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
   run_case review-marker-ignored-outside-review-mode
   test "$status" = 1 || fail "a review marker must not be checked outside review mode"
@@ -272,10 +320,10 @@ JSON
   case_dir="$test_root/claim-marker-wrong-attempt"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g9:someone-elses-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":99,"title":"Unrelated change","body":"<!-- attempt-claim:g9:someone-elses-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g9:someone-elses-intent -->"}]
+[{"id":701,"user":{"login":"someone-else[bot]","type":"Bot"},"body":"<!-- attempt-claim:g9:someone-elses-intent -->"}]
 JSON
   run_case claim-marker-wrong-attempt
   test "$status" = 1 || fail "a marker naming a different attempt must not satisfy this run"
@@ -298,7 +346,7 @@ JSON
   mkdir -p "$case_dir"
   : > "$case_dir/pulls.fail"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":701,"user":{"login":"someone-else"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
+[{"id":701,"user":{"login":"someone-else[bot]","type":"Bot"},"body":"<!-- attempt-claim:g1:test-intent -->"}]
 JSON
   run_case error-then-found
   test "$status" = 0 || fail "found evidence should win even after an earlier lookup failed"
@@ -425,7 +473,7 @@ JSON
   case_dir="$test_root/unrelated-time-windowed-pr-no-marker"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2099-01-01T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":7,"title":"Fix widget (#42)","body":"","updated_at":"2099-01-01T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   run_case unrelated-time-windowed-pr-no-marker
   test "$status" = 1 || fail "a recently-updated PR merely referencing #NUM must not satisfy the gate without the exact marker"
@@ -468,7 +516,7 @@ JSON
   case_dir="$test_root/generic-bot-comment-reply-no-marker"
   mkdir -p "$case_dir"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":556,"user":{"login":"agent-lcars[bot]"},"body":"Picked this up, working on it now."}]
+[{"id":556,"user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"Picked this up, working on it now."}]
 JSON
   run_case generic-bot-comment-reply-no-marker
   test "$status" = 1 || fail "a generic bot comment must not satisfy the gate without the exact marker"
@@ -489,7 +537,7 @@ JSON
   case_dir="$test_root/exact-requires-human-comment-is-comment-outcome"
   mkdir -p "$case_dir"
   cat > "$case_dir/comments.json" <<'JSON'
-[{"id":557,"user":{"login":"agent-lcars[bot]"},"body":"I need maintainer direction before continuing.\n<!-- attempt-claim:g1:test-intent -->"}]
+[{"id":557,"user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"I need maintainer direction before continuing.\n<!-- attempt-claim:g1:test-intent -->"}]
 JSON
   cat > "$case_dir/issue.json" <<'JSON'
 {"state":"open","closed_at":null,"labels":[{"name":"status:needs-human"}]}
@@ -528,7 +576,7 @@ JSON
   case_dir="$test_root/generic-review-no-marker"
   mkdir -p "$case_dir"
   cat > "$case_dir/reviews.json" <<'JSON'
-[{"user":{"login":"agent-lcars[bot]"},"submitted_at":"2099-01-01T00:00:00Z","body":"Looks good to me."}]
+[{"user":{"login":"agent-lcars[bot]","type":"Bot"},"submitted_at":"2099-01-01T00:00:00Z","body":"Looks good to me."}]
 JSON
   run_case generic-review-no-marker
   test "$status" = 1 || fail "a generic review must not satisfy the gate without the exact marker"
@@ -551,7 +599,7 @@ JSON
   case_dir="$test_root/legacy-reply-pr"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   run_case legacy-reply-pr
   test "$status" = 0 || fail "a standalone consumer's fresh referencing PR should pass"
@@ -569,7 +617,7 @@ JSON
   case_dir="$test_root/exact-never-falls-back"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   run_case exact-never-falls-back
   test "$status" = 1 || fail "broker-bound validation must never use inference"

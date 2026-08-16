@@ -7,8 +7,8 @@
 # (clause 0, #645 Phase 4). Standalone published-action consumers that have
 # no ATTEMPT_ID retain the five time-window/login inference clauses promised
 # by agent-protocol.md; inference is never reachable when identity exists:
-#   (0) an artifact (PR, comment, or - on a review dispatch - a pull request
-#       review) whose body carries THIS run's own hidden
+#   (0) a BOT-AUTHORED artifact (PR, comment, or - on a review dispatch - a
+#       pull request review) whose body carries THIS run's own hidden
 #       `<!-- attempt-claim:<attempt-id> -->` marker (see
 #       libs/dispatch-contracts/src/marker.ts's formatClaimMarker and
 #       agent-protocol.md #5). This is exact evidence: the marker names one
@@ -19,7 +19,29 @@
 #       window plus a shared bot login (codex and opencode both push as
 #       agent-lcars[bot] - see clause (a)'s own comment below). When
 #       ATTEMPT_ID is present, a missing marker fails closed and never falls
-#       through to inference;
+#       through to inference.
+#
+#       The `.user.type == "Bot"` requirement is #1223, and it is the same
+#       hole clause (a) already had to close. The marker was treated as
+#       unforgeable identity, but it is a plain string: `g<gen>:<repo>#<n>/r<gen>`,
+#       derivable from public issue state and printed in run logs, issue
+#       comments, and documentation. A human PR that merely QUOTED a live
+#       marker while explaining this mechanism satisfied that run's gate and
+#       marked it success, having produced nothing - the exact shape of the
+#       incident clause (a) cites (#711, a human PR whose body said
+#       "Issue #650"). Requiring a bot author is strictly narrowing: the
+#       marker must still be exact, so this does not reintroduce the
+#       inference #815 removed. It rules out only bystanders, and every
+#       lane's real artifacts are bot-authored (claude[bot],
+#       agent-lcars[bot]).
+#
+#       Deliberately `.user.type`, not a specific login: claude.yml's PRs
+#       are authored claude[bot] (its action mints that identity itself)
+#       while its `gh` comments come from agent-lcars[bot], so no single
+#       expected login covers one lane's own artifacts. On an agent:*-on-PR
+#       takeover of a HUMAN-authored PR, stamping that PR's body no longer
+#       counts - lcars-protocol.md's other sanctioned path for that case,
+#       a bot-authored comment carrying the marker, still does;
 #   (a) an open/updated PR referencing #NUM, created or updated since
 #       STARTED_AT (covers new PRs AND pushes to existing ones; on an
 #       implement dispatch, EXCLUDE_PR_AUTHOR keeps a concurrently
@@ -108,10 +130,11 @@ errors=()
 if [ -n "$ATTEMPT_ID" ]; then
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
 
-  # PRs: any PR (regardless of author or update time - the marker itself is
-  # the identity check) whose title or body carries this exact marker.
+  # PRs: any BOT-AUTHORED PR (regardless of which bot, or of update time)
+  # whose title or body carries this exact marker. See #1223 in the header:
+  # without the author test, a human PR that merely quotes the marker counts.
   if claim_pr_hits=$(gh api "repos/$REPO/pulls?state=all&per_page=100" --paginate \
-    --jq ".[] | select(((.title // \"\") + \"\\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number" 2>&1); then
+    --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number" 2>&1); then
     if [ -n "$claim_pr_hits" ]; then
       found="PR carrying this run's attempt-claim marker ($ATTEMPT_ID)"
       found_via="exact"
@@ -132,13 +155,13 @@ if [ -n "$ATTEMPT_ID" ]; then
   # a comment is exact evidence regardless of dispatch mode.
   if [ -z "$found" ]; then
     if claim_comment_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
-      --jq ".[] | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
+      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
       if [ -n "$claim_comment_hits" ]; then
         found="comment carrying this run's attempt-claim marker ($ATTEMPT_ID)"
         found_via="exact"
         outcome_kind="comment"
         if claim_no_op_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
-          --jq ".[] | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id" 2>/dev/null) && \
+          --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id" 2>/dev/null) && \
           [ -n "$claim_no_op_hits" ]; then
           found="evidence-backed structured no-op carrying this run's attempt-claim marker ($ATTEMPT_ID)"
           outcome_kind="no-op"
@@ -154,7 +177,7 @@ if [ -n "$ATTEMPT_ID" ]; then
   # this script already knows #NUM is one.
   if [ -z "$found" ] && [ "$MODE" = "review" ]; then
     if claim_review_hits=$(gh api "repos/$REPO/pulls/$NUM/reviews?per_page=100" --paginate \
-      --jq ".[] | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
+      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
       if [ -n "$claim_review_hits" ]; then
         found="pull request review carrying this run's attempt-claim marker ($ATTEMPT_ID)"
         found_via="exact"
