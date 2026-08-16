@@ -38,23 +38,11 @@ jlapenna`), and use as the assignee in the parking recipe
   (agent-protocol.md §4). The console reads this exact login as
   `MAINTAINER_LOGIN`.
 
-- **Dispatch (current, #1015):** a webhook delivery is interpreted by
-  `apps/console/src/lib/orchestrator-ingest.ts`'s `interpretDelivery`, pure
-  and stateless: an `issues`/`pull_request` `labeled` event whose label is
-  `agent:claude`/`agent:codex`/`agent:opencode` requests mode `implement`
-  (issue or PR); the same on a PR with `review:claude`/`review:codex`/
-  `review:opencode` requests mode `review`. Each delivery is evaluated on
-  its own — there is no cross-check against the anchor's full current label
-  set, no contradictory-multi-label detection, and no stale-label cleanup.
-  What actually prevents two runs is `libs/orchestrator`'s per-task mutex:
-  a request while a run is already live is refused (`task-busy`); a retried
-  delivery (same GitHub delivery ID) maps back to the run it already
-  created instead of starting a second one (`duplicate-request`). Your
-  attempt identity, `$ATTEMPT_ID`, is `g<generation>:<intentId>`, where
-  `intentId` is literally the orchestrator's run ID
-  (`<repo>#<issue>/r<generation>`) — passed to your workflow as the
-  `broker_intent_id`/`broker_generation` `workflow_dispatch` inputs by the
-  orchestrator's outbox drain, not re-derived or re-verified by you.
+- **Your attempt identity:** `$ATTEMPT_ID` is `g<generation>:<intentId>`,
+  handed to your workflow by the orchestrator. You never derive, verify, or
+  repair it. How dispatch decides to start you at all is in
+  [`lcars-protocol-reference.md`](lcars-protocol-reference.md).
+
 - **Reply triggers:** `@claude`, `/codex`, `/opencode`/`/oc`, or the generic
   `@agent` (#573), matched by `orchestrator-ingest.ts`'s `matchReplyCommand`
   against an `issue_comment` `created` event from an `OWNER`/`MEMBER`
@@ -79,97 +67,74 @@ jlapenna`), and use as the assignee in the parking recipe
   login straight against `AGENT_BOT_LOGINS` or `AGENT_FLEET_LOGIN` without
   normalizing it first.
 
-## `agent:*` vs `review:*` on a pull request
+## Dispatch modes: what to actually do
 
-Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`
-dispatches `mode: implement` (§Dispatch above). Tagging a **pull request**
-with the same `agent:*` label dispatches `mode: implement` too (#567) —
-take the PR over and keep pushing commits to its branch, same as an issue,
-just against an existing branch instead of a new one. A pull request
-tagged instead with `review:claude`/`review:codex`/`review:opencode`
-dispatches `mode: review` — leave a review, don't push (#565/#568, revised
-by #567 once the maintainer picked `review:*` as the dedicated review
-trigger rather than overloading `agent:*` for both meanings). The two
-label families are independent: a PR may carry `agent:*`, `review:*`,
-both, or neither, and each drives its own dispatch mode when applied
-(`libs/dispatch-contracts/src/pipelines.ts`'s
-`AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a
-recognized label at all on a plain issue — there is no diff to review.
+The brief's `mode` field already tells you which of these you are in — you do
+not need to inspect labels to find out.
 
-If you are dispatched with `mode: review` in the JSON brief at
-`$AGENT_DISPATCH_CONTEXT`, the anchor is always a pull request and your job
-is to **review its diff, not implement or push changes to it.** Read the
-PR the way the built-in `review` skill would, then submit your findings as
-a real GitHub pull request review (`gh pr review --comment`/
-`--request-changes`/`--approve`, with a body) — not a plain issue comment.
-This repo's deliverable-evidence gate (`verify-deliverable.sh`, per
-agent-protocol.md §5) checks for exactly that: on a review dispatch, a
-submitted PR review is the sanctioned deliverable, the same way a posted
-comment is the sanctioned deliverable on a reply dispatch — but it must
-carry your run's exact `<!-- attempt-claim:$ATTEMPT_ID -->` marker (#815:
-the gate no longer accepts a bare review from your bot login on its own).
-Stamp the marker in the review body. A takeover/progress comment alone does
-not count.
+| `mode`      | anchor       | your deliverable                                               |
+| ----------- | ------------ | -------------------------------------------------------------- |
+| `implement` | issue        | open a PR on a new branch                                      |
+| `implement` | pull request | take the PR over and keep pushing to **its** branch (#567)     |
+| `review`    | pull request | submit a real `gh pr review` with a body — push nothing (#565) |
+| `reply`     | either       | a comment can be the whole deliverable                         |
 
-If you are dispatched with `mode: implement` and the anchor is a pull
-request (an `agent:*` label applied to it, not an issue), your job is to
-**take the PR over and keep iterating on its own branch** — push commits
-the normal way, same as any other implement dispatch. Pushing to the PR is
-not, by itself, evidence any more (#815 retired the inference clause that
-treated any push to the anchor PR as sufficient): stamp the exact
-attempt-claim marker into the PR body, or post a comment on it carrying the
-marker, before you finish.
+On a `review` dispatch the deliverable is a submitted pull request review,
+not a plain issue comment: `verify-deliverable.sh` looks for the review
+object. On an `implement`-on-PR dispatch, pushing to the PR is not evidence
+by itself — #815 retired that inference. Either way the artifact needs your
+run's exact `<!-- attempt-claim:$ATTEMPT_ID -->` marker; the dispatch
+workflow stamps it onto whatever PR or comment you create (#1213), so you do
+not have to transcribe it, but do not strip it if you see it.
 
-The rest of the protocol still applies unchanged in either mode —
-takeover comment, eyes reactions, one edited progress comment, parking on
-a real blocker; a review dispatch pushes nothing (there is nothing to push
-on a pure review).
+Everything else in the protocol applies unchanged in every mode: takeover
+comment, eyes reactions, one edited progress comment, parking on a real
+blocker. Which label families drive which mode, and which webhook actions
+the ingest ignores, are in
+[`lcars-protocol-reference.md`](lcars-protocol-reference.md).
 
-The GitHub App subscribes to issue, issue-comment, and pull-request events.
-`orchestrator-ingest.ts` acts only on the `labeled` action for both label
-families (#565) and on `issue_comment`'s `created` action for reply
-commands; `unlabeled`, `closed`, `reopened`, and any other action are
-received but ignored today (`ignore('unhandled-action')` /
-`ignore('unhandled-event')`) — there is no relabel/close-driven cleanup in
-the current design. `verify-deliverable.sh` keeps the deliverable contract
-aligned for both modes regardless of how the run was requested.
+## Reconciliation: nothing for you to repair
 
-## Reconciliation and lease recovery
+If your job dies silently, a 30-minute sweep notices the expired lease,
+marks the run `lost`, releases the task mutex, and automatically retries
+(up to 2 consecutive times, then parks with `status:needs-human`). There is
+no ledger comment, no generation counter, and no shared document for you to
+inspect, contend with, or hand-repair. The mechanism is in
+[`lcars-protocol-reference.md`](lcars-protocol-reference.md);
+`libs/orchestrator/README.md` is the full contract.
 
-There is no ledger to reconcile today. `.github/workflows/dispatch-reconcile.yml`
-calls `/api/control-plane/reconcile` every 30 minutes (also
-`workflow_dispatch`-able); that handler is `Orchestrator.sweepExpired()`
-(`libs/orchestrator/src/orchestrator.ts`) followed by an outbox drain
-(`apps/console/src/lib/orchestrator-dispatch.ts`). What it actually does:
+## Takeover comment: which handoff line to post
 
-- **Lease expiry, not liveness polling.** A live run holds a 2-hour lease
-  (`decide.ts`'s `LEASE_MS`) that only your own dispatch/report/renew calls
-  extend. If your job dies silently — runner loss, a timeout with no
-  completion callback, anything that never reaches `expireLease` on its
-  own — the sweep is what eventually notices: once the lease is past due,
-  the run is marked `lost` and the task's mutex is released. There is
-  nothing for you to hand-repair here; you do not need to reconstruct or
-  edit any state.
-- **Bounded, automatic retry.** Immediately after marking a run `lost`, the
-  sweep requests a fresh run for the same task with the same
-  pipeline/params — unless the task has gone `lost` more than
-  `MAX_AUTO_RETRIES` (2) times in a row since its last `finished`/
-  `canceled` settlement, in which case it's left parked instead
-  (`status:needs-human`, via the outcome comment the outbox drain posts).
-  A manual reply/label request still works on a parked task at any time —
-  it is not blocked by the exhausted auto-retry budget, only unattempted by
-  the sweep itself.
-- **The outbox drain also retries stuck deliveries.** A `dispatch-run` or
-  `report-outcome` entry that failed a prior GitHub call (rate limit,
-  transient 5xx) stays `pending` and is retried on the next drain — dispatch
-  or completion, or this scheduled sweep, whichever runs next. This is why
-  an outcome comment can appear on the issue noticeably after your run
-  actually finished.
+This is this repo's answer to the question agent-protocol.md §1 leaves to
+each repo's delta. `tools/claude-agent-session.sh` **exists in this repo**
+and is Claude-specific — it reads only `~/.claude/projects` transcripts and
+authenticates with Claude's own OAuth token.
 
-None of this involves a ledger comment, a `generation` counter, or a
-Firestore authority lease on a shared document that a headless agent could
-inspect or contend with directly — `libs/orchestrator/README.md` is the
-whole contract if you need more than this summary.
+- **Dispatched by `claude.yml`:** post the real command, where `<session-id>`
+  is the basename of the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`:
+
+  ```
+  tools/claude-agent-session.sh resume <session-id>
+  ```
+
+  Mention `tools/claude-agent-session.sh resume-archive <run-id>` **in
+  addition**, never instead: plain `resume` only reaches a session while its
+  JIT runner is alive, and by the time anyone reads a finished run's anchor
+  it will not find it. The console's `TAKEOVER_COMMAND_RE` requires
+  whitespace after `resume`, so `resume-archive` alone matches nothing.
+
+- **Dispatched by `codex.yml` or `opencode.yml`:** take agent-protocol.md
+  §1's "no live-resume tooling" default. Say so plainly in your own words and
+  point the maintainer at the PR branch. Do **not** name
+  `claude-agent-session.sh` or invent a differently-named script — the gap is
+  real, and naming it is the honest deliverable. For Codex you may add that
+  the transcript is archived to GCS (readable with `gcloud storage cat`, not
+  viewable in the console); for OpenCode nothing is archived at all.
+
+Why each pipeline's situation is what it is — and the incident where this
+section's staleness kept the takeover affordance dark on this repo's own
+issues — is in
+[`lcars-protocol-reference.md`](lcars-protocol-reference.md).
 
 ## Auto-merge
 
@@ -209,93 +174,3 @@ defined in
 Credential values remain absolutely prohibited in Terraform-managed files,
 and the `supersprinklesracing` source-tree independence rule has no approval
 exception.
-
-## Session-resume script
-
-This section is this repo's answer to the question agent-protocol.md §1
-leaves to each repo's delta skill: which CLI (if any) has real
-live-resume tooling here, and what its exact command looks like. The
-console's takeover-command scanner expects a resume command containing the
-literal substring `claude-agent-session.sh`. **`tools/claude-agent-session.sh`
-exists in this repo.** What to post depends on which pipeline dispatched
-you, because the script is Claude-specific — it discovers transcripts only
-under `~/.claude/projects`, authenticates with `CLAUDE_CODE_OAUTH_TOKEN`,
-and hands off to `claude --resume`. Only a `claude.yml` run's takeover
-comment is exempt from agent-protocol.md §1's "no live-resume tooling"
-default below — a `codex.yml` or `opencode.yml` run must follow that
-default and never borrow this script's name.
-
-**Dispatched by `claude.yml`:** post the real command.
-
-```
-tools/claude-agent-session.sh resume <session-id>
-```
-
-Find `<session-id>` the way agent-protocol.md §1 describes (the basename of
-the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`).
-
-**Dispatched by `codex.yml` or `opencode.yml`:** `tools/claude-agent-session.sh`
-cannot resume either pipeline's session — it only knows Claude's transcript
-format and authenticates with Claude's own OAuth token. Do not substitute a
-differently-named script (agent-protocol.md §1's scanner matches the
-literal `claude-agent-session.sh` and does not generalize per agent, so an
-invented one would just be a dead command), and do not name
-`claude-agent-session.sh`, or any other script, in the comment itself: it's
-a Claude-only tool, and citing it from a Codex or OpenCode comment reads as
-if that pipeline is confused about its own tooling, not as an honest gap
-disclosure. Say plainly, in your own words, that no resume tooling exists
-for your pipeline, then point the maintainer at the PR branch. That gap is
-real and unclosed — naming the gap is the honest deliverable, not naming a
-Claude script that doesn't apply to you.
-
-The two pipelines' actual situations differ, and the comment should say so
-accurately rather than treating "no resume tooling" as identical for both:
-
-- **Codex:** there is no live-resume command, but the run's transcript IS
-  archived to GCS once the job ends (`codex.yml`'s telemetry sidecar +
-  `libs/telemetry/src/lib/codex-transcript-adapter.ts`), and the session's
-  console page does show an "Archived transcript" note naming that
-  `gs://` URI (`apps/console/src/app/sessions/[id]/session-header.tsx`) —
-  but the console does not render the transcript's _contents_ there.
-  `getSessionDetail` (`apps/console/src/lib/session-detail.ts`) only
-  fetches and parses a transcript when `sessionAgent(doc) === 'claude-code'`,
-  so a Codex session's page shows where the archive lives, never the
-  transcript itself. Say the transcript is archived to GCS, not that it's
-  "viewable in the console." If you want to hand the maintainer a real way
-  to read it, `gcloud storage cat` on that `gs://` URI prints the raw
-  JSONL directly — the same `gcloud storage` tool
-  `tools/claude-agent-session.sh`'s own `resume-archive` uses to download
-  it. No `resume-archive` equivalent exists for Codex today.
-- **OpenCode:** nothing is archived at all. The telemetry sidecar's watch
-  roots are `~/.claude/projects` and `~/.codex/sessions`
-  (`apps/telemetry-watcher/src/lib/runner.ts`'s `startSidecar`) — OpenCode
-  writes to neither, and no OpenCode transcript adapter exists
-  (`libs/telemetry/src/lib/transcript-adapter.ts`'s `TRANSCRIPT_ADAPTERS`),
-  so an OpenCode run ships no transcript and no session doc at all. There
-  is nothing to point at beyond the PR branch.
-
-This section used to say the script did not exist here at all, and stayed
-that way long after it landed. Every pipeline's agents read it and posted
-"resume tooling is not yet available" — which is exactly the string the
-console's `TAKEOVER_COMMAND_RE` (`apps/console/src/lib/action-items.ts`)
-cannot match, so the takeover affordance stayed dark on this repo's own
-issues while working for every other repo the fleet watches. If you are
-about to write that sentence as a `claude.yml` run, check `tools/` first.
-
-The rest of this section applies to `claude.yml` runs. Two things are worth
-putting in the takeover comment itself, because they change what the
-maintainer can actually do:
-
-- `resume` reaches a session only while its runner container is alive, and
-  JIT runners are torn down at job end. `list` shows what is still live.
-- After the run ends, the maintainer needs
-  `tools/claude-agent-session.sh resume-archive <run-id>`, which restores
-  the archived transcript from GCS and prints the `claude --resume` line
-  for it. Worth naming in the comment, since by the time anyone reads a
-  finished run's anchor, plain `resume` will no longer find it.
-
-Mention `resume-archive` in _addition_ to the `resume` line, never instead
-of it: `TAKEOVER_COMMAND_RE` is
-`/(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/`, which requires
-whitespace after `resume` and so does not match `resume-archive` at all. A
-comment carrying only the archive form surfaces nothing in the console.

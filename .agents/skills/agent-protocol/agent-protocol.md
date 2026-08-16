@@ -24,7 +24,14 @@ isn't true for every repo that pulls this file in.
 Read instructions in this order: the repository's `AGENTS.md`, this shared
 protocol, then the repository-specific protocol it names. Only after those
 documents are understood, read the JSON file named by
-`$AGENT_DISPATCH_CONTEXT` when the workflow provides it. That brief identifies
+`$AGENT_DISPATCH_CONTEXT` when the workflow provides it.
+
+Read each of those **once**. They are the fixed cost every dispatch pays
+before any work happens, on every provider, and re-reading one you have
+already read is the cheapest way to spend a run's context on nothing. Each
+also has a companion `*-reference.md` holding the situational sections — CI
+reruns, identity gotchas, control-plane internals — which you read only if
+and when you hit the situation they describe. Do not read them pre-emptively. That brief identifies
 the anchor, dispatch mode, optional
 runbook/deployment context, and the maintainer's reply without interpolating
 that reply into the agent prompt.
@@ -167,7 +174,10 @@ the comment accompanying an issue close:
 ```
 
 Substitute your run's own `$ATTEMPT_ID` value (exported to your environment
-by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. If it
+by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. Some
+dispatch harnesses stamp this marker onto the artifact for you at creation
+time, so you may find it already present — that is fine, and adding it twice
+is harmless; check your repo's delta skill for whether yours does. If it
 is unset, skip the marker entirely rather than inventing a value — an older
 or hand-triggered dispatch has none, and a finalizer that supports this
 marker falls back to the time-window/bot-login inference above when no
@@ -216,42 +226,10 @@ converging and is indistinguishable, from the outside, from a stuck run.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
-- If your own push triggers a failing CI check, you can usually rerun it
-  yourself rather than parking: `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun
-<run-id> --failed`. Your default token typically cannot rerun workflows;
-  a workflow that wants to grant this exports a dedicated credential as
-  `$ACTIONS_RERUN_TOKEN` for exactly this purpose — check whether your
-  dispatch workflow does. If the variable is empty, the workflow did not
-  grant it: park rather than retrying, because the failure will be an
-  opaque `gh` error rather than a clear permission message.
-- **What that credential deliberately is not:** it is never the workflow's
-  own `GITHUB_TOKEN`. That token carries the job's full
-  contents/issues/pull-requests write grant — the same class of credential
-  a repo's own dispatch control plane uses to admit, complete, and
-  reconcile work (in agent-lcars, `libs/orchestrator`'s Firestore-backed
-  mutex; in a repo whose broker still authenticates a comment-based ledger,
-  that comment) — so handing it to an agent would let agent-authored code
-  rewrite the control plane's own state (agent-lcars#645). It is a
-  separate, independently revocable credential granted the narrowest scope
-  that can still rerun a workflow.
-  Depending on what the platform can express, that scope may still be wider
-  than "rerun only" — treat it as a credential you were given for one
-  purpose, and use it for that purpose.
-- **Platform fact:** GitHub holds the Actions run resulting from a
-  bot-authored push (or a PR opened by one) as `action_required` with
-  **zero check runs minted**, regardless of billing state or fork status.
-  This is a GitHub Apps/bot-identity gate, not a bug in any one repo's
-  config. A bot-class token — including a workflow's own `GITHUB_TOKEN` —
-  **cannot self-approve** a held run; the approve API refuses bot-class
-  tokens outright.
-- **Recommended pattern:** a repo that dispatches bot-authored pushes
-  should run a small watchdog workflow, on a schedule, that approves held
-  runs on open PR heads using a **human-actor token** (a PAT or equivalent
-  belonging to an actual user account, not the bot). Do not attempt to
-  approve a held run yourself from within a headless agent run — you do
-  not have a token capable of it. If checks are still empty well after the
-  watchdog should have run, park per §4 naming this exact gate as the
-  blocker.
+**Situational** — moved to
+[`agent-protocol-reference.md`](agent-protocol-reference.md#8-ci-reruns-and-the-bot-push--action_required-platform-fact).
+Read it when a check never starts on your own push, or when you are deciding
+whether you may rerun one yourself. The section number is unchanged there.
 
 ## 9. Headless-synchronous rule
 
@@ -265,26 +243,10 @@ proof anything was delivered — see §5.
 
 ## 10. GitHub Apps bot-identity assignment gotcha
 
-The GitHub App bot identity your agent runs as (e.g. `claude[bot]`) is
-**not an assignable GitHub user**. `gh issue edit --add-assignee @me` (or
-any equivalent "assign myself" call) silently no-ops for it: the assignees
-REST API drops any login that is not a real assignable account, and App
-identities are never assignable. This is a universal GitHub Apps platform
-limitation, not specific to any one bot or repo — do not spend time
-debugging why "assign myself" did nothing before checking for this.
-
-The fix is not to work around the API — it is to assign a different,
-ordinary bot **user** account that repo uses to track fleet ownership, via
-the assignees REST endpoint directly:
-
-```bash
-gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
-  -f 'assignees[]=<fleet-tracking-login>' --silent
-```
-
-`<fleet-tracking-login>` is repo-specific (or, for a shared fleet, may be the
-same login across every repo the fleet works) — see your repo's delta skill
-for the exact login to use here.
+**Situational** — moved to
+[`agent-protocol-reference.md`](agent-protocol-reference.md#10-github-apps-bot-identity-assignment-gotcha).
+Read it when an "assign myself" call silently did nothing. The section number
+is unchanged there.
 
 ## 11. Hard limits
 
