@@ -21,7 +21,17 @@ semantics (allowlists, entrypoint, uid) it depends on.
 - `.env.example` — optional per-host Compose overrides (never commit `.env`).
 - `deploy.sh` — pulls the image, syncs the compose file, brings the stack
   up, and verifies the container is actually stable/healthy afterward (not
-  just "Up" per `docker ps`).
+  just "Up" per `docker ps`). Two independent knobs bound that
+  verification, and they are not interchangeable: `HEALTH_TIMEOUT_SECONDS`
+  (default 240) is a _ceiling_ on the wait for Docker's HEALTHCHECK, so it
+  exits the moment the container is healthy and a generous value costs
+  nothing on a good deploy; `STABILITY_WINDOW_SECONDS` (default 90) is a
+  fixed `sleep` used only when no HEALTHCHECK is defined, so raising it
+  lengthens every such deploy. The ceiling was 90s and produced a false
+  failure on a real deploy — the container went healthy just after the
+  script gave up, with 0 restarts — which is worse than a slow one: it
+  teaches you to ignore the gate, and it fails automation that trusts the
+  exit code.
 - `install-session-title-cli.sh` — builds and installs the `lcars` CLI
   agents run to declare a session title, and that the timer below imports
   through; see [Session titles](#session-titles-issue-1212) below.
