@@ -5,7 +5,7 @@ import {
   parseHostedCompletionRequestBody,
   parseHostedJsonBody,
 } from '@/lib/control-plane-request';
-import { controlPlaneRepository } from '@/lib/deployment';
+import { controlPlaneRepositories } from '@/lib/deployment';
 import { verifyCompletionOidcToken } from '@/lib/github-actions-oidc';
 import { handleCompletion } from '@/lib/orchestrator-routes';
 import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
@@ -14,7 +14,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     await verifyCompletionOidcToken(
       parseHostedBearerToken(request.headers.get('authorization')),
-      controlPlaneRepository(),
+      controlPlaneRepositories(),
     );
   } catch (error) {
     console.warn('agent-lcars: rejected hosted completion request', error);

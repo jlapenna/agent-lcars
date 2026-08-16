@@ -65,6 +65,52 @@ export function controlPlaneRepository(): string {
   );
 }
 
+/** `owner/name`: one non-empty owner segment, one non-empty name segment,
+ * no embedded `/`. Matches GitHub's own full-name shape. */
+const OWNER_NAME_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
+
+/**
+ * Repositories this backend is willing to admit as control-plane callers —
+ * webhook deliveries, completion/task-state lookups (see
+ * {@link isControlPlaneRepository}). Parsed once from
+ * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (a comma-separated `owner/name`
+ * list) when set; otherwise exactly {@link controlPlaneRepository}'s single
+ * entry, so an unset var reproduces today's single-repo behavior exactly.
+ *
+ * Misconfiguration throws rather than silently admitting the world: a typo'd
+ * or empty entry here is a security-relevant bug, not a degrade-gracefully
+ * case (mirrors `github-client.ts`'s `parseWatchedReposJson`).
+ */
+export function controlPlaneRepositories(): string[] {
+  const raw = optional('AGENT_LCARS_CONTROL_PLANE_REPOSITORIES');
+  if (raw === undefined) return [controlPlaneRepository()];
+
+  const entries = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (entries.length === 0) {
+    throw new Error(
+      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES must list at least one owner/name repository when set',
+    );
+  }
+  for (const entry of entries) {
+    if (!OWNER_NAME_PATTERN.test(entry)) {
+      throw new Error(
+        `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES entry ${JSON.stringify(entry)} is not a valid owner/name repository`,
+      );
+    }
+  }
+  return entries;
+}
+
+/** Exact, case-sensitive membership check against
+ * {@link controlPlaneRepositories} — GitHub full names are case-preserving,
+ * so this deliberately does not case-fold or substring-match. */
+export function isControlPlaneRepository(fullName: string): boolean {
+  return controlPlaneRepositories().includes(fullName);
+}
+
 /** Checkout-relative script used to restore archived Claude transcripts. */
 export function agentSessionResumeScript(): string {
   return 'tools/claude-agent-session.sh';

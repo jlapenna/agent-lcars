@@ -10,6 +10,12 @@ import { handleReconcile } from '@/lib/orchestrator-routes';
 import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // #1190: deliberately NOT `isControlPlaneRepository`/the allow-list. There
+  // is exactly one reconciler: the home repo's scheduled
+  // dispatch-reconcile.yml sweeps every onboarded repo's tasks from this one
+  // canonical caller. Widening this to the allow-list would let any
+  // onboarded repo's own reconcile workflow claim scheduler identity, which
+  // is not the topology this slice establishes.
   const repository = controlPlaneRepository();
   try {
     await verifyReconcileOidcToken(

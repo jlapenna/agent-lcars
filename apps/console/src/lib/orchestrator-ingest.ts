@@ -1,7 +1,7 @@
 import { type TaskId, taskIdSchema } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
 
-import { controlPlaneRepository } from '@/lib/deployment';
+import { isControlPlaneRepository } from '@/lib/deployment';
 
 /**
  * Interprets one GitHub webhook delivery and decides whether it is a
@@ -102,9 +102,7 @@ function matchReplyCommand(body: string): Pipeline | undefined {
 }
 
 function checkRepository(fullName: string): IngestIgnore | undefined {
-  return fullName === controlPlaneRepository()
-    ? undefined
-    : ignore('wrong-repo');
+  return isControlPlaneRepository(fullName) ? undefined : ignore('wrong-repo');
 }
 
 /** Builds the decision, re-validating the assembled task identifier against

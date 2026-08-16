@@ -1,7 +1,7 @@
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
-import { controlPlaneRepository } from '@/lib/deployment';
+import { isControlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
@@ -59,7 +59,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   const repository = payload.repository?.full_name;
-  if (repository !== controlPlaneRepository()) {
+  if (!repository || !isControlPlaneRepository(repository)) {
     console.info('agent-lcars: ignored webhook outside control plane', {
       deliveryId,
       eventName,

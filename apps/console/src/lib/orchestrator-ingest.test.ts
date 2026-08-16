@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { type IngestResult, interpretDelivery } from './orchestrator-ingest';
 
@@ -349,5 +349,53 @@ describe('interpretDelivery', () => {
         interpretDelivery({ event, deliveryId: DELIVERY_ID, payload }),
       ).not.toThrow();
     }
+  });
+});
+
+// #1190: `checkRepository` moved from an equality check against
+// `controlPlaneRepository()` to `isControlPlaneRepository()`'s allow-list
+// membership check. These prove the allow-list is actually consulted here,
+// not just in deployment.test.ts's unit tests of the predicate itself.
+describe('interpretDelivery repository allow-list (#1190)', () => {
+  const SECOND_REPO = 'other-org/other-repo';
+
+  afterEach(() => {
+    delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+  });
+
+  it('admits a second repository once the allow-list env var lists it', () => {
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+      `${REPO},${SECOND_REPO}`;
+
+    const result = interpretDelivery({
+      event: 'issues',
+      deliveryId: DELIVERY_ID,
+      payload: issuesLabeledPayload({
+        repository: { full_name: SECOND_REPO },
+      }),
+    });
+
+    expect(result).toEqual({
+      kind: 'request',
+      taskId: { repo: SECOND_REPO, issue: 42 },
+      requestId: DELIVERY_ID,
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+  });
+
+  it('still ignores a repository absent from the configured allow-list', () => {
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+      `${REPO},${SECOND_REPO}`;
+
+    const result = interpretDelivery({
+      event: 'issues',
+      deliveryId: DELIVERY_ID,
+      payload: issuesLabeledPayload({
+        repository: { full_name: 'unlisted-org/unlisted-repo' },
+      }),
+    });
+
+    expect(result).toEqual({ kind: 'ignore', reason: 'wrong-repo' });
   });
 });
