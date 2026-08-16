@@ -85,6 +85,14 @@ function fixtureDb(
         .map(() => '?')
         .join(', ')})`,
     );
+    // A single explicit transaction, not one implicit commit per `run()` --
+    // outside a transaction, SQLite's default journal mode fsyncs on every
+    // statement, so an unwrapped loop pays one fsync per row. That's near-
+    // free on this workstation's disk but measured at ~29s in CI for ~200
+    // rows (issue #1224 CI follow-up) -- a fixture-builder cost, not
+    // anything to do with the code under test, which never showed up
+    // locally only because local disk latency hid it.
+    db.exec('BEGIN');
     for (const row of rows) {
       const values = columns.map((column) => {
         const value = (row as unknown as Record<string, unknown>)[column];
@@ -92,6 +100,7 @@ function fixtureDb(
       });
       insert.run(...(values as never[]));
     }
+    db.exec('COMMIT');
   } finally {
     db.close();
   }

@@ -86,6 +86,16 @@ function fixtureCodexDb(
     const insert = db.prepare(
       'INSERT INTO threads (id, rollout_path, name, title, updated_at) VALUES (?, ?, ?, ?, ?)',
     );
+    // A single explicit transaction, not one implicit commit per `run()` --
+    // every call site here only ever passes a handful of rows, so this
+    // never showed up as a timeout in this particular file, but the same
+    // per-row-fsync exposure exists in principle (issue #1224 CI
+    // follow-up: `codex-native-title-source.spec.ts` and
+    // `session-title-overlay.integration.spec.ts` both did time out on a
+    // slow-disk CI runner from exactly this pattern at higher row counts).
+    // Kept consistent here rather than left as a latent trap for the next
+    // caller that grows this fixture into a bulk one.
+    db.exec('BEGIN');
     for (const row of rows) {
       insert.run(
         row.id,
@@ -95,6 +105,7 @@ function fixtureCodexDb(
         row.updated_at ?? DEFAULT_FIXTURE_UPDATED_AT,
       );
     }
+    db.exec('COMMIT');
   } finally {
     db.close();
   }

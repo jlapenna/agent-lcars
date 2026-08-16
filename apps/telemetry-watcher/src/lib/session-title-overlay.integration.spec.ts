@@ -50,6 +50,14 @@ function fixtureCodexDb(
     const insert = database.prepare(
       'INSERT OR REPLACE INTO threads (id, rollout_path, name, title, cwd, updated_at) VALUES (?, ?, NULL, ?, ?, ?)',
     );
+    // A single explicit transaction, not one implicit commit per `run()` --
+    // outside a transaction, SQLite's default journal mode fsyncs on every
+    // statement, so an unwrapped loop of hundreds of rows (the over-cap and
+    // rotation tests below) pays one fsync per row. Near-free on this
+    // workstation's disk, but measured in the tens of seconds in CI (issue
+    // #1224 CI follow-up) -- purely a fixture-builder cost that never
+    // showed up locally because local disk latency hid it.
+    database.exec('BEGIN');
     for (const row of rows) {
       insert.run(
         row.id,
@@ -59,6 +67,7 @@ function fixtureCodexDb(
         row.updated_at,
       );
     }
+    database.exec('COMMIT');
   } finally {
     database.close();
   }
@@ -276,6 +285,14 @@ describe('session title overlay, end to end', () => {
    * `readSessionTitleOverlay`. No seam is mocked between the importer and
    * the reader; that seam is exactly where the bug lived.
    */
+  // Explicit generous timeout (vitest's default is 5000ms): this test does
+  // genuine bulk real-filesystem work -- up to `CODEX_NATIVE_TITLE_IMPORT_
+  // CAP` (192) individually fsync'd file writes through the real writer,
+  // not a fixture shortcut -- and that cost is honest, not something to
+  // optimize away. It ran in ~26ms on this workstation's disk but timed
+  // out on a GitHub-hosted runner's slower disk (issue #1224 CI follow-up);
+  // 90s gives that runner real headroom rather than a limit that merely
+  // clears locally.
   it('keeps the generated channel readable when the store has more usable rows than the cap', () => {
     const stateDbPath = path.join(homeDirectory, 'state_5.sqlite');
     // Comfortably past `CODEX_NATIVE_TITLE_IMPORT_CAP` (192 today) -- the
@@ -319,8 +336,11 @@ describe('session title overlay, end to end', () => {
       ),
     );
     expect(new Set(overlay.generated.annotations.keys())).toEqual(expectedIds);
-  });
+  }, 90_000);
 
+  // Same reasoning as above, roughly doubled: two rounds of up to `CAP`
+  // writes each (~384 total), plus the prune sweep's deletes. ~43ms
+  // locally; 120s gives a slow CI disk real headroom.
   it('stays bounded and holds the newest set after the selected window rotates', () => {
     const stateDbPath = path.join(homeDirectory, 'state_5.sqlite');
     const importWhenSeconds = Math.floor(IMPORT_WHEN.getTime() / 1000);
@@ -398,8 +418,10 @@ describe('session title overlay, end to end', () => {
     expect(new Set(secondOverlay.generated.annotations.keys())).toEqual(
       expectedIds,
     );
-  });
+  }, 120_000);
 
+  // Same reasoning as the first bulk test above: up to `CAP` writes plus a
+  // real prune pass. ~23ms locally; 90s headroom for a slow CI disk.
   it('never touches a declared annotation while pruning an over-cap generated channel', () => {
     const declaredSessionId = 'declared-session-must-survive';
     const declared = executeSessionTitleAnnotationCommand(
@@ -446,7 +468,7 @@ describe('session title overlay, end to end', () => {
     expect(overlay.declared.annotations.get(declaredSessionId)?.title).toBe(
       'A deliberately chosen title',
     );
-  });
+  }, 90_000);
 
   it('excludes rows outside the recency window from a real import', () => {
     const stateDbPath = path.join(homeDirectory, 'state_5.sqlite');

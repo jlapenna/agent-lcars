@@ -679,6 +679,11 @@ describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
     expect(fs.readdirSync(directory(homeDirectory))).toEqual([]);
   });
 
+  // Explicit generous timeout (vitest's default is 5000ms): 300 real
+  // individually fsync'd writes through the real writer is genuine bulk
+  // real-filesystem work, not a fixture shortcut to optimize away. ~24ms
+  // locally; timed out on a GitHub-hosted runner's slower disk (issue
+  // #1224 CI follow-up) -- 90s gives that runner real headroom.
   it('never deletes a declared title purely for count, however many are inside the horizon', () => {
     const homeDirectory = home();
     // Comfortably past every count-based cap elsewhere in this issue
@@ -701,7 +706,7 @@ describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
     });
 
     expect(fs.readdirSync(directory(homeDirectory))).toHaveLength(total);
-  });
+  }, 90_000);
 
   it('fails soft when one entry cannot be deleted, and still prunes the rest', () => {
     const homeDirectory = home();
