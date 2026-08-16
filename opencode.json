@@ -18,9 +18,9 @@
       },
       "models": {
         "default": {
-          "name": "Spark Default (Gemma-4 31B, pinned production route — no swap dependency)",
+          "name": "Spark Default (DeepSeek-V4-Flash, pinned production route - no swap dependency). context 60000: see docs/opencode-context-limit.md - it is neither the backend's 262144 nor a guess, and changing it changes how often the agent loses its working memory.",
           "limit": {
-            "context": 24000,
+            "context": 60000,
             "output": 2048
           }
         }
