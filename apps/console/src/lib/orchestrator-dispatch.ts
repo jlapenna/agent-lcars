@@ -112,6 +112,8 @@ async function handleDispatchRun(
     issue: String(run.task.issue),
     mode: run.params?.mode ?? 'implement',
     reply: run.params?.reply ?? '',
+    runbook: run.params?.runbook ?? '',
+    context: run.params?.context ?? '',
     broker_intent_id: run.runId,
     broker_generation: parseGeneration(run.runId),
     broker_dispatch_token: crypto.randomUUID(),

@@ -20,13 +20,19 @@ vi.mock('jose', async (importOriginal) => {
 import {
   assertCompletionOidcClaims,
   assertReconcileOidcClaims,
+  assertRequestOidcClaims,
   verifyCompletionOidcToken,
+  verifyRequestOidcToken,
 } from './github-actions-oidc';
 
 // Matches the constants inlined into github-actions-oidc.ts (formerly
 // @agent-lcars/dispatch-reconcile, deleted in #1015 Wave 4).
 const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
 const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
+
+// Matches the constant inlined into github-actions-oidc.ts for #1215's
+// internal-workflow request path.
+const REQUEST_OIDC_AUDIENCE = 'agent-lcars-dispatch-request';
 
 const repository = 'jlapenna/agent-lcars';
 // #1190: a second repository admitted only once it is added to the
@@ -234,5 +240,166 @@ describe('verifyCompletionOidcToken repository allow-list (#1190)', () => {
     await expect(
       verifyCompletionOidcToken('token', [repository]),
     ).rejects.toThrow('allow-listed');
+  });
+});
+
+// #1215: the internal-workflow request path. Unlike the reconciler
+// (one pinned workflow) or completion's `job_workflow_ref` (one shared
+// finalizer), `workflow_ref` here is deliberately NOT pinned to a specific
+// file -- any of the caller repository's own main-branch workflows may
+// request work. See `isOwnWorkflowRefOnMain`'s doc comment for why that's
+// safe (branch-protected `main` means repo-maintainer-controlled code).
+const requestClaims = {
+  aud: REQUEST_OIDC_AUDIENCE,
+  repository,
+  repository_id: '1307149765',
+  run_id: '93099054125',
+  workflow_ref: `${repository}/.github/workflows/pr-heal.yml@refs/heads/main`,
+  ref: 'refs/heads/main',
+  event_name: 'schedule',
+};
+
+describe('GitHub Actions request OIDC claims (#1215)', () => {
+  it('accepts any of the repository’s own main-branch workflows', () => {
+    expect(assertRequestOidcClaims(requestClaims, repository)).toEqual({
+      repository,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
+    for (const workflowFile of [
+      'playbook-unstick-prs.yml',
+      'visual-refresh.yml',
+      'post-deploy-verify.yml',
+    ]) {
+      expect(
+        assertRequestOidcClaims(
+          {
+            ...requestClaims,
+            workflow_ref: `${repository}/.github/workflows/${workflowFile}@refs/heads/main`,
+          },
+          repository,
+        ),
+      ).toEqual({
+        repository,
+        repositoryId: 1_307_149_765,
+        runId: 93_099_054_125,
+      });
+    }
+  });
+
+  it.each(['schedule', 'workflow_dispatch', 'workflow_run', 'push'])(
+    'accepts the %s internal-caller event shape',
+    (eventName) => {
+      expect(
+        assertRequestOidcClaims(
+          { ...requestClaims, event_name: eventName },
+          repository,
+        ),
+      ).toMatchObject({ repository });
+    },
+  );
+
+  it.each([
+    [{ ...requestClaims, repository: 'attacker/fork' }, 'repository'],
+    [{ ...requestClaims, ref: 'refs/heads/feature' }, 'ref'],
+    [{ ...requestClaims, event_name: 'pull_request' }, 'event_name'],
+    [{ ...requestClaims, event_name: 'issue_comment' }, 'event_name'],
+    [{ ...requestClaims, repository_id: 'not-a-number' }, 'repository_id'],
+    [{ ...requestClaims, run_id: '0' }, 'run_id'],
+    [
+      // Another repo's workflow file, even with the right name -- the
+      // caller repo's own workflow_ref never actually takes this shape,
+      // but this proves the check compares against the CLAIMED
+      // repository, not just any repository.
+      {
+        ...requestClaims,
+        workflow_ref: `attacker/fork/.github/workflows/pr-heal.yml@refs/heads/main`,
+      },
+      'workflow_ref',
+    ],
+    [
+      // A nested path under workflows/ -- not a real GitHub Actions claim
+      // shape, but guards the parser against it anyway.
+      {
+        ...requestClaims,
+        workflow_ref: `${repository}/.github/workflows/nested/pr-heal.yml@refs/heads/main`,
+      },
+      'workflow_ref',
+    ],
+    [
+      // A reusable-workflow-call style `workflow_ref` pointing outside
+      // `.github/workflows/` entirely.
+      {
+        ...requestClaims,
+        workflow_ref: `${repository}/.github/actions/pr-heal.yml@refs/heads/main`,
+      },
+      'workflow_ref',
+    ],
+    [{ ...requestClaims, workflow_ref: undefined }, 'workflow_ref'],
+  ])('rejects a request caller with the wrong %s claim', (claims, field) => {
+    expect(() => assertRequestOidcClaims(claims, repository)).toThrow(field);
+  });
+});
+
+describe('verifyRequestOidcToken repository allow-list (#1215)', () => {
+  afterEach(() => {
+    jwtVerify.mockReset();
+  });
+
+  it('admits the default single home-repo token', async () => {
+    jwtVerify.mockResolvedValue({ payload: requestClaims });
+
+    await expect(
+      verifyRequestOidcToken('token', [repository]),
+    ).resolves.toEqual({
+      repository,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
+  });
+
+  it('admits an allow-listed second repo, held to its own workflow_ref', async () => {
+    jwtVerify.mockResolvedValue({
+      payload: {
+        ...requestClaims,
+        repository: secondRepo,
+        workflow_ref: `${secondRepo}/.github/workflows/pr-heal.yml@refs/heads/main`,
+      },
+    });
+
+    await expect(
+      verifyRequestOidcToken('token', [repository, secondRepo]),
+    ).resolves.toEqual({
+      repository: secondRepo,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
+  });
+
+  it('rejects a token claiming a repository outside the configured allow-list', async () => {
+    jwtVerify.mockResolvedValue({
+      payload: {
+        ...requestClaims,
+        repository: secondRepo,
+        workflow_ref: `${secondRepo}/.github/workflows/pr-heal.yml@refs/heads/main`,
+      },
+    });
+
+    // Allow-list omits secondRepo entirely.
+    await expect(verifyRequestOidcToken('token', [repository])).rejects.toThrow(
+      'allow-listed',
+    );
+  });
+
+  it('requests the dispatch-request audience, not the reconciler or completion one', async () => {
+    jwtVerify.mockResolvedValue({ payload: requestClaims });
+
+    await verifyRequestOidcToken('token', [repository]);
+
+    expect(jwtVerify).toHaveBeenCalledWith(
+      'token',
+      expect.anything(),
+      expect.objectContaining({ audience: REQUEST_OIDC_AUDIENCE }),
+    );
   });
 });

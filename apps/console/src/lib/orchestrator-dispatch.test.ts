@@ -137,14 +137,18 @@ describe('drainOutbox: dispatch-run', () => {
         'broker_dispatch_token',
         'broker_generation',
         'broker_intent_id',
+        'context',
         'issue',
         'mode',
         'reply',
+        'runbook',
       ].sort(),
     );
     expect(inputs.issue).toBe('7');
     expect(inputs.mode).toBe('implement');
     expect(inputs.reply).toBe('');
+    expect(inputs.runbook).toBe('');
+    expect(inputs.context).toBe('');
     expect(inputs.broker_intent_id).toBe(run.runId);
     expect(inputs.broker_generation).toBe('1');
     expect(inputs.broker_dispatch_token.length).toBeGreaterThanOrEqual(16);
@@ -178,6 +182,25 @@ describe('drainOutbox: dispatch-run', () => {
     const inputs = callBody(calls[0]!).inputs as Record<string, string>;
     expect(inputs.mode).toBe('reply');
     expect(inputs.reply).toBe('thanks for the update');
+    expect(inputs.broker_intent_id).toBe(run.runId);
+  });
+
+  // #1215: the request path's whole point is carrying these two through to
+  // the worker -- a label admission has no way to set either.
+  it('forwards runbook/context from run params verbatim', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator, 'req-1', {
+      mode: 'implement',
+      runbook: 'pr-heal',
+      context: 'nightly sweep',
+    });
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const inputs = callBody(calls[0]!).inputs as Record<string, string>;
+    expect(inputs.runbook).toBe('pr-heal');
+    expect(inputs.context).toBe('nightly sweep');
     expect(inputs.broker_intent_id).toBe(run.runId);
   });
 

@@ -9,6 +9,7 @@ import { AmbientTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
   handleCompletion,
+  handleDispatchRequest,
   handleReconcile,
   handleWebhookDelivery,
   type OrchestratorRouteDeps,
@@ -175,6 +176,121 @@ describe('handleWebhookDelivery', () => {
     expect(second).toEqual({ status: 200, body: { refused: 'task-busy' } });
     expect(calls).toHaveLength(0);
     expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+});
+
+describe('handleDispatchRequest', () => {
+  it('creates and dispatches a run, forwarding runbook/context to the worker', async () => {
+    const { deps, calls, store } = fixture();
+
+    const result = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 555,
+      body: {
+        issue: ISSUE.issue,
+        pipeline: 'claude',
+        runbook: 'pr-heal',
+        context: 'nightly sweep',
+      },
+    });
+
+    expect(result.status).toBe(200);
+    const runId = result.body['runId'] as string;
+    expect(runId).toBe(`${REPO}#42/r1`);
+    expect(result.body['dispatched']).toBe(true);
+
+    const dispatchCall = calls.find((c) =>
+      c.url.includes('/actions/workflows/'),
+    );
+    const inputs = JSON.parse(String(dispatchCall?.init.body)) as {
+      inputs: Record<string, string>;
+    };
+    expect(inputs.inputs.runbook).toBe('pr-heal');
+    expect(inputs.inputs.context).toBe('nightly sweep');
+
+    const run = await store.readRun(runId);
+    expect(run?.params).toEqual({
+      runbook: 'pr-heal',
+      context: 'nightly sweep',
+    });
+  });
+
+  it('maps a retried caller (same repo/issue/runbook/run id, no requestId) onto the same run', async () => {
+    const { deps, calls } = fixture();
+    const body = {
+      issue: ISSUE.issue,
+      pipeline: 'claude' as const,
+      runbook: 'pr-heal',
+    };
+
+    const first = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 555,
+      body,
+    });
+    calls.length = 0;
+
+    const second = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 555,
+      body,
+    });
+
+    expect(second).toEqual({
+      status: 200,
+      body: { duplicate: true, runId: first.body['runId'] },
+    });
+    expect(calls).toHaveLength(0); // no second dispatch attempt
+  });
+
+  it('a different caller run id mints a fresh request, refused as task-busy with the live runId', async () => {
+    const { deps, calls } = fixture();
+    const first = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 555,
+      body: { issue: ISSUE.issue, pipeline: 'claude', runbook: 'pr-heal' },
+    });
+    calls.length = 0;
+
+    const second = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 556, // a new workflow run -> a new default requestId
+      body: { issue: ISSUE.issue, pipeline: 'claude', runbook: 'pr-heal' },
+    });
+
+    expect(second).toEqual({
+      status: 200,
+      body: { refused: 'task-busy', runId: first.body['runId'] },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('honors an explicit requestId over the default digest', async () => {
+    const { deps } = fixture();
+    const first = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 555,
+      body: {
+        issue: ISSUE.issue,
+        pipeline: 'claude',
+        requestId: 'caller-chosen-key',
+      },
+    });
+
+    const second = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 999, // different caller run id, but the explicit key wins
+      body: {
+        issue: ISSUE.issue,
+        pipeline: 'claude',
+        requestId: 'caller-chosen-key',
+      },
+    });
+
+    expect(second).toEqual({
+      status: 200,
+      body: { duplicate: true, runId: first.body['runId'] },
+    });
   });
 });
 
