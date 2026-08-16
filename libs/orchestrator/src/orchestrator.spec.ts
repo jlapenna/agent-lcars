@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { isRefusal } from './decide';
+import {
+  type Decision,
+  isQueued,
+  isRefusal,
+  type Queued,
+  type Refusal,
+} from './decide';
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
-import { Orchestrator } from './orchestrator';
+import { Orchestrator, type RequestInput } from './orchestrator';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
@@ -51,9 +57,20 @@ class RacingOrchestrator extends Orchestrator {
     this.#race = race;
   }
 
+  // Mirrors `Orchestrator.request`'s own three overloads exactly -- a
+  // single (widened) override signature isn't assignable to an overloaded
+  // base method, since TS checks the override against each of the base's
+  // declared overloads, including their narrower per-shape return types.
+  override request(
+    input: RequestInput & { queueIfBusy?: false },
+  ): Promise<Decision | Refusal>;
+  override request(
+    input: RequestInput & { queueIfBusy: true },
+  ): Promise<Decision | Refusal | Queued>;
+  override request(input: RequestInput): Promise<Decision | Refusal | Queued>;
   override async request(
-    input: Parameters<Orchestrator['request']>[0],
-  ): ReturnType<Orchestrator['request']> {
+    input: RequestInput,
+  ): Promise<Decision | Refusal | Queued> {
     if (this.#armed && input.requestId.startsWith('retry:')) {
       this.#armed = false;
       await this.#race();
@@ -415,6 +432,180 @@ describe('auto-retry on loss', () => {
       activeRunId === undefined ? undefined : await store.readRun(activeRunId);
     expect(activeRun?.requestId).toBe('manual-race'); // the operator's run won
     expect(await store.listRuns(TASK)).toHaveLength(2); // original + operator's
+  });
+});
+
+describe('queueing (opt-in)', () => {
+  it('refuses a busy task by default -- queueIfBusy unset -- exactly as before', async () => {
+    const { store, orchestrator } = fixture();
+    await started(orchestrator, 'req-1');
+    const second = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'claude',
+    });
+    expect(second).toMatchObject({ refused: true, reason: 'task-busy' });
+    expect((await store.readTask(TASK))?.task.pendingRequest).toBeUndefined();
+  });
+
+  it('queues a request against a busy task instead of refusing it, when asked', async () => {
+    const { store, orchestrator } = fixture();
+    const first = await started(orchestrator, 'req-1');
+    const queued = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'codex',
+      params: { mode: 'reply' },
+      queueIfBusy: true,
+    });
+    expect(isQueued(queued)).toBe(true);
+    if (!isQueued(queued)) throw new Error('expected queued outcome');
+    expect(queued.task.pendingRequest).toEqual({
+      requestId: 'req-2',
+      pipeline: 'codex',
+      params: { mode: 'reply' },
+    });
+    // No run was started for the queued request: the live run is untouched
+    // and it's the only run that exists so far.
+    expect(queued.task.activeRunId).toBe(first.run.runId);
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+    expect(await store.readTask(TASK)).toMatchObject({
+      task: { pendingRequest: queued.task.pendingRequest },
+    });
+  });
+
+  it('still maps same-requestId dedup to the live run first, even with queueIfBusy set', async () => {
+    const { orchestrator } = fixture();
+    const first = await started(orchestrator, 'req-1');
+    const outcome = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      queueIfBusy: true,
+    });
+    expect(outcome).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: first.run.runId }),
+    });
+    expect(isQueued(outcome)).toBe(false);
+  });
+
+  it('replaces an earlier queued request with a later one -- last-write-wins, not a queue of queues', async () => {
+    const { store, orchestrator } = fixture();
+    await started(orchestrator, 'req-1');
+    await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'codex',
+      queueIfBusy: true,
+    });
+    const second = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-3',
+      pipeline: 'opencode',
+      params: { mode: 'reply' },
+      queueIfBusy: true,
+    });
+    expect(isQueued(second)).toBe(true);
+    if (!isQueued(second)) throw new Error('expected queued outcome');
+    expect(second.task.pendingRequest).toEqual({
+      requestId: 'req-3',
+      pipeline: 'opencode',
+      params: { mode: 'reply' },
+    });
+    expect((await store.readTask(TASK))?.task.pendingRequest?.requestId).toBe(
+      'req-3',
+    );
+  });
+
+  it('consumes the queued request into a fresh run atomically when the live run finishes', async () => {
+    const { store, orchestrator } = fixture();
+    const first = await started(orchestrator, 'req-1');
+    await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'codex',
+      params: { mode: 'reply' },
+      queueIfBusy: true,
+    });
+
+    const outcome = await orchestrator.report(first.run.runId, { ok: true });
+    if (isRefusal(outcome)) throw new Error('unexpected refusal');
+    expect(outcome.followUpRun).toMatchObject({
+      requestId: 'req-2',
+      pipeline: 'codex',
+      params: { mode: 'reply' },
+      state: 'pending',
+    });
+    expect(outcome.task.activeRunId).toBe(outcome.followUpRun?.runId);
+    expect(outcome.task.pendingRequest).toBeUndefined();
+    // Atomic: the settled run, the follow-up run, and its dispatch outbox
+    // entry all landed together with the task update.
+    expect(await store.readRun(outcome.followUpRun?.runId as string)).toEqual(
+      outcome.followUpRun,
+    );
+    expect((await store.readActiveRun(TASK))?.runId).toBe(
+      outcome.followUpRun?.runId,
+    );
+    // Both dispatch-run entries (the original request's, still unclaimed,
+    // and the follow-up run's) plus the settled run's report-outcome.
+    const outboxKinds = (await store.claimPendingOutbox(10))
+      .map((entry) => entry.kind)
+      .sort();
+    expect(outboxKinds).toEqual([
+      'dispatch-run',
+      'dispatch-run',
+      'report-outcome',
+    ]);
+  });
+
+  it('consumes the queued request into a fresh run atomically when the live run is canceled', async () => {
+    const { store, orchestrator } = fixture();
+    const first = await started(orchestrator, 'req-1');
+    await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'codex',
+      queueIfBusy: true,
+    });
+
+    const outcome = await orchestrator.cancel(first.run.runId, 'stop');
+    if (isRefusal(outcome)) throw new Error('unexpected refusal');
+    expect(outcome.followUpRun?.requestId).toBe('req-2');
+    expect(outcome.task.activeRunId).toBe(outcome.followUpRun?.runId);
+    expect(outcome.task.pendingRequest).toBeUndefined();
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
+  it('consumes the queued request into a fresh run atomically when the live run is lost, and it beats the auto-retry', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator, 'req-1');
+    await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'codex',
+      queueIfBusy: true,
+    });
+
+    clock.advanceMinutes(121);
+    const swept = await orchestrator.sweepExpired();
+
+    expect(swept.lost.map((r) => r.runId)).toEqual([run.runId]);
+    // The auto-retry's own request found the task already busy (the queued
+    // request's follow-up run took the lock first, in the same decision as
+    // the loss) and was refused -- so sweepExpired recorded no retry.
+    expect(swept.retried).toEqual([]);
+
+    const task = await store.readTask(TASK);
+    expect(task?.task.pendingRequest).toBeUndefined();
+    const activeRun = await store.readActiveRun(TASK);
+    expect(activeRun?.requestId).toBe('req-2'); // the queued request won
+    expect(activeRun?.pipeline).toBe('codex');
+    // consecutiveLost still carries over into the follow-up run's task,
+    // same as it would for any other request racing an expired lease.
+    expect(task?.task.consecutiveLost).toBe(1);
+    expect(await store.listRuns(TASK)).toHaveLength(2); // lost + queued follow-up
   });
 });
 

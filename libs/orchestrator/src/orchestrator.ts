@@ -5,6 +5,7 @@ import {
   expireLease,
   isRefusal,
   MAX_AUTO_RETRIES,
+  type Queued,
   type Refusal,
   renewLease,
   reportResult,
@@ -17,10 +18,10 @@ import {
   type VersionedTask,
 } from './store';
 
-type Decide = (
+type Decide<T extends Decision | Queued> = (
   task: VersionedTask | undefined,
   activeRun: Run | undefined,
-) => Promise<Decision | Refusal> | Decision | Refusal;
+) => Promise<T | Refusal> | T | Refusal;
 
 export interface Clock {
   now(): string;
@@ -40,28 +41,52 @@ export interface SweepResult {
  * Read → decide → apply, with one retry on a lost compare-and-set. The
  * decision layer is pure; this class is the only place I/O and time meet it.
  */
+export interface RequestInput {
+  taskId: TaskId;
+  requestId: string;
+  pipeline: string;
+  params?: Record<string, string>;
+  /** See `requestRun`'s own `queueIfBusy` doc comment in `decide.ts`. */
+  queueIfBusy?: boolean;
+}
+
 export class Orchestrator {
   constructor(
     private readonly store: OrchestratorStore,
     private readonly clock: Clock,
   ) {}
 
-  async request(input: {
-    taskId: TaskId;
-    requestId: string;
-    pipeline: string;
-    params?: Record<string, string>;
-  }): Promise<Decision | Refusal> {
-    return this.transact(input.taskId, async (task, activeRun) =>
-      requestRun({
-        now: this.clock.now(),
-        task: task?.task,
-        taskId: input.taskId,
-        activeRun,
-        requestId: input.requestId,
-        pipeline: input.pipeline,
-        ...(input.params === undefined ? {} : { params: input.params }),
-      }),
+  /**
+   * Three overloads, mirroring `requestRun`'s own: omitting `queueIfBusy`
+   * (or passing `false`) keeps the return type exactly `Decision | Refusal`,
+   * so every existing caller -- none of which pass the flag in this repo
+   * yet -- needs no changes at all; passing the literal `true` adds
+   * `Queued`; the general (non-literal `boolean`) fallback exists only so a
+   * caller forwarding a runtime flag value (or overriding this method, as
+   * the test double in `orchestrator.spec.ts` does) can still call/implement
+   * it without losing type safety.
+   */
+  request(
+    input: RequestInput & { queueIfBusy?: false },
+  ): Promise<Decision | Refusal>;
+  request(
+    input: RequestInput & { queueIfBusy: true },
+  ): Promise<Decision | Refusal | Queued>;
+  request(input: RequestInput): Promise<Decision | Refusal | Queued>;
+  async request(input: RequestInput): Promise<Decision | Refusal | Queued> {
+    return this.transact<Decision | Queued>(
+      input.taskId,
+      async (task, activeRun) =>
+        requestRun({
+          now: this.clock.now(),
+          task: task?.task,
+          taskId: input.taskId,
+          activeRun,
+          requestId: input.requestId,
+          pipeline: input.pipeline,
+          ...(input.params === undefined ? {} : { params: input.params }),
+          queueIfBusy: input.queueIfBusy,
+        }),
     );
   }
 
@@ -151,7 +176,10 @@ export class Orchestrator {
     return { lost, retried };
   }
 
-  async #once(taskId: TaskId, decide: Decide): Promise<Decision | Refusal> {
+  async #once<T extends Decision | Queued>(
+    taskId: TaskId,
+    decide: Decide<T>,
+  ): Promise<T | Refusal> {
     const task = await this.store.readTask(taskId);
     const activeRun = await this.store.readActiveRun(taskId);
     const outcome = await decide(task, activeRun);
@@ -163,10 +191,10 @@ export class Orchestrator {
     return outcome;
   }
 
-  private async transact(
+  private async transact<T extends Decision | Queued = Decision>(
     taskId: TaskId,
-    decide: Decide,
-  ): Promise<Decision | Refusal> {
+    decide: Decide<T>,
+  ): Promise<T | Refusal> {
     try {
       return await this.#once(taskId, decide);
     } catch (error) {
