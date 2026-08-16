@@ -2,10 +2,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { CLI_SESSION_RETENTION_DAYS } from '@agent-lcars/telemetry';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   clearSessionTitleAnnotation,
+  pruneGeneratedSessionTitleAnnotations,
+  pruneStaleDeclaredSessionTitleAnnotations,
   SESSION_TITLE_ANNOTATION_DIRECTORY,
   SessionTitleAnnotationWriterFileSystem,
   SessionTitleChannel,
@@ -445,5 +448,423 @@ describe('session-title annotation writer', () => {
       ? readAnnotation(homeDirectory)
       : undefined;
     expect(final === undefined || typeof final.title === 'string').toBe(true);
+  });
+});
+
+/** Real wall-clock offset, for tests below that age a real file's mtime and
+ * then ask whether it's inside/outside the retention horizon relative to
+ * the real "now" -- distinct from `WHEN` above, which only ever backs the
+ * writer's own `now` seam (the JSON body's `updatedAt` field), never a real
+ * file's actual on-disk mtime. */
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+describe('pruneGeneratedSessionTitleAnnotations', () => {
+  it('deletes generated finals not in the keep set, keeps those that are', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      'keep-me',
+      'kept',
+      GENERATED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionTitleAnnotation(
+      'drop-me',
+      'dropped',
+      GENERATED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+
+    pruneGeneratedSessionTitleAnnotations(
+      new Set(['keep-me']),
+      deps(homeDirectory),
+    );
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, GENERATED_TITLE_SUBDIRECTORY, 'keep-me'),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, GENERATED_TITLE_SUBDIRECTORY, 'drop-me'),
+      ),
+    ).toBe(false);
+  });
+
+  it('never touches the declared channel', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'declared must survive',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+
+    // An empty keep set is the most aggressive possible sweep -- if
+    // anything were going to leak across channels, this is where it would
+    // show up.
+    pruneGeneratedSessionTitleAnnotations(new Set(), deps(homeDirectory));
+
+    expect(
+      fs.existsSync(finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY)),
+    ).toBe(true);
+  });
+
+  it('ignores a stray temp file and a non-json entry rather than deleting them', () => {
+    const homeDirectory = home();
+    const generatedDirectory = directory(
+      homeDirectory,
+      GENERATED_TITLE_SUBDIRECTORY,
+    );
+    fs.mkdirSync(generatedDirectory, { recursive: true, mode: 0o700 });
+    const strayTemp = path.join(generatedDirectory, '.some-writer.tmp');
+    const strayOther = path.join(generatedDirectory, 'not-json.txt');
+    fs.writeFileSync(strayTemp, 'stray temp');
+    fs.writeFileSync(strayOther, 'stray other');
+
+    pruneGeneratedSessionTitleAnnotations(new Set(), deps(homeDirectory));
+
+    expect(fs.existsSync(strayTemp)).toBe(true);
+    expect(fs.existsSync(strayOther)).toBe(true);
+  });
+
+  it('is a no-op on a missing generated directory', () => {
+    const homeDirectory = home();
+    expect(() =>
+      pruneGeneratedSessionTitleAnnotations(new Set(), deps(homeDirectory)),
+    ).not.toThrow();
+  });
+
+  it('fails soft when one entry cannot be deleted, and still prunes the rest', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      'drop-a',
+      'a',
+      GENERATED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionTitleAnnotation(
+      'drop-b',
+      'b',
+      GENERATED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    const unlinkSync: SessionTitleAnnotationWriterFileSystem['unlinkSync'] = (
+      target,
+    ) => {
+      if (String(target).endsWith('drop-a.json')) {
+        throw new Error('undeletable');
+      }
+      return fs.unlinkSync(target);
+    };
+
+    expect(() =>
+      pruneGeneratedSessionTitleAnnotations(
+        new Set(),
+        deps(homeDirectory, { unlinkSync }),
+      ),
+    ).not.toThrow();
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, GENERATED_TITLE_SUBDIRECTORY, 'drop-a'),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, GENERATED_TITLE_SUBDIRECTORY, 'drop-b'),
+      ),
+    ).toBe(false);
+  });
+
+  it('never removes a directory occupying a would-be final name', () => {
+    const homeDirectory = home();
+    const generatedDirectory = directory(
+      homeDirectory,
+      GENERATED_TITLE_SUBDIRECTORY,
+    );
+    fs.mkdirSync(generatedDirectory, { recursive: true, mode: 0o700 });
+    const target = path.join(generatedDirectory, 'as-a-dir.json');
+    fs.mkdirSync(target);
+
+    pruneGeneratedSessionTitleAnnotations(new Set(), deps(homeDirectory));
+
+    expect(fs.statSync(target).isDirectory()).toBe(true);
+  });
+});
+
+describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
+  it('prunes a declared annotation older than CLI_SESSION_RETENTION_DAYS, keeps one inside it', () => {
+    const homeDirectory = home();
+    const staleId = 'declared-stale';
+    const freshId = 'declared-fresh';
+    writeSessionTitleAnnotation(
+      staleId,
+      'stale title',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionTitleAnnotation(
+      freshId,
+      'fresh title',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    const stale = daysAgo(CLI_SESSION_RETENTION_DAYS + 1);
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleId),
+      stale,
+      stale,
+    );
+    const fresh = daysAgo(CLI_SESSION_RETENTION_DAYS - 1);
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, freshId),
+      fresh,
+      fresh,
+    );
+
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleId),
+      ),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, freshId),
+      ),
+    ).toBe(true);
+  });
+
+  it('never collects a declared title written seconds ago', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'brand new',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(fs.existsSync(finalPath(homeDirectory))).toBe(true);
+  });
+
+  it('is a no-op on a missing or empty declared directory', () => {
+    const homeDirectory = home();
+    expect(() =>
+      pruneStaleDeclaredSessionTitleAnnotations({
+        homeDirectory,
+        now: () => new Date(),
+      }),
+    ).not.toThrow();
+    expect(fs.existsSync(directory(homeDirectory))).toBe(false);
+
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
+    expect(() =>
+      pruneStaleDeclaredSessionTitleAnnotations({
+        homeDirectory,
+        now: () => new Date(),
+      }),
+    ).not.toThrow();
+    expect(fs.readdirSync(directory(homeDirectory))).toEqual([]);
+  });
+
+  it('never deletes a declared title purely for count, however many are inside the horizon', () => {
+    const homeDirectory = home();
+    // Comfortably past every count-based cap elsewhere in this issue
+    // (`MAX_SESSION_TITLE_ANNOTATION_FILES` 256, `CODEX_NATIVE_TITLE_IMPORT
+    // _CAP` 192) -- this function has no count parameter at all, and this
+    // is the test that would catch one being added back by accident.
+    const total = 300;
+    for (let index = 0; index < total; index += 1) {
+      writeSessionTitleAnnotation(
+        `declared-${index}`,
+        `title ${index}`,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      );
+    }
+
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(fs.readdirSync(directory(homeDirectory))).toHaveLength(total);
+  });
+
+  it('fails soft when one entry cannot be deleted, and still prunes the rest', () => {
+    const homeDirectory = home();
+    const staleA = 'stale-a';
+    const staleB = 'stale-b';
+    writeSessionTitleAnnotation(
+      staleA,
+      'a',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionTitleAnnotation(
+      staleB,
+      'b',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    const stale = daysAgo(CLI_SESSION_RETENTION_DAYS + 5);
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleA),
+      stale,
+      stale,
+    );
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleB),
+      stale,
+      stale,
+    );
+    const unlinkSync: SessionTitleAnnotationWriterFileSystem['unlinkSync'] = (
+      target,
+    ) => {
+      if (String(target).endsWith(`${staleA}.json`)) {
+        throw new Error('undeletable');
+      }
+      return fs.unlinkSync(target);
+    };
+
+    expect(() =>
+      pruneStaleDeclaredSessionTitleAnnotations({
+        homeDirectory,
+        now: () => new Date(),
+        fileSystem: { unlinkSync },
+      }),
+    ).not.toThrow();
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleA),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleB),
+      ),
+    ).toBe(false);
+  });
+
+  it('deletes nothing when the injected clock is invalid, rather than guessing an age', () => {
+    const homeDirectory = home();
+    const staleId = 'declared-stale-invalid-clock';
+    writeSessionTitleAnnotation(
+      staleId,
+      'stale',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    const stale = daysAgo(CLI_SESSION_RETENTION_DAYS + 10);
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleId),
+      stale,
+      stale,
+    );
+
+    // A NaN cutoff makes every `mtimeMs >= cutoffMs` comparison false --
+    // without an explicit finiteness guard this would fall through to
+    // deleting literally everything instead of nothing. This is the
+    // regression test for that guard.
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => new Date(Number.NaN),
+    });
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleId),
+      ),
+    ).toBe(true);
+  });
+
+  it('deletes nothing when the injected clock throws', () => {
+    const homeDirectory = home();
+    const staleId = 'declared-stale-throwing-clock';
+    writeSessionTitleAnnotation(
+      staleId,
+      'stale',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    const stale = daysAgo(CLI_SESSION_RETENTION_DAYS + 10);
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleId),
+      stale,
+      stale,
+    );
+
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => {
+        throw new Error('clock unavailable');
+      },
+    });
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, staleId),
+      ),
+    ).toBe(true);
+  });
+
+  it('never touches the generated channel', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'generated must survive',
+      GENERATED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    const stale = daysAgo(CLI_SESSION_RETENTION_DAYS + 10);
+    fs.utimesSync(
+      finalPath(homeDirectory, GENERATED_TITLE_SUBDIRECTORY, SESSION_ID),
+      stale,
+      stale,
+    );
+
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, GENERATED_TITLE_SUBDIRECTORY, SESSION_ID),
+      ),
+    ).toBe(true);
+  });
+
+  it('ignores a stray temp file and a non-json entry rather than deleting them', () => {
+    const homeDirectory = home();
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
+    const strayTemp = path.join(directory(homeDirectory), '.some-writer.tmp');
+    const strayOther = path.join(directory(homeDirectory), 'not-json.txt');
+    fs.writeFileSync(strayTemp, 'stray temp');
+    fs.writeFileSync(strayOther, 'stray other');
+    const stale = daysAgo(CLI_SESSION_RETENTION_DAYS + 10);
+    fs.utimesSync(strayTemp, stale, stale);
+    fs.utimesSync(strayOther, stale, stale);
+
+    pruneStaleDeclaredSessionTitleAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(fs.existsSync(strayTemp)).toBe(true);
+    expect(fs.existsSync(strayOther)).toBe(true);
   });
 });

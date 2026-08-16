@@ -1,4 +1,8 @@
-import { isSafeIdentifier, truncateTitle } from '@agent-lcars/telemetry';
+import {
+  CLI_SESSION_RETENTION_DAYS,
+  isSafeIdentifier,
+  truncateTitle,
+} from '@agent-lcars/telemetry';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -30,6 +34,13 @@ export type SessionTitleChannel =
   typeof DECLARED_TITLE_SUBDIRECTORY | typeof GENERATED_TITLE_SUBDIRECTORY;
 
 type PinnedLstatSync = (filePath: string) => fs.Stats;
+/** Pinned to the plain-`string[]`, no-`withFileTypes` overload of
+ * `fs.readdirSync` -- the pruning sweeps below only ever need a name to
+ * re-`lstatSync` themselves (mirroring `clearSessionTitleAnnotation`'s own
+ * "trust `lstatSync`, not directory-entry type hints" posture), so pinning
+ * avoids the multi-overload union TypeScript would otherwise infer from
+ * `typeof fs.readdirSync`. */
+type PinnedReaddirSync = (directoryPath: string) => string[];
 
 export interface SessionTitleAnnotationWriterFileSystem {
   mkdirSync: typeof fs.mkdirSync;
@@ -37,6 +48,7 @@ export interface SessionTitleAnnotationWriterFileSystem {
   renameSync: typeof fs.renameSync;
   unlinkSync: typeof fs.unlinkSync;
   lstatSync: PinnedLstatSync;
+  readdirSync: PinnedReaddirSync;
   openSync: typeof fs.openSync;
   fsyncSync: typeof fs.fsyncSync;
   closeSync: typeof fs.closeSync;
@@ -63,6 +75,7 @@ const defaultFileSystem: SessionTitleAnnotationWriterFileSystem = {
   renameSync: fs.renameSync,
   unlinkSync: fs.unlinkSync,
   lstatSync: (filePath) => fs.lstatSync(filePath),
+  readdirSync: (directoryPath) => fs.readdirSync(directoryPath),
   openSync: fs.openSync,
   fsyncSync: fs.fsyncSync,
   closeSync: fs.closeSync,
@@ -246,5 +259,185 @@ export function clearSessionTitleAnnotation(
     // Raced away between the lstat above and this unlink -- the desired
     // end state (no final present) already holds either way.
     return { ok: isMissingFile(error) };
+  }
+}
+
+/**
+ * A well-formed final annotation filename's session id, or `undefined` for
+ * anything else -- an in-flight `.<id>.<random>.tmp` temp file (leading
+ * dot; also excluded because a leading `.` can never satisfy
+ * `isSafeIdentifier`), a stray non-`.json` entry, or a filename whose id
+ * portion fails that same safety check. Both pruning sweeps below use this
+ * as their sole filter for "is this something we're allowed to touch at
+ * all", before either one asks a more specific question (in the keep set?
+ * older than the horizon?) of what's left.
+ *
+ * Deliberately duplicated rather than imported from
+ * `session-title-annotation-source.ts`'s own private `filenameSessionId`:
+ * that module is this issue's read-only reader half (see AGENTS.md) and
+ * doesn't export it, and the two checks are simple enough that a shared
+ * import would trade a few lines of duplication for a cross-module
+ * coupling neither side asked for.
+ */
+function finalAnnotationSessionId(filename: string): string | undefined {
+  if (!filename.endsWith('.json')) return undefined;
+  const sessionId = filename.slice(0, -'.json'.length);
+  return isSafeIdentifier(sessionId) ? sessionId : undefined;
+}
+
+/**
+ * Deletes every final in the `generated` channel whose session id is not in
+ * `keepSessionIds` -- the importer's own bounded, recency-windowed
+ * selection for the run that just completed (see
+ * `codex-native-title-source.ts`'s `CODEX_NATIVE_TITLE_IMPORT_CAP`). This
+ * is what keeps that directory bounded across repeated runs: the query
+ * alone only bounds a single run's writes, but never removes what a
+ * *previous* run wrote and this run's window/cap no longer selects, so
+ * without this the directory would still accumulate past the reader's cap
+ * within a month as the selected set rotates (issue #1224).
+ *
+ * Safe to call after every import: the generated channel only ever holds
+ * machine-imported data that regenerates from the Codex store on the very
+ * next run, so removing an entry here costs nothing. Contrast
+ * `pruneStaleDeclaredSessionTitleAnnotations` below, which is deliberately
+ * far more conservative because a declared title does not regenerate from
+ * anything.
+ *
+ * Scope is hardcoded to `GENERATED_TITLE_SUBDIRECTORY`, not parameterized
+ * over `SessionTitleChannel` -- there is no legitimate reason to run a
+ * keep-set sweep over `declared`, and hardcoding the channel means a
+ * future call site cannot point this at the wrong directory by accident.
+ *
+ * Ignores (never deletes) anything that isn't a well-formed
+ * `<safeId>.json` regular file -- an in-flight temp file, a directory, a
+ * symlink, or unrelated debris someone dropped in the directory. Fails
+ * soft per entry: one undeletable file (permissions, a raced-away ENOENT,
+ * whatever) is simply left in place; it must never abort the sweep or take
+ * down the rest of the import.
+ */
+export function pruneGeneratedSessionTitleAnnotations(
+  keepSessionIds: ReadonlySet<string>,
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): void {
+  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
+  const directory = channelDirectory(
+    GENERATED_TITLE_SUBDIRECTORY,
+    dependencies,
+  );
+
+  let entries: string[];
+  try {
+    entries = fileSystem.readdirSync(directory);
+  } catch {
+    // Missing/unreadable directory -- nothing to prune. A later successful
+    // write recreates it anyway.
+    return;
+  }
+
+  for (const name of entries) {
+    const sessionId = finalAnnotationSessionId(name);
+    if (!sessionId || keepSessionIds.has(sessionId)) continue;
+
+    const target = path.join(directory, name);
+    try {
+      const stats = fileSystem.lstatSync(target);
+      // Never remove a symlink or directory occupying this name -- same
+      // "only ever touch what this writer itself produces" posture as
+      // `clearSessionTitleAnnotation` above.
+      if (!stats.isFile()) continue;
+      fileSystem.unlinkSync(target);
+    } catch {
+      // Fail soft per entry -- see doc comment above.
+    }
+  }
+}
+
+/**
+ * Deletes every final in the `declared` channel whose file is older than
+ * `CLI_SESSION_RETENTION_DAYS` (imported from `@agent-lcars/telemetry`'s
+ * `session-doc.ts`, not reinvented here -- that module's own comment
+ * explains why it's the right horizon to borrow: it's the point past which
+ * a `source: 'cli'` session doc itself becomes eligible for Firestore TTL
+ * deletion, so a declared title describing a session the console can no
+ * longer even display is already dead weight).
+ *
+ * Deliberately far more conservative than
+ * `pruneGeneratedSessionTitleAnnotations` above, because a declared title
+ * is a deliberate human or agent statement and deleting one is
+ * unrecoverable (see `writeSessionTitleAnnotation`'s own doc comment on
+ * this writer's threat model):
+ *
+ * - Age only, never count -- there is no cap parameter here at all, on
+ *   purpose. However many files are in this directory, one still inside
+ *   the retention horizon is never touched. If a host genuinely has, say,
+ *   256 live titled sessions still inside the window, discarding any of
+ *   them to satisfy a count would be discarding intent to solve a problem
+ *   that doesn't exist yet; the honest fix at that point is to revisit the
+ *   horizon, not to silently start deleting the oldest surviving titles.
+ * - Age is the file's own mtime, not `updatedAt` parsed back out of its
+ *   JSON body -- avoids a second parse of untrusted content just to decide
+ *   whether to delete it, and mtime already tracks exactly "when was this
+ *   last actually written": every publish in this writer goes through the
+ *   same write-then-rename, and rename updates mtime.
+ * - `now` comes through the same injectable clock seam as the rest of this
+ *   module (`dependencies.now`), for deterministic tests -- and a
+ *   throwing or invalid ("now" that can't produce a finite cutoff) clock
+ *   aborts the whole sweep rather than falling through to a `NaN` cutoff,
+ *   which would otherwise make every `mtimeMs >= cutoffMs` comparison
+ *   false and delete literally everything in the directory. A broken
+ *   clock must fail into "prune nothing", never "prune everything".
+ *
+ * Runs from the same host-side maintenance pass as the Codex import
+ * (`session-title-annotation-command.ts`'s `import-native` subcommand),
+ * not on a schedule of its own: the systemd timer that re-arms that import
+ * every 2 minutes
+ * (`deploy/systemd/agent-lcars-session-title-import.timer`) is the only
+ * recurring host-side hook this deployment has at all. A reader who finds
+ * declared-channel cleanup inside a Codex-titled import path may
+ * reasonably wonder why; this is the whole reason -- there is nowhere else
+ * to hang a second periodic job, and running it unconditionally (Codex DB
+ * present or not) is what actually gives every host this maintenance,
+ * since not every host runs Codex at all.
+ */
+export function pruneStaleDeclaredSessionTitleAnnotations(
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): void {
+  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
+  const directory = channelDirectory(DECLARED_TITLE_SUBDIRECTORY, dependencies);
+
+  let entries: string[];
+  try {
+    entries = fileSystem.readdirSync(directory);
+  } catch {
+    // Missing/unreadable directory -- nothing to prune.
+    return;
+  }
+
+  const clock = dependencies.now ?? (() => new Date());
+  let cutoffMs: number;
+  try {
+    cutoffMs =
+      clock().getTime() - CLI_SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  } catch {
+    return; // Clock unavailable -- see doc comment above.
+  }
+  if (!Number.isFinite(cutoffMs)) {
+    return; // Invalid Date (e.g. NaN) -- see doc comment above.
+  }
+
+  for (const name of entries) {
+    const sessionId = finalAnnotationSessionId(name);
+    if (!sessionId) continue;
+
+    const target = path.join(directory, name);
+    try {
+      const stats = fileSystem.lstatSync(target);
+      if (!stats.isFile()) continue;
+      if (stats.mtimeMs >= cutoffMs) continue; // still inside the horizon
+      fileSystem.unlinkSync(target);
+    } catch {
+      // Fail soft per entry -- one unreadable/undeletable file must never
+      // abort the sweep or the rest of the import.
+    }
   }
 }
