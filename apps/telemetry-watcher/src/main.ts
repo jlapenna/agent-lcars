@@ -117,8 +117,12 @@ function runRunnerSidecar(argv: string[]): void {
     process.on('SIGINT', () => shutdown('SIGINT'));
     // Intentionally does not exit — the daemon's own interval keeps the
     // process alive until claude.yml's "Finalize telemetry sidecar" step
-    // kills it by PID (see that step's sidecar.pid handling) and runs
-    // `runner finalize` (below) for the authoritative last write.
+    // kills it by PID. That kill now happens via sidecar-lifecycle.sh's
+    // `finalize` mode calling the generic job-daemon.sh's `stop`, which
+    // owns the PID file in its own per-name state dir (agent-lcars#1246
+    // moved PID tracking out of this script's own state dir) — only after
+    // that stop completes does `runner finalize` (below) run, for the
+    // authoritative last write.
   } catch (error) {
     logger.error(
       'agent-lcars-telemetry-watcher: runner sidecar crashed on startup; exiting 0 anyway (telemetry must never fail the agent job)',
