@@ -185,26 +185,31 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     const card = page.getByTestId('logical-work-card');
     await expect(card).toBeVisible();
     await expect(card.getByTestId('logical-work-state')).toHaveText('active');
-    await expect(card).toContainText('authoritative state rev');
     await expect(card).toContainText(`#${issueNumber}`);
 
-    // Broker decision: one accepted+dispatched generation, attributed to
-    // the `labeled` source event the one-write create+label call produced.
-    const intents = card.getByTestId('logical-work-intents');
-    await expect(intents).toBeVisible();
-    await expect(intents).toContainText('g1');
-    await expect(intents).toContainText('via labeled');
+    // #1183: this fixture's quick-task creation still simulates the legacy
+    // dispatch-broker's Firestore ledger write, not an
+    // `@agent-lcars/orchestrator` task/run write - task-detail.ts's
+    // authoritative read no longer sees it (see authoritative-task-state.ts's
+    // own doc comment), so the page falls back to its attempts-only
+    // provenance and the ledger-generation-only "Dispatch intents" list this
+    // used to also assert on no longer renders at all (empty
+    // `work.intents` - see logical-work-card.tsx's own conditional guard).
+    await expect(card).not.toContainText('authoritative state rev');
+    await expect(card.getByTestId('logical-work-intents')).toHaveCount(0);
 
-    // Attempt presentation (#306's ExecutionAttempt UI): one ledger-
-    // attributed, running attempt bound to that same generation - never
-    // collapsed, never a bare title/run-marker guess.
+    // Attempt presentation (#306's ExecutionAttempt UI): one running attempt
+    // bound to the fixture's own run-name marker - never collapsed, never a
+    // bare title guess. Its attribution reads `run marker` rather than
+    // `ledger`/`orchestrator` (neither authoritative source corroborates it
+    // here), but the marker-derived generation badge still renders.
     const attempts = card.getByTestId('logical-work-attempts');
     await expect(attempts).toContainText('Execution attempts (1)');
     await expect(attempts).toContainText('running');
-    await expect(attempts).toContainText('ledger');
+    await expect(attempts).toContainText('run marker');
     await expect(attempts).toContainText('g1');
 
-    // A clean single-generation dispatch renders no anomaly banner at all.
+    // A clean single-run dispatch renders no anomaly banner at all.
     await expect(card.getByTestId('logical-work-anomalies')).toHaveCount(0);
   });
 

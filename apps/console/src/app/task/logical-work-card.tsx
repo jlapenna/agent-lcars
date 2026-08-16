@@ -53,6 +53,7 @@ const STATE_COLORS: Record<LogicalWorkState, string> = {
 
 const ATTRIBUTION_LABELS: Record<AttemptAttribution, string> = {
   ledger: 'ledger',
+  orchestrator: 'orchestrator',
   'run-marker': 'run marker',
   'legacy-title': 'legacy title',
   unattributed: 'unattributed',

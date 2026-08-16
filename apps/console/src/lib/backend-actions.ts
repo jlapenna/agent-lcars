@@ -2,19 +2,22 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import {
   formatQuickTaskMarker,
+  isDispatchPipeline,
   parseTerminalQuickTaskBody,
   quickTaskDigest as sharedQuickTaskDigest,
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
-import { PipelineReassignmentError } from '@agent-lcars/dispatch-controller/main';
+import { isRefusal } from '@agent-lcars/orchestrator';
 
 import { issueNumberFromDisplayTitle } from './agent-activity';
+import { controlPlaneRepository } from './deployment';
 import {
   getGithubClient,
   primaryWatchedRepo,
   type WatchedRepo,
 } from './github-client';
 import { executeHostedControllerCommand } from './hosted-controller-command';
+import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
 import type { QuickTaskReceipt, QuickTaskRequest } from './quick-task-contract';
 import { deriveQuickTaskTitle } from './quick-task-evidence';
@@ -535,37 +538,62 @@ export async function dispatchUnstickPrs(
   }
 }
 
+/** A Retry click always falls back to this pipeline when the orchestrator
+ * has no prior run to read a pipeline from (a legacy-era task never worked
+ * under `@agent-lcars/orchestrator`, or a task the fleet has never touched
+ * at all). */
+const RETRIGGER_FALLBACK_PIPELINE: Pipeline = 'claude';
+
+export interface RetriggerOutcome {
+  /** True when no prior orchestrator run existed for this task, so the
+   * dispatch pipeline fell back to {@link RETRIGGER_FALLBACK_PIPELINE}
+   * instead of reading the task's own history. */
+  pipelineFallback: boolean;
+}
+
+/** The pipeline of a task's most recently created orchestrator run, or
+ * `undefined` when the task has no run history yet (see
+ * {@link RETRIGGER_FALLBACK_PIPELINE}). Falls back to `undefined` (rather
+ * than trusting an unrecognized string) for a run whose `pipeline` field
+ * predates the current pipeline vocabulary. */
+function latestOrchestratorPipeline(
+  runs: { pipeline: string; createdAt: string }[],
+): Pipeline | undefined {
+  const latest = runs
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .at(0);
+  return latest && isDispatchPipeline(latest.pipeline)
+    ? latest.pipeline
+    : undefined;
+}
+
+/**
+ * Re-requests work on a task through the orchestrator (#1183): unlike the
+ * legacy broker's label-driven admission, the orchestrator's `request()` is
+ * the one dispatch entry point, keyed by the task's own `TaskId` (issue
+ * number in the control-plane repository - orchestrator tracks no other
+ * repository, see `deployment.ts`'s `controlPlaneRepository`). A Retry click
+ * always mints a fresh idempotency key: unlike a webhook replay, there is no
+ * meaningful "same request" to converge on.
+ */
 export async function retriggerIssue(
   repo: WatchedRepo,
   issueNumber: number,
   callerId: string,
   note?: string,
-  pipeline: Pipeline = 'claude',
-): Promise<void> {
+): Promise<RetriggerOutcome> {
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
   }
-  const octokit = getGithubClient();
-  const integration = requireAgentIntegration(repo, pipeline);
-  // Pipeline names intentionally match the dispatch router's choice inputs.
-  const label = integration.label;
 
-  const { data: issue } = await octokit.rest.issues.get({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-  });
-  const hasLabel = issue.labels.some((issueLabel) =>
-    typeof issueLabel === 'string'
-      ? issueLabel === label
-      : issueLabel.name === label,
-  );
-  if (!hasLabel) {
-    throw new ActionError(
-      `Issue does not carry the ${label} label; nothing to retrigger`,
-      400,
-    );
-  }
+  const { store, orchestrator, drain } = createOrchestratorRuntime();
+  const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
+  const runs = await store.listRuns(taskId);
+  const previousPipeline = latestOrchestratorPipeline(runs);
+  const pipelineFallback = previousPipeline === undefined;
+  const pipeline = previousPipeline ?? RETRIGGER_FALLBACK_PIPELINE;
+  const integration = requireAgentIntegration(repo, pipeline);
 
   await clearNeedsHumanLabel(repo, issueNumber);
 
@@ -575,6 +603,7 @@ export async function retriggerIssue(
   // through the direct reply path, so dispatching here would double-run it.
   const trimmedNote = note?.trim();
   if (trimmedNote) {
+    const octokit = getGithubClient();
     await octokit.rest.issues.createComment({
       owner: repo.owner,
       repo: repo.name,
@@ -582,17 +611,28 @@ export async function retriggerIssue(
       body: trimmedNote,
     });
     if (containsReplyTrigger(trimmedNote, integration)) {
-      return;
+      return { pipelineFallback };
     }
   }
 
-  await executeHostedControllerCommand({
-    kind: 'retrigger',
-    repository: repo,
-    issueNumber,
+  const outcome = await orchestrator.request({
+    taskId,
+    requestId: `console-retry:${randomUUID()}`,
     pipeline,
-    requestId: callerId,
+    params: { mode: 'implement' },
   });
+  if (isRefusal(outcome)) {
+    if (outcome.reason === 'task-busy') {
+      throw new ActionError('A run is already active for this task', 409);
+    }
+    // `request()` only ever refuses with `task-busy` or `duplicate-request`
+    // (see decide.ts's `requestRun`), and the freshly minted requestId above
+    // can never collide with an existing run - any other outcome means the
+    // decision layer's contract changed underneath us.
+    throw new ActionError('Retrigger could not be processed', 500);
+  }
+  await drain();
+  return { pipelineFallback };
 }
 
 // The console's "hand this off to a different agent" action (#143) - e.g. a
@@ -601,17 +641,20 @@ export async function retriggerIssue(
 // pipeline label the issue carries rather than re-firing the one it already
 // has.
 //
-// #811: this used to be a direct `octokit.rest.issues.setLabels()` write -
-// a controller-relevant lifecycle mutation outside the authoritative
-// controller, unlike hosted admission and reconcile. It now delegates the
-// whole transition (validation against the *live* label state, the atomic
-// label swap, and recording it in the authoritative task record) to the
-// hosted controller through the same typed command boundary retriggerIssue
-// already uses, via a `reassign-pipeline` HostedControllerCommand. `callerId`
-// is the console's own stable per-click UUID (see retrigger-button.tsx's
-// `createRandomId()` sibling in item-overflow-menu.tsx): it becomes the
-// command's idempotency key, so a Server Action network retry converges on
-// the same transition instead of risking a second one.
+// #1183: this used to delegate the whole transition to the hosted
+// controller's `reassign-pipeline` command (a `DispatchLedger`-era concept -
+// see #811's history in git blame). The orchestrator has no notion of "a
+// pipeline label" at all (#1183's model is a per-task mutex over runs, not a
+// GitHub-label-driven admission loop), so this now does the two things a
+// reassignment actually means under that model directly: swap the issue's
+// own `agent:*` label (still the fleet's own routing/display truth - the
+// dashboard, RetriggerButton, and webhook-driven mention dispatch all read
+// it), then hand the task's lock to the new pipeline through the
+// orchestrator - canceling whatever run currently holds it before
+// requesting a fresh one. `callerId` remains the console's own stable
+// per-click UUID (see retrigger-button.tsx's `createRandomId()` sibling in
+// item-overflow-menu.tsx) for the malformed-input guard below; the
+// orchestrator idempotency key is minted fresh, same as retriggerIssue.
 export async function reassignPipeline(
   repo: WatchedRepo,
   issueNumber: number,
@@ -621,34 +664,71 @@ export async function reassignPipeline(
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
   }
-  // Repo-config gate, orthogonal to the controller's own generic label
-  // validation: does this specific watched repo even declare an integration
-  // for the target pipeline at all.
+  // Repo-config gate: does this specific watched repo even declare an
+  // integration for the target pipeline at all.
   const targetIntegration = requireAgentIntegration(repo, targetPipeline);
-  // This repo's own configured labels, resolved here (not reconstructed by
-  // the broker from the fleet-wide default): a watched repo's `agents`
-  // config can override the `agent:*` label per pipeline, and the broker has
-  // no notion of per-repo config of its own (#811 Codex review on #904).
+  // This repo's own configured labels (not the fleet-wide default): a
+  // watched repo's `agents` config can override the `agent:*` label per
+  // pipeline (#811 Codex review on #904).
   const pipelineLabels = supportedAgentPipelines(repo)
     .map((pipeline) => agentIntegration(repo, pipeline)?.label)
     .filter((label): label is string => Boolean(label));
 
-  try {
-    await executeHostedControllerCommand({
-      kind: 'reassign-pipeline',
-      repository: repo,
-      issueNumber,
-      targetPipeline,
-      targetLabel: targetIntegration.label,
-      pipelineLabels,
-      requestId: callerId,
-    });
-  } catch (error) {
-    if (error instanceof PipelineReassignmentError) {
-      throw new ActionError(error.message, 400);
-    }
-    throw error;
+  const octokit = getGithubClient();
+  const { data: issue } = await octokit.rest.issues.get({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+  });
+  const labels = issue.labels.map((label) =>
+    typeof label === 'string' ? label : (label.name ?? ''),
+  );
+  // Same reasoning as retriggerIssue's own clearNeedsHumanLabel call: a
+  // reassignment hands the task to a fresh agent, so any pending
+  // needs-human park state clears in the same atomic write rather than
+  // lingering under a pipeline label that no longer matches who owns it.
+  await octokit.rest.issues.setLabels({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+    labels: labels
+      .filter(
+        (label) =>
+          !pipelineLabels.includes(label) && label !== 'status:needs-human',
+      )
+      .concat(targetIntegration.label),
+  });
+
+  const { store, orchestrator, drain } = createOrchestratorRuntime();
+  const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
+  const activeRun = await store.readActiveRun(taskId);
+  if (activeRun) {
+    // `cancel` only ever refuses `unknown-run`/`run-not-live` - both mean
+    // the run already stopped being live between the read above and this
+    // call, which is exactly the outcome cancellation wants anyway.
+    await orchestrator.cancel(
+      activeRun.runId,
+      `reassigned to ${targetPipeline} from console`,
+    );
   }
+
+  const outcome = await orchestrator.request({
+    taskId,
+    requestId: `console-reassign:${randomUUID()}`,
+    pipeline: targetPipeline,
+    params:
+      activeRun?.params?.mode !== undefined
+        ? { mode: activeRun.params.mode }
+        : { mode: 'implement' },
+  });
+  if (isRefusal(outcome)) {
+    if (outcome.reason === 'task-busy') {
+      throw new ActionError('A run is already active for this task', 409);
+    }
+    // Same unreachable-in-practice guard as retriggerIssue's own request().
+    throw new ActionError('Reassignment could not be processed', 500);
+  }
+  await drain();
 }
 
 /** Assigns an unclaimed open issue to an agent pipeline. */

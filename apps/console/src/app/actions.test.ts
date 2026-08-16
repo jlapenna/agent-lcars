@@ -319,11 +319,13 @@ describe('agent-lcars Server Actions', () => {
       ]);
     });
 
-    it('retriggerIssue forwards the pipeline to retriggerIssueLib', async () => {
-      (retriggerIssueLib as Mock).mockResolvedValue(undefined);
+    it('retriggerIssue forwards the note to retriggerIssueLib and surfaces no note on a clean retry', async () => {
+      (retriggerIssueLib as Mock).mockResolvedValue({
+        pipelineFallback: false,
+      });
 
       await expect(
-        retriggerIssue(DEFAULT_REPO, 42, DISPATCH_ID, undefined, 'opencode'),
+        retriggerIssue(DEFAULT_REPO, 42, DISPATCH_ID, 'try again'),
       ).resolves.toEqual({
         ok: true,
       });
@@ -331,9 +333,25 @@ describe('agent-lcars Server Actions', () => {
         DEFAULT_REPO,
         42,
         DISPATCH_ID,
-        undefined,
-        'opencode',
+        'try again',
       );
+    });
+
+    // #1183: retriggerIssueLib no longer takes a caller-supplied pipeline -
+    // the orchestrator resolves it from the task's own run history, and
+    // surfaces whether it had to fall back to the console's own note field
+    // rather than a `message` (which is reserved for the failure case).
+    it("surfaces the orchestrator's pipeline-fallback note on success", async () => {
+      (retriggerIssueLib as Mock).mockResolvedValue({
+        pipelineFallback: true,
+      });
+
+      await expect(
+        retriggerIssue(DEFAULT_REPO, 42, DISPATCH_ID),
+      ).resolves.toEqual({
+        ok: true,
+        note: expect.stringContaining('claude'),
+      });
     });
 
     it('dispatchUnstickPrs returns { ok: true } and forwards the context', async () => {

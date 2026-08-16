@@ -698,7 +698,6 @@ export function ActionItemCard({
             <RetriggerButton
               repo={item.repo}
               issueNumber={item.number}
-              pipeline={pipeline}
               onError={setError}
               size="sm"
             />

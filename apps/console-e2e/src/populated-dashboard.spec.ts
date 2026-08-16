@@ -233,7 +233,7 @@ test.describe('populated dashboard', () => {
     await expect(recent.getByText('opencode', { exact: true })).toHaveCount(0);
   });
 
-  test('the primary Open task action reaches the canonical task page with the ledger-backed anomaly (#306)', async ({
+  test('the primary Open task action reaches the canonical task page with the duplicate-attempt anomaly (#306)', async ({
     page,
   }) => {
     await page.goto('/');
@@ -256,11 +256,12 @@ test.describe('populated dashboard', () => {
     const card = page.getByTestId('logical-work-card');
     await expect(card).toBeVisible();
     await expect(card.getByTestId('logical-work-state')).toHaveText('anomaly');
-    await expect(card).toContainText('authoritative state rev');
 
     // Both attempts remain visible on the canonical task page too - the
-    // ledger explains WHY they exist (one generation, one intent), the
-    // anomaly banner explains why there are two of them.
+    // anomaly banner explains why there are two of them. This duplicate-
+    // attempt anomaly is derived fresh from the live attempts themselves
+    // (duplicateAttemptAnomalies in logical-work.ts), independent of any
+    // ledger or orchestrator record, so it still renders correctly here.
     const attempts = card.getByTestId('logical-work-attempts');
     await expect(attempts.getByText(/queued/).first()).toBeVisible();
     await expect(attempts.getByText(/running/).first()).toBeVisible();
@@ -268,10 +269,15 @@ test.describe('populated dashboard', () => {
     const anomalies = card.getByTestId('logical-work-anomalies');
     await expect(anomalies).toContainText('2 claude attempts');
 
-    const intents = card.getByTestId('logical-work-intents');
-    await expect(intents).toBeVisible();
-    await expect(intents).toContainText('g1');
-    await expect(intents).toContainText('via labeled');
+    // #1183: this fixture predates `@agent-lcars/orchestrator` (no
+    // orchestrator task/run doc is seeded for it, only the legacy ledger
+    // doc task-detail.ts no longer reads), so the page's provenance line
+    // reads "no authoritative lifecycle state" instead of an authoritative
+    // revision, and the ledger-generation-only "Dispatch intents" list this
+    // used to also assert on (`g1`/`via labeled`) no longer renders at all -
+    // see logical-work-card.tsx's own conditional guard.
+    await expect(card).not.toContainText('authoritative state rev');
+    await expect(card.getByTestId('logical-work-intents')).toHaveCount(0);
   });
 
   test('renders the sessions archive and an issue-agent detail page', async ({

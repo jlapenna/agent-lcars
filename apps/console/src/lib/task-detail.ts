@@ -1,8 +1,12 @@
+import { type DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { cacheLife, cacheTag } from 'next/cache';
 
 import { type ActionItem, classifyIssue } from './action-items';
-import { readAuthoritativeTaskStates } from './authoritative-task-state';
+import {
+  type AuthoritativeTaskState,
+  readAuthoritativeTaskStates,
+} from './authoritative-task-state';
 import { isNotFound } from './backend-actions';
 import { GITHUB_DATA_TAG } from './cache-tags';
 import {
@@ -19,7 +23,13 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { enrichItems, type ItemEnrichment } from './item-enrichment';
-import { deriveLogicalWork, type LogicalWork } from './logical-work';
+import {
+  deriveLogicalWork,
+  type ExecutionAttempt,
+  type LogicalWork,
+  type LogicalWorkAnomaly,
+  type LogicalWorkState,
+} from './logical-work';
 import { taskRefKey } from './watched-repo';
 
 export type TaskDetailResult =
@@ -195,15 +205,23 @@ export async function getTaskDetail(
   const authoritative = await readAuthoritativeTaskStates([
     { repository: repo, issueNumber },
   ]);
-  const authoritativeState = authoritative.states.get(key);
+  const humanNeeded = labels.includes('status:needs-human');
+  const mergedDeliverables = new Set(
+    (itemEnrichment?.mergedDeliverables ?? []).map(
+      (deliverable) => deliverable.number,
+    ),
+  );
+  // No `ledgers` map any more (#1183): the legacy dispatch-controller's
+  // `DispatchLedger` is gone from this page's own read path entirely.
+  // `deriveLogicalWork` still does the one join it's needed for here -
+  // attributing raw GitHub Actions attempts to `taskMeta`/`unavailableTaskKeys`
+  // - and degrades every task to its `legacy`/`unavailable` attempts-only
+  // provenance, exactly as it already does for any task with no ledger.
+  // `applyOrchestratorTruth` below then overlays the real authoritative
+  // truth - the orchestrator's own task+run history - on top of that.
   const { work } = deriveLogicalWork({
     attempts: allAttempts,
-    ledgers: authoritativeState
-      ? new Map([[key, authoritativeState.controllerState]])
-      : new Map(),
-    authoritativeRevisions: authoritativeState
-      ? new Map([[key, authoritativeState.storageRevision]])
-      : new Map(),
+    ledgers: new Map(),
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta: new Map([
       [
@@ -213,26 +231,22 @@ export async function getTaskDetail(
           issueNumber,
           title: issue.title,
           url: issue.html_url,
-          humanNeeded: labels.includes('status:needs-human'),
+          humanNeeded,
         },
-      ],
-    ]),
-    mergedDeliverables: new Map([
-      [
-        key,
-        new Set(
-          (itemEnrichment?.mergedDeliverables ?? []).map(
-            (deliverable) => deliverable.number,
-          ),
-        ),
       ],
     ]),
   });
 
-  const task = work.find((w) => taskRefKey(w.task) === key);
+  const baseTask = work.find((w) => taskRefKey(w.task) === key);
   // Unreachable in practice - `taskMeta` above always seeds exactly this
   // key - but keeps the return type honest instead of a non-null assertion.
-  if (!task) return { status: 'not-found' };
+  if (!baseTask) return { status: 'not-found' };
+  const task = applyOrchestratorTruth(
+    baseTask,
+    authoritative.states.get(key),
+    mergedDeliverables,
+    humanNeeded,
+  );
 
   // Reuse the board's one authoritative action classifier instead of
   // recreating a detail-only partial `ActionItem`. This lets the canonical
@@ -255,4 +269,146 @@ export async function getTaskDetail(
     // comment).
     generatedAt: oldestFetchedAt(sourceFetchedAt, activityFetchedAt),
   };
+}
+
+/**
+ * Overlays `@agent-lcars/orchestrator`'s own task+run truth onto the
+ * attempts-only `LogicalWork` `deriveLogicalWork` already built from raw
+ * GitHub Actions runs (#1183). Absent authoritative state (no orchestrator
+ * task document - a repository outside `controlPlaneRepository()`, or a
+ * task the fleet has never touched) leaves `work` exactly as `attempts`
+ * alone already describe it, matching `deriveLogicalWork`'s own
+ * `legacy`/`unavailable` fallback behavior for "no ledger".
+ */
+function applyOrchestratorTruth(
+  work: LogicalWork,
+  state: AuthoritativeTaskState | undefined,
+  mergedDeliverables: ReadonlySet<number>,
+  humanNeeded: boolean,
+): LogicalWork {
+  if (!state) return work;
+
+  const { attempts, anomalies: orchestratorAnomalies } =
+    attributeAttemptsToOrchestrator(work.attempts, state, mergedDeliverables);
+  const anomalies: LogicalWorkAnomaly[] = [
+    ...work.anomalies,
+    ...orchestratorAnomalies,
+  ];
+  const orchestratorState = stateFromOrchestratorTask(state);
+  // Mirrors `deriveLogicalWork`'s own precedence (unavailable > anomaly >
+  // human-needed > the derived base state) - `work.state` here is exactly
+  // that base state's result, computed with an empty `ledgers` map, so
+  // 'unavailable' can only mean the read genuinely failed (in which case
+  // `state` above would also be undefined) and 'anomaly'/'human-needed' must
+  // still outrank the orchestrator's own reading of "what's active".
+  const nextState: LogicalWorkState =
+    work.state === 'unavailable'
+      ? 'unavailable'
+      : anomalies.length > 0
+        ? 'anomaly'
+        : humanNeeded
+          ? 'human-needed'
+          : orchestratorState;
+
+  return {
+    ...work,
+    attempts,
+    anomalies,
+    state: nextState,
+    provenance: { kind: 'authoritative-v1', revision: state.storageRevision },
+  };
+}
+
+/** A run's own state, coarsened onto `LogicalWorkState`: `pending` means
+ * "decided, dispatch not yet confirmed" (dispatching in the old ledger's own
+ * vocabulary); `running` is `active`; every terminal state (`finished`,
+ * `canceled`, `lost`) means the task is not currently being worked, exactly
+ * like the ledger's own `completed`/`dispatch-rejected` states did - the
+ * per-attempt `DispatchOutcomeBadge` remains where success/failure actually
+ * renders, not this coarse state. */
+function stateFromOrchestratorTask(
+  state: AuthoritativeTaskState,
+): LogicalWorkState {
+  const active =
+    state.activeRunId === undefined
+      ? undefined
+      : state.runs.find((run) => run.runId === state.activeRunId);
+  if (active) return active.state === 'pending' ? 'dispatching' : 'active';
+  const latest = state.runs
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .at(0);
+  return latest ? 'completed' : 'unknown';
+}
+
+/** Attributes GitHub Actions attempts to orchestrator runs by the same
+ * `[dispatch:gN:intentId]` run-name marker the legacy ledger join used
+ * (`attributeAttemptsToLedger` in logical-work.ts) - `orchestrator-dispatch.ts`
+ * mints its workflow-dispatch inputs under the identical `broker_intent_id`/
+ * `broker_generation` names, with `intentId` now literally the
+ * orchestrator's own `runId` (`{repo}#{issue}/r{generation}`), so the same
+ * marker still corroborates a real run. */
+function attributeAttemptsToOrchestrator(
+  attempts: ExecutionAttempt[],
+  state: AuthoritativeTaskState,
+  mergedDeliverables: ReadonlySet<number>,
+): { attempts: ExecutionAttempt[]; anomalies: LogicalWorkAnomaly[] } {
+  const byRunId = new Map(state.runs.map((run) => [run.runId, run]));
+  const anomalies: LogicalWorkAnomaly[] = [];
+  const attributed = attempts.map((attempt) => {
+    if (attempt.intentId === undefined) return attempt;
+    const run = byRunId.get(attempt.intentId);
+    if (!run) {
+      anomalies.push({
+        kind: 'attempt-ledger-mismatch',
+        detail: `Run ${attempt.id} carries intent ${attempt.intentId}, which is not in this task's orchestrator run history.`,
+      });
+      return attempt;
+    }
+    return {
+      ...attempt,
+      generation: generationFromRunId(run.runId) ?? attempt.generation,
+      attribution: 'orchestrator' as const,
+      outcome: outcomeFromRunResult(run, mergedDeliverables) ?? attempt.outcome,
+    };
+  });
+  return { attempts: attributed, anomalies };
+}
+
+/** A run's own id is `{repo}#{issue}/r{generation}` (see
+ * `libs/orchestrator/src/decide.ts`'s `requestRun`); this pulls the
+ * trailing generation number back out for display parity with the marker's
+ * own `g<generation>` badge. */
+function generationFromRunId(runId: string): number | undefined {
+  const match = /\/r(\d+)$/u.exec(runId);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * Maps a finished run's own `RunResult` (`{ok, summary?, ref?}` - see
+ * `libs/orchestrator/src/model.ts`) onto the existing `DispatchOutcomeKind`
+ * vocabulary as honestly as the orchestrator's own data allows. The
+ * orchestrator deliberately does not preserve the legacy worker's
+ * fine-grained failure classification (startup/trajectory/outcome-gate) -
+ * only a boolean `ok` - so an unsuccessful run reports no outcome kind at
+ * all here rather than guessing one; the raw GitHub Actions conclusion
+ * (via `classifyAgentRun`'s own fallback) still drives that attempt's
+ * status badge.
+ */
+function outcomeFromRunResult(
+  run: AuthoritativeTaskState['runs'][number],
+  mergedDeliverables: ReadonlySet<number>,
+): DispatchOutcomeKind | undefined {
+  if (run.state !== 'finished' || !run.result?.ok) return undefined;
+  const prNumber = pullRequestNumberFromRef(run.result.ref);
+  if (prNumber !== undefined && mergedDeliverables.has(prNumber)) {
+    return 'merged-deliverable';
+  }
+  return prNumber !== undefined ? 'pull-request' : 'unknown-success';
+}
+
+function pullRequestNumberFromRef(ref: string | undefined): number | undefined {
+  if (!ref) return undefined;
+  const match = /\/pull\/(\d+)$/u.exec(ref);
+  return match ? Number(match[1]) : undefined;
 }

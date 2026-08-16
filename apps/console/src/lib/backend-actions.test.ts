@@ -5,7 +5,7 @@ import {
   parseTerminalQuickTaskBody,
   quickTaskDigest as contractQuickTaskDigest,
 } from '@agent-lcars/dispatch-contracts';
-import { PipelineReassignmentError } from '@agent-lcars/dispatch-controller/main';
+import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import {
@@ -27,9 +27,16 @@ import {
 } from './backend-actions';
 import { getGithubClient } from './github-client';
 import { executeHostedControllerCommand } from './hosted-controller-command';
+import { drainOutbox } from './orchestrator-dispatch';
+import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
+// `controlPlaneRepository()`'s own fallback (see deployment.ts) - no env
+// var overrides it in this test environment (see orchestrator-routes.test.ts's
+// identical comment), so this is the repo retriggerIssue/reassignPipeline
+// build their orchestrator `TaskId` from regardless of `DEFAULT_REPO` above.
+const CONTROL_PLANE_REPO = 'jlapenna/agent-lcars';
 
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
@@ -44,10 +51,48 @@ vi.mock('./hosted-controller-command', () => ({
   executeHostedControllerCommand: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+vi.mock('./orchestrator-runtime', () => ({
+  createOrchestratorRuntime: vi.fn(),
+}));
+
 beforeEach(() => {
   (executeHostedControllerCommand as Mock).mockReset();
   (executeHostedControllerCommand as Mock).mockResolvedValue({ ok: true });
+  (createOrchestratorRuntime as Mock).mockReset();
 });
+
+/** Builds a fresh orchestrator runtime the same shape
+ * `orchestrator-runtime.ts`'s `createOrchestratorRuntime` does - a
+ * `MemoryStore`, an `Orchestrator` over it, and `drain` composed from
+ * `drainOutbox` with a fake `fetch` (see orchestrator-routes.test.ts's
+ * identical fixture) - then installs it as the mocked runtime backend-
+ * actions.ts's retriggerIssue/reassignPipeline read via
+ * `createOrchestratorRuntime()`. */
+function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
+  const clock = { now: () => now };
+  const store = new MemoryStore();
+  const orchestrator = new Orchestrator(store, clock);
+  const calls: { url: string }[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    calls.push({ url });
+    const status = url.includes('/actions/workflows/') ? 204 : 201;
+    return new Response(null, { status });
+  }) as typeof fetch;
+  const drain = () =>
+    drainOutbox({
+      store,
+      orchestrator,
+      githubToken: 'gh-test-token-0123456789',
+      fetchImpl,
+    });
+  (createOrchestratorRuntime as Mock).mockReturnValue({
+    store,
+    orchestrator,
+    drain,
+  });
+  return { store, orchestrator, calls };
+}
 
 describe('closeIssue', () => {
   function mockOctokit() {
@@ -827,199 +872,199 @@ describe('dispatchUnstickPrs', () => {
   });
 });
 
-describe('retriggerIssue (pipeline routing)', () => {
-  function mockOctokit(labels: string[]) {
-    const get = vi.fn().mockResolvedValue({ data: { labels } });
+describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
+  // retriggerIssue no longer checks GitHub labels at all - the orchestrator
+  // is the one dispatch entry point, and its `request()` is keyed by the
+  // task's own TaskId (issue number in `controlPlaneRepository()`, not the
+  // `repo` argument - see backend-actions.ts's own doc comment on this
+  // function). `getGithubClient()` is still needed for
+  // clearNeedsHumanLabel's label removal and an optional steering-note
+  // comment.
+  function mockOctokit() {
     const removeLabel = vi.fn().mockResolvedValue({});
-    const addLabels = vi.fn().mockResolvedValue({});
     const createComment = vi.fn().mockResolvedValue({});
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
-      rest: {
-        issues: { get, removeLabel, addLabels, createComment },
-        actions: { createWorkflowDispatch },
-      },
+      rest: { issues: { removeLabel, createComment } },
     });
-    return {
-      get,
-      removeLabel,
-      addLabels,
-      createComment,
-      createWorkflowDispatch,
-    };
+    return { removeLabel, createComment };
   }
 
-  it('defaults to cycling the claude label', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['agent:claude']);
+  it('falls back to claude and dispatches it when the task has no prior orchestrator run', async () => {
+    const { calls } = fixtureOrchestratorRuntime();
+    mockOctokit();
 
-    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
+    const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
-    expect(removeLabel).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent:claude' }),
-    );
-    expect(addLabels).not.toHaveBeenCalled();
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'retrigger',
-      repository: DEFAULT_REPO,
-      issueNumber: 2709,
-      pipeline: 'claude',
-      requestId: DISPATCH_ID,
-    });
+    expect(result).toEqual({ pipelineFallback: true });
+    expect(
+      calls.some((c) =>
+        c.url.includes(
+          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/claude.yml/dispatches`,
+        ),
+      ),
+    ).toBe(true);
   });
 
-  it('cycles the opencode label for the opencode pipeline', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['agent:opencode']);
-
-    await retriggerIssue(
-      DEFAULT_REPO,
-      2709,
-      DISPATCH_ID,
-      undefined,
-      'opencode',
-    );
-
-    expect(removeLabel).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent:opencode' }),
-    );
-    expect(addLabels).not.toHaveBeenCalled();
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'retrigger',
-      repository: DEFAULT_REPO,
-      issueNumber: 2709,
+  it("reads the task's latest orchestrator run for the dispatch pipeline instead of defaulting", async () => {
+    const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
+    mockOctokit();
+    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed',
       pipeline: 'opencode',
-      requestId: DISPATCH_ID,
     });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    // Settle the seeded run so the task's lock is free for retriggerIssue's
+    // own request below - only the pipeline history should matter here.
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
+
+    expect(result).toEqual({ pipelineFallback: false });
+    expect(
+      calls.some((c) =>
+        c.url.includes(
+          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/opencode.yml/dispatches`,
+        ),
+      ),
+    ).toBe(true);
+    expect((await store.listRuns(taskId)).length).toBe(2);
   });
 
-  it('400s when the issue lacks the target pipeline label', async () => {
-    mockOctokit(['agent:claude']);
+  it('refuses with a structured 409 when a run is already active for the task', async () => {
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    mockOctokit();
+    await orchestrator.request({
+      taskId: { repo: CONTROL_PLANE_REPO, issue: 2709 },
+      requestId: 'already-live',
+      pipeline: 'claude',
+    });
 
     await expect(
-      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, undefined, 'opencode'),
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
     ).rejects.toThrow(
-      'Issue does not carry the agent:opencode label; nothing to retrigger',
+      new ActionError('A run is already active for this task', 409),
     );
   });
 
-  it('posts the steering note and still cycles the label when the note carries no mention', async () => {
-    const { createComment, removeLabel, addLabels } = mockOctokit([
-      'agent:opencode',
-    ]);
+  it('posts the steering note and still dispatches when the note carries no mention', async () => {
+    const { calls } = fixtureOrchestratorRuntime();
+    const { createComment } = mockOctokit();
 
-    await retriggerIssue(
+    const result = await retriggerIssue(
       DEFAULT_REPO,
       2709,
       DISPATCH_ID,
       'try a different approach',
-      'opencode',
     );
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'try a different approach' }),
     );
-    expect(removeLabel).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'status:needs-human' }),
-    );
-    expect(addLabels).not.toHaveBeenCalled();
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'retrigger', pipeline: 'opencode' }),
-    );
+    expect(result.pipelineFallback).toBe(true);
+    expect(
+      calls.some((c) => c.url.includes('/actions/workflows/claude.yml/')),
+    ).toBe(true);
   });
 
-  it('skips the label cycle when the note already carries the pipeline mention (would double-dispatch)', async () => {
-    const { createComment, removeLabel, addLabels } = mockOctokit([
-      'agent:opencode',
-    ]);
+  it('skips the orchestrator request when the note already carries the resolved pipeline mention (would double-dispatch)', async () => {
+    const { calls } = fixtureOrchestratorRuntime();
+    const { createComment } = mockOctokit();
 
-    await retriggerIssue(
+    // No prior run - falls back to claude, whose reply trigger is '@claude'.
+    const result = await retriggerIssue(
       DEFAULT_REPO,
       2709,
       DISPATCH_ID,
-      '/oc please retry this',
-      'opencode',
+      '@claude please retry this',
     );
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: '/oc please retry this' }),
+      expect.objectContaining({ body: '@claude please retry this' }),
     );
-    // clearHumanNeededLabel legitimately calls removeLabel for the
-    // needs-human label before the note check - the agent label itself is
-    // what must be skipped.
-    expect(removeLabel).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent:opencode' }),
-    );
-    expect(addLabels).not.toHaveBeenCalled();
-    // clearNeedsHumanLabel's own reconcile ping still fires (the park-state
-    // label really was cleared just above), but the agent-triggering intent
-    // dispatch must stay skipped, or the /oc mention in the note would run
-    // the agent a second time - which is what this test guards against.
-    expect(executeHostedControllerCommand).toHaveBeenCalledTimes(1);
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'reconcile', issueNumber: 2709 }),
+    expect(result).toEqual({ pipelineFallback: true });
+    // The webhook-driven mention path is the sole trigger here - a direct
+    // request() alongside it would double-dispatch (see this function's own
+    // doc comment).
+    expect(calls.some((c) => c.url.includes('/actions/workflows/'))).toBe(
+      false,
     );
   });
 
-  it('a claude-pipeline note carrying /oc does not trigger the claude early-return', async () => {
-    const { removeLabel, addLabels } = mockOctokit(['agent:claude']);
-
-    await retriggerIssue(
-      DEFAULT_REPO,
-      2709,
-      DISPATCH_ID,
-      'please /oc retry this',
-      'claude',
-    );
-
-    expect(removeLabel).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'status:needs-human' }),
-    );
-    expect(addLabels).not.toHaveBeenCalled();
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'retrigger', pipeline: 'claude' }),
-    );
-  });
-
-  it('propagates an unavailable controller from an explicit retrigger', async () => {
-    mockOctokit(['agent:claude']);
-    (executeHostedControllerCommand as Mock)
-      .mockResolvedValueOnce({ ok: true })
-      .mockRejectedValueOnce(new Error('controller unavailable'));
+  it('400s on a malformed caller ID before ever touching the orchestrator', async () => {
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const requestSpy = vi.spyOn(orchestrator, 'request');
 
     await expect(
-      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
-    ).rejects.toThrow('controller unavailable');
-    expect(executeHostedControllerCommand).toHaveBeenCalledTimes(2);
+      retriggerIssue(DEFAULT_REPO, 2709, 'not-a-uuid'),
+    ).rejects.toThrow('A valid dispatch caller ID is required');
+    expect(requestSpy).not.toHaveBeenCalled();
   });
 });
 
-describe('reassignPipeline', () => {
-  // #811: reassignPipeline no longer touches octokit at all - it delegates
-  // the whole transition (live-label validation, the atomic label swap, and
-  // recording it in the authoritative task record) to the hosted controller
-  // through executeHostedControllerCommand, exactly as retriggerIssue
-  // already does. The controller's own validation/atomicity is covered at
-  // the dispatch-broker level (pipeline-reassignment.spec.ts); these tests
-  // cover the console-side contract: command shape, the caller-ID gate, the
-  // repo-integration pre-check, and typed-rejection translation.
+describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
+  // reassignPipeline still swaps the issue's own `agent:*` label directly
+  // (the dashboard/webhook-mention routing's own source of truth - see this
+  // function's doc comment), then hands the task's orchestrator lock to the
+  // new pipeline.
+  function mockOctokit(labels: string[] = []) {
+    const get = vi.fn().mockResolvedValue({ data: { labels } });
+    const setLabels = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { get, setLabels } },
+    });
+    return { get, setLabels };
+  }
 
-  it('delegates to the hosted controller with a reassign-pipeline command, resolving the fleet-wide default labels', async () => {
+  it('swaps the fleet-wide default label and requests the target pipeline when no run is live', async () => {
+    const { setLabels } = mockOctokit(['agent:codex']);
+    const { store, calls } = fixtureOrchestratorRuntime();
+
     await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
 
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith({
-      kind: 'reassign-pipeline',
-      repository: DEFAULT_REPO,
-      issueNumber: 2709,
-      targetPipeline: 'claude',
-      targetLabel: 'agent:claude',
-      pipelineLabels: ['agent:claude', 'agent:codex', 'agent:opencode'],
-      requestId: DISPATCH_ID,
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['agent:claude'] }),
+    );
+    expect(
+      calls.some((c) =>
+        c.url.includes(
+          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/claude.yml/dispatches`,
+        ),
+      ),
+    ).toBe(true);
+    const runs = await store.listRuns({
+      repo: CONTROL_PLANE_REPO,
+      issue: 2709,
     });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].pipeline).toBe('claude');
+  });
+
+  // A reassignment hands the task to a fresh agent, so any pending
+  // needs-human park state should clear in the same atomic label write -
+  // otherwise the issue is left carrying a pipeline label that no longer
+  // matches who owns the work alongside a stale "needs a human" flag.
+  it('clears status:needs-human in the same atomic label swap', async () => {
+    const { setLabels } = mockOctokit([
+      'agent:codex',
+      'status:needs-human',
+      'priority:high',
+    ]);
+    fixtureOrchestratorRuntime();
+
+    await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
+
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: ['priority:high', 'agent:claude'],
+      }),
+    );
   });
 
   // #811 Codex review on #904: a watched repo's own `agents` config can
-  // override the `agent:*` label per pipeline. reassignPipeline must resolve
-  // and forward THIS repo's actual configured labels, not the fleet-wide
-  // default, or the controller would validate/write the wrong label.
+  // override the `agent:*` label per pipeline - reassignPipeline must swap
+  // THIS repo's actual configured labels, not the fleet-wide default.
   it('resolves a custom per-repo label contract instead of the fleet-wide default', async () => {
     const customRepo = {
       ...DEFAULT_REPO,
@@ -1036,26 +1081,60 @@ describe('reassignPipeline', () => {
         },
       },
     };
+    const { setLabels } = mockOctokit(['bot:codex']);
+    fixtureOrchestratorRuntime();
 
     await reassignPipeline(customRepo, 2709, 'claude', DISPATCH_ID);
 
-    expect(executeHostedControllerCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targetPipeline: 'claude',
-        targetLabel: 'bot:claude',
-        pipelineLabels: ['bot:claude', 'bot:codex'],
-      }),
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['bot:claude'] }),
     );
   });
 
-  it('400s on a malformed caller ID before ever calling the controller', async () => {
+  it('cancels the live run before requesting the new pipeline, carrying its mode forward', async () => {
+    mockOctokit(['agent:codex']);
+    const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
+    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    await orchestrator.request({
+      taskId,
+      requestId: 'live-codex',
+      pipeline: 'codex',
+      params: { mode: 'review' },
+    });
+
+    await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
+
+    const runs = await store.listRuns(taskId);
+    expect(runs).toHaveLength(2);
+    expect(runs.find((r) => r.pipeline === 'codex')?.state).toBe('canceled');
+    const claudeRun = runs.find((r) => r.pipeline === 'claude');
+    expect(claudeRun?.params).toEqual({ mode: 'review' });
+    expect(
+      calls.some((c) =>
+        c.url.includes(
+          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/claude.yml/dispatches`,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('400s on a malformed caller ID before ever calling GitHub or the orchestrator', async () => {
+    const { setLabels } = mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const requestSpy = vi.spyOn(orchestrator, 'request');
+
     await expect(
       reassignPipeline(DEFAULT_REPO, 2709, 'claude', 'not-a-uuid'),
     ).rejects.toThrow('A valid dispatch caller ID is required');
-    expect(executeHostedControllerCommand).not.toHaveBeenCalled();
+    expect(setLabels).not.toHaveBeenCalled();
+    expect(requestSpy).not.toHaveBeenCalled();
   });
 
-  it('400s when the repo declares no integration for the target pipeline, without calling the controller', async () => {
+  it('400s when the repo declares no integration for the target pipeline, without calling GitHub or the orchestrator', async () => {
+    const { setLabels } = mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const requestSpy = vi.spyOn(orchestrator, 'request');
+
     await expect(
       reassignPipeline(
         { ...DEFAULT_REPO, agents: {} },
@@ -1064,32 +1143,8 @@ describe('reassignPipeline', () => {
         DISPATCH_ID,
       ),
     ).rejects.toThrow(/does not declare a claude agent integration/);
-    expect(executeHostedControllerCommand).not.toHaveBeenCalled();
-  });
-
-  it('translates a typed PipelineReassignmentError into a 400 ActionError', async () => {
-    (executeHostedControllerCommand as Mock).mockRejectedValueOnce(
-      new PipelineReassignmentError(
-        'already-targeted',
-        'Issue #2709 is already assigned to claude',
-      ),
-    );
-
-    await expect(
-      reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID),
-    ).rejects.toThrow(
-      new ActionError('Issue #2709 is already assigned to claude', 400),
-    );
-  });
-
-  it('propagates a non-rejection controller failure unchanged', async () => {
-    (executeHostedControllerCommand as Mock).mockRejectedValueOnce(
-      new Error('controller unavailable'),
-    );
-
-    await expect(
-      reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID),
-    ).rejects.toThrow('controller unavailable');
+    expect(setLabels).not.toHaveBeenCalled();
+    expect(requestSpy).not.toHaveBeenCalled();
   });
 });
 

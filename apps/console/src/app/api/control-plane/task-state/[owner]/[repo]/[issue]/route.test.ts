@@ -19,28 +19,23 @@ const params = Promise.resolve({
 beforeEach(() => {
   vi.clearAllMocks();
   readAuthoritativeTaskState.mockResolvedValue({
-    schema: 'agent-lcars.authoritative-task-state/v1',
-    task: {
-      repositoryId: 1_307_149_765,
-      repository: 'jlapenna/agent-lcars',
-      issue: 824,
-    },
+    schema: 'agent-lcars.authoritative-task-state/v2',
+    task: { repo: 'jlapenna/agent-lcars', issue: 824 },
     storageRevision: 9,
     updatedAt: '2026-08-09T00:00:00.000Z',
-    controllerState: { revision: 7 },
+    activeRunId: 'jlapenna/agent-lcars#824/r3',
+    runs: [],
   });
 });
 
 describe('GET /api/control-plane/task-state/:owner/:repo/:issue', () => {
   it('returns the exact no-store authoritative aggregate', async () => {
-    const response = await GET(
-      new Request('https://console.test/task-state?repositoryId=1307149765'),
-      { params },
-    );
+    const response = await GET(new Request('https://console.test/task-state'), {
+      params,
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(readAuthoritativeTaskState).toHaveBeenCalledWith({
-      repositoryId: 1_307_149_765,
       repository: 'jlapenna/agent-lcars',
       issue: 824,
     });
@@ -50,17 +45,24 @@ describe('GET /api/control-plane/task-state/:owner/:repo/:issue', () => {
   });
 
   it('fails closed before storage for another repository', async () => {
-    const response = await GET(
-      new Request('https://console.test/task-state?repositoryId=1307149765'),
-      {
-        params: Promise.resolve({
-          owner: 'someone',
-          repo: 'elsewhere',
-          issue: '824',
-        }),
-      },
-    );
+    const response = await GET(new Request('https://console.test/task-state'), {
+      params: Promise.resolve({
+        owner: 'someone',
+        repo: 'elsewhere',
+        issue: '824',
+      }),
+    });
     expect(response.status).toBe(404);
     expect(readAuthoritativeTaskState).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when no orchestrator task document exists for this issue', async () => {
+    readAuthoritativeTaskState.mockResolvedValue(undefined);
+
+    const response = await GET(new Request('https://console.test/task-state'), {
+      params,
+    });
+    expect(response.status).toBe(404);
+    expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });
