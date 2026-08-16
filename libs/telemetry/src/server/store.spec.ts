@@ -1,13 +1,14 @@
 import { Timestamp } from '@google-cloud/firestore';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import {
+  FieldValue,
   Firestore,
   getFirestore as getAdminFirestore,
 } from 'firebase-admin/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { SessionDoc } from '../lib/types';
+import { SessionDoc, SessionWrite } from '../lib/types';
 import {
   _resetForTesting,
   getAgentTelemetryWriterFirestore,
@@ -22,6 +23,7 @@ vi.mock('firebase-admin/app', () => ({
 vi.mock('firebase-admin/firestore', async () => ({
   getFirestore: vi.fn(),
   Timestamp: (await vi.importActual('@google-cloud/firestore')).Timestamp,
+  FieldValue: (await vi.importActual('@google-cloud/firestore')).FieldValue,
 }));
 
 vi.mock('@agent-lcars/util-server', async () => ({
@@ -50,6 +52,13 @@ function sessionDoc(overrides: Partial<SessionDoc> = {}): SessionDoc {
     deliverables: { prNumbers: [], commitShas: [] },
     ...overrides,
   } as SessionDoc;
+}
+
+function sessionWrite(
+  overrides: Partial<SessionDoc> = {},
+  clearFields: SessionWrite['clearFields'] = [],
+): SessionWrite {
+  return { doc: sessionDoc(overrides), clearFields };
 }
 
 describe('agent-telemetry store', () => {
@@ -99,7 +108,7 @@ describe('agent-telemetry store', () => {
     it('writes a session doc at sessions/{sessionId}', async () => {
       const doc = sessionDoc();
 
-      await upsertSession(doc);
+      await upsertSession({ doc, clearFields: [] });
 
       const snap = await fakeFirestore
         .collection('sessions')
@@ -113,7 +122,7 @@ describe('agent-telemetry store', () => {
     });
 
     it('writes expireAt as a native Firestore Timestamp, not the ISO string', async () => {
-      await upsertSession(sessionDoc());
+      await upsertSession(sessionWrite());
 
       const snap = await fakeFirestore
         .collection('sessions')
@@ -123,14 +132,41 @@ describe('agent-telemetry store', () => {
     });
 
     it('merges rather than overwrites on repeated upserts', async () => {
-      await upsertSession(sessionDoc({ turns: 1 }));
-      await upsertSession(sessionDoc({ turns: 2 }));
+      await upsertSession(sessionWrite({ turns: 1 }));
+      await upsertSession(sessionWrite({ turns: 2 }));
 
       const snap = await fakeFirestore
         .collection('sessions')
         .doc('session-1')
         .get();
       expect(snap.data()?.['turns']).toBe(2);
+    });
+
+    it('maps clearFields to FieldValue.delete() sentinels in the write', async () => {
+      await upsertSession(sessionWrite({}, ['status', 'statusUpdatedAt']));
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      // See apps/telemetry-watcher/src/lib/store.spec.ts's equivalent test
+      // for why reference equality against the singleton sentinel is the
+      // correct assertion here (FakeFirestore doesn't simulate Firestore's
+      // own delete semantics; this store module's job is only to translate
+      // clearFields into the right sentinel).
+      expect(snap.data()?.['status']).toBe(FieldValue.delete());
+      expect(snap.data()?.['statusUpdatedAt']).toBe(FieldValue.delete());
+    });
+
+    it('requests no field deletions when clearFields is empty', async () => {
+      await upsertSession(sessionWrite());
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      expect(snap.data()).not.toHaveProperty('status');
+      expect(snap.data()).not.toHaveProperty('statusUpdatedAt');
     });
   });
 });

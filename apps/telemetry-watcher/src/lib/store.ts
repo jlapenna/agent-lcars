@@ -1,13 +1,16 @@
 import { logger } from '@agent-lcars/logging';
-import { SessionDoc } from '@agent-lcars/telemetry';
-import { Firestore, Timestamp } from '@google-cloud/firestore';
+import { SessionWrite } from '@agent-lcars/telemetry';
+import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
 
 const AGENT_TELEMETRY_DATABASE_ID =
   process.env['AGENT_TELEMETRY_DATABASE_ID'] ?? '(default)';
 const SESSIONS_COLLECTION = 'sessions';
 
 export interface SessionStore {
-  upsertSession(doc: SessionDoc): Promise<void>;
+  /** Takes a {@link SessionWrite}, never a bare doc plus extra arguments —
+   * see that type's doc comment (`@agent-lcars/telemetry`'s `types.ts`) for
+   * why a caller cannot describe a write this value doesn't already carry. */
+  upsertSession(write: SessionWrite): Promise<void>;
 }
 
 export interface FirestoreStoreOptions {
@@ -37,10 +40,20 @@ export function createFirestoreStore(
   });
 
   return {
-    async upsertSession(doc: SessionDoc): Promise<void> {
+    async upsertSession(write: SessionWrite): Promise<void> {
+      const { doc, clearFields } = write;
       // `expireAt` must be written as a native Firestore Timestamp (not the
       // ISO string SessionDoc carries it as) or the sessions TTL policy
       // (issue #2708/#2761) never sees it as eligible for deletion.
+      //
+      // `clearFields` (issue #1257) maps to this SDK's own `FieldValue
+      // .delete()` — not `firebase-admin/firestore`'s re-export, which
+      // `libs/telemetry/src/server/store.ts` uses instead for the same
+      // reason that module's own comment explains for `Timestamp`: mixing
+      // the two SDKs' sentinel classes on one client risks a cross-chunk
+      // `instanceof` failure (#2762). This module is a plain
+      // `@google-cloud/firestore` client, so it stays on that package's own
+      // `FieldValue` throughout.
       await firestore
         .collection(SESSIONS_COLLECTION)
         .doc(doc.sessionId)
@@ -50,6 +63,9 @@ export function createFirestoreStore(
             ...(doc.expireAt && {
               expireAt: Timestamp.fromDate(new Date(doc.expireAt)),
             }),
+            ...Object.fromEntries(
+              clearFields.map((field) => [field, FieldValue.delete()]),
+            ),
           },
           { merge: true },
         );
@@ -65,10 +81,10 @@ export function createFirestoreStore(
  */
 export function createLogOnlyStore(): SessionStore {
   return {
-    async upsertSession(doc: SessionDoc): Promise<void> {
+    async upsertSession(write: SessionWrite): Promise<void> {
       logger.warn(
-        `[log-only store] no writer credentials configured; would upsert sessions/${doc.sessionId}`,
-        { doc },
+        `[log-only store] no writer credentials configured; would upsert sessions/${write.doc.sessionId}`,
+        { write },
       );
     },
   };

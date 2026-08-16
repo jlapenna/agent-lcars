@@ -220,6 +220,28 @@ describe('toSessionRow', () => {
     );
   });
 
+  it('carries the agent-declared status and its own age through, distinct from lastActivityAt (#1257)', () => {
+    const row = toSessionRow(
+      cliDoc({
+        lastActivityAt: '2026-07-10T10:09:00.000Z',
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T09:30:00.000Z',
+      }),
+      now,
+    );
+
+    expect(row.status).toBe('waiting on CI for #1247');
+    expect(row.statusUpdatedAt).toBe('2026-07-10T09:30:00.000Z');
+    expect(row.statusUpdatedAt).not.toBe(row.lastActivityAt);
+  });
+
+  it('omits status and statusUpdatedAt when the doc has none (#1257)', () => {
+    const row = toSessionRow(cliDoc(), now);
+
+    expect(row.status).toBeUndefined();
+    expect(row.statusUpdatedAt).toBeUndefined();
+  });
+
   it('sums input+output tokens', () => {
     expect(toSessionRow(cliDoc(), now).totalTokens).toBe(150);
   });

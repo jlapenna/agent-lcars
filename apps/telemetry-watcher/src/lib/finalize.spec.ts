@@ -1,4 +1,4 @@
-import { SessionDoc } from '@agent-lcars/telemetry';
+import { SessionDoc, SessionWrite } from '@agent-lcars/telemetry';
 import { describe, expect, it, vi } from 'vitest';
 
 import { finalizeSidecar } from './finalize';
@@ -77,8 +77,8 @@ const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
   const store: SessionStore = {
-    async upsertSession(doc: SessionDoc) {
-      upserts.push(doc);
+    async upsertSession(write: SessionWrite) {
+      upserts.push(write.doc);
     },
   };
   return { store, upserts };
@@ -417,11 +417,11 @@ describe('finalizeSidecar', () => {
     const uploadTranscript = vi.fn(async () => undefined);
     const upserts: SessionDoc[] = [];
     const store: SessionStore = {
-      async upsertSession(doc: SessionDoc) {
-        if (doc.sessionId === 'session-fail') {
+      async upsertSession(write: SessionWrite) {
+        if (write.doc.sessionId === 'session-fail') {
           throw new Error('unavailable');
         }
-        upserts.push(doc);
+        upserts.push(write.doc);
       },
     };
     const files = {

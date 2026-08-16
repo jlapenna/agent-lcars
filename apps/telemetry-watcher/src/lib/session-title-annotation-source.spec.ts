@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_SESSION_TITLE_ANNOTATION_BYTES,
   MAX_SESSION_TITLE_ANNOTATION_FILES,
+  readSessionStatusAnnotations,
+  readSessionStatusOverlay,
   readSessionTitleAnnotations,
   readSessionTitleOverlay,
   SessionTitleAnnotationDirectoryEntry,
@@ -16,6 +18,13 @@ const valid = JSON.stringify({
   sessionId: 'session-title-1',
   updatedAt: '2026-08-15T10:00:00.000Z',
   title: 'Annotated title',
+});
+
+const validStatus = JSON.stringify({
+  version: 1,
+  sessionId: 'session-status-1',
+  updatedAt: '2026-08-15T10:00:00.000Z',
+  status: 'waiting on CI for #1247',
 });
 
 function entry(
@@ -282,6 +291,123 @@ describe('readSessionTitleOverlay', () => {
     );
     expect(directories).toContain('/state/session-metadata');
     expect(directories).toContain('/state/native-titles');
+  });
+});
+
+describe('readSessionStatusAnnotations / readSessionStatusOverlay', () => {
+  it('parses a valid status final, keyed by its own sessionId', () => {
+    expect(
+      readSessionStatusAnnotations('/annotations', {
+        readDirectory: () => [entry('session-status-1.json')],
+        readFile: () => validStatus,
+      }),
+    ).toEqual(
+      new Map([
+        [
+          'session-status-1',
+          {
+            version: 1,
+            sessionId: 'session-status-1',
+            updatedAt: '2026-08-15T10:00:00.000Z',
+            status: 'waiting on CI for #1247',
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('rejects a title-shaped file (wrong field name) rather than parsing it as a status', () => {
+    expect(
+      readSessionStatusAnnotations('/annotations', {
+        readDirectory: () => [entry('session-title-1.json')],
+        readFile: () => valid,
+      }),
+    ).toEqual(new Map());
+  });
+
+  it('reports a directory that opens fine and has nothing in it as available with an empty map', () => {
+    const result = readSessionStatusOverlay('/state', {
+      readDirectory: () => [],
+    });
+
+    expect(result).toEqual({ available: true, annotations: new Map() });
+  });
+
+  it('reports a missing directory as unavailable', () => {
+    const result = readSessionStatusOverlay('/state', {
+      readDirectory: () => {
+        throw new Error('ENOENT');
+      },
+    });
+
+    expect(result).toEqual({ available: false, annotations: new Map() });
+  });
+
+  it('marks the directory unavailable when it overflows the file-count bound', () => {
+    const result = readSessionStatusOverlay('/state', {
+      readDirectory: () =>
+        Array.from(
+          { length: MAX_SESSION_TITLE_ANNOTATION_FILES + 1 },
+          (_, index) => entry(`session-${index}.json`),
+        ),
+    });
+
+    expect(result).toEqual({ available: false, annotations: new Map() });
+  });
+
+  it('skips a malformed sibling without marking the directory unavailable', () => {
+    const result = readSessionStatusOverlay('/state', {
+      readDirectory: () => [
+        entry('broken.json'),
+        entry('session-status-1.json'),
+      ],
+      readFile: (filePath) =>
+        filePath.endsWith('broken.json') ? '{partial' : validStatus,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.annotations.get('session-status-1')).toMatchObject({
+      status: 'waiting on CI for #1247',
+    });
+  });
+
+  it('reads session-status/ beneath the given state root', () => {
+    const readDirectory = vi.fn(
+      (
+        _directory: string,
+        _maxEntries: number,
+      ): SessionTitleAnnotationDirectoryEntry[] => [],
+    );
+    readSessionStatusOverlay('/state', { readDirectory });
+
+    expect(readDirectory.mock.calls.map(([directory]) => directory)).toEqual([
+      '/state/session-status',
+    ]);
+  });
+
+  it('reads a real valid status file end to end through the default readDirectory/readFile', () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'session-status-annotation-'),
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, 'session-real.json'),
+        JSON.stringify({
+          version: 1,
+          sessionId: 'session-real',
+          updatedAt: '2026-08-15T10:00:00.000Z',
+          status: 'Real status',
+        }),
+      );
+
+      const result = readSessionStatusAnnotations(tmpDir);
+
+      expect(result.get('session-real')).toMatchObject({
+        status: 'Real status',
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

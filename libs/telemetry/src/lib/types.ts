@@ -110,6 +110,19 @@ export interface SessionSummary {
   title?: string;
   /** In-memory only; buildSessionDoc intentionally does not persist this. */
   titleSource?: SessionTitleSource;
+  /** What the agent says it is doing RIGHT NOW — `lcars session status
+   * "<text>"` (issue #1257), joined onto a pristine reducer summary the same
+   * way the daemon joins `title`'s declared/generated overlay (see
+   * `WatcherDaemon.tick`). Unlike `title`, there is only one source (the
+   * declared status annotation) and no precedence to compute: present means
+   * "joined this tick", absent means "no current status annotation, clear
+   * it" — see `buildSessionWrite`'s `clearFields` derivation, which reads
+   * this field's absence as the entire signal. */
+  status?: string;
+  /** ISO timestamp from the status annotation's own `updatedAt` — when the
+   * agent last said so, not when this tick happened to run. Only ever set
+   * alongside `status`; the two are always joined and cleared together. */
+  statusUpdatedAt?: string;
   deliverables: SessionDeliverables;
   /** Filenames the share-media hook has written under this session's share
    * dir on its host (see `discoverSessionArtifacts` in the watcher). */
@@ -168,6 +181,16 @@ interface BaseSessionDoc {
   model?: string;
   permissionMode?: string;
   title?: string;
+  /** See {@link SessionSummary.status}. Rendered under the title with its
+   * own age; hidden entirely once `liveness` is `ended` (a console
+   * concern — see `SessionSummary.status`'s doc comment for the
+   * agent-authorship story). Omitted (never written as `undefined`/`null`
+   * — repo Firestore integrity rule) when no current status annotation
+   * exists; a previously-written value is explicitly deleted via
+   * `SessionWrite.clearFields` rather than left stale. */
+  status?: string;
+  /** See {@link SessionSummary.statusUpdatedAt}. */
+  statusUpdatedAt?: string;
   deliverables: SessionDeliverables;
   /** ISO timestamp `lastActivityAt + CLI_SESSION_RETENTION_DAYS` (`cli`
    * docs) or `lastActivityAt + ISSUE_AGENT_SESSION_RETENTION_DAYS`
@@ -266,4 +289,38 @@ export interface BuildSessionDocOptions {
   repo?: { owner: string; name: string };
   /** `issue-agent` sessions only. */
   transcriptGcsUri?: string;
+}
+
+/**
+ * Closed union of `SessionDoc` fields a write can request DELETED from
+ * Firestore rather than merely omitted (issue #1257) — `status` and
+ * `statusUpdatedAt` today, always requested together (see
+ * {@link buildSessionWrite}'s `clearFields` derivation in `session-doc.ts`).
+ * Closed on purpose: nothing else on `SessionDoc` is deletable this way, so
+ * a caller can never mistakenly request deletion of a field this contract
+ * doesn't cover.
+ */
+export type ClearableSessionField = 'status' | 'statusUpdatedAt';
+
+/**
+ * The complete description of one Firestore write: the document to merge,
+ * PLUS which fields (if any) must be explicitly deleted rather than simply
+ * left out of the merge (Firestore's `set(..., {merge:true})` never removes
+ * a field just because the payload omits it — an explicit
+ * `FieldValue.delete()` sentinel is required, see `upsertSession` in both
+ * `store.ts` modules).
+ *
+ * This exists so `upsertSession` takes ONE value that IS both the write and
+ * the daemon's write-dedupe cache key, rather than a `doc` plus a separate
+ * `clearFields` argument. The two-argument shape looks harmless but isn't:
+ * a cache keyed only on the doc is narrower than the operation being
+ * performed — `(doc, clearFields)` — and anything in the operation but not
+ * in the key becomes a silent no-op by construction. See
+ * `buildSessionWrite`'s doc comment (`session-doc.ts`) for the full
+ * argument and `WatcherDaemon.tick`'s write cache for where this matters in
+ * practice.
+ */
+export interface SessionWrite {
+  readonly doc: SessionDoc;
+  readonly clearFields: readonly ClearableSessionField[];
 }

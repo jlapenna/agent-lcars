@@ -163,6 +163,81 @@ describe('SessionTable', () => {
     expect(screen.getAllByText('codex')).toHaveLength(2);
   });
 
+  it('renders the agent-declared status with its own age under the title in both views (#1257)', () => {
+    renderTable([
+      makeRow({
+        liveness: 'live',
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+      }),
+    ]);
+
+    expect(screen.getAllByText('waiting on CI for #1247')).toHaveLength(2);
+    expect(screen.getAllByTestId('session-status-line')).toHaveLength(2);
+  });
+
+  it('hides the status line for an ended session even when a status is present (#1257)', () => {
+    renderTable([
+      makeRow({
+        liveness: 'ended',
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+      }),
+    ]);
+
+    expect(screen.queryByText('waiting on CI for #1247')).toBeNull();
+    expect(screen.queryByTestId('session-status-line')).toBeNull();
+  });
+
+  it('renders no status line, and disturbs no other row content, when a row has no status (#1257)', () => {
+    renderTable([makeRow({ liveness: 'live' })]);
+
+    expect(screen.queryByTestId('session-status-line')).toBeNull();
+    expect(
+      screen.getAllByRole('link', { name: 'Fix flaky login test' }),
+    ).toHaveLength(2);
+  });
+
+  it('truncates a long status instead of breaking the row (#1257)', () => {
+    const longStatus =
+      'a deliberately very long agent-declared status describing exactly ' +
+      'what it is doing right now in far more detail than needed';
+    renderTable([
+      makeRow({
+        liveness: 'live',
+        status: longStatus,
+        statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+      }),
+    ]);
+
+    const nodes = screen.getAllByText(longStatus);
+    expect(nodes).toHaveLength(2);
+    for (const node of nodes) {
+      expect(node.getAttribute('data-truncate')).toBe('end');
+    }
+  });
+
+  it("shows the status's own age, not the session's lastActivityAt (#1257)", () => {
+    renderTable([
+      makeRow({
+        liveness: 'live',
+        lastActivityAt: '2026-07-10T10:09:00.000Z',
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T09:30:00.000Z',
+      }),
+    ]);
+
+    // RelativeTime renders client-side from `Date.now()` (see
+    // relative-time.test.tsx) - assert the wiring by checking the <time>
+    // under the status line carries statusUpdatedAt as its datetime, not
+    // lastActivityAt.
+    const statusLines = screen.getAllByTestId('session-status-line');
+    for (const line of statusLines) {
+      const time = line.querySelector('time');
+      expect(time?.getAttribute('datetime')).toBe('2026-07-10T09:30:00.000Z');
+    }
+  });
+
   it('renders one card per row, scoped under the mobile card list', () => {
     renderTable([
       makeRow({ sessionId: 's1' }),

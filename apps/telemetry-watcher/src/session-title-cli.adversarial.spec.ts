@@ -71,6 +71,17 @@ function declaredPath(home: string, sessionId: string): string {
   );
 }
 
+function statusPath(home: string, sessionId: string): string {
+  return path.join(
+    home,
+    '.local',
+    'state',
+    'agent-lcars',
+    'session-status',
+    `${sessionId}.json`,
+  );
+}
+
 describe('session-title CLI end-to-end process behavior', () => {
   it('writes a declared annotation from CLAUDE_CODE_SESSION_ID and exits 0', () => {
     const home = tempHome();
@@ -135,6 +146,48 @@ describe('session-title CLI end-to-end process behavior', () => {
     expect(fs.existsSync(declaredPath(home, 'claude-session-2'))).toBe(false);
   });
 
+  it('writes a status annotation and exits 0, separate from any declared title', () => {
+    const home = tempHome();
+    const env = {
+      ...baseEnv(home),
+      CLAUDE_CODE_SESSION_ID: 'claude-session-4',
+    };
+    expect(runCli(['session', 'title', 'a stable name'], env).status).toBe(0);
+
+    const run = runCli(['session', 'status', 'waiting on CI'], env);
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe('');
+    const annotation = JSON.parse(
+      fs.readFileSync(statusPath(home, 'claude-session-4'), 'utf8'),
+    );
+    expect(annotation).toMatchObject({
+      version: 1,
+      sessionId: 'claude-session-4',
+      status: 'waiting on CI',
+    });
+    // The title written moments earlier must be undisturbed.
+    expect(
+      JSON.parse(
+        fs.readFileSync(declaredPath(home, 'claude-session-4'), 'utf8'),
+      ),
+    ).toMatchObject({ title: 'a stable name' });
+  });
+
+  it('--clear removes a previously written status annotation and exits 0', () => {
+    const home = tempHome();
+    const env = {
+      ...baseEnv(home),
+      CLAUDE_CODE_SESSION_ID: 'claude-session-5',
+    };
+    expect(runCli(['session', 'status', 'to be cleared'], env).status).toBe(0);
+    expect(fs.existsSync(statusPath(home, 'claude-session-5'))).toBe(true);
+
+    const clear = runCli(['session', 'status', '--clear'], env);
+    expect(clear.status).toBe(0);
+    expect(fs.existsSync(statusPath(home, 'claude-session-5'))).toBe(false);
+  });
+
   it('exits non-zero with the generic message and writes nothing when no session id is set', () => {
     const home = tempHome();
     const run = runCli(['session', 'title', 'orphan title'], baseEnv(home));
@@ -179,6 +232,7 @@ describe('session-title CLI end-to-end process behavior', () => {
 
     expect(run.status).toBe(0);
     expect(run.stderr.toLowerCase()).toContain('session title');
+    expect(run.stderr.toLowerCase()).toContain('session status');
     expect(run.stderr.toLowerCase()).toContain('import-native');
   });
 

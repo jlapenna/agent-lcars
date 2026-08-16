@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import {
   applySessionTitleOverlay,
+  buildSessionWrite,
   SessionSummary,
 } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
@@ -16,9 +17,15 @@ import {
 import { executeSessionTitleAnnotationCommand } from './session-title-annotation-command';
 import {
   MAX_SESSION_TITLE_ANNOTATION_FILES,
+  readSessionStatusOverlay,
   readSessionTitleOverlay,
 } from './session-title-annotation-source';
-import { SESSION_STATE_DIRECTORY } from './session-title-paths';
+import {
+  DECLARED_TITLE_SUBDIRECTORY,
+  SESSION_STATE_DIRECTORY,
+  sessionTitleChannelDirectory,
+  STATUS_SUBDIRECTORY,
+} from './session-title-paths';
 
 /** Builds (or adds to, if `dbPath` already exists -- see the rotation test
  * below, which calls this twice against the same file to model new threads
@@ -505,5 +512,208 @@ describe('session title overlay, end to end', () => {
     expect(Array.from(overlay.generated.annotations.keys())).toEqual([
       'inside-window',
     ]);
+  });
+});
+
+/**
+ * The issue #1257 regression suite for the session-status channel, in the
+ * same "composition, not the pieces" spirit as the title-overlay suite
+ * above: drives the real `session status` command, reads back through the
+ * real `readSessionStatusOverlay`, and joins the result onto a summary the
+ * same way `WatcherDaemon.tick` does (see `daemon.ts`) before building the
+ * real `SessionWrite` with `buildSessionWrite` — no seam mocked anywhere in
+ * that chain.
+ */
+describe('session status channel, end to end', () => {
+  const sessionId = '69618f46-c334-4823-ba90-d484f6b64b06';
+  let homeDirectory: string;
+  let stateDirectory: string;
+
+  const claudeSummary = (): SessionSummary => ({
+    sessionId,
+    source: 'cli',
+    agent: 'claude-code',
+    startedAt: '2026-08-16T00:00:00.000Z',
+    lastActivityAt: '2026-08-16T01:00:00.000Z',
+    turns: 40,
+    toolCallCounts: {},
+    tokens: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    },
+    title: 'Run unit tests and fix failures',
+    titleSource: 'generated',
+    deliverables: { prNumbers: [], commitShas: [] },
+  });
+
+  beforeEach(() => {
+    homeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-status-'));
+    stateDirectory = path.join(homeDirectory, SESSION_STATE_DIRECTORY);
+  });
+
+  afterEach(() => {
+    fs.rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  /** Joins the current status overlay read onto a pristine summary exactly
+   * the way `WatcherDaemon.tick` does (see `daemon.ts`'s `summaryWithStatus`)
+   * — absence of an annotation for `sessionId` leaves the summary
+   * untouched, which is the entire mechanism `buildSessionWrite` reads as
+   * "clear it". */
+  function withStatus(summary: SessionSummary): SessionSummary {
+    const annotation =
+      readSessionStatusOverlay(stateDirectory).annotations.get(sessionId);
+    return annotation
+      ? {
+          ...summary,
+          status: annotation.status,
+          statusUpdatedAt: annotation.updatedAt,
+        }
+      : summary;
+  }
+
+  it('sets a status and sees it in the built write; clearing it requests the delete exactly once', () => {
+    const written = executeSessionTitleAnnotationCommand(
+      ['session', 'status', 'waiting on CI for #1247'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+    expect(written.ok).toBe(true);
+
+    const firstWrite = buildSessionWrite(withStatus(claudeSummary()), 'live');
+    expect(firstWrite.doc).toMatchObject({
+      status: 'waiting on CI for #1247',
+    });
+    expect(firstWrite.clearFields).toEqual([]);
+
+    // Rebuilding from an unchanged real read must produce a byte-identical
+    // write — this is the property a real daemon tick loop's write-dedupe
+    // cache (`lastWrittenWrites` in daemon.ts, keyed on the whole
+    // serialized write) relies on to send nothing on a repeat tick.
+    const repeatWrite = buildSessionWrite(withStatus(claudeSummary()), 'live');
+    expect(JSON.stringify(repeatWrite)).toBe(JSON.stringify(firstWrite));
+
+    const cleared = executeSessionTitleAnnotationCommand(
+      ['session', 'status', '--clear'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+    expect(cleared.ok).toBe(true);
+
+    const overlay = readSessionStatusOverlay(stateDirectory);
+    // Available with nothing in it — a real state, distinct from
+    // unreadable (same distinction the title channel's own reader makes).
+    expect(overlay.available).toBe(true);
+    expect(overlay.annotations.size).toBe(0);
+
+    const clearWrite = buildSessionWrite(withStatus(claudeSummary()), 'live');
+    // The delete is requested — exactly this once, next to nothing else
+    // about the write having changed.
+    expect(clearWrite.clearFields).toEqual(['status', 'statusUpdatedAt']);
+    expect(clearWrite.doc).not.toHaveProperty('status');
+    expect(clearWrite.doc).not.toHaveProperty('statusUpdatedAt');
+    expect(JSON.stringify(clearWrite)).not.toBe(JSON.stringify(firstWrite));
+
+    // A second build from the still-cleared real state produces the exact
+    // same write again — the cache dedupes this to zero further writes,
+    // rather than resending the delete on every subsequent tick forever.
+    const repeatClearWrite = buildSessionWrite(
+      withStatus(claudeSummary()),
+      'live',
+    );
+    expect(JSON.stringify(repeatClearWrite)).toBe(JSON.stringify(clearWrite));
+  });
+
+  it('never disturbs a declared title when setting/clearing status, and vice versa, including interleaved writes', () => {
+    executeSessionTitleAnnotationCommand(
+      ['session', 'title', 'Land session titles end to end'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+
+    executeSessionTitleAnnotationCommand(
+      ['session', 'status', 'first status'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+
+    let titleOverlay = readSessionTitleOverlay(stateDirectory);
+    let statusOverlay = readSessionStatusOverlay(stateDirectory);
+    expect(titleOverlay.declared.annotations.get(sessionId)?.title).toBe(
+      'Land session titles end to end',
+    );
+    expect(statusOverlay.annotations.get(sessionId)?.status).toBe(
+      'first status',
+    );
+
+    // Interleave: retitle, then re-status, then clear the title only.
+    executeSessionTitleAnnotationCommand(['session', 'title', 'Retitled'], {
+      homeDirectory,
+      env: { CLAUDE_CODE_SESSION_ID: sessionId },
+    });
+    titleOverlay = readSessionTitleOverlay(stateDirectory);
+    statusOverlay = readSessionStatusOverlay(stateDirectory);
+    expect(titleOverlay.declared.annotations.get(sessionId)?.title).toBe(
+      'Retitled',
+    );
+    expect(statusOverlay.annotations.get(sessionId)?.status).toBe(
+      'first status',
+    );
+
+    executeSessionTitleAnnotationCommand(
+      ['session', 'status', 'second status'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+    titleOverlay = readSessionTitleOverlay(stateDirectory);
+    statusOverlay = readSessionStatusOverlay(stateDirectory);
+    expect(titleOverlay.declared.annotations.get(sessionId)?.title).toBe(
+      'Retitled',
+    );
+    expect(statusOverlay.annotations.get(sessionId)?.status).toBe(
+      'second status',
+    );
+
+    executeSessionTitleAnnotationCommand(['session', 'title', '--clear'], {
+      homeDirectory,
+      env: { CLAUDE_CODE_SESSION_ID: sessionId },
+    });
+    titleOverlay = readSessionTitleOverlay(stateDirectory);
+    statusOverlay = readSessionStatusOverlay(stateDirectory);
+    expect(titleOverlay.declared.annotations.has(sessionId)).toBe(false);
+    // The status must survive the title clear untouched.
+    expect(statusOverlay.annotations.get(sessionId)?.status).toBe(
+      'second status',
+    );
+  });
+
+  it('keeps status and title in separate files on disk', () => {
+    executeSessionTitleAnnotationCommand(
+      ['session', 'title', 'A declared title'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+    executeSessionTitleAnnotationCommand(
+      ['session', 'status', 'A declared status'],
+      { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+    );
+
+    const declaredTitleDir = sessionTitleChannelDirectory(
+      stateDirectory,
+      DECLARED_TITLE_SUBDIRECTORY,
+    );
+    const statusDir = sessionTitleChannelDirectory(
+      stateDirectory,
+      STATUS_SUBDIRECTORY,
+    );
+    expect(declaredTitleDir).not.toBe(statusDir);
+
+    const titleFile = path.join(declaredTitleDir, `${sessionId}.json`);
+    const statusFile = path.join(statusDir, `${sessionId}.json`);
+    expect(fs.existsSync(titleFile)).toBe(true);
+    expect(fs.existsSync(statusFile)).toBe(true);
+    expect(titleFile).not.toBe(statusFile);
+    expect(JSON.parse(fs.readFileSync(titleFile, 'utf8'))).toMatchObject({
+      title: 'A declared title',
+    });
+    expect(JSON.parse(fs.readFileSync(statusFile, 'utf8'))).toMatchObject({
+      status: 'A declared status',
+    });
   });
 });

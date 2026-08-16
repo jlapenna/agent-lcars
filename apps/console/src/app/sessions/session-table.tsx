@@ -26,6 +26,7 @@ import {
 } from '../agent-activity-panel';
 import { formatCost, formatDuration } from '../format';
 import { RelativeTime } from '../relative-time';
+import { SessionStatusLine } from '../session-status-line';
 
 /**
  * The archive's dense session table - unlike the dashboard's In
@@ -78,6 +79,12 @@ function SessionCard({ row }: { row: SessionRow }) {
             {row.title}
           </Text>
         </Anchor>
+
+        <SessionStatusLine
+          status={row.status}
+          statusUpdatedAt={row.statusUpdatedAt}
+          liveness={row.liveness}
+        />
 
         {(row.issueNumber !== undefined || row.prUrls.length > 0) && (
           <Group gap={10} wrap="wrap">
@@ -186,20 +193,27 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                 <TableTd>
                   <SourceBadge source={row.source} size="xs" />
                 </TableTd>
-                <TableTd>
-                  <Group gap={6} wrap="nowrap">
-                    <Anchor
-                      href={`/sessions/${row.sessionId}`}
-                      size="sm"
-                      truncate
-                      className="session-title-link"
-                      style={{ maxWidth: 280, display: 'block' }}
-                    >
-                      {row.title}
-                    </Anchor>
-                    <AgentBadge agent={row.agent} />
-                    <RepoBadge repo={row.repo} />
-                  </Group>
+                <TableTd style={{ maxWidth: 280 }}>
+                  <Stack gap={2}>
+                    <Group gap={6} wrap="nowrap">
+                      <Anchor
+                        href={`/sessions/${row.sessionId}`}
+                        size="sm"
+                        truncate
+                        className="session-title-link"
+                        style={{ maxWidth: 280, display: 'block' }}
+                      >
+                        {row.title}
+                      </Anchor>
+                      <AgentBadge agent={row.agent} />
+                      <RepoBadge repo={row.repo} />
+                    </Group>
+                    <SessionStatusLine
+                      status={row.status}
+                      statusUpdatedAt={row.statusUpdatedAt}
+                      liveness={row.liveness}
+                    />
+                  </Stack>
                 </TableTd>
                 <TableTd>
                   {row.issueNumber !== undefined && row.issueUrl && (

@@ -119,6 +119,14 @@ export interface SessionRow {
    * doc comment in cli-sessions.ts for why this is always concrete here. */
   agent: SessionAgent;
   title: string;
+  /** Agent-declared "what it's doing right now" (#1257) - unlike `title`,
+   * has no fallback and is genuinely absent on the overwhelming majority of
+   * docs, so both this and `statusUpdatedAt` are left undefined rather than
+   * defaulted. `statusUpdatedAt` is the envelope's own `updatedAt`, not
+   * `lastActivityAt` - see SessionStatusLine's doc comment for why the two
+   * must not be conflated. */
+  status?: string;
+  statusUpdatedAt?: string;
   issueNumber?: number;
   issueUrl?: string;
   prUrls: { number: number; url: string }[];
@@ -171,6 +179,10 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     repo,
     agent: sessionAgent(doc),
     title,
+    ...(doc.status !== undefined && { status: doc.status }),
+    ...(doc.statusUpdatedAt !== undefined && {
+      statusUpdatedAt: doc.statusUpdatedAt,
+    }),
     ...(doc.source === 'issue-agent' &&
       doc.issueNumber !== undefined && {
         issueNumber: doc.issueNumber,

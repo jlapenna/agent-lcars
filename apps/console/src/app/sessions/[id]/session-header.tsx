@@ -23,6 +23,7 @@ import { ArtifactPreviewToggle } from '../../artifact-viewer';
 import { Eyebrow } from '../../eyebrow';
 import { formatCost, formatDuration } from '../../format';
 import { RelativeTime } from '../../relative-time';
+import { SessionStatusLine } from '../../session-status-line';
 import { TakeoverCommand } from '../../takeover-command';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -95,6 +96,12 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         </Badge>
         <AgentBadge agent={sessionAgent(doc)} />
       </Group>
+
+      <SessionStatusLine
+        status={doc.status}
+        statusUpdatedAt={doc.statusUpdatedAt}
+        liveness={liveness}
+      />
 
       <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
         {doc.model && <Field label="Model">{doc.model}</Field>}

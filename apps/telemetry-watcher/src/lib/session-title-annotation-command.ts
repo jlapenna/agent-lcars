@@ -4,10 +4,14 @@ import {
 } from './codex-native-title-source';
 import { resolveSessionId } from './session-id';
 import {
+  clearSessionStatusAnnotation,
   clearSessionTitleAnnotation,
   pruneGeneratedSessionTitleAnnotations,
   pruneStaleDeclaredSessionTitleAnnotations,
+  pruneStaleSessionStatusAnnotations,
   SessionTitleAnnotationWriterDependencies,
+  SessionTitleAnnotationWriterResult,
+  writeSessionStatusAnnotation,
   writeSessionTitleAnnotation,
 } from './session-title-annotation-writer';
 import {
@@ -32,7 +36,7 @@ export interface SessionTitleAnnotationCommandResult {
 }
 
 export const SESSION_TITLE_CLI_USAGE =
-  'usage: session title "<text>" | session title --clear | session import-native';
+  'usage: session title "<text>" | session title --clear | session status "<text>" | session status --clear | session import-native';
 
 function invalidCommand(): SessionTitleAnnotationCommandResult {
   return {
@@ -51,9 +55,30 @@ function isHelpRequest(argv: readonly string[]): boolean {
   );
 }
 
-function runTitleSubcommand(
+/**
+ * Shared grammar for `session title` and `session status`: both are
+ * `"<text>"` | `--clear`, resolving the current session id the same way,
+ * differing only in which write/clear function backs the text field
+ * (`title` writes into one of two tiered channels and so still needs a
+ * `channel` bound in via closure at each call site below; `status` has only
+ * one channel and takes no such argument at all — see
+ * `writeSessionStatusAnnotation`'s own doc comment for why). Factored out
+ * (issue #1257) so the grammar/dispatch logic itself — argument-count and
+ * flag checks, session-id resolution, the generic `write-failed` mapping —
+ * exists in exactly one place rather than two copies that could drift.
+ */
+function runTextFieldSubcommand(
   commandArgs: readonly string[],
   dependencies: SessionTitleAnnotationCommandDependencies,
+  write: (
+    sessionId: string,
+    text: string,
+    dependencies: SessionTitleAnnotationCommandDependencies,
+  ) => SessionTitleAnnotationWriterResult,
+  clear: (
+    sessionId: string,
+    dependencies: SessionTitleAnnotationCommandDependencies,
+  ) => SessionTitleAnnotationWriterResult,
 ): SessionTitleAnnotationCommandResult {
   const resolution = resolveSessionId(dependencies.env);
   if (!resolution.ok) {
@@ -62,11 +87,7 @@ function runTitleSubcommand(
   const sessionId = resolution.sessionId;
 
   if (commandArgs.length === 1 && commandArgs[0] === '--clear') {
-    return clearSessionTitleAnnotation(
-      sessionId,
-      DECLARED_TITLE_SUBDIRECTORY,
-      dependencies,
-    ).ok
+    return clear(sessionId, dependencies).ok
       ? { ok: true }
       : { ok: false, error: 'write-failed' };
   }
@@ -79,14 +100,46 @@ function runTitleSubcommand(
     return invalidCommand();
   }
 
-  return writeSessionTitleAnnotation(
-    sessionId,
-    commandArgs[0],
-    DECLARED_TITLE_SUBDIRECTORY,
-    dependencies,
-  ).ok
+  return write(sessionId, commandArgs[0], dependencies).ok
     ? { ok: true }
     : { ok: false, error: 'write-failed' };
+}
+
+function runTitleSubcommand(
+  commandArgs: readonly string[],
+  dependencies: SessionTitleAnnotationCommandDependencies,
+): SessionTitleAnnotationCommandResult {
+  return runTextFieldSubcommand(
+    commandArgs,
+    dependencies,
+    (sessionId, text, deps) =>
+      writeSessionTitleAnnotation(
+        sessionId,
+        text,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps,
+      ),
+    (sessionId, deps) =>
+      clearSessionTitleAnnotation(sessionId, DECLARED_TITLE_SUBDIRECTORY, deps),
+  );
+}
+
+/**
+ * What the agent says it is doing RIGHT NOW — `session status "<text>"` /
+ * `session status --clear` (issue #1257). Session id resolution is the
+ * exact same shared machinery `session title` uses (see
+ * `runTextFieldSubcommand`); only the underlying channel differs.
+ */
+function runStatusSubcommand(
+  commandArgs: readonly string[],
+  dependencies: SessionTitleAnnotationCommandDependencies,
+): SessionTitleAnnotationCommandResult {
+  return runTextFieldSubcommand(
+    commandArgs,
+    dependencies,
+    writeSessionStatusAnnotation,
+    clearSessionStatusAnnotation,
+  );
 }
 
 /**
@@ -167,15 +220,23 @@ function runImportNativeSubcommand(
       );
     }
   }
+  // The status channel is bounded and pruned the same way (age-based,
+  // CLI_SESSION_RETENTION_DAYS), from the same host-side maintenance pass,
+  // unconditionally (Codex DB or not) -- see
+  // pruneStaleSessionStatusAnnotations's own doc comment for why this must
+  // never be able to overflow the reader's MAX_SESSION_TITLE_ANNOTATION_FILES
+  // cap.
   pruneStaleDeclaredSessionTitleAnnotations(dependencies);
+  pruneStaleSessionStatusAnnotations(dependencies);
   return { ok: true };
 }
 
 /**
- * Executes the `session` command's three subcommands:
- * `session title "<text>"`, `session title --clear`, and
- * `session import-native`. Directory selection is never a command input --
- * each subcommand's channel is fixed by which of the two it is.
+ * Executes the `session` command's four subcommands: `session title
+ * "<text>"`, `session title --clear`, `session status "<text>"` / `session
+ * status --clear`, and `session import-native`. Directory selection is
+ * never a command input -- each subcommand's channel is fixed by which one
+ * it is.
  */
 export function executeSessionTitleAnnotationCommand(
   argv: readonly string[],
@@ -191,6 +252,10 @@ export function executeSessionTitleAnnotationCommand(
 
   if (argv[1] === 'title') {
     return runTitleSubcommand(argv.slice(2), dependencies);
+  }
+
+  if (argv[1] === 'status') {
+    return runStatusSubcommand(argv.slice(2), dependencies);
   }
 
   if (argv[1] === 'import-native') {
