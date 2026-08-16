@@ -19,6 +19,7 @@ describe('codexAdapter', () => {
         model: 'gpt-5.6',
         permissionMode: 'on-request',
         title: 'Fix telemetry support',
+        titleSource: 'inferred',
         turns: 1,
         toolCallCounts: { exec: 1 },
         tokens: {
@@ -60,6 +61,12 @@ describe('codexAdapter', () => {
         }),
       ]),
     ).toEqual([]);
+  });
+
+  it('never yields titleSource "declared" — a rollout-derived title is always "inferred", the only tier this adapter can populate (see applySessionTitleOverlay, which relies on producers never claiming the declared/generated tiers they did not earn)', () => {
+    const [summary] = codexAdapter.reduce(fixture);
+    expect(summary.titleSource).toBe('inferred');
+    expect(summary.titleSource).not.toBe('declared');
   });
 
   it('clamps uncached input at zero for inconsistent upstream totals', () => {

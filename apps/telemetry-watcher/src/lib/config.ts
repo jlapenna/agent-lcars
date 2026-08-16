@@ -9,6 +9,7 @@ import {
   defaultAntigravityWorkspacePrefixes,
 } from './antigravity-summary-source';
 import { checkoutRoots } from './default-checkout';
+import { SESSION_STATE_DIRECTORY } from './session-title-paths';
 import { WatchRootConfig } from './watch-roots';
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -41,6 +42,20 @@ export interface WatcherConfig extends SharedWatcherConfig {
    * `pollAntigravitySummaries`/`daemon.ts`), not a config-time one — this
    * stays set either way. */
   antigravitySummaryDb?: AntigravitySummaryDbConfig;
+  /** Optional session-title overlay root (issue #1212) — the local
+   * directory beneath which the declared-title writer and the Codex
+   * native-title importer each publish their own subdirectory (see
+   * `session-title-paths.ts`, `session-title-annotation-source.ts`).
+   * Default-enabled (see `defaultSessionStateDir` below), so this is only
+   * ever `undefined` when `AGENT_TELEMETRY_SESSION_STATE_DIR` is explicitly
+   * set to the empty string (opt-out, e.g. a host that shouldn't apply
+   * either overlay channel at all). Same convention as
+   * `antigravitySummaryDb` above — see that field's comment for why unset
+   * and empty differ. Neither channel subdirectory actually existing yet
+   * (e.g. a host with no Codex importer, so no `native-titles/`) is a
+   * *runtime* fail-soft concern (see `readSessionTitleOverlay`/`daemon.ts`),
+   * not a config-time one — this stays set either way. */
+  sessionStateDir?: string;
 }
 
 /** `~/.claude/projects` (or `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR` when set) —
@@ -78,6 +93,14 @@ export function defaultAntigravitySummaryDbPath(): string {
     'antigravity-cli',
     'conversation_summaries.db',
   );
+}
+
+/** `~/.local/state/agent-lcars` — the session-title overlay root (issue
+ * #1212), see `session-title-paths.ts`'s `SESSION_STATE_DIRECTORY`.
+ * Exported (like `defaultAntigravitySummaryDbPath` above) so tests/other
+ * callers can reference the same default without re-deriving it. */
+export function defaultSessionStateDir(): string {
+  return path.join(os.homedir(), SESSION_STATE_DIRECTORY);
 }
 
 function parseAllowlistCsv(raw: string): string[] {
@@ -260,6 +283,17 @@ export function loadConfig(): WatcherConfig {
           path: antigravityDbRaw ?? defaultAntigravitySummaryDbPath(),
           workspacePrefixes: defaultAntigravityWorkspacePrefixes(),
         };
+  // Default-enabled: unset means "use the default path", an explicit empty
+  // string means "disable the whole overlay" (e.g. a host that shouldn't
+  // apply declared/generated title overlays at all). Same convention as
+  // AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB above — see that comment for why
+  // unset and empty differ.
+  const sessionStateDirRaw = optional('AGENT_TELEMETRY_SESSION_STATE_DIR');
+  const sessionStateDir =
+    sessionStateDirRaw === ''
+      ? undefined
+      : (sessionStateDirRaw ?? defaultSessionStateDir());
+
   const metricsPort = Number(
     optional('AGENT_TELEMETRY_METRICS_PORT') ?? DEFAULT_METRICS_PORT,
   );
@@ -282,5 +316,6 @@ export function loadConfig(): WatcherConfig {
       optional('AGENT_TELEMETRY_METRICS_HOST') ?? DEFAULT_METRICS_HOST,
     metricsPort,
     ...(antigravitySummaryDb && { antigravitySummaryDb }),
+    ...(sessionStateDir && { sessionStateDir }),
   };
 }

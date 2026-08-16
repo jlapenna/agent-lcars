@@ -120,6 +120,23 @@ These override any default behavior:
   Update again if the active issue changes mid-session. Not applicable to
   CI-dispatched runs (no tmux pane).
 
+- **LCARS session title**: the console's session list shows a title taken
+  from the transcript, which for Claude Code is `aiTitle` — written once,
+  early, and never revised. A session that runs long and drifts therefore
+  advertises what it started as, not what it became. When the work moves on
+  from the prompt that opened it, say so:
+
+  ```bash
+  lcars session title "Land session titles end to end"
+  ```
+
+  No session id is needed — the CLI reads `CLAUDE_CODE_SESSION_ID` or
+  `CODEX_THREAD_ID` from its own environment. `lcars session title --clear`
+  removes the override and falls back to the transcript's own title; it does
+  not blank the entry. This is the same "make concurrent sessions
+  distinguishable at a glance" idea as the tmux title above, for the people
+  reading the console instead of the terminal.
+
 ## Workflows
 
 Read the reference before starting the corresponding task:

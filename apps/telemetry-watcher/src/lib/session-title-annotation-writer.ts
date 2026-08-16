@@ -4,37 +4,42 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-export const SESSION_TITLE_ANNOTATION_DIRECTORY = path.join(
-  '.local',
-  'state',
-  'agent-lcars',
-  'session-metadata',
+import {
+  DECLARED_TITLE_SUBDIRECTORY,
+  GENERATED_TITLE_SUBDIRECTORY,
+  SESSION_STATE_DIRECTORY,
+  sessionTitleChannelDirectory,
+} from './session-title-paths';
+
+/** The `declared` channel's directory, relative to the writer's home
+ * directory. Kept as its own export -- it's still the channel most callers
+ * (and the reader side) reference directly -- but it's now derived from
+ * `session-title-paths.ts`'s shared constants rather than hardcoded here,
+ * since `native-titles/` (the `generated` channel) is the same root with a
+ * different leaf; see `SessionTitleChannel` below. */
+export const SESSION_TITLE_ANNOTATION_DIRECTORY = sessionTitleChannelDirectory(
+  SESSION_STATE_DIRECTORY,
+  DECLARED_TITLE_SUBDIRECTORY,
 );
 
-type PinnedWriteSync = (
-  fd: number,
-  buffer: Buffer,
-  offset: number,
-  length: number,
-  position: number | null,
-) => number;
-type PinnedStatSync = (filePath: string) => fs.Stats;
+/** Either of the two directories a title annotation can be written into --
+ * the directory itself is what determines a title's tier (`declared` vs.
+ * `generated`), so this writer never accepts an arbitrary caller-supplied
+ * path. */
+export type SessionTitleChannel =
+  typeof DECLARED_TITLE_SUBDIRECTORY | typeof GENERATED_TITLE_SUBDIRECTORY;
+
 type PinnedLstatSync = (filePath: string) => fs.Stats;
 
 export interface SessionTitleAnnotationWriterFileSystem {
   mkdirSync: typeof fs.mkdirSync;
-  openSync: typeof fs.openSync;
-  fstatSync: typeof fs.fstatSync;
-  fchmodSync: typeof fs.fchmodSync;
-  lstatSync: PinnedLstatSync;
-  statSync: PinnedStatSync;
-  writeSync: PinnedWriteSync;
-  fsyncSync: typeof fs.fsyncSync;
-  closeSync: typeof fs.closeSync;
-  linkSync: typeof fs.linkSync;
+  writeFileSync: typeof fs.writeFileSync;
   renameSync: typeof fs.renameSync;
   unlinkSync: typeof fs.unlinkSync;
-  readlinkSync: typeof fs.readlinkSync;
+  lstatSync: PinnedLstatSync;
+  openSync: typeof fs.openSync;
+  fsyncSync: typeof fs.fsyncSync;
+  closeSync: typeof fs.closeSync;
 }
 
 export interface SessionTitleAnnotationWriterDependencies {
@@ -42,8 +47,6 @@ export interface SessionTitleAnnotationWriterDependencies {
   homeDirectory?: string;
   /** Test seam for the pinned state-directory operations. */
   fileSystem?: Partial<SessionTitleAnnotationWriterFileSystem>;
-  /** Test seam for modelling another platform or an unavailable primitive. */
-  platform?: NodeJS.Platform;
   /** Test seam for deterministic timestamps. */
   now?: () => Date;
   /** Test seam for deterministic unique temporary names. */
@@ -54,326 +57,47 @@ export interface SessionTitleAnnotationWriterResult {
   readonly ok: boolean;
 }
 
-interface DirectoryStats {
-  isDirectory(): boolean;
-}
-
 const defaultFileSystem: SessionTitleAnnotationWriterFileSystem = {
   mkdirSync: fs.mkdirSync,
-  openSync: fs.openSync,
-  fstatSync: fs.fstatSync,
-  fchmodSync: fs.fchmodSync,
-  lstatSync: (filePath) => fs.lstatSync(filePath),
-  statSync: (filePath) => fs.statSync(filePath),
-  writeSync: (fd, buffer, offset, length, position) =>
-    fs.writeSync(fd, buffer, offset, length, position),
-  fsyncSync: fs.fsyncSync,
-  closeSync: fs.closeSync,
-  linkSync: fs.linkSync,
+  writeFileSync: fs.writeFileSync,
   renameSync: fs.renameSync,
   unlinkSync: fs.unlinkSync,
-  readlinkSync: fs.readlinkSync,
+  lstatSync: (filePath) => fs.lstatSync(filePath),
+  openSync: fs.openSync,
+  fsyncSync: fs.fsyncSync,
+  closeSync: fs.closeSync,
 };
 
-function stateDirectory(
+function channelDirectory(
+  channel: SessionTitleChannel,
   dependencies: SessionTitleAnnotationWriterDependencies,
 ): string {
   return path.join(
     dependencies.homeDirectory ?? os.homedir(),
-    SESSION_TITLE_ANNOTATION_DIRECTORY,
+    sessionTitleChannelDirectory(SESSION_STATE_DIRECTORY, channel),
   );
 }
 
-function isDirectory(value: unknown): value is DirectoryStats {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'isDirectory' in value &&
-    typeof value.isDirectory === 'function' &&
-    value.isDirectory()
-  );
-}
-
-function hasLinuxPrimitives(platform: NodeJS.Platform): boolean {
-  return (
-    platform === 'linux' &&
-    typeof fs.constants.O_DIRECTORY === 'number' &&
-    typeof fs.constants.O_NOFOLLOW === 'number' &&
-    typeof fs.fsyncSync === 'function'
-  );
-}
-
-function closeQuietly(
-  fileSystem: SessionTitleAnnotationWriterFileSystem,
-  descriptor: number | undefined,
-): void {
-  if (descriptor === undefined) return;
-  try {
-    fileSystem.closeSync(descriptor);
-  } catch {
-    // The caller is already handling an operation failure. Do not expose the
-    // underlying error, and do not let cleanup obscure the original result.
-  }
-}
-
-function removeOwnTempQuietly(
-  fileSystem: SessionTitleAnnotationWriterFileSystem,
-  temporaryPath: string | undefined,
-): void {
-  if (!temporaryPath) return;
-  try {
-    // This is the unique name created by this invocation, and is already
-    // resolved through the pinned procfd directory.
-    fileSystem.unlinkSync(temporaryPath);
-  } catch {
-    // A crash-safe writer must never broaden cleanup to a directory sweep.
-  }
-}
-
-function makeTemporaryName(
+function temporaryName(
   sessionId: string,
   randomBytes: (size: number) => Buffer,
 ): string {
   return `.${sessionId}.${randomBytes(16).toString('hex')}.tmp`;
 }
 
-function makeClearCaptureName(
-  sessionId: string,
-  randomBytes: (size: number) => Buffer,
-): string {
-  return `.${sessionId}.${randomBytes(16).toString('hex')}.clear.tmp`;
-}
-
-function writeFully(
+function removeQuietly(
   fileSystem: SessionTitleAnnotationWriterFileSystem,
-  descriptor: number,
-  content: Buffer,
+  filePath: string | undefined,
 ): void {
-  let offset = 0;
-  while (offset < content.length) {
-    const written = fileSystem.writeSync(
-      descriptor,
-      content,
-      offset,
-      content.length - offset,
-      null,
-    );
-    if (!Number.isInteger(written) || written <= 0) {
-      throw new Error('short write');
-    }
-    offset += written;
-  }
-}
-
-/**
- * Opens the private state directory once and performs all child operations
- * through that descriptor's procfs path. This is intentionally a small,
- * non-activating local primitive: it does not discover or read sessions.
- */
-export function writeSessionTitleAnnotation(
-  sessionId: string,
-  rawTitle: string,
-  dependencies: SessionTitleAnnotationWriterDependencies = {},
-): SessionTitleAnnotationWriterResult {
-  if (!isSafeIdentifier(sessionId)) return { ok: false };
-
+  if (!filePath) return;
   try {
-    const clock = dependencies.now ?? (() => new Date());
-    const updatedAt = clock().toISOString();
-    const title = truncateTitle(rawTitle);
-    if (!title) return { ok: false };
-    const annotation = { version: 1, sessionId, updatedAt, title };
-    const content = Buffer.from(JSON.stringify(annotation), 'utf8');
-    return writeOrClearAnnotation(sessionId, content, dependencies);
+    // This is the unique per-invocation temp name created above -- cleanup
+    // never broadens to a directory sweep.
+    fileSystem.unlinkSync(filePath);
   } catch {
-    return { ok: false };
+    // The caller is already handling an operation failure; do not let
+    // best-effort cleanup obscure that original result.
   }
-}
-
-/** Removes only the current session's final annotation, if it is a regular file. */
-export function clearSessionTitleAnnotation(
-  sessionId: string,
-  dependencies: SessionTitleAnnotationWriterDependencies = {},
-): SessionTitleAnnotationWriterResult {
-  if (!isSafeIdentifier(sessionId)) return { ok: false };
-  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
-  if (!hasLinuxPrimitives(dependencies.platform ?? process.platform)) {
-    return { ok: false };
-  }
-
-  let directoryDescriptor: number | undefined;
-  let captureDescriptor: number | undefined;
-  let capturePath: string | undefined;
-  let ownsPlaceholder = false;
-  try {
-    directoryDescriptor = openPinnedDirectory(fileSystem, dependencies);
-    const procfdDirectory = procfdPath(directoryDescriptor, fileSystem);
-    const finalPath = path.join(procfdDirectory, `${sessionId}.json`);
-    capturePath = path.join(
-      procfdDirectory,
-      makeClearCaptureName(
-        sessionId,
-        dependencies.randomBytes ?? crypto.randomBytes,
-      ),
-    );
-
-    // Reserve an invocation-unique capture name before touching the final
-    // entry. Renaming the final over this placeholder atomically selects the
-    // exact directory entry that clear will inspect; a later writer can safely
-    // publish a new final without becoming the object deleted below.
-    captureDescriptor = fileSystem.openSync(
-      capturePath,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_NOFOLLOW,
-      0o600,
-    );
-    ownsPlaceholder = true;
-    fileSystem.fchmodSync(captureDescriptor, 0o600);
-    fileSystem.closeSync(captureDescriptor);
-    captureDescriptor = undefined;
-
-    try {
-      fileSystem.renameSync(finalPath, capturePath);
-    } catch (error) {
-      if (isMissingFile(error)) {
-        removeOwnTempQuietly(fileSystem, capturePath);
-        capturePath = undefined;
-        ownsPlaceholder = false;
-        fileSystem.fsyncSync(directoryDescriptor);
-        return { ok: true };
-      }
-      throw error;
-    }
-    ownsPlaceholder = false;
-
-    const target = fileSystem.lstatSync(capturePath);
-    if (target.isFile()) {
-      fileSystem.unlinkSync(capturePath);
-      capturePath = undefined;
-      fileSystem.fsyncSync(directoryDescriptor);
-      return { ok: true };
-    }
-
-    // `link` is an atomic no-overwrite restore. On Linux it hard-links a
-    // symlink or special inode itself rather than following it. If a concurrent
-    // writer already recreated the final, EEXIST leaves both that new final and
-    // the captured nonregular node intact; clear never deletes either one.
-    try {
-      fileSystem.linkSync(capturePath, finalPath);
-      fileSystem.unlinkSync(capturePath);
-      capturePath = undefined;
-    } catch {
-      // Preserve the captured nonregular object under its ignored private name
-      // rather than overwrite a concurrent final or delete an unverified node.
-    }
-    fileSystem.fsyncSync(directoryDescriptor);
-    return { ok: false };
-  } catch {
-    if (ownsPlaceholder) {
-      closeQuietly(fileSystem, captureDescriptor);
-      captureDescriptor = undefined;
-      removeOwnTempQuietly(fileSystem, capturePath);
-    }
-    return { ok: false };
-  } finally {
-    closeQuietly(fileSystem, captureDescriptor);
-    closeQuietly(fileSystem, directoryDescriptor);
-  }
-}
-
-function writeOrClearAnnotation(
-  sessionId: string,
-  content: Buffer,
-  dependencies: SessionTitleAnnotationWriterDependencies,
-): SessionTitleAnnotationWriterResult {
-  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
-  if (!hasLinuxPrimitives(dependencies.platform ?? process.platform)) {
-    return { ok: false };
-  }
-
-  let directoryDescriptor: number | undefined;
-  let temporaryPath: string | undefined;
-  let renamed = false;
-  let temporaryDescriptor: number | undefined;
-  try {
-    directoryDescriptor = openPinnedDirectory(fileSystem, dependencies);
-    const procfdDirectory = procfdPath(directoryDescriptor, fileSystem);
-    const temporaryName = makeTemporaryName(
-      sessionId,
-      dependencies.randomBytes ?? crypto.randomBytes,
-    );
-    temporaryPath = path.join(procfdDirectory, temporaryName);
-    const finalPath = path.join(procfdDirectory, `${sessionId}.json`);
-    temporaryDescriptor = fileSystem.openSync(
-      temporaryPath,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_NOFOLLOW,
-      0o600,
-    );
-    fileSystem.fchmodSync(temporaryDescriptor, 0o600);
-    writeFully(fileSystem, temporaryDescriptor, content);
-    fileSystem.fsyncSync(temporaryDescriptor);
-    fileSystem.closeSync(temporaryDescriptor);
-    temporaryDescriptor = undefined;
-    fileSystem.renameSync(temporaryPath, finalPath);
-    renamed = true;
-    fileSystem.fsyncSync(directoryDescriptor);
-    return { ok: true };
-  } catch {
-    if (!renamed) {
-      closeQuietly(fileSystem, temporaryDescriptor);
-      removeOwnTempQuietly(fileSystem, temporaryPath);
-    }
-    return { ok: false };
-  } finally {
-    closeQuietly(fileSystem, directoryDescriptor);
-  }
-}
-
-function openPinnedDirectory(
-  fileSystem: SessionTitleAnnotationWriterFileSystem,
-  dependencies: SessionTitleAnnotationWriterDependencies,
-): number {
-  const directoryPath = stateDirectory(dependencies);
-  fileSystem.mkdirSync(directoryPath, { recursive: true, mode: 0o700 });
-  let descriptor: number | undefined;
-  try {
-    // O_NOFOLLOW rejects a replaced/symlinked final directory before any child
-    // operation. From here onward, permissions and identity are checked on
-    // the retained FD, never via the mutable pathname.
-    descriptor = fileSystem.openSync(
-      directoryPath,
-      fs.constants.O_RDONLY |
-        fs.constants.O_DIRECTORY |
-        fs.constants.O_NOFOLLOW,
-    );
-    if (!isDirectory(fileSystem.fstatSync(descriptor))) {
-      throw new Error('invalid state directory');
-    }
-    fileSystem.fchmodSync(descriptor, 0o700);
-    return descriptor;
-  } catch (error) {
-    closeQuietly(fileSystem, descriptor);
-    throw error;
-  }
-}
-
-function procfdPath(
-  directoryDescriptor: number,
-  fileSystem: SessionTitleAnnotationWriterFileSystem,
-): string {
-  const procfdDirectory = `/proc/self/fd/${directoryDescriptor}`;
-  const stats = fileSystem.statSync(procfdDirectory);
-  if (!isDirectory(stats)) throw new Error('procfd is unavailable');
-  // readlink is a deliberate capability check. It ensures this is a procfd
-  // symlink, rather than merely a coincidental directory at that pathname.
-  const target = fileSystem.readlinkSync(procfdDirectory);
-  if (!target) throw new Error('procfd is unavailable');
-  return procfdDirectory;
 }
 
 function isMissingFile(error: unknown): boolean {
@@ -383,4 +107,144 @@ function isMissingFile(error: unknown): boolean {
     'code' in error &&
     error.code === 'ENOENT'
   );
+}
+
+/**
+ * Fsyncs the containing directory so a completed rename survives a crash
+ * (rename updates a directory entry, and that update itself needs an
+ * explicit fsync of the directory to be durable on most filesystems --
+ * fsyncing the file alone isn't enough). Deliberately swallows every
+ * failure: by the time this runs the rename has already completed, so the
+ * annotation is already live and correct on disk. Reporting a failure here
+ * would describe a write that, in fact, succeeded.
+ */
+function fsyncDirectoryQuietly(
+  fileSystem: SessionTitleAnnotationWriterFileSystem,
+  directoryPath: string,
+): void {
+  let descriptor: number | undefined;
+  try {
+    descriptor = fileSystem.openSync(directoryPath, fs.constants.O_RDONLY);
+    fileSystem.fsyncSync(descriptor);
+  } catch {
+    // See doc comment above -- never turns an already-published annotation
+    // into a reported failure.
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        fileSystem.closeSync(descriptor);
+      } catch {
+        // Best-effort close; the fsync outcome above already stands.
+      }
+    }
+  }
+}
+
+/**
+ * Writes one session's title annotation into `channel`, atomically: the
+ * full envelope is written to a private per-invocation temp file
+ * (`wx` flag, mode 0600) and then renamed into place, and the containing
+ * directory is fsynced so that rename survives a crash. Rename-for-
+ * atomicity plus directory-fsync-for-durability are the two properties
+ * this writer defends; deliberately nothing more.
+ *
+ * An earlier version of this writer additionally pinned the directory via
+ * `/proc/self/fd`, rejected symlinks with `O_NOFOLLOW`, and ran a
+ * capture-and-restore dance for `clear`. A #1212 audit removed all of
+ * that: it hardened a threat model that doesn't hold here. Writer and
+ * reader run as the same uid inside a private (0700) directory under that
+ * user's own home; anyone who could exploit a symlink/TOCTOU race in this
+ * directory already has equally direct access to the session transcripts
+ * this writer is annotating, or to the watcher's Firestore writer key
+ * sitting next to it -- the extra machinery bought no real defense, and
+ * one of its own failure branches (the old `clearSessionTitleAnnotation`'s
+ * post-rename cleanup) could orphan an annotation under a hidden,
+ * unrecoverable name while reporting failure. One acknowledged, accepted
+ * regression from that removal: a symlinked *state directory itself* (not
+ * the final file -- see `clearSessionTitleAnnotation`'s own file-type
+ * guard for that) is now followed rather than rejected, because plain
+ * `mkdirSync`/`writeFileSync` don't refuse symlinks the way the old
+ * `O_NOFOLLOW` directory open did. `O_NOFOLLOW` only ever guarded the leaf
+ * component anyway, so it never protected a symlinked `~/.local/state`
+ * (one level up) in the first place -- this isn't a new hole, just a
+ * narrower guard removed along with everything else.
+ */
+export function writeSessionTitleAnnotation(
+  sessionId: string,
+  rawTitle: string,
+  channel: SessionTitleChannel,
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): SessionTitleAnnotationWriterResult {
+  if (!isSafeIdentifier(sessionId)) return { ok: false };
+
+  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
+  let temporaryPath: string | undefined;
+  try {
+    const clock = dependencies.now ?? (() => new Date());
+    const updatedAt = clock().toISOString();
+    const title = truncateTitle(rawTitle);
+    if (!title) return { ok: false };
+    const content = JSON.stringify({ version: 1, sessionId, updatedAt, title });
+
+    const directory = channelDirectory(channel, dependencies);
+    fileSystem.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const finalPath = path.join(directory, `${sessionId}.json`);
+    temporaryPath = path.join(
+      directory,
+      temporaryName(sessionId, dependencies.randomBytes ?? crypto.randomBytes),
+    );
+
+    fileSystem.writeFileSync(temporaryPath, content, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
+    fileSystem.renameSync(temporaryPath, finalPath);
+    temporaryPath = undefined;
+
+    fsyncDirectoryQuietly(fileSystem, directory);
+    return { ok: true };
+  } catch {
+    removeQuietly(fileSystem, temporaryPath);
+    return { ok: false };
+  }
+}
+
+/**
+ * Removes only the current session's final annotation from `channel`, if
+ * present. An absent final is treated as an already-successful clear
+ * (idempotent) rather than a failure. Only ever removes a regular file --
+ * the kind this writer itself produces; a symlink or FIFO occupying that
+ * exact name is left untouched and reported as a failure, since `clear`
+ * has no business deleting something it didn't write.
+ */
+export function clearSessionTitleAnnotation(
+  sessionId: string,
+  channel: SessionTitleChannel,
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): SessionTitleAnnotationWriterResult {
+  if (!isSafeIdentifier(sessionId)) return { ok: false };
+
+  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
+  const directory = channelDirectory(channel, dependencies);
+  const finalPath = path.join(directory, `${sessionId}.json`);
+
+  let stats: fs.Stats;
+  try {
+    stats = fileSystem.lstatSync(finalPath);
+  } catch (error) {
+    return { ok: isMissingFile(error) };
+  }
+  if (!stats.isFile()) {
+    return { ok: false };
+  }
+
+  try {
+    fileSystem.unlinkSync(finalPath);
+    return { ok: true };
+  } catch (error) {
+    // Raced away between the lstat above and this unlink -- the desired
+    // end state (no final present) already holds either way.
+    return { ok: isMissingFile(error) };
+  }
 }

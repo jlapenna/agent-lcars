@@ -34,6 +34,7 @@ describe('reduceTranscript', () => {
       timestamp: '2026-07-10T10:10:00.000Z',
     });
     expect(summary.title).toBe('Fix flaky login test');
+    expect(summary.titleSource).toBe('generated');
     expect(summary.deliverables.prNumbers).toEqual([42]);
     expect(summary.deliverables.commitShas).toEqual(['abc1234']);
   });
@@ -79,6 +80,37 @@ describe('reduceTranscript', () => {
       title: 'Use the inferred prompt',
       titleSource: 'inferred',
     });
+  });
+
+  it('never yields titleSource "declared" from a transcript — only the local session-metadata annotation overlay (applySessionTitleOverlay, session-title-selection.ts) may set that tier', () => {
+    // applySessionTitleOverlay only lets its `generated`/`inferred` overlay
+    // candidates compete by checking `summary.titleSource === 'generated'`
+    // / `'inferred'` on the reducer's own output. If a transcript ever
+    // produced `titleSource: 'declared'` here, that check would silently
+    // stop recognizing the summary's own title, and the overlay would
+    // wrongly treat it as absent rather than protecting it. Nothing in
+    // resolveTitle currently returns 'declared' (aiTitle -> 'generated',
+    // first prompt -> 'inferred'), but its return type is the full
+    // SessionTitleSource union, so nothing stops a future edit from typing
+    // 'declared' by copy-paste error — this pins the invariant at runtime.
+    const [aiTitled] = reduceTranscript(readFixture('normal-session.jsonl'));
+    expect(aiTitled.titleSource).not.toBe('declared');
+
+    const [promptTitled] = reduceTranscript(
+      JSON.stringify({
+        type: 'user',
+        isSidechain: false,
+        uuid: 'u-invariant-inferred',
+        timestamp: '2026-07-01T00:00:00.000Z',
+        sessionId: 'session-invariant-inferred',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Only a prompt, no aiTitle' }],
+        },
+      }),
+    );
+    expect(promptTitled.titleSource).toBe('inferred');
+    expect(promptTitled.titleSource).not.toBe('declared');
   });
 
   it('ignores unknown line types and malformed JSON instead of throwing', () => {

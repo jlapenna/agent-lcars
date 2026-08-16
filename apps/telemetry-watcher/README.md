@@ -83,29 +83,79 @@ Every step fails soft and logs rather than crashing — a single broken
 transcript, reducer error, or store write failure never takes down
 telemetry for the daemon's other tracked sessions.
 
+## Session titles (issue #1212)
+
+Every tracked session gets a title, chosen by rank: `declared` >
+`generated` > `inferred`. `inferred` (a fragment of the first user message)
+is the reducer's own fallback and needs nothing from an agent. The other two
+tiers are overlay data, layered on top of the reducer's pristine summary —
+see `libs/telemetry/src/lib/session-title-annotation.ts` for the envelope
+and `src/lib/session-title-selection.ts` for the rank.
+
+- **`declared`** — a deliberate statement of intent. Set one from inside a
+  Claude Code or Codex session with:
+
+  ```bash
+  lcars session title "fix the flaky retry test"
+  ```
+
+  (`lcars session title --clear` removes it.) The CLI resolves the session
+  id itself, in order: `LCARS_SESSION_ID` → `CLAUDE_CODE_SESSION_ID` →
+  `CODEX_THREAD_ID`. The first one present _and_ passing `isSafeIdentifier`
+  wins — a present-but-unsafe value is a hard failure, not a fall-through to
+  the next candidate, so a malformed id can never silently retarget another
+  runtime's session. The CLI writes
+  `~/.local/state/agent-lcars/session-metadata/<sessionId>.json` directly
+  (crash-safe rename-into-place, mode 0700); it never goes through this
+  daemon. Nothing installs the `lcars` binary automatically — see
+  [`deploy/README.md`](deploy/README.md#installing-the-cli).
+
+- **`generated`** — a machine-authored label the watcher trusts but the
+  agent didn't explicitly choose. For Claude, this is `aiTitle`, read
+  straight out of the transcript like any other field. Codex never puts a
+  title in its rollout transcripts at all — only in
+  `~/.codex/state_*.sqlite`'s `threads` table on the host, which this daemon
+  can never open from inside its container: that DB is WAL-mode, and a
+  read-only bind mount of a WAL SQLite DB fails outright
+  (`ERR_SQLITE_ERROR: attempt to write a readonly database`, verified). A
+  separate host-side importer (`lcars session import-native`, the same
+  installed CLI as the `declared` bullet above, reading
+  `AGENT_TELEMETRY_CODEX_STATE_DB`, default the newest
+  `~/.codex/state_*.sqlite`, and scheduled by a systemd user timer — see
+  [`deploy/README.md`](deploy/README.md#session-titles-issue-1212)) reads
+  that DB directly on the host instead and writes
+  `~/.local/state/agent-lcars/native-titles/<sessionId>.json`. An imported
+  title is always `generated` — the same tier as Claude's inline one, never
+  a third concept.
+
+Both files share one envelope: `{version: 1, sessionId, updatedAt, title}`.
+The directory a file lives in _is_ its tier; there is no separate per-file
+tier field to get out of sync with it.
+
 ## Configuration
 
 All via environment variables (see `src/lib/config.ts`):
 
-| Variable                                 | Default                         | Purpose                                                                                                                                                              |
-| ---------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required in host mode           | Comma-separated checkout roots this host watcher may ship. All three source allowlists derive from this one privacy boundary; no personal-home fallback is built in. |
-| `AGENT_TELEMETRY_CHECKOUT_ROOT`          | —                               | Legacy single-root compatibility alias for `AGENT_TELEMETRY_CHECKOUT_ROOTS`.                                                                                         |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`            | Root to watch (overridable for Docker bind mounts / test fixtures).                                                                                                  |
-| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`  | checkout root as a project slug | Comma-separated `*`-wildcard globs matched against project-dir names. Derived: `/` → `-`, plus a trailing `*` to admit worktrees.                                    |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`             | Recursive root for Codex rollout JSONL.                                                                                                                              |
-| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`    | checkout root + `*`             | Cwd glob privacy boundary for Codex summaries.                                                                                                                       |
-| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`   | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes follow the configured checkout roots.                      |
-| `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                 | Host label recorded on each session doc.                                                                                                                             |
-| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`  | `10000`                         | Tick interval.                                                                                                                                                       |
-| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`    | `heartbeatIntervalMs * 5`       | How long a session can go unrediscovered before it's marked `stale`.                                                                                                 |
-| `AGENT_TELEMETRY_SHARE_DIR`              | `~/share`                       | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                                                        |
-| `AGENT_TELEMETRY_METRICS_HOST`           | `0.0.0.0`                       | Address for the host watcher's Prometheus endpoint. Runner sidecar/finalize modes never start it.                                                                    |
-| `AGENT_TELEMETRY_METRICS_PORT`           | `9464`                          | Port for the host watcher's `/metrics` endpoint.                                                                                                                     |
-| `AGENT_TELEMETRY_PROJECT_ID`             | —                               | Firestore project id for the real store.                                                                                                                             |
-| `AGENT_TELEMETRY_DATABASE_ID`            | `(default)`                     | Firestore database id within that project (`src/lib/store.ts`).                                                                                                      |
-| `AGENT_TELEMETRY_WRITER_KEY_JSON`        | —                               | Service-account key JSON for the real store's writer credentials.                                                                                                    |
-| `FIRESTORE_EMULATOR_HOST`                | —                               | If set, writes to the emulator instead (takes precedence over the two above).                                                                                        |
+| Variable                                 | Default                         | Purpose                                                                                                                                                                                                                                            |
+| ---------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required in host mode           | Comma-separated checkout roots this host watcher may ship. All three source allowlists derive from this one privacy boundary; no personal-home fallback is built in.                                                                               |
+| `AGENT_TELEMETRY_CHECKOUT_ROOT`          | —                               | Legacy single-root compatibility alias for `AGENT_TELEMETRY_CHECKOUT_ROOTS`.                                                                                                                                                                       |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`            | Root to watch (overridable for Docker bind mounts / test fixtures).                                                                                                                                                                                |
+| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`  | checkout root as a project slug | Comma-separated `*`-wildcard globs matched against project-dir names. Derived: `/` → `-`, plus a trailing `*` to admit worktrees.                                                                                                                  |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`             | Recursive root for Codex rollout JSONL.                                                                                                                                                                                                            |
+| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`    | checkout root + `*`             | Cwd glob privacy boundary for Codex summaries.                                                                                                                                                                                                     |
+| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`   | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes follow the configured checkout roots.                                                                                                    |
+| `AGENT_TELEMETRY_SESSION_STATE_DIR`      | `~/.local/state/agent-lcars`    | Session-title overlay root — `session-metadata/` (`declared`) and `native-titles/` (imported `generated`). Empty string disables the whole overlay, same convention as `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` above. See "Session titles" above. |
+| `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                 | Host label recorded on each session doc.                                                                                                                                                                                                           |
+| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`  | `10000`                         | Tick interval.                                                                                                                                                                                                                                     |
+| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`    | `heartbeatIntervalMs * 5`       | How long a session can go unrediscovered before it's marked `stale`.                                                                                                                                                                               |
+| `AGENT_TELEMETRY_SHARE_DIR`              | `~/share`                       | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                                                                                                                                      |
+| `AGENT_TELEMETRY_METRICS_HOST`           | `0.0.0.0`                       | Address for the host watcher's Prometheus endpoint. Runner sidecar/finalize modes never start it.                                                                                                                                                  |
+| `AGENT_TELEMETRY_METRICS_PORT`           | `9464`                          | Port for the host watcher's `/metrics` endpoint.                                                                                                                                                                                                   |
+| `AGENT_TELEMETRY_PROJECT_ID`             | —                               | Firestore project id for the real store.                                                                                                                                                                                                           |
+| `AGENT_TELEMETRY_DATABASE_ID`            | `(default)`                     | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                                                                                    |
+| `AGENT_TELEMETRY_WRITER_KEY_JSON`        | —                               | Service-account key JSON for the real store's writer credentials.                                                                                                                                                                                  |
+| `FIRESTORE_EMULATOR_HOST`                | —                               | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                                                                                      |
 
 The allowlist rows deliberately describe how their defaults are derived
 rather than restating literals. The old deployment duplicated independently

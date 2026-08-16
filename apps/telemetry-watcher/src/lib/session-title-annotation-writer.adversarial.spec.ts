@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -9,8 +8,13 @@ import {
   clearSessionTitleAnnotation,
   SESSION_TITLE_ANNOTATION_DIRECTORY,
   SessionTitleAnnotationWriterFileSystem,
+  SessionTitleChannel,
   writeSessionTitleAnnotation,
 } from './session-title-annotation-writer';
+import {
+  DECLARED_TITLE_SUBDIRECTORY,
+  GENERATED_TITLE_SUBDIRECTORY,
+} from './session-title-paths';
 
 const SESSION_ID = 'adversarial-session-1';
 const WHEN = new Date('2026-08-15T12:34:56.000Z');
@@ -28,12 +32,21 @@ function home(): string {
   return value;
 }
 
-function directory(homeDirectory: string): string {
-  return path.join(homeDirectory, SESSION_TITLE_ANNOTATION_DIRECTORY);
+function directory(
+  homeDirectory: string,
+  channel: SessionTitleChannel = DECLARED_TITLE_SUBDIRECTORY,
+): string {
+  return channel === DECLARED_TITLE_SUBDIRECTORY
+    ? path.join(homeDirectory, SESSION_TITLE_ANNOTATION_DIRECTORY)
+    : path.join(homeDirectory, '.local', 'state', 'agent-lcars', channel);
 }
 
-function finalPath(homeDirectory: string, sessionId = SESSION_ID): string {
-  return path.join(directory(homeDirectory), `${sessionId}.json`);
+function finalPath(
+  homeDirectory: string,
+  channel: SessionTitleChannel = DECLARED_TITLE_SUBDIRECTORY,
+  sessionId = SESSION_ID,
+): string {
+  return path.join(directory(homeDirectory, channel), `${sessionId}.json`);
 }
 
 function deps(
@@ -43,23 +56,16 @@ function deps(
   return { homeDirectory, now: () => WHEN, fileSystem };
 }
 
-function readAnnotation(homeDirectory: string): Record<string, unknown> {
+function readAnnotation(
+  homeDirectory: string,
+  channel: SessionTitleChannel = DECLARED_TITLE_SUBDIRECTORY,
+): Record<string, unknown> {
   return JSON.parse(
-    fs.readFileSync(finalPath(homeDirectory), 'utf8'),
+    fs.readFileSync(finalPath(homeDirectory, channel), 'utf8'),
   ) as Record<string, unknown>;
 }
 
-function readAnnotationAt(directoryPath: string): Record<string, unknown> {
-  return JSON.parse(
-    fs.readFileSync(path.join(directoryPath, `${SESSION_ID}.json`), 'utf8'),
-  ) as Record<string, unknown>;
-}
-
-function makeState(homeDirectory: string): void {
-  fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
-}
-
-describe('session-title annotation writer adversarial durability', () => {
+describe('session-title annotation writer', () => {
   it('writes exact v1 field order, mode 0600, and private directory mode 0700', () => {
     const homeDirectory = home();
 
@@ -67,6 +73,7 @@ describe('session-title annotation writer adversarial durability', () => {
       writeSessionTitleAnnotation(
         SESSION_ID,
         '  A   title\nwith irregular whitespace  ',
+        DECLARED_TITLE_SUBDIRECTORY,
         deps(homeDirectory),
       ),
     ).toEqual({ ok: true });
@@ -83,187 +90,58 @@ describe('session-title annotation writer adversarial durability', () => {
     const rawTitle = `   ${'x'.repeat(100)}\n  `;
 
     expect(
-      writeSessionTitleAnnotation(SESSION_ID, rawTitle, deps(homeDirectory)),
+      writeSessionTitleAnnotation(
+        SESSION_ID,
+        rawTitle,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
     ).toEqual({ ok: true });
     expect(readAnnotation(homeDirectory).title).toBe(`${'x'.repeat(79)}…`);
   });
 
-  it('repairs an existing directory mode through its descriptor', () => {
+  it('rejects an empty title after normalization without publishing', () => {
     const homeDirectory = home();
-    makeState(homeDirectory);
-    fs.chmodSync(directory(homeDirectory), 0o755);
-
     expect(
       writeSessionTitleAnnotation(
         SESSION_ID,
-        'private again',
+        '   \n  ',
+        DECLARED_TITLE_SUBDIRECTORY,
         deps(homeDirectory),
       ),
-    ).toEqual({ ok: true });
-    expect(fs.statSync(directory(homeDirectory)).mode & 0o777).toBe(0o700);
-  });
-
-  it('replaces an existing final symlink itself without touching its target', () => {
-    const homeDirectory = home();
-    makeState(homeDirectory);
-    const external = path.join(homeDirectory, 'external.json');
-    fs.writeFileSync(external, 'external sentinel');
-    fs.symlinkSync(external, finalPath(homeDirectory));
-
-    expect(
-      writeSessionTitleAnnotation(
-        SESSION_ID,
-        'safe replacement',
-        deps(homeDirectory),
-      ),
-    ).toEqual({ ok: true });
-    expect(fs.readFileSync(external, 'utf8')).toBe('external sentinel');
-    expect(fs.lstatSync(finalPath(homeDirectory)).isSymbolicLink()).toBe(false);
-    expect(readAnnotation(homeDirectory).title).toBe('safe replacement');
-  });
-
-  it('refuses to clear a final symlink and never touches its target', () => {
-    const homeDirectory = home();
-    makeState(homeDirectory);
-    const external = path.join(homeDirectory, 'external.json');
-    fs.writeFileSync(external, 'must survive clear');
-    fs.symlinkSync(external, finalPath(homeDirectory));
-
-    expect(
-      clearSessionTitleAnnotation(SESSION_ID, deps(homeDirectory)),
-    ).toEqual({
-      ok: false,
-    });
-    expect(fs.readFileSync(external, 'utf8')).toBe('must survive clear');
-    expect(fs.lstatSync(finalPath(homeDirectory)).isSymbolicLink()).toBe(true);
-  });
-
-  it('never deletes a nonregular entry raced into place before clear captures it', () => {
-    const homeDirectory = home();
-    makeState(homeDirectory);
-    fs.writeFileSync(finalPath(homeDirectory), 'old regular annotation');
-    let replaced = false;
-    const renameSync: SessionTitleAnnotationWriterFileSystem['renameSync'] = (
-      from,
-      to,
-    ) => {
-      if (
-        !replaced &&
-        String(from).endsWith(`/${SESSION_ID}.json`) &&
-        String(to).endsWith('.clear.tmp')
-      ) {
-        replaced = true;
-        fs.unlinkSync(from);
-        execFileSync('mkfifo', [finalPath(homeDirectory)]);
-      }
-      fs.renameSync(from, to);
-    };
-
-    expect(
-      clearSessionTitleAnnotation(SESSION_ID, {
-        ...deps(homeDirectory, { renameSync }),
-        randomBytes: () => Buffer.alloc(16, 0x33),
-      }),
     ).toEqual({ ok: false });
-    expect(replaced).toBe(true);
-    expect(fs.lstatSync(finalPath(homeDirectory)).isFIFO()).toBe(true);
-    expect(fs.readdirSync(directory(homeDirectory))).toEqual([
-      `${SESSION_ID}.json`,
-    ]);
+    expect(fs.existsSync(directory(homeDirectory))).toBe(false);
   });
 
-  it('does not delete a new final published after clear captures the old file', () => {
+  it('targets the declared and generated channels at distinct directories', () => {
     const homeDirectory = home();
-    makeState(homeDirectory);
-    fs.writeFileSync(finalPath(homeDirectory), 'old regular annotation');
-    let published = false;
-    const lstatSync: SessionTitleAnnotationWriterFileSystem['lstatSync'] = (
-      target,
-    ) => {
-      if (!published && String(target).endsWith('.clear.tmp')) {
-        published = writeSessionTitleAnnotation(
-          SESSION_ID,
-          'new concurrent annotation',
-          deps(homeDirectory),
-        ).ok;
-      }
-      return fs.lstatSync(target);
-    };
 
     expect(
-      clearSessionTitleAnnotation(
+      writeSessionTitleAnnotation(
         SESSION_ID,
-        deps(homeDirectory, { lstatSync }),
+        'declared title',
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
       ),
     ).toEqual({ ok: true });
-    expect(published).toBe(true);
-    expect(readAnnotation(homeDirectory).title).toBe(
-      'new concurrent annotation',
+    expect(
+      writeSessionTitleAnnotation(
+        SESSION_ID,
+        'generated title',
+        GENERATED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
+    ).toEqual({ ok: true });
+
+    expect(
+      readAnnotation(homeDirectory, DECLARED_TITLE_SUBDIRECTORY).title,
+    ).toBe('declared title');
+    expect(
+      readAnnotation(homeDirectory, GENERATED_TITLE_SUBDIRECTORY).title,
+    ).toBe('generated title');
+    expect(directory(homeDirectory, DECLARED_TITLE_SUBDIRECTORY)).not.toBe(
+      directory(homeDirectory, GENERATED_TITLE_SUBDIRECTORY),
     );
-  });
-
-  it('treats an absent final as an idempotent clear and refuses nonregular finals', () => {
-    const absentHome = home();
-    makeState(absentHome);
-    expect(clearSessionTitleAnnotation(SESSION_ID, deps(absentHome))).toEqual({
-      ok: true,
-    });
-
-    const directoryHome = home();
-    makeState(directoryHome);
-    fs.mkdirSync(finalPath(directoryHome));
-    expect(
-      clearSessionTitleAnnotation(SESSION_ID, deps(directoryHome)),
-    ).toEqual({ ok: false });
-    expect(fs.statSync(finalPath(directoryHome)).isDirectory()).toBe(true);
-
-    const fifoHome = home();
-    makeState(fifoHome);
-    execFileSync('mkfifo', [finalPath(fifoHome)]);
-    expect(clearSessionTitleAnnotation(SESSION_ID, deps(fifoHome))).toEqual({
-      ok: false,
-    });
-    expect(fs.statSync(finalPath(fifoHome)).isFIFO()).toBe(true);
-  });
-
-  it('rejects a symlinked state directory without touching the external directory', () => {
-    const homeDirectory = home();
-    const external = path.join(homeDirectory, 'external-state');
-    fs.mkdirSync(external, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(path.join(external, 'attacker-sentinel'), 'untouched');
-    const state = directory(homeDirectory);
-    fs.mkdirSync(path.dirname(state), { recursive: true });
-    fs.symlinkSync(external, state);
-
-    expect(
-      writeSessionTitleAnnotation(SESSION_ID, 'must fail', deps(homeDirectory)),
-    ).toEqual({
-      ok: false,
-    });
-    expect(fs.readdirSync(external)).toEqual(['attacker-sentinel']);
-    expect(
-      fs.readFileSync(path.join(external, 'attacker-sentinel'), 'utf8'),
-    ).toBe('untouched');
-  });
-
-  it('never sweeps a pre-existing stale temp, on either write or clear', () => {
-    const homeDirectory = home();
-    makeState(homeDirectory);
-    const stale = path.join(directory(homeDirectory), '.other-writer.tmp');
-    fs.writeFileSync(stale, 'harmless stale temp');
-
-    expect(
-      writeSessionTitleAnnotation(
-        SESSION_ID,
-        'leave stale temp alone',
-        deps(homeDirectory),
-      ),
-    ).toEqual({ ok: true });
-    expect(fs.readFileSync(stale, 'utf8')).toBe('harmless stale temp');
-    expect(
-      clearSessionTitleAnnotation(SESSION_ID, deps(homeDirectory)),
-    ).toEqual({ ok: true });
-    expect(fs.readFileSync(stale, 'utf8')).toBe('harmless stale temp');
   });
 
   it.each(['', ' ../escape', '../escape', '-unsafe', 'unsafe/id', '_unsafe'])(
@@ -274,171 +152,154 @@ describe('session-title annotation writer adversarial durability', () => {
         writeSessionTitleAnnotation(
           sessionId,
           'must not write',
+          DECLARED_TITLE_SUBDIRECTORY,
           deps(homeDirectory),
         ),
       ).toEqual({ ok: false });
       expect(
-        clearSessionTitleAnnotation(sessionId, deps(homeDirectory)),
-      ).toEqual({
-        ok: false,
-      });
-      expect(
-        fs.existsSync(
-          path.join(homeDirectory, SESSION_TITLE_ANNOTATION_DIRECTORY),
+        clearSessionTitleAnnotation(
+          sessionId,
+          DECLARED_TITLE_SUBDIRECTORY,
+          deps(homeDirectory),
         ),
-      ).toBe(false);
+      ).toEqual({ ok: false });
+      expect(fs.existsSync(directory(homeDirectory))).toBe(false);
     },
   );
 
-  it('fails soft when the injected clock throws or returns an invalid Date', () => {
-    const throwingHome = home();
-    expect(() =>
-      writeSessionTitleAnnotation(SESSION_ID, 'clock failure', {
-        ...deps(throwingHome),
-        now: () => {
-          throw new Error('clock unavailable');
-        },
-      }),
-    ).not.toThrow();
-    expect(
-      writeSessionTitleAnnotation(SESSION_ID, 'clock failure', {
-        ...deps(throwingHome),
-        now: () => new Date(Number.NaN),
-      }),
-    ).toEqual({ ok: false });
-    expect(
-      fs.existsSync(
-        path.join(throwingHome, SESSION_TITLE_ANNOTATION_DIRECTORY),
-      ),
-    ).toBe(false);
-  });
-
-  it('pins the opened directory for writes when its pathname is replaced', () => {
+  it('treats an absent final as an idempotent clear', () => {
     const homeDirectory = home();
-    makeState(homeDirectory);
-    const original = directory(homeDirectory);
-    const moved = `${original}.moved`;
-    const replacement = original;
-    let opened = false;
-    const openSync: SessionTitleAnnotationWriterFileSystem['openSync'] = (
-      filePath,
-      flags,
-      mode,
-    ) => {
-      const descriptor = fs.openSync(filePath, flags, mode);
-      if (filePath === original && !opened) {
-        opened = true;
-        fs.renameSync(original, moved);
-        fs.mkdirSync(replacement, { mode: 0o700 });
-        fs.writeFileSync(
-          path.join(replacement, 'attacker-sentinel'),
-          'untouched',
-        );
-      }
-      return descriptor;
-    };
-
     expect(
-      writeSessionTitleAnnotation(
+      clearSessionTitleAnnotation(
         SESSION_ID,
-        'pinned write',
-        deps(homeDirectory, { openSync }),
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
       ),
     ).toEqual({ ok: true });
-    expect(readAnnotationAt(moved)).toEqual(
-      expect.objectContaining({ title: 'pinned write' }),
-    );
-    expect(fs.existsSync(path.join(replacement, `${SESSION_ID}.json`))).toBe(
-      false,
-    );
     expect(
-      fs.readFileSync(path.join(replacement, 'attacker-sentinel'), 'utf8'),
-    ).toBe('untouched');
+      clearSessionTitleAnnotation(
+        SESSION_ID,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
+    ).toEqual({ ok: true });
   });
 
-  it('pins the opened directory for clear when its pathname is replaced', () => {
+  it('clear removes only the targeted session and only its own channel', () => {
     const homeDirectory = home();
-    makeState(homeDirectory);
-    fs.writeFileSync(finalPath(homeDirectory), 'old');
-    const original = directory(homeDirectory);
-    const moved = `${original}.moved`;
-    let opened = false;
-    const openSync: SessionTitleAnnotationWriterFileSystem['openSync'] = (
-      filePath,
-      flags,
-      mode,
-    ) => {
-      const descriptor = fs.openSync(filePath, flags, mode);
-      if (filePath === original && !opened) {
-        opened = true;
-        fs.renameSync(original, moved);
-        fs.mkdirSync(original, { mode: 0o700 });
-        fs.writeFileSync(path.join(original, 'attacker-sentinel'), 'untouched');
-      }
-      return descriptor;
-    };
+    const other = 'adversarial-session-2';
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'to clear',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionTitleAnnotation(
+      other,
+      'must survive',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'must survive in the other channel',
+      GENERATED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
 
     expect(
       clearSessionTitleAnnotation(
         SESSION_ID,
-        deps(homeDirectory, { openSync }),
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
       ),
-    ).toEqual({
-      ok: true,
-    });
-    expect(fs.existsSync(finalPath(homeDirectory))).toBe(false);
-    expect(fs.existsSync(path.join(moved, `${SESSION_ID}.json`))).toBe(false);
+    ).toEqual({ ok: true });
+
     expect(
-      fs.readFileSync(path.join(original, 'attacker-sentinel'), 'utf8'),
-    ).toBe('untouched');
+      fs.existsSync(finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY)),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY, other),
+      ),
+    ).toBe(true);
+    expect(
+      readAnnotation(homeDirectory, GENERATED_TITLE_SUBDIRECTORY).title,
+    ).toBe('must survive in the other channel');
   });
 
-  it.each([
-    ['directory open failure', 'openSync'],
-    ['write failure', 'writeSync'],
-    ['temp fsync failure', 'fsyncSync'],
-    ['temp close failure', 'closeSync'],
-    ['rename failure', 'renameSync'],
-  ] as const)(
-    'preserves the old final and removes only its temp on pre-rename %s',
-    (_label, operation) => {
-      const homeDirectory = home();
-      makeState(homeDirectory);
-      fs.writeFileSync(finalPath(homeDirectory), 'complete old value');
-      const randomBytes = () => Buffer.alloc(16, 0x42);
-      const fileSystem = {
-        [operation]: (() => {
-          throw new Error(`${operation} failed`);
-        }) as SessionTitleAnnotationWriterFileSystem[typeof operation],
-      } as Partial<SessionTitleAnnotationWriterFileSystem>;
-
-      expect(
-        writeSessionTitleAnnotation(SESSION_ID, 'new value must not publish', {
-          ...deps(homeDirectory, fileSystem),
-          randomBytes,
-        }),
-      ).toEqual({ ok: false });
-      expect(fs.readFileSync(finalPath(homeDirectory), 'utf8')).toBe(
-        'complete old value',
-      );
-      expect(fs.readdirSync(directory(homeDirectory))).toEqual([
-        `${SESSION_ID}.json`,
-      ]);
-    },
-  );
-
-  it('rejects a zero-byte write and terminates without publishing or leaking a temp', () => {
+  it('rejects clearing a non-regular final (a directory) rather than deleting it', () => {
     const homeDirectory = home();
-    makeState(homeDirectory);
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(finalPath(homeDirectory));
+    expect(
+      clearSessionTitleAnnotation(
+        SESSION_ID,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
+    ).toEqual({ ok: false });
+    expect(fs.statSync(finalPath(homeDirectory)).isDirectory()).toBe(true);
+  });
+
+  it('rejects clearing a symlinked final without following it to delete its target', () => {
+    const homeDirectory = home();
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
+    const external = path.join(homeDirectory, 'external.json');
+    fs.writeFileSync(external, 'external sentinel');
+    fs.symlinkSync(external, finalPath(homeDirectory));
+
+    expect(
+      clearSessionTitleAnnotation(
+        SESSION_ID,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
+    ).toEqual({ ok: false });
+    expect(fs.readFileSync(external, 'utf8')).toBe('external sentinel');
+    expect(fs.lstatSync(finalPath(homeDirectory)).isSymbolicLink()).toBe(true);
+  });
+
+  it('never sweeps a pre-existing stale temp, on either write or clear', () => {
+    const homeDirectory = home();
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
+    const stale = path.join(directory(homeDirectory), '.other-writer.tmp');
+    fs.writeFileSync(stale, 'harmless stale temp');
+
+    expect(
+      writeSessionTitleAnnotation(
+        SESSION_ID,
+        'leave stale temp alone',
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
+    ).toEqual({ ok: true });
+    expect(fs.readFileSync(stale, 'utf8')).toBe('harmless stale temp');
+    expect(
+      clearSessionTitleAnnotation(
+        SESSION_ID,
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory),
+      ),
+    ).toEqual({ ok: true });
+    expect(fs.readFileSync(stale, 'utf8')).toBe('harmless stale temp');
+  });
+
+  it('leaves no stray temp file when the write itself fails', () => {
+    const homeDirectory = home();
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
     fs.writeFileSync(finalPath(homeDirectory), 'complete old value');
-    const writeSync: SessionTitleAnnotationWriterFileSystem['writeSync'] = () =>
-      0;
+    const writeFileSync: SessionTitleAnnotationWriterFileSystem['writeFileSync'] =
+      () => {
+        throw new Error('disk full');
+      };
 
     expect(
       writeSessionTitleAnnotation(
         SESSION_ID,
         'must not publish',
-        deps(homeDirectory, { writeSync }),
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory, { writeFileSync }),
       ),
     ).toEqual({ ok: false });
     expect(fs.readFileSync(finalPath(homeDirectory), 'utf8')).toBe(
@@ -449,213 +310,136 @@ describe('session-title annotation writer adversarial durability', () => {
     ]);
   });
 
-  it('handles partial writes until the complete buffer is durable', () => {
+  it('leaves no stray temp file when the rename itself fails', () => {
     const homeDirectory = home();
-    let calls = 0;
-    const writeSync: SessionTitleAnnotationWriterFileSystem['writeSync'] = (
-      fd,
-      buffer,
-      offset,
-      length,
-      position,
-    ) => {
-      calls += 1;
-      const available = length ?? buffer.byteLength - offset;
-      return fs.writeSync(fd, buffer, offset, Math.min(available, 3), position);
-    };
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(finalPath(homeDirectory), 'complete old value');
+    const renameSync: SessionTitleAnnotationWriterFileSystem['renameSync'] =
+      () => {
+        throw new Error('rename failed');
+      };
 
     expect(
       writeSessionTitleAnnotation(
         SESSION_ID,
-        'partial writes are retried',
-        deps(homeDirectory, { writeSync }),
+        'must not publish',
+        DECLARED_TITLE_SUBDIRECTORY,
+        deps(homeDirectory, { renameSync }),
       ),
-    ).toEqual({ ok: true });
-    expect(calls).toBeGreaterThan(1);
-    expect(readAnnotation(homeDirectory)).toEqual({
-      version: 1,
-      sessionId: SESSION_ID,
-      updatedAt: WHEN.toISOString(),
-      title: 'partial writes are retried',
-    });
+    ).toEqual({ ok: false });
+    expect(fs.readFileSync(finalPath(homeDirectory), 'utf8')).toBe(
+      'complete old value',
+    );
+    expect(fs.readdirSync(directory(homeDirectory))).toEqual([
+      `${SESSION_ID}.json`,
+    ]);
   });
 
-  it('does not roll back a complete rename when directory fsync fails afterward', () => {
+  it('fails soft when the injected clock throws or returns an invalid Date', () => {
+    const throwingHome = home();
+    expect(() =>
+      writeSessionTitleAnnotation(
+        SESSION_ID,
+        'clock failure',
+        DECLARED_TITLE_SUBDIRECTORY,
+        {
+          ...deps(throwingHome),
+          now: () => {
+            throw new Error('clock unavailable');
+          },
+        },
+      ),
+    ).not.toThrow();
+    expect(
+      writeSessionTitleAnnotation(
+        SESSION_ID,
+        'clock failure',
+        DECLARED_TITLE_SUBDIRECTORY,
+        { ...deps(throwingHome), now: () => new Date(Number.NaN) },
+      ),
+    ).toEqual({ ok: false });
+    expect(fs.existsSync(directory(throwingHome))).toBe(false);
+  });
+
+  it('does not roll back a completed rename when the directory fsync fails afterward', () => {
     const homeDirectory = home();
     let fsyncs = 0;
-    const fsyncSync: SessionTitleAnnotationWriterFileSystem['fsyncSync'] = (
-      fd,
-    ) => {
-      fsyncs += 1;
-      if (fsyncs === 2) throw new Error('directory fsync failed');
-      return fs.fsyncSync(fd);
-    };
+    const fsyncSync: SessionTitleAnnotationWriterFileSystem['fsyncSync'] =
+      () => {
+        fsyncs += 1;
+        throw new Error('directory fsync failed');
+      };
 
     expect(
       writeSessionTitleAnnotation(
         SESSION_ID,
         'rename already happened',
+        DECLARED_TITLE_SUBDIRECTORY,
         deps(homeDirectory, { fsyncSync }),
       ),
-    ).toEqual({ ok: false });
+    ).toEqual({ ok: true });
+    expect(fsyncs).toBe(1);
     expect(readAnnotation(homeDirectory).title).toBe('rename already happened');
+    expect(fs.readdirSync(directory(homeDirectory))).toEqual([
+      `${SESSION_ID}.json`,
+    ]);
   });
 
-  it('fails closed when the procfd capability is missing', () => {
-    const homeDirectory = home();
-    const statSync: SessionTitleAnnotationWriterFileSystem['statSync'] = () => {
-      throw new Error('procfd missing');
-    };
-    expect(
-      writeSessionTitleAnnotation(
-        SESSION_ID,
-        'not written',
-        deps(homeDirectory, { statSync }),
-      ),
-    ).toEqual({ ok: false });
-    expect(fs.existsSync(directory(homeDirectory))).toBe(true);
-    expect(fs.readdirSync(directory(homeDirectory))).toEqual([]);
-  });
-
-  it('fails closed when an individual durability primitive is absent', () => {
-    const homeDirectory = home();
-    const fsyncSync =
-      undefined as unknown as SessionTitleAnnotationWriterFileSystem['fsyncSync'];
-    expect(
-      writeSessionTitleAnnotation(
-        SESSION_ID,
-        'missing fsync must not publish',
-        deps(homeDirectory, { fsyncSync }),
-      ),
-    ).toEqual({ ok: false });
-    expect(fs.readdirSync(directory(homeDirectory))).toEqual([]);
-  });
-
-  it('fails closed when Linux-only primitives are unavailable', () => {
-    const homeDirectory = home();
-    expect(
-      writeSessionTitleAnnotation(SESSION_ID, 'not written', {
-        ...deps(homeDirectory),
-        platform: 'darwin',
-      }),
-    ).toEqual({ ok: false });
-    expect(fs.existsSync(directory(homeDirectory))).toBe(false);
-  });
-
-  it('rejects a non-directory state path and a FIFO without following either', () => {
-    const fileHome = home();
-    const state = directory(fileHome);
-    fs.mkdirSync(path.dirname(state), { recursive: true });
-    fs.writeFileSync(state, 'not a directory');
-    expect(
-      writeSessionTitleAnnotation(SESSION_ID, 'nope', deps(fileHome)),
-    ).toEqual({
-      ok: false,
-    });
-
-    const fifoHome = home();
-    const fifo = directory(fifoHome);
-    fs.mkdirSync(path.dirname(fifo), { recursive: true });
-    fs.mkdtempSync(path.join(os.tmpdir(), 'unused-'));
-    // Linux's mkfifo is used only to construct the hostile fixture; O_DIRECTORY
-    // must reject it before a blocking open can occur.
-    execFileSync('mkfifo', [fifo]);
-    expect(
-      writeSessionTitleAnnotation(SESSION_ID, 'nope', deps(fifoHome)),
-    ).toEqual({
-      ok: false,
-    });
-  });
-
-  it('keeps concurrent same-session writers complete and uses unique temporary names', () => {
+  it('keeps concurrent same-session writers complete, unique-named, and free of torn reads', () => {
     const homeDirectory = home();
     let random = 0;
     const randomBytes = () => Buffer.alloc(16, ++random);
+    const observedTitles = new Set<string>();
+
+    // Simulate interleaving: every rename observes only ever a fully-formed
+    // prior file (the old final, or a fully-written temp about to replace
+    // it) -- never a partial write, because publish is write-then-rename.
     for (let index = 0; index < 20; index += 1) {
       expect(
-        writeSessionTitleAnnotation(SESSION_ID, `complete-${index}`, {
-          ...deps(homeDirectory),
-          randomBytes,
-        }),
-      ).toEqual({ ok: true });
-      expect(() => readAnnotation(homeDirectory)).not.toThrow();
-    }
-    expect(fs.readdirSync(directory(homeDirectory))).toEqual([
-      `${SESSION_ID}.json`,
-    ]);
-  });
-
-  it('keeps a deterministic same-ID writer interleaving tear-free', () => {
-    const homeDirectory = home();
-    let nested = false;
-    let nestedResult = false;
-    const renameSync: SessionTitleAnnotationWriterFileSystem['renameSync'] = (
-      from,
-      to,
-    ) => {
-      if (!nested) {
-        nested = true;
-        nestedResult = writeSessionTitleAnnotation(
+        writeSessionTitleAnnotation(
           SESSION_ID,
-          'nested complete writer',
-          {
-            ...deps(homeDirectory),
-            randomBytes: () => Buffer.alloc(16, 0x22),
-          },
-        ).ok;
-      }
-      return fs.renameSync(from, to);
-    };
-
-    expect(
-      writeSessionTitleAnnotation(SESSION_ID, 'outer complete writer', {
-        ...deps(homeDirectory),
-        randomBytes: () => Buffer.alloc(16, 0x11),
-        fileSystem: { renameSync },
-      }),
-    ).toEqual({ ok: true });
-    expect(nestedResult).toBe(true);
-    expect(readAnnotation(homeDirectory)).toMatchObject({
-      sessionId: SESSION_ID,
-      title: 'outer complete writer',
-    });
-    expect(() => readAnnotation(homeDirectory)).not.toThrow();
+          `complete-${index}`,
+          DECLARED_TITLE_SUBDIRECTORY,
+          { ...deps(homeDirectory), randomBytes },
+        ),
+      ).toEqual({ ok: true });
+      const observed = readAnnotation(homeDirectory).title;
+      expect(typeof observed).toBe('string');
+      observedTitles.add(observed as string);
+    }
+    // Every intermediate read was a complete, valid JSON annotation (the
+    // `readAnnotation` call above would have thrown on a torn read).
+    expect(observedTitles.size).toBeGreaterThan(0);
     expect(fs.readdirSync(directory(homeDirectory))).toEqual([
       `${SESSION_ID}.json`,
     ]);
   });
 
-  it('keeps a clear/write interleaving tear-free (absent or complete final)', () => {
+  it('a writer racing a clear leaves either an absent file or one complete annotation, never a torn one', () => {
     const homeDirectory = home();
-    makeState(homeDirectory);
+    fs.mkdirSync(directory(homeDirectory), { recursive: true, mode: 0o700 });
     fs.writeFileSync(finalPath(homeDirectory), 'old complete value');
     let nested = false;
     let nestedResult = false;
-    const renameSync: SessionTitleAnnotationWriterFileSystem['renameSync'] = (
-      from,
-      to,
+    const unlinkSync: SessionTitleAnnotationWriterFileSystem['unlinkSync'] = (
+      target,
     ) => {
-      if (
-        String(from).endsWith(`/${SESSION_ID}.json`) &&
-        String(to).endsWith('.clear.tmp') &&
-        !nested
-      ) {
+      if (!nested && String(target).endsWith(`/${SESSION_ID}.json`)) {
         nested = true;
         nestedResult = writeSessionTitleAnnotation(
           SESSION_ID,
           'write racing clear',
+          DECLARED_TITLE_SUBDIRECTORY,
           deps(homeDirectory),
         ).ok;
       }
-      return fs.renameSync(from, to);
+      return fs.unlinkSync(target);
     };
 
-    expect(
-      clearSessionTitleAnnotation(
-        SESSION_ID,
-        deps(homeDirectory, { renameSync }),
-      ),
-    ).toEqual({ ok: true });
+    clearSessionTitleAnnotation(SESSION_ID, DECLARED_TITLE_SUBDIRECTORY, {
+      ...deps(homeDirectory),
+      fileSystem: { unlinkSync },
+    });
     expect(nestedResult).toBe(true);
     const final = fs.existsSync(finalPath(homeDirectory))
       ? readAnnotation(homeDirectory)

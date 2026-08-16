@@ -60,9 +60,26 @@ export interface SessionResult {
   isError: boolean;
 }
 
-/** In-memory provenance for a selected session title. This is deliberately
- * not part of the persisted SessionDoc contract. */
-export type SessionTitleSource = 'explicit' | 'annotation' | 'inferred';
+/**
+ * In-memory provenance for a selected session title. This is deliberately
+ * not part of the persisted SessionDoc contract.
+ *
+ * These are intent tiers, not data-source labels — the ranking they imply
+ * (`declared` > `generated` > `inferred`, see `selectSessionTitle`) is about
+ * how current each tier's signal is, not which system produced it. Claude's
+ * `aiTitle` is written exactly once, early in the transcript, and never
+ * revised afterward (verified against real transcripts: present in 38/40
+ * recent sessions, always from the first turn) — so a session that runs long
+ * and drifts keeps a stale, first-prompt-era label under `generated` for its
+ * entire remaining life. The `declared` tier exists precisely because
+ * nothing else in this pipeline can express "the operator says otherwise,
+ * right now": it is the only channel that carries current intent, so it has
+ * to outrank a machine-generated label even though nothing about being
+ * hand-typed makes it more "real" than `aiTitle`. `inferred` (a first-prompt
+ * fragment) is the fallback of last resort, used only when nothing more
+ * intentional exists yet.
+ */
+export type SessionTitleSource = 'declared' | 'generated' | 'inferred';
 
 export interface SessionSummary {
   sessionId: string;

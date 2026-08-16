@@ -1,8 +1,13 @@
 import { logger } from '@agent-lcars/logging';
-import { SessionDoc, SessionSummary } from '@agent-lcars/telemetry';
+import {
+  SessionDoc,
+  SessionSummary,
+  SessionTitleAnnotationV1,
+} from '@agent-lcars/telemetry';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WatcherDaemon } from './daemon';
+import { SessionTitleOverlayRead } from './session-title-annotation-source';
 import { SessionStore } from './store';
 
 const TRANSCRIPT = (
@@ -1117,6 +1122,505 @@ describe('WatcherDaemon', () => {
         'convo-antigravity-1',
         'session-mixed',
       ]);
+    });
+  });
+
+  describe('session title overlay (issue #1212)', () => {
+    const STATE_DIR = '/state/agent-lcars';
+
+    function titleAnnotation(
+      sessionId: string,
+      title: string,
+    ): SessionTitleAnnotationV1 {
+      return {
+        version: 1,
+        sessionId,
+        updatedAt: '2026-07-12T09:00:00.000Z',
+        title,
+      };
+    }
+
+    /** Builds a fixed `readSessionTitleOverlay` result for a test seam.
+     * `declared`/`generated` each accept either a map of annotations (a
+     * successful — possibly empty — directory read) or the literal string
+     * `'unavailable'` (a failed read: missing, unreadable, or over the
+     * per-directory file-count bound — see
+     * `session-title-annotation-source.ts`'s `SessionTitleDirectoryRead`). */
+    function overlayRead(
+      declared: ReadonlyMap<string, SessionTitleAnnotationV1> | 'unavailable',
+      generated:
+        | ReadonlyMap<string, SessionTitleAnnotationV1>
+        | 'unavailable' = new Map(),
+    ): SessionTitleOverlayRead {
+      return {
+        declared:
+          declared === 'unavailable'
+            ? { available: false, annotations: new Map() }
+            : { available: true, annotations: declared },
+        generated:
+          generated === 'unavailable'
+            ? { available: false, annotations: new Map() }
+            : { available: true, annotations: generated },
+      };
+    }
+
+    it('layers declared over generated over inferred through a full tick', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-title.jsonl': TRANSCRIPT(
+          'session-title',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () =>
+          overlayRead(
+            new Map([
+              [
+                'session-title',
+                titleAnnotation('session-title', 'Declared title'),
+              ],
+            ]),
+            new Map([
+              [
+                'session-title',
+                titleAnnotation('session-title', 'Generated title'),
+              ],
+            ]),
+          ),
+      });
+
+      await daemon.tick();
+
+      // TRANSCRIPT's own reduced title is 'hello' (inferred, from the first
+      // user message, no aiTitle set) — declared beats both the overlay's
+      // generated candidate and that inferred fallback.
+      expect(upserts[0]).toMatchObject({ title: 'Declared title' });
+    });
+
+    it('falls back to the overlay generated title when no declared annotation exists', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-gen.jsonl': TRANSCRIPT(
+          'session-gen',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () =>
+          overlayRead(
+            new Map(),
+            new Map([
+              [
+                'session-gen',
+                titleAnnotation('session-gen', 'Generated title'),
+              ],
+            ]),
+          ),
+      });
+
+      await daemon.tick();
+
+      expect(upserts[0]).toMatchObject({ title: 'Generated title' });
+    });
+
+    it('falls back to the transcript inferred title when neither overlay channel has an annotation for the session', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-inf.jsonl': TRANSCRIPT(
+          'session-inf',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlayRead(new Map(), new Map()),
+      });
+
+      await daemon.tick();
+
+      expect(upserts[0]).toMatchObject({ title: 'hello' });
+    });
+
+    it('produces no upsert and does not change session cardinality for an annotation with an unknown session id', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-known.jsonl': TRANSCRIPT(
+          'session-known',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () =>
+          overlayRead(
+            new Map([
+              [
+                'session-unknown',
+                titleAnnotation('session-unknown', 'Ghost title'),
+              ],
+            ]),
+            new Map(),
+          ),
+      });
+
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts.map((doc) => doc.sessionId)).toEqual(['session-known']);
+      expect(upserts[0].title).not.toBe('Ghost title');
+    });
+
+    it('retains last-good declared title across a transient unavailable read, and replaces it once the read recovers', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-retain.jsonl': TRANSCRIPT(
+          'session-retain',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      let overlay = overlayRead(
+        new Map([
+          [
+            'session-retain',
+            titleAnnotation('session-retain', 'First declared title'),
+          ],
+        ]),
+      );
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlay,
+      });
+
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'First declared title' });
+
+      // The declared directory becomes transiently unreadable — last-good
+      // must be retained, not blanked back to the inferred fallback.
+      overlay = overlayRead('unavailable');
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'First declared title' });
+
+      // It recovers with a different title — last-good is replaced.
+      overlay = overlayRead(
+        new Map([
+          [
+            'session-retain',
+            titleAnnotation('session-retain', 'Second declared title'),
+          ],
+        ]),
+      );
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'Second declared title' });
+    });
+
+    it('treats an available-but-empty read as real information that replaces last-good, unlike an unavailable read', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-empty.jsonl': TRANSCRIPT(
+          'session-empty',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      let overlay = overlayRead(
+        new Map([
+          ['session-empty', titleAnnotation('session-empty', 'Declared title')],
+        ]),
+      );
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlay,
+      });
+
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'Declared title' });
+
+      // The directory reads fine this time and simply has nothing in it —
+      // unlike an unavailable read, this DOES replace last-good, so the doc
+      // falls back to the transcript's own inferred title.
+      overlay = overlayRead(new Map());
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'hello' });
+    });
+
+    it('triggers a new write when only the overlay changes and the transcript stat is unchanged', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-write.jsonl': TRANSCRIPT(
+          'session-write',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      const readFile = vi.fn((p: string) => files[p as keyof typeof files]);
+      let overlay = overlayRead(new Map());
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile,
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlay,
+      });
+
+      await daemon.tick();
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({ title: 'hello' });
+      expect(readFile).toHaveBeenCalledTimes(1);
+
+      // Only the overlay changes on the next tick — the transcript file's
+      // stat (and therefore content) is byte-for-byte unchanged, so it is
+      // never re-read. The `lastWrittenDocs` cache keys on the serialized
+      // doc, not on whether the transcript itself changed, so the title
+      // change alone must still produce a second write.
+      overlay = overlayRead(
+        new Map([
+          ['session-write', titleAnnotation('session-write', 'Declared later')],
+        ]),
+      );
+      await daemon.tick();
+
+      expect(readFile).toHaveBeenCalledTimes(1);
+      expect(upserts).toHaveLength(2);
+      expect(upserts[1]).toMatchObject({
+        sessionId: 'session-write',
+        title: 'Declared later',
+      });
+    });
+
+    it('retries a failed write next tick with the same overlay-selected title', async () => {
+      const files = {
+        '/root/proj/session-retry.jsonl': TRANSCRIPT(
+          'session-retry',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      let shouldFail = true;
+      const upserts: SessionDoc[] = [];
+      const store: SessionStore = {
+        async upsertSession(doc: SessionDoc) {
+          if (shouldFail) {
+            throw new Error('firestore unavailable');
+          }
+          upserts.push(doc);
+        },
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () =>
+          overlayRead(
+            new Map([
+              [
+                'session-retry',
+                titleAnnotation('session-retry', 'Retry title'),
+              ],
+            ]),
+          ),
+      });
+
+      await daemon.tick();
+      expect(upserts).toHaveLength(0);
+
+      shouldFail = false;
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({
+        sessionId: 'session-retry',
+        title: 'Retry title',
+      });
+    });
+
+    it('reads the overlay exactly once per tick regardless of session count', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-1.jsonl': TRANSCRIPT(
+          'session-1',
+          '2026-07-12T10:00:00.000Z',
+        ),
+        '/root/proj/session-2.jsonl': TRANSCRIPT(
+          'session-2',
+          '2026-07-12T10:00:00.000Z',
+        ),
+        '/root/proj/session-3.jsonl': TRANSCRIPT(
+          'session-3',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      const readOverlay = vi.fn(() => overlayRead(new Map()));
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: readOverlay,
+      });
+
+      await daemon.tick();
+      expect(upserts).toHaveLength(3);
+      expect(readOverlay).toHaveBeenCalledTimes(1);
+
+      await daemon.tick();
+      expect(readOverlay).toHaveBeenCalledTimes(2);
+    });
+
+    it('never invokes the session-title overlay when sessionStateDir is unset, matching runner mode', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-runner.jsonl': TRANSCRIPT(
+          'session-runner',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      const readOverlay = vi.fn(() => overlayRead(new Map()));
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        // Mirrors runner.ts's startSidecar: forceSource set, shareDir unset,
+        // and — the thing under test — sessionStateDir never passed at all.
+        forceSource: 'issue-agent',
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        readSessionTitleOverlay: readOverlay,
+      });
+
+      await daemon.tick();
+
+      expect(readOverlay).not.toHaveBeenCalled();
+      expect(upserts[0]).toMatchObject({
+        sessionId: 'session-runner',
+        title: 'hello',
+      });
     });
   });
 });

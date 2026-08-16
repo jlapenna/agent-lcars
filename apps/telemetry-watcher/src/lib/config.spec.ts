@@ -24,6 +24,7 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_METRICS_HOST',
   'AGENT_TELEMETRY_METRICS_PORT',
   'AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB',
+  'AGENT_TELEMETRY_SESSION_STATE_DIR',
   'FIRESTORE_EMULATOR_HOST',
 ] as const;
 
@@ -285,6 +286,32 @@ describe('loadConfig', () => {
       const config = loadConfig();
 
       expect(config.antigravitySummaryDb).toBeUndefined();
+    });
+  });
+
+  describe('AGENT_TELEMETRY_SESSION_STATE_DIR (#1212)', () => {
+    it('defaults to enabled at ~/.local/state/agent-lcars', () => {
+      const config = loadConfig();
+
+      expect(config.sessionStateDir).toBe(
+        path.join(os.homedir(), '.local', 'state', 'agent-lcars'),
+      );
+    });
+
+    it('respects a custom state dir override', () => {
+      process.env['AGENT_TELEMETRY_SESSION_STATE_DIR'] = '/custom/state';
+
+      const config = loadConfig();
+
+      expect(config.sessionStateDir).toBe('/custom/state');
+    });
+
+    it('disables the overlay entirely when set to the empty string', () => {
+      process.env['AGENT_TELEMETRY_SESSION_STATE_DIR'] = '';
+
+      const config = loadConfig();
+
+      expect(config.sessionStateDir).toBeUndefined();
     });
   });
 });

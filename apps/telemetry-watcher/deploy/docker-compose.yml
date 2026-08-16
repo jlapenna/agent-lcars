@@ -89,6 +89,34 @@ services:
       # Only conversations attributed to a configured checkout root ship;
       # the poller no-ops soft when this file is absent.
       - AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB=${WATCHER_HOME}/.gemini/antigravity-cli/conversation_summaries.db
+      # Session-title overlay (issue #1212): declared titles
+      # (`lcars session title "..."`, written by the agent-side CLI as the
+      # plain user) and imported Codex native titles live under this one
+      # root, in `session-metadata/` and `native-titles/` respectively. It's
+      # a dedicated mount rather than folding into `.claude/projects` or
+      # `.codex/sessions` because this state isn't owned by either CLI --
+      # it's LCARS's own state, shared by both runtimes, and giving it its
+      # own root keeps those two existing mounts meaning exactly what their
+      # names say.
+      #
+      # The Codex state DB itself (`~/.codex/state_*.sqlite`, where the
+      # `threads` table's native titles actually live) is deliberately NOT
+      # mounted here, on either a file or directory basis:
+      #   - it's WAL-mode, and a read-only bind mount of a WAL SQLite DB
+      #     fails outright -- `ERR_SQLITE_ERROR: attempt to write a readonly
+      #     database` (verified) -- the WAL reader path still needs to
+      #     create/write `-wal`/`-shm` sidecar files next to the DB even for
+      #     a read-only-intent open, and a read-only bind mount forbids that.
+      #   - mounting the parent `~/.codex` directory instead (to dodge that)
+      #     would also expose `auth.json` and `history.jsonl`, breaching the
+      #     same privacy boundary this whole allowlist scheme exists to
+      #     enforce.
+      # That is exactly why the Codex native-title import runs on the host
+      # instead (see the `agent-lcars-session-title-import` systemd user
+      # timer in this directory) and only its OUTPUT -- one JSON file per
+      # session under `native-titles/` -- ever crosses into the container,
+      # through this mount, like any other watched state.
+      - AGENT_TELEMETRY_SESSION_STATE_DIR=${WATCHER_HOME}/.local/state/agent-lcars
       # firebase-admin pulls in gRPC/protobuf, which has a real baseline
       # footprint — 256m OOM-crash-looped on startup before this was added.
       # Explicit --max-old-space-size avoids V8 sizing its heap against the
@@ -104,6 +132,10 @@ services:
       # Read-only: the live Antigravity CLI writes this DB; the poller opens
       # it read-only every tick and fails soft if it's locked or missing.
       - ${WATCHER_HOME}/.gemini/antigravity-cli:${WATCHER_HOME}/.gemini/antigravity-cli:ro
+      # Session-title state root (issue #1212) -- see the
+      # AGENT_TELEMETRY_SESSION_STATE_DIR comment above for why this is a
+      # separate mount and why ~/.codex's state DB is deliberately excluded.
+      - ${WATCHER_HOME}/.local/state/agent-lcars:${WATCHER_HOME}/.local/state/agent-lcars:ro
       - ${DEPLOY_DIR:?deploy.sh must export DEPLOY_DIR}/writer-key.json:/secrets/writer-key.json:ro
     # Just fs-watching + small periodic writes — nothing like the runner
     # fleet's build load. 512m (not the original 256m — see NODE_OPTIONS

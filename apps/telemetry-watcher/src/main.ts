@@ -35,6 +35,12 @@ function runHostWatcher(): void {
     );
   }
 
+  if (config.sessionStateDir) {
+    logger.info(
+      `agent-lcars-telemetry-watcher: also overlaying session titles from ${config.sessionStateDir}`,
+    );
+  }
+
   const daemon = new WatcherDaemon({
     watchRoots: config.watchRoots,
     host: config.host,
@@ -43,6 +49,7 @@ function runHostWatcher(): void {
     stalenessWindowMs: config.stalenessWindowMs,
     shareDir: config.shareDir,
     antigravitySummaryDb: config.antigravitySummaryDb,
+    sessionStateDir: config.sessionStateDir,
     metrics,
   });
 
