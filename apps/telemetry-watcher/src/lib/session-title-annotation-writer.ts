@@ -13,6 +13,7 @@ import {
   GENERATED_TITLE_SUBDIRECTORY,
   SESSION_STATE_DIRECTORY,
   sessionTitleChannelDirectory,
+  STATUS_SUBDIRECTORY,
 } from './session-title-paths';
 
 /** The `declared` channel's directory, relative to the writer's home
@@ -26,12 +27,15 @@ export const SESSION_TITLE_ANNOTATION_DIRECTORY = sessionTitleChannelDirectory(
   DECLARED_TITLE_SUBDIRECTORY,
 );
 
-/** Either of the two directories a title annotation can be written into --
- * the directory itself is what determines a title's tier (`declared` vs.
- * `generated`), so this writer never accepts an arbitrary caller-supplied
- * path. */
+/** Any of the three directories an annotation can be written into -- the
+ * directory itself is what determines a title's tier (`declared` vs.
+ * `generated`) or, for `STATUS_SUBDIRECTORY`, that it's a status rather
+ * than a title at all -- so this writer never accepts an arbitrary
+ * caller-supplied path. */
 export type SessionTitleChannel =
-  typeof DECLARED_TITLE_SUBDIRECTORY | typeof GENERATED_TITLE_SUBDIRECTORY;
+  | typeof DECLARED_TITLE_SUBDIRECTORY
+  | typeof GENERATED_TITLE_SUBDIRECTORY
+  | typeof STATUS_SUBDIRECTORY;
 
 type PinnedLstatSync = (filePath: string) => fs.Stats;
 /** Pinned to the plain-`string[]`, no-`withFileTypes` overload of
@@ -182,11 +186,20 @@ function fsyncDirectoryQuietly(
  * (one level up) in the first place -- this isn't a new hole, just a
  * narrower guard removed along with everything else.
  */
-export function writeSessionTitleAnnotation(
+/**
+ * Field-generic core of both `writeSessionTitleAnnotation` (below) and
+ * `writeSessionStatusAnnotation` -- the two differ only in which envelope
+ * key (`title` vs. `status`) carries the free-text value, never in the
+ * write mechanics this function owns (temp-file-then-rename, mode 0600,
+ * directory fsync). See this module's own doc comment for why that
+ * mechanics block is deliberately minimal.
+ */
+function writeAnnotationFile<Field extends string>(
   sessionId: string,
-  rawTitle: string,
+  rawText: string,
   channel: SessionTitleChannel,
-  dependencies: SessionTitleAnnotationWriterDependencies = {},
+  fieldName: Field,
+  dependencies: SessionTitleAnnotationWriterDependencies,
 ): SessionTitleAnnotationWriterResult {
   if (!isSafeIdentifier(sessionId)) return { ok: false };
 
@@ -195,9 +208,14 @@ export function writeSessionTitleAnnotation(
   try {
     const clock = dependencies.now ?? (() => new Date());
     const updatedAt = clock().toISOString();
-    const title = truncateTitle(rawTitle);
-    if (!title) return { ok: false };
-    const content = JSON.stringify({ version: 1, sessionId, updatedAt, title });
+    const text = truncateTitle(rawText);
+    if (!text) return { ok: false };
+    const content = JSON.stringify({
+      version: 1,
+      sessionId,
+      updatedAt,
+      [fieldName]: text,
+    });
 
     const directory = channelDirectory(channel, dependencies);
     fileSystem.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -221,6 +239,46 @@ export function writeSessionTitleAnnotation(
     removeQuietly(fileSystem, temporaryPath);
     return { ok: false };
   }
+}
+
+export function writeSessionTitleAnnotation(
+  sessionId: string,
+  rawTitle: string,
+  channel: SessionTitleChannel,
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): SessionTitleAnnotationWriterResult {
+  return writeAnnotationFile(
+    sessionId,
+    rawTitle,
+    channel,
+    'title',
+    dependencies,
+  );
+}
+
+/**
+ * Writes one session's status annotation (issue #1257) into the single
+ * status channel -- unlike `writeSessionTitleAnnotation`, there is no
+ * `channel` parameter: status has only one directory
+ * (`STATUS_SUBDIRECTORY`), and hardcoding it here means a future call site
+ * cannot point a status write at the wrong directory by accident (same
+ * reasoning `pruneGeneratedSessionTitleAnnotations` below gives for
+ * hardcoding its own scope). Shares every write-mechanics guarantee
+ * `writeSessionTitleAnnotation` has (atomic rename, directory fsync, 0600
+ * mode) via the same `writeAnnotationFile` core.
+ */
+export function writeSessionStatusAnnotation(
+  sessionId: string,
+  rawStatus: string,
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): SessionTitleAnnotationWriterResult {
+  return writeAnnotationFile(
+    sessionId,
+    rawStatus,
+    STATUS_SUBDIRECTORY,
+    'status',
+    dependencies,
+  );
 }
 
 /**
@@ -260,6 +318,24 @@ export function clearSessionTitleAnnotation(
     // end state (no final present) already holds either way.
     return { ok: isMissingFile(error) };
   }
+}
+
+/**
+ * Removes the current session's status annotation, if present -- the
+ * status-channel analogue of `clearSessionTitleAnnotation` above. Already
+ * fully channel-generic, so this is a thin wrapper pinning `channel` to
+ * `STATUS_SUBDIRECTORY` for the same "no wrong-directory call site"
+ * reasoning as `writeSessionStatusAnnotation`.
+ */
+export function clearSessionStatusAnnotation(
+  sessionId: string,
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): SessionTitleAnnotationWriterResult {
+  return clearSessionTitleAnnotation(
+    sessionId,
+    STATUS_SUBDIRECTORY,
+    dependencies,
+  );
 }
 
 /**
@@ -402,8 +478,38 @@ export function pruneGeneratedSessionTitleAnnotations(
 export function pruneStaleDeclaredSessionTitleAnnotations(
   dependencies: SessionTitleAnnotationWriterDependencies = {},
 ): void {
+  pruneStaleAnnotations(DECLARED_TITLE_SUBDIRECTORY, dependencies);
+}
+
+/**
+ * Deletes every final in the status channel whose file is older than
+ * `CLI_SESSION_RETENTION_DAYS` -- the status-channel analogue of
+ * `pruneStaleDeclaredSessionTitleAnnotations` above, sharing every property
+ * that function's own doc comment argues for (age-only, mtime-based,
+ * fail-into-nothing on a broken clock). A declared status is the same kind
+ * of deliberate agent statement a declared title is, and the same "It must
+ * not be able to overflow the reader cap" requirement applies -- an
+ * unbounded status channel would eventually exceed
+ * `MAX_SESSION_TITLE_ANNOTATION_FILES` and start failing the whole
+ * directory closed (see `readSessionStatusOverlay`).
+ *
+ * Runs from the same host-side maintenance pass as the declared-title
+ * prune (`session-title-annotation-command.ts`'s `import-native`
+ * subcommand) for the identical reason: it's the only recurring host-side
+ * hook this deployment has.
+ */
+export function pruneStaleSessionStatusAnnotations(
+  dependencies: SessionTitleAnnotationWriterDependencies = {},
+): void {
+  pruneStaleAnnotations(STATUS_SUBDIRECTORY, dependencies);
+}
+
+function pruneStaleAnnotations(
+  channel: SessionTitleChannel,
+  dependencies: SessionTitleAnnotationWriterDependencies,
+): void {
   const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
-  const directory = channelDirectory(DECLARED_TITLE_SUBDIRECTORY, dependencies);
+  const directory = channelDirectory(channel, dependencies);
 
   let entries: string[];
   try {

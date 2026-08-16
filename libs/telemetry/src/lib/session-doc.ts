@@ -2,9 +2,11 @@ import { sessionAgent } from './agent';
 import { isRenderableTranscriptAgent } from './transcript-timeline';
 import {
   BuildSessionDocOptions,
+  ClearableSessionField,
   SessionDoc,
   SessionLiveness,
   SessionSummary,
+  SessionWrite,
 } from './types';
 
 /** Horizon past `lastActivityAt` at which a `source: 'cli'` session doc
@@ -80,6 +82,10 @@ export function buildSessionDoc(
     ...(summary.model && { model: summary.model }),
     ...(summary.permissionMode && { permissionMode: summary.permissionMode }),
     ...(summary.title && { title: summary.title }),
+    ...(summary.status && { status: summary.status }),
+    ...(summary.statusUpdatedAt && {
+      statusUpdatedAt: summary.statusUpdatedAt,
+    }),
     ...(summary.totalCostUsd !== undefined && {
       totalCostUsd: summary.totalCostUsd,
     }),
@@ -124,4 +130,40 @@ export function buildSessionDoc(
     ...(summary.artifacts &&
       summary.artifacts.length > 0 && { artifacts: summary.artifacts }),
   };
+}
+
+/**
+ * Builds the complete description of one Firestore write (issue #1257):
+ * the {@link SessionDoc} from {@link buildSessionDoc}, plus which fields (if
+ * any) must be explicitly DELETED rather than merely omitted from the
+ * merge. This is now the one function every `upsertSession` caller should
+ * go through — see {@link SessionWrite}'s doc comment in `types.ts` for why
+ * the write and the daemon's dedupe-cache key are deliberately the same
+ * value.
+ *
+ * `clearFields` is derived PURELY from `summary.status`: no status on the
+ * summary means BOTH `status` and `statusUpdatedAt` are requested for
+ * deletion, unconditionally — there is no separate "should I clear" branch
+ * anywhere, and no state to track. This holds even for a summary that never
+ * had a status at all (every runner-mode / antigravity-mode write, and
+ * every ordinary session that has never called `lcars session status`):
+ * deleting an absent Firestore field is a no-op, and the write-cache means
+ * it only ever goes out once per session before the identical write is
+ * deduped away. Gating this on "is the status overlay even enabled" would
+ * buy nothing and reintroduce exactly the kind of condition someone can
+ * forget — see the corrected design in issue #1257's own discussion for the
+ * fuller argument against a stateful "did a clear just happen" flag: that
+ * shape makes `clearFields` an input independent of `doc`, which is exactly
+ * what let a doc-only write cache silently swallow a delete in the first
+ * place.
+ */
+export function buildSessionWrite(
+  summary: SessionSummary,
+  liveness: SessionLiveness,
+  options: BuildSessionDocOptions = {},
+): SessionWrite {
+  const doc = buildSessionDoc(summary, liveness, options);
+  const clearFields: ClearableSessionField[] =
+    summary.status === undefined ? ['status', 'statusUpdatedAt'] : [];
+  return { doc, clearFields };
 }

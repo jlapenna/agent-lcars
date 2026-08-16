@@ -1,4 +1,4 @@
-import { SessionDoc } from '@agent-lcars/telemetry';
+import { SessionDoc, SessionWrite } from '@agent-lcars/telemetry';
 import { describe, expect, it } from 'vitest';
 
 import { startSidecar } from './runner';
@@ -82,8 +82,8 @@ const CODEX_TRANSCRIPT = [
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
   const store: SessionStore = {
-    async upsertSession(doc: SessionDoc) {
-      upserts.push(doc);
+    async upsertSession(write: SessionWrite) {
+      upserts.push(write.doc);
     },
   };
   return { store, upserts };

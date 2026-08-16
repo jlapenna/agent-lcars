@@ -54,6 +54,12 @@ export interface CliSession {
   /** Cost-weighted token equivalent; see {@link totalTokens}. */
   totalTokens: number;
   title?: string;
+  /** Agent-declared "what it's doing right now" (#1257) - see `SessionRow`
+   * (session-archive.ts) for the same fields on the archive's view-model;
+   * `statusUpdatedAt` is the declaring envelope's own `updatedAt`, not
+   * `lastActivityAt`. */
+  status?: string;
+  statusUpdatedAt?: string;
   startedAt: string;
   lastActivityAt: string;
   pr?: JoinedPr;
@@ -87,6 +93,8 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
     turns: doc.turns,
     totalTokens: totalTokens(doc.tokens),
     title: doc.title,
+    status: doc.status,
+    statusUpdatedAt: doc.statusUpdatedAt,
     startedAt: doc.startedAt,
     lastActivityAt: doc.lastActivityAt,
     artifacts: doc.artifacts,

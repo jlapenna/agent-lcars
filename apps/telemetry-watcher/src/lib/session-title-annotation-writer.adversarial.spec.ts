@@ -6,17 +6,21 @@ import { CLI_SESSION_RETENTION_DAYS } from '@agent-lcars/telemetry';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  clearSessionStatusAnnotation,
   clearSessionTitleAnnotation,
   pruneGeneratedSessionTitleAnnotations,
   pruneStaleDeclaredSessionTitleAnnotations,
+  pruneStaleSessionStatusAnnotations,
   SESSION_TITLE_ANNOTATION_DIRECTORY,
   SessionTitleAnnotationWriterFileSystem,
   SessionTitleChannel,
+  writeSessionStatusAnnotation,
   writeSessionTitleAnnotation,
 } from './session-title-annotation-writer';
 import {
   DECLARED_TITLE_SUBDIRECTORY,
   GENERATED_TITLE_SUBDIRECTORY,
+  STATUS_SUBDIRECTORY,
 } from './session-title-paths';
 
 const SESSION_ID = 'adversarial-session-1';
@@ -871,5 +875,240 @@ describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
 
     expect(fs.existsSync(strayTemp)).toBe(true);
     expect(fs.existsSync(strayOther)).toBe(true);
+  });
+});
+
+describe('writeSessionStatusAnnotation / clearSessionStatusAnnotation', () => {
+  it('writes a status final with exact v1 field order under the status channel', () => {
+    const homeDirectory = home();
+
+    const result = writeSessionStatusAnnotation(
+      SESSION_ID,
+      'waiting on CI for #1247',
+      deps(homeDirectory),
+    );
+
+    expect(result).toEqual({ ok: true });
+    const raw = fs.readFileSync(
+      finalPath(homeDirectory, STATUS_SUBDIRECTORY),
+      'utf8',
+    );
+    expect(JSON.parse(raw)).toEqual({
+      version: 1,
+      sessionId: SESSION_ID,
+      updatedAt: WHEN.toISOString(),
+      status: 'waiting on CI for #1247',
+    });
+    expect(Object.keys(JSON.parse(raw))).toEqual([
+      'version',
+      'sessionId',
+      'updatedAt',
+      'status',
+    ]);
+  });
+
+  it('persists the shared 80-character normalized status policy', () => {
+    const homeDirectory = home();
+
+    writeSessionStatusAnnotation(
+      SESSION_ID,
+      'x'.repeat(200),
+      deps(homeDirectory),
+    );
+
+    const annotation = readAnnotation(homeDirectory, STATUS_SUBDIRECTORY);
+    expect(annotation['status']).toHaveLength(80);
+  });
+
+  it('rejects an empty status after normalization without publishing', () => {
+    const homeDirectory = home();
+
+    const result = writeSessionStatusAnnotation(
+      SESSION_ID,
+      '   ',
+      deps(homeDirectory),
+    );
+
+    expect(result).toEqual({ ok: false });
+    expect(fs.existsSync(directory(homeDirectory, STATUS_SUBDIRECTORY))).toBe(
+      false,
+    );
+  });
+
+  it('writes the status channel at a distinct directory from either title channel', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'A declared title',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+
+    writeSessionStatusAnnotation(
+      SESSION_ID,
+      'A declared status',
+      deps(homeDirectory),
+    );
+
+    // Same session id, three distinct files -- clearing/overwriting one
+    // must never touch either of the others.
+    expect(directory(homeDirectory, STATUS_SUBDIRECTORY)).not.toBe(
+      directory(homeDirectory, DECLARED_TITLE_SUBDIRECTORY),
+    );
+    expect(readAnnotation(homeDirectory, DECLARED_TITLE_SUBDIRECTORY)).toEqual({
+      version: 1,
+      sessionId: SESSION_ID,
+      updatedAt: WHEN.toISOString(),
+      title: 'A declared title',
+    });
+    expect(readAnnotation(homeDirectory, STATUS_SUBDIRECTORY)).toEqual({
+      version: 1,
+      sessionId: SESSION_ID,
+      updatedAt: WHEN.toISOString(),
+      status: 'A declared status',
+    });
+  });
+
+  it('treats an absent status final as an idempotent clear', () => {
+    const homeDirectory = home();
+
+    expect(
+      clearSessionStatusAnnotation(SESSION_ID, deps(homeDirectory)),
+    ).toEqual({ ok: true });
+  });
+
+  it('clear removes only the status final, leaving a same-session declared title untouched', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'A declared title',
+      DECLARED_TITLE_SUBDIRECTORY,
+      deps(homeDirectory),
+    );
+    writeSessionStatusAnnotation(
+      SESSION_ID,
+      'A declared status',
+      deps(homeDirectory),
+    );
+
+    const result = clearSessionStatusAnnotation(
+      SESSION_ID,
+      deps(homeDirectory),
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(fs.existsSync(finalPath(homeDirectory, STATUS_SUBDIRECTORY))).toBe(
+      false,
+    );
+    expect(
+      fs.existsSync(finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY)),
+    ).toBe(true);
+  });
+});
+
+describe('pruneStaleSessionStatusAnnotations', () => {
+  it('prunes a status annotation older than CLI_SESSION_RETENTION_DAYS, keeps one inside it', () => {
+    const homeDirectory = home();
+    writeSessionStatusAnnotation('old-status', 'stale', {
+      homeDirectory,
+      now: () => new Date(),
+    });
+    writeSessionStatusAnnotation('fresh-status', 'fresh', {
+      homeDirectory,
+      now: () => new Date(),
+    });
+    const staleTime = daysAgo(CLI_SESSION_RETENTION_DAYS + 1);
+    fs.utimesSync(
+      finalPath(homeDirectory, STATUS_SUBDIRECTORY, 'old-status'),
+      staleTime,
+      staleTime,
+    );
+
+    pruneStaleSessionStatusAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, STATUS_SUBDIRECTORY, 'old-status'),
+      ),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        finalPath(homeDirectory, STATUS_SUBDIRECTORY, 'fresh-status'),
+      ),
+    ).toBe(true);
+  });
+
+  it('is a no-op on a missing status directory', () => {
+    const homeDirectory = home();
+
+    expect(() =>
+      pruneStaleSessionStatusAnnotations({ homeDirectory }),
+    ).not.toThrow();
+  });
+
+  it('never touches the declared title channel while pruning the status channel', () => {
+    const homeDirectory = home();
+    writeSessionTitleAnnotation(
+      SESSION_ID,
+      'A declared title',
+      DECLARED_TITLE_SUBDIRECTORY,
+      { homeDirectory, now: () => new Date() },
+    );
+    writeSessionStatusAnnotation(SESSION_ID, 'stale', {
+      homeDirectory,
+      now: () => new Date(),
+    });
+    const staleTime = daysAgo(CLI_SESSION_RETENTION_DAYS + 1);
+    fs.utimesSync(
+      finalPath(homeDirectory, STATUS_SUBDIRECTORY),
+      staleTime,
+      staleTime,
+    );
+    fs.utimesSync(
+      finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY),
+      staleTime,
+      staleTime,
+    );
+
+    pruneStaleSessionStatusAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    expect(fs.existsSync(finalPath(homeDirectory, STATUS_SUBDIRECTORY))).toBe(
+      false,
+    );
+    // The declared channel is old enough too, but this prune call is scoped
+    // to the status channel only -- pruneStaleDeclaredSessionTitleAnnotations
+    // is a separate call, exercised elsewhere in this file.
+    expect(
+      fs.existsSync(finalPath(homeDirectory, DECLARED_TITLE_SUBDIRECTORY)),
+    ).toBe(true);
+  });
+
+  it('never removes a status annotation still inside the retention horizon, however many are present', () => {
+    const homeDirectory = home();
+    for (let i = 0; i < 5; i++) {
+      writeSessionStatusAnnotation(`status-${i}`, `status ${i}`, {
+        homeDirectory,
+        now: () => new Date(),
+      });
+    }
+
+    pruneStaleSessionStatusAnnotations({
+      homeDirectory,
+      now: () => new Date(),
+    });
+
+    for (let i = 0; i < 5; i++) {
+      expect(
+        fs.existsSync(
+          finalPath(homeDirectory, STATUS_SUBDIRECTORY, `status-${i}`),
+        ),
+      ).toBe(true);
+    }
   });
 });

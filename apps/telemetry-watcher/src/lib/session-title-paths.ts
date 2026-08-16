@@ -40,11 +40,29 @@ export const DECLARED_TITLE_SUBDIRECTORY = 'session-metadata';
  */
 export const GENERATED_TITLE_SUBDIRECTORY = 'native-titles';
 
+/**
+ * What the agent says it is doing RIGHT NOW — `lcars session status
+ * "<text>"` (issue #1257). Its own channel, separate from both title
+ * channels above, for the same reason `GENERATED_TITLE_SUBDIRECTORY` is
+ * separate from `DECLARED_TITLE_SUBDIRECTORY`: `lcars session status` would
+ * otherwise need a read-modify-write against the same file `lcars session
+ * title` writes, racing a concurrent title update. The directory
+ * determines meaning so two writers never clobber each other — the repo
+ * already settled this once when it split declared from generated; this is
+ * the same reasoning applied a second time. Unlike the title channels,
+ * status has no precedence tier of its own (there is only ever one status
+ * source), so there is no third "status overlay" pair to read — just this
+ * one directory.
+ */
+export const STATUS_SUBDIRECTORY = 'session-status';
+
 /** Absolute path of one channel's directory beneath a resolved state root. */
 export function sessionTitleChannelDirectory(
   stateDirectory: string,
   subdirectory:
-    typeof DECLARED_TITLE_SUBDIRECTORY | typeof GENERATED_TITLE_SUBDIRECTORY,
+    | typeof DECLARED_TITLE_SUBDIRECTORY
+    | typeof GENERATED_TITLE_SUBDIRECTORY
+    | typeof STATUS_SUBDIRECTORY,
 ): string {
   return path.join(stateDirectory, subdirectory);
 }

@@ -1,13 +1,18 @@
 import { logger } from '@agent-lcars/logging';
 import {
   SessionDoc,
+  SessionStatusAnnotationV1,
   SessionSummary,
   SessionTitleAnnotationV1,
+  SessionWrite,
 } from '@agent-lcars/telemetry';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WatcherDaemon } from './daemon';
-import { SessionTitleOverlayRead } from './session-title-annotation-source';
+import {
+  SessionStatusDirectoryRead,
+  SessionTitleOverlayRead,
+} from './session-title-annotation-source';
 import { SessionStore } from './store';
 
 const TRANSCRIPT = (
@@ -46,14 +51,21 @@ const TRANSCRIPT = (
     }),
   ].join('\n');
 
+/** `upserts` collects each write's `doc` (not the whole `SessionWrite`) so
+ * every existing `upserts[i].xxx` assertion in this file keeps working
+ * unchanged; `writes` collects the full `SessionWrite` (including
+ * `clearFields`) for tests that need to inspect the clear-field cache
+ * behaviour itself. */
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
+  const writes: SessionWrite[] = [];
   const store: SessionStore = {
-    async upsertSession(doc: SessionDoc) {
-      upserts.push(doc);
+    async upsertSession(write: SessionWrite) {
+      writes.push(write);
+      upserts.push(write.doc);
     },
   };
-  return { store, upserts };
+  return { store, upserts, writes };
 }
 
 /** A content-derived fake stat, so tests can simulate a file changing on
@@ -1493,11 +1505,11 @@ describe('WatcherDaemon', () => {
       let shouldFail = true;
       const upserts: SessionDoc[] = [];
       const store: SessionStore = {
-        async upsertSession(doc: SessionDoc) {
+        async upsertSession(write: SessionWrite) {
           if (shouldFail) {
             throw new Error('firestore unavailable');
           }
-          upserts.push(doc);
+          upserts.push(write.doc);
         },
       };
 
@@ -1620,6 +1632,526 @@ describe('WatcherDaemon', () => {
       expect(upserts[0]).toMatchObject({
         sessionId: 'session-runner',
         title: 'hello',
+      });
+    });
+  });
+
+  describe('session status overlay (issue #1257)', () => {
+    const STATE_DIR = '/state/agent-lcars';
+
+    /** Local re-declaration of this file's `session title overlay` describe
+     * block's own `titleAnnotation`/`overlayRead` helpers (that block's are
+     * scoped to its own closure and not reachable here) — kept byte-for-byte
+     * identical so both helpers stay obviously equivalent. */
+    function titleAnnotation(
+      sessionId: string,
+      title: string,
+    ): SessionTitleAnnotationV1 {
+      return {
+        version: 1,
+        sessionId,
+        updatedAt: '2026-07-12T09:00:00.000Z',
+        title,
+      };
+    }
+
+    function overlayRead(
+      declared: ReadonlyMap<string, SessionTitleAnnotationV1> | 'unavailable',
+      generated:
+        | ReadonlyMap<string, SessionTitleAnnotationV1>
+        | 'unavailable' = new Map(),
+    ): SessionTitleOverlayRead {
+      return {
+        declared:
+          declared === 'unavailable'
+            ? { available: false, annotations: new Map() }
+            : { available: true, annotations: declared },
+        generated:
+          generated === 'unavailable'
+            ? { available: false, annotations: new Map() }
+            : { available: true, annotations: generated },
+      };
+    }
+
+    function statusAnnotation(
+      sessionId: string,
+      status: string,
+    ): SessionStatusAnnotationV1 {
+      return {
+        version: 1,
+        sessionId,
+        updatedAt: '2026-07-12T09:00:00.000Z',
+        status,
+      };
+    }
+
+    /** Builds a fixed `readSessionStatusOverlay` result for a test seam —
+     * the status-channel analogue of this file's own `overlayRead` helper
+     * above (see that helper's doc comment for why `'unavailable'` is
+     * accepted as a sentinel distinct from an empty, successful read). */
+    function statusOverlayRead(
+      annotations:
+        | ReadonlyMap<string, SessionStatusAnnotationV1>
+        | 'unavailable' = new Map(),
+    ): SessionStatusDirectoryRead {
+      return annotations === 'unavailable'
+        ? { available: false, annotations: new Map() }
+        : { available: true, annotations };
+    }
+
+    it('joins a declared status onto a discovered session through a full tick', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-status.jsonl': TRANSCRIPT(
+          'session-status',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlayRead(new Map()),
+        readSessionStatusOverlay: () =>
+          statusOverlayRead(
+            new Map([
+              [
+                'session-status',
+                statusAnnotation('session-status', 'waiting on CI for #1247'),
+              ],
+            ]),
+          ),
+      });
+
+      await daemon.tick();
+
+      expect(upserts[0]).toMatchObject({
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-12T09:00:00.000Z',
+      });
+    });
+
+    it('omits status/statusUpdatedAt when no status annotation exists for the session', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-nostatus.jsonl': TRANSCRIPT(
+          'session-nostatus',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlayRead(new Map()),
+        readSessionStatusOverlay: () => statusOverlayRead(new Map()),
+      });
+
+      await daemon.tick();
+
+      expect(upserts[0]).not.toHaveProperty('status');
+      expect(upserts[0]).not.toHaveProperty('statusUpdatedAt');
+    });
+
+    it('produces no upsert and does not change session cardinality for a status annotation with an unknown session id', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-known.jsonl': TRANSCRIPT(
+          'session-known',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlayRead(new Map()),
+        readSessionStatusOverlay: () =>
+          statusOverlayRead(
+            new Map([
+              [
+                'session-ghost',
+                statusAnnotation('session-ghost', 'a status for no one'),
+              ],
+            ]),
+          ),
+      });
+
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts.map((doc) => doc.sessionId)).toEqual(['session-known']);
+      expect(upserts[0]).not.toHaveProperty('status');
+    });
+
+    it('retains last-good status across a transient unavailable read, and replaces it once the read recovers', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-retain.jsonl': TRANSCRIPT(
+          'session-retain',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      let statusOverlay = statusOverlayRead(
+        new Map([
+          [
+            'session-retain',
+            statusAnnotation('session-retain', 'first status'),
+          ],
+        ]),
+      );
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlayRead(new Map()),
+        readSessionStatusOverlay: () => statusOverlay,
+      });
+
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ status: 'first status' });
+
+      // The status directory becomes transiently unreadable — last-good
+      // must be retained, not blanked/cleared.
+      statusOverlay = statusOverlayRead('unavailable');
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ status: 'first status' });
+
+      // It recovers with a different status — last-good is replaced.
+      statusOverlay = statusOverlayRead(
+        new Map([
+          [
+            'session-retain',
+            statusAnnotation('session-retain', 'second status'),
+          ],
+        ]),
+      );
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ status: 'second status' });
+    });
+
+    it('reads the status channel exactly once per tick regardless of session count', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-1.jsonl': TRANSCRIPT(
+          'session-1',
+          '2026-07-12T10:00:00.000Z',
+        ),
+        '/root/proj/session-2.jsonl': TRANSCRIPT(
+          'session-2',
+          '2026-07-12T10:00:00.000Z',
+        ),
+        '/root/proj/session-3.jsonl': TRANSCRIPT(
+          'session-3',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      const readStatusOverlay = vi.fn(() => statusOverlayRead(new Map()));
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => overlayRead(new Map()),
+        readSessionStatusOverlay: readStatusOverlay,
+      });
+
+      await daemon.tick();
+      expect(upserts).toHaveLength(3);
+      expect(readStatusOverlay).toHaveBeenCalledTimes(1);
+
+      await daemon.tick();
+      expect(readStatusOverlay).toHaveBeenCalledTimes(2);
+    });
+
+    it('never invokes the session-status overlay when sessionStateDir is unset, matching runner mode', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-runner.jsonl': TRANSCRIPT(
+          'session-runner',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      const readStatusOverlay = vi.fn(() => statusOverlayRead(new Map()));
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        forceSource: 'issue-agent',
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        readSessionStatusOverlay: readStatusOverlay,
+      });
+
+      await daemon.tick();
+
+      expect(readStatusOverlay).not.toHaveBeenCalled();
+      expect(upserts[0]).not.toHaveProperty('status');
+    });
+
+    it('never disturbs the title when setting/clearing status, and vice versa, including interleaved writes', async () => {
+      const { store, upserts } = createFakeStore();
+      const files = {
+        '/root/proj/session-mix.jsonl': TRANSCRIPT(
+          'session-mix',
+          '2026-07-12T10:00:00.000Z',
+        ),
+      };
+      let titleOverlay = overlayRead(new Map());
+      let statusOverlay = statusOverlayRead(new Map());
+
+      const daemon = new WatcherDaemon({
+        watchRoots: [
+          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+        ],
+        host: 'test-host',
+        store,
+        heartbeatIntervalMs: HEARTBEAT_MS,
+        stalenessWindowMs: STALENESS_MS,
+        now: () => '2026-07-12T10:00:01.000Z',
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+        sessionStateDir: STATE_DIR,
+        readSessionTitleOverlay: () => titleOverlay,
+        readSessionStatusOverlay: () => statusOverlay,
+      });
+
+      // Tick 1: declare a title only.
+      titleOverlay = overlayRead(
+        new Map([
+          ['session-mix', titleAnnotation('session-mix', 'Declared title')],
+        ]),
+      );
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'Declared title' });
+      expect(upserts.at(-1)).not.toHaveProperty('status');
+
+      // Tick 2: set a status — the title must be undisturbed.
+      statusOverlay = statusOverlayRead(
+        new Map([
+          ['session-mix', statusAnnotation('session-mix', 'A live status')],
+        ]),
+      );
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({
+        title: 'Declared title',
+        status: 'A live status',
+      });
+
+      // Tick 3: change the title only — the status must be undisturbed.
+      titleOverlay = overlayRead(
+        new Map([['session-mix', titleAnnotation('session-mix', 'Retitled')]]),
+      );
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({
+        title: 'Retitled',
+        status: 'A live status',
+      });
+
+      // Tick 4: clear the status only — the (changed) title must survive.
+      statusOverlay = statusOverlayRead(new Map());
+      await daemon.tick();
+      expect(upserts.at(-1)).toMatchObject({ title: 'Retitled' });
+      expect(upserts.at(-1)).not.toHaveProperty('status');
+    });
+
+    /**
+     * Confirmed empirically (temporarily reverting `daemon.ts`'s cache key
+     * from `JSON.stringify(write)` to `JSON.stringify(write.doc)` and
+     * re-running this suite, then restoring it): for `status`/
+     * `statusUpdatedAt` SPECIFICALLY, the first `it` below still passes
+     * under a doc-only key too. That is expected, not a gap in this test —
+     * `buildSessionWrite` derives `clearFields` as a pure function of
+     * `summary.status`'s presence, the exact same condition `buildSessionDoc`
+     * uses to decide whether `doc` carries a `status` key at all, so for
+     * this one field pair `clearFields` happens to be fully recoverable from
+     * `doc` alone and a doc-only key cannot diverge from a whole-write key.
+     * The second `it` below is what actually demonstrates the risk this
+     * design closes: it constructs two write-shaped values with an
+     * IDENTICAL `doc` but DIFFERENT `clearFields` (modelling a future
+     * clearable field whose clear-intent need not correlate with any other
+     * doc field) and shows the existing `JSON.stringify(write)` comparison
+     * already distinguishes them — with no change to `daemon.ts`. Keeping
+     * both tests: the first proves today's real, observable behaviour
+     * end-to-end; the second proves the design choice (key on the whole
+     * write) is what protects a case today's fields don't yet exercise.
+     */
+    describe('the write cache keys on the whole SessionWrite', () => {
+      it('a cleared status produces exactly ONE write carrying the delete, and subsequent ticks produce none', async () => {
+        const { store, writes } = createFakeStore();
+        const files = {
+          '/root/proj/session-clear.jsonl': TRANSCRIPT(
+            'session-clear',
+            '2026-07-12T10:00:00.000Z',
+          ),
+        };
+        let statusOverlay = statusOverlayRead(
+          new Map([
+            ['session-clear', statusAnnotation('session-clear', 'in progress')],
+          ]),
+        );
+
+        const daemon = new WatcherDaemon({
+          watchRoots: [
+            {
+              path: '/root',
+              adapter: 'claude-code',
+              projectDirAllowlist: ['*'],
+            },
+          ],
+          host: 'test-host',
+          store,
+          heartbeatIntervalMs: HEARTBEAT_MS,
+          stalenessWindowMs: STALENESS_MS,
+          now: () => '2026-07-12T10:00:01.000Z',
+          discover: () => Object.keys(files),
+          readFile: (p: string) => files[p as keyof typeof files],
+          statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+          isProcessAliveForCwd: () => true,
+          resolveGitBranch: async () => undefined,
+          sessionStateDir: STATE_DIR,
+          readSessionTitleOverlay: () => overlayRead(new Map()),
+          readSessionStatusOverlay: () => statusOverlay,
+        });
+
+        // Tick 1: status present — one write, nothing requested for
+        // deletion.
+        await daemon.tick();
+        expect(writes).toHaveLength(1);
+        expect(writes[0].clearFields).toEqual([]);
+        expect(writes[0].doc).toMatchObject({ status: 'in progress' });
+
+        // Tick 2: `lcars session status --clear` happens — the annotation
+        // disappears. Exactly ONE more write must go out, and it must be
+        // the one carrying the delete.
+        statusOverlay = statusOverlayRead(new Map());
+        await daemon.tick();
+        expect(writes).toHaveLength(2);
+        expect(writes[1].clearFields).toEqual(['status', 'statusUpdatedAt']);
+        expect(writes[1].doc).not.toHaveProperty('status');
+        expect(writes[1].doc).not.toHaveProperty('statusUpdatedAt');
+
+        // Tick 3, 4: still cleared, nothing else changed — the write cache
+        // must dedupe this to zero further writes, not resend the delete
+        // forever.
+        await daemon.tick();
+        await daemon.tick();
+        expect(writes).toHaveLength(2);
+      });
+
+      /**
+       * The write cache is `JSON.stringify(write)` compared against the
+       * previous tick's serialized write, where `write: { doc, clearFields
+       * }`. This test proves that mechanism is already total over
+       * `clearFields`'s *contents*, not merely over today's two field names
+       * — so a future `ClearableSessionField` addition changes what
+       * `clearFields` contains, which changes the serialized write, which
+       * the EXISTING string comparison in `WatcherDaemon.tick()` already
+       * treats as a cache miss. No line in `daemon.ts` needs to change for
+       * that to keep holding; the property is inherited entirely from
+       * comparing the WHOLE write rather than the doc alone. See
+       * `SessionWrite`'s doc comment (`@agent-lcars/telemetry`'s
+       * `types.ts`) for why a doc-only key can't offer the same guarantee.
+       */
+      it('adding a hypothetical future clearable field requires no change to the caching logic', () => {
+        const doc = { sessionId: 'session-future', liveness: 'live' };
+        // `ClearableSessionField` is a closed union today (`'status' |
+        // 'statusUpdatedAt'`) — this cast models what the type becomes the
+        // day a THIRD field is added, without touching that union or any
+        // daemon code to prove the point.
+        type FutureClearableField =
+          'status' | 'statusUpdatedAt' | 'noteHypotheticallyAddedLater';
+        const before: { doc: unknown; clearFields: FutureClearableField[] } = {
+          doc,
+          clearFields: ['status', 'statusUpdatedAt'],
+        };
+        const after: { doc: unknown; clearFields: FutureClearableField[] } = {
+          doc,
+          clearFields: [
+            'status',
+            'statusUpdatedAt',
+            'noteHypotheticallyAddedLater',
+          ],
+        };
+
+        // Same doc, different clearFields — exactly the shape a future
+        // clearable field would produce on an otherwise-unchanged tick.
+        expect(JSON.stringify(before)).not.toBe(JSON.stringify(after));
+        // The daemon's actual cache comparison is nothing more than this
+        // string inequality (`this.lastWrittenWrites.get(sessionId) ===
+        // serializedWrite`) — so this inequality alone is what makes the
+        // next tick's upsert fire instead of being silently deduped.
       });
     });
   });

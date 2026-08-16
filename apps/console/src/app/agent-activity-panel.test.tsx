@@ -10,6 +10,7 @@ import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import {
   AgentActivityPanel,
+  CliSessionRow,
   type RunItemRef,
   SourceBadge,
 } from './agent-activity-panel';
@@ -326,6 +327,66 @@ describe('AgentActivityPanel CLI sessions', () => {
   it('renders an agent badge for a non-claude-code session', () => {
     renderPanel([makeCliSession({ agent: 'opencode' })]);
     expect(screen.getByText('opencode')).toBeTruthy();
+  });
+
+  it('renders the agent-declared status with its own age under the title (#1257)', () => {
+    renderPanel([
+      makeCliSession({
+        liveness: 'live',
+        title: 'Land session titles end to end',
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-12T00:03:00.000Z',
+      }),
+    ]);
+
+    expect(screen.getByTestId('session-status-line')).toBeTruthy();
+    expect(screen.getByText('waiting on CI for #1247')).toBeTruthy();
+  });
+
+  it('renders no status line for a live session with no declared status (#1257)', () => {
+    renderPanel([makeCliSession({ liveness: 'live' })]);
+    expect(screen.queryByTestId('session-status-line')).toBeNull();
+  });
+});
+
+// ActiveAgentsSection (apps/agents/active-agents-section.tsx) renders this
+// same 'detail' variant of CliSessionRow for the fleet-focused /agents
+// page, but its own test file mocks CliSessionRow out entirely (see that
+// file's isolation-strategy comment) - covering the variant directly here
+// is what actually protects the /agents surface #1257 asked for.
+describe('CliSessionRow detail variant (used by the /agents Active Agents section)', () => {
+  it('renders the agent-declared status with its own age under the title', () => {
+    render(
+      <MantineProvider>
+        <CliSessionRow
+          session={makeCliSession({
+            liveness: 'live',
+            title: 'Land session titles end to end',
+            status: 'waiting on CI for #1247',
+            statusUpdatedAt: '2026-07-12T00:03:00.000Z',
+          })}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByTestId('session-status-line')).toBeTruthy();
+    expect(screen.getByText('waiting on CI for #1247')).toBeTruthy();
+  });
+
+  it('hides the status line once the session has ended', () => {
+    render(
+      <MantineProvider>
+        <CliSessionRow
+          session={makeCliSession({
+            liveness: 'ended',
+            status: 'waiting on CI for #1247',
+            statusUpdatedAt: '2026-07-12T00:03:00.000Z',
+          })}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.queryByTestId('session-status-line')).toBeNull();
   });
 });
 

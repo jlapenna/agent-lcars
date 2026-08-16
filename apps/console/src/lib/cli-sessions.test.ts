@@ -470,6 +470,33 @@ describe('getCliSessions', () => {
     expect(sessions.map((s) => s.sessionId)).toContain('live-tail');
   });
 
+  it('passes through the agent-declared status and its own age, distinct from lastActivityAt (#1257)', async () => {
+    const lastActivityAt = minutesAgo(1);
+    const statusUpdatedAt = minutesAgo(40);
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({
+        lastActivityAt,
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt,
+      }),
+    ]);
+    mockOpenPulls();
+
+    const { sessions } = await getCliSessions();
+    expect(sessions[0].status).toBe('waiting on CI for #1247');
+    expect(sessions[0].statusUpdatedAt).toBe(statusUpdatedAt);
+    expect(sessions[0].statusUpdatedAt).not.toBe(sessions[0].lastActivityAt);
+  });
+
+  it('leaves status and statusUpdatedAt undefined when the doc has none (#1257)', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([makeCliDoc()]);
+    mockOpenPulls();
+
+    const { sessions } = await getCliSessions();
+    expect(sessions[0].status).toBeUndefined();
+    expect(sessions[0].statusUpdatedAt).toBeUndefined();
+  });
+
   it('passes through discovered artifacts', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ artifacts: ['report.md', 'chart.png'] }),

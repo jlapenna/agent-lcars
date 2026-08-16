@@ -1,9 +1,10 @@
 import { logger } from '@agent-lcars/logging';
 import {
   applySessionTitleOverlay,
-  buildSessionDoc,
+  buildSessionWrite,
   computeLiveness,
   getTranscriptAdapter,
+  SessionStatusAnnotationV1,
   SessionSummary,
   SessionTitleAnnotationV1,
 } from '@agent-lcars/telemetry';
@@ -26,7 +27,9 @@ import {
   scanProcCwds,
 } from './process-check';
 import {
+  readSessionStatusOverlay as defaultReadSessionStatusOverlay,
   readSessionTitleOverlay as defaultReadSessionTitleOverlay,
+  SessionStatusDirectoryRead,
   SessionTitleOverlayRead,
 } from './session-title-annotation-source';
 import { SessionStore } from './store';
@@ -128,6 +131,16 @@ export interface WatcherDaemonOptions {
    * callers (main.ts) never set this; the daemon uses the real
    * `readSessionTitleOverlay` (real `fs`) by default. */
   readSessionTitleOverlay?: (stateDirectory: string) => SessionTitleOverlayRead;
+  /** Test-only injection point, mirrored from the seams above — production
+   * callers (main.ts) never set this; the daemon uses the real
+   * `readSessionStatusOverlay` (real `fs`) by default. Read from the same
+   * `sessionStateDir` root as `readSessionTitleOverlay` — see
+   * `STATUS_SUBDIRECTORY`'s doc comment for why status gets its own
+   * channel directory beneath that same root rather than a new top-level
+   * option. */
+  readSessionStatusOverlay?: (
+    stateDirectory: string,
+  ) => SessionStatusDirectoryRead;
 }
 
 interface TrackedSession {
@@ -158,11 +171,26 @@ export class WatcherDaemon {
    * value means the row can't have produced a different doc, so skip
    * re-upserting it. */
   private readonly antigravityLastModified = new Map<string, string>();
-  /** Serialized document from the last successful write per session. A tick
-   * that recomputes an identical document is only a local heartbeat and must
-   * not become a billable Firestore no-op write. Failed writes are never
-   * cached, so the next tick retries them. */
-  private readonly lastWrittenDocs = new Map<string, string>();
+  /** Serialized `SessionWrite` from the last successful write per session. A
+   * tick that recomputes an identical write is only a local heartbeat and
+   * must not become a billable Firestore no-op write. Failed writes are
+   * never cached, so the next tick retries them.
+   *
+   * Keyed on the WHOLE `SessionWrite` (`{ doc, clearFields }`), not on
+   * `doc` alone (issue #1257) — this is deliberate and load-bearing, not
+   * an arbitrary choice. `doc` and `clearFields` together are the entire
+   * operation this cache exists to dedupe; a key built from only part of
+   * that operation is narrower than the operation itself, and anything in
+   * the operation but not in the key becomes a silent no-op by
+   * construction — see `SessionWrite`'s doc comment
+   * (`@agent-lcars/telemetry`'s `types.ts`) for the fuller argument, and
+   * this repo's own #1257 discussion for the concrete trap: a doc with no
+   * `status` serializes identically whether or not that tick's write is
+   * the one that must carry a delete. Serializing the *write* rather than
+   * the doc means the key is a total function of the operation and cannot
+   * drift from it — including for any clearable field added after this
+   * one, with no change needed here. */
+  private readonly lastWrittenWrites = new Map<string, string>();
   /** Set the first time `pollAntigravitySummaries` reports the DB
    * unavailable (missing/locked/corrupt) - keeps the warning to once per
    * process instead of once per tick, since a host with no Antigravity CLI
@@ -186,6 +214,15 @@ export class WatcherDaemon {
   private lastGoodGeneratedTitles: ReadonlyMap<
     string,
     SessionTitleAnnotationV1
+  > = new Map();
+  /** Last-good session-status annotations (issue #1257) — the status
+   * channel's own analogue of `lastGoodDeclaredTitles` above, same
+   * available/unavailable + last-good semantics (see that field's doc
+   * comment). Status has no precedence tier of its own, so there is only
+   * this one map, not a declared/generated pair. */
+  private lastGoodStatusAnnotations: ReadonlyMap<
+    string,
+    SessionStatusAnnotationV1
   > = new Map();
   private intervalHandle?: ReturnType<typeof setInterval>;
 
@@ -376,6 +413,18 @@ export class WatcherDaemon {
       if (overlayRead.generated.available) {
         this.lastGoodGeneratedTitles = overlayRead.generated.annotations;
       }
+
+      // Session-status channel (issue #1257): read once per tick alongside
+      // the two title channels above, same available/unavailable +
+      // last-good semantics, same reasoning for reading it here rather
+      // than per-session below.
+      const readStatusOverlay =
+        this.options.readSessionStatusOverlay ??
+        defaultReadSessionStatusOverlay;
+      const statusRead = readStatusOverlay(this.options.sessionStateDir);
+      if (statusRead.available) {
+        this.lastGoodStatusAnnotations = statusRead.annotations;
+      }
     }
 
     for (const [sessionId, tracked] of this.sessions) {
@@ -438,7 +487,27 @@ export class WatcherDaemon {
         generated: this.lastGoodGeneratedTitles.get(sessionId),
       });
 
-      const doc = buildSessionDoc(overlaidSummary, liveness, {
+      // Join the current session-status candidate the same way, straight
+      // onto `overlaidSummary` (itself already derived fresh from the
+      // pristine `summary` above, never stored back — see the long comment
+      // above for why that matters). Unlike title there is no precedence to
+      // apply: status has exactly one source, so "present" means "joined
+      // this tick" and "absent" means exactly that — there is deliberately
+      // no separate "was a status previously set" state to consult here.
+      // Absence is what `buildSessionWrite` reads as "clear it" (see that
+      // function's own doc comment in `session-doc.ts`), so a removed
+      // annotation reaching zero effect on `overlaidSummary.status` is the
+      // entire mechanism, not a special case.
+      const statusAnnotation = this.lastGoodStatusAnnotations.get(sessionId);
+      const summaryWithStatus = statusAnnotation
+        ? {
+            ...overlaidSummary,
+            status: statusAnnotation.status,
+            statusUpdatedAt: statusAnnotation.updatedAt,
+          }
+        : overlaidSummary;
+
+      const write = buildSessionWrite(summaryWithStatus, liveness, {
         runId: this.options.runId,
         issueNumber: this.options.issueNumber,
         repo: this.options.repo,
@@ -447,14 +516,17 @@ export class WatcherDaemon {
         }),
         observedAt,
       });
-      const serializedDoc = JSON.stringify(doc);
-      if (this.lastWrittenDocs.get(sessionId) === serializedDoc) {
+      // Keyed on the WHOLE write, not the doc alone — see
+      // `lastWrittenWrites`'s own doc comment above for why that
+      // distinction is load-bearing rather than cosmetic.
+      const serializedWrite = JSON.stringify(write);
+      if (this.lastWrittenWrites.get(sessionId) === serializedWrite) {
         continue;
       }
 
       try {
-        await this.options.store.upsertSession(doc);
-        this.lastWrittenDocs.set(sessionId, serializedDoc);
+        await this.options.store.upsertSession(write);
+        this.lastWrittenWrites.set(sessionId, serializedWrite);
         this.options.metrics?.recordSuccessfulSessionUpsert(now, liveness);
       } catch (error) {
         logger.warn(
@@ -523,10 +595,15 @@ export class WatcherDaemon {
         heartbeatReceived: true,
       });
 
-      const doc = buildSessionDoc(summary, liveness);
+      // Antigravity rows never join the session-status overlay (it's keyed
+      // by transcript-discovered `sessionId`, and these come from a polled
+      // summary DB instead) — `buildSessionWrite` requests the clear
+      // unconditionally here, deliberately, same as any other write with no
+      // status on its summary. See that function's own doc comment.
+      const write = buildSessionWrite(summary, liveness);
 
       try {
-        await this.options.store.upsertSession(doc);
+        await this.options.store.upsertSession(write);
         this.options.metrics?.recordSuccessfulSessionUpsert(now, liveness);
         this.antigravityLastModified.set(
           summary.sessionId,

@@ -2,6 +2,7 @@ import {
   type CliSessionDoc,
   type IssueAgentSessionDoc,
   SESSION_RETENTION_DAYS,
+  type SessionWrite,
 } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryWriterFirestore,
@@ -278,7 +279,16 @@ export async function POST(req: NextRequest) {
           ...fixtureArchiveIssueSessions(),
         ]
       : fixtureSessions();
-    await Promise.all(docs.map((doc) => upsertSession(doc)));
+    // Full-fixture writes, not a status update - nothing to clear. See
+    // SessionWrite's doc comment (@agent-lcars/telemetry): upsertSession
+    // takes the complete write description rather than a bare doc, so
+    // every caller states its clear intent explicitly instead of it being
+    // inferred from the doc's own (possibly-absent) fields.
+    const writes: SessionWrite[] = docs.map((doc) => ({
+      doc,
+      clearFields: [],
+    }));
+    await Promise.all(writes.map((write) => upsertSession(write)));
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('agent-lcars: error in E2E seed API:', error);

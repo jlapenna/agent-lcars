@@ -1,6 +1,6 @@
 import { logger } from '@agent-lcars/logging';
 import {
-  buildSessionDoc,
+  buildSessionWrite,
   getTranscriptAdapter,
   RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
@@ -218,7 +218,13 @@ async function finalizeSummary(
     }
   }
 
-  const doc = buildSessionDoc(finalSummary, 'ended', {
+  // Runner mode never joins the session-status overlay (see runner.ts /
+  // daemon.ts's `sessionStateDir` doc comments — an ephemeral dispatch
+  // container has no `~/.local/state/agent-lcars` writer publishing
+  // candidates for its own CI session), so `finalSummary` never carries a
+  // `status`. `buildSessionWrite` requests the clear unconditionally in
+  // that case, deliberately — see its own doc comment.
+  const write = buildSessionWrite(finalSummary, 'ended', {
     runId: config.runId,
     issueNumber: config.issueNumber,
     repo: config.repo,
@@ -230,7 +236,7 @@ async function finalizeSummary(
   });
 
   try {
-    await store.upsertSession(doc);
+    await store.upsertSession(write);
     logger.info(
       `agent-lcars-telemetry-watcher: finalized session ${summary.sessionId} (run ${config.runId ?? 'unknown'})${
         transcriptGcsUri ? ` with transcript at ${transcriptGcsUri}` : ''

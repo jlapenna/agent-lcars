@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import { CLI_SESSION_RETENTION_DAYS } from '@agent-lcars/telemetry';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -13,6 +14,7 @@ import { SessionTitleAnnotationWriterFileSystem } from './session-title-annotati
 
 const SESSION_ID = 'command-session-1';
 const TITLE = 'title must never be echoed in an error';
+const STATUS = 'status must never be echoed in an error';
 /** Pinned clock every `import-native` test below passes as `now` (issue
  * #1224's recency-windowed query needs a deterministic "now" to compare
  * `updated_at` fixture values against). Also backs `fixtureCodexDb`'s
@@ -52,6 +54,17 @@ function generatedPath(homeDirectory: string, sessionId: string): string {
     'state',
     'agent-lcars',
     'native-titles',
+    `${sessionId}.json`,
+  );
+}
+
+function statusPath(homeDirectory: string, sessionId = SESSION_ID): string {
+  return path.join(
+    homeDirectory,
+    '.local',
+    'state',
+    'agent-lcars',
+    'session-status',
     `${sessionId}.json`,
   );
 }
@@ -268,6 +281,117 @@ describe('session title command grammar and dispatch', () => {
   });
 });
 
+describe('session status command grammar and dispatch', () => {
+  it('accepts a status command and reads the id via session-id resolution', () => {
+    const homeDirectory = home();
+    const result = executeSessionTitleAnnotationCommand(
+      ['session', 'status', STATUS],
+      {
+        env: { LCARS_SESSION_ID: SESSION_ID },
+        homeDirectory,
+        now: () => new Date('2026-08-15T12:34:56.000Z'),
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(
+      JSON.parse(fs.readFileSync(statusPath(homeDirectory), 'utf8')),
+    ).toMatchObject({ sessionId: SESSION_ID, status: STATUS });
+  });
+
+  it('accepts full-argv clear and removes only the env-selected session', () => {
+    const homeDirectory = home();
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'status', 'to clear'], {
+        env: { LCARS_SESSION_ID: SESSION_ID },
+        homeDirectory,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'status', '--clear'], {
+        env: { LCARS_SESSION_ID: SESSION_ID },
+        homeDirectory,
+      }),
+    ).toEqual({ ok: true });
+    expect(fs.existsSync(statusPath(homeDirectory))).toBe(false);
+  });
+
+  it('never disturbs a declared title for the same session', () => {
+    const homeDirectory = home();
+    executeSessionTitleAnnotationCommand(['session', 'title', TITLE], {
+      env: { LCARS_SESSION_ID: SESSION_ID },
+      homeDirectory,
+    });
+
+    executeSessionTitleAnnotationCommand(['session', 'status', STATUS], {
+      env: { LCARS_SESSION_ID: SESSION_ID },
+      homeDirectory,
+    });
+    executeSessionTitleAnnotationCommand(['session', 'status', '--clear'], {
+      env: { LCARS_SESSION_ID: SESSION_ID },
+      homeDirectory,
+    });
+
+    expect(
+      JSON.parse(fs.readFileSync(declaredPath(homeDirectory), 'utf8')),
+    ).toMatchObject({ title: TITLE });
+  });
+
+  it.each([
+    ['bare status', ['a status']],
+    ['bare clear', ['--clear']],
+    ['missing prefix', ['status', 'a status']],
+    ['extra argument', ['session', 'status', 'a status', 'extra']],
+    ['unknown flag', ['session', 'status', '--unknown']],
+    ['empty status', ['session', 'status', '']],
+  ] as const)(
+    'rejects %s without mutating state, with usage attached',
+    (_label, argv) => {
+      const homeDirectory = home();
+      expect(
+        executeSessionTitleAnnotationCommand(argv, {
+          env: { LCARS_SESSION_ID: SESSION_ID },
+          homeDirectory,
+        }),
+      ).toEqual({
+        ok: false,
+        error: 'invalid-command',
+        usage: SESSION_TITLE_CLI_USAGE,
+      });
+      expect(fs.existsSync(path.join(homeDirectory, '.local'))).toBe(false);
+    },
+  );
+
+  it('requires an env-provided safe ID, same resolution as session title', () => {
+    const homeDirectory = home();
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'status', STATUS], {
+        env: {},
+        homeDirectory,
+      }),
+    ).toEqual({ ok: false, error: 'invalid-session' });
+    expect(fs.existsSync(path.join(homeDirectory, '.local'))).toBe(false);
+  });
+
+  it('returns only generic diagnostics and never leaks status text on a write failure', () => {
+    const homeDirectory = home();
+    const writeFileSync: SessionTitleAnnotationWriterFileSystem['writeFileSync'] =
+      () => {
+        throw new Error('disk full');
+      };
+    const result = executeSessionTitleAnnotationCommand(
+      ['session', 'status', STATUS],
+      {
+        env: { LCARS_SESSION_ID: SESSION_ID },
+        homeDirectory,
+        fileSystem: { writeFileSync },
+      },
+    );
+    expect(JSON.stringify(result)).not.toContain(STATUS);
+    expect(result).toEqual({ ok: false, error: 'write-failed' });
+  });
+});
+
 describe('session import-native dispatch', () => {
   it('does not require a current session id', () => {
     const homeDirectory = home();
@@ -382,5 +506,36 @@ describe('session import-native dispatch', () => {
     );
 
     expect(second).toBe(first);
+  });
+
+  it('also prunes a stale status annotation, unconditionally like the declared channel', () => {
+    const homeDirectory = home();
+    executeSessionTitleAnnotationCommand(
+      ['session', 'status', 'stale status'],
+      {
+        env: { LCARS_SESSION_ID: 'stale-status-session' },
+        homeDirectory,
+        now: () => IMPORT_WHEN,
+      },
+    );
+    const staleTime = new Date(
+      IMPORT_WHEN.getTime() -
+        (CLI_SESSION_RETENTION_DAYS + 1) * 24 * 60 * 60 * 1000,
+    );
+    fs.utimesSync(
+      statusPath(homeDirectory, 'stale-status-session'),
+      staleTime,
+      staleTime,
+    );
+
+    const result = executeSessionTitleAnnotationCommand(
+      ['session', 'import-native'],
+      { env: {}, homeDirectory, now: () => IMPORT_WHEN },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(
+      fs.existsSync(statusPath(homeDirectory, 'stale-status-session')),
+    ).toBe(false);
   });
 });

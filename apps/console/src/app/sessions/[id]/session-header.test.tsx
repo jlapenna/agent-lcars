@@ -178,6 +178,41 @@ describe('SessionHeader', () => {
     );
   });
 
+  it('renders the agent-declared status with its own age under the badges (#1257)', () => {
+    renderHeader(
+      cliDoc({
+        lastActivityAt: NOW,
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T10:08:00.000Z',
+      }),
+    );
+
+    expect(screen.getByTestId('session-status-line')).toBeTruthy();
+    expect(screen.getByText('waiting on CI for #1247')).toBeTruthy();
+  });
+
+  it('hides the status line once the session has ended (#1257)', () => {
+    renderHeader(
+      cliDoc({
+        liveness: 'ended',
+        // Far enough before NOW that displayLiveness's recency override
+        // (a doc is 'live' whenever lastActivityAt is within 5m of now,
+        // regardless of the stored value) doesn't kick in and mask the
+        // stored 'ended' state - see liveness.ts's DISPLAY_LIVE_THRESHOLD_MS.
+        lastActivityAt: '2026-07-01T00:00:00.000Z',
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T10:08:00.000Z',
+      }),
+    );
+
+    expect(screen.queryByTestId('session-status-line')).toBeNull();
+  });
+
+  it('renders nothing extra when the doc has no declared status (#1257)', () => {
+    renderHeader(cliDoc({ lastActivityAt: NOW }));
+    expect(screen.queryByTestId('session-status-line')).toBeNull();
+  });
+
   it('renders a resume-archive command for an issue-agent session with a transcriptGcsUri (#3107)', () => {
     renderHeader(
       agentDoc({

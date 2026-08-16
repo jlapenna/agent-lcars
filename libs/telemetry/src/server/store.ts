@@ -6,12 +6,13 @@ import {
 import { Firestore, Query, Timestamp } from '@google-cloud/firestore';
 import { App, getApps, initializeApp } from 'firebase-admin/app';
 import {
+  FieldValue as AdminFieldValue,
   Firestore as AdminFirestore,
   getFirestore as getAdminFirestore,
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
-import { SessionDoc, SessionSource } from '../lib/types';
+import { SessionDoc, SessionSource, SessionWrite } from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';
 
 export const SESSIONS_COLLECTION = 'sessions';
@@ -56,18 +57,28 @@ export function getAgentTelemetryWriterFirestore(): AdminFirestore {
 }
 
 /**
- * Upserts a session doc at `sessions/{sessionId}` in the telemetry database.
- * `expireAt` is written as a Firestore `Timestamp` (not the ISO string
- * `SessionDoc` carries it as) because the collection's TTL policy — see
- * issue #2708 — only recognizes a native Timestamp field. Built via
+ * Upserts a session write at `sessions/{sessionId}` in the telemetry
+ * database. `expireAt` is written as a Firestore `Timestamp` (not the ISO
+ * string `SessionDoc` carries it as) because the collection's TTL policy —
+ * see issue #2708 — only recognizes a native Timestamp field. Built via
  * `AdminTimestamp` (the `firebase-admin`
  * re-export), not the plain `@google-cloud/firestore` `Timestamp` used
  * below for `listSessionDocs`: `getAgentTelemetryWriterFirestore` is a
  * `firebase-admin` client, and Next's bundler otherwise emits the two
  * `Timestamp` classes into separate chunks, so the SDK's `instanceof` check
- * on write fails with "not a valid Firestore document" (#2762).
+ * on write fails with "not a valid Firestore document" (#2762). The exact
+ * same reasoning is why `write.clearFields` is mapped to `AdminFieldValue
+ * .delete()` (the `firebase-admin` re-export) rather than
+ * `@google-cloud/firestore`'s own `FieldValue` (issue #1257) — mixing the
+ * two SDKs' sentinel classes on a `firebase-admin` client risks the same
+ * cross-chunk `instanceof` failure #2762 already hit for `Timestamp`.
+ *
+ * Takes a {@link SessionWrite}, never a bare `SessionDoc` plus extra
+ * arguments — see that type's doc comment in `types.ts` for why a caller
+ * cannot describe a write this value doesn't already carry.
  */
-export async function upsertSession(doc: SessionDoc): Promise<void> {
+export async function upsertSession(write: SessionWrite): Promise<void> {
+  const { doc, clearFields } = write;
   const firestore = getAgentTelemetryWriterFirestore();
   await firestore
     .collection(SESSIONS_COLLECTION)
@@ -78,6 +89,9 @@ export async function upsertSession(doc: SessionDoc): Promise<void> {
         ...(doc.expireAt && {
           expireAt: AdminTimestamp.fromDate(new Date(doc.expireAt)),
         }),
+        ...Object.fromEntries(
+          clearFields.map((field) => [field, AdminFieldValue.delete()]),
+        ),
       },
       { merge: true },
     );

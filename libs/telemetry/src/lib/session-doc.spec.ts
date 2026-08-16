@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSessionDoc,
+  buildSessionWrite,
   CLI_SESSION_RETENTION_DAYS,
   ISSUE_AGENT_SESSION_RETENTION_DAYS,
   SESSION_RETENTION_DAYS,
@@ -423,5 +424,70 @@ describe('buildSessionDoc', () => {
       repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
     expect(doc).not.toHaveProperty('repo');
+  });
+
+  it('carries status/statusUpdatedAt through when present on the summary', () => {
+    const doc = buildSessionDoc(
+      baseSummary({
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+      }),
+      'live',
+    );
+
+    expect(doc).toMatchObject({
+      status: 'waiting on CI for #1247',
+      statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+    });
+  });
+
+  it('omits status/statusUpdatedAt entirely rather than writing undefined', () => {
+    const doc = buildSessionDoc(baseSummary(), 'idle');
+
+    expect(doc).not.toHaveProperty('status');
+    expect(doc).not.toHaveProperty('statusUpdatedAt');
+  });
+});
+
+describe('buildSessionWrite', () => {
+  it('carries the built doc through unchanged', () => {
+    const summary = baseSummary({
+      status: 'waiting on CI for #1247',
+      statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+    });
+
+    const write = buildSessionWrite(summary, 'live');
+
+    expect(write.doc).toEqual(buildSessionDoc(summary, 'live'));
+  });
+
+  it('requests no clear when the summary carries a status', () => {
+    const write = buildSessionWrite(
+      baseSummary({
+        status: 'waiting on CI for #1247',
+        statusUpdatedAt: '2026-07-10T10:03:00.000Z',
+      }),
+      'live',
+    );
+
+    expect(write.clearFields).toEqual([]);
+  });
+
+  it('requests both status fields cleared, unconditionally, when the summary carries no status', () => {
+    const write = buildSessionWrite(baseSummary(), 'live');
+
+    expect(write.clearFields).toEqual(['status', 'statusUpdatedAt']);
+  });
+
+  it('requests a clear even for a runner-mode write that never had a status', () => {
+    // Deliberate: see buildSessionWrite's own doc comment. There is no
+    // "was the overlay even enabled" gate here.
+    const write = buildSessionWrite(
+      baseSummary({ source: 'issue-agent' }),
+      'ended',
+      { runId: 'run-123' },
+    );
+
+    expect(write.clearFields).toEqual(['status', 'statusUpdatedAt']);
   });
 });

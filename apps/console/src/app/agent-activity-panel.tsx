@@ -47,6 +47,7 @@ import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
+import { SessionStatusLine } from './session-status-line';
 import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
@@ -828,6 +829,11 @@ export function CliSessionRow({
           <Text size="sm" fw={600} truncate>
             {label}
           </Text>
+          <SessionStatusLine
+            status={session.status}
+            statusUpdatedAt={session.statusUpdatedAt}
+            liveness={session.liveness}
+          />
           <Group gap="xs" wrap="wrap">
             <Badge
               variant="filled"
@@ -868,6 +874,11 @@ export function CliSessionRow({
       >
         {label}
       </Anchor>
+      <SessionStatusLine
+        status={session.status}
+        statusUpdatedAt={session.statusUpdatedAt}
+        liveness={session.liveness}
+      />
       <Group gap="xs" wrap="nowrap">
         <Badge
           variant="filled"
