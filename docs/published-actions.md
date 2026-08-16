@@ -53,8 +53,8 @@ promised one.
 ### Internal
 
 - `setup-node-pnpm` — this repo's pnpm/Node/frozen-lockfile block.
-- `stamp-attempt-marker` — installs the marker-stamping `gh` wrapper (see below).
   Consumers have their own setup actions; do not adopt.
+- `stamp-attempt-marker` — installs the marker-stamping `gh` wrapper (see below).
 - `agent-handoff` — claude.yml/codex.yml/opencode.yml's shared
   agent-setup + verify-agent-identity pairing (agent-lcars#823). Purely an
   orchestration convenience local to this repo's own three lane workflows;
