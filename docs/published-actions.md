@@ -170,8 +170,9 @@ particular is opt-in only and verified before the action returns a token
 
 `stamp-attempt-marker` (installed by `agent-handoff`, so all three lanes get
 it identically) puts a `gh` wrapper on PATH that appends this run's
-`<!-- attempt-claim:<id> -->` marker to any pull request or comment the
-command just created. It exists because `verify-deliverable`'s clause 0
+`<!-- attempt-claim:<id> -->` marker to the pull request a `gh pr create`
+just opened — and to a comment **only** when the agent already declared that
+comment a result with `<!-- agent-result:v1:... -->`. It exists because `verify-deliverable`'s clause 0
 passes a broker-bound run only on that exact marker, and until #1213 the only
 thing producing it was the model transcribing a literal out of its prompt —
 which it demonstrably forgets. Run 31906618728 opened PR #1175, which was
@@ -195,6 +196,19 @@ the entire safety boundary, so treat it the way you would a permission grant:
   deliberate. Actions has no clean way to scope PATH to one step, and an
   inert-by-default wrapper is easier to reason about than a PATH that is
   rewritten around the agent step.
+- **The wrapper must never stamp an ordinary comment.** `agent-protocol.md`
+  §5: "Stamp only the artifact that IS your deliverable, never your takeover
+  or progress comment — the marker is a claim of authorship over one specific
+  object, not a running commentary tag." The takeover comment is a run's
+  _first_ action, so a wrapper that stamps every comment satisfies clause 0
+  before any work happens — on every run, forever, silently converting
+  "silence is failure" into "silence passes". #1213 shipped exactly that bug
+  and run 31950517581 exposed it in production, its takeover comment carrying
+  the marker. A comment is now stamped only when it carries the protocol's own
+  `<!-- agent-result:v1:... -->` signal, which is the agent declaring it to be
+  a result. Park needs no marker (clause (c) recognizes the
+  `status:needs-human` label); a reply dispatch's comment still needs the
+  agent's own marker, as it did before this wrapper existed.
 
 Stamping is best effort and never changes the exit status the agent sees: the
 agent's command has already succeeded by then, and failing it afterwards

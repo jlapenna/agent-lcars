@@ -32,7 +32,16 @@ case "$1 $2" in
     echo "https://github.com/example/consumer/pull/42"
     ;;
   "issue comment" | "pr comment")
-    printf '%s\n' "parked: blocked on a credential" > "$COMMENT_BODY"
+    # Record whatever body the caller supplied, however it was supplied.
+    prev=''; body=''
+    for a in "$@"; do
+      case "$prev" in
+        --body | -b) body="$a" ;;
+        --body-file | -F) if [ "$a" = - ]; then body="$(cat)"; else body="$(cat "$a")"; fi ;;
+      esac
+      prev="$a"
+    done
+    printf '%s' "$body" > "$COMMENT_BODY"
     echo "https://github.com/example/consumer/issues/7#issuecomment-991"
     ;;
   "pr view") cat "$PR_BODY" ;;
@@ -85,12 +94,49 @@ grep -Fq "$marker" "$pr_body"
 # ...appended to the body the agent wrote, never replacing it.
 grep -Fq "Implements #1173." "$pr_body"
 
-# --- A created comment gets the marker -------------------------------------
+# --- A takeover or progress comment must NOT be stamped ---------------------
+# This is the regression #1213 shipped and run 31950517581 exposed: the
+# takeover comment is a run's FIRST action, so stamping every comment
+# satisfies verify-deliverable before any work happens, on every run.
+# agent-protocol.md §5: "never your takeover or progress comment".
+: > "$comment_body"
 url="$(AGENT_MARKER_STAMPING=1 ATTEMPT_ID="$attempt_id" \
-  "$wrapper" issue comment 7 -b "parked: blocked on a credential")"
+  "$wrapper" issue comment 7 -b "🤖 picking up #7. Will post one edited progress comment.")"
+test "$url" = "https://github.com/example/consumer/issues/7#issuecomment-991"
+if grep -Fq "attempt-claim" "$comment_body"; then
+  echo "wrapper stamped a takeover comment - the deliverable gate now passes itself" >&2
+  exit 1
+fi
+
+# --- A comment the agent declared a RESULT does get the marker --------------
+# The evidence-backed no-op's whole deliverable is a comment, and the protocol
+# already has a machine-readable way for the agent to say so.
+url="$(AGENT_MARKER_STAMPING=1 ATTEMPT_ID="$attempt_id" \
+  "$wrapper" issue comment 7 -b "Already fixed in abc123.
+
+<!-- agent-result:v1:no-op -->")"
 test "$url" = "https://github.com/example/consumer/issues/7#issuecomment-991"
 grep -Fq "$marker" "$comment_body"
-grep -Fq "parked: blocked on a credential" "$comment_body"
+grep -Fq "Already fixed in abc123." "$comment_body"
+
+# ...including when the body arrives via --body-file, and via stdin, which the
+# wrapper must replay so the real gh still receives it.
+: > "$comment_body"
+result_file="$test_root/result-body"
+printf 'Nothing to do.\n\n<!-- agent-result:v1:no-op -->\n' > "$result_file"
+AGENT_MARKER_STAMPING=1 ATTEMPT_ID="$attempt_id" \
+  "$wrapper" issue comment 7 --body-file "$result_file" >/dev/null
+grep -Fq "$marker" "$comment_body"
+
+: > "$comment_body"
+AGENT_MARKER_STAMPING=1 ATTEMPT_ID="$attempt_id" \
+  "$wrapper" issue comment 7 -F - >/dev/null <<'STDIN_BODY'
+Nothing to do.
+
+<!-- agent-result:v1:no-op -->
+STDIN_BODY
+grep -Fq "$marker" "$comment_body"
+grep -Fq "Nothing to do." "$comment_body"
 
 # --- Idempotent: a marker the agent already wrote is not duplicated ---------
 # The prompt still asks the agent to stamp the marker itself; an agent that
