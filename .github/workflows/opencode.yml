@@ -302,7 +302,33 @@ jobs:
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
         uses: anomalyco/opencode/github@def7220bfc65b84046e597e9be772eae81f663ff # published action source, pinned
         with:
-          model: homelab/default
+          # default-nothink, not default (#1227): same deepseek-v4-flash
+          # backend, with LiteLLM forcing thinking:{type:disabled} via
+          # extra_body. opencode cannot turn thinking off any other way -
+          # a raw request capture proved its documented options/variants
+          # model-config fields never reach the wire in 1.18.4, so picking
+          # this route by NAME is the only mechanism available.
+          #
+          # Two reasons, both already recorded in homelab's own config:
+          #
+          #  - Tool-call integrity. With thinking on, ds4-serve leaked raw
+          #    `<|DSML|tool_calls>` text instead of executing a bash call
+          #    at step 40 of a long agentic run, "and the agent lost its
+          #    task afterward" (homelab#44). That is the symptom this lane
+          #    keeps showing: it stops acting and drifts into summarizing.
+          #    A ~70-minute session with thinking off completed with zero
+          #    leaks across 60+ tool calls and landed a correct, mergeable
+          #    PR (sprinkles#3100).
+          #  - Step cost. Thinking on measures ttft ~8-12s against ~250ms
+          #    off. Run 31950517581 averaged ~2.3 minutes per step and got
+          #    12 steps done; a 60-minute budget (#1226) cannot reach a
+          #    code change at that rate.
+          #
+          # sprinkles already dispatches on this route. The trade: unlike
+          # `default-with-fallback`, this route has no fallback group, so a
+          # Spark 503 hard-fails instead of falling back to a paid API -
+          # the same no-fallback policy `default` already had here.
+          model: homelab/default-nothink
           agent: build
           variant: minimal
           use_github_token: 'true'

@@ -77,6 +77,10 @@ too high and you are heading for the 64k cliff instead.
 `limit.output` (2048) is deliberately left alone here — it was not implicated
 in either failure, and one variable at a time.
 
+`default-nothink` carries the identical budget and rationale. It is the route
+this repo actually dispatches on (#1227); `default` keeps its entry because
+the two share a backend and must not drift apart on this number.
+
 Related: agent-lcars#1210 cut the fixed pre-work reading that this budget is
 mostly spent on, and agent-lcars#1217 covers the separate 60-minute push
 credential expiry.
