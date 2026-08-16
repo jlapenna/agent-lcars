@@ -111,8 +111,16 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 # pnpm's version comes from the cloned repo's own package.json
 # ("packageManager" field) via corepack, not hardcoded here, so this stays
 # correct as agent-lcars bumps it.
+# pnpm 11 verifies dependency status before `pnpm exec` and reinstalls when it
+# judges node_modules stale, so the bundle step below launches a second
+# `pnpm install` of its own. That nested install has to be guarded too: it runs
+# the `prepare` lifecycle, and tools/setup-git-hooks.sh only stands down when
+# CI is set. Declaring both as ENV (rather than inline on the install command,
+# where they covered only that one process) is what makes every later layer --
+# including the ones pnpm spawns for itself -- inherit the guard.
+ENV HUSKY=0 CI=true
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    HUSKY=0 CI=true pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
 
 # CI's Verify job runs Go race tests and validates Actions syntax with
