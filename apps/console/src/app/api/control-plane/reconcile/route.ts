@@ -6,13 +6,13 @@ import {
 } from '@/lib/control-plane-request';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyReconcileOidcToken } from '@/lib/github-actions-oidc';
-import { runHostedReconcile } from '@/lib/hosted-reconciler';
+import { handleReconcile } from '@/lib/orchestrator-routes';
+import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 export async function POST(request: Request): Promise<NextResponse> {
   const repository = controlPlaneRepository();
-  let identity;
   try {
-    identity = await verifyReconcileOidcToken(
+    await verifyReconcileOidcToken(
       parseHostedBearerToken(request.headers.get('authorization')),
       repository,
     );
@@ -31,17 +31,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await runHostedReconcile(identity);
-    console.info('agent-lcars: hosted reconcile scan completed', result);
-    return NextResponse.json(result, {
-      status: result.failed.length > 0 ? 502 : 200,
+    const result = await handleReconcile(createOrchestratorRuntime());
+    console.info('agent-lcars: orchestrator reconcile completed', result);
+    return NextResponse.json(result.body, {
+      status: result.status,
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    console.error('agent-lcars: hosted reconcile scan failed', error);
-    return NextResponse.json(
-      { error: 'Reconcile scan failed' },
-      { status: 500 },
-    );
+    console.error('agent-lcars: orchestrator reconcile failed', error);
+    return NextResponse.json({ error: 'internal' }, { status: 500 });
   }
 }

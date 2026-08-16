@@ -33,6 +33,9 @@
   ],
   "references": [
     {
+      "path": "../../libs/orchestrator/tsconfig.lib.json"
+    },
+    {
       "path": "../../libs/dispatch-reconcile/tsconfig.lib.json"
     },
     {
