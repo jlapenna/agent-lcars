@@ -275,7 +275,7 @@ describe('drainOutbox: report-outcome', () => {
       fetchImpl: fakeFetch(204).fetchImpl,
     });
 
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     const settled = await orchestrator.sweepExpired();
     expect(settled.map((r) => r.state)).toEqual(['lost']);
 

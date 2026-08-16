@@ -2,35 +2,40 @@ name: Dispatch bootstrap
 description: >-
   Shared trusted worker lifecycle scaffolding common to claude.yml,
   codex.yml, and opencode.yml (agent-lcars#823): freeze the post-agent
-  enforcement scripts, assert required repo variables are set, verify the
-  broker binding against the authoritative dispatch ledger, mint the Agent
-  LCARS App token, and claim the anchor issue/PR for the agent fleet - in
-  that exact order, byte-identical across all three lanes before this
-  extraction. One implementation now owns this sequence instead of three
-  hand-copied ones, so a change to the broker-binding/claim contract can
-  never drift between lanes.
+  enforcement scripts, assert required repo variables are set, publish this
+  attempt's stable identity, mint the Agent LCARS App token, and claim the
+  anchor issue/PR for the agent fleet - in that exact order, byte-identical
+  across all three lanes before this extraction. One implementation now owns
+  this sequence instead of three hand-copied ones, so a change to the
+  claim/attempt-identity contract can never drift between lanes.
 
-  Coupled to this repo's own dispatch-broker semantics (the
-  broker-generation/broker-intent-id/broker-dispatch-token vocabulary, the
-  Firestore ledger, and the AGENT_FLEET_LOGIN/MAINTAINER_LOGIN repo
-  variables) via its wrapped call to the dispatch-broker action - do not
-  consume this from another repo (see docs/published-actions.md's
-  "Coupled" tier).
+  Thin executor (agent-lcars#1015): this action does NOT re-verify
+  admission or bind state against any ledger. `workflow_dispatch` on this
+  repo can only be invoked by credentialed callers, and the hosted
+  orchestrator (libs/orchestrator + apps/console) already authenticated the
+  triggering event and confirmed the dispatch server-side before this
+  workflow ever ran - the `broker-generation`/`broker-intent-id` inputs
+  below are trustworthy by construction, not something this action needs to
+  re-prove against Firestore. This action used to wrap
+  `./.github/actions/dispatch-broker`'s `preflight` operation (a legacy
+  Firestore broker-binding read/write via WIF) to do exactly that; #1015
+  retired the wrapped call along with the WIF auth step it needed. The
+  `dispatch-broker` action itself is untouched and still backs the
+  independent Claude-lane-readiness probe in agent-fallback-finalize.yml.
 
   Requires the caller to have already checked out the repository: every
   wrapped step below resolves a local composite action
   (`uses: ./.github/actions/...`), which GitHub Actions can only do once
   the repo containing it is on disk - a platform constraint, not a
-  preference (see snapshot-enforcement-scripts/action.yml and
-  dispatch-broker/action.yml for the individual rationale). This action
-  does not perform that checkout itself: claude.yml checks out once with
-  fetch-depth 0 before calling this action (the claude-code-action manages
-  its own push credential internally), while codex.yml/opencode.yml check
-  out a minimal copy before calling this action and a second full copy
-  with this action's minted token afterward (their agent steps push with
-  plain `git`/`gh`, so they need the credential persisted to disk) - that
-  divergence is a genuine per-lane difference, not scaffolding, and stays
-  in each lane's own workflow file.
+  preference (see snapshot-enforcement-scripts/action.yml for the
+  rationale). This action does not perform that checkout itself: claude.yml
+  checks out once with fetch-depth 0 before calling this action (the
+  claude-code-action manages its own push credential internally), while
+  codex.yml/opencode.yml check out a minimal copy before calling this
+  action and a second full copy with this action's minted token afterward
+  (their agent steps push with plain `git`/`gh`, so they need the
+  credential persisted to disk) - that divergence is a genuine per-lane
+  difference, not scaffolding, and stays in each lane's own workflow file.
 
 inputs:
   issue:
@@ -40,24 +45,11 @@ inputs:
     description: Monotonic broker generation (the worker workflow's own `inputs.broker_generation`).
     required: true
   broker-intent-id:
-    description: Immutable broker intent ID (the worker workflow's own `inputs.broker_intent_id`).
-    required: true
-  broker-dispatch-token:
-    description: Immutable broker dispatch token (the worker workflow's own `inputs.broker_dispatch_token`).
-    required: true
-  gcp-wif-provider:
-    description: Terraform-managed WIF provider (repo variable GCP_WIF_PROVIDER).
-    required: true
-  gcp-dispatch-preflight-sa:
     description: >-
-      Service account impersonated to authenticate to the authoritative
-      dispatch storage (repo variable GCP_DISPATCH_PREFLIGHT_SA).
-    required: true
-  dispatch-firestore-database-id:
-    description: Firestore database ID backing the dispatch ledger (repo variable DISPATCH_FIRESTORE_DATABASE_ID).
-    required: true
-  gcp-project-id:
-    description: GCP project ID (repo variable GCP_PROJECT_ID).
+      Immutable broker intent ID (the worker workflow's own
+      `inputs.broker_intent_id`). Combined with `broker-generation` to
+      derive this attempt's stable identity - see "Publish attempt
+      identity" below.
     required: true
   agent-fleet-login:
     description: >-
@@ -93,9 +85,6 @@ outputs:
   app-slug:
     description: App slug the token was minted for.
     value: ${{ steps.agent-lcars-token.outputs.app-slug }}
-  prior-terminal-state:
-    description: Compact JSON summary of the latest earlier terminal generation, from broker preflight.
-    value: ${{ steps.broker-preflight.outputs.prior-terminal-state }}
 
 runs:
   using: composite
@@ -108,8 +97,8 @@ runs:
     # checked out - and via `run:` from $RUNNER_TEMP, never `uses:`, at
     # gate time. The full rationale lives in
     # snapshot-enforcement-scripts/action.yml. Runs first so failure
-    # reporting stays trusted even if broker preflight or the token mint
-    # below fails.
+    # reporting stays trusted even if a later step (the token mint below,
+    # or the agent step itself) fails.
     - name: Snapshot post-agent enforcement scripts
       uses: ./.github/actions/snapshot-enforcement-scripts
 
@@ -124,32 +113,27 @@ runs:
           AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
           MAINTAINER_LOGIN=${{ inputs.maintainer-login }}
 
-    # The worker is untrusted until its own Actions run ID is durably bound
-    # to this exact task/generation/intent/token in the serialized ledger.
-    - name: Authenticate to authoritative dispatch storage
-      id: worker-storage-auth
-      uses: google-github-actions/auth@v3
-      with:
-        workload_identity_provider: ${{ inputs.gcp-wif-provider }}
-        service_account: ${{ inputs.gcp-dispatch-preflight-sa }}
-        token_format: access_token
-        create_credentials_file: false
-        export_environment_variables: false
-
-    - name: Verify broker binding
-      id: broker-preflight
-      uses: ./.github/actions/dispatch-broker
+    # Thin executor (agent-lcars#1015): the dispatch inputs are already
+    # trustworthy (see this action's own top-level description), so this
+    # attempt's stable identity is derived directly from them rather than
+    # re-verified against a ledger. `g<generation>:<intentId>` matches
+    # formatAttemptId in libs/dispatch-contracts/src/marker.ts byte for
+    # byte - the same format the hosted orchestrator, verify-deliverable.sh
+    # (via the exact `<!-- attempt-claim:<ATTEMPT_ID> -->` marker), and
+    # agent-fallback-finalize.yml's own independent
+    # `attempt_id="g${GENERATION}:${INTENT_ID}"` re-derivation all agree
+    # on. Written to $GITHUB_ENV, not a step output: every later step in
+    # the caller's own job (including "Run post-agent gates", far after the
+    # agent step) reads it as `${{ env.ATTEMPT_ID }}`, exactly like the
+    # legacy broker-preflight call used to publish it (a composite action
+    # step can write $GITHUB_ENV exactly like a plain `run:` step can - see
+    # prepare-agent-dispatch/prepare.sh for another composite doing this).
+    - name: Publish attempt identity
+      id: attempt-identity
+      shell: bash
       env:
-        GITHUB_TOKEN: ${{ github.token }}
-        DISPATCH_STORAGE_TOKEN: ${{ steps.worker-storage-auth.outputs.access_token }}
-        DISPATCH_FIRESTORE_DATABASE_ID: ${{ inputs.dispatch-firestore-database-id }}
-        GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
-      with:
-        operation: preflight
-        issue: ${{ inputs.issue }}
-        generation: ${{ inputs.broker-generation }}
-        intent-id: ${{ inputs.broker-intent-id }}
-        dispatch-token: ${{ inputs.broker-dispatch-token }}
+        ATTEMPT_ID: g${{ inputs.broker-generation }}:${{ inputs.broker-intent-id }}
+      run: echo "ATTEMPT_ID=$ATTEMPT_ID" >> "$GITHUB_ENV"
 
     # Explicit permission-* allowlist (#868), not the blank/"all
     # installation permissions" default this step used before: the Agent

@@ -93,7 +93,7 @@ describe('the per-task mutex', () => {
     await orchestrator.cancel(second.run.runId, 'operator said stop');
     const third = await started(orchestrator, 'req-3');
     // lost → free
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     await orchestrator.sweepExpired();
     const fourth = await started(orchestrator, 'req-4');
     expect(fourth.run.runId).not.toBe(third.run.runId);
@@ -179,9 +179,9 @@ describe('leases and loss', () => {
     const { clock, orchestrator } = fixture();
     const kept = await started(orchestrator, 'req-1');
     await orchestrator.confirmDispatch(kept.run.runId);
-    clock.advanceMinutes(20);
+    clock.advanceMinutes(80);
     await orchestrator.renew(kept.run.runId);
-    clock.advanceMinutes(20); // 40m total; renewal at 20m covers to 50m
+    clock.advanceMinutes(80); // 160m total; renewal at 80m covers to 200m
     const settled = await orchestrator.sweepExpired();
     expect(settled).toEqual([]);
   });
@@ -189,7 +189,7 @@ describe('leases and loss', () => {
   it('marks an expired run lost, releases the lock, and reports onward', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     const settled = await orchestrator.sweepExpired();
     expect(settled.map((r) => r.state)).toEqual(['lost']);
     expect(await store.readActiveRun(TASK)).toBeUndefined();
@@ -200,7 +200,7 @@ describe('leases and loss', () => {
   it('does not start a replacement run for a lost one', async () => {
     const { clock, store, orchestrator } = fixture();
     await started(orchestrator);
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     await orchestrator.sweepExpired();
     expect(await store.listRuns(TASK)).toHaveLength(1);
   });
@@ -208,7 +208,7 @@ describe('leases and loss', () => {
   it('refuses a late report from a run that already lost the lock', async () => {
     const { clock, orchestrator } = fixture();
     const stale = await started(orchestrator, 'req-1');
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     await orchestrator.sweepExpired();
     const late = await orchestrator.report(stale.run.runId, { ok: true });
     expect(late).toMatchObject({ refused: true, reason: 'run-not-live' });
@@ -217,7 +217,7 @@ describe('leases and loss', () => {
   it('never lets a stale run overwrite its successor', async () => {
     const { clock, store, orchestrator } = fixture();
     const stale = await started(orchestrator, 'req-1');
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     await orchestrator.sweepExpired();
     const fresh = await started(orchestrator, 'req-2');
     const late = await orchestrator.renew(stale.run.runId);
@@ -228,7 +228,7 @@ describe('leases and loss', () => {
   it('sweeping twice settles a run only once', async () => {
     const { clock, orchestrator } = fixture();
     await started(orchestrator);
-    clock.advanceMinutes(31);
+    clock.advanceMinutes(121);
     const first = await orchestrator.sweepExpired();
     const second = await orchestrator.sweepExpired();
     expect(first).toHaveLength(1);

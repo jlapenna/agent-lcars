@@ -46,7 +46,7 @@ export function isRefusal(value: Decision | Refusal): value is Refusal {
   return 'refused' in value;
 }
 
-const LEASE_MS = 30 * 60 * 1_000;
+const LEASE_MS = 2 * 60 * 60 * 1_000;
 
 function lease(now: string): string {
   return new Date(Date.parse(now) + LEASE_MS).toISOString();
