@@ -197,18 +197,15 @@ async function AgentsPageBody({
     humanNeeded: item.actionTypes.includes('needs-human'),
   }));
   const { taskMeta } = ledgerAndTaskMetaFromItems(logicalWorkItems);
-  const ledgers = new Map(
-    [...authoritative.states].map(([key, state]) => [
-      key,
-      state.controllerState,
-    ]),
-  );
-  const authoritativeRevisions = new Map(
-    [...authoritative.states].map(([key, state]) => [
-      key,
-      state.storageRevision,
-    ]),
-  );
+  // #1183: the legacy dispatch-controller `DispatchLedger` this board used
+  // to read via `authoritative.states` is gone - `authoritative-task-state.ts`
+  // now projects `@agent-lcars/orchestrator`'s own task+run truth instead,
+  // which `deriveLogicalWork` has no ledger-shaped join for (that richer
+  // per-task overlay lives on the canonical `/task/<owner>/<repo>/<issue>`
+  // page - see task-detail.ts's `applyOrchestratorTruth`). Every task here
+  // degrades to `deriveLogicalWork`'s existing attempts-only
+  // `legacy`/`unavailable` provenance, exactly as it already does for any
+  // task that never had a ledger.
   const mergedDeliverables = new Map<string, ReadonlySet<number>>();
   for (const entry of recentTaskEnrichment.data.entries) {
     const key = repoItemKey(entry.repo, entry.issueNumber);
@@ -231,8 +228,7 @@ async function AgentsPageBody({
   }
   const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
     attempts: [...filteredActivity.liveRuns, ...filteredActivity.recentRuns],
-    ledgers,
-    authoritativeRevisions,
+    ledgers: new Map(),
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta,
     mergedDeliverables,

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { LEDGER_MARKER } from './dispatch-ledger';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
@@ -91,52 +90,55 @@ function issueResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function ledgerJson(overrides: Record<string, unknown> = {}) {
+/** A schema-safe stand-in for `@agent-lcars/orchestrator`'s own
+ * `{repo}#{issue}/r{generation}` runId format: `[A-Za-z0-9._:-]+` is the
+ * *marker's* own intentId character class (`libs/dispatch-contracts/src/
+ * marker.ts`'s `DISPATCH_MARKER_RE`), which a real runId's `/`/`#`
+ * characters cannot satisfy - orchestrator-dispatch.ts currently passes the
+ * real runId verbatim as `broker_intent_id`, so this join is not yet
+ * reachable in production (flagged in this migration's own report). This
+ * fixture exercises `applyOrchestratorTruth`'s join logic in isolation with
+ * an id the marker regex CAN parse, standing in for the day that mismatch is
+ * fixed upstream. */
+function orchestratorRun(
+  overrides: Partial<{
+    runId: string;
+    state: 'pending' | 'running' | 'finished' | 'canceled' | 'lost';
+    pipeline: string;
+    result: { ok: boolean; ref?: string; summary?: string };
+  }> = {},
+) {
   return {
-    schema: 'agent-lcars.dispatch-ledger/v1',
-    revision: 1,
-    task: {
-      repositoryId: 1001,
-      repository: 'supersprinklesracing/sprinkles',
-      issue: 42,
-    },
+    runId: 'intent-abc',
+    task: { repo: 'supersprinklesracing/sprinkles', issue: 42 },
+    state: 'running',
+    pipeline: 'claude',
+    requestId: 'req-1',
+    leaseExpiresAt: '2026-07-07T02:00:00Z',
+    events: [{ at: '2026-07-07T00:00:00Z', to: 'pending', by: 'request' }],
     createdAt: '2026-07-07T00:00:00Z',
     updatedAt: '2026-07-07T00:00:00Z',
-    control: { closed: false },
-    sources: [
-      {
-        sourceKind: 'labeled',
-        sourceId: 'src-1',
-        transportRunId: 1,
-        occurredAt: '2026-07-07T00:00:00Z',
-      },
-    ],
-    generations: [
-      {
-        generation: 1,
-        intentId: 'intent-abc',
-        sourceId: 'src-1',
-        occurredAt: '2026-07-07T00:00:00Z',
-        pipeline: 'claude',
-        state: 'active',
-      },
-    ],
-    anomalies: [],
     ...overrides,
   };
 }
 
-function useAuthoritativeState(controllerState: ReturnType<typeof ledgerJson>) {
+function useAuthoritativeState(
+  runs: ReturnType<typeof orchestratorRun>[],
+  overrides: { activeRunId?: string; storageRevision?: number } = {},
+) {
   authoritativeResult = {
     states: new Map([
       [
         'supersprinklesracing/sprinkles#42',
         {
-          schema: 'agent-lcars.authoritative-task-state/v1' as const,
-          task: controllerState.task,
-          storageRevision: 7,
+          schema: 'agent-lcars.authoritative-task-state/v2' as const,
+          task: { repo: 'supersprinklesracing/sprinkles', issue: 42 },
+          storageRevision: overrides.storageRevision ?? 7,
           updatedAt: '2026-07-07T00:00:00Z',
-          controllerState,
+          ...(overrides.activeRunId === undefined
+            ? {}
+            : { activeRunId: overrides.activeRunId }),
+          runs,
         },
       ],
     ]),
@@ -263,30 +265,14 @@ describe('getTaskDetail', () => {
     expect(result.anchorState).toBe('closed');
   });
 
-  it('uses authoritative state when the compatibility comment diverges', async () => {
-    useAuthoritativeState(ledgerJson());
+  it('uses authoritative state from the orchestrator over the attempts-only fallback', async () => {
+    useAuthoritativeState([orchestratorRun({ state: 'running' })], {
+      activeRunId: 'intent-abc',
+    });
     const issuesGet = vi
       .fn()
       .mockResolvedValue(issueResponse({ labels: ['agent:claude'] }));
-    const graphql = vi.fn().mockResolvedValue({
-      repository: {
-        i42: {
-          __typename: 'Issue',
-          comments: {
-            nodes: [
-              {
-                body: `${LEDGER_MARKER}\n\`\`\`json\n${JSON.stringify(
-                  ledgerJson({ generations: [] }),
-                )}\n\`\`\``,
-                url: 'https://x/1',
-                author: { login: 'agent-lcars[bot]' },
-              },
-            ],
-          },
-        },
-      },
-    });
-    setupOctokit({ issuesGet, graphql });
+    setupOctokit({ issuesGet });
     cachedActivity = {
       ...EMPTY_ACTIVITY,
       liveRuns: [
@@ -318,31 +304,24 @@ describe('getTaskDetail', () => {
       revision: 7,
     });
     expect(result.work.attempts).toHaveLength(1);
-    expect(result.work.attempts[0].attribution).toBe('ledger');
-    expect(result.work.intents).toHaveLength(1);
+    expect(result.work.attempts[0].attribution).toBe('orchestrator');
+    // #1183: the orchestrator carries no ledger-generation concept, so the
+    // "Dispatch intents" list this used to populate stays empty - the run
+    // itself is already fully represented in `attempts` above.
+    expect(result.work.intents).toEqual([]);
     expect(result.work.state).toBe('active');
   });
 
   it('reports a closed task as merged only for its attempt-persisted PR number', async () => {
-    const completedLedger = ledgerJson({
-      control: { closed: true },
-      generations: [
-        {
-          generation: 1,
-          intentId: 'intent-abc',
-          sourceId: 'src-1',
-          occurredAt: '2026-07-07T00:00:00Z',
-          pipeline: 'claude',
-          state: 'completed',
-          attempt: {
-            runId: 1,
-            outcome: 'pull-request',
-            outcomeReference: { kind: 'pull-request', number: 77 },
-          },
+    useAuthoritativeState([
+      orchestratorRun({
+        state: 'finished',
+        result: {
+          ok: true,
+          ref: 'https://github.com/supersprinklesracing/sprinkles/pull/77',
         },
-      ],
-    });
-    useAuthoritativeState(completedLedger);
+      }),
+    ]);
     const issuesGet = vi
       .fn()
       .mockResolvedValue(issueResponse({ state: 'closed' }));
@@ -350,14 +329,7 @@ describe('getTaskDetail', () => {
       repository: {
         i42: {
           __typename: 'Issue',
-          comments: {
-            nodes: [
-              {
-                body: `${LEDGER_MARKER}\n\`\`\`json\n${JSON.stringify(completedLedger)}\n\`\`\``,
-                url: 'https://x/1',
-              },
-            ],
-          },
+          comments: { nodes: [] },
           closedByPullRequestsReferences: {
             nodes: [
               {
@@ -399,7 +371,7 @@ describe('getTaskDetail', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.work.attempts[0].outcome).toBe('merged-deliverable');
-    expect(result.work.intents[0].outcome).toBe('merged-deliverable');
+    expect(result.work.intents).toEqual([]);
   });
 
   it('resolves the watched repo for a supported owner/repo pair regardless of casing in the URL params', async () => {

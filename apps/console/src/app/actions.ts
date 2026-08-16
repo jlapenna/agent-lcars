@@ -69,7 +69,11 @@ function toUserErrorMessage(error: unknown): string {
 // how well-formed the message is. So toUserErrorMessage()'s result has to
 // come back as a normal return value, not a thrown Error, to survive to the
 // client in prod. See #2628.
-export type ActionResult = { ok: true } | { ok: false; message: string };
+// `note` is an optional, informational aside on success (currently only
+// `retriggerIssue`'s pipeline-fallback notice) - distinct from `message`,
+// which is reserved for the failure case.
+export type ActionResult =
+  { ok: true; note?: string } | { ok: false; message: string };
 
 export type QuickTaskResult =
   ({ ok: true } & QuickTaskReceipt) | { ok: false; message: string };
@@ -157,19 +161,24 @@ export async function retriggerIssue(
   number: number,
   callerId: string,
   note?: string,
-  pipeline?: Pipeline,
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await retriggerIssueLib(
+    const { pipelineFallback } = await retriggerIssueLib(
       resolveWatchedRepo(repo),
       number,
       callerId,
       note,
-      pipeline,
     );
     revalidateDashboard();
-    return { ok: true };
+    return {
+      ok: true,
+      ...(pipelineFallback
+        ? {
+            note: 'No prior run on record for this task - defaulted to the claude pipeline.',
+          }
+        : {}),
+    };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }

@@ -4,7 +4,6 @@ import { Button, Popover, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
-import type { Pipeline } from '../lib/primary-action';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
 import { createRandomId } from './random-id';
@@ -13,14 +12,14 @@ import { showErrorToast } from './show-error-toast';
 /**
  * Retrigger-with-steering-note, shared by queue cards and compact rows.
  * Only rendered for claude- or opencode-labeled issues (the server 400s
- * otherwise) and disabled while a run is in flight. `pipeline` selects the
- * target router pipeline - defaults
- * to `claude` for existing call sites that haven't been made pipeline-aware.
+ * otherwise) and disabled while a run is in flight. The dispatch pipeline
+ * itself is no longer a caller-supplied prop (#1183): the orchestrator
+ * derives it from the task's own run history, so this component only needs
+ * to know which issue to retry.
  */
 export function RetriggerButton({
   repo,
   issueNumber,
-  pipeline = 'claude',
   disabled,
   disabledReason,
   onError,
@@ -28,7 +27,6 @@ export function RetriggerButton({
 }: {
   repo: WatchedRepo;
   issueNumber: number;
-  pipeline?: Pipeline;
   disabled?: boolean;
   disabledReason?: string;
   onError?: (message: string) => void;
@@ -46,7 +44,6 @@ export function RetriggerButton({
         issueNumber,
         createRandomId(),
         note.trim() || undefined,
-        pipeline,
       );
       if (!result.ok) {
         onError?.(result.message);
@@ -55,7 +52,9 @@ export function RetriggerButton({
       }
       setNote('');
       notifications.show({
-        message: `#${issueNumber} retriggered`,
+        message: result.note
+          ? `#${issueNumber} retriggered — ${result.note}`
+          : `#${issueNumber} retriggered`,
         color: 'green',
       });
     });

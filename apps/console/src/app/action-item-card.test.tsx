@@ -19,9 +19,10 @@ vi.mock('./actions', () => ({
   dispatchUnstickPrs: vi.fn(),
 }));
 vi.mock('./retrigger-button', () => ({
-  RetriggerButton: ({ pipeline }: { pipeline?: string }) => (
-    <div data-testid="retrigger-button" data-pipeline={pipeline ?? 'claude'} />
-  ),
+  // #1183: RetriggerButton no longer takes a `pipeline` prop - the
+  // orchestrator resolves the dispatch pipeline itself from the task's own
+  // run history (see backend-actions.ts's retriggerIssue).
+  RetriggerButton: () => <div data-testid="retrigger-button" />,
 }));
 // react-markdown/remark-gfm are ESM-only (unified ecosystem) - stubbed here
 // rather than added to the jest.config esmModules allowlist, matching the
@@ -341,18 +342,16 @@ describe('ActionItemCard', () => {
   });
 
   describe('retrigger + reply pipeline routing (#3012)', () => {
-    it('offers Retrigger, cycling claude, for a claude-labeled issue', () => {
+    it('offers Retrigger for a claude-labeled issue', () => {
       renderCard(makeItem({ kind: 'issue', labels: ['agent:claude'] }));
 
-      const button = screen.getByTestId('retrigger-button');
-      expect(button.dataset.pipeline).toBe('claude');
+      expect(screen.getByTestId('retrigger-button')).toBeTruthy();
     });
 
-    it('offers Retrigger, cycling opencode, for an opencode-only issue', () => {
+    it('offers Retrigger for an opencode-only issue', () => {
       renderCard(makeItem({ kind: 'issue', labels: ['agent:opencode'] }));
 
-      const button = screen.getByTestId('retrigger-button');
-      expect(button.dataset.pipeline).toBe('opencode');
+      expect(screen.getByTestId('retrigger-button')).toBeTruthy();
     });
 
     it('omits Retrigger when an issue carries contradictory agent labels', () => {

@@ -57,7 +57,7 @@ export type LogicalWorkState =
   | 'unknown';
 
 export type AttemptAttribution =
-  'ledger' | 'run-marker' | 'legacy-title' | 'unattributed';
+  'ledger' | 'orchestrator' | 'run-marker' | 'legacy-title' | 'unattributed';
 
 /** One GitHub Actions workflow run, enriched with whatever dispatch
  * lineage could be attributed to it. Every field `AgentRun` already carries
@@ -73,9 +73,16 @@ export interface ExecutionAttempt extends AgentRun {
   attemptId?: string;
   /** How confidently `generation`/`intentId` are known:
    * - `ledger`: the run's `[dispatch:gN:intentId]` marker matched a real
-   *   generation in this task's ledger - the strongest evidence.
-   * - `run-marker`: the marker parsed, but no ledger was available to
-   *   corroborate it (older issue, ledger fetch failed/degraded).
+   *   generation in this task's legacy dispatch ledger - the strongest
+   *   evidence that vocabulary can offer. Nothing in this module produces
+   *   this any more (#1183 retired the ledger join here); kept as a type
+   *   value only because `deriveLogicalWork`'s ledger-matching machinery
+   *   itself is still intact for any future caller that supplies one.
+   * - `orchestrator`: the same marker matched a real
+   *   `@agent-lcars/orchestrator` run instead (see task-detail.ts's own
+   *   `attributeAttemptsToOrchestrator`) - today's strongest evidence.
+   * - `run-marker`: the marker parsed, but no ledger/orchestrator run was
+   *   available to corroborate it (older issue, read failed/degraded).
    * - `legacy-title`: only the leading `#N:` join key parsed - the run
    *   predates the broker's marker rollout.
    * - `unattributed`: no issue number parsed at all. */
