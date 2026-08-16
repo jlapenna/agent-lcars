@@ -7,6 +7,8 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
 
+import { controlPlaneRepository } from './deployment';
+
 // Inlined from the now-deleted @agent-lcars/dispatch-reconcile (#1015 Wave
 // 4: that lib's scan/discovery/dispatch machinery was only ever consumed by
 // the deleted apps/console/src/lib/hosted-reconciler.ts -- these two
@@ -87,6 +89,20 @@ export async function verifyReconcileOidcToken(
   return assertReconcileOidcClaims(payload, repository);
 }
 
+/**
+ * The one shared, GitHub-hosted completion finalizer every onboarded repo's
+ * worker calls as a reusable workflow (`workflow_call`) -- there is no
+ * per-repo copy. For a cross-repo `workflow_call`, GitHub's OIDC token
+ * claims `job_workflow_ref` from the CALLED workflow's own repo/path/ref
+ * (this constant), while `repository`/`workflow_ref` continue to name the
+ * CALLER. So this is pinned to the home repo regardless of which
+ * allow-listed repository claimed the token -- derived from
+ * {@link controlPlaneRepository}, not a second hardcoded string.
+ */
+function canonicalCompletionFinalizerWorkflowRef(): string {
+  return `${controlPlaneRepository()}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`;
+}
+
 export function assertCompletionOidcClaims(
   claims: JWTPayload,
   repository: string,
@@ -100,8 +116,9 @@ export function assertCompletionOidcClaims(
   if (claims['event_name'] !== 'workflow_dispatch') {
     throw new Error('OIDC event_name claim is not workflow_dispatch');
   }
-  const expectedFinalizerRef = `${repository}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`;
-  if (claims['job_workflow_ref'] !== expectedFinalizerRef) {
+  if (
+    claims['job_workflow_ref'] !== canonicalCompletionFinalizerWorkflowRef()
+  ) {
     throw new Error(
       'OIDC job_workflow_ref claim is not the trusted completion finalizer on main',
     );
@@ -125,13 +142,37 @@ export function assertCompletionOidcClaims(
   };
 }
 
+/**
+ * Verifies signature/issuer/audience, then checks the *claimed* repository
+ * (from the now-trusted payload) against the allow-list before running the
+ * existing per-repo claim assertions with that claimed repository.
+ *
+ * This is #1190's generalization from a single pinned repository to an
+ * allow-list. The `workflow_ref` half of
+ * {@link assertCompletionOidcClaims}'s formula is still built from *that*
+ * caller's own repository (a token claiming repo A can never be validated
+ * against repo B's worker paths), but `job_workflow_ref` is pinned to the
+ * one shared fleet finalizer in the home repo for every caller -- see
+ * {@link canonicalCompletionFinalizerWorkflowRef}. With the default,
+ * single-repo config the claimed repository IS the home repo, so the two
+ * formulas coincide and nothing observably changes.
+ */
 export async function verifyCompletionOidcToken(
   token: string,
-  repository: string,
+  allowedRepositories: string[],
 ): Promise<CompletionOidcIdentity> {
   const { payload } = await jwtVerify(token, githubActionsJwks, {
     issuer: GITHUB_ACTIONS_ISSUER,
     audience: COMPLETION_OIDC_AUDIENCE,
   });
-  return assertCompletionOidcClaims(payload, repository);
+  const claimedRepository = payload['repository'];
+  if (
+    typeof claimedRepository !== 'string' ||
+    !allowedRepositories.includes(claimedRepository)
+  ) {
+    throw new Error(
+      'OIDC repository claim is not an allow-listed control-plane repository',
+    );
+  }
+  return assertCompletionOidcClaims(payload, claimedRepository);
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { readAuthoritativeTaskState } from '@/lib/authoritative-task-state';
-import { controlPlaneRepository } from '@/lib/deployment';
+import { isControlPlaneRepository } from '@/lib/deployment';
 
 function positiveInteger(value: string): number | undefined {
   const parsed = Number(value);
@@ -20,7 +20,7 @@ export async function GET(
   const { owner, repo, issue: issueValue } = await context.params;
   const repository = `${owner}/${repo}`;
   const issue = positiveInteger(issueValue);
-  if (repository !== controlPlaneRepository() || issue === undefined) {
+  if (!isControlPlaneRepository(repository) || issue === undefined) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   const state = await readAuthoritativeTaskState({ repository, issue });
