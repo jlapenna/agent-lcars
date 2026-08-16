@@ -38,7 +38,7 @@
    unified fleet governance, homelab#523; issue #900 has the history) —
    change branch protection there and go through a reviewed
    `plan`/`apply`, not by hand through the GitHub UI or API. See
-   [`infra/terraform/README.md`](../../../infra/terraform/README.md#github-ruleset-protect-main)
+   [`infra/terraform/README.md`](../../../../infra/terraform/README.md#github-ruleset-protect-main)
    for the hand-over record and the admin-bypass hazard.
 
    The ruleset enforces required `Verify`,
