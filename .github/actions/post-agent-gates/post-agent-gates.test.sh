@@ -185,7 +185,7 @@ assert_telemetry_finalize_ran() {
   case_dir="$test_root/success-deliverable-found"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":7,"title":"Fix widget (#42)","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]"}}]
+[{"number":7,"title":"Fix widget (#42)","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
   run_case success-deliverable-found
   test "$status" = 0 || fail "a found deliverable must exit 0"

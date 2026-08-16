@@ -107,6 +107,22 @@ script from `snapshot-enforcement-scripts`, the equivalent opt-in is the
 `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only part of
 that tuple fails closed instead of silently losing the report (#4388).
 
+`verify-deliverable`'s exact-marker clause additionally requires the matching
+artifact to be **bot-authored** (`.user.type == "Bot"`, agent-lcars#1223).
+The marker was treated as unforgeable identity, but it is a plain string —
+`g<gen>:<repo>#<n>/r<gen>`, derivable from public issue state and printed in
+run logs, issue comments, and documentation. A human pull request that merely
+_quoted_ a live marker while explaining this mechanism satisfied that run's
+gate and marked it `success` with nothing produced — the same shape as #711,
+which clause (a) already had to close. The author test is strictly narrowing:
+the marker must still be exact, so it does not reintroduce the inference #815
+removed. It is `.user.type` rather than a specific login because no single
+login covers one lane's own artifacts (claude.yml's PRs are `claude[bot]`
+while its `gh` comments are `agent-lcars[bot]`). Consequence for consumers: on
+an `agent:*`-on-PR takeover of a **human-authored** PR, stamping that PR's
+body no longer counts — post a bot-authored comment carrying the marker
+instead.
+
 `verify-deliverable` likewise has two deliberately separated modes. LCARS's
 broker-bound workers pass `attempt-id` and remain exact-marker-only (#815):
 no timestamp or shared-login inference can satisfy them. Standalone consumers
