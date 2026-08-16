@@ -204,9 +204,12 @@ the agent simply cannot rerun. That is deliberate — an empty
 `$ACTIONS_RERUN_TOKEN` produces an opaque `gh` error inside an agent turn,
 which reads as "the agent is stuck" rather than "a secret is missing".
 
-`apps/dispatch-broker/src/workflow-contract.spec.ts` asserts no worker's
-agent step receives the job token under any name or spelling, including via
-inherited workflow/job-level `env:`.
+No worker's agent step receives the job token under any name or spelling,
+including via inherited workflow/job-level `env:` — a `workflow-contract.spec.ts`
+in the now-deleted `apps/dispatch-broker` once asserted this mechanically;
+it was retired along with the canary/smoke-test scaffolding in #885 and has
+had no automated replacement since, so this invariant is presently
+maintained by workflow review rather than a test.
 
 ### 4. Terraform
 

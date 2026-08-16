@@ -31,12 +31,6 @@ __pycache__/
 !.github/actions/run-dispatch-canary/dist
 !.github/actions/run-dispatch-canary/dist/**
 
-# rerun-infra-killed-runs/dist is the same committed-bundle pattern as
-# dispatch-broker/dist above, produced by apps/rerun-infra-killed-runs's
-# `build` Nx target (agent-lcars#1183: moved out of apps/dispatch-broker).
-!.github/actions/rerun-infra-killed-runs/dist
-!.github/actions/rerun-infra-killed-runs/dist/**
-
 # deliverable-watchdog/dist is #721's scheduled observer bundle, built and
 # drift-checked by the sibling `build-deliverable-watchdog` Nx target.
 !.github/actions/deliverable-watchdog/dist

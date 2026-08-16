@@ -105,18 +105,18 @@ before the worker can report success — see Worker runtime, below, and
 
 ## Symptom → owning system
 
-| What you observe                                                                                                      | Owning system                                                                  | Look here first                                                                                                                                             |
-| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue carries the right `agent:*` label but nothing dispatches, no admission log for the delivery                     | Orchestrator (webhook admission)                                               | GitHub App delivery history, then `/api/control-plane/webhook/process` and Cloud Tasks logs                                                                 |
-| Webhook ACKed but the queued `/api/control-plane/webhook/process` request returns 4xx/5xx                             | Orchestrator (webhook admission)                                               | App Hosting logs for HMAC, payload interpretation, or store failure                                                                                         |
-| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                | Runner platform                                                                | `gh api repos/<owner>/<repo>/actions/runners` against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                      |
-| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs | Worker runtime (bootstrap phase)                                               | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                                     |
-| Worker fails with a provider/model error (rate limit, auth)                                                           | Worker runtime (provider admission/execution)                                  | The agent step's own log                                                                                                                                    |
-| Agent process exits 0, but no PR/comment/review carries the exact attempt-claim marker                                | Worker runtime (deliverable evidence)                                          | `.github/actions/verify-deliverable`'s log line naming the exact artifact it matched (or the FAILED-lookup name)                                            |
-| A worker run failed but the issue never got an outcome comment                                                        | Orchestrator (completion) or its fallback                                      | `agent-fallback-finalize.yml`'s "Return completion observation to the broker" step, then `/api/control-plane/completion` logs                               |
-| No outcome comment ever appeared even though the callback reported `completion-sent=true`                             | Orchestrator (outbox drain)                                                    | `drainOutbox`'s `failed` entries in the completion/reconcile route's JSON response; a failed GitHub call just leaves the entry `pending` for the next drain |
-| A task looks stuck (no run, no comment, no progress) for a long time                                                  | Orchestrator (reconciliation)                                                  | `dispatch-reconcile.yml`'s run history, then `/api/control-plane/reconcile`'s response body (`lost`/`retried`/`dispatched`/`reported`)                      |
-| The console's Retry / Reassign-pipeline UI action fails                                                               | `apps/dispatch-broker` (narrow console-command path — see its own `README.md`) | `apps/console/src/lib/backend-actions.ts` / `hosted-controller-command.ts`                                                                                  |
+| What you observe                                                                                                      | Owning system                                 | Look here first                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue carries the right `agent:*` label but nothing dispatches, no admission log for the delivery                     | Orchestrator (webhook admission)              | GitHub App delivery history, then `/api/control-plane/webhook/process` and Cloud Tasks logs                                                                 |
+| Webhook ACKed but the queued `/api/control-plane/webhook/process` request returns 4xx/5xx                             | Orchestrator (webhook admission)              | App Hosting logs for HMAC, payload interpretation, or store failure                                                                                         |
+| A worker (`claude.yml`/`codex.yml`/`opencode.yml`) job sits **queued**, never starting                                | Runner platform                               | `gh api repos/<owner>/<repo>/actions/runners` against `${{ vars.AGENT_RUNNER_LABEL }}`                                                                      |
+| Worker fails during checkout, App-token mint, tool setup, or telemetry sidecar startup — before the agent itself runs | Worker runtime (bootstrap phase)              | The job's steps before "Run Claude Code" / "Run Codex" / "Run OpenCode"                                                                                     |
+| Worker fails with a provider/model error (rate limit, auth)                                                           | Worker runtime (provider admission/execution) | The agent step's own log                                                                                                                                    |
+| Agent process exits 0, but no PR/comment/review carries the exact attempt-claim marker                                | Worker runtime (deliverable evidence)         | `.github/actions/verify-deliverable`'s log line naming the exact artifact it matched (or the FAILED-lookup name)                                            |
+| A worker run failed but the issue never got an outcome comment                                                        | Orchestrator (completion) or its fallback     | `agent-fallback-finalize.yml`'s "Return completion observation to the broker" step, then `/api/control-plane/completion` logs                               |
+| No outcome comment ever appeared even though the callback reported `completion-sent=true`                             | Orchestrator (outbox drain)                   | `drainOutbox`'s `failed` entries in the completion/reconcile route's JSON response; a failed GitHub call just leaves the entry `pending` for the next drain |
+| A task looks stuck (no run, no comment, no progress) for a long time                                                  | Orchestrator (reconciliation)                 | `dispatch-reconcile.yml`'s run history, then `/api/control-plane/reconcile`'s response body (`lost`/`retried`/`dispatched`/`reported`)                      |
+| The console's Retry / Reassign-pipeline UI action fails                                                               | Orchestrator (console command path)           | `apps/console/src/lib/backend-actions.ts`'s `retriggerIssue`/`reassignPipeline`, which call the same `notifyReconcile` sweep as other mutations             |
 
 ## 1. Runner platform
 
@@ -314,15 +314,20 @@ group is a lossy queue" incident, and the runner-platform outage worked
 example — is in this document's git history (`git log -p -- docs/lifecycle-systems.md`)
 rather than repeated here.
 
-`apps/dispatch-broker` and `apps/console/src/lib/hosted-controller.ts`
-survive narrowly: they back the console UI's post-mutation reconcile ping
-(`apps/console/src/lib/backend-actions.ts`'s `notifyReconcile`). The
-still-externally-published `rerun-infra-killed-runs` action bundle moved to
-its own `apps/rerun-infra-killed-runs` project (agent-lcars#1183) once that
-was its only remaining reason to depend on `apps/dispatch-broker`. See
-`apps/dispatch-broker/README.md` for the exact, current scope — it is
-deliberately more precise than anything repeated here, so it doesn't drift
-a second time.
+Neither survives today. `apps/console/src/lib/hosted-controller.ts` was
+retired first (#1195), moving the console UI's post-mutation reconcile ping
+(`apps/console/src/lib/backend-actions.ts`'s `notifyReconcile`) onto the
+same orchestrator sweep as every other mutation. That left the
+still-externally-published `rerun-infra-killed-runs` action bundle as
+`apps/dispatch-broker`'s only remaining reason to exist; agent-lcars#1183
+carved its true import closure out into its own `apps/rerun-infra-killed-runs`
+project, and #1199 then deleted `apps/dispatch-broker` outright (50 files)
+since nothing else consumed it. The action bundle itself stayed published
+a while longer for `jlapenna/homelab` and `supersprinklesracing/sprinkles`'s
+own crons — both have since migrated onto the central orchestrator's lease
+sweep and bounded auto-retry, so agent-lcars#1201 deleted the action and
+`apps/rerun-infra-killed-runs` too. Nothing from the original five-system
+design remains.
 
 ## Related docs
 

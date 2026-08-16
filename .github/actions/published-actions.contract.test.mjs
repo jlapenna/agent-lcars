@@ -139,16 +139,6 @@ const PUBLISHED = {
     },
     outputs: [],
   },
-  'rerun-infra-killed-runs': {
-    inputs: {
-      'workflow-file': { required: false, default: 'ci.yml' },
-    },
-    // rerun-run-ids added deliberately (agent-lcars#864/#869/#875 followup,
-    // PR #877): a new output is additive, not breaking -- an existing
-    // consumer (sprinkles, homelab) that only reads scanned/rerun is
-    // unaffected by an output it never asked for.
-    outputs: ['scanned', 'rerun', 'rerun-run-ids'],
-  },
   'merge-live-base': {
     inputs: { 'base-ref': { required: true } },
     outputs: ['original_head', 'live_base', 'tested_head'],
