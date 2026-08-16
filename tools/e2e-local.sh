@@ -11,7 +11,9 @@
 #   1. `.env.e2e` does not exist (it is gitignored), so the implementation
 #      target's own
 #      `dotenv -e .env.e2e --optional` wrapper loads nothing and the server
-#      dies at runtime with `AGENT_LCARS_GITHUB_TOKEN not defined`.
+#      dies at runtime with a "not defined" error for whichever required env
+#      var it reads first -- a symptom that names neither the missing file
+#      nor this workaround.
 #   2. NEXT_PUBLIC_FIREBASE_*/AUTH_SECRET must be real *process* env before
 #      `next build` runs -- and that build happens inside the `e2e` target's
 #      own `dependsOn` chain, BEFORE the dotenv-wrapped command that loads

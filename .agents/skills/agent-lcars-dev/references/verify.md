@@ -98,7 +98,8 @@ Use that target, not `:e2e` directly. It sets up the same environment CI's
 `tools/e2e/ci.env` without clobbering a customized one, and exporting the
 `NEXT_PUBLIC_*`/`AUTH_SECRET` values that must exist _before_ the
 `dependsOn` build inlines them). Run bare, `:e2e` fails on a fresh checkout
-with `AGENT_LCARS_GITHUB_TOKEN not defined`, which names neither cause.
+with a "not defined" error for whichever required env var the server reads
+first, which names neither cause.
 
 It also passes `--skip-nx-cache`, deliberately: an e2e result replayed from
 the Nx cache reports a green suite that never ran, which is worse than

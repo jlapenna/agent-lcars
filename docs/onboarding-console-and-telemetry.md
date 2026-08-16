@@ -236,12 +236,17 @@ set in this repo's `apphosting.yaml`): a JSON array of
   `replyTriggerAliases` records equivalent accepted commands. This keeps the
   console's routing behavior declarative and lets future integrations add
   their own control label and reply syntax without hard-coded repo branches.
-- `AGENT_LCARS_GITHUB_TOKEN` (the token `getGithubClient()` uses) needs read
-  access plus Issues write and Contents write access to any repo with a Quick
-  Task agent integration. Issues write creates the fully labeled task; Contents
-  write creates its atomic `refs/tags/agent-lcars/quick-task/<uuid>` claim.
-  Check the token's scope/installation covers the new repo, since access to an
-  existing repo does not automatically extend across organizations/accounts.
+- `getGithubClient()` (see `github-client.ts`) mints a short-lived GitHub App
+  installation token per request, scoped to the target repo, rather than
+  using one long-lived ambient credential (#1284 retired the classic PAT
+  this used to be). That still requires the GitHub App itself to be
+  _installed_ on the new repo's owner/org, with read access plus Issues
+  write and Contents write - Issues write creates the fully labeled task;
+  Contents write creates its atomic
+  `refs/tags/agent-lcars/quick-task/<uuid>` claim. Check the App's
+  installation covers the new repo before adding it here, since access to
+  an existing repo does not automatically extend across
+  organizations/accounts.
 - Quick Task always carries an explicit canonical `owner`/`name` repository
   from the UI through the Server Action. A single configured repository hides
   the picker but is still included in the mutation; there is no primary-repo

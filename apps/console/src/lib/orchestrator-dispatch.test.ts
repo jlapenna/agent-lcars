@@ -8,17 +8,18 @@ import {
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AmbientTokenProvider } from './github-app-tokens';
+import type { DispatchTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
 const TOKEN = 'gh-test-token-0123456789';
 // `DispatchDeps.tokens` resolves a per-repo token; every test here still
-// wants the exact-same-ambient-token-for-any-repo behavior the old
-// `githubToken: TOKEN` field gave directly, so a single shared
-// `AmbientTokenProvider` reproduces it.
-const tokens = new AmbientTokenProvider(TOKEN);
+// wants the exact-same-token-for-any-repo behavior the old
+// `githubToken: TOKEN` field gave directly, so a trivial fixed-token stub
+// reproduces it (`AmbientTokenProvider` itself was retired in #1284 - see
+// github-app-tokens.ts).
+const tokens: DispatchTokenProvider = { tokenFor: async () => TOKEN };
 
 class Clock {
   constructor(private value: string) {}

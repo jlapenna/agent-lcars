@@ -5,6 +5,7 @@ import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
 import { Octokit } from '@octokit/rest';
 
+import { createGithubClientAuthStrategy } from './github-app-tokens';
 import {
   type AgentIntegration,
   type AgentPipeline,
@@ -114,12 +115,55 @@ function withinRateLimitRetryBudget(
 
 const ThrottledOctokit = Octokit.plugin(retry, throttling);
 
+/**
+ * This console's own Octokit permission surface: issues (create/update/
+ * comment/label/list), pull requests (list/get/review/merge/update-branch),
+ * Actions (list/cancel/dispatch workflow runs), and contents (git refs/tags
+ * for the Quick Task claim protocol, `repos.get`'s metadata). Requesting a
+ * permission the GitHub App itself was never granted fails EVERY mint for
+ * EVERY request, not just the one call site that needed it -- so this
+ * deliberately excludes `checks`/`administration`, the two gaps #1284's
+ * permission audit found (see that PR's body for the full call-site table):
+ * `agent-activity.ts`'s `actions.listSelfHostedRunnersForRepo` (needs
+ * `administration:read`) and `item-enrichment.ts`'s GraphQL
+ * `statusCheckRollup` field (needs `checks:read`). Both already degrade
+ * through their own existing `Promise.allSettled`/partial-GraphQL-error
+ * handling rather than crashing -- see those files' own comments -- so this
+ * is a known, accepted read gap pending a maintainer App-permission change,
+ * not a silent one.
+ */
+const CONSOLE_GITHUB_CLIENT_PERMISSIONS: Record<string, string> = {
+  actions: 'write',
+  contents: 'write',
+  issues: 'write',
+  pull_requests: 'write',
+};
+
 let client: Octokit | undefined;
 
 export function getGithubClient(): Octokit {
   if (!client) {
+    // `AGENT_CONSOLE_GITHUB_API_BASE_URL` is only ever set by the
+    // agent-lcars e2e suite, which has no real GitHub App credentials and
+    // instead points every request at its own fixture route
+    // (apps/console/src/app/api/e2e/github) so PR-join assertions don't
+    // depend on the real GitHub API or a real App-token mint. Never set in
+    // prod (absent from apphosting.yaml). The fixture route does not
+    // inspect the Authorization header's value at all, so a static
+    // placeholder auth is exactly as good as a minted one here and avoids
+    // e2e needing real (or even syntactically valid) App credentials.
+    const e2eBaseUrl = optional('AGENT_CONSOLE_GITHUB_API_BASE_URL');
     client = new ThrottledOctokit({
-      auth: required('AGENT_LCARS_GITHUB_TOKEN'),
+      ...(e2eBaseUrl
+        ? { auth: 'e2e-fixture-token', baseUrl: e2eBaseUrl }
+        : {
+            authStrategy: createGithubClientAuthStrategy,
+            auth: {
+              clientId: required('AGENT_LCARS_APP_CLIENT_ID'),
+              privateKeyPem: required('AGENT_LCARS_APP_PRIVATE_KEY'),
+              permissions: CONSOLE_GITHUB_CLIENT_PERMISSIONS,
+            },
+          }),
       request: {
         fetch: timeoutFetch,
       },
@@ -167,15 +211,6 @@ export function getGithubClient(): Octokit {
           return shouldRetry;
         },
       },
-      // Only ever set by the agent-lcars e2e suite, which has no real
-      // GitHub credentials and instead points this at its own fixture route
-      // (apps/console/src/app/api/e2e/github) so PR-join
-      // assertions don't depend on the real GitHub API. Never set in prod
-      // (absent from apphosting.yaml). The fixture route is local and fast,
-      // well inside REQUEST_TIMEOUT_MS.
-      ...(optional('AGENT_CONSOLE_GITHUB_API_BASE_URL') && {
-        baseUrl: optional('AGENT_CONSOLE_GITHUB_API_BASE_URL'),
-      }),
     });
     disableRetryForMutations(client);
   }

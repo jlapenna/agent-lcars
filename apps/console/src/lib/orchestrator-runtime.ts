@@ -23,11 +23,11 @@ import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
  * apphosting.yaml (see hosted-webhook-queue.ts for the same `PROJECT_ID`
  * read pattern). The token provider is rebuilt from `process.env` on every
  * drain (see `createDispatchTokenProvider` in `github-app-tokens.ts`)
- * rather than captured once, so a rotated `AGENT_LCARS_GITHUB_TOKEN` secret
- * still takes effect without a restart -- with the `AGENT_LCARS_APP_*` envs
- * unset (today's deployed configuration), this is byte-identical to the
- * pre-#1190 single-ambient-token behavior, just rebuilt each call instead
- * of read each call.
+ * rather than captured once, so a rotated `AGENT_LCARS_APP_PRIVATE_KEY`
+ * secret still takes effect without a restart, at the cost of re-parsing
+ * that key and reconstructing the (still per-repo-caching)
+ * `AppInstallationTokenProvider` each call instead of reusing one across
+ * drains.
  */
 
 const utcClock: Clock = { now: () => new Date().toISOString() };

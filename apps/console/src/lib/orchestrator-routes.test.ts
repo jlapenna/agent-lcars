@@ -5,7 +5,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
-import { AmbientTokenProvider } from './github-app-tokens';
+import type { DispatchTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
   handleCompletion,
@@ -21,7 +21,9 @@ const REPO = 'jlapenna/agent-lcars';
 const ISSUE: TaskId = { repo: REPO, issue: 42 };
 const T0 = '2026-08-15T12:00:00.000Z';
 const TOKEN = 'gh-test-token-0123456789';
-const tokens = new AmbientTokenProvider(TOKEN);
+// Trivial fixed-token stub (`AmbientTokenProvider` itself was retired in
+// #1284 - see github-app-tokens.ts).
+const tokens: DispatchTokenProvider = { tokenFor: async () => TOKEN };
 
 class Clock {
   constructor(private value: string) {}
