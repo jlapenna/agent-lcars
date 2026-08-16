@@ -99,11 +99,36 @@ export function runOrchestratorStoreContract(
         // canceled -> free
         await orchestrator.cancel(second.run.runId, 'operator said stop');
         const third = await started(orchestrator, 'req-3');
-        // lost -> free
-        clock.advanceMinutes(121);
-        await orchestrator.sweepExpired();
+        // lost -> each loss auto-retries until the budget
+        // (MAX_AUTO_RETRIES = 2) is exhausted, which is when the task is
+        // actually free again.
+        for (let i = 0; i < 3; i++) {
+          clock.advanceMinutes(121);
+          await orchestrator.sweepExpired();
+        }
         const fourth = await started(orchestrator, 'req-4');
         expect(fourth.run.runId).not.toBe(third.run.runId);
+      });
+    });
+
+    describe('the auto-retry budget (consecutiveLost)', () => {
+      it('increments consecutiveLost on loss and resets it on a later finish', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator, 'req-1');
+        clock.advanceMinutes(121);
+        const swept = await orchestrator.sweepExpired();
+        expect(swept.retried).toHaveLength(1);
+
+        const afterLoss = await store.readTask(TASK);
+        expect(afterLoss?.task.consecutiveLost).toBe(1);
+
+        const retriedRunId = swept.retried[0]?.newRunId;
+        if (retriedRunId === undefined) throw new Error('expected a retry');
+        await orchestrator.confirmDispatch(retriedRunId);
+        await orchestrator.report(retriedRunId, { ok: true });
+
+        const afterFinish = await store.readTask(TASK);
+        expect(afterFinish?.task.consecutiveLost).toBeUndefined();
       });
     });
 
@@ -230,11 +255,15 @@ export function runOrchestratorStoreContract(
         const { clock, store, orchestrator } = await fixture();
         const stale = await started(orchestrator, 'req-1');
         clock.advanceMinutes(121);
-        await orchestrator.sweepExpired();
-        const fresh = await started(orchestrator, 'req-2');
+        // The task's lock is immediately handed to the auto-retry -- that's
+        // the "fresh run" here, not a manual re-request (which would now be
+        // refused as task-busy while the retry is live).
+        const swept = await orchestrator.sweepExpired();
+        const freshRunId = swept.retried[0]?.newRunId;
+        if (freshRunId === undefined) throw new Error('expected an auto-retry');
         const late = await orchestrator.renew(stale.run.runId);
         expect(isRefusal(late)).toBe(true);
-        expect((await store.readActiveRun(TASK))?.runId).toBe(fresh.run.runId);
+        expect((await store.readActiveRun(TASK))?.runId).toBe(freshRunId);
       });
     });
   });

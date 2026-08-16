@@ -95,6 +95,12 @@ export const taskSchema = z.strictObject({
   activeRunId: z.string().min(1).max(64).optional(),
   /** Monotonic count of runs ever started, for run-id minting. */
   runCount: z.number().int().nonnegative(),
+  /** How many runs in a row have gone `lost`, since the last one that
+   *  `finished` or was `canceled`. Optional: absent means 0 (existing
+   *  Firestore task documents predate this field and are read that way by
+   *  `FirestoreStore`'s zod validation). Drives the bounded auto-retry
+   *  budget in `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
+  consecutiveLost: z.number().int().nonnegative().optional(),
   updatedAt: isoUtc,
 });
 export type Task = z.infer<typeof taskSchema>;

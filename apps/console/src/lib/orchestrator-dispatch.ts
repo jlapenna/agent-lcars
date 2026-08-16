@@ -1,8 +1,10 @@
-import type {
-  Orchestrator,
-  OrchestratorStore,
-  OutboxEntry,
-  Run,
+import {
+  MAX_AUTO_RETRIES,
+  type Orchestrator,
+  type OrchestratorStore,
+  type OutboxEntry,
+  type Run,
+  type TaskId,
 } from '@agent-lcars/orchestrator';
 
 /**
@@ -159,7 +161,10 @@ async function handleReportOutcome(
     return;
   }
 
-  const body = outcomeCommentBody(run);
+  const outcome =
+    run.state === 'lost'
+      ? await describeLostOutcome(store, run)
+      : { body: outcomeCommentBody(run), needsHumanLabel: false };
   const url = `${GITHUB_API}/repos/${run.task.repo}/issues/${run.task.issue}/comments`;
 
   let response: Response;
@@ -167,7 +172,7 @@ async function handleReportOutcome(
     response = await fetchImpl(url, {
       method: 'POST',
       headers: githubHeaders(githubToken),
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body: outcome.body }),
     });
   } catch (error) {
     await store.settleOutbox(entry.entryId, 'pending');
@@ -184,8 +189,91 @@ async function handleReportOutcome(
     return;
   }
 
+  if (outcome.needsHumanLabel) {
+    await addNeedsHumanLabelBestEffort(fetchImpl, githubToken, run.task);
+  }
+
   await store.settleOutbox(entry.entryId, 'done');
   result.reported.push(run.runId);
+}
+
+/**
+ * Describes a `lost` run's outcome comment, which depends on what happened
+ * after the loss -- something `outcomeCommentBody` alone can't know, since
+ * it only looks at the run itself. Reads the task's current active run (if
+ * any) from the store:
+ *
+ * - it's the deterministic auto-retry (`requestId === 'retry:<lostRunId>'`)
+ *   -> name it and report the attempt count;
+ * - it's some other live run (an operator's manual request raced the
+ *   auto-retry and won, or landed after the budget was already exhausted)
+ *   -> name that run instead, matching decide.ts's "refusal is fine"
+ *   contract: no auto-retry to report, but the task isn't actually parked;
+ * - no active run at all -> the auto-retry budget is exhausted; the task is
+ *   genuinely parked, so also flag it for human attention.
+ *
+ * This is a best-effort read of state as of drain time, not a fact
+ * captured durably alongside the lost run itself; in the common case the
+ * drain runs moments after the sweep that settled the loss (and any
+ * retry), so it reliably reflects that sweep's outcome.
+ */
+async function describeLostOutcome(
+  store: OrchestratorStore,
+  run: Run,
+): Promise<{ body: string; needsHumanLabel: boolean }> {
+  const lostPrefix = `⚠️ Run ${run.runId} was lost (no report before its lease expired). `;
+  const task = await store.readTask(run.task);
+  const activeRunId = task?.task.activeRunId;
+  const activeRun =
+    activeRunId === undefined ? undefined : await store.readRun(activeRunId);
+
+  if (activeRun?.requestId === `retry:${run.runId}`) {
+    const attempt = (task?.task.consecutiveLost ?? 0) + 1;
+    return {
+      body:
+        lostPrefix +
+        `Retrying automatically as run ${activeRun.runId} ` +
+        `(attempt ${attempt} of ${MAX_AUTO_RETRIES + 1}).`,
+      needsHumanLabel: false,
+    };
+  }
+  if (activeRun !== undefined) {
+    return {
+      body: lostPrefix + `Run ${activeRun.runId} is already in progress.`,
+      needsHumanLabel: false,
+    };
+  }
+  return {
+    body:
+      lostPrefix +
+      `Auto-retry budget exhausted -- re-request manually (re-add the ` +
+      `agent label) when ready.`,
+    needsHumanLabel: true,
+  };
+}
+
+/** Flags the issue for human attention once the auto-retry budget is
+ *  exhausted. Best-effort: a failure here must not fail the outcome-comment
+ *  entry, which has already been posted and is about to be settled --
+ *  the operator already has the comment telling them what happened;
+ *  a missing label is a cosmetic miss, not a functional one. */
+async function addNeedsHumanLabelBestEffort(
+  fetchImpl: typeof fetch,
+  githubToken: string,
+  task: TaskId,
+): Promise<void> {
+  try {
+    await fetchImpl(
+      `${GITHUB_API}/repos/${task.repo}/issues/${task.issue}/labels`,
+      {
+        method: 'POST',
+        headers: githubHeaders(githubToken),
+        body: JSON.stringify({ labels: ['status:needs-human'] }),
+      },
+    );
+  } catch {
+    // Swallowed deliberately -- see the doc comment above.
+  }
 }
 
 function githubHeaders(token: string): Record<string, string> {
@@ -222,10 +310,10 @@ function outcomeCommentBody(run: Run): string {
     case 'canceled':
       return `⏹️ Run ${run.runId} was canceled.`;
     case 'lost':
-      return (
-        `⚠️ Run ${run.runId} was lost (no report before its lease expired). ` +
-        `The task is unlocked; re-request to try again.`
-      );
+      // `handleReportOutcome` routes `lost` runs to `describeLostOutcome`
+      // instead, which needs to consult the store for auto-retry state;
+      // this function only covers the synchronous, run-only cases.
+      throw new Error(`outcomeCommentBody called for a lost run: ${run.runId}`);
     case 'pending':
     case 'running':
       // A report-outcome entry only ever accompanies a run settling into

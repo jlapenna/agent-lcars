@@ -167,12 +167,13 @@ export async function handleReconcile(
   deps: OrchestratorRouteDeps,
 ): Promise<RouteResult> {
   try {
-    const lost = await deps.orchestrator.sweepExpired();
+    const swept = await deps.orchestrator.sweepExpired();
     const drained = await deps.drain();
     return {
       status: 200,
       body: {
-        lost: lost.map((run) => run.runId),
+        lost: swept.lost.map((run) => run.runId),
+        retried: swept.retried,
         dispatched: drained.dispatched,
         reported: drained.reported,
       },
