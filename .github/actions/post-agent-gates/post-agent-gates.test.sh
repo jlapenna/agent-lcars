@@ -248,7 +248,12 @@ JSON
 # must be skipped entirely (mirrors its original if: success()), and this
 # step's own exit stays 0 as long as report-failure itself succeeds
 # (mirrors the original "Report failure on the issue" step being able to
-# succeed even though the job is already red from an earlier failure). ---
+# succeed even though the job is already red from an earlier failure).
+# base_env leaves MAINTAINER unset, so this is also the hosted-mode case for
+# #1208's GH_TOKEN/ISSUE_NUM/MAINTAINER pass-through: the assertion below
+# proves report-failure.sh still takes its log-only branch even though
+# GH_TOKEN and ISSUE are both ambiently non-empty on this script (case 14
+# below is the standalone counterpart, MAINTAINER set). ---
 (
   base_env
   export JOB_STATUS=failure
@@ -256,6 +261,9 @@ JSON
   test "$status" = 0 || fail "already-failed upstream with a landed report must still exit 0"
   if grep -q '/pulls?' "$FAKE_GH_DIR/calls"; then
     fail "verify-deliverable must be skipped once JOB_STATUS is not success"
+  fi
+  if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
+    fail "hosted mode (MAINTAINER absent) must never post a visible failure comment"
   fi
   grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged"
   if grep -q 'was cancelled' <<<"$output"; then
@@ -423,6 +431,32 @@ SCAN
   run_case invalid-readiness-failure
   test "$status" != 0 || fail "an invalid readiness signal must fail closed"
   grep -q 'Invalid READINESS_FAILURE' "$FAKE_GH_DIR/output" || fail "expected the invalid readiness diagnostic"
+)
+
+# --- Case 14: a standalone consumer sets MAINTAINER (with GH_TOKEN and
+# ISSUE already ambiently present from base_env) - report-failure.sh takes
+# its compatibility path and posts/parks the failure directly, instead of
+# every other case's hosted log-only branch (#1208). This is the same
+# visible-failure path report-failure.test.sh exercises directly; here it
+# proves post-agent-gates.sh's own pass-through actually reaches it. ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export MAINTAINER=octocat
+  run_case standalone-maintainer-set
+  test "$status" = 0 || fail "a landed standalone report must still exit 0"
+  grep -q '^issue comment 42 ' "$FAKE_GH_DIR/calls" || \
+    fail "expected the standalone path to post the visible failure comment on the caller-supplied ISSUE"
+  grep -q 'agent run failed' "$FAKE_GH_DIR/calls" || \
+    fail "expected the standalone comment body to carry the failure message"
+  grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls" || \
+    fail "expected the standalone path to set status:needs-human"
+  grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls" || \
+    fail "expected the standalone path to assign the maintainer"
+  if grep -q '::notice::.*agent run failed' <<<"$output"; then
+    fail "standalone mode must not also emit the hosted log-only notice"
+  fi
+  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed standalone report must suppress the hosted fallback"
 )
 
 echo "post-agent-gates.test.sh: all cases passed"

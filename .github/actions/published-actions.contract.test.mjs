@@ -262,6 +262,61 @@ test('snapshot-enforcement-scripts default gate list is guarded', async () => {
   ]);
 });
 
+// post-agent-gates has no action.yml -- see docs/published-actions.md's
+// "Security: post-agent gates run from a pre-agent snapshot": it is
+// deliberately never `uses:`-callable, only ever run from the pre-agent
+// snapshot as `bash ".../post-agent-gates.sh"`, so a composite-action
+// input/output surface would invite calling it post-agent and defeat the
+// snapshot invariant. Its published surface is instead the environment-
+// variable contract documented in its own header comment (#1208) -- parse
+// that contract straight out of the script's own `: "${VAR:?...}"` (fails
+// fast, required) and `VAR="${VAR:-...}"` (has a default, optional) shapes
+// so silently adding, renaming, or dropping one fails here instead of only
+// showing up as review-invisible drift in a consumer's hand-copied step.
+test('post-agent-gates.sh env-var contract is guarded', async () => {
+  const source = await fs.readFile(
+    path.join(actionsDirectory, 'post-agent-gates', 'post-agent-gates.sh'),
+    'utf8',
+  );
+  const required = [...source.matchAll(/^\s*: "\$\{([A-Z_]+):\?/gmu)].map(
+    (m) => m[1],
+  );
+  const optional = [...source.matchAll(/^([A-Z_]+)="\$\{\1:-/gmu)].map(
+    (m) => m[1],
+  );
+
+  assert.deepEqual(
+    required.sort(),
+    [
+      // Always required.
+      'GH_TOKEN',
+      'AGENT',
+      'REPO',
+      'SERVER_URL',
+      'RUN_ID',
+      'ISSUE',
+      'JOB_STATUS',
+      // Required only when JOB_STATUS is "success" (#815).
+      'MODE',
+      'ATTEMPT_ID',
+    ].sort(),
+    'post-agent-gates.sh: required env-var set changed',
+  );
+  assert.deepEqual(
+    optional.sort(),
+    [
+      'WRITER_CREDENTIALS_FILE',
+      'NO_DELIVERABLE_REASON',
+      'FAILURE_LOG_SCAN_SCRIPT',
+      'AGENT_STEP_OUTCOME',
+      'READINESS_FAILURE',
+      // #1208: report-failure.sh's own standalone-mode toggle, forwarded.
+      'MAINTAINER',
+    ].sort(),
+    'post-agent-gates.sh: optional env-var set changed',
+  );
+});
+
 test('every Published action directory exists', async () => {
   for (const name of Object.keys(PUBLISHED)) {
     await fs.access(path.join(actionsDirectory, name, 'action.yml'));
