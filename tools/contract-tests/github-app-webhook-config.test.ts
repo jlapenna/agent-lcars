@@ -110,7 +110,9 @@ describe('GitHub App webhook configuration', () => {
       'utf8',
     );
 
-    expect(workflow).toContain('google-github-actions/auth@v3');
+    // Pinned by SHA fleet-wide (supply-chain hardening adopted from
+    // homelab); the assertion enforces the pin so a float cannot return.
+    expect(workflow).toMatch(/google-github-actions\/auth@[0-9a-f]{40} # v3/);
     expect(workflow).toContain('webhook_secret_version:');
     expect(workflow).toContain(
       'gcloud secrets versions access "$WEBHOOK_SECRET_VERSION"',
