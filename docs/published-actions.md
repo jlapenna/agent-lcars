@@ -111,6 +111,21 @@ for moving-`main` consumers: `token` falls back to the caller's
 with a different agent-step timeout must pass all three deadline inputs so the
 brief describes the real runtime bound.
 
+The brief it writes is also **size-budgeted** (`schema: 3`, #1202). Every
+field carrying GitHub- or maintainer-authored prose — `anchor.body`, `reply`,
+`context`, `latest_agent_result.body` — is clamped to a fixed character
+budget, and a clamped field gets a trailing marker naming how much was
+dropped and the URL to read the rest. `truncated` lists the field paths that
+were shortened, so a consumer can tell "this is the whole story" from "fetch
+the rest" without parsing prose. The budgets sit above this repo's p99 issue
+body, so a typical brief is unchanged; they exist so one 32KB issue body
+cannot turn into kilotokens of preamble on every provider. Acceptance
+criteria are extracted from the _full_ body before clamping, so an issue's
+checklist always survives. The budgets are constants in `prepare.sh`, not
+inputs: the brief is a contract every lane reads identically, and a
+per-caller knob is how one lane quietly grows a preamble the others do not
+pay.
+
 ### The whole-repo-download caveat
 
 A cross-repo `uses:` downloads this entire repository at the resolved ref

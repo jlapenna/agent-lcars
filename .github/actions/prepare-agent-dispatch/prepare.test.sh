@@ -71,7 +71,7 @@ test "$(find "$consumer" -mindepth 1 -print -quit)" = ""
 jq -e \
   --arg reply "$REPLY" \
   '.agent == "Test Agent" and
-   .schema == 2 and
+   .schema == 3 and
    .repository == "example/consumer" and
    .anchor.number == 123 and
    .anchor.type == "issue" and
@@ -80,6 +80,7 @@ jq -e \
    .anchor.labels == ["agent:codex"] and
    .anchor.assignees == ["jclaw-bot"] and
    .anchor.acceptance_criteria == ["Preserve exact state", "Keep inert data"] and
+   .truncated == [] and
    .mode == "reply" and
    .reply == $reply and
    .context == "deployment sha abc123" and
@@ -108,3 +109,74 @@ case "$protocol_path" in
     exit 1
     ;;
 esac
+
+# A brief built from oversized GitHub content must stay bounded. The budgets
+# are constants in prepare.sh, so this exercises the real shipped values
+# rather than a lowered test-only limit: the fixtures below are sized against
+# them, and a budget change here fails loudly instead of silently passing.
+oversized_root="$test_root/oversized"
+mkdir -p "$oversized_root/runner-temp" "$oversized_root/consumer"
+
+long_line="$(printf 'x%.0s' $(seq 1 200))"
+long_body="## Acceptance"$'\n'
+for i in $(seq 1 60); do
+  long_body+="- [ ] criterion $i"$'\n'
+done
+for _ in $(seq 1 60); do
+  long_body+="$long_line"$'\n'
+done
+
+FAKE_ANCHOR="$oversized_root/anchor.json"
+FAKE_COMMENTS="$oversized_root/comments.json"
+export FAKE_ANCHOR FAKE_COMMENTS
+jq -n --arg body "$long_body" \
+  '{number:123,state:"open",state_reason:null,title:"Oversized",body:$body,
+    labels:[],assignees:[],html_url:"https://example.test/issues/123"}' \
+  > "$FAKE_ANCHOR"
+long_comment="<!-- attempt-claim:g1:abc -->"$'\n'"$(printf 'y%.0s' $(seq 1 9000))"
+jq -n --arg body "$long_comment" \
+  '[{id:9,html_url:"https://example.test/comments/9",created_at:"2026-08-08T00:00:00Z",
+     updated_at:"2026-08-08T00:00:00Z",user:{login:"agent-lcars[bot]"},body:$body}]' \
+  > "$FAKE_COMMENTS"
+
+RUNNER_TEMP="$oversized_root/runner-temp"
+GITHUB_ENV="$oversized_root/github-env"
+GITHUB_OUTPUT="$oversized_root/github-output"
+REPLY="$(printf 'r%.0s' $(seq 1 9000))"
+CONTEXT="$(printf 'c%.0s' $(seq 1 9000))"
+export RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT REPLY CONTEXT
+
+(
+  cd "$oversized_root/consumer"
+  bash "$action_dir/prepare.sh"
+)
+
+oversized_path="$RUNNER_TEMP/agent-dispatch/context.json"
+
+# Every clamped field lands at its budget plus this action's own truncation
+# marker, and every one of them is named in `truncated` so the agent knows to
+# fetch the rest rather than assuming it read the whole thing.
+jq -e '
+  (.anchor.body | startswith("## Acceptance")) and
+  (.anchor.body | contains("[dispatch-brief: truncated to 6000 of ")) and
+  (.anchor.body | contains("https://example.test/issues/123")) and
+  (.reply | contains("[dispatch-brief: truncated to 4000 of 9000 characters.")) and
+  (.context | contains("[dispatch-brief: truncated to 2000 of 9000 characters.")) and
+  (.latest_agent_result.body | contains("[dispatch-brief: truncated to 2000 of ")) and
+  (.latest_agent_result.body | contains("https://example.test/comments/9")) and
+  ((.anchor.acceptance_criteria | length) == 40) and
+  # Criteria are extracted from the full body, so ones past the body budget
+  # still survive - truncating the prose must not silently drop the checklist.
+  (.anchor.acceptance_criteria[39] == "criterion 40") and
+  (.truncated | sort) == [
+    "anchor.acceptance_criteria", "anchor.body", "context",
+    "latest_agent_result.body", "reply"
+  ]' "$oversized_path" >/dev/null
+
+# The whole brief stays within a predictable ceiling no matter how large the
+# thread was: this is the property the budget exists to guarantee.
+oversized_bytes="$(wc -c < "$oversized_path")"
+if [ "$oversized_bytes" -gt 20000 ]; then
+  echo "dispatch brief exceeded its size budget: $oversized_bytes bytes" >&2
+  exit 1
+fi

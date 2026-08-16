@@ -9,6 +9,18 @@ umask 077
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
 
+# Character budgets for the untrusted prose the brief carries. Deliberately
+# constants, not action inputs: the brief is a contract every lane and every
+# provider reads identically, and a per-caller knob is exactly how one lane
+# quietly grows a preamble the others do not pay. Raising a budget is a
+# reviewed edit here. See the jq that applies them for the rationale on the
+# values.
+MAX_ANCHOR_BODY_CHARACTERS=6000
+MAX_REPLY_CHARACTERS=4000
+MAX_CONTEXT_CHARACTERS=2000
+MAX_RESULT_BODY_CHARACTERS=2000
+MAX_ACCEPTANCE_CRITERIA=40
+
 for numeric_name in BUDGET_MINUTES ARTIFACT_CHECKPOINT_MINUTES FINALIZE_CHECKPOINT_MINUTES; do
   numeric_value="${!numeric_name:-}"
   if ! [[ "$numeric_value" =~ ^[1-9][0-9]{0,2}$ ]]; then
@@ -51,6 +63,16 @@ diagnosis_by="$(date -u -d "@$((now_epoch + 15 * 60))" +%Y-%m-%dT%H:%M:%SZ)"
 artifact_by="$(date -u -d "@$((now_epoch + ARTIFACT_CHECKPOINT_MINUTES * 60))" +%Y-%m-%dT%H:%M:%SZ)"
 finalize_by="$(date -u -d "@$((now_epoch + FINALIZE_CHECKPOINT_MINUTES * 60))" +%Y-%m-%dT%H:%M:%SZ)"
 
+# Every field below that carries GitHub- or maintainer-authored prose is
+# clamped to a character budget. The brief is what a headless agent reads
+# *before* it can do anything else, so its size is a fixed tax on every
+# dispatch, paid again on every provider - and on the homelab LLM server it
+# is the difference between a served and a refused prompt
+# (agent-lcars#1202). Unbounded assembly also fails open: a single 32KB
+# issue body (this repo's observed maximum) silently becomes 8k tokens of
+# preamble. The budgets below sit above this repo's p99 issue body (~10k
+# characters) so a typical dispatch is byte-identical to the unclamped
+# brief, while the tail is bounded and told exactly where to read the rest.
 jq -n \
   --arg agent "$AGENT" \
   --arg repository "$GITHUB_REPOSITORY" \
@@ -69,41 +91,76 @@ jq -n \
   --arg artifact_by "$artifact_by" \
   --arg finalize_by "$finalize_by" \
   --argjson budget_minutes "$BUDGET_MINUTES" \
-  '{schema: 2, agent: $agent, repository: $repository,
+  --argjson max_anchor_body "$MAX_ANCHOR_BODY_CHARACTERS" \
+  --argjson max_reply "$MAX_REPLY_CHARACTERS" \
+  --argjson max_context "$MAX_CONTEXT_CHARACTERS" \
+  --argjson max_result_body "$MAX_RESULT_BODY_CHARACTERS" \
+  --argjson max_criteria "$MAX_ACCEPTANCE_CRITERIA" \
+  '# Clamp untrusted prose to $limit characters, appending a marker that says
+   # how much was dropped and where the agent can read the rest on demand.
+   # The marker is our own text, appended after the untrusted content - it
+   # never grants that content any authority it did not already have.
+   def clamp($limit; $hint):
+     if length > $limit
+     then .[0:$limit] + "\n\n[dispatch-brief: truncated to \($limit) of \(length) characters. \($hint)]"
+     else . end;
+   def over($limit): length > $limit;
+
+   ($anchor.body // "") as $body |
+   ($anchor.html_url // "") as $anchor_url |
+   [
+     ($body | split("\n")[]) |
+     select(test("^[[:space:]]*[-*][[:space:]]+\\[[ xX]\\][[:space:]]+")) |
+     sub("^[[:space:]]*[-*][[:space:]]+\\[[ xX]\\][[:space:]]+"; "")
+   ] as $criteria |
+   (
+     [$comments[] |
+       select(
+         ((.body // "") | contains("<!-- attempt-claim:")) or
+         ((.body // "") | contains("<!-- agent-result:v1:")) or
+         ((.body // "") | contains("status:needs-human"))
+       ) |
+       {id, html_url, created_at, updated_at, author: .user.login, body: (.body // "")}
+     ] | last
+   ) as $result |
+   {schema: 3, agent: $agent, repository: $repository,
     anchor: {
       number: ($issue | tonumber),
       type: (if $anchor.pull_request then "pull-request" else "issue" end),
       state: $anchor.state,
       state_reason: ($anchor.state_reason // null),
       title: $anchor.title,
-      body: ($anchor.body // ""),
+      body: ($body | clamp($max_anchor_body; "Read the full body at \($anchor_url).")),
       labels: [($anchor.labels // [])[] | if type == "string" then . else .name end],
       assignees: [($anchor.assignees // [])[] | .login],
       html_url: $anchor.html_url,
-      acceptance_criteria: [
-        (($anchor.body // "") | split("\n")[]) |
-        select(test("^[[:space:]]*[-*][[:space:]]+\\[[ xX]\\][[:space:]]+")) |
-        sub("^[[:space:]]*[-*][[:space:]]+\\[[ xX]\\][[:space:]]+"; "")
-      ]
+      # Extracted from the full body, not the clamped one: the checklist is
+      # the highest-signal part of an issue and must survive truncation.
+      acceptance_criteria: $criteria[0:$max_criteria]
     },
-    mode: $mode, reply: $reply,
-    runbook: $runbook, context: $context,
+    mode: $mode,
+    reply: ($reply | clamp($max_reply; "Read the full reply on the anchor thread at \($anchor_url).")),
+    runbook: $runbook,
+    context: ($context | clamp($max_context; "Read the full router context in the dispatching workflow run.")),
     prior_terminal_state: $prior_terminal_state,
     latest_agent_result: (
-      [$comments[] |
-        select(
-          ((.body // "") | contains("<!-- attempt-claim:")) or
-          ((.body // "") | contains("<!-- agent-result:v1:")) or
-          ((.body // "") | contains("status:needs-human"))
-        ) |
-        {id, html_url, created_at, updated_at, author: .user.login, body: (.body // "")}
-      ] | last // null
+      if $result == null then null
+      else $result | .body = ($result.body | clamp($max_result_body; "Read the full comment at \($result.html_url).")) end
     ),
     requested_results: (
       if $mode == "review" then ["review", "park", "no-op"]
       elif $mode == "reply" then ["comment", "pull-request", "park", "no-op"]
       else ["pull-request", "park", "no-op"] end
     ),
+    # Names every field the budget actually shortened, so an agent can tell
+    # "this is the whole story" from "fetch the rest" without parsing prose.
+    truncated: [
+      (if $body | over($max_anchor_body) then "anchor.body" else empty end),
+      (if ($criteria | length) > $max_criteria then "anchor.acceptance_criteria" else empty end),
+      (if $reply | over($max_reply) then "reply" else empty end),
+      (if $context | over($max_context) then "context" else empty end),
+      (if ($result != null) and ($result.body | over($max_result_body)) then "latest_agent_result.body" else empty end)
+    ],
     runtime: {
       started_at: $started_at,
       deadline: $deadline,
