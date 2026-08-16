@@ -89,7 +89,7 @@ env:
   # was probe-verified before this flip (#1190). Sprinkles's local router
   # went dark in supersprinklesracing/sprinkles ahead of this deploy.
   - variable: AGENT_LCARS_CONTROL_PLANE_REPOSITORIES
-    value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles'
+    value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab'
     availability:
       - RUNTIME
 
