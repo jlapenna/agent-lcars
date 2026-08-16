@@ -92,7 +92,7 @@ const PUBLISHED = {
       'artifact-checkpoint-minutes': { required: false, default: '25' },
       'finalize-checkpoint-minutes': { required: false, default: '45' },
     },
-    outputs: ['path', 'protocol-path'],
+    outputs: ['path', 'protocol-path', 'skills-path', 'skills-digest'],
   },
   'setup-opencode': {
     inputs: { 'github-token': { required: true } },

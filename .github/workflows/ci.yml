@@ -110,6 +110,9 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
+      - name: Test layer-1 skill install (#1269)
+        run: bash .github/actions/prepare-agent-dispatch/install-skills.test.sh
+
       - name: Test attempt-marker stamping
         run: bash .github/actions/stamp-attempt-marker/stamp.test.sh
 
