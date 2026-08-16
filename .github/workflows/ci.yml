@@ -166,18 +166,20 @@ jobs:
 
       # rerun-infra-killed-runs's action.yml runs the committed bundle at
       # rerun-infra-killed-runs/dist/main.mjs, not the loose sources next to
-      # it (built by apps/dispatch-broker's `build-rerun-infra-killed-runs`
-      # target from apps/dispatch-broker/src/rerun-infra-killed-runs -- see
-      # that target's "// why"). A committed build artifact that can silently
-      # drift from the sources it was built from is worse than no bundle at
-      # all: someone could edit the source, forget to rebuild, and ship an
-      # action that still runs the OLD behavior with no signal anything is
-      # wrong -- exactly what broke this action outright for five straight
-      # scheduled runs before this check existed. Rebuilding here and diffing
-      # against what is committed turns that into a loud CI failure instead.
-      # This bundle stays published for jlapenna/homelab and
-      # supersprinklesracing/sprinkles (see docs/published-actions.md) even
-      # though agent-lcars's own local scheduled use of it
+      # it (built by apps/rerun-infra-killed-runs's `build` target -- see
+      # that project's "// why". agent-lcars#1183 moved this target here
+      # from apps/dispatch-broker's own `build-rerun-infra-killed-runs`,
+      # once that was apps/dispatch-broker's last live reason to exist and
+      # it was deleted outright). A committed build artifact that can
+      # silently drift from the sources it was built from is worse than no
+      # bundle at all: someone could edit the source, forget to rebuild, and
+      # ship an action that still runs the OLD behavior with no signal
+      # anything is wrong -- exactly what broke this action outright for
+      # five straight scheduled runs before this check existed. Rebuilding
+      # here and diffing against what is committed turns that into a loud
+      # CI failure instead. This bundle stays published for jlapenna/homelab
+      # and supersprinklesracing/sprinkles (see docs/published-actions.md)
+      # even though agent-lcars's own local scheduled use of it
       # (rerun-infra-killed-runs.yml) was retired in #1015 Wave 4 in favor of
       # the orchestrator's lease sweep.
       #
@@ -186,7 +188,7 @@ jobs:
       # two actions in #1015 Wave 4 -- both were fully dead, unlike this one.
       - name: Check committed operational action bundles match their source
         run: |
-          pnpm nx build-rerun-infra-killed-runs @agent-lcars/dispatch-broker
+          pnpm nx build @agent-lcars/rerun-infra-killed-runs
           git diff --exit-code -- .github/actions/rerun-infra-killed-runs/dist
 
       - name: Check formatting

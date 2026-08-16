@@ -26,7 +26,6 @@
         "libs/dispatch-contracts/src/index.ts"
       ],
       "@agent-lcars/orchestrator": ["libs/orchestrator/src/index.ts"],
-      "@agent-lcars/dispatch-controller/*": ["apps/dispatch-broker/src/*"],
       "@agent-lcars/telemetry": ["libs/telemetry/src/index.ts"],
       "@agent-lcars/telemetry/server": ["libs/telemetry/src/server/index.ts"]
     }

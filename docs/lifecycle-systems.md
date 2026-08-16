@@ -315,11 +315,14 @@ example — is in this document's git history (`git log -p -- docs/lifecycle-sys
 rather than repeated here.
 
 `apps/dispatch-broker` and `apps/console/src/lib/hosted-controller.ts`
-survive narrowly: they back the console UI's Retry/Reassign-pipeline
-commands and the still-externally-published `rerun-infra-killed-runs`
-action bundle. See `apps/dispatch-broker/README.md` for the exact, current
-scope — it is deliberately more precise than anything repeated here, so it
-doesn't drift a second time.
+survive narrowly: they back the console UI's post-mutation reconcile ping
+(`apps/console/src/lib/backend-actions.ts`'s `notifyReconcile`). The
+still-externally-published `rerun-infra-killed-runs` action bundle moved to
+its own `apps/rerun-infra-killed-runs` project (agent-lcars#1183) once that
+was its only remaining reason to depend on `apps/dispatch-broker`. See
+`apps/dispatch-broker/README.md` for the exact, current scope — it is
+deliberately more precise than anything repeated here, so it doesn't drift
+a second time.
 
 ## Related docs
 

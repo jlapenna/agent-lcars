@@ -1,8 +1,36 @@
-// apps/dispatch-broker/src/rerun-infra-killed-runs/main.ts
+// apps/rerun-infra-killed-runs/src/main.ts
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-// apps/dispatch-broker/src/github-api.ts
+// apps/rerun-infra-killed-runs/src/detect.ts
+function jobLooksInfraKilled(job) {
+  const steps = Array.isArray(job?.steps) ? job.steps : [];
+  return job?.conclusion === "failure" && steps.length > 0 && steps.every((step) => step?.conclusion === null);
+}
+function runLooksInfraKilled(jobs) {
+  const failedJobs = (jobs ?? []).filter(
+    (job) => job?.conclusion === "failure"
+  );
+  return failedJobs.length > 0 && failedJobs.every(jobLooksInfraKilled);
+}
+function isEligibleForRerun(run2) {
+  return run2?.status === "completed" && run2?.conclusion === "failure" && run2?.run_attempt === 1;
+}
+function selectAssociatedPullRequest(pulls) {
+  const candidates = pulls ?? [];
+  return candidates.find((pr) => pr.state === "open") ?? candidates[0];
+}
+function buildRerunCommentBody({
+  runUrl,
+  workflowName,
+  jobNames
+}) {
+  const names = jobNames ?? [];
+  const jobs = names.length > 0 ? names.join(", ") : "a job";
+  return `${workflowName ?? "CI"}'s ${jobs} failed with every step's conclusion \`null\` -- the runner was evicted/killed at the infrastructure level (agent-lcars#536), not a real test failure. Automatically reran it once: ${runUrl}`;
+}
+
+// apps/rerun-infra-killed-runs/src/github-api.ts
 var API_VERSION = "2026-03-10";
 var GitHubApiError = class extends Error {
   status;
@@ -101,35 +129,7 @@ async function mapWithConcurrency(items, limit, worker) {
 }
 var FIND_RUNS_FOR_GENERATION_CREATED_BUFFER_MS = 5 * 60 * 1e3;
 
-// apps/dispatch-broker/src/rerun-infra-killed-runs/detect.ts
-function jobLooksInfraKilled(job) {
-  const steps = Array.isArray(job?.steps) ? job.steps : [];
-  return job?.conclusion === "failure" && steps.length > 0 && steps.every((step) => step?.conclusion === null);
-}
-function runLooksInfraKilled(jobs) {
-  const failedJobs = (jobs ?? []).filter(
-    (job) => job?.conclusion === "failure"
-  );
-  return failedJobs.length > 0 && failedJobs.every(jobLooksInfraKilled);
-}
-function isEligibleForRerun(run2) {
-  return run2?.status === "completed" && run2?.conclusion === "failure" && run2?.run_attempt === 1;
-}
-function selectAssociatedPullRequest(pulls) {
-  const candidates = pulls ?? [];
-  return candidates.find((pr) => pr.state === "open") ?? candidates[0];
-}
-function buildRerunCommentBody({
-  runUrl,
-  workflowName,
-  jobNames
-}) {
-  const names = jobNames ?? [];
-  const jobs = names.length > 0 ? names.join(", ") : "a job";
-  return `${workflowName ?? "CI"}'s ${jobs} failed with every step's conclusion \`null\` -- the runner was evicted/killed at the infrastructure level (agent-lcars#536), not a real test failure. Automatically reran it once: ${runUrl}`;
-}
-
-// apps/dispatch-broker/src/rerun-infra-killed-runs/main.ts
+// apps/rerun-infra-killed-runs/src/main.ts
 var DEFAULT_WORKFLOW_FILE = "ci.yml";
 var SCAN_WINDOW_MS = 24 * 60 * 60 * 1e3;
 var MAX_LIST_PAGES = 5;

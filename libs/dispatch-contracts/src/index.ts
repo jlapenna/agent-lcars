@@ -123,11 +123,3 @@ export {
   quickTaskDigest,
   quickTaskMarkerMatcher,
 } from './quick-task';
-export type { LaneReadinessFailure } from './readiness';
-export { isLaneReadinessFailure, LANE_READINESS_FAILURES } from './readiness';
-export type { AuthoritativeTaskState } from './task-state';
-export {
-  AUTHORITATIVE_TASK_STATE_SCHEMA,
-  isAuthoritativeTaskState,
-  redactAuthoritativeTaskState,
-} from './task-state';

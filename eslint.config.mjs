@@ -51,14 +51,7 @@ export default [
         'error',
         {
           enforceBuildableLibDependency: true,
-          allow: [
-            '^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$',
-            // #736: the hosted console and committed Action bundle execute
-            // the same controller source during migration. This one public
-            // alias is the explicit bridge; arbitrary app-to-app imports
-            // remain forbidden by the rule below.
-            '^@agent-lcars/dispatch-controller/.+$',
-          ],
+          allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
           depConstraints: [
             {
               sourceTag: 'platform:server',

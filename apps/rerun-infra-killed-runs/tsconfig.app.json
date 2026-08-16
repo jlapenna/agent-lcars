@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "../../dist/out-tsc/dispatch-broker",
+    "outDir": "../../dist/out-tsc/rerun-infra-killed-runs",
     "rootDir": "src",
     "composite": true,
     "module": "esnext",

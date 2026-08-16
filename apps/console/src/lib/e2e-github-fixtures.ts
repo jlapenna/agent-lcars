@@ -624,7 +624,6 @@ interface QuickTaskFixtureIssue {
   labels: string[];
   createdAt: string;
   comments: { author: string; body: string }[];
-  controllerState: DispatchLedger;
 }
 
 interface QuickTaskFixtureState {
@@ -809,7 +808,6 @@ export function recordQuickTaskIssue(params: {
     labels: params.labels,
     createdAt: now,
     comments: [{ author: FLEET, body: ledgerCommentBody(ledger) }],
-    controllerState: ledger,
   });
 
   return {
@@ -819,13 +817,6 @@ export function recordQuickTaskIssue(params: {
     body: params.body,
     labels: params.labels.map((name) => ({ name })),
   };
-}
-
-export function quickTaskControllerState(
-  number: number,
-): DispatchLedger | undefined {
-  return quickTaskState().issues.find((item) => item.number === number)
-    ?.controllerState;
 }
 
 function quickTaskIssueRestShape(item: QuickTaskFixtureIssue) {

@@ -1,0 +1,33 @@
+{
+  "name": "@agent-lcars/rerun-infra-killed-runs",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/rerun-infra-killed-runs/src",
+  "projectType": "application",
+  "tags": ["platform:server", "scope:shared"],
+  "// why": "agent-lcars#1183: carved out of apps/dispatch-broker so the PUBLISHED rerun-infra-killed-runs action (jlapenna/homelab and supersprinklesracing/sprinkles consume its dist bundle directly, see docs/published-actions.md) no longer depends on that app's fate. src/main.ts and src/detect.ts are the action's own logic (moved, not copied -- nothing else referenced them). src/github-api.ts, src/broker.ts, and src/modules/{intent,ledger-core,scheduler}.ts are this project's own copies of files apps/dispatch-broker used to own -- kept as full, unmodified copies (not a trimmed-down rewrite) even though apps/dispatch-broker itself was deleted outright in the same slice (its other live reason, apps/console/src/lib/hosted-controller.ts, was retired in #1195 first). Only createGitHubApi/mapWithConcurrency/repositoryPath are reachable from main.ts -- the `build` target's esbuild bundle tree-shakes the rest away, same as it always did when this lived in dispatch-broker.",
+  "targets": {
+    "build": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "platform": "node",
+        "target": "node24",
+        "format": ["esm"],
+        "bundle": true,
+        "thirdParty": true,
+        "outputPath": ".github/actions/rerun-infra-killed-runs/dist",
+        "outputFileName": "main.mjs",
+        "main": "apps/rerun-infra-killed-runs/src/main.ts",
+        "tsConfig": "apps/rerun-infra-killed-runs/tsconfig.build.json",
+        "generatePackageJson": false,
+        "skipTypeCheck": false,
+        "esbuildOptions": {
+          "sourcemap": false,
+          "outExtension": {
+            ".js": ".mjs"
+          }
+        }
+      }
+    }
+  }
+}

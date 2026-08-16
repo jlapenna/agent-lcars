@@ -1,4 +1,3 @@
-import { FirestoreStoragePort } from '@agent-lcars/dispatch-controller/storage/firestore-port';
 import {
   type CliSessionDoc,
   type IssueAgentSessionDoc,
@@ -16,9 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GITHUB_DATA_TAG } from '../../../../lib/cache-tags';
 import { E2E_FIXTURE_BRANCH } from '../../../../lib/e2e-fixtures';
 import {
-  authoritativeLedgerFixture,
   E2E_FIXTURE_REPO,
-  E2E_FIXTURE_REPOSITORY_ID,
   E2E_ITEM_NUMBERS,
   E2E_RUN_IDS,
   resetIssueContentEdits,
@@ -282,25 +279,6 @@ export async function POST(req: NextRequest) {
         ]
       : fixtureSessions();
     await Promise.all(docs.map((doc) => upsertSession(doc)));
-    if (populated) {
-      const port = new FirestoreStoragePort({
-        projectId: process.env['PROJECT_ID'] ?? 'demo-no-project',
-        databaseId:
-          process.env['DISPATCH_FIRESTORE_DATABASE_ID'] ?? '(default)',
-      });
-      const controllerState = authoritativeLedgerFixture();
-      const task = {
-        repositoryId: E2E_FIXTURE_REPOSITORY_ID,
-        repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
-        issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
-      };
-      const current = await port.readTask(task);
-      await port.writeTask(task, current?.revision, {
-        signals: [],
-        intents: [],
-        controllerState,
-      });
-    }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('agent-lcars: error in E2E seed API:', error);
