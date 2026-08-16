@@ -28,6 +28,14 @@ export interface EnvVars {
 
   AGENT_CONSOLE_GITHUB_API_BASE_URL?: string;
   AGENT_LCARS_ADMIN_GITHUB_LOGIN?: string;
+  // Issue #1190: GitHub App credentials for minting per-repo installation
+  // tokens (see apps/console/src/lib/github-app-tokens.ts). Both must be
+  // set for the outbox drain to use the App path at all; either unset
+  // falls back to the single ambient AGENT_LCARS_GITHUB_TOKEN for every
+  // repo. Not yet wired to any deployment -- dormant until a follow-up
+  // adds the private key as a Secret Manager value and apphosting.yaml env.
+  AGENT_LCARS_APP_CLIENT_ID?: string; // Secret
+  AGENT_LCARS_APP_PRIVATE_KEY?: string; // Secret
   AGENT_LCARS_ARTIFACT_SHARE_BASE_URL?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORY?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORIES?: string;

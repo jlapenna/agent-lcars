@@ -5,6 +5,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
+import { AmbientTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
   handleCompletion,
@@ -19,6 +20,7 @@ const REPO = 'jlapenna/agent-lcars';
 const ISSUE: TaskId = { repo: REPO, issue: 42 };
 const T0 = '2026-08-15T12:00:00.000Z';
 const TOKEN = 'gh-test-token-0123456789';
+const tokens = new AmbientTokenProvider(TOKEN);
 
 class Clock {
   constructor(private value: string) {}
@@ -67,8 +69,7 @@ function fixture(overrides?: Parameters<typeof fakeFetch>[0]) {
   const deps: OrchestratorRouteDeps = {
     store,
     orchestrator,
-    drain: () =>
-      drainOutbox({ store, orchestrator, githubToken: TOKEN, fetchImpl }),
+    drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
   };
   return { clock, store, orchestrator, deps, calls };
 }
@@ -313,8 +314,7 @@ describe('error handling', () => {
     const deps: OrchestratorRouteDeps = {
       store,
       orchestrator,
-      drain: () =>
-        drainOutbox({ store, orchestrator, githubToken: TOKEN, fetchImpl }),
+      drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
     };
 
     const result = await handleCompletion(deps, {

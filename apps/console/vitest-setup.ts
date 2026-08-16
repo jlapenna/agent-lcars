@@ -11,20 +11,27 @@ import { afterEach, vi } from 'vitest';
 // see a stale, already-rendered tree.
 afterEach(cleanup);
 
-window.HTMLElement.prototype.scrollIntoView = vi.fn();
+// Guarded rather than unconditional: a `// @vitest-environment node` test
+// file (e.g. github-app-tokens.test.ts -- real WebCrypto RSA signing is
+// unreliable under jsdom's window, see that file's comment) still runs
+// this shared setup file, but has no `window` at all. Every jsdom-tier
+// test still gets the exact same setup as before.
+if (typeof window !== 'undefined') {
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
-class ResizeObserver {
-  observe() {
-    // mock
+  class ResizeObserver {
+    observe() {
+      // mock
+    }
+    unobserve() {
+      // mock
+    }
+    disconnect() {
+      // mock
+    }
   }
-  unobserve() {
-    // mock
-  }
-  disconnect() {
-    // mock
-  }
+  window.ResizeObserver = ResizeObserver;
 }
-window.ResizeObserver = ResizeObserver;
 
 // jsdom has no `document.fonts` — Mantine's Textarea autosize
 // (Autosize.mjs) unconditionally calls

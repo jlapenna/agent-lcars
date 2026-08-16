@@ -7,21 +7,27 @@ import {
 } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 
+import { createDispatchTokenProvider } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
  * store, the orchestrator itself wired to a real clock, and the outbox
- * drain bound to the fleet's GitHub token. Memoized at module scope so every
- * route handler invoked within one running server instance shares the same
- * store connection rather than opening a new one per request.
+ * drain bound to a per-repo dispatch token provider. Memoized at module
+ * scope so every route handler invoked within one running server instance
+ * shares the same store connection rather than opening a new one per
+ * request.
  *
  * `PROJECT_ID` and `DISPATCH_FIRESTORE_DATABASE_ID` are already deployed in
  * apphosting.yaml (see hosted-webhook-queue.ts for the same `PROJECT_ID`
- * read pattern). The GitHub token is re-read from the environment on every
- * drain rather than captured once, so a rotated secret takes effect without
- * a restart.
+ * read pattern). The token provider is rebuilt from `process.env` on every
+ * drain (see `createDispatchTokenProvider` in `github-app-tokens.ts`)
+ * rather than captured once, so a rotated `AGENT_LCARS_GITHUB_TOKEN` secret
+ * still takes effect without a restart -- with the `AGENT_LCARS_APP_*` envs
+ * unset (today's deployed configuration), this is byte-identical to the
+ * pre-#1190 single-ambient-token behavior, just rebuilt each call instead
+ * of read each call.
  */
 
 const utcClock: Clock = { now: () => new Date().toISOString() };
@@ -44,7 +50,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
       drainOutbox({
         store,
         orchestrator,
-        githubToken: required('AGENT_LCARS_GITHUB_TOKEN'),
+        tokens: createDispatchTokenProvider(process.env),
       }),
   };
   return cached;

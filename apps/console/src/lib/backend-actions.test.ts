@@ -25,6 +25,7 @@ import {
   updateIssueContent,
   updatePrBranch,
 } from './backend-actions';
+import { AmbientTokenProvider } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -76,7 +77,7 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
     drainOutbox({
       store,
       orchestrator,
-      githubToken: 'gh-test-token-0123456789',
+      tokens: new AmbientTokenProvider('gh-test-token-0123456789'),
       fetchImpl,
     });
   (createOrchestratorRuntime as Mock).mockReturnValue({
