@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# agent-lcars:marker-stamping-gh-wrapper -- sentinel, do not remove.
+# install.sh greps for it to prove interception actually took effect
+# (#1268); without it the installer cannot tell this wrapper apart
+# from the real gh and fails the handoff closed.
 # A `gh` wrapper that stamps this attempt's claim marker onto the pull
 # request or comment a dispatched agent just created.
 #

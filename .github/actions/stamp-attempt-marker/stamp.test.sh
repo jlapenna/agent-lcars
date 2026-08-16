@@ -61,6 +61,7 @@ chmod +x "$fake_bin/gh"
 export CALLS="$calls" PR_BODY="$pr_body" COMMENT_BODY="$comment_body"
 export AGENT_GH_REAL="$fake_bin/gh"
 wrapper="$action_dir/gh"
+fail_msg() { echo "$*" >&2; exit 1; }
 
 attempt_id='g3:jlapenna/agent-lcars#1173/r3'
 marker="<!-- attempt-claim:${attempt_id} -->"
@@ -186,12 +187,18 @@ echo "stamp-attempt-marker: ok"
 install_root="$test_root/install"
 mkdir -p "$install_root/runner-temp"
 
+# Fall-back mode: when gh's own directory is not writable the installer
+# cannot take over its path, so it publishes a PATH entry instead. Made
+# explicit here because in-place is now preferred whenever it is possible
+# (#1268), and that path has its own case further down.
+chmod a-w "$fake_bin"
 RUNNER_TEMP="$install_root/runner-temp" \
   GITHUB_ACTION_PATH="$action_dir" \
   GITHUB_ENV="$install_root/github-env" \
   GITHUB_PATH="$install_root/github-path" \
   PATH="$fake_bin:$PATH" \
   bash "$action_dir/install.sh"
+chmod u+w "$fake_bin"
 
 installed_dir="$install_root/runner-temp/agent-gh-marker"
 test -x "$installed_dir/gh"
@@ -213,12 +220,91 @@ export AGENT_GH_REAL="$fake_bin/gh"
 # Running the installer twice must not chain the wrapper to itself: the
 # recorded real gh stays the fake, never the wrapper we just installed.
 : > "$install_root/github-env"
+chmod a-w "$fake_bin"
 RUNNER_TEMP="$install_root/runner-temp" \
   GITHUB_ACTION_PATH="$action_dir" \
   GITHUB_ENV="$install_root/github-env" \
   GITHUB_PATH="$install_root/github-path" \
   PATH="$installed_dir:$fake_bin:$PATH" \
   bash "$action_dir/install.sh"
+chmod u+w "$fake_bin"
 grep -Fxq "AGENT_GH_REAL=$fake_bin/gh" "$install_root/github-env"
 
 echo "stamp-attempt-marker: install ok"
+
+# --- #1268: in-place install takes over gh's own path ---------------------
+# PATH-only interception is not enough. Runs 31962331339 and 31967111276 both
+# merged correct PRs and were scored as failures because the wrapper was never
+# invoked - and a wrapper that is never invoked cannot warn. In-place install
+# survives a login shell rebuilding PATH and absolute-path invocations.
+inplace_root="$test_root/inplace"
+mkdir -p "$inplace_root/runner-temp" "$inplace_root/bin"
+cp "$fake_bin/gh" "$inplace_root/bin/gh"
+
+RUNNER_TEMP="$inplace_root/runner-temp" \
+  GITHUB_ACTION_PATH="$action_dir" \
+  GITHUB_ENV="$inplace_root/github-env" \
+  GITHUB_PATH="$inplace_root/github-path" \
+  PATH="$inplace_root/bin:$PATH" \
+  bash "$action_dir/install.sh" > "$inplace_root/out" 2>&1 ||
+  { echo "in-place install failed"; cat "$inplace_root/out"; exit 1; }
+
+grep -q "in-place" "$inplace_root/out" || fail_msg "expected an in-place install into a writable bin dir"
+# gh's own path is now the wrapper...
+head -n 5 "$inplace_root/bin/gh" | grep -q 'marker-stamping-gh-wrapper' ||
+  { echo "gh's own path was not replaced by the wrapper" >&2; exit 1; }
+# ...and the real binary was stashed, with AGENT_GH_REAL pointing at it.
+test -x "$inplace_root/runner-temp/agent-gh-marker/gh.real"
+grep -q "^AGENT_GH_REAL=$inplace_root/runner-temp/agent-gh-marker/gh.real$" "$inplace_root/github-env" ||
+  { echo "AGENT_GH_REAL does not point at the stashed real gh" >&2; exit 1; }
+# In-place mode must NOT also publish a PATH entry - nothing needs it.
+test ! -s "$inplace_root/github-path"
+
+# Stamping still works end to end through the replaced path.
+: > "$pr_body"
+url="$(AGENT_GH_REAL="$inplace_root/runner-temp/agent-gh-marker/gh.real" \
+  AGENT_MARKER_STAMPING=1 ATTEMPT_ID="$attempt_id" \
+  "$inplace_root/bin/gh" pr create --title t --body "In-place body.")"
+test "$url" = "https://github.com/example/consumer/pull/42"
+grep -Fq "$marker" "$pr_body"
+
+# Re-running the installer must not chain the wrapper to itself: the stashed
+# real gh must still be the fake, never the wrapper.
+RUNNER_TEMP="$inplace_root/runner-temp" \
+  GITHUB_ACTION_PATH="$action_dir" \
+  GITHUB_ENV="$inplace_root/github-env2" \
+  GITHUB_PATH="$inplace_root/github-path2" \
+  PATH="$inplace_root/bin:$PATH" \
+  bash "$action_dir/install.sh" >/dev/null 2>&1
+head -n 5 "$inplace_root/runner-temp/agent-gh-marker/gh.real" | grep -q 'marker-stamping-gh-wrapper' &&
+  { echo "installer chained the wrapper to itself on re-run" >&2; exit 1; }
+
+# --- #1268: a non-intercepting install must fail the handoff loudly --------
+# This is the case that shipped the bug. Silence here is the whole defect.
+noop_root="$test_root/noop"
+mkdir -p "$noop_root/runner-temp" "$noop_root/bin"
+cp "$fake_bin/gh" "$noop_root/bin/gh"
+chmod a-w "$noop_root/bin"
+# Sabotage the wrapper source so the installed copy carries no sentinel; the
+# verification must notice rather than reporting success.
+sabotaged="$noop_root/action"
+mkdir -p "$sabotaged"
+cp -r "$action_dir/." "$sabotaged/"
+grep -v 'marker-stamping-gh-wrapper' "$action_dir/gh" > "$sabotaged/gh"
+chmod +x "$sabotaged/gh"
+
+set +e
+RUNNER_TEMP="$noop_root/runner-temp" \
+  GITHUB_ACTION_PATH="$sabotaged" \
+  GITHUB_ENV="$noop_root/github-env" \
+  GITHUB_PATH="$noop_root/github-path" \
+  PATH="$noop_root/bin:$PATH" \
+  bash "$sabotaged/install.sh" > "$noop_root/out" 2>&1
+noop_status=$?
+set -e
+chmod u+w "$noop_root/bin"
+test "$noop_status" -ne 0 || { echo "a non-intercepting install must fail, not warn" >&2; exit 1; }
+grep -q "not intercepting gh" "$noop_root/out" ||
+  { echo "expected the non-interception error"; cat "$noop_root/out"; exit 1; }
+
+echo "stamp-attempt-marker: interception ok"

@@ -302,6 +302,22 @@ the entire safety boundary, so treat it the way you would a permission grant:
   `status:needs-human` label); a reply dispatch's comment still needs the
   agent's own marker, as it did before this wrapper existed.
 
+**Interception is verified at install time, and a failure to intercept fails
+the handoff** (#1268). The installer prefers to replace `gh` at its own path —
+which no PATH manipulation, login-shell profile, or absolute-path invocation
+can undo — and falls back to a `$GITHUB_PATH` entry only when that directory
+is not writable. Either way it then resolves `gh` and confirms the wrapper is
+what answers, erroring out if not.
+
+That check exists because the original PATH-only install silently did nothing
+on runs 31962331339 and 31967111276. Both opened correct pull requests that
+merged, and both were recorded as **failures** because nothing stamped them —
+with no warning, since a wrapper that is never invoked cannot warn. The
+wrapper's own logic was verified correct against those exact command shapes,
+so the break was interception, not parsing. An install that silently no-ops
+puts "did the agent forget?" straight back as an explanation, which is the
+ambiguity this action exists to remove.
+
 Stamping is best effort and never changes the exit status the agent sees: the
 agent's command has already succeeded by then, and failing it afterwards
 would turn a created artifact into a failed command. A stamping failure is a
