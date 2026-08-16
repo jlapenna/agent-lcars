@@ -533,6 +533,40 @@ resource "google_service_account_iam_member" "homelab_codex_agent_impersonation"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
+# Per-repo GitHub App installation tokens for the orchestrator drain (#1204,
+# enabling the dormant `DispatchTokenProvider` seam #1197 shipped). Terraform
+# owns the container only - there is no value here, and none belongs in this
+# repo or in GitHub Actions secrets. A maintainer populates it by hand, once
+# a dedicated App private key exists (kept a separate lineage from the
+# Actions-secrets one on purpose):
+#
+#   gcloud secrets versions add AGENT_LCARS_APP_PRIVATE_KEY --data-file=<key.pem>
+#
+# apphosting.yaml is deliberately left unwired here - an empty secret would
+# break deploys. Wiring AGENT_LCARS_APP_CLIENT_ID (plain var) and this secret
+# into apphosting.yaml is a follow-up PR, after the value above exists.
+resource "google_secret_manager_secret" "agent_lcars_app_private_key" {
+  secret_id = "AGENT_LCARS_APP_PRIVATE_KEY"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+# Scoped to this ONE secret rather than folded into the apphosting_secrets
+# for_each above: that for_each mirrors google_secret_manager_secret.runtime,
+# which apphosting.yaml wires as env vars today, and this secret is
+# deliberately not wired yet (see comment above). Same grant shape
+# apphosting_secrets uses for AGENT_LCARS_GITHUB_TOKEN (project + secret_id +
+# secretAccessor on the App Hosting compute SA); the wiring follow-up can
+# fold this into that for_each once apphosting.yaml references it.
+resource "google_secret_manager_secret_iam_member" "agent_lcars_app_private_key_accessor" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.agent_lcars_app_private_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
   display_name    = "Agent LCARS monthly budget"
