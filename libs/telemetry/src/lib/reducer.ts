@@ -292,7 +292,7 @@ function resolveTitle(
 ): { title: string; source: SessionTitleSource } | undefined {
   if (state.aiTitle) {
     const title = truncateTitle(state.aiTitle);
-    if (title) return { title, source: 'explicit' };
+    if (title) return { title, source: 'generated' };
   }
   if (state.firstUserPrompt) {
     const title = truncateTitle(state.firstUserPrompt);

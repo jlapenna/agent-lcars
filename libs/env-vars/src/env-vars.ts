@@ -134,4 +134,22 @@ export interface EnvVars {
    * no Antigravity CLI installed). See #3123 phase 3 and
    * `apps/telemetry-watcher/src/lib/antigravity-summary-source.ts`. */
   AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB?: string;
+  /** Root of the local session-title overlay state (issue #1212) -
+   * default-enabled at `~/.local/state/agent-lcars` when unset; an explicit
+   * empty string disables the overlay entirely, matching
+   * `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB`'s convention above. Holds
+   * `session-metadata/` (titles an agent declared via `lcars session title`)
+   * and `native-titles/` (titles the host importer read out of Codex's own
+   * thread store). See
+   * `apps/telemetry-watcher/src/lib/session-title-paths.ts`. */
+  AGENT_TELEMETRY_SESSION_STATE_DIR?: string;
+  /** Absolute path to Codex's thread-store SQLite DB - defaults to the
+   * highest-numbered `~/.codex/state_<N>.sqlite` when unset (the numeric
+   * suffix is a schema version Codex rotates), and an explicit empty string
+   * disables the native-title import. Read only by the HOST-side importer
+   * (`lcars session import-native`), never by the watcher container: that
+   * database is WAL-mode, and a WAL reader must be able to write its `-shm`
+   * sidecar, so a read-only bind mount of it fails outright. See
+   * `apps/telemetry-watcher/src/lib/codex-native-title-source.ts`. */
+  AGENT_TELEMETRY_CODEX_STATE_DB?: string;
 }

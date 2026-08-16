@@ -6,6 +6,12 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 
+import {
+  DECLARED_TITLE_SUBDIRECTORY,
+  GENERATED_TITLE_SUBDIRECTORY,
+  sessionTitleChannelDirectory,
+} from './session-title-paths';
+
 /** Limits local untrusted input work per read; a directory above this bound is
  * skipped wholesale rather than selecting an enumeration-order-dependent
  * subset. */
@@ -99,15 +105,45 @@ function filenameSessionId(filename: string): string | undefined {
 }
 
 /**
- * Reads only complete final annotation files and returns validated candidates
- * in filename order. This is deliberately not connected to watcher discovery,
- * title precedence, session documents, or any writer.
+ * One channel directory's read outcome. `available` and "has annotations"
+ * are independent axes on purpose — see {@link readSessionTitleDirectory}'s
+ * doc comment for the full argument. Callers that need last-good retention
+ * (`daemon.ts`) branch on `available`; callers that only ever want "whatever
+ * candidates exist right now" (the legacy `readSessionTitleAnnotations`
+ * below) can ignore it and read `annotations` alone.
  */
-export function readSessionTitleAnnotations(
+export interface SessionTitleDirectoryRead {
+  readonly available: boolean;
+  readonly annotations: ReadonlyMap<string, SessionTitleAnnotationV1>;
+}
+
+/**
+ * Reads one channel directory's complete final annotation files, returning
+ * validated candidates in filename order alongside whether the directory
+ * itself was usable this read.
+ *
+ * `available: false` means the directory read failed wholesale — missing,
+ * unreadable (permissions, not-a-directory, raced out from under us), or
+ * over {@link MAX_SESSION_TITLE_ANNOTATION_FILES} (fails closed rather than
+ * selecting an enumeration-order-dependent subset, same reasoning as the
+ * per-file bound below). It does NOT mean "no annotations" — a directory
+ * that opens fine and simply contains zero (or zero *valid*) files is
+ * `available: true` with an empty map, because "the channel currently has
+ * nothing to say" and "the channel couldn't be read at all" are different
+ * facts a caller doing last-good retention needs to tell apart: the former
+ * should overwrite what was last known-good (there might genuinely be
+ * nothing declared right now), the latter should preserve it (a transient
+ * hiccup shouldn't blank every title on this tick).
+ *
+ * A single malformed, partial, unreadable, or raced FILE is skipped without
+ * affecting `available` — that failure is scoped to the one file, not the
+ * directory it lives in, so a broken sibling never prevents a valid file
+ * from being returned.
+ */
+function readSessionTitleDirectory(
   directory: string,
-  dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
-): ReadonlyMap<string, SessionTitleAnnotationV1> {
-  const fileSystem = { ...defaultFileSystem, ...dependencies };
+  fileSystem: SessionTitleAnnotationFileSystem,
+): SessionTitleDirectoryRead {
   let entries: readonly SessionTitleAnnotationDirectoryEntry[];
   try {
     entries = fileSystem.readDirectory(
@@ -115,11 +151,11 @@ export function readSessionTitleAnnotations(
       MAX_SESSION_TITLE_ANNOTATION_FILES,
     );
   } catch {
-    return new Map();
+    return { available: false, annotations: new Map() };
   }
 
   if (entries.length > MAX_SESSION_TITLE_ANNOTATION_FILES) {
-    return new Map();
+    return { available: false, annotations: new Map() };
   }
 
   const annotations = new Map<string, SessionTitleAnnotationV1>();
@@ -155,8 +191,69 @@ export function readSessionTitleAnnotations(
       }
     } catch {
       // A malformed, partial, unreadable, or raced file must never prevent a
-      // valid sibling from being returned on this or a later read.
+      // valid sibling from being returned on this or a later read, and must
+      // never mark the whole directory unavailable — see this function's
+      // doc comment.
     }
   }
-  return annotations;
+  return { available: true, annotations };
+}
+
+/**
+ * Reads only complete final annotation files and returns validated candidates
+ * in filename order. This is deliberately not connected to watcher discovery,
+ * title precedence, session documents, or any writer.
+ *
+ * Kept as a thin wrapper over {@link readSessionTitleDirectory} for callers
+ * that only need "whatever's readable right now" and have no last-good
+ * state to maintain (this directly backs the legacy behaviour this function
+ * has always had, and its existing tests).
+ */
+export function readSessionTitleAnnotations(
+  directory: string,
+  dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
+): ReadonlyMap<string, SessionTitleAnnotationV1> {
+  const fileSystem = { ...defaultFileSystem, ...dependencies };
+  return readSessionTitleDirectory(directory, fileSystem).annotations;
+}
+
+/** Both channels' directory reads for one state root, see
+ * {@link readSessionTitleOverlay}. */
+export interface SessionTitleOverlayRead {
+  readonly declared: SessionTitleDirectoryRead;
+  readonly generated: SessionTitleDirectoryRead;
+}
+
+/**
+ * Reads both session-title channel directories beneath `stateDirectory` —
+ * `session-metadata/` (declared) and `native-titles/` (generated), see
+ * `session-title-paths.ts`. Availability is tracked PER DIRECTORY, entirely
+ * independently: the two channels have unrelated existence stories. A host
+ * with no Codex importer ever having run has no `native-titles/` directory
+ * at all — that is the ordinary, permanent state of such a host, not a
+ * failure, and it must not be conflated with `session-metadata/` also being
+ * unavailable (the declared-title writer may be running there just fine).
+ * Conversely a host that writes both may have either directory momentarily
+ * unreadable independently of the other (e.g. mid-write on one, untouched
+ * on the other). Each directory's `available` therefore only ever reflects
+ * that one directory's own read.
+ */
+export function readSessionTitleOverlay(
+  stateDirectory: string,
+  dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
+): SessionTitleOverlayRead {
+  const fileSystem = { ...defaultFileSystem, ...dependencies };
+  return {
+    declared: readSessionTitleDirectory(
+      sessionTitleChannelDirectory(stateDirectory, DECLARED_TITLE_SUBDIRECTORY),
+      fileSystem,
+    ),
+    generated: readSessionTitleDirectory(
+      sessionTitleChannelDirectory(
+        stateDirectory,
+        GENERATED_TITLE_SUBDIRECTORY,
+      ),
+      fileSystem,
+    ),
+  };
 }

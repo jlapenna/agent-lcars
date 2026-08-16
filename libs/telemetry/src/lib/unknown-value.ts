@@ -38,11 +38,27 @@ export const TITLE_MAX_LENGTH = 80;
 
 /** Collapses whitespace and truncates to `TITLE_MAX_LENGTH`, ellipsizing
  * anything longer — shared by every transcript adapter that derives a
- * session title from freeform user/agent text. */
+ * session title from freeform user/agent text.
+ *
+ * Length is measured and cut in CODE POINTS, not UTF-16 code units. Slicing
+ * the raw string can split an astral character (emoji, and most non-BMP
+ * scripts) across the boundary and leave a lone surrogate behind. That
+ * survives `JSON.stringify` — it escapes as `\uXXXX` and the JSON stays
+ * syntactically valid — but the moment the string is encoded to UTF-8 for
+ * disk or the wire it becomes U+FFFD, so the corruption lands silently at
+ * persist time rather than failing anywhere a caller would notice.
+ * Reproduced with 78 ASCII characters followed by U+1F600, whose UTF-8
+ * round-trip was lossy before this fix.
+ *
+ * Code points, not grapheme clusters: a ZWJ sequence or a flag pair can
+ * still be cut in half, but each half is a valid, renderable character, so
+ * the result degrades visually instead of corrupting the bytes. Full
+ * grapheme segmentation is not worth its cost for a display title. */
 export function truncateTitle(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length > TITLE_MAX_LENGTH
-    ? `${collapsed.slice(0, TITLE_MAX_LENGTH - 1)}…`
+  const codePoints = Array.from(collapsed);
+  return codePoints.length > TITLE_MAX_LENGTH
+    ? `${codePoints.slice(0, TITLE_MAX_LENGTH - 1).join('')}…`
     : collapsed;
 }
 

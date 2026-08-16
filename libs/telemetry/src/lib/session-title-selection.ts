@@ -1,13 +1,10 @@
-import {
-  parseSessionTitleAnnotationV1,
-  SessionTitleAnnotationV1,
-} from './session-title-annotation';
+import { SessionTitleAnnotationV1 } from './session-title-annotation';
 import { SessionSummary, SessionTitleSource } from './types';
-import { asRecord, truncateTitle } from './unknown-value';
+import { truncateTitle } from './unknown-value';
 
 export interface SessionTitleSelectionInput {
-  explicit?: unknown;
-  annotation?: unknown;
+  declared?: unknown;
+  generated?: unknown;
   inferred?: unknown;
 }
 
@@ -22,17 +19,23 @@ function normalizedTitle(value: unknown): string | undefined {
   return title || undefined;
 }
 
-/** Selects a title without comparing timestamps across unrelated sources. */
+/**
+ * Selects a title by intent tier, not by timestamp. `declared` wins even
+ * over a `generated` value written moments ago, because `declared` is a
+ * deliberate operator statement and `generated` (Claude's `aiTitle`, an
+ * imported Codex thread name) is a machine label that may have been sitting
+ * unrevised for the entire life of a long session — see
+ * {@link SessionTitleSource} for why "most recent" is the wrong axis here.
+ */
 export function selectSessionTitle(
   input: SessionTitleSelectionInput,
 ): SessionTitleSelection | undefined {
   try {
-    const explicit = normalizedTitle(input.explicit);
-    if (explicit) return { title: explicit, source: 'explicit' };
+    const declared = normalizedTitle(input.declared);
+    if (declared) return { title: declared, source: 'declared' };
 
-    const parsedAnnotation = validAnnotation(input.annotation);
-    const annotation = normalizedTitle(parsedAnnotation?.title);
-    if (annotation) return { title: annotation, source: 'annotation' };
+    const generated = normalizedTitle(input.generated);
+    if (generated) return { title: generated, source: 'generated' };
 
     const inferred = normalizedTitle(input.inferred);
     if (inferred) return { title: inferred, source: 'inferred' };
@@ -42,136 +45,57 @@ export function selectSessionTitle(
   return undefined;
 }
 
-function isAnnotation(value: unknown): value is SessionTitleAnnotationV1 {
-  try {
-    if (!value || typeof value !== 'object') return false;
-    const record = asRecord(value);
-    return (
-      !!record &&
-      record['version'] === 1 &&
-      typeof record['sessionId'] === 'string' &&
-      typeof record['updatedAt'] === 'string' &&
-      typeof record['title'] === 'string'
-    );
-  } catch {
-    return false;
-  }
-}
-
-function cloneSummary(summary: SessionSummary): SessionSummary {
-  try {
-    return {
-      sessionId: summary.sessionId,
-      source: summary.source,
-      ...(summary.agent && { agent: summary.agent }),
-      ...(summary.host && { host: summary.host }),
-      ...(summary.cwd && { cwd: summary.cwd }),
-      ...(summary.worktree && { worktree: summary.worktree }),
-      ...(summary.branch && { branch: summary.branch }),
-      ...(summary.repo && { repo: { ...summary.repo } }),
-      ...(summary.model && { model: summary.model }),
-      ...(summary.permissionMode && { permissionMode: summary.permissionMode }),
-      startedAt: summary.startedAt,
-      lastActivityAt: summary.lastActivityAt,
-      turns: summary.turns,
-      toolCallCounts: { ...summary.toolCallCounts },
-      tokens: { ...summary.tokens },
-      ...(summary.lastToolCall && {
-        lastToolCall: { ...summary.lastToolCall },
-      }),
-      ...(summary.title && { title: summary.title }),
-      ...(summary.titleSource && { titleSource: summary.titleSource }),
-      deliverables: {
-        ...(summary.deliverables.branch && {
-          branch: summary.deliverables.branch,
-        }),
-        prNumbers: [...summary.deliverables.prNumbers],
-        commitShas: [...summary.deliverables.commitShas],
-      },
-      ...(summary.artifacts && { artifacts: [...summary.artifacts] }),
-      ...(summary.totalCostUsd !== undefined && {
-        totalCostUsd: summary.totalCostUsd,
-      }),
-      ...(summary.result && { result: { ...summary.result } }),
-    };
-  } catch {
-    // A malformed legacy value must not let an annotation scan take down the
-    // whole discovery pass. Keep cardinality stable with a detached empty
-    // summary; well-formed summaries never use this path.
-    return {
-      sessionId: '',
-      source: 'cli',
-      startedAt: '',
-      lastActivityAt: '',
-      turns: 0,
-      toolCallCounts: {},
-      tokens: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
-      },
-      deliverables: { prNumbers: [], commitShas: [] },
-    };
-  }
-}
-
-function validAnnotation(value: unknown): SessionTitleAnnotationV1 | undefined {
-  try {
-    if (!isAnnotation(value)) return undefined;
-    return parseSessionTitleAnnotationV1(value, value.sessionId);
-  } catch {
-    return undefined;
-  }
+export interface SessionTitleOverlay {
+  declared?: SessionTitleAnnotationV1;
+  generated?: SessionTitleAnnotationV1;
 }
 
 /**
- * Inner-joins validated annotation candidates onto discovered summaries.
- * Unknown ids are ignored and duplicate ids fail closed. Legacy summaries
- * without titleSource are treated as inferred, preserving old callers.
+ * Layers locally-sourced title candidates onto a freshly-reduced session
+ * summary. Pure: never mutates `summary`, never mutates `overlay`, and never
+ * deletes an existing `title`/`titleSource` — the worst case is returning
+ * `summary` back unchanged.
+ *
+ * This replaces the landed `joinSessionTitleAnnotations`, which cloned a
+ * whole array of summaries, mutated the clones, and included a
+ * `delete summary.title` branch reachable only if some caller re-persisted
+ * the join's output as a new source of truth. No caller does or should:
+ * `applySessionTitleOverlay` is always called with a *pristine* reducer
+ * summary (the transcript's own title/titleSource, never a previous overlay
+ * result), so removing a `declared` annotation can never require deleting
+ * anything — it simply stops contributing a candidate, and selection falls
+ * back to whatever the transcript itself produced. That also means there is
+ * no "title was explicitly cleared" state to persist, which is what made
+ * #1161's Firestore-field-deletion concern a phantom: the state it worried
+ * about can't occur when the join is pure and its input is always pristine.
+ *
+ * Candidate derivation, the entire correctness argument:
+ *  - `declared`  comes only from the overlay — the transcript itself never
+ *    produces a declared title, so there is nothing on `summary` to prefer.
+ *  - `generated` prefers the summary's OWN generated title (Claude's
+ *    `aiTitle`, reduced moments ago from the actual transcript) over the
+ *    overlay's imported one (a Codex thread name imported from SQLite,
+ *    potentially stale by comparison) — "transcript beats imported file" is
+ *    not a tie-break, it's preferring the fresher of two same-tier signals.
+ *    Only when the summary carries no generated title of its own does the
+ *    imported one get a chance.
+ *  - `inferred` comes only from the summary — the overlay has no inferred
+ *    tier (nothing external infers from a first prompt), so this is just
+ *    "was the transcript's own title actually inferred, or something else."
  */
-export function joinSessionTitleAnnotations(
-  summaries: readonly SessionSummary[],
-  annotations: readonly SessionTitleAnnotationV1[],
-): SessionSummary[] {
-  const byId = new Map<string, SessionTitleAnnotationV1 | null>();
-  for (const candidate of annotations) {
-    const annotation = validAnnotation(candidate);
-    if (!annotation) continue;
-    if (byId.has(annotation.sessionId)) {
-      byId.set(annotation.sessionId, null);
-    } else {
-      byId.set(annotation.sessionId, annotation);
-    }
-  }
+export function applySessionTitleOverlay(
+  summary: SessionSummary,
+  overlay: SessionTitleOverlay,
+): SessionSummary {
+  const declared = overlay.declared?.title;
+  const generated =
+    (summary.titleSource === 'generated' ? summary.title : undefined) ??
+    overlay.generated?.title;
+  const inferred =
+    summary.titleSource === 'inferred' ? summary.title : undefined;
 
-  return summaries.map((original) => {
-    const summary = cloneSummary(original);
-    const annotation = byId.get(summary.sessionId);
-    if (annotation === undefined && summary.titleSource === 'annotation') {
-      delete summary.title;
-      delete summary.titleSource;
-      return summary;
-    }
-    const selection =
-      annotation &&
-      selectSessionTitle({
-        explicit:
-          summary.titleSource === 'explicit' ? summary.title : undefined,
-        annotation,
-        inferred:
-          summary.titleSource === 'explicit' ||
-          summary.titleSource === 'annotation'
-            ? undefined
-            : summary.title,
-      });
-    if (
-      selection &&
-      (selection.source !== 'annotation' || summary.titleSource !== 'explicit')
-    ) {
-      summary.title = selection.title;
-      summary.titleSource = selection.source;
-    }
-    return summary;
-  });
+  const selection = selectSessionTitle({ declared, generated, inferred });
+  if (!selection) return summary;
+
+  return { ...summary, title: selection.title, titleSource: selection.source };
 }

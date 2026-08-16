@@ -1,18 +1,21 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { executeSessionTitleAnnotationCommand } from './session-title-annotation-command';
-import { SESSION_TITLE_ANNOTATION_DIRECTORY } from './session-title-annotation-writer';
+import {
+  executeSessionTitleAnnotationCommand,
+  SESSION_TITLE_CLI_USAGE,
+} from './session-title-annotation-command';
+import { SessionTitleAnnotationWriterFileSystem } from './session-title-annotation-writer';
 
 const SESSION_ID = 'command-session-1';
 const TITLE = 'title must never be echoed in an error';
 const homes: string[] = [];
 
 afterEach(() => {
-  delete process.env['LCARS_SESSION_ID'];
   for (const home of homes.splice(0))
     fs.rmSync(home, { recursive: true, force: true });
 });
@@ -23,16 +26,64 @@ function home(): string {
   return value;
 }
 
-function finalPath(homeDirectory: string): string {
+function declaredPath(homeDirectory: string, sessionId = SESSION_ID): string {
   return path.join(
     homeDirectory,
-    SESSION_TITLE_ANNOTATION_DIRECTORY,
-    `${SESSION_ID}.json`,
+    '.local',
+    'state',
+    'agent-lcars',
+    'session-metadata',
+    `${sessionId}.json`,
   );
 }
 
-describe('session title command exact CLI grammar', () => {
-  it('accepts only the full session title command and reads the ID from its env seam', () => {
+function generatedPath(homeDirectory: string, sessionId: string): string {
+  return path.join(
+    homeDirectory,
+    '.local',
+    'state',
+    'agent-lcars',
+    'native-titles',
+    `${sessionId}.json`,
+  );
+}
+
+function fixtureCodexDb(
+  homeDirectory: string,
+  rows: readonly {
+    id: string;
+    rollout_path: string;
+    name: string | null;
+    title: string | null;
+  }[],
+): void {
+  const codexDir = path.join(homeDirectory, '.codex');
+  fs.mkdirSync(codexDir, { recursive: true });
+  const db = new DatabaseSync(path.join(codexDir, 'state_5.sqlite'));
+  try {
+    db.exec(
+      `CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        rollout_path TEXT,
+        name TEXT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        cwd TEXT,
+        updated_at INTEGER
+      )`,
+    );
+    const insert = db.prepare(
+      'INSERT INTO threads (id, rollout_path, name, title) VALUES (?, ?, ?, ?)',
+    );
+    for (const row of rows) {
+      insert.run(row.id, row.rollout_path, row.name, row.title ?? '');
+    }
+  } finally {
+    db.close();
+  }
+}
+
+describe('session title command grammar and dispatch', () => {
+  it('accepts a title command and reads the id via session-id resolution', () => {
     const homeDirectory = home();
     const result = executeSessionTitleAnnotationCommand(
       ['session', 'title', TITLE],
@@ -45,11 +96,30 @@ describe('session title command exact CLI grammar', () => {
 
     expect(result).toEqual({ ok: true });
     expect(
-      JSON.parse(fs.readFileSync(finalPath(homeDirectory), 'utf8')),
-    ).toMatchObject({
-      sessionId: SESSION_ID,
-      title: TITLE,
-    });
+      JSON.parse(fs.readFileSync(declaredPath(homeDirectory), 'utf8')),
+    ).toMatchObject({ sessionId: SESSION_ID, title: TITLE });
+  });
+
+  it('resolves the id from CLAUDE_CODE_SESSION_ID when LCARS_SESSION_ID is absent', () => {
+    const homeDirectory = home();
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'title', TITLE], {
+        env: { CLAUDE_CODE_SESSION_ID: SESSION_ID },
+        homeDirectory,
+      }),
+    ).toEqual({ ok: true });
+    expect(fs.existsSync(declaredPath(homeDirectory))).toBe(true);
+  });
+
+  it('resolves the id from CODEX_THREAD_ID when the other two are absent', () => {
+    const homeDirectory = home();
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'title', TITLE], {
+        env: { CODEX_THREAD_ID: SESSION_ID },
+        homeDirectory,
+      }),
+    ).toEqual({ ok: true });
+    expect(fs.existsSync(declaredPath(homeDirectory))).toBe(true);
   });
 
   it('accepts full-argv clear and removes only the env-selected session', () => {
@@ -66,7 +136,7 @@ describe('session title command exact CLI grammar', () => {
         homeDirectory,
       }),
     ).toEqual({ ok: true });
-    expect(fs.existsSync(finalPath(homeDirectory))).toBe(false);
+    expect(fs.existsSync(declaredPath(homeDirectory))).toBe(false);
   });
 
   it.each([
@@ -77,66 +147,211 @@ describe('session title command exact CLI grammar', () => {
     ['extra argument', ['session', 'title', 'a title', 'extra']],
     ['unknown flag', ['session', 'title', '--unknown']],
     ['empty title', ['session', 'title', '']],
-  ] as const)('rejects %s without mutating state', (_label, argv) => {
-    const homeDirectory = home();
-    expect(
-      executeSessionTitleAnnotationCommand(argv, {
-        env: { LCARS_SESSION_ID: SESSION_ID },
-        homeDirectory,
-      }),
-    ).toEqual({ ok: false, error: 'invalid-command' });
-    expect(
-      fs.existsSync(
-        path.join(homeDirectory, SESSION_TITLE_ANNOTATION_DIRECTORY),
-      ),
-    ).toBe(false);
-  });
+    [
+      'import-native with an extra argument',
+      ['session', 'import-native', 'extra'],
+    ],
+  ] as const)(
+    'rejects %s without mutating state, with usage attached',
+    (_label, argv) => {
+      const homeDirectory = home();
+      expect(
+        executeSessionTitleAnnotationCommand(argv, {
+          env: { LCARS_SESSION_ID: SESSION_ID },
+          homeDirectory,
+        }),
+      ).toEqual({
+        ok: false,
+        error: 'invalid-command',
+        usage: SESSION_TITLE_CLI_USAGE,
+      });
+      expect(fs.existsSync(path.join(homeDirectory, '.local'))).toBe(false);
+    },
+  );
+
+  it.each([
+    ['no argv', []],
+    ['--help', ['--help']],
+    ['-h', ['-h']],
+    ['help', ['help']],
+  ] as const)(
+    '%s reports the terse usage surface without requiring a session id',
+    (_label, argv) => {
+      const homeDirectory = home();
+      expect(
+        executeSessionTitleAnnotationCommand(argv, { env: {}, homeDirectory }),
+      ).toEqual({ ok: true, usage: SESSION_TITLE_CLI_USAGE });
+      expect(fs.existsSync(path.join(homeDirectory, '.local'))).toBe(false);
+    },
+  );
 
   it('requires an env-provided safe ID and does not fall back to ambient process env', () => {
     const homeDirectory = home();
     process.env['LCARS_SESSION_ID'] = SESSION_ID;
-    expect(
-      executeSessionTitleAnnotationCommand(['session', 'title', TITLE], {
-        env: {},
-        homeDirectory,
-      }),
-    ).toEqual({ ok: false, error: 'invalid-session' });
-    expect(
-      fs.existsSync(
-        path.join(homeDirectory, SESSION_TITLE_ANNOTATION_DIRECTORY),
-      ),
-    ).toBe(false);
+    try {
+      expect(
+        executeSessionTitleAnnotationCommand(['session', 'title', TITLE], {
+          env: {},
+          homeDirectory,
+        }),
+      ).toEqual({ ok: false, error: 'invalid-session' });
+      expect(fs.existsSync(path.join(homeDirectory, '.local'))).toBe(false);
+    } finally {
+      delete process.env['LCARS_SESSION_ID'];
+    }
   });
 
   it.each(['', '   ', '../escape', '-unsafe', 'unsafe/id'])(
-    'rejects unsafe/missing ID %j',
+    'rejects unsafe/missing ID %j without falling through to a lower-priority variable',
     (id) => {
       const homeDirectory = home();
       expect(
         executeSessionTitleAnnotationCommand(['session', 'title', TITLE], {
-          env: { LCARS_SESSION_ID: id },
+          env: {
+            LCARS_SESSION_ID: id,
+            CLAUDE_CODE_SESSION_ID: 'safe-fallback',
+          },
           homeDirectory,
         }),
       ).toEqual({ ok: false, error: 'invalid-session' });
-      expect(
-        fs.existsSync(
-          path.join(homeDirectory, SESSION_TITLE_ANNOTATION_DIRECTORY),
-        ),
-      ).toBe(false);
+      expect(fs.existsSync(declaredPath(homeDirectory, 'safe-fallback'))).toBe(
+        false,
+      );
     },
   );
 
-  it('returns only generic diagnostics and never leaks title text', () => {
+  it('returns only generic diagnostics and never leaks title text on a write failure', () => {
     const homeDirectory = home();
+    const writeFileSync: SessionTitleAnnotationWriterFileSystem['writeFileSync'] =
+      () => {
+        throw new Error('disk full');
+      };
     const result = executeSessionTitleAnnotationCommand(
       ['session', 'title', TITLE],
       {
         env: { LCARS_SESSION_ID: SESSION_ID },
         homeDirectory,
-        platform: 'darwin',
+        fileSystem: { writeFileSync },
       },
     );
     expect(JSON.stringify(result)).not.toContain(TITLE);
     expect(result).toEqual({ ok: false, error: 'write-failed' });
+  });
+});
+
+describe('session import-native dispatch', () => {
+  it('does not require a current session id', () => {
+    const homeDirectory = home();
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'import-native'], {
+        env: {},
+        homeDirectory,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it('fails soft to ok:true and imports nothing when no Codex state DB exists', () => {
+    const homeDirectory = home();
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'import-native'], {
+        env: {},
+        homeDirectory,
+      }),
+    ).toEqual({ ok: true });
+    expect(fs.existsSync(path.join(homeDirectory, '.local', 'state'))).toBe(
+      false,
+    );
+  });
+
+  it('imports usable rows from a real fixture Codex DB into the generated channel', () => {
+    const homeDirectory = home();
+    fixtureCodexDb(homeDirectory, [
+      {
+        id: 'codex-session-a',
+        rollout_path: '/rollouts/a.jsonl',
+        name: 'A deliberate rename',
+        title: 'auto title',
+      },
+      {
+        id: 'codex-session-b',
+        rollout_path: '/rollouts/b.jsonl',
+        name: null,
+        title: 'generated only',
+      },
+      // Skipped: unsafe id.
+      {
+        id: '../escape',
+        rollout_path: '/rollouts/c.jsonl',
+        name: null,
+        title: 'x',
+      },
+    ]);
+
+    expect(
+      executeSessionTitleAnnotationCommand(['session', 'import-native'], {
+        env: {},
+        homeDirectory,
+        now: () => new Date('2026-08-15T00:00:00.000Z'),
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          generatedPath(homeDirectory, 'codex-session-a'),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({
+      sessionId: 'codex-session-a',
+      title: 'A deliberate rename',
+    });
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          generatedPath(homeDirectory, 'codex-session-b'),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({ sessionId: 'codex-session-b', title: 'generated only' });
+    expect(fs.existsSync(generatedPath(homeDirectory, '../escape'))).toBe(
+      false,
+    );
+  });
+
+  it('is idempotent: rerunning with unchanged input and a pinned clock rewrites byte-identical files', () => {
+    const homeDirectory = home();
+    fixtureCodexDb(homeDirectory, [
+      {
+        id: 'codex-session-a',
+        rollout_path: '/rollouts/a.jsonl',
+        name: 'stable name',
+        title: 'stable title',
+      },
+    ]);
+    const dependencies = {
+      env: {},
+      homeDirectory,
+      now: () => new Date('2026-08-15T00:00:00.000Z'),
+    };
+
+    executeSessionTitleAnnotationCommand(
+      ['session', 'import-native'],
+      dependencies,
+    );
+    const first = fs.readFileSync(
+      generatedPath(homeDirectory, 'codex-session-a'),
+      'utf8',
+    );
+    executeSessionTitleAnnotationCommand(
+      ['session', 'import-native'],
+      dependencies,
+    );
+    const second = fs.readFileSync(
+      generatedPath(homeDirectory, 'codex-session-a'),
+      'utf8',
+    );
+
+    expect(second).toBe(first);
   });
 });

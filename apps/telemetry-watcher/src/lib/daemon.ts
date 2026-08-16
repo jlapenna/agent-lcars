@@ -1,9 +1,11 @@
 import { logger } from '@agent-lcars/logging';
 import {
+  applySessionTitleOverlay,
   buildSessionDoc,
   computeLiveness,
   getTranscriptAdapter,
   SessionSummary,
+  SessionTitleAnnotationV1,
 } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,6 +25,10 @@ import {
   isProcessAliveForCwd as defaultIsProcessAliveForCwd,
   scanProcCwds,
 } from './process-check';
+import {
+  readSessionTitleOverlay as defaultReadSessionTitleOverlay,
+  SessionTitleOverlayRead,
+} from './session-title-annotation-source';
 import { SessionStore } from './store';
 import { WatchRootConfig } from './watch-roots';
 
@@ -84,6 +90,17 @@ export interface WatcherDaemonOptions {
    * no equivalent (an ephemeral CI container never has the Antigravity CLI
    * installed). */
   antigravitySummaryDb?: AntigravitySummaryDbConfig;
+  /** Optional session-title overlay root (issue #1212), alongside the
+   * file-based `watchRoots` above — see `config.ts`'s `loadConfig`
+   * (default-enabled) and `session-title-annotation-source.ts`. `main.ts`'s
+   * host watcher is the only production caller that sets this; runner mode
+   * (`runner.ts`) has no equivalent — a dispatch runner's ephemeral
+   * container has no `~/.local/state/agent-lcars` writer/importer
+   * publishing candidates for its own CI session, so `sessionStateDir`
+   * simply stays unset there and this daemon skips the overlay entirely
+   * (same "unset means skip" pattern as `shareDir`/`antigravitySummaryDb`
+   * above). */
+  sessionStateDir?: string;
   /** Host-watcher Prometheus observer. Runner mode deliberately omits it. */
   metrics?: WatcherMetricsSink;
   now?: () => string;
@@ -107,6 +124,10 @@ export interface WatcherDaemonOptions {
     allowlistPrefixes: string[],
     options?: { onUnavailable?: (error: unknown) => void },
   ) => SessionSummary[];
+  /** Test-only injection point, mirrored from the seams above — production
+   * callers (main.ts) never set this; the daemon uses the real
+   * `readSessionTitleOverlay` (real `fs`) by default. */
+  readSessionTitleOverlay?: (stateDirectory: string) => SessionTitleOverlayRead;
 }
 
 interface TrackedSession {
@@ -147,6 +168,25 @@ export class WatcherDaemon {
    * process instead of once per tick, since a host with no Antigravity CLI
    * installed will report this on every single tick forever. */
   private antigravityDbUnavailableWarned = false;
+  /** Last-good session-title overlay read per channel (issue #1212) — see
+   * `readSessionTitleOverlay`'s `available` flag on `SessionTitleDirectoryRead`.
+   * A directory read that fails (missing, unreadable, or over the
+   * per-directory file-count bound) must not blank every session's
+   * declared/generated title candidate on this tick; instead the daemon
+   * keeps showing whatever the last *successful* read produced. That
+   * includes a successful read that found zero files — an empty map from a
+   * successful read is real information ("nothing declared right now"),
+   * distinct from "couldn't read," and it DOES replace last-good. Only ever
+   * updated in `tick()`, and only when the corresponding directory reports
+   * `available: true`. */
+  private lastGoodDeclaredTitles: ReadonlyMap<
+    string,
+    SessionTitleAnnotationV1
+  > = new Map();
+  private lastGoodGeneratedTitles: ReadonlyMap<
+    string,
+    SessionTitleAnnotationV1
+  > = new Map();
   private intervalHandle?: ReturnType<typeof setInterval>;
 
   constructor(private readonly options: WatcherDaemonOptions) {}
@@ -310,6 +350,34 @@ export class WatcherDaemon {
       });
     }
 
+    // Session-title overlay (issue #1212): read exactly ONCE per tick here,
+    // not once per session inside the loop below. Both channel directories
+    // (`~/.local/state/agent-lcars/{session-metadata,native-titles}`) are
+    // shared across every tracked session, so re-reading them per session
+    // would turn a bounded pair of directory reads into O(sessions) for no
+    // benefit, and could let a transient failure on one session's iteration
+    // disagree with another session's already-applied result within the
+    // same tick. `readSessionTitleOverlay` already fails soft internally
+    // (missing/unreadable/overflowed directory reports `available: false`
+    // rather than throwing — see session-title-annotation-source.ts), so no
+    // try/catch is needed here; skipped entirely when `sessionStateDir` is
+    // unset (runner mode never sets it).
+    if (this.options.sessionStateDir) {
+      const readOverlay =
+        this.options.readSessionTitleOverlay ?? defaultReadSessionTitleOverlay;
+      const overlayRead = readOverlay(this.options.sessionStateDir);
+      // `available` is tracked and applied per channel, independently — see
+      // `lastGoodDeclaredTitles`'s doc comment above for why a failed read
+      // preserves the previous last-good instead of blanking it, and why a
+      // successful-but-empty read still replaces it.
+      if (overlayRead.declared.available) {
+        this.lastGoodDeclaredTitles = overlayRead.declared.annotations;
+      }
+      if (overlayRead.generated.available) {
+        this.lastGoodGeneratedTitles = overlayRead.generated.annotations;
+      }
+    }
+
     for (const [sessionId, tracked] of this.sessions) {
       const heartbeatReceived =
         Date.parse(now) - Date.parse(tracked.lastHeartbeatAt) <=
@@ -344,7 +412,33 @@ export class WatcherDaemon {
           ? { ...tracked.summary, artifacts }
           : tracked.summary;
 
-      const doc = buildSessionDoc(summary, liveness, {
+      // Overlay declared/generated title candidates fresh from the
+      // pristine `tracked.summary` every tick, into a local variable only —
+      // this result is deliberately NEVER stored back into `this.sessions`.
+      // `tracked.summary` must stay exactly what the reducer produced,
+      // because that pristine state is the ONLY reason removing a
+      // `declared`/`generated` annotation can fall back to the transcript's
+      // own title on the very next tick instead of getting stuck on a
+      // stale overlaid value (there being no "explicit clear" operation to
+      // trigger that fallback otherwise — see `applySessionTitleOverlay`'s
+      // doc comment in libs/telemetry for the full argument). This is the
+      // single easiest invariant for a future change to accidentally break
+      // by doing `this.sessions.set(sessionId, { summary: overlaidSummary,
+      // ... })` somewhere below — don't.
+      //
+      // Looking annotations up by `sessionId` here (rather than iterating
+      // the overlay maps themselves) is also what guarantees an annotation
+      // for a session this daemon has never discovered a transcript for
+      // produces no doc and no upsert: this loop only ever runs over
+      // `this.sessions`, so an unknown id sitting in
+      // `lastGoodDeclaredTitles`/`lastGoodGeneratedTitles` is simply never
+      // read.
+      const overlaidSummary = applySessionTitleOverlay(summary, {
+        declared: this.lastGoodDeclaredTitles.get(sessionId),
+        generated: this.lastGoodGeneratedTitles.get(sessionId),
+      });
+
+      const doc = buildSessionDoc(overlaidSummary, liveness, {
         runId: this.options.runId,
         issueNumber: this.options.issueNumber,
         repo: this.options.repo,
