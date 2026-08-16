@@ -83,7 +83,7 @@ jobs:
     # Backstop only - the real bound is the per-step timeout on Run OpenCode
     # below. Keep enough room for telemetry, failure reporting, and the broker
     # callback after the agent's bounded execution window.
-    timeout-minutes: 135
+    timeout-minutes: 75
     env:
       npm_config_store_dir: /home/runner/_work/.pnpm-store
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
@@ -227,9 +227,13 @@ jobs:
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
           context: ${{ inputs.context }}
-          budget-minutes: '120'
-          artifact-checkpoint-minutes: '30'
-          finalize-checkpoint-minutes: '90'
+          # Must track the agent step's own timeout-minutes below, and
+          # prepare.sh fails closed if these are not ordered inside it. The
+          # artifact checkpoint is deliberately early: the push credential
+          # dies before the step does (#1217).
+          budget-minutes: '60'
+          artifact-checkpoint-minutes: '20'
+          finalize-checkpoint-minutes: '45'
 
       - name: Preserve protected dispatch snapshot for evaluation
         continue-on-error: true
@@ -255,7 +259,28 @@ jobs:
         # hears about it - which, in both original hangs, was the only
         # notification that ever arrived. The job-level backstop stays 15
         # minutes clear of this so it never fires first.
-        timeout-minutes: 120
+        #
+        # 60, not 120 (#1217): the GitHub App installation token minted at
+        # job start - the credential actions/checkout persists, and the only
+        # one the agent's `git push` has - expires 3600s after it is minted,
+        # and nothing refreshes it mid-step. A 120-minute step meant the
+        # entire second hour could not push at all, failing with a git error
+        # that reads like a missing credential rather than an expired one:
+        #
+        #   fatal: could not read Username for 'https://github.com'
+        #
+        # Run 31906606247 hit exactly that at +89 minutes, having spent 48
+        # steps fixing a bug and passing its tests; three seconds later
+        # create-github-app-token's own revoke step logged "Token expired,
+        # skipping token revocation". All of that work was lost.
+        #
+        # This does NOT fully close the window - the step starts ~2 minutes
+        # after the mint, so its last couple of minutes are still past
+        # expiry. It shrinks the exposed tail from ~60 minutes to ~2, which
+        # is why the durable-artifact checkpoint above is early rather than
+        # merely ordered. Closing it completely needs a refreshable push
+        # credential, which is #1217's remaining scope.
+        timeout-minutes: 60
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # Turns on the marker-stamping gh wrapper agent-handoff installed:
