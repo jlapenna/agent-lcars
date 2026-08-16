@@ -32,7 +32,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER_KEY="$DEPLOY_DIR/writer-key.json"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONTAINER_NAME=agent-lcars-telemetry-watcher
-HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
+# Upper bound on the wait for a Docker HEALTHCHECK to report healthy. This is
+# a ceiling, not a delay: the loop below breaks the moment the container is
+# healthy, so a generous value costs nothing on a good deploy and only delays
+# the report of a genuinely broken one.
+#
+# 90s was too tight and produced a false failure on a real deploy: the
+# container reported healthy moments after the script had already given up,
+# with 0 restarts, and stayed healthy. The compose HEALTHCHECK alone
+# (start_period 15s, interval 15s, retries 4) needs ~75s just to declare
+# itself unhealthy, so 90 left ~15s of slack -- and time-to-FIRST-SUCCESS on
+# a cold start is not bounded by that config at all. It depends on how long
+# the process takes to serve /metrics, which means loading firebase-admin's
+# gRPC stack and finishing a first tick that scans every watched transcript
+# root. Under that load a 5s probe can lapse several times before the event
+# loop is free to answer one.
+#
+# A false failure is worse than a slow one. It trains whoever runs this to
+# ignore the gate -- the exact signal the gate exists to provide -- and it
+# fails any automation that trusts the exit code. 240s is ~3x the
+# healthcheck's own unhealthy threshold, and was chosen over the 180s that
+# happened to pass on two hosts because "the value that worked the one time
+# we measured" is not headroom.
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-240}"
+# Fixed settling window for the no-HEALTHCHECK fallback below. Deliberately a
+# SEPARATE knob from the ceiling above, because this one is a `sleep` that is
+# paid in full on every deploy rather than an upper bound that exits early.
+# Folding both onto one variable is what made the ceiling unraisable: any
+# value big enough to stop the false failure would have added that many
+# seconds to every no-healthcheck deploy.
+STABILITY_WINDOW_SECONDS="${STABILITY_WINDOW_SECONDS:-90}"
 WATCHER_USER="${AGENT_TELEMETRY_WATCHER_USER:-jlapenna}"
 watcher_passwd="$(getent passwd "$WATCHER_USER" || true)"
 
@@ -188,8 +217,8 @@ if [ -n "$baseline_health" ]; then
 else
   # No Docker HEALTHCHECK today -- fall back to a stability window: assert
   # the container is still running and its restart count hasn't moved.
-  echo "No HEALTHCHECK defined; waiting ${HEALTH_TIMEOUT_SECONDS}s to confirm stability..."
-  sleep "$HEALTH_TIMEOUT_SECONDS"
+  echo "No HEALTHCHECK defined; waiting ${STABILITY_WINDOW_SECONDS}s to confirm stability..."
+  sleep "$STABILITY_WINDOW_SECONDS"
   current="$(docker inspect --format '{{.RestartCount}}|{{.State.Running}}' "$CONTAINER_NAME")"
   current_restarts="${current%%|*}"
   current_running="${current#*|}"
