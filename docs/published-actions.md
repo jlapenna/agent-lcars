@@ -1,12 +1,22 @@
-# Published composite actions
+# Published composite actions and reusable workflows
 
 agent-lcars is the fleet's infrastructure hub: it publishes the composite
-actions under [`.github/actions/`](../.github/actions/) for consumption by
-the other fleet repos (supersprinklesracing/sprinkles, jlapenna/homelab).
-This repo is public, so private consumers can resolve them regardless of
-owner. The publishing unit is the **composite action referenced
-cross-repo** — there are deliberately no `workflow_call` reusable
-workflows, no separate actions repo, and no Marketplace listing.
+actions under [`.github/actions/`](../.github/actions/) and, since
+`renovate-auto-approve.yml`, select `workflow_call` reusable workflows under
+[`.github/workflows/`](../.github/workflows/) for consumption by the other
+fleet repos (supersprinklesracing/sprinkles, jlapenna/homelab). This repo is
+public, so private consumers can resolve them regardless of owner. The
+publishing unit is the **composite action or reusable workflow referenced
+cross-repo** — there is deliberately no separate actions repo and no
+Marketplace listing.
+
+`agent-fallback-finalize.yml` is also called cross-repo via `workflow_call`,
+but it predates and sits outside this general-purpose catalog: it is a
+Coupled trust-boundary component of this repo's own dispatch protocol
+(signed `job_workflow_ref`, hosted-completion OIDC audience), documented in
+[lifecycle-systems.md](lifecycle-systems.md) instead of here. Do not treat it
+as a template for a Published reusable workflow's contract — it never
+promised one.
 
 ## Support tiers
 
@@ -33,6 +43,12 @@ workflows, no separate actions repo, and no Marketplace listing.
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
 | `scan-image`                   | Trivy scan + SARIF upload + fail on fixable CRITICALs                                                                |
+
+### Published reusable workflows
+
+| Workflow                    | Purpose                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `renovate-auto-approve.yml` | Approve a `renovate[bot]` pull request via a minted Agent LCARS App installation token |
 
 ### Internal
 
@@ -79,11 +95,28 @@ There is no special `@latest` syntax in GitHub Actions: `@main` is the
 moving branch reference. This intentionally trades immutable, reviewable
 action versions for automatically receiving the newest `agent-lcars` commit.
 
+A reusable workflow is referenced the same way, but from a job's `uses:` key
+instead of a step's, with `with:`/`secrets:` in place of a composite
+action's step-level `with:`:
+
+```yaml
+jobs:
+  auto-approve:
+    uses: jlapenna/agent-lcars/.github/workflows/renovate-auto-approve.yml@main # latest
+    with:
+      runs-on: ${{ vars.CI_RUNS_ON || '["homelab-autoscale-default"]' }}
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+```
+
 Release tags remain available for consumers that need immutable versions. A
 compatible fix is a patch release, a new optional input or action is a minor
 release, and a removed or renamed input or a changed default requires a major
 release. The contract-test manifest diff in review is the "this needs a major
-bump" signal.
+bump" signal — `published-actions.contract.test.mjs` covers composite-action
+`action.yml` surfaces only, so a reusable workflow's `on.workflow_call`
+contract is guarded by review and by `actionlint`, not by that test (see
+"Contract test" below).
 
 `credential-grant` was removed in #1015 Wave 4: it was published but had been
 deliberately inactive since it landed (no workflow ever called it — the
@@ -281,3 +314,14 @@ runs in `ci.yml`'s Verify job and asserts every Published action's inputs
 (name, requiredness, default) and outputs against an embedded manifest.
 Editing the surface means editing the manifest in the same PR — that diff
 is the review signal that consumers are affected.
+
+Its manifest and parser are scoped to composite-action `action.yml` files
+under `.github/actions/`; they do not cover `.github/workflows/*.yml`
+reusable workflows. `agent-fallback-finalize.yml` — this repo's only other
+cross-repo-called `workflow_call` workflow — was never added to this
+manifest either, for the same reason. A Published reusable workflow's
+`on.workflow_call.inputs`/`secrets` contract is instead guarded by
+`actionlint` (run in CI on every changed workflow) and by review of the
+manifest-shaped diff itself; extending the parser to a second file shape
+was left out rather than inventing a new registry mechanism for one
+workflow.
