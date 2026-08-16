@@ -7,6 +7,7 @@ import {
 } from './seed';
 import { expectMobileBridgeHeader } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { seedOrchestratorTask } from './util/orchestrator-seed';
 
 /**
  * #40: the initial LCARS redesign coverage used an empty environment, so
@@ -236,6 +237,20 @@ test.describe('populated dashboard', () => {
   test('the primary Open task action reaches the canonical task page with the duplicate-attempt anomaly (#306)', async ({
     page,
   }) => {
+    // #1183/#1187: task-detail.ts's provenance line now reads real
+    // `@agent-lcars/orchestrator` state (authoritative-task-state.ts), not
+    // the legacy dispatch-broker ledger this fixture issue also carries
+    // (see e2e-github-fixtures.ts's authoritativeLedgerFixture) - seed a
+    // matching orchestrator task directly against the emulator so this
+    // assertion exercises the real provenance path rather than the "no
+    // authoritative lifecycle state" fallback (see orchestrator-seed.ts's
+    // own doc comment for why a direct emulator write here is safe).
+    await seedOrchestratorTask({
+      issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+      pipeline: 'claude',
+      requestId: 'e2e-fixture-seed:populated-dashboard:9008',
+    });
+
     await page.goto('/');
 
     const duplicateGroup = page.getByTestId(
@@ -269,14 +284,17 @@ test.describe('populated dashboard', () => {
     const anomalies = card.getByTestId('logical-work-anomalies');
     await expect(anomalies).toContainText('2 claude attempts');
 
-    // #1183: this fixture predates `@agent-lcars/orchestrator` (no
-    // orchestrator task/run doc is seeded for it, only the legacy ledger
-    // doc task-detail.ts no longer reads), so the page's provenance line
-    // reads "no authoritative lifecycle state" instead of an authoritative
-    // revision, and the ledger-generation-only "Dispatch intents" list this
-    // used to also assert on (`g1`/`via labeled`) no longer renders at all -
-    // see logical-work-card.tsx's own conditional guard.
-    await expect(card).not.toContainText('authoritative state rev');
+    // #1183/#1187: the orchestrator task seeded above gives the page a real
+    // authoritative revision to render - `seedOrchestratorTask`'s own
+    // idempotent-by-requestId contract keeps this at rev 1 across retries
+    // (the request always refuses as `duplicate-request` against the same
+    // still-live run rather than minting a second one, so the task's
+    // storage revision never advances past its first successful write). The
+    // ledger-generation-only "Dispatch intents" list this used to also
+    // assert on (`g1`/`via labeled`) still never renders: the orchestrator
+    // has no such concept at all, so `work.intents` stays empty regardless
+    // of provenance - see logical-work-card.tsx's own conditional guard.
+    await expect(card).toContainText('authoritative state rev 1');
     await expect(card.getByTestId('logical-work-intents')).toHaveCount(0);
   });
 
