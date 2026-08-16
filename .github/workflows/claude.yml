@@ -315,9 +315,11 @@ jobs:
             Work the routed anchor in the JSON brief at
             `$AGENT_DISPATCH_CONTEXT`. Read AGENTS.md, then the
             agent-protocol skill, then the lcars skill, and follow them in
-            that order. Both are installed for this run and available to you
-            without a path (#1278); if either is somehow missing, fall back
-            to .agents/skills/agent-protocol/agent-protocol.md and
+            that order. Both are available to you as skills, without a
+            path: agent-protocol is installed for this run (#1278) and lcars
+            comes from this repo's own checkout. If either is somehow
+            missing, fall back to
+            .agents/skills/agent-protocol/agent-protocol.md and
             .agents/skills/lcars/lcars-protocol.md in the checkout. Read each
             exactly once - they are short by design (#1210) and re-reading
             one you already read is how a run spends its whole context before
@@ -361,18 +363,7 @@ jobs:
         env:
           CLAUDE_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
         run: |
-          if [ -z "$CLAUDE_EXECUTION_FILE" ] || [ ! -r "$CLAUDE_EXECUTION_FILE" ]; then
-            echo "::error::Claude Code Action did not publish its structured execution file."
-            exit 1
-          fi
-          LOG="$(cat "$CLAUDE_EXECUTION_FILE")"
-          # Detect if the run crashed during initialization (is_error: true and cost is 0,
-          # or api_error_status is 401).
-          if (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
-             (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
-            echo "::error::Claude Code run failed silently during startup/authentication."
-            exit 1
-          fi
+          bash tools/verify-claude-run-status.sh "$CLAUDE_EXECUTION_FILE"
 
       # Shared post-agent gate orchestrator (#645 Phase 3): runs
       # telemetry-finalize, verify-deliverable, failure-reason
