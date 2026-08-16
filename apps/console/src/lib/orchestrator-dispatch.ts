@@ -7,6 +7,8 @@ import {
   type TaskId,
 } from '@agent-lcars/orchestrator';
 
+import type { DispatchTokenProvider } from './github-app-tokens';
+
 /**
  * The outbox drain: turns `@agent-lcars/orchestrator` decisions into real
  * GitHub effects. The orchestrator itself never does I/O beyond its own
@@ -19,6 +21,11 @@ import {
  * Nothing here is durable itself - `store.claimPendingOutbox` /
  * `store.settleOutbox` own that. A failed GitHub call just leaves its entry
  * `pending` for a later `drainOutbox` call to retry.
+ *
+ * Every GitHub call resolves its bearer token per-repo through `tokens`
+ * (see `github-app-tokens.ts`) rather than a single ambient token, so a
+ * dispatch or outcome comment against a foreign repo can use a token
+ * actually scoped there.
  */
 
 /** GitHub's REST API accepts a bearer token for both endpoints this module
@@ -28,7 +35,8 @@ const GITHUB_API = 'https://api.github.com';
 export interface DispatchDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
-  githubToken: string;
+  /** Resolves the bearer token to use for a given repo's GitHub calls. */
+  tokens: DispatchTokenProvider;
   /** Injectable for tests; defaults to the ambient `fetch`. */
   fetchImpl?: typeof fetch;
 }
@@ -91,7 +99,7 @@ async function handleDispatchRun(
   entry: OutboxEntry,
   result: DrainOutboxResult,
 ): Promise<void> {
-  const { store, orchestrator, githubToken } = deps;
+  const { store, orchestrator, tokens } = deps;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 
   const run = await store.readRun(entry.runId);
@@ -112,9 +120,10 @@ async function handleDispatchRun(
 
   let response: Response;
   try {
+    const token = await tokens.tokenFor(run.task.repo);
     response = await fetchImpl(url, {
       method: 'POST',
-      headers: githubHeaders(githubToken),
+      headers: githubHeaders(token),
       body: JSON.stringify({ ref: 'main', inputs }),
     });
   } catch (error) {
@@ -143,7 +152,7 @@ async function handleReportOutcome(
   entry: OutboxEntry,
   result: DrainOutboxResult,
 ): Promise<void> {
-  const { store, githubToken } = deps;
+  const { store, tokens } = deps;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 
   const run = await store.readRun(entry.runId);
@@ -169,9 +178,10 @@ async function handleReportOutcome(
 
   let response: Response;
   try {
+    const token = await tokens.tokenFor(run.task.repo);
     response = await fetchImpl(url, {
       method: 'POST',
-      headers: githubHeaders(githubToken),
+      headers: githubHeaders(token),
       body: JSON.stringify({ body: outcome.body }),
     });
   } catch (error) {
@@ -190,7 +200,7 @@ async function handleReportOutcome(
   }
 
   if (outcome.needsHumanLabel) {
-    await addNeedsHumanLabelBestEffort(fetchImpl, githubToken, run.task);
+    await addNeedsHumanLabelBestEffort(fetchImpl, tokens, run.task);
   }
 
   await store.settleOutbox(entry.entryId, 'done');
@@ -259,15 +269,16 @@ async function describeLostOutcome(
  *  a missing label is a cosmetic miss, not a functional one. */
 async function addNeedsHumanLabelBestEffort(
   fetchImpl: typeof fetch,
-  githubToken: string,
+  tokens: DispatchTokenProvider,
   task: TaskId,
 ): Promise<void> {
   try {
+    const token = await tokens.tokenFor(task.repo);
     await fetchImpl(
       `${GITHUB_API}/repos/${task.repo}/issues/${task.issue}/labels`,
       {
         method: 'POST',
-        headers: githubHeaders(githubToken),
+        headers: githubHeaders(token),
         body: JSON.stringify({ labels: ['status:needs-human'] }),
       },
     );

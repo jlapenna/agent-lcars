@@ -8,11 +8,17 @@ import {
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
 
+import { AmbientTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
 const TOKEN = 'gh-test-token-0123456789';
+// `DispatchDeps.tokens` resolves a per-repo token; every test here still
+// wants the exact-same-ambient-token-for-any-repo behavior the old
+// `githubToken: TOKEN` field gave directly, so a single shared
+// `AmbientTokenProvider` reproduces it.
+const tokens = new AmbientTokenProvider(TOKEN);
 
 class Clock {
   constructor(private value: string) {}
@@ -110,7 +116,7 @@ describe('drainOutbox: dispatch-run', () => {
     const result = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
 
@@ -152,7 +158,7 @@ describe('drainOutbox: dispatch-run', () => {
     const second = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
     expect(second.dispatched).toEqual([]);
@@ -167,7 +173,7 @@ describe('drainOutbox: dispatch-run', () => {
     });
     const { fetchImpl, calls } = fakeFetch(204);
 
-    await drainOutbox({ store, orchestrator, githubToken: TOKEN, fetchImpl });
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
 
     const inputs = callBody(calls[0]!).inputs as Record<string, string>;
     expect(inputs.mode).toBe('reply');
@@ -183,7 +189,7 @@ describe('drainOutbox: dispatch-run', () => {
     const first = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: failing.fetchImpl,
     });
 
@@ -200,7 +206,7 @@ describe('drainOutbox: dispatch-run', () => {
     const second = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: succeeding.fetchImpl,
     });
 
@@ -228,7 +234,7 @@ describe('drainOutbox: dispatch-run', () => {
     const result = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: neverCalled,
     });
 
@@ -240,7 +246,7 @@ describe('drainOutbox: dispatch-run', () => {
     const again = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: neverCalled,
     });
     expect(again.dispatched).toEqual([]);
@@ -255,7 +261,7 @@ describe('drainOutbox: report-outcome', () => {
     await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: fakeFetch(204).fetchImpl,
     });
 
@@ -272,7 +278,7 @@ describe('drainOutbox: report-outcome', () => {
     const result = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
 
@@ -290,7 +296,7 @@ describe('drainOutbox: report-outcome', () => {
     const second = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
     expect(second.reported).toEqual([]);
@@ -303,7 +309,7 @@ describe('drainOutbox: report-outcome', () => {
     await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: fakeFetch(204).fetchImpl,
     });
 
@@ -317,7 +323,7 @@ describe('drainOutbox: report-outcome', () => {
     const result = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
 
@@ -343,7 +349,7 @@ describe('drainOutbox: report-outcome', () => {
     await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl: routedFetch().fetchImpl,
     });
 
@@ -357,7 +363,7 @@ describe('drainOutbox: report-outcome', () => {
       await drainOutbox({
         store,
         orchestrator,
-        githubToken: TOKEN,
+        tokens,
         fetchImpl: routedFetch().fetchImpl,
       });
     }
@@ -370,7 +376,7 @@ describe('drainOutbox: report-outcome', () => {
     const result = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
 
@@ -425,7 +431,7 @@ describe('drainOutbox: report-outcome', () => {
     const result = await drainOutbox({
       store,
       orchestrator,
-      githubToken: TOKEN,
+      tokens,
       fetchImpl,
     });
 
