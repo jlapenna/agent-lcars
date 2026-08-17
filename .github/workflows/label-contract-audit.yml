@@ -25,6 +25,18 @@ jobs:
           - full_name: supersprinklesracing/sprinkles
             owner: supersprinklesracing
             repository: sprinkles
+          - full_name: supersprinklesracing/www
+            owner: supersprinklesracing
+            repository: www
+          - full_name: supersprinklesracing/girosf
+            owner: supersprinklesracing
+            repository: girosf
+          - full_name: jlapenna/nx-cache-server
+            owner: jlapenna
+            repository: nx-cache-server
+          - full_name: jlapenna/sync-padd
+            owner: jlapenna
+            repository: sync-padd
 
     steps:
       - uses: actions/checkout@v7

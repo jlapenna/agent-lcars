@@ -4,7 +4,8 @@ agent-lcars is the fleet's infrastructure hub: it publishes the composite
 actions under [`.github/actions/`](../.github/actions/) and, since
 `renovate-auto-approve.yml`, select `workflow_call` reusable workflows under
 [`.github/workflows/`](../.github/workflows/) for consumption by the other
-fleet repos (supersprinklesracing/sprinkles, jlapenna/homelab). This repo is
+fleet repos (supersprinklesracing/{sprinkles,www,girosf},
+jlapenna/{homelab,nx-cache-server,sync-padd}). This repo is
 public, so private consumers can resolve them regardless of owner. The
 publishing unit is the **composite action or reusable workflow referenced
 cross-repo** — there is deliberately no separate actions repo and no

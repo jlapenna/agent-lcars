@@ -101,7 +101,10 @@
       "color": "ededed",
       "description": "Substantial planning, design, or proposal work is documented here"
     },
-    "app:console": { "color": "1d76db", "description": "Agent LCARS console" },
+    "app:console": {
+      "color": "1d76db",
+      "description": "Agent LCARS console"
+    },
     "app:telemetry": {
       "color": "5319e7",
       "description": "Agent telemetry collection and transport"
@@ -245,6 +248,162 @@
       "remove": ["conflicting", "heal:1", "heal:2", "wontfix"]
     },
     "jlapenna/homelab": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
+        "planning",
+        "bot:renovate"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "human-needed": ["status:needs-human"]
+      },
+      "remove": [
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "question",
+        "wontfix"
+      ]
+    },
+    "supersprinklesracing/www": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
+        "planning",
+        "bot:renovate"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "human-needed": ["status:needs-human"]
+      },
+      "remove": [
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "question",
+        "wontfix"
+      ]
+    },
+    "supersprinklesracing/girosf": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
+        "planning",
+        "bot:renovate"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "human-needed": ["status:needs-human"]
+      },
+      "remove": [
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "question",
+        "wontfix"
+      ]
+    },
+    "jlapenna/nx-cache-server": {
+      "labels": [
+        "type:bug",
+        "type:feature",
+        "type:docs",
+        "type:maintenance",
+        "type:security",
+        "type:dependency-update",
+        "status:ready-for-agent",
+        "status:blocked",
+        "status:needs-human",
+        "status:post-deploy-action",
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
+        "agent-option:long-run",
+        "intake:quick-task",
+        "planning",
+        "bot:renovate"
+      ],
+      "migrations": {
+        "bug": ["type:bug"],
+        "documentation": ["type:docs"],
+        "enhancement": ["type:feature"],
+        "dependencies": ["type:dependency-update", "bot:renovate"],
+        "human-needed": ["status:needs-human"]
+      },
+      "remove": [
+        "duplicate",
+        "good first issue",
+        "help wanted",
+        "invalid",
+        "question",
+        "wontfix"
+      ]
+    },
+    "jlapenna/sync-padd": {
       "labels": [
         "type:bug",
         "type:feature",
