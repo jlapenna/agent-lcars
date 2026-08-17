@@ -5,6 +5,7 @@ import {
   RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   SessionAgent,
+  SessionStatusAnnotationV1,
   SessionSummary,
   transcriptObjectPath,
 } from '@agent-lcars/telemetry';
@@ -15,6 +16,10 @@ import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { applyGitContext } from './git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
 import { RunnerConfig } from './runner-config';
+import {
+  readSessionStatusOverlay as defaultReadSessionStatusOverlay,
+  SessionStatusDirectoryRead,
+} from './session-title-annotation-source';
 import { SessionStore } from './store';
 import {
   uploadTranscript as defaultUploadTranscript,
@@ -56,6 +61,12 @@ export interface FinalizeSidecarOptions {
     cwd: string,
   ) => Promise<{ owner: string; name: string } | undefined>;
   uploadTranscript?: (options: UploadTranscriptOptions) => Promise<void>;
+  /** Test-only injection point, mirrored from `daemon.ts`'s own seam of the
+   * same name — production callers (main.ts) never set this; finalize uses
+   * the real `readSessionStatusOverlay` (real `fs`) by default. */
+  readSessionStatusOverlay?: (
+    stateDirectory: string,
+  ) => SessionStatusDirectoryRead;
 }
 
 /**
@@ -73,6 +84,21 @@ export interface FinalizeSidecarOptions {
  * process this session's transcript belonged to is unconditionally gone;
  * there is no `/proc` check left to make.
  *
+ * Reads the session-status overlay exactly once, the same
+ * `config.sessionStateDir` root the live sidecar's `WatcherDaemon.tick()`
+ * reads on every tick (issue #1289) — see `finalizeSummary` below for how
+ * each summary is joined against it. This is deliberately status-only: the
+ * title channels need no equivalent wiring here, because every prior
+ * `live`/`idle` tick already applied them and this write's Firestore
+ * `set(..., {merge: true})` leaves an omitted `title` exactly as that last
+ * tick left it (see `store.ts`'s `upsertSession`) — there is no "last
+ * write reverts the title" failure mode to guard against. Status has no
+ * such free ride: `buildSessionWrite` unconditionally REQUESTS A CLEAR of
+ * `status`/`statusUpdatedAt` whenever a summary carries no status (see
+ * that function's own doc comment), so a finalize pass that never joined
+ * this overlay would blank a status the agent declared moments before job
+ * end — the exact accident-of-container-teardown issue #1289 rejected.
+ *
  * Fails soft throughout, per-transcript and per-session: one broken read,
  * reduce, upload, or upsert must never stop the others from shipping, and
  * this function itself never throws.
@@ -87,6 +113,21 @@ export async function finalizeSidecar(
   const resolveGitBranch = options.resolveGitBranch ?? defaultResolveGitBranch;
   const resolveGitRepo = options.resolveGitRepo ?? defaultResolveGitRepo;
   const uploadTranscript = options.uploadTranscript ?? defaultUploadTranscript;
+  const readStatusOverlay =
+    options.readSessionStatusOverlay ?? defaultReadSessionStatusOverlay;
+  // Unset means skip entirely, same "unset means skip" convention as
+  // `daemon.ts`'s own `sessionStateDir` handling — `config.sessionStateDir`
+  // is always set for real runner-mode callers (see `runner-config.ts`),
+  // so this only ever stays `undefined` for a test fixture that
+  // deliberately omits it. A configured-but-nonexistent directory (a
+  // container the CLI never wrote in) is a DIFFERENT, always-fail-soft
+  // case handled one layer down: `readSessionStatusOverlay` itself catches
+  // ENOENT/EACCES/etc. and reports `available: false` rather than
+  // throwing (see `session-title-annotation-source.ts`), so this call
+  // never needs its own try/catch.
+  const statusAnnotations = config.sessionStateDir
+    ? readStatusOverlay(config.sessionStateDir).annotations
+    : undefined;
 
   // The single runner-mode watch-root contract (@agent-lcars/telemetry,
   // #645) — the same function `startSidecar` (runner.ts) calls. Before
@@ -147,6 +188,7 @@ export async function finalizeSidecar(
         resolveGitBranch,
         resolveGitRepo,
         uploadTranscript,
+        statusAnnotations,
       });
     }
   }
@@ -183,6 +225,10 @@ async function finalizeSummary(
       cwd: string,
     ) => Promise<{ owner: string; name: string } | undefined>;
     uploadTranscript: (options: UploadTranscriptOptions) => Promise<void>;
+    /** One status-overlay read, shared across every summary this finalize
+     * pass ships — see `finalizeSidecar`'s own read of this, and
+     * `undefined` when `config.sessionStateDir` was unset there. */
+    statusAnnotations?: ReadonlyMap<string, SessionStatusAnnotationV1>;
   },
 ): Promise<void> {
   const { config, store } = deps;
@@ -218,13 +264,29 @@ async function finalizeSummary(
     }
   }
 
-  // Runner mode never joins the session-status overlay (see runner.ts /
-  // daemon.ts's `sessionStateDir` doc comments — an ephemeral dispatch
-  // container has no `~/.local/state/agent-lcars` writer publishing
-  // candidates for its own CI session), so `finalSummary` never carries a
-  // `status`. `buildSessionWrite` requests the clear unconditionally in
-  // that case, deliberately — see its own doc comment.
-  const write = buildSessionWrite(finalSummary, 'ended', {
+  // Issue #1289: join the session-status overlay the same way `daemon.ts`
+  // joins it into a live tick's summary, straight onto `finalSummary`
+  // (never back onto `summary` — there is no last-good/pristine distinction
+  // to preserve here the way the daemon's tick loop has, since this is a
+  // one-shot pass with no next tick to fall back on). Absence (no
+  // `config.sessionStateDir`, an unreadable/nonexistent directory, or no
+  // final file for this session) leaves `finalSummary` exactly as
+  // `applyGitContext` produced it — carrying no `status` — which is what
+  // makes `buildSessionWrite` request the field's deletion below,
+  // unconditionally and without a separate branch (see that function's own
+  // doc comment). That is correct here too: a session that never declared
+  // a status, or whose declaration this pass couldn't read, should not
+  // retain a stale one in the `ended` doc either.
+  const statusAnnotation = deps.statusAnnotations?.get(summary.sessionId);
+  const summaryWithStatus = statusAnnotation
+    ? {
+        ...finalSummary,
+        status: statusAnnotation.status,
+        statusUpdatedAt: statusAnnotation.updatedAt,
+      }
+    : finalSummary;
+
+  const write = buildSessionWrite(summaryWithStatus, 'ended', {
     runId: config.runId,
     issueNumber: config.issueNumber,
     repo: config.repo,

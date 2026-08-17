@@ -58,12 +58,16 @@ ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0c
 # still letting BuildKit cache its immutable image layers.
 ARG GO_VERSION=1.26.5
 
-# Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool
-# (apps/telemetry-watcher's `bundle` target) from source, baked into the
-# runner image below rather than published to GCS and curl-downloaded by
-# every job (agent-lcars#30) — this image is the fleet's own, so there's no
-# ephemeral-runner reason left to re-fetch the tool per job the way a stock
-# GitHub-hosted runner would need to. Always builds from agent-lcars's
+# Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool AND the
+# `lcars` session-title/status CLI (apps/telemetry-watcher's `bundle` and
+# `session-title-cli` targets, respectively -- agent-lcars#1289 added the
+# second) from source, baked into the runner image below rather than
+# published to GCS and curl-downloaded by every job (agent-lcars#30) — this
+# image is the fleet's own, so there's no ephemeral-runner reason left to
+# re-fetch either tool per job the way a stock GitHub-hosted runner would
+# need to. Both bundles are built from the exact same checkout, so they can
+# never drift to different agent-lcars revisions the way two separately
+# published artifacts could. Always builds from agent-lcars's
 # `main` (no version pin): a stale pin was exactly the failure mode this
 # replaces (agent-lcars#29 — claude.yml silently pointed at a frozen,
 # never-republished GCS bundle for months). If this stage fails, the whole
@@ -72,9 +76,9 @@ ARG GO_VERSION=1.26.5
 # it cannot, rather than shipping a broken tool or rebuilding locally.
 # --platform=$BUILDPLATFORM pins this stage to the machine doing the
 # building instead of letting it be rebuilt once per *target* platform.
-# Everything it produces -- sidecar.cjs (a JavaScript bundle) and the
-# job-daemon.sh/sidecar-lifecycle.sh shell scripts -- is
-# architecture-independent, so the arm64 rebuild recomputed a
+# Everything it produces -- sidecar.cjs and lcars-session-title.cjs (both
+# JavaScript bundles) and the job-daemon.sh/sidecar-lifecycle.sh shell
+# scripts -- is architecture-independent, so the arm64 rebuild recomputed a
 # byte-identical artifact while running the whole `pnpm install` + nx
 # dependency chain under QEMU emulation.
 #
@@ -122,7 +126,18 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 ENV HUSKY=0 CI=true
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
-RUN ./tools/nx bundle @agent-lcars/telemetry-watcher
+# agent-lcars#1289 added the second `nx` call below: the `lcars` CLI's own
+# bundle (`session-title-cli` target, apps/telemetry-watcher/project.json),
+# a second, independent esbuild entry point from the same checkout --
+# `session-title-cli.ts` pulls in only `session-title-annotation-command.ts`
+# and its own dependency graph (local-filesystem annotation read/write, no
+# Firestore/GCS client), so this is a second small bundle, not a second
+# copy of sidecar.cjs's much larger one. Both `nx` invocations share one
+# `RUN` (one extra layer per stage is negligible on its own, but #1246's
+# disk audit is the reason to default to not adding one anyway when
+# combining is this cheap).
+RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
+    ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
 
 # CI's Verify job runs Go race tests and validates Actions syntax with
 # actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
@@ -329,6 +344,44 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/apps/telemetry-watcher/bin/sidecar-lifecycle.sh \
     /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
+
+# agent-lcars#1289: the `lcars` CLI (`lcars session title "..."`/`lcars
+# session status "..."`), built above as a second, independent bundle
+# (session-title-cli target). This closes the gap #1289 exists for: the
+# `.agents/skills/lcars-session-updates` layer-1 skill surface has been
+# installed into every dispatched agent's $HOME/.claude/skills since #1269,
+# and that skill already teaches `lcars session status "..."` -- but until
+# now this image shipped no `lcars` binary at all, so every dispatched
+# agent's attempt silently no-op'd (the skill degrades via `command -v
+# lcars` on purpose, so nothing broke, but nothing worked either; see
+# #1282's live verification of that degrade path).
+#
+# Installed the same way as sidecar.cjs just above: copied to
+# /usr/local/lib/agent-lcars/, owned by runner:runner. The bundle itself
+# needs no execute bit -- like sidecar.cjs, it is only ever invoked as
+# `node <path>`, never executed directly -- but the launcher below does,
+# since that's what a dispatched agent actually types.
+#
+# This CLI's dependency graph is deliberately narrow (local-filesystem
+# annotation read/write only -- no Firestore/GCS client, unlike sidecar.cjs
+# and finalize's watch-root/adapter code), so its bundle is small: measured
+# at 16 KB from the equivalent host-side build
+# (apps/telemetry-watcher/deploy/install-session-title-cli.sh's own output
+# on this checkout's watcher host), a few hundred bytes to BuildKit's
+# layer/manifest bookkeeping on top of that. Negligible against the
+# per-host disk budget #1246 tightened.
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
+    /usr/local/lib/agent-lcars/lcars-session-title.cjs
+# The launcher itself lives on PATH at /usr/local/bin (standard on this
+# Debian-derived base for every user, root or `runner` -- no ENV PATH
+# change needed), named literally `lcars` rather than
+# /usr/local/lib/agent-lcars/lcars -- see lcars.sh's own header for why the
+# name is load-bearing and the "lib" scripts above are not: those are only
+# ever invoked by their full path from workflow YAML/other scripts, this
+# one is meant to be typed.
+COPY lcars.sh /usr/local/bin/lcars
+RUN chmod +x /usr/local/bin/lcars
 
 USER runner
 

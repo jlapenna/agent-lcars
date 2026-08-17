@@ -1596,7 +1596,7 @@ describe('WatcherDaemon', () => {
       expect(readOverlay).toHaveBeenCalledTimes(2);
     });
 
-    it('never invokes the session-title overlay when sessionStateDir is unset, matching runner mode', async () => {
+    it('never invokes the session-title overlay when sessionStateDir is unset', async () => {
       const { store, upserts } = createFakeStore();
       const files = {
         '/root/proj/session-runner.jsonl': TRANSCRIPT(
@@ -1610,8 +1610,12 @@ describe('WatcherDaemon', () => {
         watchRoots: [
           { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
         ],
-        // Mirrors runner.ts's startSidecar: forceSource set, shareDir unset,
-        // and — the thing under test — sessionStateDir never passed at all.
+        // An issue-agent-shaped daemon (forceSource set, shareDir unset) —
+        // NOT what runner.ts's startSidecar actually configures since
+        // issue #1289 (it now always passes a real sessionStateDir). This
+        // pins the daemon's own generic contract instead: whatever the
+        // caller is, an omitted sessionStateDir must skip the overlay
+        // entirely rather than reading from `undefined`.
         forceSource: 'issue-agent',
         host: 'test-host',
         store,
@@ -1923,7 +1927,7 @@ describe('WatcherDaemon', () => {
       expect(readStatusOverlay).toHaveBeenCalledTimes(2);
     });
 
-    it('never invokes the session-status overlay when sessionStateDir is unset, matching runner mode', async () => {
+    it('never invokes the session-status overlay when sessionStateDir is unset', async () => {
       const { store, upserts } = createFakeStore();
       const files = {
         '/root/proj/session-runner.jsonl': TRANSCRIPT(

@@ -1,8 +1,13 @@
 import { SessionDoc, SessionWrite } from '@agent-lcars/telemetry';
-import { describe, expect, it } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { startSidecar } from './runner';
 import { RunnerConfig } from './runner-config';
+import { executeSessionTitleAnnotationCommand } from './session-title-annotation-command';
+import { SESSION_STATE_DIRECTORY } from './session-title-paths';
 import { SessionStore } from './store';
 
 /** An issue-agent-shaped transcript: the `entrypoint:
@@ -89,10 +94,21 @@ function createFakeStore() {
   return { store, upserts };
 }
 
+/** No test below that doesn't explicitly exercise the overlay (see the
+ * "session-status overlay (issue #1289)" describe block) writes anything
+ * here, so every other test in this file doubles as a regression guard on
+ * the required acceptance criterion that runner mode behaves identically
+ * to before #1289 when no overlay exists: `readSessionStatusOverlay`'s real
+ * `fs` implementation hits a real ENOENT against this path and reports
+ * `available: false`, the same fail-soft outcome as `sessionStateDir` being
+ * unset entirely (see session-title-annotation-source.ts). */
+const NO_OVERLAY_STATE_DIR = '/nonexistent/agent-lcars-session-state-fixture';
+
 function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
+    sessionStateDir: NO_OVERLAY_STATE_DIR,
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
     stalenessWindowMs: 50_000,
@@ -303,5 +319,136 @@ describe('startSidecar', () => {
 
     // stop() on a daemon that never started must be a no-op, not a throw.
     expect(() => daemon.stop()).not.toThrow();
+  });
+
+  /**
+   * Issue #1289: `startSidecar` now threads `config.sessionStateDir` into
+   * `WatcherDaemon`, so `tick()` reads the same session-title/status
+   * overlay a host watcher does. These tests deliberately inject no
+   * `readSessionTitleOverlay`/`readSessionStatusOverlay` seam — they write
+   * through the REAL CLI command (`executeSessionTitleAnnotationCommand`,
+   * the exact function `lcars-session-title.cjs` calls) into a real temp
+   * directory, and let the daemon read it back with the real `fs`-backed
+   * reader. Mocked seams here would only prove the plumbing accepts a
+   * value, not that a dispatched agent's actual `lcars session
+   * status "..."` invocation reaches the doc — which is the one thing
+   * #1289 exists to fix.
+   */
+  describe('session-title/status overlay (issue #1289)', () => {
+    let homeDirectory: string;
+    let stateDirectory: string;
+
+    beforeEach(() => {
+      homeDirectory = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'lcars-runner-overlay-'),
+      );
+      stateDirectory = path.join(homeDirectory, SESSION_STATE_DIRECTORY);
+    });
+
+    afterEach(() => {
+      fs.rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it('joins a declared status written by the real CLI into the built SessionWrite', async () => {
+      const { store, upserts } = createFakeStore();
+      const sessionId = 'session-status-live';
+      const files = {
+        [`/home/runner/.claude/projects/proj/${sessionId}.jsonl`]:
+          ISSUE_AGENT_TRANSCRIPT(sessionId, '2026-07-19T10:00:00.000Z'),
+      };
+
+      const written = executeSessionTitleAnnotationCommand(
+        ['session', 'status', 'Running the test suite'],
+        { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+      );
+      expect(written.ok).toBe(true);
+
+      const daemon = startSidecar({
+        config: baseConfig({ sessionStateDir: stateDirectory }),
+        store,
+        autoStart: false,
+        now: () => '2026-07-19T10:00:01.000Z',
+        discover: (rootPath: string) =>
+          Object.keys(files).filter((f) => f.startsWith(rootPath)),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: () => ({ mtimeMs: 1, size: 10 }),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+      });
+
+      await daemon.tick();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({
+        sessionId,
+        status: 'Running the test suite',
+      });
+      expect(upserts[0].statusUpdatedAt).toBeTruthy();
+    });
+
+    it('joins a declared title the same way, alongside status', async () => {
+      const { store, upserts } = createFakeStore();
+      const sessionId = 'session-title-live';
+      const files = {
+        [`/home/runner/.claude/projects/proj/${sessionId}.jsonl`]:
+          ISSUE_AGENT_TRANSCRIPT(sessionId, '2026-07-19T10:00:00.000Z'),
+      };
+
+      executeSessionTitleAnnotationCommand(
+        ['session', 'title', 'Port the CLI into the runner image'],
+        { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+      );
+
+      const daemon = startSidecar({
+        config: baseConfig({ sessionStateDir: stateDirectory }),
+        store,
+        autoStart: false,
+        now: () => '2026-07-19T10:00:01.000Z',
+        discover: (rootPath: string) =>
+          Object.keys(files).filter((f) => f.startsWith(rootPath)),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: () => ({ mtimeMs: 1, size: 10 }),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+      });
+
+      await daemon.tick();
+
+      expect(upserts[0]).toMatchObject({
+        sessionId,
+        title: 'Port the CLI into the runner image',
+      });
+    });
+
+    it('is fail-soft when sessionStateDir points at a directory that was never written to', async () => {
+      const { store, upserts } = createFakeStore();
+      const sessionId = 'session-status-missing-dir';
+      const files = {
+        [`/home/runner/.claude/projects/proj/${sessionId}.jsonl`]:
+          ISSUE_AGENT_TRANSCRIPT(sessionId, '2026-07-19T10:00:00.000Z'),
+      };
+
+      const daemon = startSidecar({
+        // stateDirectory exists as a path string but nothing was ever
+        // written beneath it (homeDirectory is a real, empty temp dir) --
+        // the same shape as a genuine runner container whose agent never
+        // ran `lcars session status`.
+        config: baseConfig({ sessionStateDir: stateDirectory }),
+        store,
+        autoStart: false,
+        now: () => '2026-07-19T10:00:01.000Z',
+        discover: (rootPath: string) =>
+          Object.keys(files).filter((f) => f.startsWith(rootPath)),
+        readFile: (p: string) => files[p as keyof typeof files],
+        statFile: () => ({ mtimeMs: 1, size: 10 }),
+        isProcessAliveForCwd: () => true,
+        resolveGitBranch: async () => undefined,
+      });
+
+      await expect(daemon.tick()).resolves.toBeUndefined();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).not.toHaveProperty('status');
+    });
   });
 });
