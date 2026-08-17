@@ -116,10 +116,18 @@ jobs:
               exit 1
               ;;
           esac
+          # Each lane's agent step name(s), as a JSON array of candidates.
+          # The opencode lane is era-split (agent-lane-opencode.yml): the
+          # dispatch-bootstrap era runs 'Run OpenCode' while the consumer
+          # era runs 'Run OpenCode (CLI)' — and whichever era ran, the
+          # OTHER step still appears in the jobs API with conclusion
+          # 'skipped'. Matching only 'Run OpenCode' therefore resolved
+          # every consumer-era run's agent conclusion to 'skipped' and
+          # misclassified real agent failures as startup-failure.
           case "$WORKER_WORKFLOW" in
-            claude.yml) agent_step='Run Claude Code' ;;
-            codex.yml) agent_step='Run Codex' ;;
-            opencode.yml) agent_step='Run OpenCode' ;;
+            claude.yml) agent_steps='["Run Claude Code"]' ;;
+            codex.yml) agent_steps='["Run Codex"]' ;;
+            opencode.yml) agent_steps='["Run OpenCode","Run OpenCode (CLI)"]' ;;
             *)
               echo "::error::Unsupported worker workflow"
               exit 1
@@ -133,8 +141,8 @@ jobs:
             > "$jobs_file"; then
             echo "::warning::Could not read trusted worker job metadata"
           fi
-          worker_job="$(jq -c --arg step "$agent_step" \
-            '[.[]?.jobs[]? | select(any(.steps[]?; .name == $step))] | last // empty' \
+          worker_job="$(jq -c --argjson steps "$agent_steps" \
+            '[.[]?.jobs[]? | select(any(.steps[]?; .name as $n | $steps | index($n)))] | last // empty' \
             "$jobs_file")"
 
           readiness_failure=''
@@ -163,8 +171,14 @@ jobs:
               echo "::warning::Omitting unverified lifecycle outcome"
               exit 0
             fi
-            agent_conclusion="$(jq -r --arg step "$agent_step" \
-              '[.steps[]? | select(.name == $step)] | last | .conclusion // ""' \
+            # Among the candidate step names, prefer the one that actually
+            # ran: skipped candidates are the inactive era's step, not
+            # evidence. Only when EVERY candidate is skipped does 'skipped'
+            # win — the agent never started, which IS a startup failure.
+            agent_conclusion="$(jq -r --argjson steps "$agent_steps" \
+              '[.steps[]? | select(.name as $n | $steps | index($n))]
+               | ((map(select(.conclusion != "skipped")) | last) // last)
+               | .conclusion // ""' \
               <<<"$worker_job")"
             case "$agent_conclusion" in
               ''|skipped) outcome_kind='startup-failure' ;;
