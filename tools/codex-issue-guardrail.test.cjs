@@ -9,7 +9,7 @@ const {
 } = require('./codex-issue-guardrail.cjs');
 
 function dependencies({
-  assignees = ['jclaw-bot'],
+  assignees = ['agent-lcars-bot'],
   parentIssueNumber = null,
   tmuxPane = '%20',
   tmuxTitle = '642 unified guardrail',

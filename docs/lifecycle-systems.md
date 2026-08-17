@@ -225,7 +225,7 @@ token (`mint-agent-token`) for its own claim/comment/push identity, a
 distinct telemetry WIF credential (`telemetry-start`, impersonating a
 write-only `telemetry-writer` service account), and, optionally,
 `AGENT_CI_RERUN_TOKEN` — a classic PAT at `public_repo` scope from the
-`jclaw-bot` machine account, not `github.token`, so the agent can rerun its
+`agent-lcars-bot` machine account, not `github.token`, so the agent can rerun its
 own failed CI without holding a control-plane-capable credential. The
 post-agent completion callback (`agent-fallback-finalize.yml`) runs on
 `ubuntu-latest` from a separate job with its own exact-workflow OIDC token,

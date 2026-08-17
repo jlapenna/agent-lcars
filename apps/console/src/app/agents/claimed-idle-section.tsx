@@ -30,9 +30,9 @@ function activeOrchestratorRun(state: AuthoritativeTaskState | undefined) {
 
 /**
  * "Claimed but Idle": open items the fleet has claimed (assignee
- * `jclaw-bot`) with no live run and no live/idle CLI session actually
+ * `agent-lcars-bot`) with no live run and no live/idle CLI session actually
  * working them - see deriveClaimedIdle in claimed-idle.ts. A stale claim
- * per orchestration.md §4 ("jclaw-bot assigned but no in-progress run
+ * per orchestration.md §4 ("agent-lcars-bot assigned but no in-progress run
  * named #N ⇒ claim is stale; any session may take over"). Before this
  * section existed these were only discoverable by noticing silence on an
  * issue.

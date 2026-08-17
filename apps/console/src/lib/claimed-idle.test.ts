@@ -163,29 +163,37 @@ describe('deriveClaimedIdle', () => {
   const noLiveRun = () => false;
   const allLiveRun = () => true;
 
-  it('includes an open jclaw-bot claim with no live run and no active session', () => {
-    const items = [makeItem({ number: 1, assigneeLogins: ['jclaw-bot'] })];
+  it('includes an open agent-lcars-bot claim with no live run and no active session', () => {
+    const items = [
+      makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
+    ];
     expect(deriveClaimedIdle(items, noLiveRun, [])).toEqual(items);
   });
 
-  it('excludes items not assigned to jclaw-bot', () => {
+  it('excludes items not assigned to agent-lcars-bot', () => {
     const items = [makeItem({ number: 1, assigneeLogins: ['jlapenna'] })];
     expect(deriveClaimedIdle(items, noLiveRun, [])).toEqual([]);
   });
 
   it('excludes items with a live run', () => {
-    const items = [makeItem({ number: 1, assigneeLogins: ['jclaw-bot'] })];
+    const items = [
+      makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
+    ];
     expect(deriveClaimedIdle(items, allLiveRun, [])).toEqual([]);
   });
 
   it('excludes items an active CLI session is working', () => {
-    const items = [makeItem({ number: 1, assigneeLogins: ['jclaw-bot'] })];
+    const items = [
+      makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
+    ];
     const sessions = [makeSession({ pr: { number: 1, url: 'u' } })];
     expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual([]);
   });
 
   it('does not let an unrelated active session mask a genuinely stale claim', () => {
-    const items = [makeItem({ number: 1, assigneeLogins: ['jclaw-bot'] })];
+    const items = [
+      makeItem({ number: 1, assigneeLogins: ['agent-lcars-bot'] }),
+    ];
     const sessions = [makeSession({ pr: { number: 999, url: 'u' } })];
     expect(deriveClaimedIdle(items, noLiveRun, sessions)).toEqual(items);
   });
@@ -194,7 +202,7 @@ describe('deriveClaimedIdle', () => {
     const repoA = { owner: 'org-a', name: 'repo-a' };
     const repoB = { owner: 'org-b', name: 'repo-b' };
     const items = [
-      makeItem({ number: 1, repo: repoA, assigneeLogins: ['jclaw-bot'] }),
+      makeItem({ number: 1, repo: repoA, assigneeLogins: ['agent-lcars-bot'] }),
     ];
     const sessions = [
       makeSession({ repo: repoB, pr: { number: 1, url: 'u' } }),

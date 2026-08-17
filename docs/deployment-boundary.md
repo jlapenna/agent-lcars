@@ -29,7 +29,7 @@ else asks it:
 | Value                    | Env var                                | This deployment                  |
 | ------------------------ | -------------------------------------- | -------------------------------- |
 | maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`       | `jlapenna`                       |
-| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `jclaw-bot`                      |
+| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `agent-lcars-bot`                |
 | artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net` |
 | control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `jlapenna/agent-lcars`           |
 | watched repos            | `AGENT_LCARS_WATCHED_REPOS`            | see `github-client.ts`           |
@@ -88,7 +88,7 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `GCP_WEBHOOK_CONFIG_SA`           | Terraform output `github_app_webhook_configurator_service_account`               | configure-github-app-webhook; reads only the webhook HMAC secret                                                    |
 | `DISPATCH_FIRESTORE_DATABASE_ID`  | `dispatch-controller`                                                            | hosted controller and worker preflight                                                                              |
 | `MAINTAINER_LOGIN`                | `jlapenna`                                                                       | dispatch guards, failure assignment                                                                                 |
-| `AGENT_FLEET_LOGIN`               | `jclaw-bot`                                                                      | claim steps and queue hand-off                                                                                      |
+| `AGENT_FLEET_LOGIN`               | `agent-lcars-bot`                                                                | claim steps and queue hand-off                                                                                      |
 | `APPHOSTING_BACKEND_ID`           | `agent-lcars`                                                                    | deploy-console                                                                                                      |
 | `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]"]`                                             | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                                                   |
 | `NX_CACHE_URL`                    | homelab Nx cache                                                                 | all agent lanes (pre-existing)                                                                                      |
@@ -124,7 +124,7 @@ Agent LCARS repository variable.
 One further exception:
 
 - **Prose still names the logins** — step names ("Claim the issue as
-  jclaw-bot"), `::warning::` text, and the agent prompt bodies. These are
+  agent-lcars-bot"), `::warning::` text, and the agent prompt bodies. These are
   human-readable strings, not config; interpolating them would make the
   already-long prompts harder to read for no functional gain. A fork should
   update the prompt text by hand.
@@ -160,13 +160,13 @@ would let that code rewrite the control plane's own state
 ([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
 
 So this is a **classic PAT at `public_repo` scope, issued from the
-`jclaw-bot` machine account** — not the maintainer's. `public_repo` is the
+`agent-lcars-bot` machine account** — not the maintainer's. `public_repo` is the
 narrowest classic scope that can rerun a workflow here, and this repository
 is public, so it suffices.
 
 **The machine account is what makes the containment real rather than
 nominal.** `public_repo` grants write across the _token owner's_ accessible
-public repositories. Issued from `jclaw-bot` that is effectively this
+public repositories. Issued from `agent-lcars-bot` that is effectively this
 repository alone, and the fleet's private repos (`jlapenna/homelab`,
 `supersprinklesracing/sprinkles`) are unreachable — verified: they answer
 `404`, not `403`, so the token cannot even observe that they exist. The same
@@ -219,7 +219,7 @@ _containers_ but never secret _values_ (see `AGENTS.md`).
 
 ### 5. Protocol docs
 
-`.agents/skills/lcars/lcars-protocol.md` names `jlapenna` and `jclaw-bot`
+`.agents/skills/lcars/lcars-protocol.md` names `jlapenna` and `agent-lcars-bot`
 directly. That's deliberate — it's instructions written for agents working
 _this_ repo, not a reusable library.
 

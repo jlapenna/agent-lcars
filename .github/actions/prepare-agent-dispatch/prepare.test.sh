@@ -29,7 +29,7 @@ FAKE_ANCHOR="$test_root/anchor.json"
 FAKE_COMMENTS="$test_root/comments.json"
 export FAKE_ANCHOR FAKE_COMMENTS
 cat > "$FAKE_ANCHOR" <<'JSON'
-{"number":123,"state":"open","state_reason":null,"title":"Fix dispatch reliability","body":"## Acceptance\n- [ ] Preserve exact state\n- [x] Keep inert data","labels":[{"name":"agent:codex"}],"assignees":[{"login":"jclaw-bot"}],"html_url":"https://github.com/example/consumer/issues/123"}
+{"number":123,"state":"open","state_reason":null,"title":"Fix dispatch reliability","body":"## Acceptance\n- [ ] Preserve exact state\n- [x] Keep inert data","labels":[{"name":"agent:codex"}],"assignees":[{"login":"agent-lcars-bot"}],"html_url":"https://github.com/example/consumer/issues/123"}
 JSON
 cat > "$FAKE_COMMENTS" <<'JSON'
 [{"id":7,"html_url":"https://example.test/comments/7","created_at":"2026-08-08T00:00:00Z","updated_at":"2026-08-08T00:00:00Z","user":{"login":"agent-lcars[bot]"},"body":"NO-OP: already fixed\n<!-- agent-result:v1:no-op -->\n<!-- attempt-claim:g1:abc -->"}]
@@ -78,7 +78,7 @@ jq -e \
    .anchor.state == "open" and
    .anchor.title == "Fix dispatch reliability" and
    .anchor.labels == ["agent:codex"] and
-   .anchor.assignees == ["jclaw-bot"] and
+   .anchor.assignees == ["agent-lcars-bot"] and
    .anchor.acceptance_criteria == ["Preserve exact state", "Keep inert data"] and
    .truncated == [] and
    .mode == "reply" and

@@ -131,7 +131,7 @@ describe('deployment config', () => {
 
   it('falls back to this deployment when nothing is configured', () => {
     expect(maintainerLogin()).toBe('jlapenna');
-    expect(agentFleetLogin()).toBe('jclaw-bot');
+    expect(agentFleetLogin()).toBe('agent-lcars-bot');
     expect(consoleDescription()).toBe(
       'jlapenna/agent-lcars — multi-agent issue activity',
     );

@@ -17,14 +17,14 @@ specifically: this repo's own code is what depends on them.
 
 ## Identity
 
-- **Fleet-claim identity: `jclaw-bot`.** This is the owner's identity for
+- **Fleet-claim identity: `agent-lcars-bot`.** This is the owner's identity for
   the whole agent fleet across every repo it works — not specific to
   `agent-lcars`. Claim the anchor issue/PR for the fleet at the start of a
   run via the assignees REST API (agent-protocol.md §10):
 
   ```bash
   gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
-    -f 'assignees[]=jclaw-bot' --silent
+    -f 'assignees[]=agent-lcars-bot' --silent
   ```
 
   This repo's own console (`apps/console`) reads this exact login as

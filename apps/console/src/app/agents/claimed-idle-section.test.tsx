@@ -17,7 +17,7 @@ function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
     updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     actionTypes: [],
     labels: [],
-    assigneeLogins: ['jclaw-bot'],
+    assigneeLogins: ['agent-lcars-bot'],
     ...overrides,
   };
 }

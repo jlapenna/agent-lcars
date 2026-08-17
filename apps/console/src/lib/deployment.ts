@@ -43,7 +43,7 @@ export function maintainerLogin(): string {
  * the bot App identity itself is not assignable, which is why a real
  * account stands in for it). */
 export function agentFleetLogin(): string {
-  return optional('AGENT_LCARS_FLEET_GITHUB_LOGIN') ?? 'jclaw-bot';
+  return optional('AGENT_LCARS_FLEET_GITHUB_LOGIN') ?? 'agent-lcars-bot';
 }
 
 /** Copy identifying this console deployment in metadata and auth surfaces. */

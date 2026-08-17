@@ -102,11 +102,11 @@ jobs:
           fi
 
       # Ownership spine, matching claude.yml/opencode.yml's own "Claim the
-      # issue as jclaw-bot" step: agent-authored PRs carry the fleet's
+      # issue as agent-lcars-bot" step: agent-authored PRs carry the fleet's
       # assignee just like the anchor issues they came from. Additive and
       # idempotent; non-blocking so a hiccup can't cost the auto-merge arm
       # below.
-      - name: Claim the PR as jclaw-bot
+      - name: Claim the PR as agent-lcars-bot
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -116,7 +116,7 @@ jobs:
             '{assignees: [$login]}' |
             gh api "repos/$REPO/issues/$PR/assignees" \
               --method POST --input - >/dev/null \
-            || echo "::warning::Could not assign jclaw-bot to #$PR"
+            || echo "::warning::Could not assign agent-lcars-bot to #$PR"
 
       - name: Mark ready and enable squash auto-merge
         env:

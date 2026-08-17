@@ -298,7 +298,7 @@ describe('getActionItems', () => {
         makeItem(2, { labels: ['agent:opencode'] }),
         makeItem(3, { labels: ['agent:codex'] }),
         makeItem(4, { labels: ['status:needs-human'] }),
-        makeItem(5, { assignees: [{ login: 'jclaw-bot' }] }),
+        makeItem(5, { assignees: [{ login: 'agent-lcars-bot' }] }),
         makeItem(6, { assignees: [{ login: 'jlapenna' }] }),
         makeItem(7), // control: must stay off
       ],
@@ -357,7 +357,7 @@ describe('getActionItems', () => {
   });
 
   it('selects a PR solely because it was authored by a known agent bot login (#216)', async () => {
-    // Mirrors a PR whose assignee-based claim (jclaw-bot) never took and
+    // Mirrors a PR whose assignee-based claim (agent-lcars-bot) never took and
     // whose review request already cleared (approved) - author is the last
     // signal keeping it from going invisible.
     const listForRepo = pagedListForRepo({
@@ -846,12 +846,12 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
-  it('surfaces the takeover command on a jclaw-bot-assigned PR', async () => {
+  it('surfaces the takeover command on a agent-lcars-bot-assigned PR', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(42, {
           pull_request: {},
-          assignees: [{ login: 'jclaw-bot' }],
+          assignees: [{ login: 'agent-lcars-bot' }],
           comments: 1,
         }),
       ],
@@ -879,7 +879,10 @@ describe('getActionItems', () => {
   it('takes the newest takeover command when a thread has several', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(45, { assignees: [{ login: 'jclaw-bot' }], comments: 2 }),
+        makeItem(45, {
+          assignees: [{ login: 'agent-lcars-bot' }],
+          comments: 2,
+        }),
       ],
     });
     const graphql = mockGraphql({
@@ -900,7 +903,10 @@ describe('getActionItems', () => {
   it('surfaces assignee logins on the item (#3024 stale-claim detection)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(70, { assignees: [{ login: 'jclaw-bot' }], comments: 0 }),
+        makeItem(70, {
+          assignees: [{ login: 'agent-lcars-bot' }],
+          comments: 0,
+        }),
       ],
     });
     setupOctokit({ listForRepo });
@@ -908,13 +914,16 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([70]);
-    expect(result.items[0].assigneeLogins).toEqual(['jclaw-bot']);
+    expect(result.items[0].assigneeLogins).toEqual(['agent-lcars-bot']);
   });
 
-  it('scans takeover for a jclaw-bot-assigned issue without the claude label (interactive claim)', async () => {
+  it('scans takeover for a agent-lcars-bot-assigned issue without the claude label (interactive claim)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(43, { assignees: [{ login: 'jclaw-bot' }], comments: 1 }),
+        makeItem(43, {
+          assignees: [{ login: 'agent-lcars-bot' }],
+          comments: 1,
+        }),
       ],
     });
     const graphql = mockGraphql({
@@ -973,7 +982,7 @@ describe('getActionItems', () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(50, {
-          assignees: [{ login: 'jclaw-bot' }, { login: 'jlapenna' }],
+          assignees: [{ login: 'agent-lcars-bot' }, { login: 'jlapenna' }],
           comments: 1,
         }),
       ],
@@ -991,10 +1000,13 @@ describe('getActionItems', () => {
     expect(result.items[0].actionTypes).not.toContain('needs-human');
   });
 
-  it('does not derive needs-human from jclaw-bot alone (no maintainer assignee, no label)', async () => {
+  it('does not derive needs-human from agent-lcars-bot alone (no maintainer assignee, no label)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
-        makeItem(51, { assignees: [{ login: 'jclaw-bot' }], comments: 0 }),
+        makeItem(51, {
+          assignees: [{ login: 'agent-lcars-bot' }],
+          comments: 0,
+        }),
       ],
     });
     setupOctokit({ listForRepo });

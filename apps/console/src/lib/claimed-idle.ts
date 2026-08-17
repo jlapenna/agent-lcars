@@ -67,9 +67,9 @@ export function mostRecentSessionForItem(
 }
 
 /**
- * Open items the agent fleet has claimed (assignee `jclaw-bot`, #2783) but
+ * Open items the agent fleet has claimed (assignee `agent-lcars-bot`, #2783) but
  * which have no live CI run and no live/idle CLI session actually working
- * them - a stale claim per orchestration.md §4 ("jclaw-bot assigned but no
+ * them - a stale claim per orchestration.md §4 ("agent-lcars-bot assigned but no
  * in-progress run named #N ⇒ claim is stale; any session may take over").
  * Before the /agents page existed, these were only discoverable by noticing
  * silence on an issue.

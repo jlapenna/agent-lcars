@@ -23,7 +23,7 @@ runtime:
   Trusted Codex sessions load `.codex/hooks.json`, and Claude sessions load
   `.claude/settings.json`; both run the shared issue-workflow hook after Bash
   commands. When a command uses `gh issue view` or `gh issue edit`, the hook
-  verifies `jclaw-bot` ownership and the issue-specific tmux title.
+  verifies `agent-lcars-bot` ownership and the issue-specific tmux title.
 
 Local initialization uses `pnpm install`, whose `prepare` lifecycle installs
 and verifies Husky through `tools/setup-git-hooks.sh`. Linked worktrees use

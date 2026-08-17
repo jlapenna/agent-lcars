@@ -26,7 +26,7 @@ fail() {
 }
 
 # All present passes silently.
-run $'MAINTAINER_LOGIN=jlapenna\nAGENT_FLEET_LOGIN=jclaw-bot'
+run $'MAINTAINER_LOGIN=jlapenna\nAGENT_FLEET_LOGIN=agent-lcars-bot'
 test "$status" = 0 || fail "all-present must pass"
 
 # One empty value fails, naming it.
