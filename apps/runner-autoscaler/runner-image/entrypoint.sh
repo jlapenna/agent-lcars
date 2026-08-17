@@ -40,5 +40,12 @@ if ! java_21_runs; then
   exit 1
 fi
 
+# agent-lcars#1330: point the runner at the baked action-archive cache so
+# `uses:` tarballs resolve locally instead of from codeload (outage
+# resilience). Guarded: a runner image built before the bake simply skips it.
+if [ -d /opt/actions-archive-cache ]; then
+  export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache
+fi
+
 # Execute the runner's standard run script with passed arguments
 exec /home/runner/run.sh "$@"
