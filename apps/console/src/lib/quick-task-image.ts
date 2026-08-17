@@ -24,7 +24,7 @@ export async function normalizeQuickTaskEvidence(
   ) {
     throw new QuickTaskEvidenceError(413, 'Evidence exceeds the input limit');
   }
-  let image: sharp.Sharp;
+  let image: ReturnType<typeof sharp>;
   try {
     image = sharp(input, {
       animated: false,
@@ -35,7 +35,7 @@ export async function normalizeQuickTaskEvidence(
     if (
       !metadata.format ||
       !QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES.includes(
-        `image/${metadata.format === 'jpg' ? 'jpeg' : metadata.format}` as (typeof QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES)[number],
+        `image/${metadata.format}` as (typeof QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES)[number],
       )
     ) {
       throw new QuickTaskEvidenceError(415, 'Unsupported evidence type');
