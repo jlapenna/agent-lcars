@@ -211,9 +211,14 @@ every fleet consumer passed `attempt-id` — agent-lcars's own three lanes,
 homelab's three lanes (homelab#697), and sprinkles' three lanes (the
 exact-marker flip). Its retired inputs (`started-at`,
 `expected-comment-login`, `exclude-pr-author`, `exclude-comment-id`,
-`runbook`) were dropped from the action; a moving-`@main` consumer that
-still passes one gets a runner warning ("Unexpected input(s)"), never a
-failure.
+`runbook`) were dropped from the action. How a straggling consumer finds
+out depends on how it calls the gate: a consumer invoking the composite
+action directly with a retired `with:` input gets a runner warning
+("Unexpected input(s)"), never a failure — but the fleet's consumers run
+the snapshotted `post-agent-gates.sh` and pass these values as environment
+variables, and the runner never warns about an unrecognized env var: a
+retired variable is silently ignored. Do not count on a warning to surface
+the drift; check this table when updating a consumer.
 
 `prepare-agent-dispatch` keeps its richer runtime contract backward-compatible
 for moving-`main` consumers: `token` falls back to the caller's

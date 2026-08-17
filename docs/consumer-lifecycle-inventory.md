@@ -58,8 +58,10 @@ hosted-controller cutover ([#736](https://github.com/jlapenna/agent-lcars/issues
 [#645](https://github.com/jlapenna/agent-lcars/issues/645) Phase 6). This is
 not a new domain #645's vocabulary needs extending to cover — it is the
 `controller` system's `signal`/`authorization`/`intent`/`scheduling`/`launch`/
-`reconciliation` phases (`libs/dispatch-contracts/src/failure.ts`), already
-fully specified, running a second, independently-drifting implementation in
+`reconciliation` phases (formerly specified in
+`libs/dispatch-contracts/src/failure.ts`, deleted with the broker in
+[#1300](https://github.com/jlapenna/agent-lcars/pull/1300)), which at the
+time ran a second, independently-drifting implementation in
 another repository. The same lossy-concurrency-group queue problem
 [#703](https://github.com/jlapenna/agent-lcars/pull/703) fixed here is
 structurally present there too (`agent-router.yml`'s `normalize` job holds a

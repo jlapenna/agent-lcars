@@ -152,7 +152,7 @@ Read the reference before starting the corresponding task:
 Load these when the task enters their domain:
 
 - **[agent-protocol](../agent-protocol/SKILL.md)** / **[lcars](../lcars/SKILL.md)**
-  — headless CI dispatch conventions and this repo's own dispatch-broker,
+  — headless CI dispatch conventions and this repo's own dispatch/orchestrator,
   auto-merge, and identity delta. Not needed for ordinary interactive
   development.
 - **[verifying-console-session](../verifying-console-session/SKILL.md)** —

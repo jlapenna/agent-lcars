@@ -97,19 +97,21 @@ jobs:
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
-      # A minimal checkout, before broker verification and the minted-token
-      # checkout below: "Verify broker binding" is now a local composite
+      # A minimal checkout, before dispatch-bootstrap and the minted-token
+      # checkout below: dispatch-bootstrap is a local composite
       # action (`uses: ./.github/actions/...`), and GitHub Actions can only
       # resolve a local action once the repo containing it has been checked
       # out - a platform constraint, not a preference.
-      - name: Bootstrap checkout for broker preflight
+      - name: Bootstrap checkout for dispatch bootstrap
         uses: actions/checkout@v7
 
       # Shared trusted worker lifecycle (agent-lcars#823): freezes the
       # post-agent enforcement scripts, asserts required repo variables,
-      # verifies the broker binding against the authoritative dispatch
-      # ledger, mints the Agent LCARS App token, and claims the anchor
-      # issue/PR for the agent fleet - identical across claude.yml,
+      # publishes this attempt's stable identity, mints the Agent LCARS App
+      # token, and claims the anchor issue/PR for the agent fleet - a thin
+      # executor (#1015): admission was already decided server-side by the
+      # hosted orchestrator before this workflow ran, so nothing here
+      # re-verifies it against any ledger. Identical across claude.yml,
       # codex.yml, and opencode.yml. See
       # .github/actions/dispatch-bootstrap/action.yml for the full
       # step-by-step rationale.
@@ -250,12 +252,10 @@ jobs:
       # agent's own working identity (claim/comment/push, and it is also
       # handed to the agent step below as GH_TOKEN/GITHUB_TOKEN for its own
       # gh/git operations); github.token is this job's own control-plane
-      # credential, the exact one dispatch-broker uses to read and write
-      # the ledger comment (every dispatch-broker step in this file passes
-      # GITHUB_TOKEN: ${{ github.token }}), carrying this workflow's full
+      # credential, carrying this workflow's full
       # contents/issues/pull-requests/actions write grant. Handing that one
       # to the agent step below under any name would let agent-authored
-      # code rewrite the ledger or act as the controller - exactly what
+      # code act as the controller - exactly what
       # #645 forbids. AGENT_CI_RERUN_TOKEN is not that credential, but be
       # precise about what it is: a classic PAT at public_repo scope from
       # the agent-lcars-bot machine account. Classic scopes cannot express
@@ -476,7 +476,7 @@ jobs:
           # This run's verified attempt identity (#815): verify-deliverable.sh
           # now requires an exact `<!-- attempt-claim:<ATTEMPT_ID> -->` marker
           # on the PR/comment/review this run produced. Ambient from
-          # dispatch-bootstrap's "Verify broker binding" step, which always
+          # dispatch-bootstrap's "Publish attempt identity" step, which always
           # runs earlier in this same job and publishes it via $GITHUB_ENV -
           # named explicitly here to document the dependency.
           ATTEMPT_ID: ${{ env.ATTEMPT_ID }}

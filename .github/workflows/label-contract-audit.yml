@@ -29,7 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Mint read token
+      # issues:write, not read: the sync below creates/edits declared labels
+      # and deletes reappearing legacy ones (GitHub's label endpoints sit
+      # under the Issues permission).
+      - name: Mint write token
         id: app-token
         uses: ./.github/actions/mint-agent-token
         with:
@@ -37,9 +40,19 @@ jobs:
           private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
           repositories: ${{ matrix.repository }}
-          permission-issues: read
+          permission-issues: write
 
-      - name: Check labels
+      # Self-healing sync, not a report-only audit: --apply re-creates or
+      # fixes any declared label that drifted; --migrate moves open items
+      # off a reappearing legacy label onto its declared replacements; and
+      # --prune then deletes any label on the repo's migrations/remove
+      # lists that reappeared (Renovate re-mints defaults like
+      # `dependencies`/`javascript`/`go` on its own PRs, which used to flap
+      # this job red every day). --prune touches ONLY the manifest's
+      # migrations/remove lists - a live label that is simply undeclared is
+      # left alone, so every live label must either be declared or
+      # consciously listed for removal.
+      - name: Sync labels
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: node tools/sync-github-labels.mjs --repo="${{ matrix.full_name }}"
+        run: node tools/sync-github-labels.mjs --apply --migrate --prune --repo="${{ matrix.full_name }}"
