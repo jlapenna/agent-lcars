@@ -1,0 +1,1270 @@
+# The single parameterized issue-agent lane (#1340 A-R1).
+#
+# One worker job carries the shared spine that agent-lane-claude.yml,
+# agent-lane-codex.yml, and agent-lane-opencode.yml used to triplicate
+# (~19 of ~27 steps were shared, drifting only in comment wording and
+# checkout ordering). Those three files remain as the published shims:
+# each re-declares its historical `workflow_call` surface (pinned by
+# tools/contract-tests/worker-workflow-contract.test.ts) and delegates
+# here with the `pipeline` input. Consumers keep calling the shims —
+# `jlapenna/agent-lcars/.github/workflows/agent-lane-<pipeline>.yml@main`
+# — and never need to know this file exists.
+#
+# Parameterization rules:
+# - `pipeline` (claude|codex|opencode) selects the per-agent steps via
+#   `if: inputs.pipeline == '<x>'`. `uses:` action downloads happen
+#   regardless of `if:` — that is fine; the runner image's action archive
+#   cache covers them.
+# - Inputs are the union of the three shim surfaces. Inputs that one shim
+#   requires (codex's WIF trio, opencode's model) are optional here with
+#   empty defaults; "Assert pipeline lane configuration" fails fast when
+#   the active pipeline is missing one, naming every missing value at
+#   once, the way assert-repo-vars does.
+# - Secrets are the union too; the lane-specific ones
+#   (CLAUDE_CODE_OAUTH_TOKEN, OPENCODE_LLM_API_KEY) are `required: false`
+#   here and presence-asserted per pipeline in the same first step.
+# - The checkout sequence adopts the codex/opencode ordering (bootstrap
+#   checkout -> dispatch bootstrap -> App-credential re-checkout). The
+#   claude pipeline keeps its deliberate credential behavior inside that
+#   shape: its checkout persists the job's own github.token, never the
+#   minted App token — the claude-code action vends its own separate
+#   claude[bot] push credential (see "Run Claude Code").
+#
+# Recorded divergence reasons (#1305 convention) — every toggle below
+# exists because one repo needs it, and defaults to the consumer behavior:
+#
+# - dispatch-bootstrap: agent-lcars is the hosted-orchestrator thin
+#   executor (#1015) — admission, attempt identity, App-token mint, claim,
+#   and enforcement-snapshot run through its local dispatch-bootstrap/
+#   agent-handoff composites; consumer repos run the published
+#   snapshot/mint/claim/verify path against `@main` instead. The opencode
+#   agent step is also era-split: agent-lcars runs the SHA-pinned
+#   anomalyco/opencode published action (plus its authenticated-release
+#   curl wrapper), while consumers run the published setup-opencode
+#   composite and the same `opencode github run` entry point as a plain
+#   step.
+# - protected-snapshot: agent-lcars preserves the dispatch brief as a run
+#   artifact for trajectory evaluation; consumers run no evaluation.
+# - trajectory-export (opencode): agent-lcars exports sanitized OpenCode
+#   sessions as a run artifact for durable trajectory diagnosis.
+# - long-run-budget (claude): sprinkles resolves the agent budget from the
+#   dispatched issue's live `agent-option:long-run` label (200 turns/80
+#   minutes default, 400/170 long); the other repos use fixed budgets.
+# - gcp-auth (claude/opencode): sprinkles' agents self-verify production
+#   through a read-only WIF identity; the other repos grant the agent no
+#   ambient GCP.
+# - codex-auth-secret-name / gcp-project-id (codex): every repo minted its
+#   own independent subscription credential on purpose — two repos sharing
+#   one blob invalidate each other, because Codex rotates the credential
+#   on every run and nothing can serialize runs across repos.
+# - gcp-access-verify-projects (codex): sprinkles fails before starting a
+#   costly agent turn if its cross-project read-only viewer grants
+#   regressed.
+# - queue-drain (codex): sprinkles paces `agent:codex` bursts itself —
+#   GitHub keeps only ONE pending run per concurrency group, so a burst
+#   collapses to a single survivor unless the finishing run hands the
+#   baton to the next unclaimed issue explicitly (sprinkles#3489).
+# - install-workspace-deps: sprinkles' Nx worktree-aware resolution needs
+#   the primary checkout's node_modules installed (sprinkles#4003).
+# - telemetry-workload-identity-provider empty skips the telemetry
+#   sidecar entirely.
+# - opencode-model is caller-chosen: the LiteLLM route name encodes each
+#   repo's own thinking/fallback policy (#1227, homelab#44).
+# - ACTIONS_RERUN_TOKEN source is era-tied: agent-lcars hands the agent a
+#   separate revocable PAT so agent code never holds the job's
+#   control-plane credential (#645); consumers hand the job token.
+# - prompt / no-deliverable-reason are caller-supplied text: each repo's
+#   protocol paths, mode conditionals, and redispatch vocabulary are
+#   repo-specific content, exactly like `run-name`.
+
+on:
+  workflow_call:
+    inputs:
+      pipeline:
+        description: 'Which agent pipeline this lane runs: claude, codex, or opencode'
+        required: true
+        type: string
+      issue:
+        description: 'Issue number the dispatch is anchored on'
+        required: true
+        type: string
+      mode:
+        description: 'Dispatch mode for hosted-controller issue work'
+        required: true
+        type: string
+      reply:
+        description: 'Original maintainer reply when mode is reply'
+        required: false
+        default: ''
+        type: string
+      runbook:
+        description: 'Optional skill for a runbook dispatch'
+        required: false
+        default: ''
+        type: string
+      context:
+        description: 'Optional deployment or router context'
+        required: false
+        default: ''
+        type: string
+      broker-generation:
+        description: 'Monotonic broker generation (attempt identity half)'
+        required: false
+        default: ''
+        type: string
+      broker-intent-id:
+        description: 'Immutable broker intent ID (attempt identity half)'
+        required: false
+        default: ''
+        type: string
+      runs-on-label:
+        description: 'Self-hosted runner label the worker job targets'
+        required: true
+        type: string
+      job-timeout-minutes:
+        description: 'Whole-job backstop timeout'
+        required: false
+        default: 90
+        type: number
+      agent-timeout-minutes:
+        description: 'Agent-step timeout (for claude, when long-run-budget is off)'
+        required: false
+        default: 60
+        type: number
+      max-turns:
+        description: 'Claude agent turn budget when long-run-budget is off'
+        required: false
+        default: 200
+        type: number
+      long-run-budget:
+        description: 'Claude: resolve 200/80 vs 400/170 from the agent-option:long-run label'
+        required: false
+        default: false
+        type: boolean
+      dispatch-bootstrap:
+        description: 'agent-lcars thin-executor admission era (see header)'
+        required: false
+        default: false
+        type: boolean
+      protected-snapshot:
+        description: 'Upload the dispatch brief as a run artifact for evaluation'
+        required: false
+        default: false
+        type: boolean
+      trajectory-export:
+        description: 'OpenCode: export sanitized sessions as a run artifact'
+        required: false
+        default: false
+        type: boolean
+      queue-drain:
+        description: 'Codex: hand the concurrency group to the next queued issue (sprinkles#3489)'
+        required: false
+        default: false
+        type: boolean
+      install-workspace-deps:
+        description: 'pnpm-install the primary checkout (sprinkles#4003)'
+        required: false
+        default: false
+        type: boolean
+      gcp-auth:
+        description: 'Claude/OpenCode: authenticate ambient GCP ADC for the agent'
+        required: false
+        default: false
+        type: boolean
+      gcp-workload-identity-provider:
+        description: 'WIF provider (codex: subscription credential, required; claude/opencode: gcp-auth)'
+        required: false
+        default: ''
+        type: string
+      gcp-service-account:
+        description: 'Service account (codex: subscription credential, required; claude/opencode: gcp-auth)'
+        required: false
+        default: ''
+        type: string
+      gcp-project-id:
+        description: 'Codex: GCP project holding the subscription-credential secret (required)'
+        required: false
+        default: ''
+        type: string
+      codex-auth-secret-name:
+        description: "Codex: Secret Manager name of this repo's own auth.json lineage"
+        required: false
+        default: 'CODEX_AUTH_JSON'
+        type: string
+      gcp-access-verify-projects:
+        description: 'Codex: space-separated projects to preflight read-only access against (empty skips)'
+        required: false
+        default: ''
+        type: string
+      telemetry-workload-identity-provider:
+        description: 'WIF provider for the telemetry sidecar (empty skips it)'
+        required: false
+        default: ''
+        type: string
+      telemetry-service-account:
+        description: 'Write-only telemetry service account'
+        required: false
+        default: ''
+        type: string
+      agent-fleet-login:
+        description: "Caller's AGENT_FLEET_LOGIN repo variable"
+        required: true
+        type: string
+      agent-lcars-client-id:
+        description: 'Agent LCARS App client ID for the token mint'
+        required: true
+        type: string
+      opencode-model:
+        description: 'OpenCode: LiteLLM route the agent runs against (required; repo policy, see header)'
+        required: false
+        default: ''
+        type: string
+      nx-cache-url:
+        description: 'Nx self-hosted remote cache URL (empty soft-fails)'
+        required: false
+        default: ''
+        type: string
+      pnpm-store-dir:
+        description: 'npm_config_store_dir for the run (empty leaves default)'
+        required: false
+        default: ''
+        type: string
+      brief-budget-minutes:
+        description: 'Dispatch-brief runtime budget (prepare-agent-dispatch)'
+        required: false
+        default: '60'
+        type: string
+      brief-artifact-checkpoint-minutes:
+        description: 'Dispatch-brief durable-artifact checkpoint'
+        required: false
+        default: '25'
+        type: string
+      brief-finalize-checkpoint-minutes:
+        description: 'Dispatch-brief finalization checkpoint'
+        required: false
+        default: '45'
+        type: string
+      prompt:
+        description: "The agent prompt, fully rendered in the caller's context"
+        required: true
+        type: string
+      no-deliverable-reason:
+        description: 'Silent-stall wording, rendered with the caller redispatch vocabulary'
+        required: true
+        type: string
+      message-prefix:
+        description: 'Optional prefix for post-agent gate failure reports'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      AGENT_LCARS_PRIVATE_KEY:
+        description: 'Agent LCARS App private key for the token mint'
+        required: true
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: 'Claude: long-lived token from `claude setup-token` (required for that pipeline)'
+        required: false
+      OPENCODE_LLM_API_KEY:
+        description: 'OpenCode: LiteLLM gateway credential (required for that pipeline)'
+        required: false
+      NX_CACHE_TOKEN:
+        description: 'Nx remote cache access token (empty soft-fails)'
+        required: false
+      AGENT_CI_RERUN_TOKEN:
+        description: 'Separate revocable CI-rerun PAT (dispatch-bootstrap era)'
+        required: false
+
+jobs:
+  agent:
+    runs-on: ['${{ inputs.runs-on-label }}']
+    # The real bound is the per-step timeout on the agent step below; this
+    # is the backstop (see #51/#129 for what an unbounded agent step
+    # costs).
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    # Requests exactly what every lane's caller grants today; a called
+    # workflow can only downgrade the caller's grant, never widen it.
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+      actions: write
+    env:
+      # Lane identity, resolved from the pipeline input. The common
+      # lifecycle below must use these rather than repeat per-agent
+      # literals in individual steps. The values mirror
+      # libs/dispatch-contracts/src/pipelines.ts and are pinned against it
+      # by tools/contract-tests/worker-workflow-contract.test.ts.
+      AGENT_NAME: ${{ fromJSON('{"claude":"Claude","codex":"Codex","opencode":"OpenCode"}')[inputs.pipeline] }}
+      WORKER_WORKFLOW: ${{ fromJSON('{"claude":"claude.yml","codex":"codex.yml","opencode":"opencode.yml"}')[inputs.pipeline] }}
+      AGENT_LABEL: ${{ fromJSON('{"claude":"agent:claude","codex":"agent:codex","opencode":"agent:opencode"}')[inputs.pipeline] }}
+      REDISPATCH_COMMAND: ${{ fromJSON('{"claude":"@claude","codex":"/codex","opencode":"/opencode"}')[inputs.pipeline] }}
+      # claude pushes under the fleet App identity resolved from the
+      # caller's AGENT_FLEET_LOGIN; codex and opencode push under the
+      # registered bot login directly.
+      AGENT_GIT_LOGIN: ${{ inputs.pipeline == 'claude' && inputs.agent-fleet-login || 'agent-lcars[bot]' }}
+      # Nx remote cache: the agent's own lint/test/build runs replay task
+      # outputs CI already computed and seed the cache for the CI runs on
+      # its PRs. Empty values or an unreachable server soft-fail to local
+      # recompute, so this can never block the agent.
+      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ inputs.nx-cache-url }}
+      NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
+    steps:
+      # The union surface makes one-lane-required values optional at the
+      # `workflow_call` layer, so enforce them here instead: fail fast,
+      # naming every missing value for the active pipeline at once, before
+      # any step depends on one.
+      - name: Assert pipeline lane configuration
+        env:
+          PIPELINE: ${{ inputs.pipeline }}
+          GCP_WIF_PROVIDER: ${{ inputs.gcp-workload-identity-provider }}
+          GCP_SERVICE_ACCOUNT: ${{ inputs.gcp-service-account }}
+          GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model }}
+          HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          HAS_OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY != '' }}
+        run: |
+          missing=()
+          case "$PIPELINE" in
+            claude)
+              [ "$HAS_CLAUDE_CODE_OAUTH_TOKEN" = 'true' ] || missing+=('secret CLAUDE_CODE_OAUTH_TOKEN')
+              ;;
+            codex)
+              [ -n "$GCP_WIF_PROVIDER" ] || missing+=('input gcp-workload-identity-provider')
+              [ -n "$GCP_SERVICE_ACCOUNT" ] || missing+=('input gcp-service-account')
+              [ -n "$GCP_PROJECT_ID" ] || missing+=('input gcp-project-id')
+              ;;
+            opencode)
+              [ -n "$OPENCODE_MODEL" ] || missing+=('input opencode-model')
+              [ "$HAS_OPENCODE_LLM_API_KEY" = 'true' ] || missing+=('secret OPENCODE_LLM_API_KEY')
+              ;;
+            *)
+              echo "::error::Unknown pipeline '$PIPELINE' (expected claude, codex, or opencode)"
+              exit 1
+              ;;
+          esac
+          if [ "${#missing[@]}" -gt 0 ]; then
+            for value in "${missing[@]}"; do
+              echo "::error::$value is required when pipeline is '$PIPELINE'"
+            done
+            exit 1
+          fi
+
+      # Repo-specific store location (agent-lcars parks it on the shared
+      # workdir mount, sprinkles on the disk-backed runner workdir; homelab
+      # sets none). Published via GITHUB_ENV instead of job env so an empty
+      # input leaves the pnpm default untouched rather than forcing an
+      # empty-string config value.
+      - name: Publish lane environment
+        env:
+          PNPM_STORE_DIR: ${{ inputs.pnpm-store-dir }}
+        run: |
+          if [ -n "$PNPM_STORE_DIR" ]; then
+            echo "npm_config_store_dir=$PNPM_STORE_DIR" >> "$GITHUB_ENV"
+          fi
+
+      # ---- Consumer admission era (published actions, dispatch-bootstrap
+      # off). Fail fast, naming every missing required value at once.
+      - name: Assert required lane inputs are set
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/assert-repo-vars@main # latest
+        with:
+          vars: |
+            AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
+
+      # Freeze the trusted failure path at the earliest point possible, so
+      # mint/claim/checkout can fail without stranding the issue. The
+      # composite copies bytes from the pinned-ref fetch of
+      # jlapenna/agent-lcars itself, not this checkout's working tree.
+      - name: Snapshot post-agent enforcement scripts
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/snapshot-enforcement-scripts@main # latest
+        with:
+          actions: |
+            verify-deliverable
+            report-failure
+            telemetry-finalize
+            post-agent-gates
+
+      # This attempt's stable identity, derived directly from the trusted
+      # dispatch inputs — `g<generation>:<intentId>`, byte-identical to
+      # libs/dispatch-contracts' formatAttemptId. Written to $GITHUB_ENV so
+      # any later step reads it as ${{ env.ATTEMPT_ID }}. (In the
+      # dispatch-bootstrap era the bootstrap composite publishes the same
+      # value itself.)
+      - name: Publish attempt identity
+        if: ${{ !inputs.dispatch-bootstrap }}
+        env:
+          ATTEMPT_ID: g${{ inputs.broker-generation }}:${{ inputs.broker-intent-id }}
+        run: echo "ATTEMPT_ID=$ATTEMPT_ID" >> "$GITHUB_ENV"
+
+      # Mints the Agent LCARS App token so claim/comment/label operations
+      # are attributed to the App's bot login instead of
+      # github-actions[bot]. This does NOT change how claude's "Run Claude
+      # Code" pushes or opens PRs: that step vends its own separate
+      # claude[bot] App token internally.
+      - name: Mint agent token
+        id: agent-lcars-token
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/mint-agent-token@main # latest
+        with:
+          client-id: ${{ inputs.agent-lcars-client-id }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-actions: write
+          permission-contents: write
+          permission-issues: write
+          permission-metadata: read
+          permission-pull-requests: write
+
+      # Claim the anchor issue/PR for the agent fleet the moment the run
+      # starts. Before checkout on purpose — a cross-repo action needs no
+      # local checkout, so the claim still lands even if workspace setup
+      # fails. Additive and idempotent: never removes a human assignee.
+      # The pickup comment is opencode's recorded divergence: its lane has
+      # always posted one; the other lanes never have.
+      - name: Claim the issue as the agent fleet
+        id: claim
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          issue: ${{ inputs.issue }}
+          claim-login: ${{ inputs.agent-fleet-login }}
+          post-pickup-comment: ${{ inputs.pipeline == 'opencode' && 'true' || 'false' }}
+          agent: ${{ env.AGENT_NAME }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # The only consumer-era checkout, now that the App token exists. For
+      # codex/opencode it carries fetch-depth: 0 and the minted token, so
+      # the agent's eventual raw `git push` authenticates as
+      # agent-lcars[bot]; persist-credentials stays true because opencode's
+      # internal finalization does a second, raw `git push` after the
+      # model's turn ends (sprinkles run 29713964250's false-negative
+      # "failure"). claude's checkout deliberately persists the job's own
+      # github.token instead — the claude-code action vends its own push
+      # credential.
+      - name: Checkout with the authorized App credential
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ inputs.pipeline == 'claude' && github.token || steps.agent-lcars-token.outputs.token }}
+          persist-credentials: true
+
+      - name: Shared agent setup
+        id: agent-setup
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/agent-setup@main # latest
+        with:
+          agent-login: ${{ env.AGENT_GIT_LOGIN }}
+
+      # $GITHUB_WORKSPACE never otherwise gets `pnpm install` in these
+      # workflows — only the agent's own linked worktree does. Nx's
+      # worktree-aware resolution anchors some workspace-library imports
+      # off the git "main worktree" root, which here is $GITHUB_WORKSPACE;
+      # left dependency-less that silently breaks Vitest resolution for
+      # tests reaching a workspace lib with third-party deps
+      # (sprinkles#4003).
+      - name: Install workspace dependencies (primary checkout)
+        if: ${{ !inputs.dispatch-bootstrap && inputs.install-workspace-deps }}
+        run: |
+          if ! command -v pnpm >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/corepack-shims"
+            corepack enable --install-directory "$RUNNER_TEMP/corepack-shims"
+            echo "$RUNNER_TEMP/corepack-shims" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/corepack-shims:$PATH"
+          fi
+          HUSKY=0 pnpm install --frozen-lockfile
+
+      - name: Verify agent identity
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/verify-agent-identity@main # latest
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          agent: ${{ env.AGENT_NAME }}
+          app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
+
+      - name: Prepare dispatch context
+        id: agent-dispatch
+        if: ${{ !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@main # latest
+        with:
+          agent: ${{ env.AGENT_NAME }}
+          issue: ${{ inputs.issue }}
+          mode: ${{ inputs.mode }}
+          reply: ${{ inputs.reply }}
+          runbook: ${{ inputs.runbook }}
+          context: ${{ inputs.context }}
+          budget-minutes: ${{ inputs.brief-budget-minutes }}
+          artifact-checkpoint-minutes: ${{ inputs.brief-artifact-checkpoint-minutes }}
+          finalize-checkpoint-minutes: ${{ inputs.brief-finalize-checkpoint-minutes }}
+
+      # The official composite action performs its release lookup without
+      # authentication; anonymous GitHub API traffic is shared across
+      # runners and can exhaust its per-IP budget before OpenCode starts.
+      # The published setup action resolves through this workflow's token,
+      # caches that exact release, and installs it without modifying
+      # runner shell configuration. The "Run OpenCode (CLI)" step below
+      # invokes the same `opencode github run` entry point as the official
+      # action.
+      - name: Setup OpenCode
+        if: ${{ inputs.pipeline == 'opencode' && !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/setup-opencode@main # latest
+        with:
+          github-token: ${{ steps.agent-lcars-token.outputs.token }}
+
+      # ---- agent-lcars thin-executor admission era (#1015). A minimal
+      # checkout first: dispatch-bootstrap is a local composite action, and
+      # GitHub Actions can only resolve a local action once the repo
+      # containing it has been checked out — a platform constraint.
+      - name: Bootstrap checkout for dispatch bootstrap
+        if: ${{ inputs.dispatch-bootstrap }}
+        uses: actions/checkout@v7
+
+      # Freezes the post-agent enforcement scripts, asserts required repo
+      # variables, publishes this attempt's stable identity, mints the
+      # Agent LCARS App token, and claims the anchor issue/PR for the
+      # agent fleet — admission was already decided server-side by the
+      # hosted orchestrator before this workflow ran. See
+      # .github/actions/dispatch-bootstrap/action.yml for the full
+      # step-by-step rationale.
+      - name: Dispatch bootstrap
+        id: dispatch-bootstrap
+        if: ${{ inputs.dispatch-bootstrap }}
+        uses: ./.github/actions/dispatch-bootstrap
+        with:
+          issue: ${{ inputs.issue }}
+          broker-generation: ${{ inputs.broker-generation }}
+          broker-intent-id: ${{ inputs.broker-intent-id }}
+          agent-fleet-login: ${{ inputs.agent-fleet-login }}
+          agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
+          agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+
+      # The real checkout, now that the App token exists: for
+      # codex/opencode this one carries fetch-depth: 0 and the minted
+      # token, so the agent's eventual raw `git push` authenticates as
+      # agent-lcars[bot] (not the bootstrap checkout's default workflow
+      # token). claude re-checks-out at full depth with the job's own
+      # github.token instead — its lane has never persisted the minted App
+      # token, because the claude-code action vends its own push
+      # credential (and handing the agent the App token through the git
+      # credential store is exactly what #645 forbids).
+      - name: Checkout with the authorized App credential (bootstrap era)
+        if: ${{ inputs.dispatch-bootstrap }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ inputs.pipeline == 'claude' && github.token || steps.dispatch-bootstrap.outputs.token }}
+          persist-credentials: true
+
+      # Trusted finalization handoff (agent-lcars#823): agent git identity,
+      # run-start timestamp, shared Nx cache, and the App-identity/push-
+      # credential verification — the last trusted gate before the agent
+      # step below.
+      - name: Agent handoff
+        id: agent-handoff
+        if: ${{ inputs.dispatch-bootstrap }}
+        uses: ./.github/actions/agent-handoff
+        with:
+          agent-login: ${{ env.AGENT_GIT_LOGIN }}
+          token: ${{ steps.dispatch-bootstrap.outputs.token }}
+          agent: ${{ env.AGENT_NAME }}
+          app-slug: ${{ steps.dispatch-bootstrap.outputs.app-slug }}
+
+      # ---- Shared trunk. Codex uses two distinct GCP identities,
+      # deliberately kept separate:
+      #
+      #   subscription-credential SA (here) — read AND add versions of the
+      #                                        repo's own auth.json secret
+      #   telemetry-writer (below)          — write session telemetry only
+      #
+      # export_environment_variables is left at its default (true) for
+      # this one because the `gcloud secrets` calls in later steps need
+      # ambient ADC. That is also why this credential is scoped to exactly
+      # one secret in Terraform and nothing else: it IS reachable from the
+      # agent's own shell.
+      - name: Authenticate to GCP for the subscription credential
+        id: codex-credential-auth
+        if: ${{ inputs.pipeline == 'codex' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ inputs.gcp-workload-identity-provider }}
+          service_account: ${{ inputs.gcp-service-account }}
+
+      - name: Setup gcloud
+        if: ${{ inputs.pipeline == 'codex' }}
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # Fail before starting a costly agent turn if the runner image, WIF
+      # credential, or any cross-project viewer grant has regressed
+      # (sprinkles). The credential file exported by
+      # google-github-actions/auth remains available to Codex and every
+      # worktree it creates through the ambient process environment.
+      - name: Verify read-only GCP access
+        if: ${{ inputs.pipeline == 'codex' && inputs.gcp-access-verify-projects != '' }}
+        env:
+          VERIFY_PROJECTS: ${{ inputs.gcp-access-verify-projects }}
+        run: |
+          set -euo pipefail
+          gcloud auth print-access-token >/dev/null
+          for project in $VERIFY_PROJECTS; do
+            gcloud logging read 'resource.type="cloud_run_revision"' \
+              --project="$project" \
+              --limit=1 \
+              --format='value(timestamp)' >/dev/null
+            gcloud run services list \
+              --project="$project" \
+              --region=us-central1 \
+              --limit=1 \
+              --format='value(metadata.name)' >/dev/null
+            gcloud firestore databases describe \
+              --project="$project" \
+              --database='(default)' \
+              --format='value(name)' >/dev/null
+            echo "Verified read-only GCP access: $project"
+          done
+
+      # Separate WIF identity for telemetry, including
+      # export_environment_variables: false, which keeps the storage-scoped
+      # writer credential out of the agent's ambient environment. The
+      # sidecar forces source: 'issue-agent', so this run's turns/tokens/
+      # cost show up in the console uniformly across lanes. if: always() so
+      # an earlier step's failure doesn't skip telemetry entirely — the
+      # composite's own inner steps are already continue-on-error, so this
+      # never turns a healthy run red. Two era-split instances of the same
+      # composite: the dispatch-bootstrap era resolves it from this repo's
+      # own dispatched-ref checkout, the consumer era from the published
+      # `@main` fetch.
+      - name: Start telemetry sidecar
+        id: telemetry-start
+        if: always() && inputs.dispatch-bootstrap
+        uses: ./.github/actions/telemetry-start
+        with:
+          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
+          service-account: ${{ inputs.telemetry-service-account }}
+          issue: ${{ inputs.issue }}
+
+      - name: Start telemetry sidecar (published)
+        id: telemetry-start-published
+        if: always() && !inputs.dispatch-bootstrap && inputs.telemetry-workload-identity-provider != ''
+        uses: jlapenna/agent-lcars/.github/actions/telemetry-start@main # latest
+        with:
+          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
+          service-account: ${{ inputs.telemetry-service-account }}
+          issue: ${{ inputs.issue }}
+
+      # GCP access via Workload Identity Federation so the agent can
+      # self-verify things it used to have to ask the maintainer to check.
+      # No stored key: the WIF provider trusts the caller repo's OIDC token
+      # directly. claude's toggle has never been era-gated; opencode's
+      # lane only ever offered it in the consumer era.
+      - name: Authenticate to GCP
+        id: gcp-auth
+        if: >-
+          (inputs.pipeline == 'claude' && inputs.gcp-auth) ||
+          (inputs.pipeline == 'opencode' && !inputs.dispatch-bootstrap && inputs.gcp-auth)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ inputs.gcp-workload-identity-provider }}
+          service_account: ${{ inputs.gcp-service-account }}
+
+      - name: Install Codex CLI
+        # npm's prefix in the runner image is /usr, so a bare `npm install
+        # --global` tries to mkdir /usr/lib/node_modules/@openai. That
+        # directory is root-owned 0755 and the runner executes as uid 1001,
+        # so every attempt dies with EACCES. Install into a user-writable
+        # prefix instead of reaching for sudo: this pool deliberately runs
+        # agent-authored code unprivileged (mount_docker_socket: false), and
+        # a global install is not a reason to hand it root.
+        #
+        # $GITHUB_PATH, not a bare export: later steps run in their own
+        # shells and would otherwise not find the binary.
+        if: ${{ inputs.pipeline == 'codex' }}
+        run: |
+          npm config set prefix "$HOME/.npm-global"
+          npm install --global @openai/codex@0.144.6
+          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+
+      - name: Restore subscription authentication
+        # DO NOT populate this secret by copying the blob out of another
+        # repository's auth.json secret, however tempting the shortcut
+        # looks. Codex rotates the credential on every run and the
+        # "Persist refreshed..." step below writes the new one back.
+        #
+        # Two repos sharing one blob therefore invalidate each other: a run
+        # here rotates the upstream token, and the other repo's stored copy
+        # is stale by its next run. The caller's concurrency group
+        # serializes runs within one repo; nothing can serialize across
+        # repos, so there is no configuration that makes a shared
+        # credential safe.
+        #
+        # Mint an independent one instead (`codex login`) — same ChatGPT
+        # subscription, separate token, rotating on its own.
+        id: restore-auth
+        if: ${{ inputs.pipeline == 'codex' }}
+        env:
+          GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
+          CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
+        run: |
+          mkdir -p "$HOME/.codex"
+          chmod 700 "$HOME/.codex"
+          gcloud secrets versions access latest \
+            --project="$GCP_PROJECT_ID" \
+            --secret="$CODEX_AUTH_SECRET_NAME" > "$HOME/.codex/auth.json"
+          chmod 600 "$HOME/.codex/auth.json"
+          codex login status
+          # #1192: fingerprint the credential as-restored, before Codex gets
+          # a chance to rotate it. "Persist refreshed subscription
+          # authentication" below compares this against the end-of-run
+          # file, so a run that never actually rotated the token (nothing
+          # to persist) doesn't burn a new secret version identical to the
+          # one already stored.
+          echo "restored-sha256=$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      # The published action resolves its cache key with an unauthenticated
+      # GitHub Releases API request. Shared runners can exhaust that
+      # IP-based limit even when this job has a valid token, so scope
+      # authentication to that one URL without putting the token in a
+      # process-wide curl config.
+      - name: Authenticate published OpenCode action API calls
+        if: ${{ inputs.pipeline == 'opencode' && inputs.dispatch-bootstrap }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/opencode-curl-bin"
+          cat > "$RUNNER_TEMP/opencode-curl-bin/curl" <<'CURL_WRAPPER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          for argument in "$@"; do
+            if [[ "$argument" == 'https://api.github.com/repos/anomalyco/opencode/releases/latest' ]]; then
+              exec /usr/bin/curl -H "Authorization: Bearer ${GITHUB_TOKEN:?}" "$@"
+            fi
+          done
+          exec /usr/bin/curl "$@"
+          CURL_WRAPPER
+          chmod 700 "$RUNNER_TEMP/opencode-curl-bin/curl"
+          echo "$RUNNER_TEMP/opencode-curl-bin" >> "$GITHUB_PATH"
+
+      # A second, narrower mint — deliberately not the App token above and
+      # not github.token. The App token is the agent's own working
+      # identity; github.token is this job's control-plane credential, and
+      # handing either to the agent step below would let agent-authored
+      # code act as the controller — exactly what #645 forbids.
+      # AGENT_CI_RERUN_TOKEN is a classic PAT at public_repo scope from the
+      # agent-lcars-bot machine account: a separate, attributable,
+      # independently revocable identity confined to the public repo.
+      # Loud rather than silent when the credential is absent: an empty
+      # $ACTIONS_RERUN_TOKEN makes `gh run rerun` fail with an opaque error
+      # deep inside an agent turn, which reads as "the agent is stuck"
+      # rather than "a secret is unset".
+      - name: Check CI-rerun credential is present
+        if: ${{ inputs.dispatch-bootstrap }}
+        run: |
+          if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
+            echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
+          not be able to rerun its own failed CI (agent-protocol.md §8). \
+          Expected a classic PAT with public_repo scope."
+          fi
+        env:
+          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
+
+      - name: Prepare current dispatch brief and runtime deadline
+        id: dispatch-brief
+        if: ${{ inputs.dispatch-bootstrap }}
+        uses: ./.github/actions/prepare-agent-dispatch
+        with:
+          token: ${{ steps.dispatch-bootstrap.outputs.token }}
+          agent: ${{ env.AGENT_NAME }}
+          issue: ${{ inputs.issue }}
+          mode: ${{ inputs.mode }}
+          reply: ${{ inputs.reply }}
+          runbook: ${{ inputs.runbook }}
+          context: ${{ inputs.context }}
+          # Must track the agent step's own timeout-minutes, and prepare.sh
+          # fails closed if these are not ordered inside it. agent-lcars's
+          # artifact checkpoint is deliberately early: the push credential
+          # dies before the step does (#1217).
+          budget-minutes: ${{ inputs.brief-budget-minutes }}
+          artifact-checkpoint-minutes: ${{ inputs.brief-artifact-checkpoint-minutes }}
+          finalize-checkpoint-minutes: ${{ inputs.brief-finalize-checkpoint-minutes }}
+
+      # The skill install is fail-soft by contract (guidance must never
+      # fail the job it instruments), and agent-lcars's claude prompt
+      # relies on those skills being discoverable rather than naming their
+      # paths. An empty digest is the observable symptom of an install that
+      # quietly did nothing, so surface it (#1278). A warning, not a
+      # failure — the prompt keeps a checkout fallback.
+      - name: Warn if the layer-1 skill install produced nothing
+        if: inputs.pipeline == 'claude' && inputs.dispatch-bootstrap && steps.dispatch-brief.outputs.skills-digest == ''
+        run: |
+          echo "::warning::Layer-1 skill install produced no digest (#1278); this run's agent is falling back to checkout paths for the protocol."
+
+      - name: Preserve protected dispatch snapshot for evaluation
+        if: ${{ inputs.protected-snapshot }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-dispatch-brief-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.dispatch-brief.outputs.path || steps.agent-dispatch.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # One uniform budget mechanism for claude: with long-run-budget off
+      # this simply echoes the static inputs; with it on it takes
+      # sprinkles' label-resolved implementation (workflow_dispatch has no
+      # event payload to read labels from, so the dispatched issue's live
+      # labels are the one source of truth; a PR-anchored dispatch falls
+      # back to the PR's closing issue).
+      - name: Resolve agent budget
+        id: budget
+        if: ${{ inputs.pipeline == 'claude' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ inputs.issue }}
+          LONG_RUN_BUDGET: ${{ inputs.long-run-budget }}
+          DEFAULT_MAX_TURNS: ${{ inputs.max-turns }}
+          DEFAULT_TIMEOUT_MINUTES: ${{ inputs.agent-timeout-minutes }}
+        run: |
+          if [ "$LONG_RUN_BUDGET" != "true" ]; then
+            echo "max_turns=$DEFAULT_MAX_TURNS" >> "$GITHUB_OUTPUT"
+            echo "timeout_minutes=$DEFAULT_TIMEOUT_MINUTES" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          long=false
+          labels=$(gh issue view "$NUM" --repo "${{ github.repository }}" \
+            --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || true)
+          if [[ ",${labels}," == *",agent-option:long-run,"* ]]; then
+            long=true
+          elif [ -z "$labels" ]; then
+            # NUM anchors a PR, not an issue: inherit from its closing issue.
+            source_issue=$(gh pr view "$NUM" --repo "${{ github.repository }}" \
+              --json closingIssuesReferences \
+              --jq '.closingIssuesReferences[0].number // empty' 2>/dev/null || true)
+            if [ -n "$source_issue" ]; then
+              source_labels=$(gh issue view "$source_issue" --repo "${{ github.repository }}" \
+                --json labels --jq '[.labels[].name] | join(",")')
+              [[ ",${source_labels}," == *",agent-option:long-run,"* ]] && long=true
+            fi
+          fi
+
+          if [ "$long" = "true" ]; then
+            echo "max_turns=400" >> "$GITHUB_OUTPUT"
+            echo "timeout_minutes=170" >> "$GITHUB_OUTPUT"
+          else
+            echo "max_turns=200" >> "$GITHUB_OUTPUT"
+            echo "timeout_minutes=80" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Claude Code
+        id: agent-claude
+        if: ${{ inputs.pipeline == 'claude' }}
+        # A step timeout, not just the job's: exceeding this fails the
+        # step rather than cancelling the job, so the post-agent gates
+        # below still run and the issue actually hears about it.
+        timeout-minutes: ${{ fromJSON(steps.budget.outputs.timeout_minutes) }}
+        # SHA-pinned (not a tag, and not floating @v1) deliberately: this
+        # step holds the CLAUDE_CODE_OAUTH_TOKEN, the job's full write
+        # permissions, and unrestricted Bash on a self-hosted runner — the
+        # single most privileged step in the fleet. Resolved from the
+        # v1.0.191 tag (the fleet hit a real breakage on a later version —
+        # do not bump without confirming the new version against a live
+        # test dispatch first).
+        uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1.0.191
+        env:
+          # Turns on the marker-stamping gh wrapper agent-handoff installed
+          # (agent-lcars#1213) — dispatch-bootstrap era only; consumer
+          # prompts stamp the attempt-claim marker themselves. Deliberately
+          # set ONLY here: the post-agent gates use the same gh, and
+          # stamping their reports would let the deliverable gate satisfy
+          # itself.
+          AGENT_MARKER_STAMPING: ${{ inputs.dispatch-bootstrap && '1' || '' }}
+          # The app token the action vends to the agent maxes out at
+          # actions:read, so re-running workflows needs a second token.
+          # Era-tied (see header): the dispatch-bootstrap era hands the
+          # separate AGENT_CI_RERUN_TOKEN PAT and NEVER falls back to the
+          # job's control-plane token when that secret is unset (#645);
+          # consumers hand the job token, whose actions:write their own
+          # permissions grant. The agent uses it as
+          # `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun ...`
+          # (agent-protocol.md §8).
+          ACTIONS_RERUN_TOKEN: ${{ (inputs.dispatch-bootstrap && secrets.AGENT_CI_RERUN_TOKEN) || (!inputs.dispatch-bootstrap && github.token) || '' }}
+        with:
+          # A manually-issued long-lived token from `claude setup-token`
+          # (interactive browser OAuth flow) — no auto-refresh or rotation.
+          # If it expires, every dispatch crashes instantly
+          # (is_error:true, api_error_status:401, total_cost_usd:0) while
+          # the workflow's own conclusion still reports "success" — the
+          # "Verify Claude run status" step below is what actually catches
+          # this. Fix: run `claude setup-token` to completion in a terminal
+          # with real browser access, then `gh secret set
+          # CLAUDE_CODE_OAUTH_TOKEN` in the calling repo.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Grant the action's GitHub token read access to Actions so the
+          # agent can inspect CI results on the draft PRs it opens.
+          additional_permissions: |
+            actions: read
+          # Scoped to the fleet's own bots, not `*` — a wildcard would let
+          # any App that can reach the trigger start a privileged agent
+          # step. github-actions[bot] is the actor of workflow_dispatch
+          # runs; agent-lcars[bot] became the triggering actor when
+          # dispatch moved onto App installation tokens (#1287).
+          allowed_bots: 'claude[bot],github-actions[bot],agent-lcars[bot]'
+          # Caller-supplied so every run uses agent mode consistently; an
+          # empty prompt would silently fall back to tag mode with
+          # different tool rules and no eyes-reaction/progress behavior.
+          prompt: ${{ inputs.prompt }}
+          # Allow Bash wholesale. The action denies all Bash by default,
+          # and a granular allowlist is brittle (env-var prefixes and pipes
+          # don't match Bash(cmd:*) patterns cleanly). The authorization
+          # gate is the caller's dispatch admission; the runner is
+          # dedicated to this agent workload. ScheduleWakeup/SendMessage
+          # only work in interactive sessions; in a headless run they let
+          # the agent end its turn "waiting" on something that will never
+          # resume. Task is disallowed for the same reason: it defaults to
+          # run_in_background, so a headless run can background a subagent
+          # and end its own turn cleanly while the backgrounded work never
+          # runs (agent-protocol.md §5/§9; the deliverable-evidence gate
+          # below is the backstop).
+          claude_args: |
+            --max-turns ${{ steps.budget.outputs.max_turns }}
+            --allowedTools "Bash,Edit,Write,MultiEdit"
+            --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task"
+
+      # Claude-only trusted adapter check, era-split. The
+      # dispatch-bootstrap variant requires the pinned action's completed
+      # structured result instead of querying this workflow's own log while
+      # the run is still in progress (GitHub often cannot serve it yet);
+      # the consumer variant greps the run log the way homelab/sprinkles
+      # do today. Runs BEFORE the generic gates so a failure correctly
+      # skips deliverable validation through JOB_STATUS.
+      - name: Verify Claude run status
+        if: success() && inputs.pipeline == 'claude' && inputs.dispatch-bootstrap
+        env:
+          CLAUDE_EXECUTION_FILE: ${{ steps.agent-claude.outputs.execution_file }}
+        run: |
+          bash tools/verify-claude-run-status.sh "$CLAUDE_EXECUTION_FILE"
+
+      - name: Verify Claude run status (log scan)
+        if: success() && inputs.pipeline == 'claude' && !inputs.dispatch-bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG="$(gh run view ${{ github.run_id }} --log 2>/dev/null || true)"
+          # GitHub often can't serve logs for a still-in-progress run (this
+          # step runs as part of the very run whose log it's fetching), so
+          # LOG can legitimately come back empty - make that visible instead
+          # of letting the checks below silently pass on no data.
+          if [ -z "$LOG" ]; then
+            echo "::warning::Could not fetch this run's log (often unavailable while the run is still in progress); the auth-crash check below was skipped."
+          fi
+          # Detect if the run crashed during initialization (is_error: true and cost is 0,
+          # or api_error_status is 401).
+          if (echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0') || \
+             (echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'); then
+            echo "::error::Claude Code run failed silently during startup/authentication."
+            exit 1
+          fi
+
+      - name: Run Codex
+        id: agent-codex
+        if: ${{ inputs.pipeline == 'codex' }}
+        # A step timeout, not just the job's: exceeding this fails the step
+        # rather than cancelling the job, so "Persist refreshed subscription
+        # authentication", the deliverable gate, the failure report, and the
+        # queue hand-off below all still run. #51 is the incident that
+        # taught this — an unbounded agent step burned the whole job budget
+        # and the issue was never told.
+        timeout-minutes: ${{ inputs.agent-timeout-minutes }}
+        env:
+          # Marker-stamping gh wrapper installed by agent-handoff
+          # (agent-lcars#1213) — dispatch-bootstrap era only; consumer
+          # prompts stamp the attempt-claim marker themselves. Deliberately
+          # set ONLY here — the post-agent gates use the same gh, and
+          # stamping their reports would let the deliverable gate satisfy
+          # itself.
+          AGENT_MARKER_STAMPING: ${{ inputs.dispatch-bootstrap && '1' || '' }}
+          # The minted App token is the agent's own working identity for
+          # its gh/git operations — never github.token, the job's
+          # control-plane credential (#645).
+          GH_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token || steps.agent-lcars-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token || steps.agent-lcars-token.outputs.token }}
+          # Era-tied CI-rerun affordance (agent-protocol.md §8) — see "Run
+          # Claude Code"'s identical expression for the #645 rationale and
+          # the deliberate no-fallback on an unset PAT.
+          ACTIONS_RERUN_TOKEN: ${{ (inputs.dispatch-bootstrap && secrets.AGENT_CI_RERUN_TOKEN) || (!inputs.dispatch-bootstrap && github.token) || '' }}
+          CODEX_PROMPT: ${{ inputs.prompt }}
+        run: |
+          # pipefail is load-bearing: without it this step's status is
+          # `tee`'s, which is always 0, so a crashed/auth-failed codex run
+          # would report success. The deliverable gate does not reliably
+          # catch that -- a pre-existing status:needs-human label, or a PR opened
+          # just before the crash, satisfies it.
+          set -o pipefail
+          codex exec --json --dangerously-bypass-approvals-and-sandbox \
+            "$CODEX_PROMPT" | tee "$RUNNER_TEMP/codex-output.jsonl"
+
+      - name: Persist refreshed subscription authentication
+        # Persist a refresh whether Codex succeeded or failed, but do not
+        # turn a restore/setup failure into a second, misleading auth
+        # failure.
+        if: always() && inputs.pipeline == 'codex' && steps.restore-auth.outcome == 'success'
+        env:
+          GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
+          CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
+          RESTORED_SHA256: ${{ steps.restore-auth.outputs.restored-sha256 }}
+        run: |
+          if [ ! -s "$HOME/.codex/auth.json" ]; then
+            echo "::error::Codex auth.json is missing or empty; refusing to replace the stored credential"
+            exit 1
+          fi
+
+          # #1192 — do not write back a burned credential lineage.
+          #
+          # Incident (2026-08-15): the restored OAuth refresh token had
+          # already been rotated out from under a run ("refresh token
+          # was already used"). Codex failed in ~40s with hundreds of
+          # codex_login::auth::manager refresh errors, and this step —
+          # deliberately `if: always()`, so a genuinely rotated token
+          # survives an unrelated agent failure — still ran and wrote the
+          # now-burned auth.json back as a new secret version. That
+          # destroyed the version history a human would need to find the
+          # last-good credential, and re-armed the identical failure for
+          # the very next dispatch.
+          #
+          # This guard is deliberately narrow: it skips the write ONLY
+          # when the captured codex output
+          # ($RUNNER_TEMP/codex-output.jsonl, produced by the `tee` in
+          # "Run Codex") carries positive evidence that THIS run's auth
+          # was the problem. A run that failed for any other reason may
+          # still have legitimately rotated the token before failing, and
+          # losing that rotation would burn the lineage just the same —
+          # so this must never become a blanket "skip persist on any
+          # failure" guard.
+          #
+          # Fixed-string greps only, not a broad pattern: agent output
+          # routinely discusses HTTP status codes and auth as the SUBJECT
+          # of its work (e.g. debugging someone else's 401), and a regex
+          # loose enough to catch every phrasing would misclassify that as
+          # this run's own auth failure. Each signature is either copied
+          # verbatim from the incident log or anchored to the
+          # codex_login source module that actually emits the refresh
+          # error, so a bare mention of "401" elsewhere in agent output
+          # cannot trip it.
+          codex_output="$RUNNER_TEMP/codex-output.jsonl"
+          auth_failure_reason=""
+          if [ -s "$codex_output" ]; then
+            if grep -qF -- 'Your access token could not be refreshed' "$codex_output"; then
+              # Covers both the plain CLI message and the structured
+              # {"type":"turn.failed","error":{"message":"Your access
+              # token could not be refreshed..."}} shape codex emits on
+              # --json runs: that JSON's error.message value IS this
+              # exact string, so one fixed-string match catches both
+              # forms without needing to parse the JSON.
+              auth_failure_reason='codex reported "Your access token could not be refreshed"'
+            elif grep -qF -- 'refresh token was already used' "$codex_output"; then
+              auth_failure_reason='codex reported "refresh token was already used" (the #1192 incident signature)'
+            elif grep -F -- 'codex_login' "$codex_output" | grep -qF -- '401 Unauthorized'; then
+              # Anchored to the codex_login logger, not a bare "401" —
+              # see the false-positive note above.
+              auth_failure_reason='codex_login logged a 401 Unauthorized refresh error'
+            fi
+          fi
+
+          if [ -n "$auth_failure_reason" ]; then
+            echo "::warning::Skipping credential persist: $auth_failure_reason. The restored credential lineage is burned; a human must re-seed $CODEX_AUTH_SECRET_NAME (see #1192). Not writing auth.json back as a new secret version."
+            exit 0
+          fi
+
+          # Cheap no-op guard: if nothing rotated, writing the same bytes
+          # back only adds version noise (and would still, per the
+          # incident above, mask that no useful rotation happened this
+          # run).
+          if [ -n "$RESTORED_SHA256" ]; then
+            end_of_run_sha256="$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')"
+            if [ "$end_of_run_sha256" = "$RESTORED_SHA256" ]; then
+              echo "::notice::Skipping credential persist: auth.json is byte-identical to the restored credential; nothing rotated this run"
+              exit 0
+            fi
+          fi
+
+          gcloud secrets versions add "$CODEX_AUTH_SECRET_NAME" \
+            --project="$GCP_PROJECT_ID" \
+            --data-file="$HOME/.codex/auth.json"
+
+      # ---- Era-split opencode agent step (see header). #51: two
+      # dispatches retried a persistent LiteLLM 429 with a backoff growing
+      # to tens of minutes and never gave up — no comment, no label, no PR
+      # — until a human cancelled. Neither entry point exposes a max-retry
+      # or max-elapsed-time option; the hard bound therefore lives here, as
+      # a *step* timeout: exceeding it marks the step failed rather than
+      # cancelling the job, so "Run post-agent gates" below still reports
+      # the failure and the issue actually hears about it. Keep it well
+      # short of the App-token expiry: the push credential minted at job
+      # start dies 3600s after mint, and nothing refreshes it mid-step
+      # (#1217 — run 31906606247 lost 48 steps of finished work to exactly
+      # that).
+      - name: Run OpenCode
+        id: agent-opencode
+        if: ${{ inputs.pipeline == 'opencode' && inputs.dispatch-bootstrap }}
+        timeout-minutes: ${{ inputs.agent-timeout-minutes }}
+        env:
+          OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+          # Marker-stamping gh wrapper installed by agent-handoff
+          # (agent-lcars#1213) — deliberately set ONLY here; the post-agent
+          # gates use the same gh, and stamping their reports would let the
+          # deliverable gate satisfy itself.
+          AGENT_MARKER_STAMPING: '1'
+          # use_github_token needs this passed explicitly — it does not
+          # fall back to the job's ambient token.
+          GITHUB_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}
+          # The CI-rerun affordance (agent-protocol.md §8): a classic PAT
+          # at public_repo scope — NOT github.token (#645).
+          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
+        uses: anomalyco/opencode/github@def7220bfc65b84046e597e9be772eae81f663ff # published action source, pinned
+        with:
+          model: ${{ inputs.opencode-model }}
+          agent: build
+          variant: minimal
+          use_github_token: 'true'
+          prompt: ${{ inputs.prompt }}
+
+      - name: Run OpenCode (CLI)
+        id: agent-opencode-cli
+        if: ${{ inputs.pipeline == 'opencode' && !inputs.dispatch-bootstrap }}
+        timeout-minutes: ${{ inputs.agent-timeout-minutes }}
+        env:
+          OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+          # use_github_token needs this passed explicitly — it does not
+          # fall back to the job's ambient token.
+          GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
+          # The CI-rerun affordance (agent-protocol.md §8): the recipe
+          # silently no-ops when this is unset.
+          ACTIONS_RERUN_TOKEN: ${{ github.token }}
+          MODEL: ${{ inputs.opencode-model }}
+          USE_GITHUB_TOKEN: 'true'
+          PROMPT: ${{ inputs.prompt }}
+        run: opencode github run
+
+      - name: Export sanitized OpenCode trajectory
+        id: opencode-trajectory
+        if: always() && inputs.pipeline == 'opencode' && inputs.trajectory-export && steps.agent-opencode.outcome != 'skipped'
+        continue-on-error: true
+        uses: ./.github/actions/archive-opencode-trajectory
+        env:
+          ISSUE: ${{ inputs.issue }}
+        with:
+          started-at: ${{ steps.agent-handoff.outputs['started-at'] }}
+
+      - name: Persist OpenCode trajectory artifact
+        if: always() && inputs.pipeline == 'opencode' && inputs.trajectory-export && steps.opencode-trajectory.outputs.path != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: opencode-trajectory-${{ github.run_id }}
+          path: ${{ steps.opencode-trajectory.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # Shared post-agent gate orchestrator (#645 Phase 3): runs
+      # telemetry-finalize, verify-deliverable, failure-reason
+      # determination, and report-failure, in that order, from ONE script —
+      # see post-agent-gates.sh's own header for exactly how it reproduces
+      # each phase's original if: condition using JOB_STATUS.
+      # Silent-stall detection matters because a run can end job-success
+      # having produced NOTHING — "success" alone is never proof of
+      # delivery (agent-protocol.md §5). Its comment clause is mode-gated
+      # (reply only), so an earlier status comment cannot prove a
+      # completed implement dispatch.
+      #
+      # Runs from the pre-agent snapshot ($RUNNER_TEMP), not a local
+      # composite: this step's scripts run AFTER the agent step, which
+      # has unrestricted Bash and could have rewritten a locally-resolved
+      # composite in the working tree.
+      - name: Run post-agent gates
+        id: post_agent_gates
+        if: always()
+        env:
+          # The job's own GITHUB_TOKEN, NOT the minted App token:
+          # installation tokens expire after one hour, and this step can
+          # run at hour three of a long agent turn (run 30988771060 hit
+          # exactly that — HTTP 401 on the failure report). The job token
+          # lives for the whole job; attribution shifts to
+          # github-actions[bot].
+          GH_TOKEN: ${{ github.token }}
+          AGENT: ${{ env.AGENT_NAME }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          ISSUE: ${{ inputs.issue }}
+          MODE: ${{ inputs.mode }}
+          # This run's verified attempt identity (#815): published via
+          # $GITHUB_ENV by dispatch-bootstrap or the consumer-era publish
+          # step, always earlier in this same job.
+          ATTEMPT_ID: ${{ env.ATTEMPT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          MESSAGE_PREFIX: ${{ inputs.message-prefix }}
+          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
+          # Caller-rendered no-deliverable wording (agent-protocol.md §5) —
+          # the shared script stays lane-agnostic.
+          NO_DELIVERABLE_REASON: ${{ inputs.no-deliverable-reason }}
+          # Claude-only extra failure-reason signal (a turn-budget
+          # exhaustion or an expired/invalid OAuth token), kept as an
+          # adapter-style input to the shared orchestrator — see
+          # claude-log-scan.sh. Left empty on every other pipeline.
+          FAILURE_LOG_SCAN_SCRIPT: ${{ inputs.pipeline == 'claude' && format('{0}/trusted-actions/post-agent-gates/claude-log-scan.sh', runner.temp) || '' }}
+          CLAUDE_EXECUTION_FILE: ${{ steps.agent-claude.outputs.execution_file }}
+        run: bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"
+
+      # Hand the concurrency group off to the next queued issue
+      # (sprinkles#3489). GitHub keeps only ONE pending run per group — a
+      # third arrival cancels whichever was already waiting, silently: not
+      # one step of the cancelled run executes. So stop using GitHub's
+      # queue as a queue: serialize on the group, but do the queuing
+      # explicitly — as this run releases the group, re-trigger the next
+      # unclaimed issue. always(): a failed or cancelled run must still
+      # pass the baton, or one bad issue strands everything behind it.
+      # Self-healing by construction: a dispatched run that is itself
+      # cancelled leaves its issue unclaimed for the next completing run.
+      - name: Dispatch the next queued Codex issue
+        if: always() && inputs.pipeline == 'codex' && inputs.queue-drain && steps.claim.outputs.claimed == 'true'
+        env:
+          # The job's own GITHUB_TOKEN, NOT the minted App token — the
+          # mint can be hours expired by now.
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CURRENT: ${{ inputs.issue }}
+          FLEET_LOGIN: ${{ inputs.agent-fleet-login }}
+        run: |
+          set -euo pipefail
+
+          # Queue only valid exact-one Codex selections. Contradictory
+          # multi-agent state is escalated by the reconciler, never resolved
+          # through hidden precedence.
+          NEXT=$(gh issue list --repo "$REPO" --state open --label agent:codex \
+            --json number,labels,assignees --limit 100 \
+            | jq -r --argjson cur "${CURRENT:-0}" --arg fleet "$FLEET_LOGIN" '
+                [ .[]
+                  | select((.labels | map(.name) | index("agent:claude")) == null)
+                  | select((.labels | map(.name) | index("agent:opencode")) == null)
+                  | select((.assignees | map(.login) | index($fleet)) == null)
+                  | .number
+                ]
+                | map(select(. != $cur))
+                | sort
+                | first // empty')
+
+          if [ -z "$NEXT" ]; then
+            echo "No unclaimed codex issues remain; queue is drained."
+            exit 0
+          fi
+
+          echo "Handing off to #$NEXT."
+          # NEXT was selected above for already carrying agent:codex, so a
+          # plain re-add is a GitHub API no-op -- it mints no new `labeled`
+          # webhook delivery. Remove then re-add to force a fresh one; the
+          # central orchestrator (agent-lcars#1190) admits it from there
+          # and dispatches codex.yml directly with mode=implement. A stray
+          # extra delivery is harmless: the orchestrator's per-task mutex
+          # refuses a request against an already-busy task.
+          gh issue edit "$NEXT" --repo "$REPO" --remove-label agent:codex
+          gh issue edit "$NEXT" --repo "$REPO" --add-label agent:codex

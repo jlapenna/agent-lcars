@@ -30,6 +30,8 @@ interface WorkflowJob {
   if?: string;
   env?: Record<string, string | number | boolean>;
   uses?: string;
+  with?: Record<string, string | number | boolean>;
+  secrets?: Record<string, string>;
 }
 
 interface WorkflowCallInput {
@@ -56,23 +58,66 @@ function loadWorkflow(file: string): { source: string; doc: WorkflowDoc } {
   return { source, doc: parseYaml(source) as WorkflowDoc };
 }
 
-/** The reusable lane workflow file each thin caller must delegate to
+/** The published reusable lane shim each thin caller must delegate to
  * (#1312 U1): the caller keeps run-name/dispatch inputs/permissions, the
- * lane keeps the worker job. Same-repo relative `uses:` so a dispatched
- * ref stays coherent with its own lane bytes. */
+ * shim keeps the published `workflow_call` surface. Same-repo relative
+ * `uses:` so a dispatched ref stays coherent with its own lane bytes. */
 function laneWorkflowFile(pipeline: string): string {
   return `agent-lane-${pipeline}.yml`;
 }
 
-/** Resolve a pipeline's worker job through the thin caller's `uses:`
- * indirection: the caller declares `jobs.<pipeline>` as a reusable call of
- * the lane workflow, and the lane declares the worker job under the same
- * pipeline id with the lane-data `env:` block. */
+/** The single parameterized worker lane every shim delegates to
+ * (#1340 A-R1), carrying the one worker job (`jobs.agent`) behind a
+ * required `pipeline` input. */
+const UNIFIED_LANE_FILE = 'agent-lane.yml';
+
+/** Resolve a raw expression string from agent-lane.yml's job `env:` block
+ * for one pipeline. The unified lane keys its per-pipeline identity
+ * values off `inputs.pipeline` with exactly two expression shapes:
+ * `fromJSON('<map>')[inputs.pipeline]` and the claude-vs-bot ternary for
+ * AGENT_GIT_LOGIN. Anything else passes through verbatim, so a new
+ * expression shape fails the equality assertions loudly instead of being
+ * silently "resolved". */
+function resolveLaneExpression(
+  raw: string | number | boolean | undefined,
+  pipeline: string,
+): string | undefined {
+  if (typeof raw !== 'string') {
+    return raw === undefined ? undefined : String(raw);
+  }
+  const fromJsonMap = raw.match(
+    /^\$\{\{\s*fromJSON\('(?<map>.+)'\)\[inputs\.pipeline\]\s*\}\}$/u,
+  );
+  if (fromJsonMap?.groups) {
+    const map = JSON.parse(fromJsonMap.groups.map) as Record<string, string>;
+    expect(
+      Object.keys(map).sort(),
+      `agent-lane.yml env map "${raw}" covers exactly the registry pipelines`,
+    ).toEqual([...DISPATCH_PIPELINES].sort());
+    return map[pipeline];
+  }
+  const pipelineTernary = raw.match(
+    /^\$\{\{\s*inputs\.pipeline == '(?<pipeline>[a-z]+)' && inputs\.(?<input>[a-z-]+) \|\| '(?<fallback>[^']+)'\s*\}\}$/u,
+  );
+  if (pipelineTernary?.groups) {
+    return pipeline === pipelineTernary.groups.pipeline
+      ? `\${{ inputs.${pipelineTernary.groups.input} }}`
+      : pipelineTernary.groups.fallback;
+  }
+  return raw;
+}
+
+/** Resolve a pipeline's worker job through both layers of `uses:`
+ * indirection: the caller declares `jobs.<pipeline>` as a reusable call
+ * of the published shim, the shim declares `jobs.<pipeline>` as a call of
+ * the unified lane with `pipeline: <pipeline>`, and the unified lane
+ * declares the one worker job (`jobs.agent`) whose `env:` block resolves
+ * the lane-data values from `inputs.pipeline`. */
 function resolveWorkerLane(pipeline: string): {
   callerSource: string;
   laneSource: string;
   laneDoc: WorkflowDoc;
-  env: Record<string, string | number | boolean>;
+  env: Record<string, string | undefined>;
 } {
   const contract =
     PIPELINE_CONTRACTS[pipeline as keyof typeof PIPELINE_CONTRACTS];
@@ -91,17 +136,39 @@ function resolveWorkerLane(pipeline: string): {
     `./.github/workflows/${laneWorkflowFile(pipeline)}`,
   );
 
-  const { source: laneSource, doc: laneDoc } = loadWorkflow(
+  const { source: shimSource, doc: shimDoc } = loadWorkflow(
     laneWorkflowFile(pipeline),
   );
-  const laneJob = laneDoc.jobs?.[pipeline];
-  if (!laneJob) {
+  const shimJob = shimDoc.jobs?.[pipeline];
+  if (!shimJob) {
     throw new Error(
-      `${laneWorkflowFile(pipeline)} must declare its worker job under the ` +
-        `pipeline id "${pipeline}" (jobs.${pipeline})`,
+      `${laneWorkflowFile(pipeline)} must declare its delegating job under ` +
+        `the pipeline id "${pipeline}" (jobs.${pipeline})`,
     );
   }
-  return { callerSource, laneSource, laneDoc, env: laneJob.env ?? {} };
+  expect(shimJob.uses).toBe(`./.github/workflows/${UNIFIED_LANE_FILE}`);
+  expect(shimJob.with?.pipeline).toBe(pipeline);
+
+  const { source: unifiedSource, doc: unifiedDoc } =
+    loadWorkflow(UNIFIED_LANE_FILE);
+  const unifiedJob = unifiedDoc.jobs?.agent;
+  if (!unifiedJob) {
+    throw new Error(
+      `${UNIFIED_LANE_FILE} must declare its worker job as jobs.agent`,
+    );
+  }
+  const env = Object.fromEntries(
+    Object.entries(unifiedJob.env ?? {}).map(([name, raw]) => [
+      name,
+      resolveLaneExpression(raw, pipeline),
+    ]),
+  );
+  return {
+    callerSource,
+    laneSource: shimSource + unifiedSource,
+    laneDoc: unifiedDoc,
+    env,
+  };
 }
 
 describe('worker workflow <-> dispatch-contracts registry', () => {
@@ -112,12 +179,14 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
       // Throws ENOENT — with the missing path in the message — if the
       // registry names a workflow file that does not exist.
       readFileSync(path.join(workflowsDirectory, workflowFile), 'utf8');
-      // The reusable lane the thin caller delegates to must exist too.
+      // The reusable lane shim the thin caller delegates to must exist too.
       readFileSync(
         path.join(workflowsDirectory, laneWorkflowFile(pipeline)),
         'utf8',
       );
     }
+    // As must the single parameterized lane the shims delegate to.
+    readFileSync(path.join(workflowsDirectory, UNIFIED_LANE_FILE), 'utf8');
   });
 
   it.each(DISPATCH_PIPELINES)(
@@ -192,19 +261,20 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     // rotating an identity without updating libs/dispatch-contracts.
     const registered = new Set([...AGENT_BOT_LOGINS, 'github-actions[bot]']);
     const unregistered: string[] = [];
+    const files = new Set<string>([UNIFIED_LANE_FILE]);
     for (const pipeline of DISPATCH_PIPELINES) {
       const { workflowFile } = PIPELINE_CONTRACTS[pipeline];
-      for (const file of [workflowFile, laneWorkflowFile(pipeline)]) {
-        const { source } = loadWorkflow(file);
-        const literals = new Set(
-          [...source.matchAll(/[A-Za-z0-9-]+\[bot\]/gu)].map(
-            (match) => match[0],
-          ),
-        );
-        for (const login of literals) {
-          if (!registered.has(login)) {
-            unregistered.push(`${file}: ${login}`);
-          }
+      files.add(workflowFile);
+      files.add(laneWorkflowFile(pipeline));
+    }
+    for (const file of files) {
+      const { source } = loadWorkflow(file);
+      const literals = new Set(
+        [...source.matchAll(/[A-Za-z0-9-]+\[bot\]/gu)].map((match) => match[0]),
+      );
+      for (const login of literals) {
+        if (!registered.has(login)) {
+          unregistered.push(`${file}: ${login}`);
         }
       }
     }
@@ -427,4 +497,139 @@ describe('published reusable lane workflow surface (#1312)', () => {
       }
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Shim -> unified lane forwarding (#1340 A-R1). The three published shims
+// above delegate to one parameterized lane, .github/workflows/agent-lane.yml.
+// These pins prove the delegation is lossless: every input and secret a shim
+// declares is forwarded verbatim into the unified lane, the unified lane
+// declares exactly the union of the three shim surfaces (plus `pipeline`),
+// and the values a shim requires but the union relaxes are enforced by the
+// lane's own per-pipeline assertion step instead of silently defaulting.
+
+describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
+  const unified = loadWorkflow(UNIFIED_LANE_FILE);
+  const unifiedInputs = unified.doc.on?.workflow_call?.inputs ?? {};
+  const unifiedSecrets = unified.doc.on?.workflow_call?.secrets ?? {};
+
+  it.each(DISPATCH_PIPELINES)(
+    'agent-lane-%s.yml forwards its whole declared surface, dropping nothing',
+    (pipeline) => {
+      const { doc } = loadWorkflow(laneWorkflowFile(pipeline));
+      const declaredInputs = doc.on?.workflow_call?.inputs ?? {};
+      const declaredSecrets = doc.on?.workflow_call?.secrets ?? {};
+      const job = doc.jobs?.[pipeline];
+      expect(job?.uses).toBe(`./.github/workflows/${UNIFIED_LANE_FILE}`);
+
+      const withBlock = job?.with ?? {};
+      expect(withBlock.pipeline).toBe(pipeline);
+      for (const [name, spec] of Object.entries(declaredInputs)) {
+        expect(
+          withBlock[name],
+          `agent-lane-${pipeline}.yml must forward input "${name}"`,
+        ).toBe(`\${{ inputs.${name} }}`);
+        expect(
+          unifiedInputs[name]?.type,
+          `${UNIFIED_LANE_FILE} must declare input "${name}" with the shim's type`,
+        ).toBe(spec.type);
+      }
+      // Where a shim declares a default, the unified lane's default must
+      // match it, so calling the unified lane directly can never behave
+      // differently from calling through the shim.
+      const defaultDrift = Object.entries(declaredInputs)
+        .filter(([, spec]) => spec.default !== undefined)
+        .filter(
+          ([name, spec]) =>
+            !Object.is(unifiedInputs[name]?.default, spec.default),
+        )
+        .map(
+          ([name, spec]) =>
+            `${name}: shim ${JSON.stringify(spec.default)} != ` +
+            `unified ${JSON.stringify(unifiedInputs[name]?.default)}`,
+        );
+      expect(defaultDrift).toEqual([]);
+      expect(Object.keys(withBlock).sort()).toEqual(
+        ['pipeline', ...Object.keys(declaredInputs)].sort(),
+      );
+
+      const secretsBlock = job?.secrets ?? {};
+      for (const name of Object.keys(declaredSecrets)) {
+        expect(
+          secretsBlock[name],
+          `agent-lane-${pipeline}.yml must forward secret "${name}"`,
+        ).toBe(`\${{ secrets.${name} }}`);
+        expect(
+          unifiedSecrets[name],
+          `${UNIFIED_LANE_FILE} must declare secret "${name}"`,
+        ).toBeDefined();
+      }
+      expect(Object.keys(secretsBlock).sort()).toEqual(
+        Object.keys(declaredSecrets).sort(),
+      );
+    },
+  );
+
+  it('agent-lane.yml declares exactly the union of the shim surfaces plus pipeline', () => {
+    const unionInputs = new Set(['pipeline']);
+    const unionSecrets = new Set<string>();
+    for (const pipeline of DISPATCH_PIPELINES) {
+      const { doc } = loadWorkflow(laneWorkflowFile(pipeline));
+      for (const name of Object.keys(doc.on?.workflow_call?.inputs ?? {})) {
+        unionInputs.add(name);
+      }
+      for (const name of Object.keys(doc.on?.workflow_call?.secrets ?? {})) {
+        unionSecrets.add(name);
+      }
+    }
+    expect(Object.keys(unifiedInputs).sort()).toEqual([...unionInputs].sort());
+    expect(Object.keys(unifiedSecrets).sort()).toEqual(
+      [...unionSecrets].sort(),
+    );
+    expect(unifiedInputs.pipeline).toMatchObject({
+      required: true,
+      type: 'string',
+    });
+  });
+
+  it('one-shim-required values stay optional at the union layer and are asserted per pipeline', () => {
+    // codex's WIF trio and opencode's model are required by their own shim
+    // but optional (empty default) in the union; the unified lane's
+    // "Assert pipeline lane configuration" step enforces them for the
+    // active pipeline, together with the per-pipeline secrets that the
+    // union layer cannot mark required.
+    for (const name of [
+      'gcp-workload-identity-provider',
+      'gcp-service-account',
+      'gcp-project-id',
+      'opencode-model',
+    ]) {
+      expect(
+        {
+          name,
+          required: unifiedInputs[name]?.required ?? false,
+          default: unifiedInputs[name]?.default,
+        },
+        `agent-lane.yml input "${name}"`,
+      ).toEqual({ name, required: false, default: '' });
+    }
+    expect(unifiedSecrets.AGENT_LCARS_PRIVATE_KEY?.required).toBe(true);
+    expect(unifiedSecrets.CLAUDE_CODE_OAUTH_TOKEN?.required ?? false).toBe(
+      false,
+    );
+    expect(unifiedSecrets.OPENCODE_LLM_API_KEY?.required ?? false).toBe(false);
+    expect(unified.source).toContain('Assert pipeline lane configuration');
+    for (const value of [
+      'input gcp-workload-identity-provider',
+      'input gcp-service-account',
+      'input gcp-project-id',
+      'input opencode-model',
+      'secret CLAUDE_CODE_OAUTH_TOKEN',
+      'secret OPENCODE_LLM_API_KEY',
+    ]) {
+      expect(unified.source, `assert step must name "${value}"`).toContain(
+        value,
+      );
+    }
+  });
 });

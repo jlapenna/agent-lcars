@@ -107,7 +107,8 @@ Per new repo:
    ```text
    assertion.repository=='<owner>/<repo>' &&
      (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/codex.yml')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml'))
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))
    ```
 
    To admit a new repo where the pool already exists, read the current

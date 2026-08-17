@@ -11,12 +11,21 @@ import { describe, expect, it } from 'vitest';
 // in the workflow (not a reimplementation) run against gh-shaped job
 // fixtures, so a regression in the embedded jq itself fails here.
 //
-// The regression this pins: agent-lane-opencode.yml is era-split into a
+// The regression this pins: the opencode lane is era-split into a
 // 'Run OpenCode' step (dispatch-bootstrap era) and a 'Run OpenCode (CLI)'
 // step (consumer era). Whichever era ran, the OTHER step still appears in
 // the jobs API with conclusion 'skipped'. When the finalizer matched only
 // 'Run OpenCode', every failed consumer-era run resolved its agent
 // conclusion to 'skipped' and was misclassified as a startup-failure.
+//
+// Since #1340 A-R1 the worker job additionally lives in the single
+// parameterized agent-lane.yml behind two levels of reusable-workflow
+// nesting: its jobs-API name is "<caller job> / <shim job> / agent"
+// (e.g. 'claude / claude / agent'), and EVERY pipeline's agent steps
+// exist in that one job, with the inactive pipelines' steps reported as
+// conclusion 'skipped'. The fixtures below cover both the historical
+// per-lane job shapes (in-flight runs on the old lanes) and the unified
+// nested shape.
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -52,6 +61,7 @@ function nextQuoted(marker: string): string {
 // case statement rather than hand-copied.
 const opencodeSteps = nextQuoted('opencode.yml) agent_steps=');
 const claudeSteps = nextQuoted('claude.yml) agent_steps=');
+const codexSteps = nextQuoted('codex.yml) agent_steps=');
 
 // The two jq programs the evidence step runs: worker-job selection over
 // the slurped paginated jobs API, and the agent-step conclusion.
@@ -211,6 +221,120 @@ describe('fallback-finalize agent-step derivation', () => {
       pages(finalizeJob),
     );
     expect(selected).toBe('');
+  });
+
+  // ---- Unified-lane shape (#1340 A-R1): one nested job named
+  // '<caller> / <shim> / agent' carrying every pipeline's agent steps,
+  // the inactive pipelines' reported as 'skipped'.
+
+  /** The unified job's step list: the active pipeline's agent step gets
+   * `conclusion`, every other pipeline's agent step reports 'skipped'. */
+  function unifiedJob(
+    pipeline: 'claude' | 'codex' | 'opencode',
+    conclusion: string,
+    postGates: string,
+  ) {
+    const activeSteps: Record<string, string[]> = {
+      claude: ['Run Claude Code'],
+      codex: ['Run Codex'],
+      // The bootstrap era's step is the one that runs in this repo; the
+      // consumer-era CLI step stays skipped alongside the other lanes'.
+      opencode: ['Run OpenCode'],
+    };
+    const allAgentSteps = [
+      'Run Claude Code',
+      'Run Codex',
+      'Run OpenCode',
+      'Run OpenCode (CLI)',
+    ];
+    return job(`${pipeline} / ${pipeline} / agent`, [
+      step(
+        'Checkout with the authorized App credential (bootstrap era)',
+        'success',
+      ),
+      ...allAgentSteps.map((name) =>
+        step(
+          name,
+          activeSteps[pipeline].includes(name) ? conclusion : 'skipped',
+        ),
+      ),
+      step('Run post-agent gates', postGates),
+    ]);
+  }
+
+  it('classifies a unified-lane claude success as success', () => {
+    const workerJob = unifiedJob('claude', 'success', 'success');
+    const selected = runJq(
+      '-c',
+      selectWorkerJob,
+      claudeSteps,
+      pages(finalizeJob, workerJob),
+    );
+    expect(selected).not.toBe('');
+    const conclusion = runJq(
+      '-r',
+      deriveConclusion,
+      claudeSteps,
+      JSON.parse(selected),
+    );
+    expect(conclusion).toBe('success');
+  });
+
+  it('classifies a failed unified-lane codex run as an agent failure', () => {
+    // The skipped sibling-pipeline steps must not shadow the failed codex
+    // step the way the era-split opencode regression did.
+    const workerJob = unifiedJob('codex', 'failure', 'failure');
+    const selected = runJq(
+      '-c',
+      selectWorkerJob,
+      codexSteps,
+      pages(finalizeJob, workerJob),
+    );
+    expect(selected).not.toBe('');
+    const conclusion = runJq(
+      '-r',
+      deriveConclusion,
+      codexSteps,
+      JSON.parse(selected),
+    );
+    expect(conclusion).toBe('failure');
+  });
+
+  it('classifies a failed unified-lane opencode run as an agent failure', () => {
+    const workerJob = unifiedJob('opencode', 'failure', 'failure');
+    const selected = runJq(
+      '-c',
+      selectWorkerJob,
+      opencodeSteps,
+      pages(finalizeJob, workerJob),
+    );
+    expect(selected).not.toBe('');
+    const conclusion = runJq(
+      '-r',
+      deriveConclusion,
+      opencodeSteps,
+      JSON.parse(selected),
+    );
+    expect(conclusion).toBe('failure');
+  });
+
+  it('keeps startup-failure when the unified lane never reached the agent step', () => {
+    // e.g. "Assert pipeline lane configuration" or a checkout failed:
+    // every pipeline's agent step is skipped, which IS a startup failure.
+    const workerJob = unifiedJob('claude', 'skipped', 'failure');
+    const selected = runJq(
+      '-c',
+      selectWorkerJob,
+      claudeSteps,
+      pages(finalizeJob, workerJob),
+    );
+    const conclusion = runJq(
+      '-r',
+      deriveConclusion,
+      claudeSteps,
+      JSON.parse(selected),
+    );
+    expect(conclusion).toBe('skipped');
   });
 
   it("maps ''/skipped conclusions to startup-failure in the workflow", () => {
