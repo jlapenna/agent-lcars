@@ -54,9 +54,10 @@ promised one.
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `renovate-auto-approve.yml`    | Approve a `renovate[bot]` pull request via a minted Agent LCARS App installation token                          |
 | `agent-automerge-reusable.yml` | The whole agent auto-merge surface: arm squash auto-merge, restore the post-merge chain, sweep orphaned anchors |
-| `agent-lane-claude.yml`        | The canonical Claude issue-agent lane (see "Published reusable lane workflows" below)                           |
-| `agent-lane-codex.yml`         | The canonical Codex issue-agent lane                                                                            |
-| `agent-lane-opencode.yml`      | The canonical OpenCode issue-agent lane                                                                         |
+| `agent-lane-claude.yml`        | The published Claude issue-agent lane shim (see "Published reusable lane workflows" below)                      |
+| `agent-lane-codex.yml`         | The published Codex issue-agent lane shim                                                                       |
+| `agent-lane-opencode.yml`      | The published OpenCode issue-agent lane shim                                                                    |
+| `agent-lane.yml`               | The single parameterized worker lane all three shims delegate to (internal; call the shims)                     |
 | `repo-validation.yml`          | Repository validation: actionlint (dockerized, version input) over the caller's whole workflow tree             |
 | `codeql-reusable.yml`          | The CodeQL analyze job; the caller owns triggers (weekly cron included) and passes its language list            |
 
@@ -316,6 +317,20 @@ repo-specific behavior behind a typed `workflow_call` input. This repo's own
 (`uses: ./.github/workflows/agent-lane-<pipeline>.yml`); homelab and
 sprinkles collapse onto `@main` callers in the follow-up units.
 
+Since #1340 A-R1 the three published lane files are minimal **shims**: each
+re-declares its historical `workflow_call` input/secret surface unchanged
+and delegates to one internal parameterized lane,
+`.github/workflows/agent-lane.yml`, passing `pipeline: <claude|codex|opencode>`
+and forwarding every input and secret. The unified lane carries the single
+worker job (id `agent`): the ~19-step shared spine once, with each
+pipeline's unique steps behind `if: inputs.pipeline == '<x>'`. Consumers
+keep calling the shims — the shim surface is the published contract — and
+the shim's relative `uses:` resolves the unified lane from the same
+repository and commit as the shim itself, so an `@main` call stays
+coherent. Inputs one shim requires but the union relaxes (codex's WIF
+trio, opencode's model) and the per-pipeline secrets are enforced by the
+unified lane's own "Assert pipeline lane configuration" step.
+
 A caller keeps only what `workflow_call` cannot carry:
 
 - the `on: workflow_dispatch` input contract and the contract-tested
@@ -364,14 +379,15 @@ jobs:
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 ```
 
-One infra note for consumers: the worker job now runs inside the reusable
-workflow, so an OIDC token minted by that job carries
-`job_workflow_ref: jlapenna/agent-lcars/.github/workflows/agent-lane-*.yml@...`
+One infra note for consumers: the worker job runs inside the unified
+reusable lane, so an OIDC token minted by that job carries
+`job_workflow_ref: jlapenna/agent-lcars/.github/workflows/agent-lane.yml@...`
 while `workflow_ref` still names the caller's own lane file. A WIF provider
 whose attribute condition matches only on `assertion.repository` (this
 repo's pool, and the fleet-shared telemetry pool) is unaffected; a provider
-conditioned on `job_workflow_ref` must allow the lane files before a
-consumer adopts.
+conditioned on `job_workflow_ref` must allow `agent-lane.yml` (and, for
+in-flight runs dispatched before #1340 A-R1, the historical
+`agent-lane-*.yml` refs) before a consumer adopts.
 
 ## Fleet workstation tools (`packages/fleet-tools`, installed from main)
 
@@ -532,9 +548,12 @@ manifest either, for the same reason. A Published reusable workflow's
 `actionlint` (run in CI on every changed workflow) and by review of the
 manifest-shaped diff itself. Two carry real behavioral pins on top:
 `agent-automerge-reusable.yml` (the pins named in its table entry above),
-and the three `agent-lane-*.yml` lane workflows, whose full
+and the three `agent-lane-*.yml` lane shims, whose full
 `workflow_call` input/secret surface (name, requiredness, type, default)
 is pinned by
 [`worker-workflow-contract.test.ts`](../tools/contract-tests/worker-workflow-contract.test.ts)
 the same way this file's manifest pins the composite actions — published
-surface is guarded surface.
+surface is guarded surface. The same test proves each shim forwards its
+whole surface into the internal `agent-lane.yml` (no input or secret
+silently dropped) and that the unified lane declares exactly the union of
+the three shim surfaces plus `pipeline`.

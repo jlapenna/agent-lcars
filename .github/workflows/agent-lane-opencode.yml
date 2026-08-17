@@ -1,45 +1,22 @@
-# Fleet-published reusable OpenCode agent lane (issue #1312 U1).
+# Fleet-published reusable OpenCode agent lane (issue #1312 U1; shim
+# since #1340 A-R1).
 #
-# The canonical OpenCode issue-agent pipeline, synthesized from the union
-# of the fleet's three opencode.yml lanes (agent-lcars, homelab,
-# sprinkles). Callers keep what workflow_call cannot carry: `on:
-# workflow_dispatch` inputs, `run-name` (contract-tested), top-level
-# concurrency, top-level permissions, and the repo-variable spellings
-# (vars don't cross repos — every needed value arrives as an input).
+# This file is the published surface consumers call
+# (`jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml@main`,
+# and this repo's own opencode.yml same-repo). The worker job itself
+# lives in .github/workflows/agent-lane.yml — the single parameterized
+# lane the three per-agent shims delegate to — selected here with
+# `pipeline: opencode`. The `workflow_call` input/secret surface below is
+# the lane's published contract, pinned name-for-name (requiredness,
+# type, default) by tools/contract-tests/worker-workflow-contract.test.ts;
+# the same test proves every input and secret is forwarded into
+# agent-lane.yml, so nothing declared here can silently drop.
 #
-# Recorded divergence reasons (#1305 convention) — every toggle below
-# exists because one repo needs it, and defaults to the consumer behavior:
-#
-# - dispatch-bootstrap: agent-lcars is the hosted-orchestrator thin
-#   executor (#1015) — admission, attempt identity, App-token mint, claim,
-#   and enforcement-snapshot run through its local dispatch-bootstrap/
-#   agent-handoff composites; consumer repos run the published
-#   snapshot/mint/claim/verify path against `@main` instead. The agent
-#   step itself is also era-split: agent-lcars runs the SHA-pinned
-#   anomalyco/opencode published action (plus its authenticated-release
-#   curl wrapper), while consumers run the published setup-opencode
-#   composite and the same `opencode github run` entry point as a plain
-#   step — the reviewed, rate-limit-safe install path both consumer repos
-#   already chose.
-# - protected-snapshot: agent-lcars preserves the dispatch brief as a run
-#   artifact for trajectory evaluation; consumers run no evaluation.
-# - trajectory-export: agent-lcars exports sanitized OpenCode sessions as
-#   a run artifact for durable trajectory diagnosis; consumers don't run
-#   that diagnosis loop.
-# - gcp-auth: sprinkles' agents self-verify production through a
-#   read-only WIF identity; the other repos grant opencode no ambient GCP.
-# - install-workspace-deps: sprinkles' Nx worktree-aware resolution needs
-#   the primary checkout's node_modules installed (sprinkles#4003).
-# - telemetry-workload-identity-provider empty skips the telemetry
-#   sidecar entirely (sprinkles' opencode lane runs without telemetry).
-# - opencode-model is caller-chosen: the LiteLLM route name encodes each
-#   repo's own thinking/fallback policy (#1227, homelab#44).
-# - ACTIONS_RERUN_TOKEN source is era-tied: agent-lcars hands the agent a
-#   separate revocable PAT so agent code never holds the job's
-#   control-plane credential (#645); consumers hand the job token.
-# - prompt / no-deliverable-reason are caller-supplied text: each repo's
-#   protocol paths and redispatch vocabulary are repo-specific content,
-#   exactly like `run-name`.
+# Callers keep what workflow_call cannot carry: `on: workflow_dispatch`
+# inputs, `run-name` (contract-tested), top-level concurrency, top-level
+# permissions, and the repo-variable spellings (vars don't cross repos —
+# every needed value arrives as an input). Divergence-toggle rationale
+# (#1305 convention) lives in agent-lane.yml's header.
 
 on:
   workflow_call:
@@ -92,7 +69,7 @@ on:
         default: 60
         type: number
       dispatch-bootstrap:
-        description: 'agent-lcars thin-executor admission era (see header)'
+        description: 'agent-lcars thin-executor admission era (see agent-lane.yml)'
         required: false
         default: false
         type: boolean
@@ -145,7 +122,7 @@ on:
         required: true
         type: string
       opencode-model:
-        description: 'LiteLLM route the agent runs against (repo policy, see header)'
+        description: 'LiteLLM route the agent runs against (repo policy, see agent-lane.yml)'
         required: true
         type: string
       nx-cache-url:
@@ -202,404 +179,49 @@ on:
 
 jobs:
   opencode:
-    runs-on: ['${{ inputs.runs-on-label }}']
-    # Backstop only — the real bound is the per-step timeout on Run
-    # OpenCode below (#51).
-    timeout-minutes: ${{ inputs.job-timeout-minutes }}
-    # Requests exactly what every lane's caller grants today; a called
-    # workflow can only downgrade the caller's grant, never widen it.
+    # Same permissions the worker job requests; a called workflow can only
+    # downgrade the caller's grant, never widen it.
     permissions:
       contents: write
       issues: write
       pull-requests: write
       id-token: write
       actions: write
-    env:
-      AGENT_NAME: OpenCode
-      WORKER_WORKFLOW: opencode.yml
-      AGENT_GIT_LOGIN: agent-lcars[bot]
-      AGENT_LABEL: agent:opencode
-      REDISPATCH_COMMAND: /opencode
-      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ inputs.nx-cache-url }}
-      NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
-    steps:
-      - name: Publish lane environment
-        env:
-          PNPM_STORE_DIR: ${{ inputs.pnpm-store-dir }}
-        run: |
-          if [ -n "$PNPM_STORE_DIR" ]; then
-            echo "npm_config_store_dir=$PNPM_STORE_DIR" >> "$GITHUB_ENV"
-          fi
-
-      # ---- Consumer admission era (published actions, dispatch-bootstrap
-      # off). Fail fast, naming every missing required value at once.
-      - name: Assert required lane inputs are set
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/assert-repo-vars@main # latest
-        with:
-          vars: |
-            AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
-
-      # Freeze the trusted failure path at the earliest point possible, so
-      # mint/claim/checkout can fail without stranding the issue.
-      - name: Snapshot post-agent enforcement scripts
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/snapshot-enforcement-scripts@main # latest
-        with:
-          actions: |
-            verify-deliverable
-            report-failure
-            telemetry-finalize
-            post-agent-gates
-
-      - name: Publish attempt identity
-        if: ${{ !inputs.dispatch-bootstrap }}
-        env:
-          ATTEMPT_ID: g${{ inputs.broker-generation }}:${{ inputs.broker-intent-id }}
-        run: echo "ATTEMPT_ID=$ATTEMPT_ID" >> "$GITHUB_ENV"
-
-      - name: Mint agent token
-        id: agent-lcars-token
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/mint-agent-token@main # latest
-        with:
-          client-id: ${{ inputs.agent-lcars-client-id }}
-          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-          permission-actions: write
-          permission-contents: write
-          permission-issues: write
-          permission-metadata: read
-          permission-pull-requests: write
-
-      - name: Claim the issue as the agent fleet
-        id: claim
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
-        with:
-          token: ${{ steps.agent-lcars-token.outputs.token }}
-          issue: ${{ inputs.issue }}
-          claim-login: ${{ inputs.agent-fleet-login }}
-          post-pickup-comment: 'true'
-          agent: OpenCode
-          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-      # The only consumer-era checkout, now that the App token exists: it
-      # carries fetch-depth: 0 and the minted token, so OpenCode's eventual
-      # raw `git push` authenticates as agent-lcars[bot]. persist-
-      # credentials stays true: the action's own internal finalization does
-      # a second, raw `git push` after the model's turn ends, and that one
-      # has no credentials once checkout's temporary config is torn down
-      # (sprinkles run 29713964250's false-negative "failure").
-      - name: Checkout with the authorized App credential
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          token: ${{ steps.agent-lcars-token.outputs.token }}
-          persist-credentials: true
-
-      - name: Shared agent setup
-        id: agent-setup
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/agent-setup@main # latest
-        with:
-          agent-login: agent-lcars[bot]
-
-      # See sprinkles#4003 — Nx's worktree-aware resolution anchors some
-      # workspace-library imports off the primary checkout root.
-      - name: Install workspace dependencies (primary checkout)
-        if: ${{ !inputs.dispatch-bootstrap && inputs.install-workspace-deps }}
-        run: |
-          if ! command -v pnpm >/dev/null 2>&1; then
-            mkdir -p "$RUNNER_TEMP/corepack-shims"
-            corepack enable --install-directory "$RUNNER_TEMP/corepack-shims"
-            echo "$RUNNER_TEMP/corepack-shims" >> "$GITHUB_PATH"
-            export PATH="$RUNNER_TEMP/corepack-shims:$PATH"
-          fi
-          HUSKY=0 pnpm install --frozen-lockfile
-
-      - name: Verify agent identity
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/verify-agent-identity@main # latest
-        with:
-          token: ${{ steps.agent-lcars-token.outputs.token }}
-          agent: OpenCode
-          app-slug: ${{ steps.agent-lcars-token.outputs.app-slug }}
-
-      - name: Prepare dispatch context
-        id: agent-dispatch
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@main # latest
-        with:
-          agent: OpenCode
-          issue: ${{ inputs.issue }}
-          mode: ${{ inputs.mode }}
-          reply: ${{ inputs.reply }}
-          runbook: ${{ inputs.runbook }}
-          context: ${{ inputs.context }}
-          budget-minutes: ${{ inputs.brief-budget-minutes }}
-          artifact-checkpoint-minutes: ${{ inputs.brief-artifact-checkpoint-minutes }}
-          finalize-checkpoint-minutes: ${{ inputs.brief-finalize-checkpoint-minutes }}
-
-      # GCP access via Workload Identity Federation so the agent can
-      # self-verify things it used to have to ask the maintainer to check.
-      - name: Authenticate to GCP
-        id: gcp-auth
-        if: ${{ !inputs.dispatch-bootstrap && inputs.gcp-auth }}
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
-        with:
-          workload_identity_provider: ${{ inputs.gcp-workload-identity-provider }}
-          service_account: ${{ inputs.gcp-service-account }}
-
-      # The official composite action performs its release lookup without
-      # authentication; anonymous GitHub API traffic is shared across
-      # runners and can exhaust its per-IP budget before OpenCode starts.
-      # The published setup action resolves through this workflow's token,
-      # caches that exact release, and installs it without modifying
-      # runner shell configuration. The Run step below invokes the same
-      # `opencode github run` entry point as the official action.
-      - name: Setup OpenCode
-        if: ${{ !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/setup-opencode@main # latest
-        with:
-          github-token: ${{ steps.agent-lcars-token.outputs.token }}
-
-      # ---- agent-lcars thin-executor admission era (#1015). A minimal
-      # checkout first: dispatch-bootstrap is a local composite action, and
-      # GitHub Actions can only resolve a local action once the repo
-      # containing it has been checked out — a platform constraint.
-      - name: Bootstrap checkout for dispatch bootstrap
-        if: ${{ inputs.dispatch-bootstrap }}
-        uses: actions/checkout@v7
-
-      - name: Dispatch bootstrap
-        id: dispatch-bootstrap
-        if: ${{ inputs.dispatch-bootstrap }}
-        uses: ./.github/actions/dispatch-bootstrap
-        with:
-          issue: ${{ inputs.issue }}
-          broker-generation: ${{ inputs.broker-generation }}
-          broker-intent-id: ${{ inputs.broker-intent-id }}
-          agent-fleet-login: ${{ inputs.agent-fleet-login }}
-          agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
-          agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-
-      # The real checkout, now that the App token exists: this one carries
-      # fetch-depth: 0 and the minted token, so OpenCode's eventual raw
-      # `git push` authenticates as agent-lcars[bot] (not the bootstrap
-      # checkout's default workflow token).
-      - name: Checkout with the authorized App credential (bootstrap era)
-        if: ${{ inputs.dispatch-bootstrap }}
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          token: ${{ steps.dispatch-bootstrap.outputs.token }}
-          persist-credentials: true
-
-      # Trusted finalization handoff (agent-lcars#823): agent git identity,
-      # run-start timestamp, shared Nx cache, and the App-identity/push-
-      # credential verification — the last trusted gate before "Run
-      # OpenCode" below.
-      - name: Agent handoff
-        id: agent-handoff
-        if: ${{ inputs.dispatch-bootstrap }}
-        uses: ./.github/actions/agent-handoff
-        with:
-          agent-login: ${{ env.AGENT_GIT_LOGIN }}
-          token: ${{ steps.dispatch-bootstrap.outputs.token }}
-          agent: ${{ env.AGENT_NAME }}
-          app-slug: ${{ steps.dispatch-bootstrap.outputs.app-slug }}
-
-      # if: always() so an earlier step's failure doesn't skip telemetry
-      # entirely — the composite's own inner steps are already
-      # continue-on-error, so this never turns a healthy run red. Two
-      # era-split instances of the same composite: the dispatch-bootstrap
-      # era resolves it from this repo's own dispatched-ref checkout, the
-      # consumer era from the published `@main` fetch.
-      - name: Start telemetry sidecar
-        id: telemetry-start
-        if: always() && inputs.dispatch-bootstrap
-        uses: ./.github/actions/telemetry-start
-        with:
-          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
-          service-account: ${{ inputs.telemetry-service-account }}
-          issue: ${{ inputs.issue }}
-
-      - name: Start telemetry sidecar (published)
-        id: telemetry-start-published
-        if: always() && !inputs.dispatch-bootstrap && inputs.telemetry-workload-identity-provider != ''
-        uses: jlapenna/agent-lcars/.github/actions/telemetry-start@main # latest
-        with:
-          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
-          service-account: ${{ inputs.telemetry-service-account }}
-          issue: ${{ inputs.issue }}
-
-      # The published action resolves its cache key with an unauthenticated
-      # GitHub Releases API request. Shared runners can exhaust that
-      # IP-based limit even when this job has a valid token, so scope
-      # authentication to that one URL without putting the token in a
-      # process-wide curl config.
-      - name: Authenticate published OpenCode action API calls
-        if: ${{ inputs.dispatch-bootstrap }}
-        run: |
-          umask 077
-          mkdir -p "$RUNNER_TEMP/opencode-curl-bin"
-          cat > "$RUNNER_TEMP/opencode-curl-bin/curl" <<'CURL_WRAPPER'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          for argument in "$@"; do
-            if [[ "$argument" == 'https://api.github.com/repos/anomalyco/opencode/releases/latest' ]]; then
-              exec /usr/bin/curl -H "Authorization: Bearer ${GITHUB_TOKEN:?}" "$@"
-            fi
-          done
-          exec /usr/bin/curl "$@"
-          CURL_WRAPPER
-          chmod 700 "$RUNNER_TEMP/opencode-curl-bin/curl"
-          echo "$RUNNER_TEMP/opencode-curl-bin" >> "$GITHUB_PATH"
-
-      # A second, narrower mint — see agent-lane-claude.yml's identical
-      # step for the full #645 rationale. Loud rather than silent when the
-      # credential is absent: the CI-rerun recipe silently no-ops when
-      # ACTIONS_RERUN_TOKEN is unset.
-      - name: Check CI-rerun credential is present
-        if: ${{ inputs.dispatch-bootstrap }}
-        run: |
-          if [ -z "$ACTIONS_RERUN_TOKEN" ]; then
-            echo "::warning::AGENT_CI_RERUN_TOKEN is unset - the agent will \
-          not be able to rerun its own failed CI (agent-protocol.md §8). \
-          Expected a classic PAT with public_repo scope."
-          fi
-        env:
-          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
-
-      - name: Prepare current dispatch brief and runtime deadline
-        id: dispatch-brief
-        if: ${{ inputs.dispatch-bootstrap }}
-        uses: ./.github/actions/prepare-agent-dispatch
-        with:
-          token: ${{ steps.dispatch-bootstrap.outputs.token }}
-          agent: ${{ env.AGENT_NAME }}
-          issue: ${{ inputs.issue }}
-          mode: ${{ inputs.mode }}
-          reply: ${{ inputs.reply }}
-          runbook: ${{ inputs.runbook }}
-          context: ${{ inputs.context }}
-          # Must track the agent step's own timeout-minutes, and prepare.sh
-          # fails closed if these are not ordered inside it. agent-lcars's
-          # artifact checkpoint is deliberately early: the push credential
-          # dies before the step does (#1217).
-          budget-minutes: ${{ inputs.brief-budget-minutes }}
-          artifact-checkpoint-minutes: ${{ inputs.brief-artifact-checkpoint-minutes }}
-          finalize-checkpoint-minutes: ${{ inputs.brief-finalize-checkpoint-minutes }}
-
-      - name: Preserve protected dispatch snapshot for evaluation
-        if: ${{ inputs.protected-snapshot }}
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: agent-dispatch-brief-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.dispatch-brief.outputs.path || steps.agent-dispatch.outputs.path }}
-          if-no-files-found: error
-          retention-days: 30
-
-      # ---- Era-split agent step (see header). #51: two dispatches
-      # retried a persistent LiteLLM 429 with a backoff growing to tens of
-      # minutes and never gave up — no comment, no label, no PR — until a
-      # human cancelled. Neither entry point exposes a max-retry or
-      # max-elapsed-time option; the hard bound therefore lives here, as a
-      # *step* timeout: exceeding it marks the step failed rather than
-      # cancelling the job, so "Run post-agent gates" below still reports
-      # the failure and the issue actually hears about it. Keep it well
-      # short of the App-token expiry: the push credential minted at job
-      # start dies 3600s after mint, and nothing refreshes it mid-step
-      # (#1217 — run 31906606247 lost 48 steps of finished work to exactly
-      # that).
-      - name: Run OpenCode
-        id: agent
-        if: ${{ inputs.dispatch-bootstrap }}
-        timeout-minutes: ${{ inputs.agent-timeout-minutes }}
-        env:
-          OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
-          # Marker-stamping gh wrapper installed by agent-handoff
-          # (agent-lcars#1213) — deliberately set ONLY here; the post-agent
-          # gates use the same gh, and stamping their reports would let the
-          # deliverable gate satisfy itself.
-          AGENT_MARKER_STAMPING: '1'
-          # use_github_token needs this passed explicitly — it does not
-          # fall back to the job's ambient token.
-          GITHUB_TOKEN: ${{ steps.dispatch-bootstrap.outputs.token }}
-          # The CI-rerun affordance (agent-protocol.md §8): a classic PAT
-          # at public_repo scope — NOT github.token (#645).
-          ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
-        uses: anomalyco/opencode/github@def7220bfc65b84046e597e9be772eae81f663ff # published action source, pinned
-        with:
-          model: ${{ inputs.opencode-model }}
-          agent: build
-          variant: minimal
-          use_github_token: 'true'
-          prompt: ${{ inputs.prompt }}
-
-      - name: Run OpenCode (CLI)
-        id: agent-cli
-        if: ${{ !inputs.dispatch-bootstrap }}
-        timeout-minutes: ${{ inputs.agent-timeout-minutes }}
-        env:
-          OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
-          # use_github_token needs this passed explicitly — it does not
-          # fall back to the job's ambient token.
-          GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
-          # The CI-rerun affordance (agent-protocol.md §8): the recipe
-          # silently no-ops when this is unset.
-          ACTIONS_RERUN_TOKEN: ${{ github.token }}
-          MODEL: ${{ inputs.opencode-model }}
-          USE_GITHUB_TOKEN: 'true'
-          PROMPT: ${{ inputs.prompt }}
-        run: opencode github run
-
-      - name: Export sanitized OpenCode trajectory
-        id: opencode-trajectory
-        if: always() && inputs.trajectory-export && steps.agent.outcome != 'skipped'
-        continue-on-error: true
-        uses: ./.github/actions/archive-opencode-trajectory
-        env:
-          ISSUE: ${{ inputs.issue }}
-        with:
-          started-at: ${{ steps.agent-handoff.outputs['started-at'] }}
-
-      - name: Persist OpenCode trajectory artifact
-        if: always() && inputs.trajectory-export && steps.opencode-trajectory.outputs.path != ''
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: opencode-trajectory-${{ github.run_id }}
-          path: ${{ steps.opencode-trajectory.outputs.path }}
-          if-no-files-found: error
-          retention-days: 30
-
-      # Shared post-agent gate orchestrator (#645 Phase 3) — see
-      # agent-lane-claude.yml's identical step for the full rationale.
-      # Runs from the pre-agent snapshot ($RUNNER_TEMP), never a local
-      # composite resolved after the agent's unrestricted Bash. Its
-      # comment clause is mode-gated (reply only), so an earlier status
-      # comment cannot prove a completed implement dispatch.
-      - name: Run post-agent gates
-        id: post_agent_gates
-        if: always()
-        env:
-          # The job's own GITHUB_TOKEN, NOT the minted App token:
-          # installation tokens expire after one hour, and this step can
-          # run at hour three of a long agent turn (run 30988771060 hit
-          # exactly that — HTTP 401 on the failure report).
-          GH_TOKEN: ${{ github.token }}
-          AGENT: ${{ env.AGENT_NAME }}
-          REPO: ${{ github.repository }}
-          SERVER_URL: ${{ github.server_url }}
-          RUN_ID: ${{ github.run_id }}
-          ISSUE: ${{ inputs.issue }}
-          MODE: ${{ inputs.mode }}
-          ATTEMPT_ID: ${{ env.ATTEMPT_ID }}
-          JOB_STATUS: ${{ job.status }}
-          MESSAGE_PREFIX: ${{ inputs.message-prefix }}
-          WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
-          NO_DELIVERABLE_REASON: ${{ inputs.no-deliverable-reason }}
-        run: bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"
+    uses: ./.github/workflows/agent-lane.yml
+    with:
+      pipeline: opencode
+      issue: ${{ inputs.issue }}
+      mode: ${{ inputs.mode }}
+      reply: ${{ inputs.reply }}
+      runbook: ${{ inputs.runbook }}
+      context: ${{ inputs.context }}
+      broker-generation: ${{ inputs.broker-generation }}
+      broker-intent-id: ${{ inputs.broker-intent-id }}
+      runs-on-label: ${{ inputs.runs-on-label }}
+      job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
+      agent-timeout-minutes: ${{ inputs.agent-timeout-minutes }}
+      dispatch-bootstrap: ${{ inputs.dispatch-bootstrap }}
+      protected-snapshot: ${{ inputs.protected-snapshot }}
+      trajectory-export: ${{ inputs.trajectory-export }}
+      install-workspace-deps: ${{ inputs.install-workspace-deps }}
+      gcp-auth: ${{ inputs.gcp-auth }}
+      gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
+      gcp-service-account: ${{ inputs.gcp-service-account }}
+      telemetry-workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
+      telemetry-service-account: ${{ inputs.telemetry-service-account }}
+      agent-fleet-login: ${{ inputs.agent-fleet-login }}
+      agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
+      opencode-model: ${{ inputs.opencode-model }}
+      nx-cache-url: ${{ inputs.nx-cache-url }}
+      pnpm-store-dir: ${{ inputs.pnpm-store-dir }}
+      brief-budget-minutes: ${{ inputs.brief-budget-minutes }}
+      brief-artifact-checkpoint-minutes: ${{ inputs.brief-artifact-checkpoint-minutes }}
+      brief-finalize-checkpoint-minutes: ${{ inputs.brief-finalize-checkpoint-minutes }}
+      prompt: ${{ inputs.prompt }}
+      no-deliverable-reason: ${{ inputs.no-deliverable-reason }}
+      message-prefix: ${{ inputs.message-prefix }}
+    secrets:
+      OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+      AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+      NX_CACHE_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
+      AGENT_CI_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}

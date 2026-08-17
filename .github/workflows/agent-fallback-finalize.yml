@@ -106,13 +106,22 @@ jobs:
               ;;
           esac
           # Each lane's agent step name(s), as a JSON array of candidates.
-          # The opencode lane is era-split (agent-lane-opencode.yml): the
+          # The worker job is identified by these STEP names, never by its
+          # job id or display name: since #1340 A-R1 the worker job lives
+          # in the single parameterized agent-lane.yml (job id `agent`,
+          # jobs-API name "<caller job> / <shim job> / agent" through the
+          # nested reusable calls), and every pipeline's agent steps exist
+          # in that one job with the inactive pipelines' steps reported as
+          # conclusion 'skipped'. The jq below already handles skipped
+          # candidates: the opencode lane is era-split — the
           # dispatch-bootstrap era runs 'Run OpenCode' while the consumer
           # era runs 'Run OpenCode (CLI)' — and whichever era ran, the
           # OTHER step still appears in the jobs API with conclusion
           # 'skipped'. Matching only 'Run OpenCode' therefore resolved
           # every consumer-era run's agent conclusion to 'skipped' and
-          # misclassified real agent failures as startup-failure.
+          # misclassified real agent failures as startup-failure; the
+          # skipped sibling-pipeline steps of the unified lane ride the
+          # same non-skipped-candidate preference.
           case "$WORKER_WORKFLOW" in
             claude.yml) agent_steps='["Run Claude Code"]' ;;
             codex.yml) agent_steps='["Run Codex"]' ;;
