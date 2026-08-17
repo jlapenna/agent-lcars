@@ -5,12 +5,24 @@ set -e
 export NX_TUI=false
 export NX_DAEMON=false
 
-# core.hooksPath points at Husky, so Git LFS's generated .git/hooks/pre-push
-# is never invoked on its own. Forward Git's untouched ref stream and remote
-# arguments before any validation command has a chance to read stdin.
-git lfs pre-push "$@"
+# Git feeds pre-push one line per ref on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# Capture it once and replay a copy to each consumer: the worktree guard
+# reads it to exempt deletion-only pushes (all-zero local shas -- see the
+# guard's own header, sprinkles#4296), and git lfs pre-push needs the same
+# stream to know which refs to upload for.
+refs="$(cat)"
 
-./packages/fleet-tools/bin/require-feature-worktree.sh
+# core.hooksPath points at Husky, so Git LFS's generated .git/hooks/pre-push
+# is never invoked on its own. Replay Git's untouched ref stream and forward
+# the remote arguments.
+if [ -n "$refs" ]; then
+  printf '%s\n' "$refs" | git lfs pre-push "$@"
+else
+  git lfs pre-push "$@" </dev/null
+fi
+
+printf '%s\n' "$refs" | ./packages/fleet-tools/bin/require-feature-worktree.sh pushes
 
 ./tools/check-dependencies.sh
 ./tools/nx format:check --base=origin/main

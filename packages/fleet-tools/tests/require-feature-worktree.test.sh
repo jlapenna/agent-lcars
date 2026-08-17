@@ -80,6 +80,54 @@ esac
 # checkout (CI clones are never worktrees).
 (cd "$temp_dir/repository" && GITHUB_ACTIONS=true "$root/bin/require-feature-worktree.sh")
 
+# Deletion-only push exemption (sprinkles#4296): a push whose every ref
+# line carries an all-zero local sha is a pure branch deletion, normally
+# run from the primary checkout, and must pass the guard.
+zeros="0000000000000000000000000000000000000000"
+sha="$(git -C "$temp_dir/repository" rev-parse HEAD)"
+(cd "$temp_dir/repository" &&
+  printf '(delete) %s refs/heads/gone %s\n' "$zeros" "$sha" |
+  "$root/bin/require-feature-worktree.sh" pushes)
+
+# ...including multiple deletions at once.
+(cd "$temp_dir/repository" &&
+  printf '(delete) %s refs/heads/a %s\n(delete) %s refs/heads/b %s\n' \
+    "$zeros" "$sha" "$zeros" "$sha" |
+  "$root/bin/require-feature-worktree.sh" pushes)
+
+# A push that MIXES a deletion with a real ref is still rejected.
+if (cd "$temp_dir/repository" &&
+  printf 'refs/heads/main %s refs/heads/main %s\n(delete) %s refs/heads/gone %s\n' \
+    "$sha" "$sha" "$zeros" "$sha" |
+  "$root/bin/require-feature-worktree.sh" pushes); then
+  echo "expected a mixed deletion+content push to be rejected" >&2
+  exit 1
+fi
+
+# A content-only push is rejected regardless of stdin being attached.
+if (cd "$temp_dir/repository" &&
+  printf 'refs/heads/main %s refs/heads/main %s\n' "$sha" "$zeros" |
+  "$root/bin/require-feature-worktree.sh" pushes); then
+  echo "expected a content push from the primary checkout to be rejected" >&2
+  exit 1
+fi
+
+# An empty ref stream (nothing to push) gets no exemption.
+if (cd "$temp_dir/repository" &&
+  "$root/bin/require-feature-worktree.sh" pushes </dev/null); then
+  echo "expected an empty-stdin push to be rejected" >&2
+  exit 1
+fi
+
+# Non-push invocations never read stdin: deletion-shaped input on a
+# commit-stage invocation must not unlock the guard.
+if (cd "$temp_dir/repository" &&
+  printf '(delete) %s refs/heads/gone %s\n' "$zeros" "$sha" |
+  "$root/bin/require-feature-worktree.sh" commits); then
+  echo "expected a commit-stage invocation to ignore deletion-shaped stdin" >&2
+  exit 1
+fi
+
 git -C "$temp_dir/repository" worktree add "$temp_dir/feature" -b feature >/dev/null
 (cd "$temp_dir/feature" && "$root/bin/require-feature-worktree.sh")
 
