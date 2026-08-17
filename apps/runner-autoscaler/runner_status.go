@@ -20,6 +20,22 @@ const (
 	runnerStatusHTTPTimeout  = 15 * time.Second
 )
 
+// runnerUnavailableReapAfter is how long a tracked runner must stay
+// continuously unavailable to GitHub before this control plane destroys it.
+//
+// An idle runner GitHub reports offline (or stops listing) is unusable: GitHub
+// will never dispatch to it, while this side keeps counting it toward
+// runners_total and therefore satisfies desired_runners with it. Neither side
+// times that out on its own, so the queued job it was meant to serve waits
+// indefinitely -- three and a half hours in the 2026-08-16 incident, ended only
+// by removing the container by hand. Both views were internally consistent,
+// which is why nothing self-corrected.
+//
+// Ten minutes is deliberately well past a transient blip: it sits on top of the
+// five-minute startup grace above, and the poll runs every minute, so a reap
+// needs ten consecutive confirmations of the same verdict.
+const runnerUnavailableReapAfter = 10 * time.Minute
+
 const (
 	runnerUnavailableOffline = "offline"
 	runnerUnavailableMissing = "missing"
@@ -195,6 +211,14 @@ type registrationRunnerStatusMonitor struct {
 	scalers      []*Scaler
 	logger       *slog.Logger
 	now          func() time.Time
+
+	// unavailableSince records when each tracked runner was first seen
+	// unavailable, so reconcile can require the verdict to persist for
+	// runnerUnavailableReapAfter rather than acting on one poll. Entries are
+	// dropped as soon as a runner reports available again or stops being
+	// tracked, so a runner that flaps never accumulates toward a reap. Only
+	// reconcile touches it, and run calls reconcile from a single goroutine.
+	unavailableSince map[string]time.Time
 }
 
 // reconcile fetches the latest runner statuses and updates the
@@ -232,6 +256,10 @@ func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) time.Du
 	runnerStatusProbeUpGauge.WithLabelValues(m.registration).Set(1)
 
 	now := m.now()
+	if m.unavailableSince == nil {
+		m.unavailableSince = map[string]time.Time{}
+	}
+	stillTracked := map[string]struct{}{}
 	for _, scaler := range m.scalers {
 		counts := map[string]map[string]int{}
 		for _, host := range scaler.dockerHosts {
@@ -244,6 +272,7 @@ func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) time.Du
 			if !runner.startedAt.IsZero() && now.Sub(runner.startedAt) < runnerStartupGracePeriod {
 				continue
 			}
+			stillTracked[runner.name] = struct{}{}
 			status, ok := statuses[runner.name]
 			reason := ""
 			switch {
@@ -252,17 +281,53 @@ func (m *registrationRunnerStatusMonitor) reconcile(ctx context.Context) time.Du
 			case status != "online":
 				reason = runnerUnavailableOffline
 			}
-			if reason != "" {
-				if counts[runner.host] == nil {
-					counts[runner.host] = map[string]int{}
-				}
-				counts[runner.host][reason]++
+			if reason == "" {
+				delete(m.unavailableSince, runner.name)
+				continue
 			}
+			if counts[runner.host] == nil {
+				counts[runner.host] = map[string]int{}
+			}
+			counts[runner.host][reason]++
+
+			since, seen := m.unavailableSince[runner.name]
+			if !seen {
+				m.unavailableSince[runner.name] = now
+				continue
+			}
+			if now.Sub(since) < runnerUnavailableReapAfter {
+				continue
+			}
+			// Reaping only takes the runner if it is still idle at this
+			// instant. A busy runner is deliberately left alone: it may be
+			// mid-job behind a transient GitHub API blip, and an ephemeral
+			// runner that has genuinely died exits on its own for
+			// reconcileRunners to collect. Destroying it here would kill a
+			// live job to fix a reporting disagreement.
+			if !scaler.reapUnavailableRunner(ctx, runner.name, reason) {
+				continue
+			}
+			delete(m.unavailableSince, runner.name)
+			m.logger.Warn("Destroyed an idle runner GitHub has not seen; releasing its capacity for a replacement",
+				slog.String("registration", m.registration),
+				slog.String("name", runner.name),
+				slog.String("host", runner.host),
+				slog.String("reason", reason),
+				slog.Duration("unavailable_for", now.Sub(since)),
+			)
 		}
 		for host, byReason := range counts {
 			for _, reason := range []string{runnerUnavailableOffline, runnerUnavailableMissing} {
 				githubUnavailableRunnersGauge.WithLabelValues(scaler.scaleSetLabel(), host, reason).Set(float64(byReason[reason]))
 			}
+		}
+	}
+	// Forget runners that are no longer tracked at all, so a name reused by a
+	// later runner cannot inherit an older runner's elapsed unavailability and
+	// be reaped early.
+	for name := range m.unavailableSince {
+		if _, ok := stillTracked[name]; !ok {
+			delete(m.unavailableSince, name)
 		}
 	}
 	return runnerStatusPollInterval

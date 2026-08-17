@@ -193,6 +193,13 @@ var (
 		},
 		[]string{"scale_set", "host", "state", "reason"},
 	)
+	githubUnavailableRunnersReapedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_github_unavailable_runners_reaped_total",
+			Help: "Idle runner containers destroyed because GitHub reported them offline or stopped listing them for longer than the reap threshold, by scale set, host, and reason.",
+		},
+		[]string{"scale_set", "host", "reason"},
+	)
 	hostReachableGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_host_reachable",
@@ -426,6 +433,7 @@ func registerMetrics() {
 			runnerStartFailures,
 			runnerDiedIdleTotal,
 			trackedRunnerMismatchTotal,
+			githubUnavailableRunnersReapedTotal,
 			hostReachableGauge,
 			hostExternalsHealthyGauge,
 			hostReadyGauge,

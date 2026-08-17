@@ -2880,6 +2880,61 @@ func (a *Scaler) removeIdleRunners(ctx context.Context) {
 	a.runnersChanged()
 }
 
+// reapUnavailableRunner destroys a single idle runner that GitHub has stopped
+// seeing, and reports whether it did.
+//
+// This is the GitHub-side counterpart to reconcileRunners, which reconciles
+// against authoritative *Docker* state. That one collects runners whose
+// container has stopped or vanished; this one collects the opposite and
+// previously unhandled disagreement -- container healthy and listening, GitHub
+// reporting offline or no longer listing it. That split-brain does not resolve
+// itself from either side: GitHub never dispatches to a runner it considers
+// gone, while this control plane keeps the runner in runners_total and lets it
+// satisfy desired_runners, so no replacement is placed and the queued job waits
+// forever (2026-08-16: three and a half hours, cleared only by hand).
+//
+// Only idle runners are taken, and idleness is re-checked here under the lock
+// rather than trusted from the caller's poll snapshot -- a job may have been
+// assigned in between, and killing a busy runner to settle a reporting
+// disagreement would destroy real work. See the caller for why a busy runner
+// needs no equivalent handling.
+func (a *Scaler) reapUnavailableRunner(ctx context.Context, name, reason string) bool {
+	a.runners.mu.Lock()
+	ref, ok := a.runners.idle[name]
+	if !ok {
+		a.runners.mu.Unlock()
+		return false
+	}
+	delete(a.runners.idle, name)
+	// Marked while still holding the lock, for the same reason
+	// removeIdleRunners does: no window may exist where a name is out of
+	// a.runners without being marked. See tearingDown's doc comment.
+	a.beginTeardown(name)
+	a.runners.mu.Unlock()
+	defer a.endTeardown(name)
+
+	githubUnavailableRunnersReapedTotal.WithLabelValues(a.scaleSetLabel(), ref.host, reason).Inc()
+
+	client, err := a.hostClient(ref.host)
+	if err != nil {
+		// The runner is already untracked, so leaving the container behind
+		// would strand it. cleanupOrphans sweeps it on a later boot; log loudly
+		// rather than silently reinstating capacity GitHub cannot reach.
+		a.logger.Error("Failed to get docker host client to reap an unavailable runner",
+			slog.String("name", name), slog.String("host", ref.host), slog.String("error", err.Error()))
+	} else {
+		removeCtx, cancel := context.WithTimeout(ctx, removeIdleRunnerTimeout)
+		if err := client.ContainerRemove(removeCtx, ref.containerID, container.RemoveOptions{Force: true}); err != nil {
+			a.logger.Error("Failed to remove the container of an unavailable runner",
+				slog.String("name", name), slog.String("host", ref.host), slog.String("error", err.Error()))
+		}
+		cancel()
+	}
+	a.deregisterRunner(ctx, name)
+	a.runnersChanged()
+	return true
+}
+
 // BeginDrain is idempotent. It refuses future scale-ups and removes idle
 // capacity while allowing assigned jobs to finish normally. Operators send
 // SIGUSR1, wait for runners_total=0, then recreate the container.
