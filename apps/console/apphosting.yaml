@@ -84,7 +84,7 @@ env:
   # PAT this flip was originally probe-verified against (#1190) has been
   # retired.
   - variable: AGENT_LCARS_CONTROL_PLANE_REPOSITORIES
-    value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab'
+    value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab,supersprinklesracing/www,supersprinklesracing/girosf,jlapenna/nx-cache-server,jlapenna/sync-padd'
     availability:
       - RUNTIME
 
@@ -115,7 +115,7 @@ env:
   # Agent capabilities are explicit. Omitting `agents` opts a repository into
   # the standard Claude, Codex, and OpenCode integrations.
   - variable: AGENT_LCARS_WATCHED_REPOS
-    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"agent-lcars"},{"owner":"jlapenna","name":"homelab","alias":"homelab"}]'
+    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"agent-lcars"},{"owner":"jlapenna","name":"homelab","alias":"homelab"},{"owner":"supersprinklesracing","name":"www","alias":"www"},{"owner":"supersprinklesracing","name":"girosf","alias":"girosf"},{"owner":"jlapenna","name":"nx-cache-server","alias":"nx-cache-server"},{"owner":"jlapenna","name":"sync-padd","alias":"sync-padd"}]'
     availability:
       - RUNTIME
 
