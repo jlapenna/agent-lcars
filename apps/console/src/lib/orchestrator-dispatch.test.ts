@@ -367,6 +367,29 @@ describe('drainOutbox: report-outcome', () => {
     expect(result.dispatched).toEqual([newRunId]);
   });
 
+  it('says the executor failed, not that a lease expired, for a terminal-settled run (#1361)', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await orchestrator.confirmDispatch(run.runId);
+    // One minute in: the lease is nowhere near expiry, so claiming it
+    // expired would be plainly false.
+    clock.advanceMinutes(1);
+    const settled = await orchestrator.settleTerminalRuns([
+      { runId: run.runId, conclusion: 'startup_failure' },
+    ]);
+    const newRunId = settled.retried[0]!.newRunId;
+
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const commentCall = calls.find((c) => c.url.endsWith('/comments'));
+    expect(callBody(commentCall!).body).toBe(
+      `⚠️ Run ${run.runId} was lost (executor terminal: startup_failure, ` +
+        `no completion report). Retrying automatically as run ${newRunId} ` +
+        `(attempt 2 of ${MAX_AUTO_RETRIES + 1}).`,
+    );
+  });
+
   it('exhausts the auto-retry budget after 3 consecutive losses: exhausted comment + best-effort needs-human label', async () => {
     const { clock, store, orchestrator } = fixture();
     await started(orchestrator);
