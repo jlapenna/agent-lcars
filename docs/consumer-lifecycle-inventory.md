@@ -27,6 +27,14 @@
 > `apps/rerun-infra-killed-runs` source project outright. Treat the Group C
 > description and table omission-note below as describing the arrangement
 > as it stood on 2026-08-09, not current state.
+>
+> **Names have moved since.** Sprinkles' `claude-automerge.yml` (the
+> auto-merge row in the table below) is now `agent-automerge.yml`, with the
+> hourly `schedule` trigger the orphaned-anchor sweep needs
+> (sprinkles#4510), and the per-repo agent lanes this document references
+> are now thin callers of one parameterized lane in this repo
+> (agent-lcars#1347). The behaviors described below are still the
+> behaviors; the file names are historical.
 
 [#864](https://github.com/jlapenna/agent-lcars/issues/864) proposes making the
 hosted controller (see [`lifecycle-systems.md`](lifecycle-systems.md)) the
