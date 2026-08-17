@@ -1,0 +1,62 @@
+# Reports when a consumer repo's copy of a script this repo owns has drifted.
+#
+# AGENTS.md forbids cross-repository source imports, so the fleet's shared
+# scripts exist as byte-identical copies rather than a shared dependency
+# (#1307, #1311). Copies drift in silence; this makes them drift loudly.
+#
+# Deliberately NOT a required check on this repo's PRs: drift is usually
+# introduced by a change in a *consumer*, so failing this repo's PRs would
+# block work that did not cause the problem. It runs on a schedule and files
+# the finding instead.
+name: Cross-repo drift
+
+on:
+  schedule:
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: cross-repo-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare consumer copies against this repo's canonical files
+        id: check
+        env:
+          # Read-only clones of the consumers. Never a build input: nothing
+          # here is imported, compiled, or linked into an artifact.
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          set -uo pipefail
+          if ./tools/check-cross-repo-drift.sh >drift.txt 2>&1; then
+            echo "drifted=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drifted=true" >> "$GITHUB_OUTPUT"
+          fi
+          cat drift.txt
+
+      - name: Open or update the drift issue
+        if: steps.check.outputs.drifted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='Cross-repo drift: a consumer copy no longer matches this repo'
+          body="$(printf 'Detected by %s\n\n```\n%s\n```\n\nThese files are duplicated deliberately (AGENTS.md forbids cross-repository source imports), so they are kept in step by hand. One of them moved.\n\nFix by making the copies byte-identical again, or remove the pair from `tools/cross-repo-drift.conf` if the divergence is now intentional.\n' "$RUN_URL" "$(cat drift.txt)")"
+          existing="$(gh issue list --repo "$REPO" --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi
