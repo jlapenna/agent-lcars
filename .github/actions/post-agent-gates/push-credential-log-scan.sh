@@ -39,8 +39,5 @@ fi
 
 if echo "$LOG" | grep -Eqi \
   "could not read Username for 'https://github.com'|Support for password authentication was removed|remote: Invalid username or token|fatal: Authentication failed for 'https://github.com"; then
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo 'readiness-failure=credential' >> "$GITHUB_OUTPUT"
-  fi
   printf '%s' $'\n\nA `git`/`gh` push or API call failed with an authentication error. This is very likely the GitHub App installation token expiring mid-step, not a missing credential: the token dispatch-bootstrap mints lives for only 60 minutes and nothing refreshes it once the agent step starts (agent-lcars#1217). Any work committed but not yet pushed before that point did not land. Re-dispatch to retry from a fresh token.'
 fi

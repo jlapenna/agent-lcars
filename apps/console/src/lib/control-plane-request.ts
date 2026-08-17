@@ -60,7 +60,6 @@ const hostedCompletionRequestSchema = z
     token: z.string().min(16).optional(),
     outcome: z.unknown().optional(),
     outcomeReference: z.unknown().optional(),
-    readinessFailure: z.unknown().optional(),
   })
   .strict();
 

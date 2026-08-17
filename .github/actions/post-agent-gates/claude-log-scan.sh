@@ -51,16 +51,10 @@ if echo "$LOG" | grep -Eqi 'Reached maximum number of turns|"subtype"[[:space:]]
 fi
 
 if echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0'; then
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo 'readiness-failure=credential' >> "$GITHUB_OUTPUT"
-  fi
   printf '%s' $'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
   exit 0
 fi
 
 if echo "$LOG" | grep -q '"is_error": true' && echo "$LOG" | grep -q '"total_cost_usd": 0'; then
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo 'readiness-failure=provider' >> "$GITHUB_OUTPUT"
-  fi
   printf '%s' $'\n\nClaude Code failed during provider initialization before any billed work (`is_error:true`, zero cost). Its structured result did not identify an OAuth 401, so this is classified as provider readiness rather than a credential rotation. Inspect the Claude step and provider health before retrying.'
 fi

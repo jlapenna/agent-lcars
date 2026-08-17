@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# #813 keeps LCARS's hosted-projector path log-only. #4388 adds an explicit
-# standalone-consumer compatibility path when MAINTAINER, GH_TOKEN, and
-# ISSUE_NUM are present. These cases prove both modes stay isolated.
+# #813 keeps failure reporting log-only: the hosted finalizer/orchestrator
+# is the one writer of visible failure state. The former standalone
+# direct-park mode (#4388's GH_TOKEN/ISSUE_NUM/MAINTAINER tuple) was
+# retired per maintainer decision 2026-08-17, so these cases prove the
+# script logs, never calls gh, and honors its message inputs.
 #
 # Each case below runs in its own `( ... )` subshell so exported overrides
 # never leak into the next case.
@@ -13,24 +15,15 @@ script="$action_dir/report-failure.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 
-# A fake `gh` records every call and accepts exactly the standalone reporter's
-# comment/label/assignee operations.
+# A fake `gh` records every call so cases can assert its ABSENCE — a
+# regression back to a direct GitHub write would surface here.
 fake_bin="$test_root/bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/gh" <<'FAKE_GH'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "$*" >> "${FAKE_GH_CALLS:?FAKE_GH_CALLS is required}"
-if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
-  exit 0
-fi
-if [ "$1" = "api" ]; then
-  case "$2" in
-    */labels|*/assignees) exit 0 ;;
-  esac
-fi
-echo "fake gh: unsupported invocation: $*" >&2
-exit 64
+exit 0
 FAKE_GH
 chmod +x "$fake_bin/gh"
 export PATH="$fake_bin:$PATH"
@@ -43,7 +36,6 @@ base_env() {
   export JOB_STATUS=failure
   export MESSAGE_PREFIX=""
   export REASON=""
-  unset GH_TOKEN ISSUE_NUM MAINTAINER
   export FAKE_GH_CALLS="$test_root/calls"
   : > "$FAKE_GH_CALLS"
 }
@@ -55,7 +47,7 @@ fail() {
   exit 1
 }
 
-# --- Case 1: LCARS hosted-finalizer mode logs, calls no gh, and exits 0. ---
+# --- Case 1: an ordinary failure logs, calls no gh, and exits 0. ---
 (
   base_env
   output="$(bash "$script" 2>&1)"
@@ -68,7 +60,7 @@ fail() {
   case "$output" in
     *"::error::"*) fail "must not log an error on the ordinary path" ;;
   esac
-  test ! -s "$FAKE_GH_CALLS" || fail "hosted-finalizer mode must not call gh"
+  test ! -s "$FAKE_GH_CALLS" || fail "log-only reporting must not call gh"
 )
 
 # --- Case 2: JOB_STATUS=cancelled renders the timeout-specific wording. ---
@@ -114,8 +106,8 @@ fail() {
   esac
 )
 
-# --- Case 5: a standalone consumer supplies the complete opt-in tuple and
-# gets the visible comment plus additive label/assignee parking writes. ---
+# --- Case 5: the retired standalone tuple no longer opts into any direct
+# write — even fully supplied, the script stays log-only and calls no gh. ---
 (
   base_env
   export GH_TOKEN=test-token
@@ -123,45 +115,12 @@ fail() {
   export MAINTAINER=maintainer-login
   output="$(bash "$script" 2>&1)"
   status=$?
-  test "$status" = 0 || fail "standalone reporting must exit 0"
-  grep -q 'issue comment 42' "$FAKE_GH_CALLS" || fail "expected a failure comment"
-  grep -q 'issues/42/labels' "$FAKE_GH_CALLS" || fail "expected status:needs-human"
-  grep -q 'issues/42/assignees' "$FAKE_GH_CALLS" || fail "expected maintainer assignment"
-)
-
-# --- Case 6: any non-empty standalone input is an explicit opt-in. A partial
-# tuple fails closed instead of logging a misleading hosted-finalizer handoff. ---
-(
-  base_env
-  export MAINTAINER=maintainer-login
-  set +e
-  output="$(bash "$script" 2>&1)"
-  status=$?
-  set -e
-  test "$status" != 0 || fail "partial standalone inputs must fail"
+  test "$status" = 0 || fail "the retired tuple must not change the exit status"
   case "$output" in
-    *"GH_TOKEN is required when any standalone-reporting input is set"*) ;;
-    *) fail "expected the missing GH_TOKEN diagnostic" ;;
+    *"::notice::"*"Test Agent agent run failed:"*) ;;
+    *) fail "expected the ordinary log-only notice despite the retired tuple" ;;
   esac
-  test ! -s "$FAKE_GH_CALLS" || fail "partial inputs must not call gh"
-)
-
-# --- Case 7: token+issue with a missing maintainer is also partial. This is
-# distinct from LCARS's deliberately all-empty hosted-finalizer mode. ---
-(
-  base_env
-  export GH_TOKEN=test-token
-  export ISSUE_NUM=42
-  set +e
-  output="$(bash "$script" 2>&1)"
-  status=$?
-  set -e
-  test "$status" != 0 || fail "a missing maintainer must fail"
-  case "$output" in
-    *"MAINTAINER is required when any standalone-reporting input is set"*) ;;
-    *) fail "expected the missing MAINTAINER diagnostic" ;;
-  esac
-  test ! -s "$FAKE_GH_CALLS" || fail "partial inputs must not call gh"
+  test ! -s "$FAKE_GH_CALLS" || fail "the retired tuple must not resurrect a direct gh write"
 )
 
 echo "report-failure.test.sh: all cases passed"

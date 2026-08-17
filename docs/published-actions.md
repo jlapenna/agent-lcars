@@ -38,7 +38,7 @@ promised one.
 | `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                                          |
 | `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                                                 |
 | `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                                       |
-| `report-failure`               | Log failure; optionally park an anchor for standalone consumers (run from snapshot)                                  |
+| `report-failure`               | Log failure in the run's own log; the hosted finalizer/orchestrator owns visible reporting (run from snapshot)       |
 | `post-agent-gates`             | Single post-agent step driving verify-deliverable/report-failure/telemetry-finalize (script only, run from snapshot) |
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                         |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
@@ -178,37 +178,36 @@ sweep and bounded auto-retry (sprinkles#4453, homelab#660) and no repo's
 (`apps/rerun-infra-killed-runs`) were deleted outright rather than carved
 further.
 
-`report-failure` keeps LCARS's #813 architecture plus a direct-park path.
-LCARS workers omit `maintainer`, so the action only logs; the hosted
-finalizer's completion callback and dispatch-controller projector remain
-their one idempotent writer. The `token`/`issue`/`maintainer` inputs — which
-post the visible failure, add `status:needs-human`, and assign the
-maintainer directly — were built as a standalone-consumer compatibility
-path, but no such consumer exists today: every fleet repo that calls this
+`report-failure` is log-only (#813): it annotates the failing run's own
+log, and the hosted finalizer's completion callback drives the
+orchestrator — the one idempotent writer of visible failure state on the
+anchor issue/PR. It used to carry a standalone direct-park path (#4388's
+`token`/`issue`/`maintainer` inputs, or the equivalent
+`GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple when running the
+script from `snapshot-enforcement-scripts`) that posted the visible
+failure, added `status:needs-human`, and assigned the maintainer directly.
+No standalone consumer ever existed — every fleet repo that calls this
 action is a control-plane tenant whose lanes also run the coupled fallback
-finalizer. The inputs therefore stand as belt-and-braces redundancy
-alongside the finalizer; whether to retire one of the two writers is an
-open maintainer decision this doc deliberately does not make. When running
-the script from `snapshot-enforcement-scripts`, the equivalent opt-in is
-the `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only
-part of that tuple fails closed instead of silently losing the report
-(#4388).
+finalizer — so the direct park had become a redundant second writer and
+was retired per maintainer decision 2026-08-17, inputs and park branch
+deleted. A straggling caller still passing the retired inputs gets a
+runner "Unexpected input(s)" warning (never an error), and the retired
+environment variables are silently ignored.
 
 `post-agent-gates` (script only — see "Security: post-agent gates run from a
 pre-agent snapshot" below; there is deliberately no `action.yml`, since a
 `uses:`-callable surface would invite invoking it post-agent, defeating the
-snapshot invariant) carries the same dual-mode contract one level up (#1208).
-It already required `GH_TOKEN` and `ISSUE` for its own verify-deliverable
-lookups, so the only new input is `MAINTAINER`: absent, it forwards
-`report-failure.sh`'s `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` all blank —
-byte-identical to LCARS's hosted, log-only behavior. Set, it forwards its own
-ambient `GH_TOKEN` and `ISSUE` (as `ISSUE_NUM`) alongside it, so
-`report-failure.sh` takes its standalone compatibility path and posts/parks
-the failure directly. This is what lets sprinkles/homelab collapse their
-hand-copied telemetry-finalize/verify-deliverable/failure-reason/report-failure
-steps into the one snapshot-run step LCARS's own workers already use, without
-losing their existing visible-failure reporting (issue #1208; the consumer-side
-rewiring is tracked as a follow-up, not part of this change).
+snapshot invariant) is log-only at its report phase for the same reason:
+the former `MAINTAINER` pass-through toggle (#1208) was retired with
+report-failure's direct-park path, so the script now forwards no
+GitHub-write credentials to `report-failure.sh` at all. It still requires
+`GH_TOKEN` and `ISSUE` for its own verify-deliverable lookups. It
+publishes no step outputs either: its former `complete`/`outcome-kind`/
+`readiness-failure` `$GITHUB_OUTPUT` writes had no consumer (nothing ever
+mapped `steps.post_agent_gates.outputs.*` — `agent-fallback-finalize.yml`
+deliberately re-derives lifecycle evidence from GitHub's job metadata and
+exact attempt markers instead of trusting worker-side step outputs), and
+were deleted in the same retirement.
 
 `post-agent-gates` requires `ATTEMPT_ID` whenever `JOB_STATUS` is
 `success` — the verify phase is exact-marker-only, and the requirement is

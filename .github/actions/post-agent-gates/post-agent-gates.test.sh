@@ -116,16 +116,15 @@ base_env() {
   export RUN_ID=30749363701
   export ISSUE=42
   export JOB_STATUS=success
-  # #813: MAINTAINER is no longer a post-agent-gates.sh input -- report-
-  # failure.sh stopped needing it once it stopped writing GitHub state.
+  # MAINTAINER is no longer a post-agent-gates.sh input: report-failure.sh
+  # is log-only (#813), and its former standalone direct-park mode was
+  # retired per maintainer decision 2026-08-17.
   export MODE=implement
   export ATTEMPT_ID="g1:test-intent"
   export WRITER_CREDENTIALS_FILE=
   export NO_DELIVERABLE_REASON="LANE_NO_DELIVERABLE_MARKER"
   export FAILURE_LOG_SCAN_SCRIPT=
   export CLAUDE_EXECUTION_FILE=
-  export AGENT_STEP_OUTCOME=success
-  export READINESS_FAILURE=
 }
 
 run_case() {
@@ -193,7 +192,6 @@ JSON
   if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
     fail "a found deliverable must never post a failure comment"
   fi
-  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a clean primary finalizer must suppress the fallback"
   grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its outcome kind"
   grep -qx 'outcome-reference=7' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its exact reference"
 )
@@ -222,8 +220,6 @@ JSON
   if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
     fail "must not post the failure comment directly (#813)"
   fi
-  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed no-deliverable report must suppress a duplicate fallback"
-  grep -qx 'outcome-kind=outcome-gate-failure' "$GITHUB_OUTPUT" || fail "a missing deliverable must be classified separately"
 )
 
 # --- Case 3: JOB_STATUS success, verify-deliverable's own lookup fails
@@ -249,11 +245,10 @@ JSON
 # step's own exit stays 0 as long as report-failure itself succeeds
 # (mirrors the original "Report failure on the issue" step being able to
 # succeed even though the job is already red from an earlier failure).
-# base_env leaves MAINTAINER unset, so this is also the hosted-mode case for
-# #1208's GH_TOKEN/ISSUE_NUM/MAINTAINER pass-through: the assertion below
-# proves report-failure.sh still takes its log-only branch even though
-# GH_TOKEN and ISSUE are both ambiently non-empty on this script (case 14
-# below is the standalone counterpart, MAINTAINER set). ---
+# The assertion below proves report-failure.sh stays log-only even though
+# GH_TOKEN and ISSUE are both ambiently non-empty on this script -- its
+# standalone direct-park mode was retired (maintainer decision
+# 2026-08-17). ---
 (
   base_env
   export JOB_STATUS=failure
@@ -269,18 +264,6 @@ JSON
   if grep -q 'was cancelled' <<<"$output"; then
     fail "an ordinary failure must not be reported as cancelled"
   fi
-  grep -qx 'outcome-kind=trajectory-failure' "$GITHUB_OUTPUT" || fail "an agent-step failure must be classified as trajectory"
-)
-
-# --- Case 4b: a worker that fails before the agent step is distinguishable
-# from a trajectory failure. ---
-(
-  base_env
-  export JOB_STATUS=failure
-  export AGENT_STEP_OUTCOME=skipped
-  run_case startup-failed
-  test "$status" = 0 || fail "a reported startup failure must preserve the upstream job result"
-  grep -qx 'outcome-kind=startup-failure' "$GITHUB_OUTPUT" || fail "a skipped agent step must be classified as startup failure"
 )
 
 # --- Case 5: JOB_STATUS cancelled - report-failure.sh's own MSG logic
@@ -386,7 +369,6 @@ SCAN
   run_case claude-log-scan-oauth
   test "$status" = 0 || fail "log-scan oauth case with a landed report must still exit 0"
   grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' <<<"$output" || fail "expected the OAuth-token REASON text"
-  grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the OAuth signature to publish a credential readiness failure"
   if grep -q '^run view ' "$FAKE_GH_DIR/calls"; then
     fail "the structured execution file must avoid the unavailable in-progress run-log API"
   fi
@@ -405,58 +387,31 @@ SCAN
   run_case claude-log-scan-provider
   test "$status" = 0 || fail "provider-init case with a landed report must still exit 0"
   grep -q 'failed during provider initialization' <<<"$output" || fail "expected the provider-init REASON text"
-  grep -qx 'readiness-failure=provider' "$GITHUB_OUTPUT" || fail "expected a provider readiness failure without a 401"
   if grep -q 'CLAUDE_CODE_OAUTH_TOKEN has expired' <<<"$output"; then
     fail "a generic zero-cost failure must not guess that the OAuth token expired"
   fi
 )
 
-# --- Case 12: a lane adapter can publish a validated readiness signal even
-# when the ordinary failure report subsequently runs. ---
-(
-  base_env
-  export JOB_STATUS=failure
-  export READINESS_FAILURE=credential
-  run_case adapter-readiness-failure
-  test "$status" = 0 || fail "adapter readiness signal must not change the ordinary report result"
-  grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the adapter readiness signal in step outputs"
-)
-
-# --- Case 13: arbitrary readiness strings never cross the callback trust
-# boundary. ---
-(
-  base_env
-  export JOB_STATUS=failure
-  export READINESS_FAILURE=not-a-real-signal
-  run_case invalid-readiness-failure
-  test "$status" != 0 || fail "an invalid readiness signal must fail closed"
-  grep -q 'Invalid READINESS_FAILURE' "$FAKE_GH_DIR/output" || fail "expected the invalid readiness diagnostic"
-)
-
-# --- Case 14: a standalone consumer sets MAINTAINER (with GH_TOKEN and
-# ISSUE already ambiently present from base_env) - report-failure.sh takes
-# its compatibility path and posts/parks the failure directly, instead of
-# every other case's hosted log-only branch (#1208). This is the same
-# visible-failure path report-failure.test.sh exercises directly; here it
-# proves post-agent-gates.sh's own pass-through actually reaches it. ---
+# --- Case 12: MAINTAINER no longer opts into any standalone direct-park
+# path (retired per maintainer decision 2026-08-17) - even with the full
+# former opt-in tuple ambiently present (GH_TOKEN and ISSUE from base_env),
+# report-failure.sh stays log-only and writes no GitHub state. ---
 (
   base_env
   export JOB_STATUS=failure
   export MAINTAINER=octocat
-  run_case standalone-maintainer-set
-  test "$status" = 0 || fail "a landed standalone report must still exit 0"
-  grep -q '^issue comment 42 ' "$FAKE_GH_DIR/calls" || \
-    fail "expected the standalone path to post the visible failure comment on the caller-supplied ISSUE"
-  grep -q 'agent run failed' "$FAKE_GH_DIR/calls" || \
-    fail "expected the standalone comment body to carry the failure message"
-  grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls" || \
-    fail "expected the standalone path to set status:needs-human"
-  grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls" || \
-    fail "expected the standalone path to assign the maintainer"
-  if grep -q '::notice::.*agent run failed' <<<"$output"; then
-    fail "standalone mode must not also emit the hosted log-only notice"
+  run_case retired-maintainer-ignored
+  test "$status" = 0 || fail "a landed log-only report must still exit 0"
+  grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged"
+  if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
+    fail "the retired MAINTAINER toggle must not resurrect the direct failure comment"
   fi
-  grep -qx 'complete=true' "$GITHUB_OUTPUT" || fail "a landed standalone report must suppress the hosted fallback"
+  if grep -q '/issues/42/labels' "$FAKE_GH_DIR/calls"; then
+    fail "the retired MAINTAINER toggle must not write status:needs-human directly"
+  fi
+  if grep -q '/issues/42/assignees' "$FAKE_GH_DIR/calls"; then
+    fail "the retired MAINTAINER toggle must not assign the maintainer directly"
+  fi
 )
 
 # --- Case 15: ATTEMPT_ID is required for the verify phase, with no legacy
@@ -512,7 +467,6 @@ JSON
   test "$status" = 0 || fail "log-scan push-credential case with a landed report must still exit 0"
   grep -q 'installation token expiring mid-step' <<<"$output" || fail "expected the push-credential-expiry REASON text"
   grep -q 'agent-lcars#1217' <<<"$output" || fail "expected the REASON text to cite #1217"
-  grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the signature to publish a credential readiness failure"
 )
 
 # --- Case 18: push-credential-log-scan.sh stays silent on an unrelated

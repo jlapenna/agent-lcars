@@ -693,12 +693,7 @@ jobs:
           # step, always earlier in this same job.
           ATTEMPT_ID: ${{ env.ATTEMPT_ID }}
           JOB_STATUS: ${{ job.status }}
-          # Standalone parking (report-failure's consumer mode): empty in
-          # the dispatch-bootstrap era, where the hosted finalizer and
-          # dispatch-controller projector own the visible failure state.
-          MAINTAINER: ${{ (!inputs.dispatch-bootstrap && inputs.maintainer-login) || '' }}
           MESSAGE_PREFIX: ${{ inputs.message-prefix }}
-          AGENT_STEP_OUTCOME: ${{ steps.agent.outcome }}
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
           # Caller-rendered no-deliverable wording (agent-protocol.md §5) —
           # the shared script stays lane-agnostic.
