@@ -1,5 +1,8 @@
 # Onboarding infrastructure to the runner-autoscaler
 
+> Part of the end-to-end repo onboarding sequence — start at
+> [onboarding-repo.md](onboarding-repo.md); this doc is its §2 (capacity).
+
 How to add a new GitHub account/repo — a **registration** — to the shared
 fleet, so it gets its own on-demand, ephemeral self-hosted runners without
 a new standalone control plane.
