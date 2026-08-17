@@ -138,7 +138,7 @@ and avoids GitHub's first-contributor workflow approval path. Generate a
 replacement private key from the App's settings page when needed; never put
 it in source control or an issue.
 
-`jclaw-bot` remains the separate, assignable fleet-ownership account on
+`agent-lcars-bot` remains the separate, assignable fleet-ownership account on
 issues and pull requests. GitHub App identities, including
 `agent-lcars[bot]`, cannot be assigned by GitHub's API.
 

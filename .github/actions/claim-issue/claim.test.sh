@@ -42,7 +42,7 @@ run_case() {
   mkdir -p "$case_dir"
   export FAKE_GH_DIR="$case_dir"
   export GITHUB_OUTPUT="$case_dir/github-output"
-  export EXPECTED_LOGIN='jclaw-bot'
+  export EXPECTED_LOGIN='agent-lcars-bot'
   export GH_TOKEN=test-token
   export REPO=example/repo
   export NUM=42
@@ -63,7 +63,7 @@ run_case assignment-success
 test "$status" = 0
 grep -qx 'claimed=true' "$GITHUB_OUTPUT"
 grep -qx 'pickup-comment-id=' "$GITHUB_OUTPUT"
-jq -e '. == {assignees: ["jclaw-bot"]}' \
+jq -e '. == {assignees: ["agent-lcars-bot"]}' \
   "$FAKE_GH_DIR/assignee-payload.json" >/dev/null
 if grep -q -- '--silent\|assignees\[\]' "$FAKE_GH_DIR/calls"; then
   echo 'claim must use an explicit JSON body without gh --silent' >&2
@@ -80,6 +80,6 @@ mkdir -p "$test_root/assignment-failure"
 run_case assignment-failure
 test "$status" = 0
 grep -qx 'claimed=false' "$GITHUB_OUTPUT"
-grep -q 'Could not assign jclaw-bot' "$FAKE_GH_DIR/output"
+grep -q 'Could not assign agent-lcars-bot' "$FAKE_GH_DIR/output"
 
 echo 'claim.test.sh: all cases passed'

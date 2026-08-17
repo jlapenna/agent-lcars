@@ -73,7 +73,7 @@ env:
   # fallbacks explicitly rather than relying on them - so what this instance
   # is configured with is visible here, not only in app source.
   - variable: AGENT_LCARS_FLEET_GITHUB_LOGIN
-    value: 'jclaw-bot'
+    value: 'agent-lcars-bot'
     availability:
       - RUNTIME
 

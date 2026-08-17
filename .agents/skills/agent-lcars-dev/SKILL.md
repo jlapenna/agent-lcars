@@ -88,18 +88,18 @@ These override any default behavior:
   dependency.
 
 - **Issue ownership — the assignee field**: the assignee records whose
-  court the ball is in, so agents and humans don't collide. `jclaw-bot` is
+  court the ball is in, so agents and humans don't collide. `agent-lcars-bot` is
   this fleet's claim identity across every repo it works, not specific to
   `agent-lcars` (see the [lcars](../lcars/SKILL.md) skill).
   - A **human assignee** owns the issue — do not start work on it unless
     that human explicitly hands it off (adding an `agent:*` label or a
     recognized reply trigger IS that handoff).
-  - **`jclaw-bot` assigned** means the agent fleet has claimed it. Before
+  - **`agent-lcars-bot` assigned** means the agent fleet has claimed it. Before
     touching such an issue, check for a live `claude.yml`/`codex.yml`/
     `opencode.yml` run or a recent agent session comment; if neither
     exists the claim is stale — take over and say so in an issue comment.
   - **Claim before you start**: when beginning work on an issue from an
-    interactive session, run `gh issue edit <N> --add-assignee jclaw-bot`
+    interactive session, run `gh issue edit <N> --add-assignee agent-lcars-bot`
     AND post a session takeover comment on the issue (name the resume
     command if your CLI supports one, mirroring the format the
     [lcars](../lcars/SKILL.md) skill's headless delta uses) — the claim

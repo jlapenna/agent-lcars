@@ -89,7 +89,7 @@ export interface ActionItem {
   actionTypes: ActionType[];
   labels: string[];
   /** GitHub logins assigned to this item (#2783 ownership spine) - e.g.
-   * `jclaw-bot` means the agent fleet has claimed it. Used by the /agents
+   * `agent-lcars-bot` means the agent fleet has claimed it. Used by the /agents
    * page's stale-claim detection (see claimed-idle.ts); no console surface
    * needed it before that. */
   assigneeLogins: string[];
@@ -446,7 +446,7 @@ const BOARD_LABELS = ['status:needs-human', 'status:ready-for-agent'];
  * `agent-automerge.yml` reads that must be kept in sync with that registry,
  * not this constant. Belt and suspenders, same reasoning as `BOARD_LABELS`:
  * the assignee-based ownership spine (#2783) is the primary signal, but it
- * depends on `jclaw-bot` actually holding assignable (triage+) repo access,
+ * depends on `agent-lcars-bot` actually holding assignable (triage+) repo access,
  * and an agent-authored PR must not go invisible the moment that assignment
  * silently no-ops or every other signal (a label, a still-open review
  * request) has cleared (#216). */
@@ -456,7 +456,7 @@ const AGENT_AUTHOR_LOGINS = AGENT_BOT_LOGINS;
  * The open-item predicate, replacing the old per-qualifier search queries
  * one for one.
  *
- * Assignee checks are the ownership spine (#2783): `jclaw-bot` assigned
+ * Assignee checks are the ownership spine (#2783): `agent-lcars-bot` assigned
  * means the agent fleet has claimed the item - this covers what used to
  * need an `author:app/claude` query AND still missed things (@claude PR
  * threads, runbook anchors, and interactive-session claims never carry the

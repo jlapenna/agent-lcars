@@ -7,7 +7,9 @@
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
-const CLAIM_ASSIGNEE = 'jclaw-bot';
+const { fleetLogin } = require('./fleet-identity.cjs');
+
+const CLAIM_ASSIGNEE = fleetLogin();
 
 function extractIssueNumbers(command) {
   if (typeof command !== 'string') return [];
