@@ -228,4 +228,21 @@ else
   fi
 fi
 
+# The compose file tracks `latest` rather than pinning a digest (see its own
+# comment for why). That trades away a record of what was *intended* to run,
+# so record what ACTUALLY ran -- which is the more useful artifact anyway: a
+# pin tells you what someone meant to deploy, this tells you what the daemon
+# is executing right now.
+#
+# Read from the running container, not from the compose file or a registry
+# lookup: those describe intent and current-latest respectively, and neither
+# survives `latest` moving underneath a container that started earlier.
+deployed_digest="$(docker inspect --format '{{index .RepoDigests 0}}' \
+  "$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME")" 2>/dev/null || true)"
+if [ -n "$deployed_digest" ]; then
+  echo "$CONTAINER_NAME is running $deployed_digest"
+else
+  echo "$CONTAINER_NAME digest could not be resolved (image may be local-only)" >&2
+fi
+
 echo "$CONTAINER_NAME deployed and stable."
