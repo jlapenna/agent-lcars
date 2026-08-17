@@ -1,0 +1,58 @@
+name: CodeQL Reusable
+
+# Fleet-published reusable workflow (docs/published-actions.md, #1340
+# A-R6): the CodeQL analyze job this repo's codeql.yml and
+# nx-cache-server's codeql.yml had each hand-rolled with ~30 lines of
+# drift. The caller owns what `workflow_call` cannot carry: triggers
+# (including the weekly `schedule` cron — keep per-repo crons staggered),
+# concurrency, and workflow-level permissions; this file owns the analyze
+# steps. CodeQL is available to any fleet repo by adding a thin caller,
+# but enabling it in a new repo is a maintainer choice, not a default.
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: >-
+          Comma-separated CodeQL language list passed straight to
+          github/codeql-action/init (e.g. 'javascript-typescript').
+        required: false
+        type: string
+        default: 'javascript-typescript'
+      build-mode:
+        description: >-
+          CodeQL build mode. 'none' suits the fleet's interpreted
+          JavaScript/TypeScript codebases; compiled languages would pass
+          'autobuild' or 'manual'.
+        required: false
+        type: string
+        default: 'none'
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analyze (${{ inputs.languages }})
+    # ubuntu-latest unconditionally, not an input: GitHub's CodeQL CLI has
+    # no linux/arm64 build at all (confirmed on agent-lcars CI — "The
+    # CodeQL CLI does not support the platform/architecture combination of
+    # linux/arm64"), and the fleet's self-hosted pools include arm64
+    # hosts. A caller-supplied label landing on one of those would fail
+    # outright — this is a hard platform incompatibility, not a
+    # trust-boundary question, so the knob deliberately does not exist.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ inputs.languages }}
+          build-mode: ${{ inputs.build-mode }}
+
+      - uses: github/codeql-action/analyze@v4

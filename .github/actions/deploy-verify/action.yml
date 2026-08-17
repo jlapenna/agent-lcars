@@ -1,0 +1,143 @@
+name: deploy-verify
+description: >-
+  Catch dead-on-arrival deploys: a rollout can report success while the
+  service serves nothing but errors. Polls the deployed URL until it
+  answers with any HTTP status below 500 (backend roots legitimately
+  401/404), then optionally records the verdict on a GitHub Deployment
+  and, on failure, annotates the deployed commit's pull requests. Modeled
+  on sprinkles deploy.yml's smoke block (#1340 D4); published so the
+  fleet's three private reimplementations converge here.
+
+inputs:
+  url:
+    description: The deployed URL to verify.
+    required: true
+  max-attempts:
+    description: Number of polling attempts before declaring failure.
+    required: false
+    default: '10'
+  interval:
+    description: Seconds to sleep between attempts.
+    required: false
+    default: '15'
+  deployment-id:
+    description: >-
+      Optional GitHub Deployment id. When set, a success/failure
+      deployment status (with environment_url and this run's log_url) is
+      recorded whichever way the verification goes. Best-effort: a status
+      API hiccup never changes the verification verdict. Leave empty for
+      jobs whose `environment:` key already makes Actions manage the
+      deployment record.
+    required: false
+    default: ''
+  annotate-sha:
+    description: >-
+      Optional deployed commit SHA. When set and verification FAILS, each
+      open pull request associated with that commit is annotated with the
+      failure so the dead-on-arrival deploy is visible where the change
+      landed. Success stays quiet — the run log and any deployment status
+      carry the green. Requires a token with pull-requests write.
+    required: false
+    default: ''
+  token:
+    description: >-
+      Token for the optional deployment-status and PR-annotation calls.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  status-code:
+    description: The last HTTP status code observed by the smoke loop.
+    value: ${{ steps.smoke.outputs.status-code }}
+  result:
+    description: "'success' or 'failure' — the smoke loop's outcome."
+    value: ${{ steps.smoke.outcome }}
+
+runs:
+  using: composite
+  steps:
+    # Any HTTP status below 500 counts as alive: an auth-walled or
+    # path-sensitive service legitimately answers 401/404 at its root; the
+    # failure signature this loop exists to catch is an origin that only
+    # ever produces 5xx (or nothing at all, curl's 000).
+    - name: Smoke check
+      id: smoke
+      shell: bash
+      continue-on-error: true
+      env:
+        URL: ${{ inputs.url }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        INTERVAL: ${{ inputs.interval }}
+      run: |
+        set -euo pipefail
+        for i in $(seq 1 "$MAX_ATTEMPTS"); do
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$URL" || echo 000)
+          echo "attempt $i/$MAX_ATTEMPTS: $URL -> $CODE"
+          echo "status-code=$CODE" >> "$GITHUB_OUTPUT"
+          case "$CODE" in
+            [1-4]??) exit 0 ;;
+          esac
+          if [ "$i" -lt "$MAX_ATTEMPTS" ]; then
+            sleep "$INTERVAL"
+          fi
+        done
+        echo "::error::Deploy verification failed: $URL never answered below 500."
+        exit 1
+
+    - name: Record GitHub Deployment status
+      if: inputs.deployment-id != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        DEPLOYMENT_ID: ${{ inputs.deployment-id }}
+        URL: ${{ inputs.url }}
+        OUTCOME: ${{ steps.smoke.outcome }}
+      run: |
+        set -euo pipefail
+        STATE=failure
+        if [ "$OUTCOME" = success ]; then
+          STATE=success
+        fi
+        # Non-fatal: a transient reporting failure must not repaint an
+        # otherwise-verified rollout (or mask an unverified one — the
+        # fail-on-failure step below owns the verdict).
+        gh api "repos/${GITHUB_REPOSITORY}/deployments/${DEPLOYMENT_ID}/statuses" \
+          -f state="$STATE" \
+          -f environment_url="$URL" \
+          -f log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+          -f description="deploy-verify: $URL ($STATE)" \
+          || echo "::warning::failed to record GitHub Deployment status for $DEPLOYMENT_ID"
+
+    - name: Annotate deployed PRs with the failure
+      if: inputs.annotate-sha != '' && steps.smoke.outcome == 'failure'
+      shell: bash
+      # Best-effort like the deployment status above: annotation is
+      # visibility, not the verdict.
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        DEPLOYED_SHA: ${{ inputs.annotate-sha }}
+        URL: ${{ inputs.url }}
+      run: |
+        set -euo pipefail
+        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        BODY=$(printf \
+          ':rotating_light: Post-deploy verification FAILED: %s never answered below 500.\n\n- Verify run: %s' \
+          "$URL" "$RUN_URL")
+        PRS=$(gh api \
+          -H 'Accept: application/vnd.github+json' \
+          "repos/${GITHUB_REPOSITORY}/commits/${DEPLOYED_SHA}/pulls" \
+          --jq '.[].number' | sort -un)
+        if [ -z "$PRS" ]; then
+          echo "No pull request is associated with deployed commit $DEPLOYED_SHA."
+          exit 0
+        fi
+        while read -r PR; do
+          gh pr comment "$PR" --body "$BODY"
+          echo "Annotated PR #$PR with the verification failure."
+        done <<< "$PRS"
+
+    - name: Fail on unverified deploy
+      if: steps.smoke.outcome == 'failure'
+      shell: bash
+      run: exit 1

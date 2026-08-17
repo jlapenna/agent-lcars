@@ -45,6 +45,7 @@ promised one.
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
 | `check-canonical-sync`         | Fail consumer CI when a vendored fleet-canonical file drifts (or, opt-in, when a stray copy reappears)               |
 | `setup-nx-remote-cache`        | Point trusted Nx jobs at the self-hosted L2 remote cache; fork PRs receive no cache capability                       |
+| `deploy-verify`                | Post-deploy smoke loop: poll a deployed URL until it answers below 500; optional Deployment status + PR annotation   |
 
 ### Published reusable workflows
 
@@ -55,6 +56,8 @@ promised one.
 | `agent-lane-claude.yml`        | The canonical Claude issue-agent lane (see "Published reusable lane workflows" below)                           |
 | `agent-lane-codex.yml`         | The canonical Codex issue-agent lane                                                                            |
 | `agent-lane-opencode.yml`      | The canonical OpenCode issue-agent lane                                                                         |
+| `repo-validation.yml`          | Repository validation: actionlint (dockerized, version input) over the caller's whole workflow tree             |
+| `codeql-reusable.yml`          | The CodeQL analyze job; the caller owns triggers (weekly cron included) and passes its language list            |
 
 `agent-automerge-reusable.yml` (#1312 U4) is the union of this repo's own
 `agent-automerge.yml` and sprinkles' `claude-automerge.yml`, which had
@@ -74,6 +77,34 @@ reference caller; beyond actionlint and review, its embedded required-check
 jq evaluation is behaviorally pinned by
 `tools/contract-tests/agent-automerge-required-checks.test.ts` and its
 admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
+
+`repo-validation.yml` (#1340 A-R5) replaces the byte-identical local
+`validate.yml` bodies the small fleet repos (www, girosf, sync-padd,
+nx-cache-server) carried, and gives sprinkles its first actionlint
+coverage (`actionlint.yml`). The caller owns triggers, permissions, and
+concurrency; inputs are `actionlint-version` (default `1.7.7`, tracking
+`apps/runner-autoscaler/runner-image/actionlint-version`) and `runs-on`
+(JSON array string, default `'["ubuntu-latest"]'` — the runner must be
+able to `docker run`). Check-run naming composes as
+`<caller job> / repository validation`; a caller whose job key is
+`validate` therefore produces `validate / repository validation`, and
+that composed string is what a ruleset or an `agent-automerge.yml`
+`required-checks` input must name. One migration note: a consumer that
+SHA-pinned its own checkout step (nx-cache-server's Renovate
+pin-digests policy) gives that pin up — the checkout now happens inside
+this workflow, at this repo's `actions/checkout@v7` convention, where a
+consumer repo's Renovate cannot see it.
+
+`codeql-reusable.yml` (#1340 A-R6) carries the CodeQL analyze job for
+this repo's own `codeql.yml` and nx-cache-server's; inputs are
+`languages` (default `javascript-typescript`) and `build-mode` (default
+`none`). The runner is unconditionally `ubuntu-latest` — GitHub's CodeQL
+CLI has no linux/arm64 build, and the fleet's self-hosted pools include
+arm64 hosts, so the knob deliberately does not exist. Callers own the
+triggers, the weekly `schedule` cron (keep per-repo crons staggered),
+and the `security-events: write` permission grant. CodeQL is available
+to any fleet repo through a thin caller, but enabling it in a new repo
+is a maintainer choice, not an onboarding default.
 
 ### Internal
 

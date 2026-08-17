@@ -195,6 +195,17 @@ jobs:
           fi
           echo "version=${BUILD##*/}" >> "$GITHUB_OUTPUT"
 
+      # Catch dead-on-arrival rollouts (#1340 D4): App Hosting can report
+      # a build READY while the origin serves nothing but 500s, and until
+      # now nothing between "deploy succeeded" and production traffic ever
+      # asked the console a single HTTP question. A hard gate, unlike the
+      # best-effort release annotation above: an unverified rollout must
+      # mark this run red.
+      - name: Verify the deployed console is serving
+        uses: ./.github/actions/deploy-verify
+        with:
+          url: https://lcars.jlapenna.net
+
       - name: Annotate the deployed PR with its App Hosting version
         if: steps.release.outputs.version != ''
         # A release annotation is useful metadata, but an API or permission
