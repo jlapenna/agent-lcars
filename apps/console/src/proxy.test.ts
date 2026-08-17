@@ -1,3 +1,6 @@
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 
@@ -15,10 +18,29 @@ const EXPECTED_PUBLIC_ROUTES = [
   '/api/logs/error',
   '/api/control-plane/completion',
   '/api/control-plane/reconcile',
+  '/api/control-plane/request',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
-  '/api/control-plane/webhook/probe',
 ];
+
+// Every control-plane route authenticates itself (OIDC claims or raw-body
+// HMAC) and is called by machines that never carry a session cookie, so
+// each one MUST be reachable through publicRoutes/publicPrefixes. Deriving
+// the set from the route files on disk is what neither hand-maintained
+// list could do: #1232's request route shipped absent from both lists and
+// 401ed every caller (exactly as recovery-observation did before #885),
+// while webhook/probe outlived its deleted route in both lists.
+function controlPlaneRoutesOnDisk(): string[] {
+  const base = join(__dirname, 'app', 'api', 'control-plane');
+  return readdirSync(base, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name === 'route.ts')
+    .map((entry) => {
+      const dir = join(entry.parentPath ?? entry.path, '.');
+      const relative = dir.slice(base.length).replace(/\\/g, '/');
+      return `/api/control-plane${relative}`;
+    })
+    .sort();
+}
 
 describe('console proxy public control-plane routes', () => {
   it('keeps the real allowlist in exact sync with the routes that must be public', () => {
@@ -28,6 +50,32 @@ describe('console proxy public control-plane routes', () => {
     expect([...publicRoutes].sort()).toEqual(
       [...EXPECTED_PUBLIC_ROUTES].sort(),
     );
+  });
+
+  it('lets every control-plane route that exists on disk through unauthenticated', () => {
+    const routes = controlPlaneRoutesOnDisk();
+    // If this list is ever empty the test is vacuously green — fail loud.
+    expect(routes.length).toBeGreaterThan(0);
+    for (const path of routes) {
+      const request = new NextRequest(`https://lcars.jlapenna.net${path}`, {
+        method: 'POST',
+      });
+
+      expect(
+        proxy(request).status,
+        `${path} must bypass the session check`,
+      ).toBe(200);
+    }
+  });
+
+  it('allowlists no control-plane route that no longer exists on disk', () => {
+    const routes = controlPlaneRoutesOnDisk();
+    for (const entry of publicRoutes) {
+      if (!entry.startsWith('/api/control-plane/')) continue;
+      expect(routes, `${entry} is allowlisted but has no route file`).toContain(
+        entry,
+      );
+    }
   });
 
   it('lets every route that must be public through unauthenticated', () => {
