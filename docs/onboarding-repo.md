@@ -141,13 +141,18 @@ Then verify by listing, not by trusting the loop (GitHub 503s drop
 writes silently): `gh variable list -R "$r"` should show 5,
 `gh secret list -R "$r"` should show 2.
 
-The maintainer-mintable remainder — `CLAUDE_CODE_OAUTH_TOKEN`, the
-per-repo Codex `auth.json` lineage (+ its WIF plumbing), and any new
-LiteLLM key — is [fleet-credentials.md](fleet-credentials.md). Until
-those exist the corresponding lanes fail at a specific, named step
-(Claude: "Run Claude Code"; Codex: "Restore subscription
-authentication") — that exact failure is the expected dark state, not a
-bug.
+The claude lane needs nothing further: its subscription token is read
+from Secret Manager at run time and no repo carries a copy (#1350). The
+repo does need `permissions: id-token: write` on the calling job, and to
+appear in `local.github_repositories` (`infra/terraform/main.tf`) so the
+shared `github` pool admits its OIDC token.
+
+The maintainer-mintable remainder — the per-repo Codex `auth.json`
+lineage (+ its WIF plumbing) and any new LiteLLM key — is
+[fleet-credentials.md](fleet-credentials.md). Until those exist the
+corresponding lanes fail at a specific, named step (Codex: "Restore
+subscription authentication") — that exact failure is the expected dark
+state, not a bug.
 
 ## 6. Console + telemetry integration detail
 

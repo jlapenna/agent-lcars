@@ -375,7 +375,6 @@ jobs:
       no-deliverable-reason: >-
         <this repo's silent-stall wording>
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 ```
 

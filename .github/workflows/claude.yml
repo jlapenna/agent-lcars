@@ -145,7 +145,6 @@ jobs:
         `@claude`, and remind it to push early and
         stamp its deliverable with the marker (agent-protocol.md #5).
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
       NX_CACHE_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
       AGENT_CI_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}

@@ -10,11 +10,11 @@ locals {
     "secretmanager.googleapis.com", "serviceusage.googleapis.com",
     "storage.googleapis.com", "sts.googleapis.com",
   ])
-  github_repositories = [
+  github_repositories = concat([
     "${var.github_owner}/${var.github_repository}",
     var.sprinkles_repository,
     var.homelab_repository,
-  ]
+  ], var.additional_fleet_repositories)
 }
 
 data "google_project" "this" {
@@ -476,6 +476,52 @@ resource "google_secret_manager_secret_iam_member" "codex_auth_version_adder" {
   secret_id = google_secret_manager_secret.codex_auth.id
   role      = "roles/secretmanager.secretVersionAdder"
   member    = "serviceAccount:${google_service_account.codex_agent.email}"
+}
+
+# The fleet's ONE Claude subscription token (#1350). Terraform owns the
+# container only - the value is minted by the maintainer
+# (`claude setup-token`) and published with
+# `gcloud secrets versions add CLAUDE_CODE_OAUTH_TOKEN --data-file=-`. It
+# never lives in this repo or in a GitHub Actions secret.
+#
+# Contrast CODEX_AUTH_JSON above, which needs one lineage per repo because
+# Codex rotates it on every run and writes the new blob back. This
+# credential never rotates - `claude setup-token` mints it once and nothing
+# writes it back - so a single shared, read-only copy is safe fleet-wide,
+# and there is deliberately NO secretVersionAdder grant below. The lane
+# reads; only a human writes.
+resource "google_secret_manager_secret" "claude_oauth" {
+  secret_id = "CLAUDE_CODE_OAUTH_TOKEN"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+# Its own identity rather than codex_agent or telemetry_writer: this one is
+# read-only, holds nothing but accessor on the single secret below, and -
+# unlike codex_agent - is never exported as ambient ADC into the agent's
+# shell (agent-lane.yml scopes the credential file to the one step that
+# reads the secret). Blast radius is exactly the Claude token.
+resource "google_service_account" "claude_token_reader" {
+  account_id   = "claude-token-reader"
+  display_name = "Claude lane subscription-token reader"
+}
+
+resource "google_secret_manager_secret_iam_member" "claude_oauth_accessor" {
+  secret_id = google_secret_manager_secret.claude_oauth.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.claude_token_reader.email}"
+}
+
+# Every fleet repo may impersonate the reader, because every fleet repo may
+# run the claude lane. The pool's own attribute_condition is what bounds
+# this to the repositories in local.github_repositories.
+resource "google_service_account_iam_member" "claude_token_reader_impersonation" {
+  for_each           = toset(local.github_repositories)
+  service_account_id = google_service_account.claude_token_reader.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${each.value}"
 }
 
 resource "google_service_account_iam_member" "codex_agent_impersonation" {

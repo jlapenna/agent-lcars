@@ -164,10 +164,22 @@ on:
         required: false
         default: ''
         type: string
+      claude-token-secret:
+        description: 'Secret Manager resource holding the subscription token (#1350)'
+        required: false
+        default: 'projects/agent-lcars/secrets/CLAUDE_CODE_OAUTH_TOKEN/versions/latest'
+        type: string
+      claude-token-wif-provider:
+        description: 'WIF provider admitting the caller repo to read that secret'
+        required: false
+        default: 'projects/611425338852/locations/global/workloadIdentityPools/github/providers/github'
+        type: string
+      claude-token-service-account:
+        description: 'Read-only service account holding accessor on that one secret'
+        required: false
+        default: 'claude-token-reader@agent-lcars.iam.gserviceaccount.com'
+        type: string
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN:
-        description: 'Long-lived token from `claude setup-token`'
-        required: true
       AGENT_LCARS_PRIVATE_KEY:
         description: 'Agent LCARS App private key for the token mint'
         required: true
@@ -221,8 +233,10 @@ jobs:
       prompt: ${{ inputs.prompt }}
       no-deliverable-reason: ${{ inputs.no-deliverable-reason }}
       message-prefix: ${{ inputs.message-prefix }}
+      claude-token-secret: ${{ inputs.claude-token-secret }}
+      claude-token-wif-provider: ${{ inputs.claude-token-wif-provider }}
+      claude-token-service-account: ${{ inputs.claude-token-service-account }}
     secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
       NX_CACHE_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
       AGENT_CI_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}

@@ -16,7 +16,7 @@ history — move values with pipes, `read -rs`, or files created under
 
 | Credential                | Consumed by                               | Canonical home                                                       | Mintable by                        |
 | ------------------------- | ----------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane-claude.yml`)     | repo Actions secret, per repo                                        | maintainer only (browser OAuth)    |
+| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane.yml`, run time)  | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)     | maintainer only (browser OAuth)    |
 | Codex `auth.json` lineage | codex lane (`agent-lane-codex.yml`)       | GCP Secret Manager, one secret **per repo**                          | maintainer only (`codex login`)    |
 | `OPENCODE_LLM_API_KEY`    | opencode lane (`agent-lane-opencode.yml`) | age store + repo Actions secret                                      | anyone with the LiteLLM master key |
 | `AGENT_LCARS_PRIVATE_KEY` | all three lanes' token mint; console      | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`) | maintainer (App settings UI)       |
@@ -39,27 +39,46 @@ GitHub-App _user_ token, so `gh` cannot do it).
 
 ## `CLAUDE_CODE_OAUTH_TOKEN` (claude lane)
 
-A long-lived OAuth token for the maintainer's Claude subscription. Not
-self-rotating: unlike the Codex lineage below, **one token may be shared
-across repos** safely.
+A long-lived OAuth token for the maintainer's Claude subscription. It does
+**not** rotate — `claude setup-token` mints it once and nothing writes it
+back — so unlike the Codex lineage below one value is safely shared across
+every repo, and it lives in exactly one place (#1350).
+
+No repo carries a copy. `agent-lane.yml` reads it from Secret Manager per
+run over WIF, so onboarding a new repo to the claude lane needs no
+credential work at all, and an expiry is one command rather than an N-repo
+fan-out. Admission is the shared `github` pool in project `agent-lcars`,
+conditioned on `assertion.repository` alone
+(`infra/terraform/main.tf`), so a new repo joins by being added to
+`local.github_repositories` — it needs no pool of its own. The reader
+identity is `claude-token-reader@agent-lcars.iam.gserviceaccount.com`: it
+holds `secretAccessor` on this one secret and nothing else, and is never
+exported as ambient ADC into the agent's shell.
 
 1. Run `claude setup-token`. It prints an authorization URL and waits.
    Open that URL in the maintainer's signed-in browser (an agent with
    browser tooling can do this — navigate, click **Authorize**, and copy
    the resulting code back into the waiting prompt if one is shown). The
    command then prints the long-lived token exactly once.
-2. Store it on each repo without it ever touching a shell history or chat:
+2. Publish it as a new version of the one canonical secret, without it
+   touching shell history or chat. `printf %s`, not `echo`: a trailing
+   newline corrupts the credential.
 
    ```bash
    read -rs TOKEN   # paste the token, press Enter (nothing echoes)
-   for r in supersprinklesracing/www supersprinklesracing/girosf \
-            jlapenna/nx-cache-server jlapenna/sync-padd; do
-     printf %s "$TOKEN" | gh secret set CLAUDE_CODE_OAUTH_TOKEN -R "$r"
-   done; unset TOKEN
+   printf %s "$TOKEN" | gcloud secrets versions add CLAUDE_CODE_OAUTH_TOKEN \
+     --project=agent-lcars --data-file=-
+   unset TOKEN
    ```
 
-3. Verify: label an issue `agent:claude`; the lane's "Run Claude Code"
-   step is the consumer. An empty token fails exactly there.
+3. Verify, then label an issue `agent:claude`. The lane's "Read the Claude
+   subscription token" step is the first consumer and names the secret on
+   failure; "Run Claude Code" is the second.
+
+   ```bash
+   gcloud secrets versions access latest --secret=CLAUDE_CODE_OAUTH_TOKEN \
+     --project=agent-lcars | sha256sum
+   ```
 
 ## Codex `auth.json` lineage (codex lane)
 
@@ -110,6 +129,13 @@ Per new repo:
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml')
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))
    ```
+
+   This is the **sprinkles-project** pool (`claude-agent-pool` in project
+   `supersprinklesracing`), conditioned on `job_workflow_ref`, so it must
+   name each lane file it admits. Do not confuse it with the shared
+   `github` pool in project `agent-lcars` that the Claude
+   subscription-token read uses, which matches on `assertion.repository`
+   alone and needs no per-lane entry.
 
    To admit a new repo where the pool already exists, read the current
    condition first
