@@ -58,17 +58,19 @@ export interface AgentRun {
   event: string;
   url: string;
   /**
-   * claude.yml's `run-name` sets this to `#<issue/PR number>: <title>`;
-   * opencode.yml's mirrors it as `opencode #<number>: <title>`. Either form
-   * lets the dashboard join live runs to action items without any
+   * Every lane caller in the fleet renders `#<issue/PR number>: <Agent>
+   * issue agent [dispatch:g<gen>:<intent>]` - one shape, pinned to
+   * `libs/dispatch-contracts`' `runNameLabel` by
+   * `tools/contract-tests/run-name-console-join.test.ts`. That leading
+   * `#<number>:` is what joins live runs to action items without any
    * runner-side telemetry.
    */
   displayTitle: string;
   /**
-   * Parsed from the leading `#<number>:` (optionally preceded by `opencode
-   * `) of displayTitle. Undefined for runs that predate the run-name
-   * rollout - callers should fall back to a title-string match against
-   * `displayTitle` for those.
+   * Parsed from the leading `#<number>:` of displayTitle. Undefined for
+   * runs that predate the run-name rollout, and for the legacy `codex #N:`
+   * / `opencode #N:` prefixes retired in #1340 A-R2 - callers should fall
+   * back to a title-string match against `displayTitle` for those.
    */
   issueNumber?: number;
   createdAt: string;
@@ -121,7 +123,12 @@ export interface AgentActivity {
   warnings: string[];
 }
 
-const DISPLAY_TITLE_NUMBER_RE = /^(?:(?:codex|opencode)\s+)?#(\d+):/;
+// One shape fleet-wide since #1340 A-R2. Before that, codex and opencode
+// callers prefixed their own pipeline name ahead of the join key
+// (`opencode #42: …`) and this regex carried an optional-prefix branch for
+// them; the pipeline is already known from the fetch source, so the prefix
+// was redundant everywhere it appeared.
+const DISPLAY_TITLE_NUMBER_RE = /^#(\d+):/;
 
 export function issueNumberFromDisplayTitle(
   displayTitle: string,
@@ -156,20 +163,6 @@ export function attemptMarkerFromDisplayTitle(
   displayTitle: string,
 ): AttemptMarker | undefined {
   return parseDispatchMarker(displayTitle);
-}
-
-const PIPELINE_TITLE_PREFIX_RE = /^(?:codex|opencode)\s+/;
-
-/**
- * opencode.yml's run-name repeats the pipeline name ahead of the `#N:` join
- * key (`opencode #42: Fix the thing`). A pipeline badge already renders
- * "opencode" next to the row, so strip the redundant word from the title
- * text itself to avoid saying it twice.
- */
-export function displayRunTitle(run: AgentRun): string {
-  return run.pipeline !== 'claude'
-    ? run.displayTitle.replace(PIPELINE_TITLE_PREFIX_RE, '')
-    : run.displayTitle;
 }
 
 /**

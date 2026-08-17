@@ -3,7 +3,6 @@ import { describe, expect, it, type Mock, vi } from 'vitest';
 import {
   type AgentRun,
   attemptMarkerFromDisplayTitle,
-  displayRunTitle,
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
   getAgentActivity,
@@ -75,10 +74,23 @@ describe('issueNumberFromDisplayTitle', () => {
     expect(issueNumberFromDisplayTitle('#42: Fix the thing')).toBe(42);
   });
 
-  it('parses the leading run-name issue number for opencode run-names', () => {
+  it('parses the registry run-name shape every lane caller now renders', () => {
+    expect(
+      issueNumberFromDisplayTitle(
+        '#99: OpenCode issue agent [dispatch:g1:intent-abc]',
+      ),
+    ).toBe(99);
+  });
+
+  // The legacy `codex #N:` / `opencode #N:` prefixes are retired fleet-wide
+  // (#1340 A-R2). Asserting they no longer parse is what keeps the
+  // optional-prefix branch from creeping back: a run title in that shape
+  // can only come from an un-normalized caller, and silently joining it
+  // would hide exactly that regression.
+  it('does not parse a retired pipeline-prefixed run-name', () => {
     expect(
       issueNumberFromDisplayTitle('opencode #99: Fix the other thing'),
-    ).toBe(99);
+    ).toBeUndefined();
   });
 
   it('returns undefined for a pre-rollout title with no leading number', () => {
@@ -104,7 +116,7 @@ describe('attemptMarkerFromDisplayTitle', () => {
   it('parses an opencode run-name', () => {
     expect(
       attemptMarkerFromDisplayTitle(
-        'opencode #9: OpenCode [dispatch:g2:intent-oc]',
+        '#9: OpenCode issue agent [dispatch:g2:intent-oc]',
       ),
     ).toEqual({ generation: 2, intentId: 'intent-oc' });
   });
@@ -131,24 +143,6 @@ describe('attemptMarkerFromDisplayTitle', () => {
     expect(
       attemptMarkerFromDisplayTitle('#42: Claude issue agent [dispatch:g:]'),
     ).toBeUndefined();
-  });
-});
-
-describe('displayRunTitle', () => {
-  it('strips the redundant "opencode " prefix for opencode runs', () => {
-    const run = makeAgentRun({
-      pipeline: 'opencode',
-      displayTitle: 'opencode #11: Fix the thing',
-    });
-    expect(displayRunTitle(run)).toBe('#11: Fix the thing');
-  });
-
-  it('leaves claude run titles unchanged', () => {
-    const run = makeAgentRun({
-      pipeline: 'claude',
-      displayTitle: '#42: Fix the thing',
-    });
-    expect(displayRunTitle(run)).toBe('#42: Fix the thing');
   });
 });
 
@@ -420,7 +414,7 @@ describe('getAgentActivity', () => {
           return Promise.resolve({
             data: {
               workflow_runs: [
-                makeRun({ id: 2, display_title: 'opencode #11: OpenCode run' }),
+                makeRun({ id: 2, display_title: '#11: OpenCode issue agent' }),
               ],
             },
           });
@@ -478,7 +472,7 @@ describe('getAgentActivity', () => {
                   id: 100 + day,
                   status: 'completed',
                   conclusion: 'success',
-                  display_title: `opencode #${100 + day}: opencode run ${day}`,
+                  display_title: `#${100 + day}: OpenCode issue agent ${day}`,
                   updated_at: `2026-07-0${day}T12:00:00Z`,
                 }),
               ),

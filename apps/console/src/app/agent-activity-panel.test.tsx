@@ -45,10 +45,6 @@ vi.mock('../lib/agent-activity', async () => {
     RUN_TIMEOUT_MINUTES: 90,
     MAX_TURNS_BUDGET: 200,
     QUEUE_STALL_THRESHOLD_SECONDS,
-    displayRunTitle: (run: AgentRun) =>
-      run.pipeline === 'opencode'
-        ? run.displayTitle.replace(/^opencode\s+/, '')
-        : run.displayTitle,
     findStalledQueuedRun: (liveRuns: AgentRun[]) =>
       liveRuns
         .filter(
@@ -846,7 +842,7 @@ describe('AgentActivityPanel live run budget gauges', () => {
             id: 21,
             status: 'running',
             pipeline: 'opencode',
-            displayTitle: 'opencode #21: Fix it',
+            displayTitle: '#21: OpenCode issue agent',
           }),
         ],
       },
@@ -888,7 +884,7 @@ describe('AgentActivityPanel pipeline metadata', () => {
     expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
   });
 
-  it('strips the redundant opencode prefix without showing a source tag', () => {
+  it('renders an opencode run title verbatim, with no source tag', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [
@@ -896,13 +892,14 @@ describe('AgentActivityPanel pipeline metadata', () => {
           id: 2,
           pipeline: 'opencode',
           status: 'running',
-          displayTitle: 'opencode #43: Fix the other thing',
+          displayTitle: '#43: OpenCode issue agent',
         }),
       ],
     });
+    // The pipeline badge already names the lane; the title itself never
+    // repeats it now that every caller renders the registry shape.
     expect(screen.queryByText('opencode')).toBeNull();
-    expect(screen.getByText('#43: Fix the other thing')).toBeTruthy();
-    expect(screen.queryByText('opencode #43: Fix the other thing')).toBeNull();
+    expect(screen.getByText('#43: OpenCode issue agent')).toBeTruthy();
   });
 
   it('strips the dispatch marker from a Bridge run title', () => {
@@ -928,12 +925,12 @@ describe('AgentActivityPanel pipeline metadata', () => {
         makeAgentRun({
           id: 3,
           pipeline: 'opencode',
-          displayTitle: 'opencode #44: Fix a third thing',
+          displayTitle: '#44: OpenCode issue agent',
         }),
       ],
     });
     expect(screen.queryByText('opencode')).toBeNull();
-    expect(screen.getByText('#44: Fix a third thing')).toBeTruthy();
+    expect(screen.getByText('#44: OpenCode issue agent')).toBeTruthy();
   });
 });
 

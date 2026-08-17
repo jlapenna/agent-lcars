@@ -5,7 +5,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import { type ActionItem } from '../../lib/action-items';
-import { displayRunTitle, issueUrlForRun } from '../../lib/agent-activity';
+import { issueUrlForRun } from '../../lib/agent-activity';
 import { readAuthoritativeTaskStates } from '../../lib/authoritative-task-state';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
@@ -194,7 +194,7 @@ async function AgentsPageBody({
       taskMeta.set(key, {
         repo: run.repo,
         issueNumber: run.issueNumber,
-        title: displayRunTitle(run),
+        title: run.displayTitle,
         url: issueUrlForRun(run) ?? run.url,
       });
     }

@@ -14,6 +14,10 @@ import {
   attemptMarkerFromDisplayTitle,
   issueNumberFromDisplayTitle,
 } from '../../apps/console/src/lib/agent-activity';
+import {
+  DISPATCH_PIPELINES,
+  PIPELINE_CONTRACTS,
+} from '../../libs/dispatch-contracts/src';
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -89,12 +93,12 @@ function loadRunName(workflowRelativePath: string): string {
 // live runs from by parsing displayTitle - see agent-activity.ts's
 // `resolveWorkflowFile` / AgentPipeline and watched-repo.ts's
 // agentIntegration() wiring for the (repo, pipeline) -> workflow file map
-// this mirrors.
-const WORKFLOWS = [
-  '.github/workflows/claude.yml',
-  '.github/workflows/codex.yml',
-  '.github/workflows/opencode.yml',
-];
+// this mirrors. Derived from the pipeline registry rather than listed, so
+// a fourth pipeline cannot be added with an unjoinable run-name.
+const WORKFLOWS = DISPATCH_PIPELINES.map(
+  (pipeline) =>
+    `.github/workflows/${PIPELINE_CONTRACTS[pipeline].workflowFile}`,
+);
 
 describe('run-name <-> console join contract', () => {
   it.each(WORKFLOWS)(
@@ -119,6 +123,27 @@ describe('run-name <-> console join contract', () => {
         generation: Number(EXPRESSION_VALUES['inputs.broker_generation']),
         intentId: EXPRESSION_VALUES['inputs.broker_intent_id'],
       });
+    },
+  );
+
+  // The console's parser stopped accepting the legacy `codex #N:` /
+  // `opencode #N: OpenCode` prefixes when the last consumer repo was
+  // normalized (#1340 A-R2). That deletion is only safe while every
+  // caller renders the registry shape, so pin the whole string - not just
+  // the parts the parser reads - against `runNameLabel` here.
+  it.each(DISPATCH_PIPELINES)(
+    '%s renders exactly the registry run-name shape',
+    (pipeline) => {
+      const contract = PIPELINE_CONTRACTS[pipeline];
+      const rendered = renderRunName(
+        loadRunName(`.github/workflows/${contract.workflowFile}`),
+      );
+
+      expect(rendered).toBe(
+        `#${EXPRESSION_VALUES['inputs.issue']}: ${contract.runNameLabel} ` +
+          `[dispatch:g${EXPRESSION_VALUES['inputs.broker_generation']}:` +
+          `${EXPRESSION_VALUES['inputs.broker_intent_id']}]`,
+      );
     },
   );
 

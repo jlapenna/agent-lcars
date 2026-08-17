@@ -16,10 +16,6 @@ import { LogicalWorkCard } from './logical-work-card';
 // by this card's per-attempt badge) reads it from this module.
 vi.mock('../../lib/agent-activity', () => ({
   RUN_TIMEOUT_MINUTES: 90,
-  displayRunTitle: (run: AgentRun) =>
-    run.pipeline === 'opencode'
-      ? run.displayTitle.replace(/^opencode\s+/, '')
-      : run.displayTitle,
   issueUrlForRun: (run: AgentRun) =>
     run.issueNumber === undefined
       ? undefined
