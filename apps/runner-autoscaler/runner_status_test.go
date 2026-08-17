@@ -361,3 +361,113 @@ func TestGitHubRunnerStatusClientUsesConfiguredPath(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// newReapTestScaler builds a Scaler whose only reachable dependency is the
+// 404 scaleset stub. reapUnavailableRunner's ContainerRemove is expected to
+// fail (no docker host client), which is deliberate: the runner must still be
+// untracked and deregistered so its capacity is released either way.
+func newReapTestScaler(t *testing.T, scaleSet string, idle, busy map[string]runnerRef) *Scaler {
+	t.Helper()
+	return &Scaler{
+		scaleSetName:   scaleSet,
+		dockerHosts:    []DockerHost{{Name: "host-a"}},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		runners:        runnerState{idle: idle, busy: busy},
+	}
+}
+
+// The 2026-08-16 split-brain: the container is healthy and listening, GitHub
+// reports it offline, and nothing on either side times that out. One poll must
+// not be enough to destroy a runner, but a sustained verdict must be.
+func TestRunnerStatusMonitorReapsIdleRunnerAfterSustainedUnavailability(t *testing.T) {
+	start := time.Now()
+	scaleSet := "reap-sustained-test"
+	scaler := newReapTestScaler(t, scaleSet,
+		map[string]runnerRef{"stuck": {host: "host-a", startedAt: start.Add(-time.Hour)}},
+		map[string]runnerRef{})
+	now := start
+	monitor := &registrationRunnerStatusMonitor{
+		registration: "reap-sustained-registration",
+		source:       &fakeRunnerStatusSource{statuses: map[string]string{"stuck": "offline"}},
+		scalers:      []*Scaler{scaler},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:          func() time.Time { return now },
+	}
+
+	monitor.reconcile(context.Background())
+	if _, ok := scaler.runners.idle["stuck"]; !ok {
+		t.Fatal("runner reaped on its first unavailable observation; a blip must not destroy capacity")
+	}
+
+	now = start.Add(runnerUnavailableReapAfter - time.Minute)
+	monitor.reconcile(context.Background())
+	if _, ok := scaler.runners.idle["stuck"]; !ok {
+		t.Fatal("runner reaped before the threshold elapsed")
+	}
+
+	now = start.Add(runnerUnavailableReapAfter + time.Minute)
+	monitor.reconcile(context.Background())
+	if _, ok := scaler.runners.idle["stuck"]; ok {
+		t.Fatal("runner still tracked after sustained unavailability; its capacity stays pinned and no replacement is placed")
+	}
+	if got := testutil.ToFloat64(githubUnavailableRunnersReapedTotal.WithLabelValues(scaleSet, "host-a", runnerUnavailableOffline)); got != 1 {
+		t.Fatalf("reaped total = %v, want 1", got)
+	}
+}
+
+// A busy runner may be mid-job behind a transient API blip. Killing it to
+// settle a reporting disagreement would destroy real work, and an ephemeral
+// runner that has genuinely died exits for reconcileRunners to collect.
+func TestRunnerStatusMonitorNeverReapsBusyRunner(t *testing.T) {
+	start := time.Now()
+	scaler := newReapTestScaler(t, "reap-busy-test",
+		map[string]runnerRef{},
+		map[string]runnerRef{"working": {host: "host-a", startedAt: start.Add(-time.Hour)}})
+	now := start
+	monitor := &registrationRunnerStatusMonitor{
+		registration: "reap-busy-registration",
+		source:       &fakeRunnerStatusSource{statuses: map[string]string{"working": "offline"}},
+		scalers:      []*Scaler{scaler},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:          func() time.Time { return now },
+	}
+
+	monitor.reconcile(context.Background())
+	now = start.Add(4 * runnerUnavailableReapAfter)
+	monitor.reconcile(context.Background())
+
+	if _, ok := scaler.runners.busy["working"]; !ok {
+		t.Fatal("busy runner was reaped; a job in flight must survive a GitHub reporting disagreement")
+	}
+}
+
+// Availability returning at any point clears the elapsed time, so a runner
+// that flaps never accumulates its way to a reap.
+func TestRunnerStatusMonitorResetsUnavailabilityOnRecovery(t *testing.T) {
+	start := time.Now()
+	scaler := newReapTestScaler(t, "reap-recovery-test",
+		map[string]runnerRef{"flappy": {host: "host-a", startedAt: start.Add(-time.Hour)}},
+		map[string]runnerRef{})
+	now := start
+	source := &fakeRunnerStatusSource{statuses: map[string]string{"flappy": "offline"}}
+	monitor := &registrationRunnerStatusMonitor{
+		registration: "reap-recovery-registration",
+		source:       source,
+		scalers:      []*Scaler{scaler},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:          func() time.Time { return now },
+	}
+
+	monitor.reconcile(context.Background())
+	now = start.Add(runnerUnavailableReapAfter - time.Minute)
+	source.statuses["flappy"] = "online"
+	monitor.reconcile(context.Background())
+	now = start.Add(runnerUnavailableReapAfter + time.Minute)
+	source.statuses["flappy"] = "offline"
+	monitor.reconcile(context.Background())
+
+	if _, ok := scaler.runners.idle["flappy"]; !ok {
+		t.Fatal("runner reaped using unavailability it had already recovered from")
+	}
+}
