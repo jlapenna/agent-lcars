@@ -62,7 +62,21 @@ promised one.
 - `archive-opencode-trajectory` — export sanitized OpenCode sessions from
   this run for durable trajectory diagnosis.
 - `setup-nx-remote-cache` — points trusted Nx jobs at the self-hosted L2
-  remote cache.
+  remote cache. Deliberately kept Internal, not harmonized into a shared
+  implementation: sprinkles maintains its own independent rebuild of the
+  same self-hosted-cache-guard logic (same interface, same env var names,
+  drifted empty-URL handling — fleet survey finding #7, agent-lcars#1206).
+  This repo's own contract — `url` empty ⇒ no-op, `write-token` empty ⇒
+  notice-and-skip, both documented in the action's own `inputs` block — is
+  the version of record here, but this repo has no access to sprinkles'
+  checkout to verify or edit its copy directly, and the
+  `supersprinklesracing` source-tree independence rule (see the top-level
+  `AGENTS.md`) means this repo does not reach into it to force a shared
+  implementation either. Promoting to Published tier remains open and
+  would need a contract test
+  (`published-actions.contract.test.mjs`) plus a sprinkles-side PR
+  adopting it — sequencing for whoever picks that up next, not something
+  this repo can complete unilaterally.
 
 ### Coupled — do not consume
 
