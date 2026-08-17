@@ -496,4 +496,41 @@ JSON
     fail "expected the named ATTEMPT_ID diagnostic"
 )
 
+
+# --- Case 17: push-credential-log-scan.sh detects the opaque git-push
+# authentication failure a mid-step App-token expiry produces and
+# supplements the failure report with a legible explanation (#1217). ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export FAILURE_LOG_SCAN_SCRIPT="$action_dir/push-credential-log-scan.sh"
+  case_dir="$test_root/push-credential-log-scan-expired"
+  mkdir -p "$case_dir"
+  export FAKE_GH_DIR="$case_dir"
+  printf '%s\n' "fatal: could not read Username for 'https://github.com': No such device or address" > "$case_dir/run-log.txt"
+  run_case push-credential-log-scan-expired
+  test "$status" = 0 || fail "log-scan push-credential case with a landed report must still exit 0"
+  grep -q 'installation token expiring mid-step' <<<"$output" || fail "expected the push-credential-expiry REASON text"
+  grep -q 'agent-lcars#1217' <<<"$output" || fail "expected the REASON text to cite #1217"
+  grep -qx 'readiness-failure=credential' "$GITHUB_OUTPUT" || fail "expected the signature to publish a credential readiness failure"
+)
+
+# --- Case 18: push-credential-log-scan.sh stays silent on an unrelated
+# failure signature - it must not guess credential expiry from any
+# authentication-shaped text. ---
+(
+  base_env
+  export JOB_STATUS=failure
+  export FAILURE_LOG_SCAN_SCRIPT="$action_dir/push-credential-log-scan.sh"
+  case_dir="$test_root/push-credential-log-scan-unrelated"
+  mkdir -p "$case_dir"
+  export FAKE_GH_DIR="$case_dir"
+  printf '%s\n' "Error: some unrelated step failure" > "$case_dir/run-log.txt"
+  run_case push-credential-log-scan-unrelated
+  test "$status" = 0 || fail "log-scan unrelated-failure case with a landed report must still exit 0"
+  if grep -q 'installation token expiring mid-step' <<<"$output"; then
+    fail "an unrelated failure signature must not produce the push-credential-expiry REASON text"
+  fi
+)
+
 echo "post-agent-gates.test.sh: all cases passed"
