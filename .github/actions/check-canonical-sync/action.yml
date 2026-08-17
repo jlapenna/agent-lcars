@@ -15,6 +15,13 @@ inputs:
     description: agent-lcars ref to compare against.
     required: false
     default: main
+  forbid-strays:
+    description: >-
+      Also fail when a copy of any canonicalized script's basename exists at
+      a path the manifest does not declare ("local copy quietly grows back",
+      agent-lcars#1307).
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -25,3 +32,4 @@ runs:
         "${{ github.action_path }}/check.sh"
         --manifest "${{ inputs.manifest }}"
         --ref "${{ inputs.ref }}"
+        ${{ inputs.forbid-strays == 'true' && '--forbid-strays' || '' }}

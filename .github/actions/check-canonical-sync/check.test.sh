@@ -70,6 +70,19 @@ printf '\n# just a comment\n' > empty.conf
 check 'a manifest with no pairs passes' \
   status_is 0 "$checker" --manifest empty.conf --base "$BASE" --ref main
 
+# --- stray-copy tripwire (--forbid-strays) -----------------------------------
+check 'in-sync with no strays passes under --forbid-strays' \
+  status_is 0 run --forbid-strays
+mkdir -p vendored
+printf 'echo shared\n' > vendored/shared.sh
+check 'an undeclared copy of a canonicalized basename fails under --forbid-strays' \
+  status_is 1 run --forbid-strays
+check 'the stray failure is labelled STRAY with the undeclared path' \
+  bash -c "\"$checker\" --manifest manifest.conf --base \"$BASE\" --ref main --forbid-strays 2>&1 | grep -q 'STRAY    vendored/shared.sh'"
+check 'strays are opt-in: default mode ignores undeclared copies' \
+  status_is 0 run
+rm -rf vendored
+
 if [ "$failures" -gt 0 ]; then
   echo "check.test.sh: $failures case(s) failed" >&2; exit 1
 fi

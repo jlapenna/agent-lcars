@@ -128,9 +128,6 @@ jobs:
       - name: Test the feature-worktree requirement
         run: bash tools/require-feature-worktree.test.sh
 
-      - name: Test fleet-script drift verification (#1307)
-        run: bash .github/actions/verify-fleet-scripts/verify-fleet-scripts.test.sh
-
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
 

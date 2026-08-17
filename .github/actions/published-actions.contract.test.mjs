@@ -98,6 +98,14 @@ const PUBLISHED = {
     inputs: { 'github-token': { required: true } },
     outputs: ['version'],
   },
+  'check-canonical-sync': {
+    inputs: {
+      manifest: { required: false, default: '.github/canonical-sync.conf' },
+      ref: { required: false, default: 'main' },
+      'forbid-strays': { required: false, default: 'false' },
+    },
+    outputs: [],
+  },
   // Exact-marker only: attempt-id is required, and the legacy inference
   // inputs #4388 once restored (started-at, runbook,
   // expected-comment-login, exclude-pr-author, exclude-comment-id) were
@@ -146,14 +154,6 @@ const PUBLISHED = {
       actions: { required: false },
     },
     outputs: ['path'],
-  },
-  'verify-fleet-scripts': {
-    inputs: {
-      // Multi-line default (the canonicalized fleet-script manifest);
-      // requiredness only - the exact list is guarded below.
-      scripts: { required: false },
-    },
-    outputs: [],
   },
 };
 
@@ -260,39 +260,6 @@ test('snapshot-enforcement-scripts default gate list is guarded', async () => {
     'telemetry-finalize',
     'post-agent-gates',
   ]);
-});
-
-// verify-fleet-scripts' default `scripts` list IS published surface the
-// same way: a consumer that omits the input relies on it naming every
-// fleet-canonicalized script (agent-lcars#1307), so silently dropping one
-// would silently drop its drift protection in every consumer. Assert the
-// exact manifest, and that each canonical path actually exists here - a
-// manifest entry pointing at a moved/deleted file would fail every
-// consumer's CI while this repo's own stayed green.
-test('verify-fleet-scripts default manifest is guarded', async () => {
-  const source = await fs.readFile(
-    path.join(actionsDirectory, 'verify-fleet-scripts', 'action.yml'),
-    'utf8',
-  );
-  const lines = source.split(/\r?\n/gu);
-  const start = lines.findIndex((line) => /^ {4}default: \|/u.test(line));
-  assert.notEqual(start, -1, 'scripts input must keep a block-scalar default');
-  const entries = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    const entry = /^ {6}(\S+)\s*$/u.exec(lines[i]);
-    if (!entry) break;
-    entries.push(entry[1]);
-  }
-  assert.deepEqual(entries, [
-    'tools/codex-issue-guardrail.cjs',
-    'tools/fleet-identity.cjs',
-    'tools/claude-agent-session.sh',
-    'tools/require-feature-worktree.sh',
-    '.agents/skills/github-ci-monitor/scripts/watch-prs.sh',
-  ]);
-  for (const entry of entries) {
-    await fs.access(path.resolve(entry));
-  }
 });
 
 // post-agent-gates has no action.yml -- see docs/published-actions.md's

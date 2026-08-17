@@ -42,7 +42,7 @@ promised one.
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                         |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
-| `verify-fleet-scripts`         | Fail consumer CI when a vendored fleet-canonical workstation script drifts, or a stray copy reappears (see below)    |
+| `check-canonical-sync`         | Fail consumer CI when a vendored fleet-canonical file drifts (or, opt-in, when a stray copy reappears)               |
 
 ### Published reusable workflows
 
@@ -255,7 +255,7 @@ and `snapshot-enforcement-scripts` copies sibling action directories from
 a supported pattern here, but each action that relies on one must say so in
 its `action.yml`.
 
-## Fleet-canonical workstation scripts (`verify-fleet-scripts`)
+## Fleet-canonical workstation scripts (`check-canonical-sync`)
 
 The fleet's _session-side_ enforcement tooling — scripts that run on
 workstations, not CI, and therefore cannot be delivered by
@@ -274,39 +274,37 @@ repos (agent-lcars#1307):
 A workstation hook must exist locally and work offline on every Bash
 command, so "consumers hold no copy" is not achievable here the way it is
 for CI actions. What IS achievable is making the copies mechanically
-un-driftable: each consumer's CI calls the `verify-fleet-scripts` action,
-which compares every vendored copy byte-for-byte against the canonical
-file shipped inside the action's own whole-repo download (no network
-fetch, no pin to go stale) and additionally fails if a **stray** copy of
-any canonicalized script's basename appears at an undeclared path — the
-"local copy quietly grows back" failure mode the issue exists to close.
-Repo-specific behavior never justifies editing a copy: it enters only
-through the hooks in the table, which each script documents in its header.
+un-driftable: each consumer's CI calls the `check-canonical-sync` action
+(above), whose manifest lists each vendored copy against its canonical
+path here, and whose `--forbid-strays` mode additionally fails if a copy
+of any canonicalized script's basename appears at an undeclared path —
+the "local copy quietly grows back" failure mode agent-lcars#1307 exists
+to close. Repo-specific behavior never justifies editing a copy: it
+enters only through the hooks in the table, which each script documents
+in its header.
 
-Consumer wiring (homelab shown — it holds the guardrail pair under `bin/`
-and re-homes its watcher into the shared skill path):
+Consumer wiring (homelab shown — it holds the guardrail pair under
+`bin/`): a `.github/canonical-sync.conf` of `<local> <canonical>` pairs —
 
-```yaml
-- uses: jlapenna/agent-lcars/.github/actions/verify-fleet-scripts@main # latest
-  with:
-    scripts: |
-      tools/codex-issue-guardrail.cjs=bin/codex-issue-guardrail.cjs
-      tools/fleet-identity.cjs=bin/fleet-identity.cjs
-      tools/claude-agent-session.sh
-      tools/require-feature-worktree.sh=bin/require-feature-worktree.sh
-      .agents/skills/github-ci-monitor/scripts/watch-prs.sh
+```
+bin/codex-issue-guardrail.cjs tools/codex-issue-guardrail.cjs
+bin/fleet-identity.cjs tools/fleet-identity.cjs
+tools/claude-agent-session.sh tools/claude-agent-session.sh
+bin/require-feature-worktree.sh tools/require-feature-worktree.sh
+.agents/skills/github-ci-monitor/scripts/watch-prs.sh .agents/skills/github-ci-monitor/scripts/watch-prs.sh
 ```
 
-Omitting `scripts` asserts the canonical paths themselves; the default
-manifest is published surface, guarded by
-`published-actions.contract.test.mjs` exactly like
-`snapshot-enforcement-scripts`' gate list. To update a script fleet-wide:
-edit the canonical file here, land it, then re-copy it verbatim in each
-consumer (their CI names the exact file and the `curl` re-sync command
-until they do). This repo deliberately does **not** run the action against
-itself — that comparison is file-vs-itself and can only pass vacuously;
-the action's own behavior is covered by
-`verify-fleet-scripts.test.sh` in CI instead.
+— plus `uses: jlapenna/agent-lcars/.github/actions/check-canonical-sync@main`
+with `--forbid-strays` in the consumer's verify job. To update a script
+fleet-wide: edit the canonical file here, land it, then re-copy it
+verbatim in each consumer (their CI names the exact file and the `curl`
+re-sync command until they do). This repo deliberately does **not** run
+the action against itself — that comparison is file-vs-itself and can
+only pass vacuously; the action's behavior is covered by its own
+`check.test.sh` in CI. (For file pairs that are _allowed_ to diverge in
+bounded ways — the ESLint-rule twins of agent-lcars#1311 — sprinkles'
+pinned-hash `check-lint-rule-drift` is the right tool instead: it pins a
+reconciled state rather than requiring byte-identity.)
 
 ## Security: post-agent gates run from a pre-agent snapshot
 
