@@ -81,8 +81,11 @@
 #   has — the pipeline's label/redispatch vocabulary and the broker
 #   generation/intent that make up this attempt's claim marker — so a
 #   caller supplies text only where its content genuinely differs
-#   (sprinkles' mode-conditional runbook prompt). `protocol-note` is the
-#   one small seam that used to force a whole prompt copy: an extra clause
+#   (sprinkles' mode-conditional runbook prompt). `prompt` overrides the
+#   prompt BODY only: the attempt-claim marker block and the
+#   push-before-you-end paragraph are always the lane's, so no caller can
+#   drift the one byte-exact string the deliverable gate greps for.
+#   `protocol-note` is the one small seam on the body: an extra clause
 #   naming a repo's own protocol file, spliced into the reading order.
 
 on:
@@ -275,7 +278,7 @@ on:
         default: '45'
         type: string
       prompt:
-        description: 'Override the canonical dispatch prompt (empty renders the lane default)'
+        description: "Override the canonical prompt BODY (the attempt-claim tail is always the lane's)"
         required: false
         default: ''
         type: string
@@ -403,19 +406,29 @@ jobs:
 
       # The canonical dispatch prompt and silent-stall wording (#1340
       # A-R2). Both used to be required caller inputs, which meant 21
-      # callers hand-maintained near-identical prose — including the
-      # attempt-claim marker block, which the lane can build itself from
-      # the broker generation/intent it already receives. Rendered here
-      # unconditionally; `inputs.prompt` / `inputs.no-deliverable-reason`
-      # still win when non-empty (see their consumers below), so a repo
-      # whose prompt genuinely differs keeps overriding it.
+      # callers hand-maintained near-identical prose.
       #
-      # `protocol-note` is the per-repo seam: a clause naming that repo's
-      # own protocol file, spliced into the reading order after the shared
-      # protocol. Written with a randomized heredoc delimiter because
-      # GITHUB_ENV's multi-line form is delimiter-terminated.
+      # The prompt is assembled in two halves, and only the first is
+      # overridable:
+      #
+      # - the BODY is the fleet-canonical task framing, or `inputs.prompt`
+      #   when a repo's framing genuinely differs (sprinkles routes four
+      #   modes to four of its own reference files).
+      # - the TAIL is machine-critical and always the lane's: the exact
+      #   `<!-- attempt-claim:g<gen>:<intent> -->` line the deliverable gate
+      #   later greps for, built from the broker identity the lane already
+      #   receives, plus the push-before-you-end paragraph. A caller cannot
+      #   drift it, mis-render it, or forget it — which is how 21 hand-kept
+      #   copies of a byte-exact marker were a standing hazard.
+      #
+      # `protocol-note` is the per-repo seam on the body: a clause naming
+      # that repo's own protocol file, spliced into the reading order after
+      # the shared protocol. Written with a randomized heredoc delimiter
+      # because GITHUB_ENV's multi-line form is delimiter-terminated.
       - name: Resolve the canonical dispatch prompt
         env:
+          PROMPT_OVERRIDE: ${{ inputs.prompt }}
+          NO_DELIVERABLE_OVERRIDE: ${{ inputs.no-deliverable-reason }}
           PROTOCOL_NOTE: ${{ inputs.protocol-note }}
           ATTEMPT_ID: g${{ inputs.broker-generation }}:${{ inputs.broker-intent-id }}
           HAS_ATTEMPT_ID: ${{ inputs.broker-intent-id != '' }}
@@ -425,9 +438,7 @@ jobs:
 
           # The two `\$` below are LITERAL in the prompt: they name env
           # vars in the agent's own shell, not this step's.
-          {
-            printf '%s\n' "AGENT_PROMPT<<$delimiter"
-            cat <<PROMPT
+          default_body="$(cat <<PROMPT
           Work the routed anchor in the JSON brief at
           \`\$AGENT_DISPATCH_CONTEXT\`. Read AGENTS.md, then the shared
           protocol at \`\$AGENT_PROTOCOL_PATH\`,${PROTOCOL_NOTE:+ $PROTOCOL_NOTE} and follow them in
@@ -454,6 +465,11 @@ jobs:
           no-op. End your response with exactly one of: PR <url>, REVIEW
           <evidence>, PARK <blocker and resume trigger>, or NO-OP <evidence>.
           PROMPT
+          )"
+
+          {
+            printf '%s\n' "AGENT_PROMPT<<$delimiter"
+            printf '%s\n' "${PROMPT_OVERRIDE:-$default_body}"
             if [ "$HAS_ATTEMPT_ID" = 'true' ]; then
               cat <<PROMPT
 
@@ -488,9 +504,7 @@ jobs:
 
           # One wording for every pipeline, parameterized by the lane
           # identity resolved from `pipeline` (agent-protocol.md #5).
-          {
-            printf '%s\n' "AGENT_NO_DELIVERABLE_REASON<<$delimiter"
-            cat <<REASON
+          default_reason="$(cat <<REASON
           The run ended "successfully" but produced **no deliverable** - no
           PR, comment, or review carries this run's exact attempt-claim
           marker, so nothing it did can be credited and any local work is
@@ -498,6 +512,11 @@ jobs:
           replying \`$REDISPATCH_COMMAND\`, and remind it to push early and
           stamp its deliverable with the marker (agent-protocol.md #5).
           REASON
+          )"
+
+          {
+            printf '%s\n' "AGENT_NO_DELIVERABLE_REASON<<$delimiter"
+            printf '%s\n' "${NO_DELIVERABLE_OVERRIDE:-$default_reason}"
             printf '%s\n' "$delimiter"
           } >> "$GITHUB_ENV"
 
@@ -1105,7 +1124,7 @@ jobs:
           # Caller-supplied so every run uses agent mode consistently; an
           # empty prompt would silently fall back to tag mode with
           # different tool rules and no eyes-reaction/progress behavior.
-          prompt: ${{ inputs.prompt || env.AGENT_PROMPT }}
+          prompt: ${{ env.AGENT_PROMPT }}
           # Allow Bash wholesale. The action denies all Bash by default,
           # and a granular allowlist is brittle (env-var prefixes and pipes
           # don't match Bash(cmd:*) patterns cleanly). The authorization
@@ -1185,7 +1204,7 @@ jobs:
           # Claude Code"'s identical expression for the #645 rationale and
           # the deliberate no-fallback on an unset PAT.
           ACTIONS_RERUN_TOKEN: ${{ (inputs.dispatch-bootstrap && secrets.AGENT_CI_RERUN_TOKEN) || (!inputs.dispatch-bootstrap && github.token) || '' }}
-          CODEX_PROMPT: ${{ inputs.prompt || env.AGENT_PROMPT }}
+          CODEX_PROMPT: ${{ env.AGENT_PROMPT }}
         run: |
           # pipefail is load-bearing: without it this step's status is
           # `tee`'s, which is always 0, so a crashed/auth-failed codex run
@@ -1319,7 +1338,7 @@ jobs:
           agent: build
           variant: minimal
           use_github_token: 'true'
-          prompt: ${{ inputs.prompt || env.AGENT_PROMPT }}
+          prompt: ${{ env.AGENT_PROMPT }}
 
       - name: Run OpenCode (CLI)
         id: agent-opencode-cli
@@ -1335,7 +1354,7 @@ jobs:
           ACTIONS_RERUN_TOKEN: ${{ github.token }}
           MODEL: ${{ inputs.opencode-model }}
           USE_GITHUB_TOKEN: 'true'
-          PROMPT: ${{ inputs.prompt || env.AGENT_PROMPT }}
+          PROMPT: ${{ env.AGENT_PROMPT }}
         run: opencode github run
 
       - name: Export sanitized OpenCode trajectory
@@ -1399,7 +1418,7 @@ jobs:
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
           # Caller-rendered no-deliverable wording (agent-protocol.md §5) —
           # the shared script stays lane-agnostic.
-          NO_DELIVERABLE_REASON: ${{ inputs.no-deliverable-reason || env.AGENT_NO_DELIVERABLE_REASON }}
+          NO_DELIVERABLE_REASON: ${{ env.AGENT_NO_DELIVERABLE_REASON }}
           # Claude-only extra failure-reason signal (a turn-budget
           # exhaustion or an expired/invalid OAuth token), kept as an
           # adapter-style input to the shared orchestrator — see

@@ -151,7 +151,7 @@ on:
         default: '45'
         type: string
       prompt:
-        description: 'Override the canonical dispatch prompt (empty renders the lane default)'
+        description: "Override the canonical prompt BODY (the attempt-claim tail is always the lane's)"
         required: false
         default: ''
         type: string

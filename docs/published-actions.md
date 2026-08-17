@@ -354,7 +354,10 @@ per-pipeline label/redispatch vocabulary it resolves from `pipeline`. A
 caller passes only `protocol-note` — one clause naming its own protocol
 file, spliced into the reading order after `$AGENT_PROTOCOL_PATH` — and
 overrides `prompt` / `no-deliverable-reason` only where the content
-genuinely differs (sprinkles' mode-conditional runbook prompt).
+genuinely differs (sprinkles' mode-conditional runbook prompt). `prompt`
+overrides the prompt **body** only — the attempt-claim marker block and the
+push-before-you-end paragraph are appended by the lane either way, so no
+caller can drift the one byte-exact string the deliverable gate greps for.
 
 Every toggle defaults to the consumer behavior; the extras
 (`dispatch-bootstrap`, `protected-snapshot`, `trajectory-export`,
