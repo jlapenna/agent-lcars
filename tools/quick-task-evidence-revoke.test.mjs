@@ -1,6 +1,6 @@
-/* eslint-disable vitest/no-import-node-test -- CI runs this via node --test (ci.yml), matching the other tools/ boundary tests; no vitest project covers tools/. */
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+
+import { test } from 'vitest';
 
 import {
   parseRevokeArgs,
