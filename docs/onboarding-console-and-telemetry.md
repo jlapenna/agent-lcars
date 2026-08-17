@@ -1,5 +1,8 @@
 # Onboarding a repo to the Agent LCARS console + telemetry
 
+> Part of the end-to-end repo onboarding sequence — start at
+> [onboarding-repo.md](onboarding-repo.md); this doc is its §6 detail.
+
 > Credential minting (Claude OAuth token, Codex auth lineage, LiteLLM key,
 > App keys) is documented in [fleet-credentials.md](fleet-credentials.md).
 
