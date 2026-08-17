@@ -111,7 +111,7 @@ admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
   attempt's stable identity directly from the trusted `broker-generation`/
   `broker-intent-id` workflow inputs instead of re-verifying them against
   `dispatch-broker`'s ledger, but it is still Coupled - the
-  `AGENT_FLEET_LOGIN`/`MAINTAINER_LOGIN` repo-variable vocabulary and the
+  `AGENT_FLEET_LOGIN` repo-variable vocabulary and the
   attempt-identity format it publishes are this repo's own dispatch
   contract, not a general-purpose interface.
 - `telemetry-start` — depends on
@@ -335,7 +335,6 @@ jobs:
       broker-intent-id: ${{ inputs.broker_intent_id }}
       runs-on-label: ${{ vars.AGENT_RUNNER_LABEL }}
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
-      maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       telemetry-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
       telemetry-service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}

@@ -140,10 +140,6 @@ on:
         description: "Caller's AGENT_FLEET_LOGIN repo variable"
         required: true
         type: string
-      maintainer-login:
-        description: "Caller's MAINTAINER_LOGIN repo variable"
-        required: true
-        type: string
       agent-lcars-client-id:
         description: 'Agent LCARS App client ID for the token mint'
         required: true
@@ -243,7 +239,6 @@ jobs:
         with:
           vars: |
             AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
-            MAINTAINER_LOGIN=${{ inputs.maintainer-login }}
 
       # Freeze the trusted failure path at the earliest point possible, so
       # mint/claim/checkout can fail without stranding the issue.
@@ -386,7 +381,6 @@ jobs:
           broker-generation: ${{ inputs.broker-generation }}
           broker-intent-id: ${{ inputs.broker-intent-id }}
           agent-fleet-login: ${{ inputs.agent-fleet-login }}
-          maintainer-login: ${{ inputs.maintainer-login }}
           agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
           agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 

@@ -55,14 +55,6 @@ on:
       worker-result:
         required: true
         type: string
-      mode:
-        required: false
-        default: implement
-        type: string
-      runbook:
-        required: false
-        default: ''
-        type: string
       agent:
         required: true
         type: string
@@ -73,9 +65,6 @@ on:
         required: false
         default: ''
         type: string
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN:
-        required: false
 
 permissions: {}
 

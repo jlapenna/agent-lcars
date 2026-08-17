@@ -72,8 +72,6 @@ if [ -z "${ATTEMPT_ID:-}" ]; then
 fi
 
 found=""
-outcome_kind=""
-outcome_reference=""
 errors=()
 
 claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
@@ -89,14 +87,6 @@ if claim_pr_hits=$(gh api "repos/$REPO/pulls?state=all&per_page=100" --paginate 
   --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number" 2>&1); then
   if [ -n "$claim_pr_hits" ]; then
     found="PR carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-    outcome_kind="pull-request"
-    # A duplicated claim marker still proves a PR deliverable exists, but
-    # it no longer identifies ONE object that can later be called merged.
-    # Persist no reference in that anomalous case rather than selecting an
-    # arbitrary API-list entry and misattributing its future merge.
-    if [[ "$claim_pr_hits" != *$'\n'* ]]; then
-      outcome_reference="$claim_pr_hits"
-    fi
   fi
 else
   errors+=("PR list lookup (gh api repos/$REPO/pulls) failed: $claim_pr_hits")
@@ -109,12 +99,10 @@ if [ -z "$found" ]; then
     --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
     if [ -n "$claim_comment_hits" ]; then
       found="comment carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-      outcome_kind="comment"
       if claim_no_op_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
         --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id" 2>/dev/null) && \
         [ -n "$claim_no_op_hits" ]; then
         found="evidence-backed structured no-op carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-        outcome_kind="no-op"
       fi
     fi
   else
@@ -130,7 +118,6 @@ if [ -z "$found" ] && [ "$MODE" = "review" ]; then
     --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
     if [ -n "$claim_review_hits" ]; then
       found="pull request review carrying this run's attempt-claim marker ($ATTEMPT_ID)"
-      outcome_kind="review"
     fi
   else
     errors+=("PR review lookup (gh api repos/$REPO/pulls/$NUM/reviews) failed: $claim_review_hits")
@@ -140,12 +127,10 @@ fi
 if [ -n "$found" ]; then
   echo "::notice::$AGENT deliverable verified via exact attempt-claim marker"
   echo "Deliverable evidence: $found"
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo "outcome-kind=${outcome_kind:-unknown-success}" >> "$GITHUB_OUTPUT"
-    if [ -n "$outcome_reference" ]; then
-      echo "outcome-reference=$outcome_reference" >> "$GITHUB_OUTPUT"
-    fi
-  fi
+  # No $GITHUB_OUTPUT writes: the former outcome-kind/outcome-reference
+  # step outputs were retired 2026-08-17 -- nothing ever mapped this
+  # step's outputs (agent-fallback-finalize.yml re-derives outcome
+  # evidence from job metadata and exact attempt markers itself).
   exit 0
 fi
 
