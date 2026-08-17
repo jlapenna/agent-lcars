@@ -26,14 +26,19 @@ export const config = {
 // was never added to either list. (recovery-observation and
 // completion/reconcile were retired in #1015 Wave 4 along with the legacy
 // broker machinery they backed.)
+// #1232's /api/control-plane/request shipped without an entry in either
+// list and 401ed every OIDC caller until it was caught here — the same
+// failure mode again. proxy.test.ts now derives the required entries from
+// the route files on disk, which is also what retired the stale
+// webhook/probe entry (#885 deleted that route).
 export const publicRoutes = [
   '/login',
   '/api/logs/error',
   '/api/control-plane/completion',
   '/api/control-plane/reconcile',
+  '/api/control-plane/request',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
-  '/api/control-plane/webhook/probe',
 ];
 
 export default createAuthProxy({
