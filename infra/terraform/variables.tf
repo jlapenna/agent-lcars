@@ -49,6 +49,28 @@ variable "homelab_repository" {
     error_message = "homelab_repository must be one exact owner/repository pair without wildcards."
   }
 }
+# The rest of the fleet (#1325, #1350). These repos need nothing from this
+# project except OIDC admission to the shared `github` pool and read access
+# to the one Claude subscription token, so they get a plain list rather than
+# a named variable each - unlike sprinkles/homelab above, no other resource
+# refers to them individually.
+variable "additional_fleet_repositories" {
+  type = list(string)
+  default = [
+    "supersprinklesracing/www",
+    "supersprinklesracing/girosf",
+    "jlapenna/nx-cache-server",
+    "jlapenna/sync-padd",
+  ]
+  validation {
+    condition = alltrue([
+      for repository in var.additional_fleet_repositories :
+      can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repository))
+    ])
+    error_message = "each entry must be one exact owner/repository pair without wildcards."
+  }
+}
+
 variable "budget_notification_channels" {
   type    = list(string)
   default = []

@@ -51,7 +51,7 @@ if echo "$LOG" | grep -Eqi 'Reached maximum number of turns|"subtype"[[:space:]]
 fi
 
 if echo "$LOG" | grep -q '"api_error_status": 401' && echo "$LOG" | grep -q '"total_cost_usd": 0'; then
-  printf '%s' $'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Copy the token and update the `CLAUDE_CODE_OAUTH_TOKEN` secret in this repository.'
+  printf '%s' $'\n\nThe CLAUDE_CODE_OAUTH_TOKEN has expired or is invalid. To resolve this:\n1. Run `claude setup-token` on a browser-enabled terminal.\n2. Publish it as a new version of the fleet\'s one canonical secret - no per-repo step:\n   `gcloud secrets versions add CLAUDE_CODE_OAUTH_TOKEN --project=agent-lcars --data-file=-`'
   exit 0
 fi
 

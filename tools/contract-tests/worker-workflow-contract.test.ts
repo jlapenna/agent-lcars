@@ -402,11 +402,27 @@ const LANE_SURFACES: Record<
         default: '',
       },
       'gcp-service-account': { required: false, type: 'string', default: '' },
+      'claude-token-secret': {
+        required: false,
+        type: 'string',
+        default:
+          'projects/agent-lcars/secrets/CLAUDE_CODE_OAUTH_TOKEN/versions/latest',
+      },
+      'claude-token-wif-provider': {
+        required: false,
+        type: 'string',
+        default:
+          'projects/611425338852/locations/global/workloadIdentityPools/github/providers/github',
+      },
+      'claude-token-service-account': {
+        required: false,
+        type: 'string',
+        default: 'claude-token-reader@agent-lcars.iam.gserviceaccount.com',
+      },
     },
-    secrets: {
-      ...COMMON_LANE_SECRETS,
-      CLAUDE_CODE_OAUTH_TOKEN: { required: true },
-    },
+    // No CLAUDE_CODE_OAUTH_TOKEN: the subscription token is read from
+    // Secret Manager at run time (#1350), never carried by a consumer.
+    secrets: { ...COMMON_LANE_SECRETS },
   },
   codex: {
     inputs: {
@@ -614,9 +630,7 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
       ).toEqual({ name, required: false, default: '' });
     }
     expect(unifiedSecrets.AGENT_LCARS_PRIVATE_KEY?.required).toBe(true);
-    expect(unifiedSecrets.CLAUDE_CODE_OAUTH_TOKEN?.required ?? false).toBe(
-      false,
-    );
+    expect(unifiedSecrets.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(unifiedSecrets.OPENCODE_LLM_API_KEY?.required ?? false).toBe(false);
     expect(unified.source).toContain('Assert pipeline lane configuration');
     for (const value of [
@@ -624,7 +638,9 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
       'input gcp-service-account',
       'input gcp-project-id',
       'input opencode-model',
-      'secret CLAUDE_CODE_OAUTH_TOKEN',
+      'input claude-token-secret',
+      'input claude-token-wif-provider',
+      'input claude-token-service-account',
       'secret OPENCODE_LLM_API_KEY',
     ]) {
       expect(unified.source, `assert step must name "${value}"`).toContain(

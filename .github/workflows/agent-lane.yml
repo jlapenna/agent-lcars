@@ -20,9 +20,12 @@
 #   empty defaults; "Assert pipeline lane configuration" fails fast when
 #   the active pipeline is missing one, naming every missing value at
 #   once, the way assert-repo-vars does.
-# - Secrets are the union too; the lane-specific ones
-#   (CLAUDE_CODE_OAUTH_TOKEN, OPENCODE_LLM_API_KEY) are `required: false`
-#   here and presence-asserted per pipeline in the same first step.
+# - Secrets are the union too; the lane-specific one
+#   (OPENCODE_LLM_API_KEY) is `required: false` here and
+#   presence-asserted per pipeline in the same first step. Claude's
+#   subscription token is deliberately NOT a secret on this surface — it
+#   is read from Secret Manager at run time (#1350), so no consumer repo
+#   holds a copy.
 # - The checkout sequence adopts the codex/opencode ordering (bootstrap
 #   checkout -> dispatch bootstrap -> App-credential re-checkout). The
 #   claude pipeline keeps its deliberate credential behavior inside that
@@ -181,6 +184,28 @@ on:
         required: false
         default: ''
         type: string
+      # Claude's subscription token (#1350). Defaulted to the fleet's own
+      # values so no consumer passes anything: there is exactly one token,
+      # in one place, and agent-lcars holds it. Unlike codex's per-repo
+      # rotating auth.json lineage, this credential never rotates
+      # (`claude setup-token` mints it once, nothing writes it back), so
+      # one shared read-only value is safe fleet-wide. Overridable only
+      # for the case a repo must point at a different subscription.
+      claude-token-secret:
+        description: 'Claude: Secret Manager resource holding the subscription token'
+        required: false
+        default: 'projects/agent-lcars/secrets/CLAUDE_CODE_OAUTH_TOKEN/versions/latest'
+        type: string
+      claude-token-wif-provider:
+        description: 'Claude: WIF provider admitting the caller repo to read that secret'
+        required: false
+        default: 'projects/611425338852/locations/global/workloadIdentityPools/github/providers/github'
+        type: string
+      claude-token-service-account:
+        description: 'Claude: read-only service account holding accessor on that one secret'
+        required: false
+        default: 'claude-token-reader@agent-lcars.iam.gserviceaccount.com'
+        type: string
       gcp-project-id:
         description: 'Codex: GCP project holding the subscription-credential secret (required)'
         required: false
@@ -261,9 +286,6 @@ on:
       AGENT_LCARS_PRIVATE_KEY:
         description: 'Agent LCARS App private key for the token mint'
         required: true
-      CLAUDE_CODE_OAUTH_TOKEN:
-        description: 'Claude: long-lived token from `claude setup-token` (required for that pipeline)'
-        required: false
       OPENCODE_LLM_API_KEY:
         description: 'OpenCode: LiteLLM gateway credential (required for that pipeline)'
         required: false
@@ -321,13 +343,17 @@ jobs:
           GCP_SERVICE_ACCOUNT: ${{ inputs.gcp-service-account }}
           GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
           OPENCODE_MODEL: ${{ inputs.opencode-model }}
-          HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          CLAUDE_TOKEN_SECRET: ${{ inputs.claude-token-secret }}
+          CLAUDE_TOKEN_WIF_PROVIDER: ${{ inputs.claude-token-wif-provider }}
+          CLAUDE_TOKEN_SERVICE_ACCOUNT: ${{ inputs.claude-token-service-account }}
           HAS_OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY != '' }}
         run: |
           missing=()
           case "$PIPELINE" in
             claude)
-              [ "$HAS_CLAUDE_CODE_OAUTH_TOKEN" = 'true' ] || missing+=('secret CLAUDE_CODE_OAUTH_TOKEN')
+              [ -n "$CLAUDE_TOKEN_SECRET" ] || missing+=('input claude-token-secret')
+              [ -n "$CLAUDE_TOKEN_WIF_PROVIDER" ] || missing+=('input claude-token-wif-provider')
+              [ -n "$CLAUDE_TOKEN_SERVICE_ACCOUNT" ] || missing+=('input claude-token-service-account')
               ;;
             codex)
               [ -n "$GCP_WIF_PROVIDER" ] || missing+=('input gcp-workload-identity-provider')
@@ -653,6 +679,59 @@ jobs:
           service-account: ${{ inputs.telemetry-service-account }}
           issue: ${{ inputs.issue }}
 
+      # Claude's subscription token, read from Secret Manager per run
+      # (#1350). Before this, every consumer repo carried its own copy as
+      # an Actions secret — write-only storage, so the value could never be
+      # read back, every new repo needed a fresh interactive mint, and each
+      # expiry meant an N-repo manual fan-out with a silent partial-failure
+      # mode. One canonical copy replaces all of that.
+      #
+      # Deliberately NOT reusing the `gcp-auth` inputs below: those are a
+      # per-repo, per-project grant that exists so the AGENT can self-verify
+      # production (sprinkles points them at claude-agent-readonly in its
+      # own project). This is a control-plane read that must work
+      # identically in every repo, including ones that grant their agent no
+      # GCP access at all.
+      #
+      # export_environment_variables is false and the credential file is
+      # scoped to the single step below via a step-level env override, so
+      # this identity is never ambient: it cannot be reached from the
+      # agent's shell, and it does not disturb the ADC that `gcp-auth`
+      # exports for the agent when a consumer asks for it.
+      - name: Authenticate to GCP for the Claude subscription token
+        id: claude-token-auth
+        if: ${{ inputs.pipeline == 'claude' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ inputs.claude-token-wif-provider }}
+          service_account: ${{ inputs.claude-token-service-account }}
+          export_environment_variables: false
+
+      - name: Read the Claude subscription token
+        id: claude-token
+        if: ${{ inputs.pipeline == 'claude' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.claude-token-auth.outputs.credentials_file_path }}
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |-
+            token:${{ inputs.claude-token-secret }}
+
+      # Fail here, by name, rather than letting an empty token surface as
+      # an opaque 401 deep inside a billed agent turn.
+      - name: Assert the Claude subscription token was read
+        if: ${{ inputs.pipeline == 'claude' }}
+        env:
+          HAS_TOKEN: ${{ steps.claude-token.outputs.token != '' }}
+          SECRET_REF: ${{ inputs.claude-token-secret }}
+        run: |
+          if [ "$HAS_TOKEN" != 'true' ]; then
+            echo "::error::Read an empty Claude subscription token from $SECRET_REF." \
+              "Check the secret has an enabled version and that this repo is admitted" \
+              "by the WIF provider (agent-lcars#1350)."
+            exit 1
+          fi
+
       # GCP access via Workload Identity Federation so the agent can
       # self-verify things it used to have to ask the maintainer to check.
       # No stored key: the WIF provider trusts the caller repo's OIDC token
@@ -895,10 +974,12 @@ jobs:
           # (is_error:true, api_error_status:401, total_cost_usd:0) while
           # the workflow's own conclusion still reports "success" — the
           # "Verify Claude run status" step below is what actually catches
-          # this. Fix: run `claude setup-token` to completion in a terminal
-          # with real browser access, then `gh secret set
-          # CLAUDE_CODE_OAUTH_TOKEN` in the calling repo.
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # this. Fix: mint once with `claude setup-token` and publish it
+          # as a new version of the one canonical secret — no per-repo
+          # step, for any repo (#1350):
+          #   gcloud secrets versions add CLAUDE_CODE_OAUTH_TOKEN \
+          #     --project=agent-lcars --data-file=-
+          claude_code_oauth_token: ${{ steps.claude-token.outputs.token }}
           # Grant the action's GitHub token read access to Actions so the
           # agent can inspect CI results on the draft PRs it opens.
           additional_permissions: |
