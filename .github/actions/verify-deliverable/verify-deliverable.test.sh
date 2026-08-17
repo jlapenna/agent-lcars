@@ -81,7 +81,11 @@ FAKE_GH
 chmod +x "$fake_bin/gh"
 export PATH="$fake_bin:$PATH"
 
-# Common broker-bound env every exact-mode case starts from.
+# Common env every case starts from. The retired legacy inference inputs
+# (STARTED_AT, EXPECTED_COMMENT_LOGIN, RUNBOOK, EXCLUDE_PR_AUTHOR,
+# EXCLUDE_COMMENT_ID) are unset so no case accidentally depends on them;
+# the stray-legacy-env case below exports them deliberately to prove the
+# script ignores them entirely.
 base_env() {
   export GH_TOKEN=test-token
   export AGENT="Test Agent"
@@ -90,16 +94,6 @@ base_env() {
   export MODE=implement
   export ATTEMPT_ID="g1:test-intent"
   unset STARTED_AT EXPECTED_COMMENT_LOGIN RUNBOOK EXCLUDE_PR_AUTHOR EXCLUDE_COMMENT_ID
-}
-
-legacy_env() {
-  base_env
-  unset ATTEMPT_ID
-  export STARTED_AT=2026-08-13T23:20:45Z
-  export EXPECTED_COMMENT_LOGIN='agent-lcars[bot]'
-  export RUNBOOK=
-  export EXCLUDE_PR_AUTHOR=
-  export EXCLUDE_COMMENT_ID=
 }
 
 run_case() {
@@ -452,8 +446,10 @@ JSON
 )
 
 # ============================================================================
-# Negative cases (#815): each of the five inference clauses retired from
-# broker-bound exact mode is tested with the shape that USED to satisfy it
+# Negative cases: each of the five inference clauses deleted from the
+# script (#815 removed them for hosted lanes; the standalone legacy mode
+# followed once every consumer passed ATTEMPT_ID) is tested with the shape
+# that USED to satisfy it
 # - a time-windowed PR, an issue closure, a status:needs-human label, a bare
 # reply-mode bot comment, and a bare review - all WITHOUT this run's exact
 # attempt-claim marker anywhere. Every one must be a genuine exact-mode
@@ -587,51 +583,63 @@ JSON
 )
 
 # ============================================================================
-# Standalone compatibility: consumers without broker attempt identity use the
-# guarded time-window/login inference promised by agent-protocol.md.
+# Exact-marker is the ONLY mode: the legacy time-window/login inference was
+# deleted (every fleet consumer passes ATTEMPT_ID - agent-lcars's own lanes,
+# homelab#697, sprinkles' exact-marker flip). No input combination may reach
+# any weaker validation.
 # ============================================================================
 
-# The live Sprinkles #4385 shape: a reply-mode run creates a referencing PR
-# as the expected App bot after the run starts, but has no ATTEMPT_ID.
-(
-  legacy_env
-  export MODE=reply
-  case_dir="$test_root/legacy-reply-pr"
-  mkdir -p "$case_dir"
-  cat > "$case_dir/pulls.json" <<'JSON'
-[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
-JSON
-  run_case legacy-reply-pr
-  test "$status" = 0 || fail "a standalone consumer's fresh referencing PR should pass"
-  grep -q 'verified via INFERENCE' <<<"$output" || fail "expected the standalone inference notice"
-  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "legacy PR evidence must publish its outcome kind"
-  grep -qx 'outcome-reference=4392' "$GITHUB_OUTPUT" || fail "legacy PR evidence must publish its PR number"
-)
-
-# Exact identity remains the boundary: the same fixture must still fail when
-# ATTEMPT_ID exists but the artifact lacks that exact marker.
+# Stray legacy env vars are ignored: exporting the full retired inference
+# input set alongside ATTEMPT_ID changes nothing - a marker-less artifact
+# that would have satisfied retired clause (a) (fresh referencing PR from
+# the expected login) still fails as a genuine no-deliverable.
 (
   base_env
   export STARTED_AT=2026-08-13T23:20:45Z
   export EXPECTED_COMMENT_LOGIN='agent-lcars[bot]'
-  case_dir="$test_root/exact-never-falls-back"
+  export RUNBOOK=unstick-prs
+  export EXCLUDE_PR_AUTHOR='someone-else[bot]'
+  export EXCLUDE_COMMENT_ID=12345
+  case_dir="$test_root/stray-legacy-env-ignored"
   mkdir -p "$case_dir"
   cat > "$case_dir/pulls.json" <<'JSON'
 [{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
 JSON
-  run_case exact-never-falls-back
-  test "$status" = 1 || fail "broker-bound validation must never use inference"
+  run_case stray-legacy-env-ignored
+  test "$status" = 1 || fail "stray legacy env must never re-enable inference"
+  case "$output" in
+    *"verified via INFERENCE"*) fail "the retired inference notice must never appear" ;;
+  esac
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "missing exact evidence must stay a genuine no-deliverable"
 )
 
-# Empty identity is not enough by itself: both legacy guard inputs are
-# mandatory, preventing an unbounded or unauthenticated inference query.
+# Missing ATTEMPT_ID is a hard, fail-fast configuration error naming the
+# exact-marker contract - never a fallback to weaker validation, and never
+# a silent pass. Even the full retired legacy input pair cannot substitute.
 (
   base_env
-  unset ATTEMPT_ID STARTED_AT EXPECTED_COMMENT_LOGIN
-  run_case incomplete-legacy-inputs
-  test "$status" = 1 || fail "legacy mode without a start timestamp must fail closed"
-  grep -q 'STARTED_AT is required when ATTEMPT_ID is unset' <<<"$output" || fail "expected the missing legacy timestamp diagnostic"
+  unset ATTEMPT_ID
+  export STARTED_AT=2026-08-13T23:20:45Z
+  export EXPECTED_COMMENT_LOGIN='agent-lcars[bot]'
+  case_dir="$test_root/missing-attempt-id"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":4392,"title":"fix: dossier photo (#42)","body":"","updated_at":"2026-08-13T23:26:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
+JSON
+  run_case missing-attempt-id
+  test "$status" = 1 || fail "a missing ATTEMPT_ID must fail hard"
+  grep -q 'ATTEMPT_ID is required' <<<"$output" || fail "expected the missing-ATTEMPT_ID diagnostic"
+  grep -q 'exact-marker-only' <<<"$output" || fail "the diagnostic must name the exact-marker contract"
+  if grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" 2>/dev/null; then
+    fail "a configuration error must not be recorded as a confirmed missing deliverable"
+  fi
+)
+(
+  base_env
+  export ATTEMPT_ID=
+  run_case empty-attempt-id
+  test "$status" = 1 || fail "an empty ATTEMPT_ID must fail hard"
+  grep -q 'ATTEMPT_ID is required' <<<"$output" || fail "expected the missing-ATTEMPT_ID diagnostic for the empty string too"
 )
 
 echo "verify-deliverable.test.sh: all cases passed"

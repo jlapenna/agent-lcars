@@ -98,21 +98,21 @@ const PUBLISHED = {
     inputs: { 'github-token': { required: true } },
     outputs: ['version'],
   },
-  // #4388 restores legacy inputs for standalone consumers without broker
-  // attempt identity. Broker-bound callers still pass attempt-id and remain
-  // exact-marker-only; inference is unreachable for them.
+  // Exact-marker only: attempt-id is required, and the legacy inference
+  // inputs #4388 once restored (started-at, runbook,
+  // expected-comment-login, exclude-pr-author, exclude-comment-id) were
+  // deleted once every fleet consumer passed attempt-id (agent-lcars's own
+  // lanes, homelab#697, sprinkles#4490). Dropping an input is safe for a
+  // moving-@main consumer that still passes it: the runner emits an
+  // "Unexpected input(s)" WARNING for unknown composite-action inputs,
+  // never an error (actions/runner ActionRunner.cs).
   'verify-deliverable': {
     inputs: {
       token: { required: true },
       agent: { required: true },
       issue: { required: true },
       mode: { required: true },
-      'started-at': { required: false, default: '' },
-      runbook: { required: false, default: '' },
-      'expected-comment-login': { required: false, default: '' },
-      'exclude-pr-author': { required: false, default: '' },
-      'exclude-comment-id': { required: false, default: '' },
-      'attempt-id': { required: false, default: '' },
+      'attempt-id': { required: true },
     },
     outputs: [],
   },
@@ -288,13 +288,13 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'RUN_ID',
       'ISSUE',
       'JOB_STATUS',
-      // Required only when JOB_STATUS is "success" (#815). MODE always;
-      // then either ATTEMPT_ID (optional, see below) or this legacy
-      // inference pair when ATTEMPT_ID is unset (#1208 Phase 2) -- mirrors
-      // verify-deliverable.sh's own `if [ -z "$ATTEMPT_ID" ]` contract.
+      // Required only when JOB_STATUS is "success" (#815): the verify
+      // phase is exact-marker-only. The legacy STARTED_AT +
+      // EXPECTED_COMMENT_LOGIN inference pair (#1208 Phase 2/#1237's
+      // ATTEMPT_ID optionality) was deleted once every fleet consumer
+      // passed ATTEMPT_ID.
       'MODE',
-      'STARTED_AT',
-      'EXPECTED_COMMENT_LOGIN',
+      'ATTEMPT_ID',
     ].sort(),
     'post-agent-gates.sh: required env-var set changed',
   );
@@ -308,12 +308,6 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'READINESS_FAILURE',
       // #1208: report-failure.sh's own standalone-mode toggle, forwarded.
       'MAINTAINER',
-      // #1208 Phase 2: optional -- a standalone consumer without broker
-      // attempt identity leaves this unset and relies on the
-      // STARTED_AT/EXPECTED_COMMENT_LOGIN legacy inference pair above
-      // instead (both become unconditionally required only in that case,
-      // enforced inside the script itself, not by this static contract).
-      'ATTEMPT_ID',
     ].sort(),
     'post-agent-gates.sh: optional env-var set changed',
   );
