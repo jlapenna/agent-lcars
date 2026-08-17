@@ -84,19 +84,12 @@ env:
     availability:
       - RUNTIME
   # Repositories the orchestrator admits (webhook, ingest, completion,
-  # task-state). The home repo stays the reconcile caller and the ambient
-  # token's primary scope; the ambient token's actions:write on sprinkles
-  # was probe-verified before this flip (#1190). Sprinkles's local router
-  # went dark in supersprinklesracing/sprinkles ahead of this deploy.
+  # task-state). The home repo stays the reconcile caller. Dispatch tokens
+  # are minted per repository from the fleet App (#1197/#1287); the ambient
+  # PAT this flip was originally probe-verified against (#1190) has been
+  # retired.
   - variable: AGENT_LCARS_CONTROL_PLANE_REPOSITORIES
     value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab'
-    availability:
-      - RUNTIME
-
-  # GitHub App webhook delivery is the production event authority; hosted
-  # reconciliation handles manual recovery as well.
-  - variable: AGENT_LCARS_HOSTED_ADMISSION_MODE
-    value: 'authority'
     availability:
       - RUNTIME
 

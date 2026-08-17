@@ -1,11 +1,8 @@
-// `--no-warn-ignored` rather than a path exclusion here. The dispatch
-// broker's committed bundle (.github/actions/dispatch-broker/dist) is
-// generated output: eslint and prettier both ignore it by config, but
-// lint-staged still hands it over because it is a staged .mjs file, and an
-// "ignored file" warning is fatal under --max-warnings=0. Suppressing the
-// warning keeps the zero-tolerance budget meaningful for real findings
-// instead of trading it away, and it stays correct for any future generated
-// file rather than naming this one path.
+// `--no-warn-ignored` rather than a path exclusion here: a staged file
+// that eslint ignores by config still gets handed over by lint-staged, and
+// an "ignored file" warning is fatal under --max-warnings=0. Suppressing
+// the warning keeps the zero-tolerance budget meaningful for real findings
+// and stays correct for any generated file rather than naming paths.
 const ESLINT = 'eslint --fix --max-warnings=0 --no-warn-ignored';
 
 export default {

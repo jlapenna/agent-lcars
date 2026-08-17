@@ -120,6 +120,7 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
   or a `workflow_dispatch` call is attempted more than once for the same
   entry (each is written to be safe under that retry, not to prevent it).
 - **Provide multi-tenant or cross-repository authority.** One task is keyed
-  by `(repo, issue)`; there is no tenant concept above that. See
-  `docs/consumer-lifecycle-inventory.md` for the still-separate dispatch
-  loops this does not (yet) cover in other repositories.
+  by `(repo, issue)`; there is no tenant concept above that. The consumer
+  repos' formerly separate dispatch loops have since migrated onto this
+  orchestrator (#1198, #1200; `docs/consumer-lifecycle-inventory.md` is now
+  a historical snapshot of what they replaced).

@@ -33,8 +33,9 @@ decision.
 
 If a future need for genuinely cross-repository (not just cross-lane)
 dispatch authority reappears — the "Group A" forked brokers in
-[`docs/consumer-lifecycle-inventory.md`](consumer-lifecycle-inventory.md) are
-the concrete case — start from what the orchestrator actually does
+[`docs/consumer-lifecycle-inventory.md`](consumer-lifecycle-inventory.md)
+were the concrete case until homelab#660 retired them onto the central
+orchestrator — start from what the orchestrator actually does
 (`libs/orchestrator/src/model.ts`, `decide.ts`) and what it deliberately
 doesn't (queueing, exactly-once, result adjudication — see
 `libs/orchestrator/README.md`), not from this document. Multi-tenancy,
