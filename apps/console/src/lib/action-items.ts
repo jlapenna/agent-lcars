@@ -93,7 +93,7 @@ export interface ActionItem {
    * page's stale-claim detection (see claimed-idle.ts); no console surface
    * needed it before that. */
   assigneeLogins: string[];
-  /** Newest `claude-agent-session.sh resume <id>` command the agent posted. */
+  /** Newest `claude-agent-session[.sh] resume <id>` command the agent posted. */
   takeoverCommand?: string;
   lastCommentBody?: string;
   lastCommentUrl?: string;
@@ -167,10 +167,14 @@ const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
 ]);
 
 // The agent's kickoff prompt (see .github/workflows/claude.yml) makes it
-// post its exact takeover command in its first ack comment, e.g.
-// `~/p/members/tools/claude-agent-session.sh resume <session-id>`. Each new
-// run posts a fresh one, so the newest match wins.
-const TAKEOVER_COMMAND_RE = /(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/;
+// post its exact takeover command in its first ack comment. Since
+// agent-lcars#1328 that is `fleet-claude-agent-session resume <id>` (the
+// PATH bin); historical comments say
+// `~/p/members/tools/claude-agent-session.sh resume <id>`. The pattern
+// matches both — `claude-agent-session` with an optional `.sh` — and each
+// new run posts a fresh command, so the newest match wins.
+const TAKEOVER_COMMAND_RE =
+  /(\S*claude-agent-session(?:\.sh)?\s+resume\s+[\w-]+)/;
 
 /** One item as returned by `issues.listForRepo`, which serves both issues
  * and PRs (a PR is an issue carrying a `pull_request` key). Verified against

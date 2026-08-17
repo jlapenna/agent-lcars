@@ -40,7 +40,7 @@ touch "$temp_dir/repository/README.md"
 git -C "$temp_dir/repository" add README.md
 git -C "$temp_dir/repository" commit -m initial >/dev/null
 
-if (cd "$temp_dir/repository" && "$root/tools/require-feature-worktree.sh"); then
+if (cd "$temp_dir/repository" && "$root/bin/require-feature-worktree.sh"); then
   echo "expected the primary checkout to be rejected" >&2
   exit 1
 fi
@@ -48,7 +48,7 @@ fi
 # The rejection banner names what was rejected: the default wording without
 # an argument, the caller-supplied action word with one (sprinkles passes
 # COMMITS/PUSHES from its husky hooks).
-message="$( (cd "$temp_dir/repository" && "$root/tools/require-feature-worktree.sh" 2>&1) || true)"
+message="$( (cd "$temp_dir/repository" && "$root/bin/require-feature-worktree.sh" 2>&1) || true)"
 case "$message" in
   *"commits and pushes must come from a feature worktree"*) ;;
   *)
@@ -56,7 +56,7 @@ case "$message" in
     exit 1
     ;;
 esac
-message="$( (cd "$temp_dir/repository" && "$root/tools/require-feature-worktree.sh" pushes 2>&1) || true)"
+message="$( (cd "$temp_dir/repository" && "$root/bin/require-feature-worktree.sh" pushes 2>&1) || true)"
 case "$message" in
   *"pushes must come from a feature worktree"*) ;;
   *)
@@ -67,7 +67,7 @@ esac
 
 # REQUIRE_WORKTREE_EXTRA_HINT is the documented repo-specific remediation
 # hook (sprinkles points at its deploy script through it).
-message="$( (cd "$temp_dir/repository" && REQUIRE_WORKTREE_EXTRA_HINT='Use the deploy script instead.' "$root/tools/require-feature-worktree.sh" 2>&1) || true)"
+message="$( (cd "$temp_dir/repository" && REQUIRE_WORKTREE_EXTRA_HINT='Use the deploy script instead.' "$root/bin/require-feature-worktree.sh" 2>&1) || true)"
 case "$message" in
   *"Use the deploy script instead."*) ;;
   *)
@@ -78,9 +78,9 @@ esac
 
 # Under GITHUB_ACTIONS the hook must no-op even in an otherwise-rejected
 # checkout (CI clones are never worktrees).
-(cd "$temp_dir/repository" && GITHUB_ACTIONS=true "$root/tools/require-feature-worktree.sh")
+(cd "$temp_dir/repository" && GITHUB_ACTIONS=true "$root/bin/require-feature-worktree.sh")
 
 git -C "$temp_dir/repository" worktree add "$temp_dir/feature" -b feature >/dev/null
-(cd "$temp_dir/feature" && "$root/tools/require-feature-worktree.sh")
+(cd "$temp_dir/feature" && "$root/bin/require-feature-worktree.sh")
 
 echo "require-feature-worktree: PASS"

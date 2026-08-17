@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 
-/* eslint-disable no-restricted-syntax -- this is a standalone CommonJS
- * script invoked directly by node (see .codex/hooks.json), with no build
- * step, so it must use require(). */
-
 /**
- * Fleet-canonical copy (agent-lcars#1307). Consumer repos (jlapenna/homelab,
- * supersprinklesracing/sprinkles) vendor this file and its sibling
- * fleet-identity.cjs byte-for-byte and load it from their own
- * .claude/settings.json / .codex/hooks.json; the verify-fleet-scripts
- * published action fails their CI when a vendored copy drifts. Edit it HERE
- * and re-sync the consumers -- never patch a consumer copy in place.
+ * Single fleet source (#1307, de-vendored in #1328): this file lives only
+ * in agent-lcars's packages/fleet-tools. Consumer repos' .claude/settings.json
+ * / .codex/hooks.json invoke it as `fleet-codex-issue-guardrail` from PATH
+ * (machines install the package from main; the runner image installs it at
+ * build time), guarded with `command -v` so an uninstalled machine degrades
+ * quietly. fleet-identity.cjs must remain a sibling of this real file —
+ * the installed bin is a symlink and require() resolves via its realpath.
  */
 
 const { execFileSync } = require('node:child_process');

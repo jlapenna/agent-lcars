@@ -43,7 +43,7 @@ not reliably kill the process tree under it — `bash` (and its `claude` or
 the old cwd, invisible to tmux. The authoritative check is a `/proc` scan:
 
 ```bash
-scripts/scan-live-processes.sh <repo-or-worktree-path>
+fleet-scan-live-processes <repo-or-worktree-path>
 ```
 
 If more than one _other_ session shows a `cwd` under the path you're about
@@ -120,7 +120,7 @@ merge-base --is-ancestor <branch> main` alone — it false-negatives on
    deciding.
 5. **Remove it:**
    ```bash
-   scripts/safe-remove-worktree.sh <worktree-path>
+   fleet-safe-remove-worktree <worktree-path>
    ```
    The helper resolves the target worktree's own Git common directory, so it
    is safe to invoke from a different repository; inspect the exact removal
@@ -137,9 +137,9 @@ merge-base --is-ancestor <branch> main` alone — it false-negatives on
    immediate sibling (for example, a centralized `worktrees/` directory),
    identify it explicitly with `--git-dir <owning-checkout-or-git-dir>`:
    ```bash
-   scripts/safe-remove-worktree.sh <worktree-path> --force-anyway --dry-run
-   scripts/safe-remove-worktree.sh <worktree-path> --force-anyway
-   scripts/safe-remove-worktree.sh <worktree-path> --git-dir <owner> --force-anyway --dry-run
+   fleet-safe-remove-worktree <worktree-path> --force-anyway --dry-run
+   fleet-safe-remove-worktree <worktree-path> --force-anyway
+   fleet-safe-remove-worktree <worktree-path> --git-dir <owner> --force-anyway --dry-run
    ```
    That recovery identifies only the target's administrative record, restores
    its missing `.git` link, and asks `git worktree remove` to remove that

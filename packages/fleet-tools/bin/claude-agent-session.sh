@@ -45,17 +45,20 @@
 # unaffected by the fleet topology, since it never touches a runner host.
 set -euo pipefail
 
-# Repo-specific defaults: a sibling claude-agent-session.conf (same
-# directory as this script; not drift-checked) may pre-seed any CLAUDE_*
+# Repo-specific defaults: tools/claude-agent-session.conf at the top of
+# the repository this command is launched from may pre-seed any CLAUDE_*
 # variable read below. Use the `: "${CLAUDE_X:=value}"` form there so an
 # explicit environment override still wins over the repo's conf. Without a
 # conf, the fallbacks below are jlapenna/agent-lcars's own registration --
-# a consumer repo MUST ship a conf or its copy targets the wrong scale
-# set, checkout path, and transcripts bucket.
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$script_dir/claude-agent-session.conf" ]; then
+# a consumer repo MUST ship a conf or its sessions target the wrong scale
+# set, checkout path, and transcripts bucket. (This script lives only in
+# agent-lcars and runs from PATH as fleet-claude-agent-session — see
+# tools/install-fleet-tools.sh — so the conf is resolved from the caller's
+# repo, never from the script's own directory.)
+launch_repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$launch_repo_root" ] && [ -f "$launch_repo_root/tools/claude-agent-session.conf" ]; then
   # shellcheck source=/dev/null
-  . "$script_dir/claude-agent-session.conf"
+  . "$launch_repo_root/tools/claude-agent-session.conf"
 fi
 
 # Fleet hosts this queries. Keep in sync with jlapenna/homelab's

@@ -61,16 +61,18 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
   `.agents/skills/lcars/lcars-protocol.md`'s "Session-resume script"
   section, which is exactly this declaration for this repo.
 - **For a Claude dispatch that ships genuinely Claude-capable resume
-  tooling:** add `tools/claude-agent-session.sh` at that **exact path and
-  filename** — the console's takeover-command scanner
+  tooling:** the takeover comment must name `fleet-claude-agent-session`
+  (the fleet-tools bin, installed machine-wide and baked into the runner
+  image — agent-lcars#1328) — the console's takeover-command scanner
   (`apps/console/src/lib/action-items.ts`'s `TAKEOVER_COMMAND_RE`)
-  hard-codes the literal substring `claude-agent-session.sh` and does not
-  generalize per agent, so a takeover comment referencing any other
-  filename never surfaces in the console UI.
+  matches the literal substring `claude-agent-session` (with optional
+  `.sh` for historical comments) and does not generalize per agent, so a
+  takeover comment referencing any other command name never surfaces in
+  the console UI.
 - **For Codex, OpenCode, or any pipeline without real live-resume tooling
-  in the new repo:** do not create a script under that name (or any other
-  name) just to satisfy the scanner, and do not name
-  `claude-agent-session.sh` in that pipeline's takeover comment — it is a
+  in the new repo:** do not cite that command just to satisfy the
+  scanner, and do not name
+  `fleet-claude-agent-session` in that pipeline's takeover comment — it is a
   Claude-only tool and citing it from a different CLI's comment is a false
   handoff, not an honest gap disclosure. Follow agent-protocol.md §1's
   provider-honest default instead: state plainly that no live-resume

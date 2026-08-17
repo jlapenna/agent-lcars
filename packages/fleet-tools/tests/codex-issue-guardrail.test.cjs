@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- this is a CommonJS node:test fixture. */
 // Fleet-canonical (agent-lcars#1307): byte-identical copy consumed by
 // supersprinklesracing/sprinkles via its .github/canonical-sync.conf.
 // Edit the canonical copy in jlapenna/agent-lcars and re-copy verbatim.
@@ -9,7 +8,7 @@ const {
   extractIssueNumbers,
   runHook,
   titleMatchesIssue,
-} = require('./codex-issue-guardrail.cjs');
+} = require('../bin/codex-issue-guardrail.cjs');
 
 function dependencies({
   assignees = ['agent-lcars-bot'],

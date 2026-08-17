@@ -111,9 +111,11 @@ export function isControlPlaneRepository(fullName: string): boolean {
   return controlPlaneRepositories().includes(fullName);
 }
 
-/** Checkout-relative script used to restore archived Claude transcripts. */
+/** Command used to restore archived Claude transcripts: the fleet-tools
+ * PATH bin (agent-lcars#1328) — installed on workstations and baked into
+ * the runner image, so it is checkout-independent. */
 export function agentSessionResumeScript(): string {
-  return 'tools/claude-agent-session.sh';
+  return 'fleet-claude-agent-session';
 }
 
 /**

@@ -347,56 +347,54 @@ repo's pool, and the fleet-shared telemetry pool) is unaffected; a provider
 conditioned on `job_workflow_ref` must allow the lane files before a
 consumer adopts.
 
-## Fleet-canonical workstation scripts (`check-canonical-sync`)
+## Fleet workstation tools (`packages/fleet-tools`, installed from main)
 
-The fleet's _session-side_ enforcement tooling — scripts that run on
-workstations, not CI, and therefore cannot be delivered by
-`snapshot-enforcement-scripts` or a cross-repo `uses:` at runtime — is
-canonical in this repo and **vendored byte-for-byte** into the consumer
-repos (agent-lcars#1307):
+The fleet's _session-side_ tooling — scripts that run on workstations and
+inside agent sessions, not as CI steps — is a real package in this repo,
+`packages/fleet-tools`, exposing six commands:
 
-| Canonical path                                          | Runs as                                                 | Repo-specific hook                                                     |
-| ------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `tools/codex-issue-guardrail.cjs`                       | Claude/Codex PostToolUse hook (`.claude/settings.json`) | none needed (project name from cwd; identity via `fleet-identity.cjs`) |
-| `tools/fleet-identity.cjs`                              | required by the guardrail                               | `AGENT_FLEET_LOGIN` env override                                       |
-| `tools/claude-agent-session.sh`                         | operator CLI for fleet runner sessions                  | sibling `claude-agent-session.conf` pre-seeds the `CLAUDE_*` defaults  |
-| `tools/require-feature-worktree.sh`                     | pre-commit/pre-push git hook                            | `$1` action word; `REQUIRE_WORKTREE_EXTRA_HINT` env                    |
-| `.agents/skills/github-ci-monitor/scripts/watch-prs.sh` | CI-monitor skill script                                 | none needed (repo discovered from cwd)                                 |
+| Command                       | Runs as                                                 | Repo-specific hook                                                     |
+| ----------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `fleet-codex-issue-guardrail` | Claude/Codex PostToolUse hook (`.claude/settings.json`) | none needed (project name from cwd; identity via `fleet-identity.cjs`) |
+| `fleet-claude-agent-session`  | operator CLI for fleet runner sessions                  | `tools/claude-agent-session.conf` at the launching repo's root         |
+| `fleet-require-worktree`      | pre-commit/pre-push git hook                            | `$1` action word; `REQUIRE_WORKTREE_EXTRA_HINT` env                    |
+| `fleet-watch-prs`             | CI-monitor skill command                                | none needed (repo discovered from cwd)                                 |
+| `fleet-safe-remove-worktree`  | worktree-hygiene skill command                          | none needed                                                            |
+| `fleet-scan-live-processes`   | worktree-hygiene skill command                          | none needed                                                            |
 
-A workstation hook must exist locally and work offline on every Bash
-command, so "consumers hold no copy" is not achievable here the way it is
-for CI actions. What IS achievable is making the copies mechanically
-un-driftable: each consumer's CI calls the `check-canonical-sync` action
-(above), whose manifest lists each vendored copy against its canonical
-path here, and whose `--forbid-strays` mode additionally fails if a copy
-of any canonicalized script's basename appears at an undeclared path —
-the "local copy quietly grows back" failure mode agent-lcars#1307 exists
-to close. Repo-specific behavior never justifies editing a copy: it
-enters only through the hooks in the table, which each script documents
-in its header.
+Consumer repos hold **no copies** (the agent-lcars#1307 vendor-and-byte-pin
+mechanism is retired, #1328). Distribution tracks `main` — first-party
+software is never version-pinned in this fleet (the #29/#30 stale-pin
+lesson):
 
-Consumer wiring (homelab shown — it holds the guardrail pair under
-`bin/`): a `.github/canonical-sync.conf` of `<local> <canonical>` pairs —
+- **Workstations**: one global install per machine, refreshed whenever it
+  is re-run —
 
-```
-bin/codex-issue-guardrail.cjs tools/codex-issue-guardrail.cjs
-bin/fleet-identity.cjs tools/fleet-identity.cjs
-tools/claude-agent-session.sh tools/claude-agent-session.sh
-bin/require-feature-worktree.sh tools/require-feature-worktree.sh
-.agents/skills/github-ci-monitor/scripts/watch-prs.sh .agents/skills/github-ci-monitor/scripts/watch-prs.sh
-```
+  ```
+  pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"
+  ```
 
-— plus `uses: jlapenna/agent-lcars/.github/actions/check-canonical-sync@main`
-with `--forbid-strays` in the consumer's verify job. To update a script
-fleet-wide: edit the canonical file here, land it, then re-copy it
-verbatim in each consumer (their CI names the exact file and the `curl`
-re-sync command until they do). This repo deliberately does **not** run
-the action against itself — that comparison is file-vs-itself and can
-only pass vacuously; the action's behavior is covered by its own
-`check.test.sh` in CI. (For file pairs that are _allowed_ to diverge in
-bounded ways — the ESLint-rule twins of agent-lcars#1311 — sprinkles'
-pinned-hash `check-lint-rule-drift` is the right tool instead: it pins a
-reconciled state rather than requiring byte-identity.)
+- **Runner image**: `apps/runner-autoscaler/runner-image/Dockerfile`
+  installs the package from the same fresh-`main` checkout it already
+  builds the telemetry bundle from — no extra network, cache-busted per
+  publish like everything else in that stage.
+- **Consumer hooks** invoke the command guarded by `command -v` (e.g.
+  `command -v fleet-codex-issue-guardrail >/dev/null 2>&1 && fleet-codex-issue-guardrail; exit 0`),
+  so a machine without the install degrades quietly. Repo-specific
+  behavior enters only through the hooks in the table — never a diverging
+  copy.
+
+`packages/fleet-tools/tests/package-install.test.sh` (Verify) pins the
+command set and the `fleet-identity.cjs` sibling-module invariant; the
+guardrail and worktree-hook behavior tests live beside it in
+`packages/fleet-tools/tests/`.
+
+`check-canonical-sync` (above) remains published for consumers'
+genuinely-must-be-identical _non-script_ files while those still exist,
+but no fleet script is distributed by copying any more. (For file pairs
+_allowed_ to diverge in bounded ways — the ESLint-rule twins of
+agent-lcars#1311 — byte-identity plus repo-neutral content is the current
+mechanism; see sprinkles#4496.)
 
 ## Security: post-agent gates run from a pre-agent snapshot
 

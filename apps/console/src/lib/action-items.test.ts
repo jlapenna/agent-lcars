@@ -888,7 +888,7 @@ describe('getActionItems', () => {
     const graphql = mockGraphql({
       45: issueNode([
         { body: 'tools/claude-agent-session.sh resume old-session' },
-        { body: 'tools/claude-agent-session.sh resume new-session' },
+        { body: 'fleet-claude-agent-session resume new-session' },
       ]),
     });
     setupOctokit({ listForRepo, graphql });
@@ -896,7 +896,7 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items[0].takeoverCommand).toBe(
-      'tools/claude-agent-session.sh resume new-session',
+      'fleet-claude-agent-session resume new-session',
     );
   });
 

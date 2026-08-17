@@ -126,7 +126,10 @@ jobs:
         run: bash .github/actions/archive-opencode-trajectory/archive.test.sh
 
       - name: Test the feature-worktree requirement
-        run: bash tools/require-feature-worktree.test.sh
+        run: bash packages/fleet-tools/tests/require-feature-worktree.test.sh
+
+      - name: Test the fleet-tools package install
+        run: bash packages/fleet-tools/tests/package-install.test.sh
 
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
@@ -180,7 +183,7 @@ jobs:
         run: node --test tools/e2e-hermetic-env.test.mjs
 
       - name: Test codex issue guardrail hook
-        run: node --test tools/codex-issue-guardrail.test.cjs
+        run: node --test packages/fleet-tools/tests/codex-issue-guardrail.test.cjs
 
       - name: Test e2e-docker isolation (#908)
         run: bash tools/e2e-docker-isolation.test.sh
