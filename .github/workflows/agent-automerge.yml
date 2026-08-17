@@ -1,24 +1,17 @@
 name: Agent PR Auto-Merge
 
-# This is a private repo with a single maintainer, and the "Protect main"
-# ruleset's required_approving_review_count is already 0 - a human-review
-# click before merge is pure friction for agent-authored PRs, not a security
-# boundary. Any PR whose author is one of this repo's known coding-agent bot
-# identities (vars.AGENT_BOT_LOGINS - a JSON array, currently claude[bot]
-# from claude.yml and agent-lcars[bot] from opencode.yml/codex.yml) gets squash
+# Thin caller of the fleet-published agent-automerge-reusable.yml (#1312 U4
+# moved the logic there so homelab and sprinkles run this same surface -
+# see docs/published-actions.md). This file owns what `workflow_call`
+# cannot carry: the triggers below and this repo's parameter values. Any PR
+# whose author is one of this repo's known coding-agent bot identities
+# (vars.AGENT_BOT_LOGINS - a JSON array, currently claude[bot] from
+# claude.yml and agent-lcars[bot] from opencode.yml/codex.yml) gets squash
 # auto-merge enabled the moment it's opened/marked ready, gated only on the
-# ruleset's required "Verify" check. Adding a new agent pipeline later (a
-# future codex.yml, gemini.yml, ...) that follows the existing
-# agent-protocol.md/lcars-protocol.md conventions only needs its bot login
-# appended to that one repo variable - never a change to this workflow.
-#
-# Ported from supersprinklesracing/sprinkles's claude-automerge.yml, trimmed
-# for this repo's shape: one CI workflow (ci.yml, "Verify" + "E2E" jobs, only
-# "Verify" required) instead of two. Runs on the self-hosted lcars-default
-# pool (jlapenna/homelab's github-runner-autoscaler/orchestrator.yml) rather
-# than a GitHub-hosted runner - deliberately NOT the claude-agent-lcars pool
-# claude.yml/opencode.yml use, since that backs long agent sessions this
-# glue job must never queue behind.
+# ruleset's required "Verify" check. Adding a new agent pipeline later that
+# follows the existing agent-protocol.md/lcars-protocol.md conventions only
+# needs its bot login appended to that one repo variable - never a change
+# to this workflow.
 
 on:
   pull_request:
@@ -26,22 +19,24 @@ on:
   pull_request_review:
     types: [submitted]
   # GITHUB_TOKEN-authored auto-merges do not emit downstream push workflows:
-  # a push to main that results from this job's own GITHUB_TOKEN squash-merge
-  # does not trigger ci.yml's `push: branches: [main]` trigger, so
-  # deploy-console.yml's `workflow_run: [CI]` listener never fires either.
-  # Once CI finishes (naturally, or restored below), verify the required
-  # check and explicitly restore the missing main-branch CI/deploy runs.
+  # a push to main that results from the reusable's own GITHUB_TOKEN
+  # squash-merge does not trigger ci.yml's `push: branches: [main]` trigger,
+  # so deploy-console.yml's `workflow_run: [CI]` listener never fires either.
+  # Once CI finishes (naturally, or restored by the reusable), the
+  # restore-main-checks job verifies the required check and explicitly
+  # restores the missing main-branch CI/deploy runs.
   workflow_run:
     workflows: [CI]
     types: [completed]
   # The same GITHUB_TOKEN suppression, one level up: CI runs triggered by a
   # bot's own push do not emit `workflow_run` either, so for a purely
-  # bot-driven PR the job below never runs at all and its anchor stays open.
-  # Measured 2026-07-29: #220's CI was triggered by github-actions[bot], no
-  # workflow_run fired, #215 was closed by hand 13 minutes later; #198's last
-  # CI was triggered by a human push, workflow_run fired, and #194 closed
-  # automatically 15 seconds after the merge. `close-orphaned-anchors` below
-  # is the periodic backstop for the first case.
+  # bot-driven PR the restore job never runs at all and its anchor stays
+  # open. Measured 2026-07-29: #220's CI was triggered by
+  # github-actions[bot], no workflow_run fired, #215 was closed by hand 13
+  # minutes later; #198's last CI was triggered by a human push,
+  # workflow_run fired, and #194 closed automatically 15 seconds after the
+  # merge. The reusable's close-orphaned-anchors sweep, running on this
+  # cron, is the periodic backstop for the first case.
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
@@ -50,426 +45,29 @@ permissions:
   actions: write
   checks: read
   contents: write
-  # Needed by restore-main-checks' explicit `gh issue close` below. #214
-  # added this scope on the theory that it alone would let the platform's own
-  # "Closes #N" handling fire for a GITHUB_TOKEN auto-merge; measured
-  # afterwards, it does not - see that step's comment for the two negative
-  # data points. Keep the scope, but it is the explicit close that does the
-  # work, not this line.
+  # Needed by the reusable's explicit `gh issue close`. agent-lcars#214
+  # added this scope on the theory that it alone would let the platform's
+  # own "Closes #N" handling fire for a GITHUB_TOKEN auto-merge; measured
+  # afterwards, it does not - see the reusable's close step comment for the
+  # two negative data points. Keep the scope, but it is the explicit close
+  # that does the work, not this line.
   issues: write
   pull-requests: write
 
 jobs:
   automerge:
-    # The event guard is redundant today (a scheduled run has no
-    # `pull_request` payload, so the login check already fails) but explicit:
-    # this job must never look like it could fire off the cron added above.
-    if: >
-      (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') &&
-      contains(fromJSON(vars.AGENT_BOT_LOGINS), github.event.pull_request.user.login) &&
-      (github.event_name != 'pull_request_review' ||
-       github.event.review.state == 'approved')
-    # Self-hosted, the general-purpose lcars-default pool - NOT
-    # claude-agent-lcars, which backs 90-180 minute agent sessions. Sharing
-    # that pool would queue this job behind an in-flight agent run, the same
-    # antipattern sprinkles' own claude-automerge.yml was moved off of.
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
-    timeout-minutes: 5
-    # `pull_request:[opened]` and `pull_request_review:[submitted]` for the
-    # same PR can both land here close together; without a per-PR group
-    # their `gh pr ready`/`gh pr merge --auto` calls race. Serialize per PR
-    # rather than dropping either invocation.
-    concurrency:
-      group: automerge-pr-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
-    steps:
-      # This job's own `if:` above also reads AGENT_BOT_LOGINS (fromJSON,
-      # no fallback). A step can only run once the job has already started,
-      # so this assert cannot make an empty/unset AGENT_BOT_LOGINS loud on a
-      # run the `if:` itself would otherwise skip - it only guarantees the
-      # loud failure on runs that do reach this step.
-      - name: Assert required repo variables are set
-        env:
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
-          AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-        run: |
-          missing=""
-          [ -z "$AGENT_BOT_LOGINS" ] && missing="$missing AGENT_BOT_LOGINS"
-          [ -z "$AGENT_FLEET_LOGIN" ] && missing="$missing AGENT_FLEET_LOGIN"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing required repo variable(s):$missing"
-            exit 1
-          fi
-
-      # Ownership spine, matching claude.yml/opencode.yml's own "Claim the
-      # issue as agent-lcars-bot" step: agent-authored PRs carry the fleet's
-      # assignee just like the anchor issues they came from. Additive and
-      # idempotent; non-blocking so a hiccup can't cost the auto-merge arm
-      # below.
-      - name: Claim the PR as agent-lcars-bot
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          jq -cn --arg login "${{ vars.AGENT_FLEET_LOGIN }}" \
-            '{assignees: [$login]}' |
-            gh api "repos/$REPO/issues/$PR/assignees" \
-              --method POST --input - >/dev/null \
-            || echo "::warning::Could not assign agent-lcars-bot to #$PR"
-
-      - name: Mark ready and enable squash auto-merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
-            gh pr ready "$PR" --repo "$REPO"
-          fi
-          gh pr merge "$PR" --repo "$REPO" --auto --squash
-
-  restore-main-checks:
-    if: >
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'pull_request' &&
-       contains(fromJSON(vars.AGENT_BOT_LOGINS), github.event.pull_request.user.login))
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
-    timeout-minutes: 45
-    concurrency:
-      group: agent-postmerge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
-      cancel-in-progress: false
-    steps:
-      # This job's own `if:` above also reads AGENT_BOT_LOGINS (fromJSON,
-      # no fallback). A step can only run once the job has already started,
-      # so this assert cannot make an empty/unset AGENT_BOT_LOGINS loud on a
-      # run the `if:` itself would otherwise skip - it only guarantees the
-      # loud failure on runs that do reach this step (every workflow_run
-      # invocation, plus any pull_request invocation whose event-name check
-      # already passed).
-      - name: Assert required repo variables are set
-        env:
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
-        run: |
-          if [ -z "$AGENT_BOT_LOGINS" ]; then
-            echo "::error::Missing required repo variable: AGENT_BOT_LOGINS"
-            exit 1
-          fi
-
-      - name: Dispatch missing post-merge CI/deploy runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
-        run: |
-          set -euo pipefail
-
-          if [ "$EVENT_NAME" = pull_request ]; then
-            # A GITHUB_TOKEN-created PR can run CI, but that run does not emit
-            # a workflow_run event. Keep this original PR-triggered job alive
-            # so it can observe the check and restore the merge chain.
-            PR="$EVENT_PR"
-            WAIT_FOR_CHECKS=true
-          else
-            PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-              --jq 'map(select(.state == "open" or .merged_at != null))[0].number // empty')
-            WAIT_FOR_CHECKS=false
-          fi
-          if [ -z "$PR" ]; then
-            echo "No pull request is associated with $HEAD_SHA; nothing to restore."
-            exit 0
-          fi
-
-          AUTHOR=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
-          if ! jq -e --arg a "$AUTHOR" 'index($a) != null' <<<"$AGENT_BOT_LOGINS" >/dev/null; then
-            echo "PR #$PR is not agent-authored ($AUTHOR); nothing to restore."
-            exit 0
-          fi
-
-          # workflow_run invocations exit unless the check is already green.
-          # The pull_request invocation is the primary path for
-          # GITHUB_TOKEN-created agent PRs, whose CI completions cannot emit
-          # workflow_run; it waits up to 20 minutes for the same gate.
-          CHECKS_GREEN=false
-          for _ in $(seq 1 240); do
-            COUNT=$(gh pr view "$PR" --repo "$REPO" --json statusCheckRollup \
-              --jq '[.statusCheckRollup[] | select(.name == "Verify" and .conclusion == "SUCCESS")] | length')
-            if [ "${COUNT:-0}" -gt 0 ]; then
-              CHECKS_GREEN=true
-              break
-            fi
-            [ "$WAIT_FOR_CHECKS" = true ] || break
-            sleep 5
-          done
-          if [ "$CHECKS_GREEN" != true ]; then
-            if [ "$WAIT_FOR_CHECKS" = true ]; then
-              echo "::error::PR #$PR did not produce a green Verify check within 20 minutes."
-              exit 1
-            fi
-            echo "PR #$PR does not have a green Verify check yet."
-            exit 0
-          fi
-
-          # Auto-merge normally fires immediately after the required check.
-          # Give GitHub up to two minutes to publish the merge commit.
-          MERGE_SHA=""
-          for _ in $(seq 1 24); do
-            MERGE_SHA=$(gh pr view "$PR" --repo "$REPO" --json state,mergeCommit \
-              --jq 'if .state == "MERGED" then .mergeCommit.oid // "" else "" end')
-            [ -n "$MERGE_SHA" ] && break
-            sleep 5
-          done
-          if [ -z "$MERGE_SHA" ]; then
-            echo "::warning::PR #$PR is green but did not merge within two minutes; auto-merge remains responsible."
-            exit 0
-          fi
-
-          # Close the PR's linked issues ourselves.
-          #
-          # GitHub is supposed to do this: "Closes #N" in an agent-authored
-          # PR body creates a real link, and merging is supposed to close it.
-          # It does for a human merge (jlapenna's merges close their anchor in
-          # the same second) and has never once worked for a GITHUB_TOKEN
-          # `gh pr merge --auto` here. Granting this workflow `issues: write`
-          # (#214) did NOT fix it: #202 merged four minutes after that landed
-          # and left #191 open, and #222 was opened AND merged entirely after
-          # it and left #216 for an agent to close by hand twelve minutes
-          # later. Two clean post-fix data points, both negative.
-          #
-          # So stop relying on the platform for it. `closingIssuesReferences`
-          # is GitHub's own resolution of the closing keywords, so this closes
-          # exactly what the PR declared - no keyword regex of our own to
-          # drift. Filtering to OPEN keeps it idempotent across the
-          # pull_request and workflow_run invocations, which both reach here.
-          # A swallowed failure here would reproduce the exact bug this step
-          # exists to fix - an empty result and an anchor left open, with
-          # nothing in the log saying why - so retry, and if it still fails,
-          # say so loudly. Empty output with a zero exit is the legitimate
-          # "this PR closes nothing" case and is not retried.
-          LINKED=""
-          LOOKUP_OK=false
-          GQL_ERR=$(mktemp)
-          for attempt in 1 2 3; do
-            # SC2016: the $owner/$name/$pr below are GraphQL variables bound
-            # by the -F flags, not shell expansions - single quotes required.
-            # shellcheck disable=SC2016
-            if LINKED=$(gh api graphql \
-              -f query='query($owner:String!,$name:String!,$pr:Int!){
-                repository(owner:$owner,name:$name){
-                  pullRequest(number:$pr){
-                    closingIssuesReferences(first:20){nodes{number state}}}}}' \
-              -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" \
-              --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[]
-                    | select(.state == "OPEN") | .number' 2>"$GQL_ERR"); then
-              LOOKUP_OK=true
-              break
-            fi
-            LINKED=""
-            echo "::warning::Linked-issue lookup for PR #$PR failed (attempt $attempt/3): $(tr '\n' ' ' <"$GQL_ERR")"
-            if [ "$attempt" -lt 3 ]; then
-              sleep 5
-            fi
-          done
-          rm -f "$GQL_ERR"
-          if [ "$LOOKUP_OK" != true ]; then
-            echo "::warning::Could not determine which issues PR #$PR closes; any anchor it declared stays open and needs closing by hand."
-          fi
-
-          for ISSUE in $LINKED; do
-            if gh issue close "$ISSUE" --repo "$REPO" \
-              --comment "Closed by #$PR ($MERGE_SHA)." >/dev/null 2>&1; then
-              echo "Closed #$ISSUE, linked from merged PR #$PR."
-            else
-              echo "::warning::Could not close #$ISSUE, linked from merged PR #$PR."
-            fi
-          done
-
-          # Natural human/App merges already emit push runs. GITHUB_TOKEN
-          # merges do not, so dispatch CI only when it's actually missing.
-          sleep 10
-          CI_COUNT=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&per_page=20" \
-            --jq "[.workflow_runs[] | select(.head_sha == \"$MERGE_SHA\")] | length")
-          if [ "$CI_COUNT" -gt 0 ]; then
-            echo "CI already has a main run for $MERGE_SHA; nothing else to restore."
-            exit 0
-          fi
-
-          echo "Dispatching missing CI run for merged PR #$PR ($MERGE_SHA)."
-          gh workflow run ci.yml --repo "$REPO" --ref main
-
-          CI_RUN=""
-          for _ in $(seq 1 24); do
-            CI_RUN=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=workflow_dispatch&per_page=20" \
-              --jq "[.workflow_runs[] | select(.head_sha == \"$MERGE_SHA\")][0].id // empty")
-            [ -n "$CI_RUN" ] && break
-            sleep 5
-          done
-          if [ -z "$CI_RUN" ]; then
-            echo "::error::The restored main CI run for $MERGE_SHA did not appear."
-            exit 1
-          fi
-
-          # `read ... < <(gh ...)` (process substitution) runs the command
-          # in a subshell whose exit status `set -e`/`pipefail` cannot see,
-          # so a transient `gh` failure would leave CI_STATUS/CI_CONCLUSION
-          # holding the PREVIOUS iteration's values (or produce a ragged
-          # TSV from an empty conclusion) instead of failing loud. Capture
-          # the output into a variable first with an explicit check, and
-          # clear both vars every iteration so a failed attempt can't leak
-          # a stale "completed"/"success" into the comparison below.
-          CI_STATUS="" CI_CONCLUSION=""
-          for _ in $(seq 1 180); do
-            CI_STATUS="" CI_CONCLUSION=""
-            if ! CI_VIEW=$(gh run view "$CI_RUN" --repo "$REPO" \
-              --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv'); then
-              echo "::warning::gh run view failed for run $CI_RUN; retrying."
-              sleep 5
-              continue
-            fi
-            read -r CI_STATUS CI_CONCLUSION <<<"$CI_VIEW"
-            [ "$CI_STATUS" = completed ] && break
-            sleep 5
-          done
-          if [ "$CI_STATUS" != completed ] || [ "$CI_CONCLUSION" != success ]; then
-            echo "::error::Restored main CI run $CI_RUN ended status=$CI_STATUS conclusion=$CI_CONCLUSION; deploy remains gated."
-            exit 1
-          fi
-
-          # A workflow dispatched with GITHUB_TOKEN may run other workflows,
-          # but its completion does not emit another workflow_run event, and
-          # its own event type (workflow_dispatch, not push) would fail
-          # deploy-console.yml's `workflow_run.event == 'push'` gate anyway -
-          # dispatch it explicitly instead of relying on the chain.
-          gh workflow run deploy-console.yml --repo "$REPO" --ref main
-
-  # Backstop for the reach gap the cron comment above describes: the inline
-  # close in restore-main-checks is the fast path (#194 closed 15s after its
-  # merge), but it only runs when a workflow_run event fired, which a
-  # bot-triggered CI run does not emit. This sweep does not depend on any
-  # event cascade, so it catches the anchors that path never reaches.
-  close-orphaned-anchors:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
-    timeout-minutes: 10
-    # Runs on the shared lcars-default pool on both a */15 cron and
-    # workflow_dispatch with no group of its own; a static group serializes
-    # overlapping runs (defense in depth alongside the $RUNNER_TEMP fix
-    # below, which keeps a still-possible overlap from clobbering shared
-    # state).
-    concurrency:
-      group: agent-automerge-close-orphaned-anchors
-      cancel-in-progress: false
-    steps:
-      # This job's `if:` above does not consume AGENT_BOT_LOGINS, so unlike
-      # the assert steps in the other two jobs in this file, this one is a
-      # full guarantee: every run of this job reaches this step.
-      - name: Assert required repo variables are set
-        env:
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
-        run: |
-          if [ -z "$AGENT_BOT_LOGINS" ]; then
-            echo "::error::Missing required repo variable: AGENT_BOT_LOGINS"
-            exit 1
-          fi
-
-      - name: Close open anchors of recently-merged agent PRs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          AGENT_BOT_LOGINS: ${{ vars.AGENT_BOT_LOGINS }}
-        run: |
-          set -euo pipefail
-
-          # Bounded to a day: an issue the maintainer deliberately reopens
-          # long after its PR merged must not be re-closed forever by a cron.
-          SINCE=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-
-          # Belt-and-suspenders alongside the job-level concurrency group
-          # above: a fixed /tmp path let one overlapping run's write clobber
-          # another's read mid-sweep. $RUNNER_TEMP is unique per job run, so
-          # use that instead.
-          MERGED_JSON="$RUNNER_TEMP/agent-automerge-merged.json"
-
-          # `gh pr list --json author` answers in the GRAPHQL shape
-          # (`app/claude`) while AGENT_BOT_LOGINS is REST-shaped
-          # (`claude[bot]`) - comparing them raw is exactly the silent
-          # mismatch that broke #175, and docs/bot-identity-formats.md makes
-          # REST canonical. Normalize before the membership test.
-          gh pr list --repo "$REPO" --state merged --limit 50 \
-            --json number,author,mergedAt,closingIssuesReferences >"$MERGED_JSON"
-
-          CANDIDATES=$(jq -r --argjson bots "$AGENT_BOT_LOGINS" --arg since "$SINCE" '
-            .[]
-            | select(.mergedAt > $since)
-            | .author.login as $raw
-            | (if ($raw | startswith("app/")) then ($raw[4:] + "[bot]") else $raw end) as $login
-            | select($bots | index($login) != null)
-            | . as $pr
-            | .closingIssuesReferences[]?
-            | "\($pr.number) \(.number) \($pr.mergedAt)"
-          ' "$MERGED_JSON")
-
-          if [ -z "$CANDIDATES" ]; then
-            echo "No agent PRs merged since $SINCE declared a closing issue."
-            exit 0
-          fi
-
-          # A sweep that reports nothing is indistinguishable from a sweep
-          # that never ran - the failure mode this whole mechanism exists to
-          # correct. Always print what was examined.
-          CHECKED=0 CLOSED=0 KEPT=0 FAILED=0
-
-          while read -r PR ISSUE MERGED_AT; do
-            [ -n "${ISSUE:-}" ] || continue
-            CHECKED=$((CHECKED + 1))
-
-            STATE=$(gh issue view "$ISSUE" --repo "$REPO" --json state --jq .state 2>/dev/null || echo "")
-            if [ "$STATE" != OPEN ]; then
-              continue
-            fi
-
-            # Respect a deliberate reopen: if someone reopened this after the
-            # PR merged, they want it open and the sweep must not fight them.
-            #
-            # `--paginate --jq` runs the filter once PER PAGE and concatenates
-            # the results, so a long timeline yields "0\n1" and the numeric
-            # test below dies with "integer expression expected" - falling
-            # through to the close path and re-closing a reopened issue on
-            # every sweep. `--slurp` aggregates the pages, but gh (2.96.0)
-            # rejects `--slurp` together with `--jq`, so the aggregation has
-            # to happen in a real jq downstream of it.
-            #
-            # A lookup failure must skip, not default to "no reopens": under
-            # `set -o pipefail` the `if !` catches it. Guessing here would
-            # close an issue precisely when we cannot tell whether someone
-            # reopened it on purpose.
-            if ! REOPENED=$(gh api "repos/$REPO/issues/$ISSUE/timeline" --paginate --slurp 2>/dev/null \
-              | jq --arg merged "$MERGED_AT" \
-                '[.[][] | select(.event == "reopened" and .created_at > $merged)] | length'); then
-              echo "::warning::Could not read #$ISSUE's timeline; leaving it open rather than guessing."
-              KEPT=$((KEPT + 1))
-              continue
-            fi
-            if [ "${REOPENED:-0}" -gt 0 ]; then
-              echo "#$ISSUE was reopened after PR #$PR merged; leaving it open."
-              KEPT=$((KEPT + 1))
-              continue
-            fi
-
-            if gh issue close "$ISSUE" --repo "$REPO" \
-              --comment "Closed by #$PR, which declared it and has merged." >/dev/null 2>&1; then
-              echo "Swept: closed #$ISSUE, linked from merged PR #$PR."
-              CLOSED=$((CLOSED + 1))
-            else
-              echo "::warning::Could not close #$ISSUE, linked from merged PR #$PR."
-              FAILED=$((FAILED + 1))
-            fi
-          done <<< "$CANDIDATES"
-
-          echo "Sweep since $SINCE: $CHECKED linked anchor(s) examined, $CLOSED closed, $KEPT left open (reopened after merge, or timeline unreadable), $FAILED close attempt(s) failed."
-          if [ "$CLOSED" -gt 0 ]; then
-            echo "::warning::Swept $CLOSED anchor(s) the inline close in restore-main-checks did not reach."
-          fi
+    uses: ./.github/workflows/agent-automerge-reusable.yml
+    with:
+      bot-logins: ${{ vars.AGENT_BOT_LOGINS }}
+      fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
+      # Self-hosted, the general-purpose lcars-default pool - NOT
+      # claude-agent-lcars, which backs 90-180 minute agent sessions.
+      # Sharing that pool would queue this glue work behind an in-flight
+      # agent run, the same antipattern sprinkles' own claude-automerge.yml
+      # was moved off of.
+      runs-on: ${{ format('["{0}"]', vars.DEFAULT_RUNNER_LABEL) }}
+      # One CI workflow (ci.yml, "Verify" + "E2E" jobs, only "Verify"
+      # required by the Protect main ruleset).
+      required-checks: '["Verify"]'
+      ci-workflow: ci.yml
+      deploy-workflow: deploy-console.yml

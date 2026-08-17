@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
  *  - Comment text is stripped first (see `stripComments`) so an
  *    *explanatory* comment mentioning "app/" or "[bot]" - like the one
  *    right above the real callsite this rule is modeled on, in
- *    agent-automerge.yml's close-orphaned-anchors job - can never stand in
+ *    agent-automerge-reusable.yml's close-orphaned-anchors job - can never stand in
  *    for the normalization it describes. Without this, a stale comment left
  *    behind after someone deleted the real normalization code would keep
  *    the check silently passing - the exact failure mode this whole test
@@ -35,7 +35,7 @@ import { describe, expect, it } from 'vitest';
  *  - If both are present, requires a normalization signal in the same
  *    window: either the documented `sed -E 's#^app/(.+)#\1[bot]#'` pattern,
  *    or the equivalent jq conditional already in use in this repo
- *    (`startswith("app/")` swapped for `[bot]` - see agent-automerge.yml's
+ *    (`startswith("app/")` swapped for `[bot]` - see agent-automerge-reusable.yml's
  *    close-orphaned-anchors job), detected as "app/" and "[bot]" both
  *    appearing somewhere in the (comment-stripped) window.
  *
@@ -70,7 +70,7 @@ const GRAPHQL_AUTHOR_SIGNAL_RE = /--json\s+[^\n]*\bauthor\b|\.author\.login\b/;
 const REST_COMPARISON_SIGNAL_RE = /AGENT_BOT_LOGINS|AGENT_FLEET_LOGIN|\[bot\]/;
 // Either the documented sed one-liner, or evidence (anywhere in the window)
 // that both shapes' literal substrings are being handled together - covers
-// the jq-conditional form actually used in agent-automerge.yml today
+// the jq-conditional form actually used in agent-automerge-reusable.yml today
 // without hardcoding to that one query shape.
 const NORMALIZATION_SIGNAL_RE = /app\//;
 
@@ -189,7 +189,7 @@ describe('bot-identity shape contract (heuristic)', () => {
   // behaves correctly, independent of what today's actual workflows happen
   // to contain.
   describe('comment-stripping (regression for a real review finding)', () => {
-    // Modeled on agent-automerge.yml's close-orphaned-anchors job: an
+    // Modeled on agent-automerge-reusable.yml's close-orphaned-anchors job: an
     // explanatory comment describing the app/[bot] shapes, sitting directly
     // above the real callsite. Before comment-stripping was added, this
     // comment block alone was enough to satisfy the normalization check -

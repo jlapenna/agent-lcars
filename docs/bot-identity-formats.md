@@ -5,7 +5,7 @@ of different string encodings of the _same_ underlying GitHub App
 installation. They are not accounts that can drift apart; they are two
 serializations of one identity that happen to look nothing alike. Mixing
 them without translating is what silently broke the CI → deploy chain for
-every agent-merged PR (#175): `agent-automerge.yml`'s `restore-main-checks`
+every agent-merged PR (#175): the auto-merge workflow's `restore-main-checks`
 job read a GraphQL-shaped login (`app/claude`) and compared it against
 `vars.AGENT_BOT_LOGINS`, a REST-shaped list (`["claude[bot]", ...]`) —
 the two never matched, so the job always took the "not agent-authored"
@@ -83,8 +83,8 @@ not a hypothetical risk.
 
 | Callsite                                                                                                                                                                                                                                                   | Shape | Status                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent-automerge.yml`'s `restore-main-checks` (`gh api .../pulls/$PR --jq '.user.login'`)                                                                                                                                                                  | REST  | Fixed (#188)                                                                                                                                  |
-| `agent-automerge.yml`'s `automerge` job `if:` / event-payload checks (`github.event.pull_request.user.login`)                                                                                                                                              | REST  | Always was correct — Actions event payloads are REST-shaped                                                                                   |
+| `agent-automerge-reusable.yml`'s `restore-main-checks` (`gh api .../pulls/$PR --jq '.user.login'`)                                                                                                                                                         | REST  | Fixed (#188)                                                                                                                                  |
+| `agent-automerge-reusable.yml`'s `automerge` job `if:` / event-payload checks (`github.event.pull_request.user.login`)                                                                                                                                     | REST  | Always was correct — Actions event payloads are REST-shaped                                                                                   |
 | `apps/console` (`github-client.ts`, `action-items.ts`)                                                                                                                                                                                                     | REST  | Correct by construction — Octokit REST only, no GraphQL client in this codebase                                                               |
 | `.github/actions/verify-deliverable/verify-deliverable.sh` — the deliverable-check dedup guard (`gh api .../pulls?...` / `select(.user.login != $exclude)`), shared composite used by all three worker pipelines (`claude.yml`/`codex.yml`/`opencode.yml`) | REST  | Correct — uses the REST list endpoint and compares the canonical REST-shaped login; moved here from `opencode.yml`'s inline construct in #330 |
 
