@@ -160,15 +160,26 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(unregistered).toEqual([]);
   });
 
-  it('agent-automerge.yml admits PR authors by AGENT_BOT_LOGINS membership', () => {
+  it('agent-automerge admits PR authors by AGENT_BOT_LOGINS membership through the reusable', () => {
     // The AGENT_BOT_LOGINS *repo variable* is deployment configuration that
     // cannot import the registry; pipelines.spec.ts pins the code-side
-    // array's exact value, and this pins the consumption points: both
-    // automerge jobs gate on JSON-array membership of the PR author, and
-    // the shell-side author gate receives the same variable.
-    const { source, doc } = loadWorkflow('agent-automerge.yml');
+    // array's exact value, and this pins the consumption points across the
+    // #1312 U4 split: the thin caller (agent-automerge.yml) feeds the repo
+    // variable into the published reusable's bot-logins input, and inside
+    // the reusable both automerge jobs gate on JSON-array membership of
+    // the PR author, with the shell-side author gates receiving the same
+    // list.
+    const caller = loadWorkflow('agent-automerge.yml');
+    expect(caller.source).toContain(
+      'uses: ./.github/workflows/agent-automerge-reusable.yml',
+    );
+    expect(caller.source).toMatch(
+      /bot-logins:\s+\$\{\{ vars\.AGENT_BOT_LOGINS \}\}/u,
+    );
+
+    const { source, doc } = loadWorkflow('agent-automerge-reusable.yml');
     const membership =
-      'contains(fromJSON(vars.AGENT_BOT_LOGINS), github.event.pull_request.user.login)';
+      'contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login)';
     const admissionGates = Object.fromEntries(
       ['automerge', 'restore-main-checks'].map((job) => [
         job,
@@ -180,7 +191,7 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
       'restore-main-checks': true,
     });
     expect(source).toMatch(
-      /AGENT_BOT_LOGINS:\s+\$\{\{ vars\.AGENT_BOT_LOGINS \}\}/u,
+      /AGENT_BOT_LOGINS:\s+\$\{\{ inputs\.bot-logins \}\}/u,
     );
   });
 });

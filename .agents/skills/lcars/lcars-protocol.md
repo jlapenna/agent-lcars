@@ -138,7 +138,9 @@ issues — is in
 
 ## Auto-merge
 
-`.github/workflows/agent-automerge.yml` squash-auto-merges any PR whose
+`.github/workflows/agent-automerge.yml` (a thin caller of the
+fleet-published `agent-automerge-reusable.yml` since #1312 U4, so homelab
+and sprinkles run this same surface) squash-auto-merges any PR whose
 author is listed in the `AGENT_BOT_LOGINS` repo variable (a JSON array —
 currently `claude[bot]` and `agent-lcars[bot]`, covering claude.yml and the
 OpenCode/Codex lanes respectively), gated only on the ruleset's required
