@@ -190,6 +190,21 @@ The fleet App's RSA private key. Canonical copy: Secret Manager secret
 `AGENT_LCARS_APP_PRIVATE_KEY` in project `agent-lcars` (the console reads
 it there directly; repos carry fan-out copies as Actions secrets).
 
+**One App, one lineage** (#1340 D3, settling a contradiction two documents
+carried): the Secret Manager secret and the seven `AGENT_LCARS_PRIVATE_KEY`
+repo Actions secrets are the same credential of the same App — verified by
+minting an App JWT from the Secret Manager value and calling `GET /app`,
+which returns `agent-lcars` (App id `4457090`, client
+`Iv23liO6X8pLJLcTFzyv`), the same client id every repo's
+`AGENT_LCARS_CLIENT_ID` var and the console's `AGENT_LCARS_APP_CLIENT_ID`
+name. `infra/terraform/main.tf`'s #1204 comment used to describe the two as
+deliberately separate lineages; that was the pre-population intent, not what
+shipped, and the comment has been corrected. Treat Secret Manager as the
+only place a new key is ever written first, and always run the fan-out below
+afterwards: a repo left on a previous version keeps working only for as long
+as the older key stays registered on the App, which is exactly the kind of
+silent expiry this doc exists to prevent.
+
 Rotation / (re)provisioning:
 
 1. GitHub → Settings → Developer settings → GitHub Apps → _agent-lcars_ →

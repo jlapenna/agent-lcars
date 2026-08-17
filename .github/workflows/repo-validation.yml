@@ -39,6 +39,15 @@ on:
         required: false
         type: string
         default: '["ubuntu-latest"]'
+      canonical-sync:
+        description: >-
+          Also compare this repo's copies of files agent-lcars owns against
+          agent-lcars@main, per the caller's .github/canonical-sync.conf.
+          Off by default so a caller without a manifest is unaffected;
+          a caller that ships one opts in with `true` (agent-lcars#1340 B8).
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -66,3 +75,20 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/repo" \
             --workdir /repo \
             "rhysd/actionlint:${ACTIONLINT_VERSION}" -color
+
+      # Files this repo copies verbatim from agent-lcars. They are copies
+      # rather than a dependency because cross-repository source imports are
+      # forbidden fleet-wide, so nothing but this keeps them in step
+      # (agent-lcars#1307). Reads agent-lcars unauthenticated -- it is
+      # public. forbid-strays also fails when a copy of a canonicalized
+      # file's basename grows back at a path the manifest does not declare.
+      #
+      # DELIBERATELY UNPINNED, like every other first-party cross-repo
+      # reference in the fleet: a canonical-sync check pinned behind
+      # agent-lcars would validate against a version of the contract that no
+      # longer exists -- the exact drift it exists to catch.
+      - name: Check canonical files match agent-lcars
+        if: inputs.canonical-sync
+        uses: jlapenna/agent-lcars/.github/actions/check-canonical-sync@main # latest
+        with:
+          forbid-strays: 'true'

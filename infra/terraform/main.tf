@@ -570,8 +570,14 @@ resource "google_service_account_iam_member" "homelab_codex_agent_impersonation"
 # wired AGENT_LCARS_APP_CLIENT_ID and this secret into apphosting.yaml, live
 # since 2026-08-16). Terraform owns the container only - there is no value
 # here, and none belongs in this repo or in GitHub Actions secrets. A
-# maintainer populates it by hand, once a dedicated App private key exists
-# (kept a separate lineage from the Actions-secrets one on purpose):
+# maintainer populates it by hand with the fleet App's private key. This is
+# the SAME App and the SAME key the repos' AGENT_LCARS_PRIVATE_KEY Actions
+# secrets carry -- this secret is canonical and those are fan-out copies of
+# it (#1340 D3 verified that by minting an App JWT from this value: GET /app
+# returns app id 4457090, client Iv23liO6X8pLJLcTFzyv). An earlier revision
+# of this comment called the two "a separate lineage on purpose"; that was
+# the pre-population intent and never what shipped. docs/fleet-credentials.md
+# holds the rotation procedure, including the mandatory fan-out loop:
 #
 #   gcloud secrets versions add AGENT_LCARS_APP_PRIVATE_KEY --data-file=<key.pem>
 #
