@@ -121,6 +121,18 @@
     "app:primes": {
       "color": "f96335",
       "description": "Sprinkles Primes application"
+    },
+    "ci:update-snapshots:members": {
+      "color": "0e8a16",
+      "description": "Regenerate visual snapshots in CI, scoped to members only (#4458)"
+    },
+    "ci:update-snapshots:onecake": {
+      "color": "0e8a16",
+      "description": "Regenerate visual snapshots in CI, scoped to onecake only (#4458)"
+    },
+    "ci:update-snapshots:primes": {
+      "color": "0e8a16",
+      "description": "Regenerate visual snapshots in CI, scoped to primes only (#4458)"
     }
   },
   "repositories": {
@@ -164,6 +176,7 @@
       },
       "remove": [
         "duplicate",
+        "go",
         "good first issue",
         "help wanted",
         "invalid",
@@ -195,6 +208,9 @@
         "automation:visual-refresh",
         "ci:run-e2e",
         "ci:update-snapshots",
+        "ci:update-snapshots:members",
+        "ci:update-snapshots:onecake",
+        "ci:update-snapshots:primes",
         "planning",
         "app:sprinkles",
         "app:onecake",

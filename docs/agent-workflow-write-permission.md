@@ -102,8 +102,8 @@ there.
   `public_repo`, used only for `gh run rerun`) never touches this App at
   all and gains nothing from this change — it was never a
   `mint-agent-token` output and remains unable to write source or workflow
-  files. The job's own `github.token` (the dispatch-broker/ledger
-  control-plane credential) and the GCP WIF-based deploy credentials are
+  files. The job's own `github.token` (the workflow's control-plane
+  credential) and the GCP WIF-based deploy credentials are
   likewise untouched; none of them go through `mint-agent-token`.
 
 ## Using the capability (for a future caller)

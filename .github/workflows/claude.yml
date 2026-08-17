@@ -57,13 +57,12 @@ permissions:
   actions: write
 
 # No per-issue concurrency group here (deliberately - see #321). Dispatch
-# dedup/serialization is the hosted controller's job now: its per-task
-# authority lease serializes every ledger write for one issue, and within it,
-# apps/dispatch-broker/src/broker.ts enforces at most one ACTIVE generation per
-# issue at a time - beginDispatch() throws "Another generation is active"
-# (broker.ts) and acceptIntent()'s duplicate/pending handling means a
-# second router run for the same issue is either a no-op or queued in the
-# ledger, never a second worker dispatch. A workflow-level group here would
+# dedup/serialization is the hosted orchestrator's job now: libs/orchestrator
+# is a durable per-task mutex (a task never has two live runs at once -
+# admission for a task whose run is live is refused, or at most recorded as
+# the task's single pendingRequest and minted into a fresh run only after
+# the live one settles), so a second dispatch request for the same issue
+# never becomes a second worker run. A workflow-level group here would
 # be actively harmful on top of that: GitHub keeps exactly ONE pending run
 # per group, so a second queued run for this group is silently killed
 # before any step - including "Run post-agent gates" below - can fire.
@@ -103,8 +102,8 @@ jobs:
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ vars.NX_CACHE_URL }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
     steps:
-      # Checkout must run before the broker-binding/mint/claim steps below:
-      # all three are local composite actions (`uses: ./.github/actions/...`),
+      # Checkout must run before the bootstrap/mint/claim steps below:
+      # all are local composite actions (`uses: ./.github/actions/...`),
       # and GitHub Actions can only resolve a local action once the repo
       # containing it has been checked out - a platform constraint, not a
       # preference. It costs the "claim survives a checkout failure" property
@@ -117,9 +116,11 @@ jobs:
 
       # Shared trusted worker lifecycle (agent-lcars#823): freezes the
       # post-agent enforcement scripts, asserts required repo variables,
-      # verifies the broker binding against the authoritative dispatch
-      # ledger, mints the Agent LCARS App token, and claims the anchor
-      # issue/PR for the agent fleet - identical across claude.yml,
+      # publishes this attempt's stable identity, mints the Agent LCARS App
+      # token, and claims the anchor issue/PR for the agent fleet - a thin
+      # executor (#1015): admission was already decided server-side by the
+      # hosted orchestrator before this workflow ran, so nothing here
+      # re-verifies it against any ledger. Identical across claude.yml,
       # codex.yml, and opencode.yml. This mints the same Agent LCARS App
       # token codex.yml/opencode.yml use, so claude's own claim/comment/
       # label gh operations below are attributed to the App's bot login
@@ -175,14 +176,11 @@ jobs:
       # A second, narrower mint - deliberately not the "Mint agent token"
       # step above and not github.token. The App token minted above is the
       # agent's own working identity (claim/comment/push, App-attributed);
-      # github.token is this job's own control-plane credential, the exact
-      # one dispatch-broker uses to read and write the ledger comment
-      # (every dispatch-broker step in this file passes
-      # GITHUB_TOKEN: ${{ github.token }}), carrying this workflow's full
-      # contents/issues/pull-requests/actions write grant. Handing either
-      # one to the agent step below would let agent-authored code rewrite
-      # the ledger or act as the controller - exactly what #645 forbids.
-      # #645 forbids. AGENT_CI_RERUN_TOKEN is not that credential, but be
+      # github.token is this job's own control-plane credential, carrying
+      # this workflow's full contents/issues/pull-requests/actions write
+      # grant. Handing either one to the agent step below would let
+      # agent-authored code act as the controller - exactly what #645
+      # forbids. AGENT_CI_RERUN_TOKEN is not that credential, but be
       # precise about what it is: a classic PAT at public_repo scope from
       # the jclaw-bot machine account. Classic scopes cannot express
       # "actions: write only", so it does carry issues:write here and CAN
@@ -269,10 +267,9 @@ jobs:
           # actions:read (the token exchange supports nothing higher), so
           # re-running workflows needs a second token. NOT the workflow's
           # own github.token: that carries this job's full
-          # contents/issues/pull-requests/actions write grant and is the
-          # same credential dispatch-broker uses to read and write the
-          # ledger comment - handing it to the agent would let agent
-          # code rewrite the ledger and act as the controller (#645).
+          # contents/issues/pull-requests/actions write grant - the job's
+          # control-plane credential - and handing it to the agent would
+          # let agent code act as the controller (#645).
           # Use AGENT_CI_RERUN_TOKEN instead: a classic PAT with the
           # narrowest scope that can rerun a workflow here (public_repo).
           # Note what that does NOT buy -- classic scopes cannot express
@@ -412,7 +409,7 @@ jobs:
           # This run's verified attempt identity (#815): verify-deliverable.sh
           # now requires an exact `<!-- attempt-claim:<ATTEMPT_ID> -->` marker
           # on the PR/comment/review this run produced. Ambient from
-          # dispatch-bootstrap's "Verify broker binding" step, which always
+          # dispatch-bootstrap's "Publish attempt identity" step, which always
           # runs earlier in this same job and publishes it via $GITHUB_ENV -
           # named explicitly here to document the dependency.
           ATTEMPT_ID: ${{ env.ATTEMPT_ID }}

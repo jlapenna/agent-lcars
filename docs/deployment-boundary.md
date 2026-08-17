@@ -154,9 +154,9 @@ Agents are allowed to rerun their own failed CI
 `actions: write`, which the token the Claude action vends does not have. The
 obvious source is the workflow's own `GITHUB_TOKEN` — and that is exactly
 what this must never be: it carries the job's full
-contents/issues/pull-requests grant and is the same credential the dispatch
-broker reads and writes the ledger comment with, so handing it to agent code
-would let that code rewrite the control plane's own state
+contents/issues/pull-requests grant, the workflow's own control-plane
+credential, so handing it to agent code would let that code act as the
+controller
 ([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
 
 So this is a **classic PAT at `public_repo` scope, issued from the
@@ -175,10 +175,11 @@ repository that account can write.
 
 **What it still does not buy.** Classic scopes cannot express "actions:
 write and nothing else": `public_repo` also carries `issues: write` on the
-repositories it does reach, so this token _can_ edit the ledger comment on
-this one. The boundary is "a separate, attributable, independently revocable
-identity, confined to this public repository" — not "cannot reach the
-control plane".
+repositories it does reach, so this token _can_ edit issue comments on
+this one (in the broker era that meant the dispatch ledger itself). The
+boundary is "a separate, attributable, independently revocable
+identity, confined to this public repository" — not "cannot write
+anything here".
 
 Two alternatives were considered and rejected. A **fine-grained** PAT would
 express exactly `Actions: write` and nothing more, but does not work here. A
@@ -194,10 +195,11 @@ single shared `repo`-scoped PAT would let an agent running here — in a
 public repo — reach private infrastructure it otherwise has no path to.
 
 That residue is not a gap to be closed by better credential hygiene. An
-agent that comments on issues needs `issues: write`, and the ledger _is_ an
-issue comment — which is the argument for moving control-plane state
-somewhere a repository-scoped token cannot reach at all
-([#645](https://github.com/jlapenna/agent-lcars/issues/645) Phase 5).
+agent that comments on issues needs `issues: write`, and in the broker era
+the dispatch ledger _was_ an issue comment — the argument that drove moving
+control-plane state somewhere a repository-scoped token cannot reach at
+all, realized today by the hosted orchestrator's Firestore-backed task
+state ([#645](https://github.com/jlapenna/agent-lcars/issues/645) Phase 5).
 
 Fails **loudly, not closed**: each worker warns if the secret is unset, and
 the agent simply cannot rerun. That is deliberate — an empty

@@ -88,5 +88,14 @@ pnpm check:labels
 ```
 
 `--apply` only creates labels and fixes metadata. `--migrate` relabels open
-issues and pull requests according to the manifest. Destructive removal is
-reserved for the explicit `--prune` step after workflow changes have landed.
+issues and pull requests according to the manifest. `--prune` deletes only
+labels on a repository's `migrations`/`remove` lists — a live label that is
+simply undeclared is left alone.
+
+The daily `label-contract-audit.yml` job runs the full
+`--apply --migrate --prune` sync per repository: bot-minted legacy labels
+(Renovate re-creates defaults like `dependencies`, `javascript`, and `go` on
+its own pull requests) self-heal instead of flapping the job red every day.
+Because of that, every live label in a covered repository must either be
+declared in the manifest or consciously listed for removal — an undeclared
+label is invisible to the sync in both directions.
