@@ -424,6 +424,66 @@ export function expireLease(input: {
   );
 }
 
+/**
+ * A live run whose *executor* has already reached a terminal state without
+ * ever reporting is settled here, without waiting out its lease.
+ *
+ * This is `expireLease`'s sibling, and deliberately reaches the same verdict
+ * (`lost`, lock released, `consecutiveLost` bumped, `pendingRequest`
+ * consumed if present) by a different, faster route: instead of inferring
+ * "probably dead" from silence, the caller has *observed* that the execution
+ * this run stands for is over. The orchestrator still learns nothing about
+ * what the run did -- there is no result to record, because nothing ran far
+ * enough to produce one -- so `lost` remains exactly the right verdict, and
+ * every downstream behaviour built on it (bounded auto-retry in
+ * `Orchestrator.sweepExpired`/`settleTerminalRuns`, parking at
+ * `MAX_AUTO_RETRIES`, the lost-run outcome comment) applies unchanged.
+ *
+ * `note` carries the caller's evidence (e.g. the GitHub run conclusion) onto
+ * the run's event log, and `by: 'infra'` attributes the settlement to the
+ * execution environment rather than to the agent -- the run never reported,
+ * so this is emphatically not an agent-reported failure.
+ *
+ * This function takes NO view on how terminality was established: resolving
+ * that is I/O, and belongs to the caller at the GitHub boundary (see
+ * `apps/console/src/lib/orchestrator-terminal-runs.ts`). It refuses a run
+ * that is no longer live, which is what makes double-settling impossible:
+ * a completion callback that lands between the caller's observation and
+ * this decision wins, and this settle is refused `run-not-live`.
+ */
+export function settleTerminal(input: {
+  now: string;
+  task: Task;
+  run: Run;
+  note?: string;
+}): Decision | Refusal {
+  const { now, task, run } = input;
+  if (!isLive(run.state)) return refused('run-not-live');
+  if (task.activeRunId !== run.runId) return refused('stale-lease');
+  const settled: Run = {
+    ...run,
+    state: 'lost',
+    events: [
+      ...run.events,
+      {
+        at: now,
+        to: 'lost',
+        by: 'infra',
+        ...(input.note === undefined ? {} : { note: input.note }),
+      },
+    ],
+    updatedAt: now,
+  };
+  return settleWithFollowUp(
+    {
+      ...releaseLock(task, run.runId, now),
+      consecutiveLost: (task.consecutiveLost ?? 0) + 1,
+    },
+    settled,
+    now,
+  );
+}
+
 /** Shared tail of every settle path: fold `consumePendingRequest`'s
  *  possible follow-up run/outbox entry into the settled run's own
  *  `Decision`. */

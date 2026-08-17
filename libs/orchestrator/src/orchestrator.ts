@@ -10,6 +10,7 @@ import {
   renewLease,
   reportResult,
   requestRun,
+  settleTerminal,
 } from './decide';
 import type { Run, RunResult, TaskId } from './model';
 import {
@@ -34,6 +35,25 @@ export interface SweepResult {
    *  fresh run it started. A lost run absent from this list either
    *  exhausted its task's auto-retry budget or had its retry request
    *  refused (e.g. an operator's manual request raced and won). */
+  readonly retried: { lostRunId: string; newRunId: string }[];
+}
+
+/** One caller-resolved terminal fact: the executor behind `runId` is over,
+ *  and `conclusion` is the caller's own word for how (e.g. a GitHub run
+ *  conclusion such as `startup_failure`). The orchestrator neither resolves
+ *  nor interprets it -- it records it on the run's event log and settles. */
+export interface TerminalRunEntry {
+  readonly runId: string;
+  readonly conclusion: string;
+}
+
+export interface TerminalSettleResult {
+  /** Runs settled because their executor was already terminal, paired with
+   *  the conclusion that proved it. A run absent from this list was not
+   *  settled by this call -- most often because its completion callback
+   *  landed first, so the settle was refused `run-not-live`. */
+  readonly settled: { run: Run; conclusion: string }[];
+  /** Same shape and meaning as `SweepResult.retried`. */
   readonly retried: { lostRunId: string; newRunId: string }[];
 }
 
@@ -151,29 +171,91 @@ export class Orchestrator {
     const lost: Run[] = [];
     const retried: { lostRunId: string; newRunId: string }[] = [];
     for (const run of await this.store.listExpiredRuns(now)) {
-      const outcome = await this.transactOnRun(run.runId, (task, current) =>
-        expireLease({ now, task, run: current }),
+      const settled = await this.#settleAndRetry(
+        run.runId,
+        (task, current) => expireLease({ now, task, run: current }),
+        retried,
       );
-      if (isRefusal(outcome)) continue;
-      lost.push(outcome.run);
-
-      if ((outcome.task.consecutiveLost ?? 0) > MAX_AUTO_RETRIES) continue;
-      const retry = await this.request({
-        taskId: outcome.run.task,
-        requestId: `retry:${outcome.run.runId}`,
-        pipeline: outcome.run.pipeline,
-        ...(outcome.run.params === undefined
-          ? {}
-          : { params: outcome.run.params }),
-      });
-      if (!isRefusal(retry)) {
-        retried.push({
-          lostRunId: outcome.run.runId,
-          newRunId: retry.run.runId,
-        });
-      }
+      if (settled !== undefined) lost.push(settled);
     }
     return { lost, retried };
+  }
+
+  /**
+   * Settle every run in `entries`, whose executor the caller has already
+   * observed to be terminal, then auto-retry each on exactly the same terms
+   * `sweepExpired` uses -- same `MAX_AUTO_RETRIES` budget, same
+   * deterministic `retry:<lostRunId>` requestId, same parking behaviour, and
+   * the same deference to a task's `pendingRequest` (consumed inside the
+   * settle decision itself, which leaves the task busy and gets this call's
+   * own retry request refused).
+   *
+   * This method does NO network I/O and knows nothing about GitHub: it takes
+   * already-resolved facts. Resolving them -- reading a workflow run's status
+   * through an App installation token -- is the console's job, at the
+   * GitHub boundary (`apps/console/src/lib/orchestrator-terminal-runs.ts`).
+   * That is what keeps this library pure domain logic over its store.
+   *
+   * Passing a run that is no longer live (its completion callback landed in
+   * the window between the caller's observation and this call) is safe and
+   * expected: the settle is refused inside the transaction and the run
+   * simply does not appear in the result. There is no double-settle path.
+   *
+   * The same KNOWN GAP `sweepExpired` documents applies here: a crash
+   * between a settle commit and its retry request loses that one auto-retry
+   * and leaves the task merely unlocked.
+   */
+  async settleTerminalRuns(
+    entries: readonly TerminalRunEntry[],
+  ): Promise<TerminalSettleResult> {
+    const now = this.clock.now();
+    const settled: { run: Run; conclusion: string }[] = [];
+    const retried: { lostRunId: string; newRunId: string }[] = [];
+    for (const entry of entries) {
+      const run = await this.#settleAndRetry(
+        entry.runId,
+        (task, current) =>
+          settleTerminal({
+            now,
+            task,
+            run: current,
+            note: `executor terminal: ${entry.conclusion}`,
+          }),
+        retried,
+      );
+      if (run !== undefined)
+        settled.push({ run, conclusion: entry.conclusion });
+    }
+    return { settled, retried };
+  }
+
+  /** Shared body of both settle paths: apply `decide` to `runId`, and -- if
+   *  it settled the run and the task still has auto-retry budget -- request
+   *  the deterministic `retry:<runId>` follow-up, appending it to `retried`.
+   *  Returns the settled run, or undefined if the decision was refused. */
+  async #settleAndRetry(
+    runId: string,
+    decide: (task: VersionedTask['task'], run: Run) => Decision | Refusal,
+    retried: { lostRunId: string; newRunId: string }[],
+  ): Promise<Run | undefined> {
+    const outcome = await this.transactOnRun(runId, decide);
+    if (isRefusal(outcome)) return undefined;
+
+    if ((outcome.task.consecutiveLost ?? 0) > MAX_AUTO_RETRIES) {
+      return outcome.run;
+    }
+    const retry = await this.request({
+      taskId: outcome.run.task,
+      requestId: `retry:${outcome.run.runId}`,
+      pipeline: outcome.run.pipeline,
+      ...(outcome.run.params === undefined
+        ? {}
+        : { params: outcome.run.params }),
+    });
+    if (!isRefusal(retry)) {
+      retried.push({ lostRunId: outcome.run.runId, newRunId: retry.run.runId });
+    }
+    return outcome.run;
   }
 
   async #once<T extends Decision | Queued>(

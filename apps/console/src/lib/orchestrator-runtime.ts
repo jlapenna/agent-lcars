@@ -10,6 +10,7 @@ import { required } from '@agent-lcars/util-server';
 import { createDispatchTokenProvider } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
+import { settleTerminalRuns } from '@/lib/orchestrator-terminal-runs';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -48,6 +49,12 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     orchestrator,
     drain: () =>
       drainOutbox({
+        store,
+        orchestrator,
+        tokens: createDispatchTokenProvider(process.env),
+      }),
+    settleTerminal: () =>
+      settleTerminalRuns({
         store,
         orchestrator,
         tokens: createDispatchTokenProvider(process.env),

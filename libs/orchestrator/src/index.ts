@@ -7,5 +7,7 @@ export {
   Orchestrator,
   type RequestInput,
   type SweepResult,
+  type TerminalRunEntry,
+  type TerminalSettleResult,
 } from './orchestrator';
 export * from './store';

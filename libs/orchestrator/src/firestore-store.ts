@@ -180,20 +180,24 @@ export class FirestoreStore implements OrchestratorStore {
     // A single query for `state in [...] AND leaseExpiresAt <= now` would
     // combine an equality/`in` filter with a range filter on a *different*
     // field, which Firestore only serves with a composite index. Rather
-    // than require one, run one single-field equality query per live state
-    // (each covered by Firestore's automatic single-field index), and
-    // apply the lease-expiry filter client-side, merging the results.
+    // than require one, reuse the per-live-state equality queries
+    // `listLiveRuns` already runs (each covered by Firestore's automatic
+    // single-field index) and apply the lease-expiry filter client-side.
+    return (await this.listLiveRuns()).filter(
+      (run) => Date.parse(run.leaseExpiresAt) <= cutoff,
+    );
+  }
+
+  async listLiveRuns(): Promise<Run[]> {
+    // One single-field equality query per live state, merged -- see
+    // `listExpiredRuns` above for why this shape rather than an `in` query
+    // combined with a range filter.
     const perState = await Promise.all(
       LIVE_STATES.map((state) => this.#runs.where('state', '==', state).get()),
     );
-    const expired: Run[] = [];
-    for (const snapshot of perState) {
-      for (const doc of snapshot.docs) {
-        const run = runSchema.parse(doc.data());
-        if (Date.parse(run.leaseExpiresAt) <= cutoff) expired.push(run);
-      }
-    }
-    return expired;
+    return perState.flatMap((snapshot) =>
+      snapshot.docs.map((doc) => runSchema.parse(doc.data())),
+    );
   }
 
   #taskRef(id: TaskId): DocumentReference {
