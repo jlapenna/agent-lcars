@@ -1,8 +1,22 @@
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig, mergeConfig, type UserConfig } from 'vitest/config';
+
+// Under Nx (`affected`/`run-many` schedule up to --parallel tasks at once),
+// an uncapped Vitest process forks ~availableParallelism() workers, so three
+// concurrent test tasks oversubscribe a 16-core box ~3x. That contention is
+// what made CPU-bound suites blow their test timeout under the affected gate
+// while passing in isolation (sprinkles#4046 — ported here with the
+// 15s testTimeout below). Direct runs (plain `vitest`) keep Vitest's own
+// default fan-out.
+const underNx = Boolean(process.env.NX_TASK_TARGET_PROJECT);
+const nxCappedMaxWorkers = Math.max(
+  2,
+  Math.floor(os.availableParallelism() / 4),
+);
 
 // Vite 8's native resolve.tsconfigPaths option does not currently resolve
 // bare workspace aliases through Vitest's SSR import path. Keep the proven
@@ -123,6 +137,14 @@ export function createVitestConfig(options: {
         // — some migrated libs (e.g. type-only or index-only packages) have
         // no test files at all.
         passWithNoTests: true,
+        // 3x Vitest's 5s default: with worker fan-out capped above, a busy
+        // box (concurrent agent sessions, the affected gate itself) still
+        // stretches CPU-bound tests; 5s left zero headroom and turned load
+        // spikes into spurious per-test timeouts (sprinkles#4046). Projects
+        // that need more (e.g. the console's 30s) keep overriding via
+        // `overrides`.
+        testTimeout: 15000,
+        ...(underNx && { maxWorkers: nxCappedMaxWorkers }),
         setupFiles,
         coverage: {
           reportsDirectory: path.join(

@@ -8,58 +8,94 @@ if [[ "$NODE_OPTIONS" != *"--max-old-space-size"* ]]; then
   export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=8192"
 fi
 
-# Linked worktrees (.claude/worktrees/*, agent sessions) start with a cold Nx
-# cache, so they recompile every lib and Next build the primary checkout has
-# already cached. Point them at the primary checkout's cache: entries are
-# content-addressed (hashed by task inputs), so sharing across concurrent
-# worktrees/sessions is safe. A pre-set NX_CACHE_DIRECTORY always wins, and
-# the primary checkout itself is unaffected (#2437).
-if [ -z "${NX_CACHE_DIRECTORY:-}" ]; then
+# Nx 23 copies its native addon to a shared temporary cache before loading it.
+# CI jobs do not need that Windows file-lock workaround, and concurrent
+# self-hosted jobs have observed SIGSEGVs in the copy/load path. Load the
+# immutable addon directly from this job's node_modules instead.
+if [ "${CI:-}" = "true" ] && [ -z "${NX_SKIP_NATIVE_FILE_CACHE:-}" ]; then
+  export NX_SKIP_NATIVE_FILE_CACHE=true
+fi
+
+# Nx 23.1 resolves linked worktrees to the main checkout's cache natively.
+# Do not set NX_CACHE_DIRECTORY here: doing so duplicates upstream behavior
+# and makes the wrapper responsible for tracking Nx's cache semantics.
+#
+# That native sharing means `nx reset` can still disrupt other sessions:
+# an agent's full reset once wiped a shared cache mid-run and a concurrent
+# green build died writing its outputs (agent-lcars#2887, 2026-07-14).
+# `--only-cache` removes the shared artifacts, while
+# `--only-workspace-data` also removes the main checkout's shared cache DB
+# when invoked from a linked worktree. Protect both a linked worktree and a
+# primary checkout with registered worktrees. A custom cache/workspace-data
+# directory is conservatively treated as shared too.
+if [ "${1:-}" = "reset" ] &&
+  [ "${NX_ALLOW_SHARED_CACHE_RESET:-}" != "1" ]; then
+  nx_state_is_shared=false
+  if [ -n "${NX_CACHE_DIRECTORY:-}" ] ||
+    [ -n "${NX_WORKSPACE_DATA_DIRECTORY:-}" ] ||
+    [ -n "${NX_PROJECT_GRAPH_CACHE_DIRECTORY:-}" ]; then
+    nx_state_is_shared=true
+  fi
+
   git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$git_common_dir" ] && [ -n "$toplevel" ]; then
     primary_root="$(dirname "$git_common_dir")"
-    if [ "$primary_root" != "$toplevel" ] && [ -d "$primary_root/.nx/cache" ]; then
-      export NX_CACHE_DIRECTORY="$primary_root/.nx/cache"
+    if [ "$primary_root" != "$toplevel" ]; then
+      nx_state_is_shared=true
+    fi
+
+    worktree_count="$(git worktree list --porcelain 2>/dev/null |
+      awk '$1 == "worktree" { count++ } END { print count + 0 }' || true)"
+    if [ "${worktree_count:-0}" -gt 1 ]; then
+      nx_state_is_shared=true
+    fi
+  fi
+
+  if [ "$nx_state_is_shared" = true ]; then
+    reset_has_help=false
+    reset_has_safe_scope=false
+    reset_has_destructive_scope=false
+    for reset_arg in "$@"; do
+      case "$reset_arg" in
+      --help | -h) reset_has_help=true ;;
+      --only-cache | --only-cache=* | --onlyCache | --onlyCache=*)
+        reset_has_destructive_scope=true
+        ;;
+      --only-workspace-data | --only-workspace-data=* | --onlyWorkspaceData | --onlyWorkspaceData=*)
+        reset_has_destructive_scope=true
+        ;;
+      --only-daemon | --only-daemon=* | --onlyDaemon | --onlyDaemon=* | --only-cloud | --only-cloud=* | --onlyCloud | --onlyCloud=*)
+        reset_has_safe_scope=true
+        ;;
+      esac
+    done
+
+    if [ "$reset_has_help" = false ] &&
+      [ "$reset_has_destructive_scope" = true ]; then
+      echo "tools/nx: refusing to reset shared Nx cache/workspace data (sprinkles#3801, agent-lcars#2887)." >&2
+      echo "tools/nx: rerun with NX_ALLOW_SHARED_CACHE_RESET=1 only when every checkout using it is idle." >&2
+      exit 1
+    fi
+
+    if [ "$reset_has_help" = false ] &&
+      [ "$reset_has_safe_scope" = false ]; then
+      echo "tools/nx: scoping bare 'nx reset' to --only-daemon because Nx state is shared with other worktrees/jobs (sprinkles#3801, agent-lcars#2887)." >&2
+      echo "tools/nx: set NX_ALLOW_SHARED_CACHE_RESET=1 only when every checkout using it is idle." >&2
+      shift
+      set -- reset --only-daemon "$@"
     fi
   fi
 fi
 
-# `nx reset` rm -rf's the ENTIRE cache directory (cleanupCacheEntries in
-# nx/src/command-line/reset). Whenever NX_CACHE_DIRECTORY is in play — the
-# host-wide /shared-cache/nx that CI and agent jobs share across every runner
-# on a host, or the primary checkout's cache borrowed by a worktree above —
-# that directory is shared with OTHER live sessions/jobs, and deleting it
-# yanks in-flight cache writes out from under them: on 2026-07-14 an agent's
-# `nx reset` on spark wiped /shared-cache/nx mid-run and a concurrent green
-# Verify build died writing terminalOutputs (ENOENT, #2887). Stale-graph
-# debugging only ever needs the daemon + workspace-data cleared, so scope
-# bare resets to that, and refuse an explicit cache nuke unless overridden.
-if [ "${1:-}" = "reset" ] && [ -n "${NX_CACHE_DIRECTORY:-}" ] &&
-  [ "${NX_ALLOW_SHARED_CACHE_RESET:-}" != "1" ]; then
-  case " $* " in
-  *" --help "* | *" -h "*) ;; # help output only, nothing gets deleted
-  *" --only-cache "* | *" --onlyCache "*)
-    echo "tools/nx: refusing 'nx reset --only-cache': NX_CACHE_DIRECTORY=$NX_CACHE_DIRECTORY is shared with other sessions/jobs (#2887)." >&2
-    echo "tools/nx: rerun with NX_ALLOW_SHARED_CACHE_RESET=1 if you really mean to delete it for everyone." >&2
-    exit 1
-    ;;
-  *" --only-"* | *" --only"[A-Z]*) ;; # already scoped away from the cache dir
-  *)
-    echo "tools/nx: scoping 'nx reset' to --only-daemon --only-workspace-data: NX_CACHE_DIRECTORY=$NX_CACHE_DIRECTORY is shared with other sessions/jobs and a full reset would delete it out from under them (#2887). Set NX_ALLOW_SHARED_CACHE_RESET=1 to force a full reset." >&2
-    shift
-    set -- reset --only-daemon --only-workspace-data "$@"
-    ;;
-  esac
-fi
-
 # Self-hosted Nx remote cache (the same spark server CI uses). The vars live
-# in the gitignored .nx-remote-cache.env — written by
-# tools/setup-nx-remote-cache.sh — rather than .env.local, so that ONLY this
-# wrapper enables them, and only after a fast reachability probe: nx fails
-# open on an unreachable server but pays
-# ~45s of request timeouts per task write (measured), which would tax laptops
-# off the VPN. Explicit env (CI sets these directly) wins and skips the probe.
+# in the gitignored .nx-remote-cache.env — written by the repo's setup script
+# (sprinkles' setup-repo.sh, agent-lcars' tools/setup-nx-remote-cache.sh) —
+# rather than .env.local, so that ONLY this wrapper enables them, and only
+# after a fast reachability probe: nx fails open on an unreachable server but
+# pays ~45s of request timeouts per task write (measured), which would tax
+# laptops off the VPN. Explicit env (CI sets these directly) wins and skips
+# the probe.
 #
 # Linked worktrees do not inherit ignored files, and a worktree created by a
 # bare `git worktree add` never runs setup-worktree.sh — so fall back to the
@@ -87,6 +123,21 @@ if [ -z "${NX_SELF_HOSTED_REMOTE_CACHE_SERVER:-}" ]; then
       . "$rc_env"
       set +a
     fi
+  elif curl -sf --max-time 0.4 -o /dev/null \
+    "${NX_REMOTE_CACHE_URL:-http://spark.lan.jlapenna.net:3123}/healthz" 2>/dev/null; then
+    # No credential anywhere, but the cache server is right there answering.
+    # Say so once per invocation: the setup script is one-time init, so a
+    # checkout created before its cache block existed (sprinkles#2442,
+    # 2026-07-10) never got a credential and nothing would ever tell you --
+    # Nx just recomputes everything locally and the build is merely "slow".
+    # That cost a 35-minute Verify timeout on sprinkles#4262 before anyone
+    # noticed.
+    setup_hint="./tools/setup-repo.sh"
+    if [ -x ./tools/setup-nx-remote-cache.sh ]; then
+      setup_hint="./tools/setup-nx-remote-cache.sh"
+    fi
+    echo "⚠️  Nx remote cache is reachable but no credential is configured;" >&2
+    echo "   builds will recompute locally. Fix: $setup_hint" >&2
   fi
 fi
 
@@ -101,7 +152,7 @@ if [ -z "${NODE_COMPILE_CACHE:-}" ] && [ -f .env.local ]; then
   [ -n "$local_tmpdir" ] && export NODE_COMPILE_CACHE="$local_tmpdir/node-compile-cache"
 fi
 
-# Otherwise default the compile cache on: every nx/jest invocation re-parses
+# Otherwise default the compile cache on: every Nx invocation re-parses
 # megabytes of JS at startup, and Node's on-disk compile cache shaves a
 # consistent chunk off that for free. Shared across worktrees (keyed by file
 # content), so agent sessions benefit from each other's warm cache.
