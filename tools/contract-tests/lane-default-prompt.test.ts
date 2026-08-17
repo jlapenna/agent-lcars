@@ -60,6 +60,8 @@ interface RenderOptions {
   generation?: string;
   intentId?: string;
   protocolNote?: string;
+  promptOverride?: string;
+  noDeliverableOverride?: string;
 }
 
 /** Runs the lane step exactly as Actions would: same script, same env, and
@@ -69,6 +71,8 @@ function renderLaneDefaults({
   generation = '7',
   intentId = 'intent-contract-test',
   protocolNote = '',
+  promptOverride = '',
+  noDeliverableOverride = '',
 }: RenderOptions): Record<string, string> {
   const contract = PIPELINE_CONTRACTS[pipeline];
   const dir = mkdtempSync(path.join(tmpdir(), 'lane-prompt-'));
@@ -82,6 +86,8 @@ function renderLaneDefaults({
       PATH: process.env.PATH ?? '',
       GITHUB_ENV: envPath,
       PROTOCOL_NOTE: protocolNote,
+      PROMPT_OVERRIDE: promptOverride,
+      NO_DELIVERABLE_OVERRIDE: noDeliverableOverride,
       ATTEMPT_ID: `g${generation}:${intentId}`,
       HAS_ATTEMPT_ID: intentId === '' ? 'false' : 'true',
       // Job-level lane env, pinned to this same registry by
@@ -178,6 +184,34 @@ describe('agent-lane.yml canonical prompt rendering', () => {
       expect(AGENT_NO_DELIVERABLE_REASON).toContain('no deliverable');
     },
   );
+
+  it('keeps the attempt-claim tail when a caller overrides the prompt body', () => {
+    // sprinkles is the one repo whose task framing genuinely differs, and
+    // the marker is the one string it must never be trusted to render.
+    const { AGENT_PROMPT } = renderLaneDefaults({
+      pipeline: 'claude',
+      promptOverride: 'Do the sprinkles-specific thing.',
+    });
+
+    expect(AGENT_PROMPT).toContain('Do the sprinkles-specific thing.');
+    expect(AGENT_PROMPT).toContain(
+      formatClaimMarker(
+        formatAttemptId({ generation: 7, intentId: 'intent-contract-test' }),
+      ),
+    );
+    expect(AGENT_PROMPT).toContain('Commit and push before you end your turn.');
+    // The overridden body replaces the default body, not adds to it.
+    expect(AGENT_PROMPT).not.toContain('Work the routed anchor');
+  });
+
+  it('lets a caller override the silent-stall wording', () => {
+    const { AGENT_NO_DELIVERABLE_REASON } = renderLaneDefaults({
+      pipeline: 'claude',
+      noDeliverableOverride: 'This repo says it differently.',
+    });
+
+    expect(AGENT_NO_DELIVERABLE_REASON).toBe('This repo says it differently.');
+  });
 
   it('renders a different marker for a different attempt (not a fixed string)', () => {
     const first = renderLaneDefaults({
