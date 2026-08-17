@@ -83,6 +83,21 @@ check 'strays are opt-in: default mode ignores undeclared copies' \
   status_is 0 run
 rm -rf vendored
 
+# suffix match mode (third manifest column) for generic basenames
+mkdir -p skills/alpha skills/beta remote_add
+printf 'alpha doc\n' > skills/alpha/SKILL.md
+printf 'beta doc\n' > skills/beta/SKILL.md
+mkdir -p "$root/remote/main/skills"
+printf 'alpha doc\n' > "$root/remote/main/skills/alpha-SKILL.md"
+printf 'skills/alpha/SKILL.md skills/alpha-SKILL.md suffix\n' > suffix.conf
+check 'suffix mode: a sibling generic basename is NOT a stray' \
+  status_is 0 "$checker" --manifest suffix.conf --base "$BASE" --ref main --forbid-strays
+mkdir -p elsewhere/alpha
+printf 'alpha doc\n' > elsewhere/alpha/SKILL.md
+check 'suffix mode: a copy at the same two-component suffix IS a stray' \
+  status_is 1 "$checker" --manifest suffix.conf --base "$BASE" --ref main --forbid-strays
+rm -rf skills elsewhere suffix.conf
+
 if [ "$failures" -gt 0 ]; then
   echo "check.test.sh: $failures case(s) failed" >&2; exit 1
 fi
