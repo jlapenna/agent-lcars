@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true); if [ -n \"$repo_root\" ] && [ -f \"$repo_root/tools/codex-issue-guardrail.cjs\" ]; then node \"$repo_root/tools/codex-issue-guardrail.cjs\"; fi; exit 0",
+            "command": "repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true); if [ -n \"$repo_root\" ] && [ -f \"$repo_root/packages/fleet-tools/bin/codex-issue-guardrail.cjs\" ]; then node \"$repo_root/packages/fleet-tools/bin/codex-issue-guardrail.cjs\"; fi; exit 0",
             "timeout": 10
           }
         ]

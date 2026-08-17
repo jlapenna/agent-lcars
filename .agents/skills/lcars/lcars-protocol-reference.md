@@ -102,12 +102,12 @@ whole contract if you need more than this summary.
 > [`lcars-protocol.md`](lcars-protocol.md)'s "Takeover comment" section.
 > This is the background for why the three pipelines differ.
 
-`tools/claude-agent-session.sh` is Claude-specific by construction: it
-discovers transcripts only under `~/.claude/projects`, authenticates with
+`fleet-claude-agent-session` (packages/fleet-tools) is Claude-specific by
+construction: it discovers transcripts only under `~/.claude/projects`, authenticates with
 `CLAUDE_CODE_OAUTH_TOKEN`, and hands off to `claude --resume`. The console's
 `TAKEOVER_COMMAND_RE` (`apps/console/src/lib/action-items.ts`) is
-`/(\S*claude-agent-session\.sh\s+resume\s+[\w-]+)/` — it matches that
-literal script name and requires whitespace after `resume`, so it does not
+`/(\S*claude-agent-session(?:\.sh)?\s+resume\s+[\w-]+)/` — it matches the
+bin name (and historical `.sh` paths) and requires whitespace after `resume`, so it does not
 match `resume-archive`, and it does not generalize per agent. A Codex or
 OpenCode run that borrowed the name would be posting a command that cannot
 work; naming the gap honestly is the correct outcome, not a hole to paper

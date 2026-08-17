@@ -1,0 +1,18 @@
+{
+  "name": "@agent-lcars/fleet-tools",
+  "version": "0.0.0",
+  "private": false,
+  "description": "Fleet workstation tools: agent session launcher, issue-claim guardrail hooks, PR watcher, worktree hygiene. Installed tracking main — never pinned (see docs/published-actions.md).",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "bin": {
+    "fleet-claude-agent-session": "bin/claude-agent-session.sh",
+    "fleet-codex-issue-guardrail": "bin/codex-issue-guardrail.cjs",
+    "fleet-require-worktree": "bin/require-feature-worktree.sh",
+    "fleet-watch-prs": "bin/watch-prs.sh",
+    "fleet-safe-remove-worktree": "bin/safe-remove-worktree.sh",
+    "fleet-scan-live-processes": "bin/scan-live-processes.sh"
+  },
+  "files": [
+    "bin"
+  ]
+}

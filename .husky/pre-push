@@ -10,7 +10,7 @@ export NX_DAEMON=false
 # arguments before any validation command has a chance to read stdin.
 git lfs pre-push "$@"
 
-./tools/require-feature-worktree.sh
+./packages/fleet-tools/bin/require-feature-worktree.sh
 
 ./tools/check-dependencies.sh
 ./tools/nx format:check --base=origin/main

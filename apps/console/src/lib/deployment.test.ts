@@ -139,7 +139,7 @@ describe('deployment config', () => {
       'https://github.com/jlapenna/agent-lcars',
     );
     expect(controlPlaneRepository()).toBe('jlapenna/agent-lcars');
-    expect(agentSessionResumeScript()).toBe('tools/claude-agent-session.sh');
+    expect(agentSessionResumeScript()).toBe('fleet-claude-agent-session');
     expect(shareArtifactUrl('pike', 'abc', 'out.txt')).toBe(
       'https://share.lan.jlapenna.net/pike/abc/out.txt',
     );

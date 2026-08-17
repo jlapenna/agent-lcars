@@ -106,18 +106,19 @@ inspect, contend with, or hand-repair. The mechanism is in
 ## Takeover comment: which handoff line to post
 
 This is this repo's answer to the question agent-protocol.md §1 leaves to
-each repo's delta. `tools/claude-agent-session.sh` **exists in this repo**
-and is Claude-specific — it reads only `~/.claude/projects` transcripts and
+each repo's delta. `fleet-claude-agent-session` (the fleet-tools PATH bin,
+agent-lcars#1328 — installed on workstations, baked into the runner image)
+is Claude-specific — it reads only `~/.claude/projects` transcripts and
 authenticates with Claude's own OAuth token.
 
 - **Dispatched by `claude.yml`:** post the real command, where `<session-id>`
   is the basename of the newest `~/.claude/projects/<slugified-repo-path>/*.jsonl`:
 
   ```
-  tools/claude-agent-session.sh resume <session-id>
+  fleet-claude-agent-session resume <session-id>
   ```
 
-  Mention `tools/claude-agent-session.sh resume-archive <run-id>` **in
+  Mention `fleet-claude-agent-session resume-archive <run-id>` **in
   addition**, never instead: plain `resume` only reaches a session while its
   JIT runner is alive, and by the time anyone reads a finished run's anchor
   it will not find it. The console's `TAKEOVER_COMMAND_RE` requires

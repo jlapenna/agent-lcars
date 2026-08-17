@@ -8,7 +8,7 @@ const {
   extractIssueNumbers,
   runHook,
   titleMatchesIssue,
-} = require('./codex-issue-guardrail.cjs');
+} = require('../bin/codex-issue-guardrail.cjs');
 
 function dependencies({
   assignees = ['agent-lcars-bot'],

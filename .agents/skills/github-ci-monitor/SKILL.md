@@ -11,7 +11,7 @@ is: **did my PRs land, and if not, what needs fixing?** An armed PR whose
 nothing pings the session. `watch-prs.sh` closes that gap:
 
 ```bash
-.agents/skills/github-ci-monitor/scripts/watch-prs.sh [--strict] [--interval <s>] <pr> [<pr>...]
+fleet-watch-prs [--strict] [--interval <s>] <pr> [<pr>...]
 ```
 
 In an agent session, run it as a **background task** so its exit
@@ -39,9 +39,9 @@ The watcher checks paginated review-thread state after required checks are
 green. It keeps each attention reason as one whitespace-free token so agent
 consumers can parse verdicts even when GitHub check names contain spaces.
 
-This is the fleet-canonical copy of `watch-prs.sh` (agent-lcars#1307):
-homelab and sprinkles vendor it byte-for-byte, and their CI runs the
-`verify-fleet-scripts` published action, which fails when a vendored copy
-drifts from this one. Behavioral changes land here first; consumers then
-re-copy the file (their CI names the exact file until they do). There is
-no manual keep-in-sync contract anymore.
+This is the only copy of the watcher in the fleet (#1307, de-vendored in
+#1328): it lives in `packages/fleet-tools` and consumer repos do not carry
+the script. On any machine with the fleet tools installed
+(`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`;
+the runner image bakes the same) it is on PATH as `fleet-watch-prs`, so
+sessions in any repo run the identical command.

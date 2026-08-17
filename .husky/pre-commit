@@ -5,6 +5,6 @@ set -e
 export NX_TUI=false
 export NX_DAEMON=false
 
-./tools/require-feature-worktree.sh
+./packages/fleet-tools/bin/require-feature-worktree.sh
 
 pnpm exec lint-staged
