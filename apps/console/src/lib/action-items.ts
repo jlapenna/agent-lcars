@@ -4,7 +4,6 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 
 import { agentFleetLogin, maintainerLogin } from './deployment';
-import { type DispatchLedger } from './dispatch-ledger';
 import {
   getGithubClient,
   getWatchedRepos,
@@ -120,11 +119,6 @@ export interface ActionItem {
    * explanation of what looks wrong despite GitHub reporting success (see
    * `run-classification.ts`'s `deriveSilentErrorDiagnoses`). */
   silentErrorDiagnosis?: string;
-  /** Parsed dispatch-broker ledger for this task, when its comment window
-   * was fetched (see `wantsComments`) and carried a well-formed one -
-   * `logical-work.ts`'s `deriveLogicalWork` uses this as the authoritative
-   * intent/attempt lineage source (agent-lcars#306). */
-  ledger?: DispatchLedger;
 }
 
 export interface ActionItemsResult {
@@ -413,7 +407,6 @@ export function classifyIssue(
     failingChecks,
     ciRunning,
     unresolvedReviewThreadCount,
-    ledger: enrichment?.ledger,
   };
   return { item, warnings };
 }
@@ -680,10 +673,10 @@ export async function getActionItems(): Promise<ActionItemsResult> {
     const assignees = (issue.assignees ?? []).map((a) => a?.login ?? '');
     // The first three conditions mirror classifyIssue's own condition for
     // reading comments at all (last-comment preview / takeover command).
-    // The fourth is new for #306: any item carrying an agent pipeline label
-    // is a candidate for a pinned dispatch-broker ledger comment, and
-    // `toEnrichment` (item-enrichment.ts) only ever gets a chance to parse
-    // one out of a comment window this app actually fetched.
+    // The fourth (#306): any item carrying an agent pipeline label may have
+    // agent activity worth previewing even before the fleet claims it, and
+    // `toEnrichment` (item-enrichment.ts) only ever scans a comment window
+    // this app actually fetched.
     group.requests.push({
       number: issue.number,
       isPr: Boolean(issue.pull_request),

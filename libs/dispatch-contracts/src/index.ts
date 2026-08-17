@@ -6,54 +6,6 @@
  */
 
 export type {
-  FailureClassification,
-  FailurePhase,
-  FailureReason,
-  OwningSystem,
-  RetryDisposition,
-} from './failure';
-export {
-  AUTOMATICALLY_RETRYABLE_DISPOSITIONS,
-  classifyFailure,
-  FAILURE_PHASES,
-  FAILURE_REASONS,
-  formatFailure,
-  isAutomaticallyRetryable,
-  isWellFormedFailureClassification,
-  needsMaintainer,
-  OWNING_SYSTEMS,
-  PHASE_OWNERS,
-  RETRY_DISPOSITIONS,
-} from './failure';
-export type {
-  DispatchLedger,
-  LedgerAnomaly,
-  LedgerAuthorization,
-  LedgerAuthorizationDecision,
-  LedgerAuthorizationObservation,
-  LedgerCommentExtraction,
-  LedgerControl,
-  LedgerGeneration,
-  LedgerGenerationState,
-  LedgerRunAttempt,
-  LedgerSource,
-  LedgerTaskRef,
-} from './ledger';
-export {
-  extractLedgerComment,
-  hasLedgerMarker,
-  isPlainObject,
-  isWellFormedAnomaly,
-  isWellFormedGeneration,
-  isWellFormedLedger,
-  isWellFormedSource,
-  LEDGER_ACTIVE_GENERATION_STATES,
-  LEDGER_GENERATION_STATES,
-  LEDGER_MARKER,
-  LEDGER_SCHEMA,
-  renderLedgerComment,
-} from './ledger';
-export type {
   AgentResultClaim,
   AttemptMarker,
   ClaimArtifactType,
@@ -72,15 +24,7 @@ export {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
 } from './oidc';
-export type { DispatchOutcomeKind, DispatchOutcomeReference } from './outcomes';
-export {
-  DISPATCH_OUTCOME_KINDS,
-  dispatchOutcomeKindSchema,
-  dispatchOutcomeReferenceSchema,
-  isDispatchOutcomeKind,
-  isDispatchOutcomeReference,
-  isFailureOutcomeKind,
-} from './outcomes';
+export type { DispatchOutcomeKind } from './outcomes';
 export type {
   AgentPipeline,
   DispatchPipeline,
@@ -100,16 +44,6 @@ export {
   WORKER_WORKFLOW_FILES,
   workerWorkflow,
 } from './pipelines';
-export type {
-  ProjectionConvergenceState,
-  ProjectionStatus,
-} from './projection';
-export {
-  isWellFormedProjectionStatus,
-  PROJECTION_CONVERGENCE_STATES,
-  projectionConvergenceStateSchema,
-  projectionStatusSchema,
-} from './projection';
 export type { QuickTaskIdentity } from './quick-task';
 export {
   formatQuickTaskMarker,

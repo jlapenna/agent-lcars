@@ -209,13 +209,13 @@ test.describe('populated dashboard', () => {
     // is no longer collapsed away - both rows render, grouped under one
     // visible duplicate-attempt anomaly, never silently reduced to one.
     const duplicateGroup = page.getByTestId(
-      `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}`,
+      `live-run-group-${E2E_ITEM_NUMBERS.duplicateDispatch}`,
     );
     await expect(duplicateGroup).toBeVisible();
     await expect(duplicateGroup.getByTestId('current-run-row')).toHaveCount(2);
     await expect(duplicateGroup).not.toContainText('[dispatch:');
     const duplicateAlert = page.getByTestId(
-      `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}-duplicate`,
+      `live-run-group-${E2E_ITEM_NUMBERS.duplicateDispatch}-duplicate`,
     );
     await expect(duplicateAlert).toBeVisible();
     await expect(duplicateAlert).toContainText('2 claude');
@@ -237,16 +237,14 @@ test.describe('populated dashboard', () => {
   test('the primary Open task action reaches the canonical task page with the duplicate-attempt anomaly (#306)', async ({
     page,
   }) => {
-    // #1183/#1187: task-detail.ts's provenance line now reads real
-    // `@agent-lcars/orchestrator` state (authoritative-task-state.ts), not
-    // the legacy dispatch-broker ledger this fixture issue also carries
-    // (see e2e-github-fixtures.ts's authoritativeLedgerFixture) - seed a
-    // matching orchestrator task directly against the emulator so this
+    // #1183/#1187: task-detail.ts's provenance line reads real
+    // `@agent-lcars/orchestrator` state (authoritative-task-state.ts) - seed
+    // a matching orchestrator task directly against the emulator so this
     // assertion exercises the real provenance path rather than the "no
     // authoritative lifecycle state" fallback (see orchestrator-seed.ts's
     // own doc comment for why a direct emulator write here is safe).
     await seedOrchestratorTask({
-      issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+      issue: E2E_ITEM_NUMBERS.duplicateDispatch,
       pipeline: 'claude',
       requestId: 'e2e-fixture-seed:populated-dashboard:9008',
     });
@@ -254,7 +252,7 @@ test.describe('populated dashboard', () => {
     await page.goto('/');
 
     const duplicateGroup = page.getByTestId(
-      `live-run-group-${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}`,
+      `live-run-group-${E2E_ITEM_NUMBERS.duplicateDispatch}`,
     );
     const primaryAction = duplicateGroup
       .getByTestId('current-run-primary-action')
@@ -264,7 +262,7 @@ test.describe('populated dashboard', () => {
 
     await expect(page).toHaveURL(
       new RegExp(
-        `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}$`,
+        `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.duplicateDispatch}$`,
       ),
     );
 
@@ -276,7 +274,7 @@ test.describe('populated dashboard', () => {
     // anomaly banner explains why there are two of them. This duplicate-
     // attempt anomaly is derived fresh from the live attempts themselves
     // (duplicateAttemptAnomalies in logical-work.ts), independent of any
-    // ledger or orchestrator record, so it still renders correctly here.
+    // orchestrator record, so it still renders correctly here.
     const attempts = card.getByTestId('logical-work-attempts');
     await expect(attempts.getByText(/queued/).first()).toBeVisible();
     await expect(attempts.getByText(/running/).first()).toBeVisible();
@@ -289,13 +287,8 @@ test.describe('populated dashboard', () => {
     // idempotent-by-requestId contract keeps this at rev 1 across retries
     // (the request always refuses as `duplicate-request` against the same
     // still-live run rather than minting a second one, so the task's
-    // storage revision never advances past its first successful write). The
-    // ledger-generation-only "Dispatch intents" list this used to also
-    // assert on (`g1`/`via labeled`) still never renders: the orchestrator
-    // has no such concept at all, so `work.intents` stays empty regardless
-    // of provenance - see logical-work-card.tsx's own conditional guard.
+    // storage revision never advances past its first successful write).
     await expect(card).toContainText('authoritative state rev 1');
-    await expect(card.getByTestId('logical-work-intents')).toHaveCount(0);
   });
 
   test('renders the sessions archive and an issue-agent detail page', async ({

@@ -54,7 +54,7 @@ interface AttemptLike {
  * attempt. This derives it from the intent and generation rather than minting
  * a fresh random value, for a specific reason: GitHub's API does not return a
  * run's dispatch-time inputs on the run object, so `display_title` is the only
- * channel a bound run and a ledger entry actually share. A minted ID would
+ * channel a bound run and an orchestrator run record actually share. A minted ID would
  * therefore have to be encoded into the run title anyway — at which point it
  * is a second identifier that can disagree with the marker already there.
  *

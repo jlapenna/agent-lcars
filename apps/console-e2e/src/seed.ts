@@ -33,14 +33,9 @@ export const E2E_ITEM_NUMBERS = {
   silentError: 9005,
   readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
-  ledgerDuplicateDispatch: 9008,
+  duplicateDispatch: 9008,
   mergeBlockedThreads: 9011,
 } as const;
-
-/** Mirrors `E2E_LEDGER_INTENT_ID` in the frontend app's
- * `lib/e2e-github-fixtures.ts` (same module-boundary reason as the ids
- * above). */
-export const E2E_LEDGER_INTENT_ID = 'e2e-fixture-intent-9008';
 
 export const E2E_ISSUE_AGENT_SESSION_ID = 'e2e-issue-agent-session';
 
