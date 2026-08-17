@@ -372,8 +372,9 @@ const COMMON_LANE_INPUTS: Record<string, InputSpec> = {
     type: 'string',
     default: '45',
   },
-  prompt: { required: true, type: 'string' },
-  'no-deliverable-reason': { required: true, type: 'string' },
+  prompt: { required: false, type: 'string', default: '' },
+  'protocol-note': { required: false, type: 'string', default: '' },
+  'no-deliverable-reason': { required: false, type: 'string', default: '' },
   'message-prefix': { required: false, type: 'string', default: '' },
 };
 
