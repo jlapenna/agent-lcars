@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Fleet-shared Renovate baseline (agent-lcars#1340 C2), consumed as",
+    "`github>jlapenna/agent-lcars//renovate-preset` by this repo, homelab,",
+    "sprinkles, and sync-padd. Carries only the common core; genuinely",
+    "repo-local policy stays in each consumer's renovate.json.",
+    "nx-cache-server keeps its deliberately stricter pin-digests config and",
+    "www/girosf have no Renovate — both stay off this preset on purpose."
+  ],
+  "extends": ["config:recommended"],
+  "labels": ["bot:renovate", "type:dependency-update"],
+  "platformAutomerge": true,
+  "rebaseWhen": "conflicted",
+  "schedule": ["after 8pm on monday"],
+  "packageRules": [
+    {
+      "description": "Group and automerge updates that preserve the declared compatibility range",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Images hosted only on LAN registries (docker-registry.lan.jlapenna.net, local/ tags) are unreachable from Renovate's hosted runner, so lookups fail as recurring 'Error obtaining docker token' repository problems. These pins are deliberate and updated by hand.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["local/**", "docker-registry.lan.jlapenna.net/**"],
+      "enabled": false
+    }
+  ]
+}

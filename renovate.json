@@ -1,51 +1,23 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
+    "github>jlapenna/agent-lcars//renovate-preset",
     "monorepo:nx",
     "monorepo:nextjs",
     "monorepo:react"
   ],
-  "labels": ["bot:renovate", "type:dependency-update"],
-  "platformAutomerge": true,
-  "rebaseWhen": "conflicted",
-  "schedule": ["after 8pm on monday"],
   "packageRules": [
     {
-      "description": "Keep pnpm on the supported 10.x line until the runtime toolchain is upgraded deliberately",
+      "description": "pnpm majors change install/lockfile semantics for the whole workspace at once (packageManager pins the exact version, currently 11.x); hold them for a deliberate toolchain upgrade rather than a bot PR",
       "enabled": false,
       "matchPackageNames": ["pnpm"],
       "matchUpdateTypes": ["major"]
-    },
-    {
-      "description": "Group and automerge updates that preserve the declared compatibility range",
-      "matchUpdateTypes": ["minor", "patch", "digest"],
-      "groupName": "all non-major dependencies",
-      "groupSlug": "all-minor-patch",
-      "automerge": true,
-      "automergeType": "pr"
     },
     {
       "description": "Resolve github.com/google/uuid through the public Go module proxy. This avoids the hosted no-result lookup while keeping Renovate checks and future updates enabled.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["github.com/google/uuid"],
       "registryUrls": ["https://proxy.golang.org"]
-    },
-    {
-      "description": "This mirror lives on a LAN-only registry (docker-registry.lan.jlapenna.net) that Renovate's runner cannot reach or authenticate to, so digest lookups always fail here. The image is already pinned deliberately and updated by hand per the instructions in apps/runner-autoscaler/runner-image/Dockerfile — disable Renovate for it rather than have it keep filing the same unfixable lookup-failure warning.",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": [
-        "docker-registry.lan.jlapenna.net/mirror/actions-runner"
-      ],
-      "enabled": false
-    },
-    {
-      "description": "Same LAN-only-registry unreachability as the mirror rule above, now also true of apps/telemetry-watcher/deploy/docker-compose.yml's own image reference (that file moved here from jlapenna/homelab in homelab#218 Phase 6; homelab's own renovate.json covered it there under a blanket docker-registry.lan.jlapenna.net/** exclusion this repo doesn't have). Updated by hand on pike via deploy/deploy.sh after canonical homelab publication.",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": [
-        "docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher"
-      ],
-      "enabled": false
     }
   ],
   "vulnerabilityAlerts": {
