@@ -98,19 +98,35 @@ covers** — the four 2026-08 additions (`www`, `girosf`, `nx-cache-server`,
 `sync-padd`) have their secret containers, service accounts, grants, and
 repo vars provisioned (#1354), so only the mint is left.
 
-1. On a workstation with no live Codex session you care about, run
-   `codex login`. Like the Claude mint, it prints an authorization URL and
-   waits — complete it in the maintainer's signed-in browser (an agent
-   with browser tooling: navigate, approve). Result: a fresh
-   `~/.codex/auth.json`.
-2. Publish it as that repo's own lineage, then remove the local copy so no
-   competing lineage exists:
+1. Mint into an **isolated `CODEX_HOME`**, not your real one. `codex login`
+   writes `$CODEX_HOME/auth.json`, and `CODEX_HOME` defaults to `~/.codex`
+   — so an unisolated mint silently replaces your own live session, once
+   per repo. Point it at a temp dir instead and nothing of yours is
+   touched:
+
+   ```bash
+   export CODEX_HOME=$(mktemp -d) && chmod 700 "$CODEX_HOME"
+   codex login          # authorization URL; complete it in a signed-in browser
+   codex login status   # prove it authenticates BEFORE it becomes the lineage
+   ```
+
+   This is why the old "run it on a workstation with no live Codex session
+   you care about" advice is obsolete: run it on your normal machine.
+
+2. Publish it as that repo's own lineage, then shred the isolated home so
+   no competing lineage is left on disk:
 
    ```bash
    gcloud secrets versions add SYNC_PADD_CODEX_AUTH_JSON \
-     --project=agent-lcars --data-file="$HOME/.codex/auth.json"
-   rm "$HOME/.codex/auth.json" # the lineage lives in Secret Manager now
+     --project=agent-lcars --data-file="$CODEX_HOME/auth.json"
+   rm -rf "$CODEX_HOME"; unset CODEX_HOME
    ```
+
+   For the four 2026-08 repos there is a script that does all of this with
+   preflight, per-repo isolation, shredding on every exit path (Ctrl-C
+   included), and a hash check that the stored bytes match what was
+   minted: `~/p/mint-fleet-codex-lineages.sh`, discussed in
+   jlapenna/homelab#758 (kept out of this public repo deliberately).
 
    Secret naming is `<REPO>_CODEX_AUTH_JSON`. **Project `agent-lcars` for
    every repo**, settled in #1354 including the two `supersprinklesracing`
