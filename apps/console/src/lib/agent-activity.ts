@@ -138,7 +138,7 @@ export function issueNumberFromDisplayTitle(
  * the identical `[dispatch:g${generation}:${intentId}]` string when binding
  * a run, both via `@agent-lcars/dispatch-contracts`' `formatDispatchMarker`).
  * Parsing it back out lets the console attribute a raw workflow run to the
- * exact ledger generation/intent that dispatched it (see `logical-work.ts`'s
+ * exact dispatch generation/intent that dispatched it (see `logical-work.ts`'s
  * `toExecutionAttempt`) instead of only knowing the issue it worked.
  * Undefined for runs that predate the broker rollout, or any run dispatched
  * by hand outside it (a manual `workflow_dispatch` leaves the input blank,

@@ -188,7 +188,7 @@ describe('getTaskDetail', () => {
     expect(result.warning).toMatch(/unavailable/);
   });
 
-  it('renders an open task with no ledger and no attempts (idle)', async () => {
+  it('renders an open task with no attempts (idle)', async () => {
     const issuesGet = vi.fn().mockResolvedValue(issueResponse());
     setupOctokit({ issuesGet });
     cachedActivity = EMPTY_ACTIVITY;
@@ -312,10 +312,6 @@ describe('getTaskDetail', () => {
     });
     expect(result.work.attempts).toHaveLength(1);
     expect(result.work.attempts[0].attribution).toBe('orchestrator');
-    // #1183: the orchestrator carries no ledger-generation concept, so the
-    // "Dispatch intents" list this used to populate stays empty - the run
-    // itself is already fully represented in `attempts` above.
-    expect(result.work.intents).toEqual([]);
     expect(result.work.state).toBe('active');
   });
 
@@ -438,7 +434,6 @@ describe('getTaskDetail', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.work.attempts[0].outcome).toBe('merged-deliverable');
-    expect(result.work.intents).toEqual([]);
   });
 
   it('resolves the watched repo for a supported owner/repo pair regardless of casing in the URL params', async () => {

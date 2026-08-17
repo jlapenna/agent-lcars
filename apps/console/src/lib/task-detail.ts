@@ -72,8 +72,8 @@ interface GithubIssueLike {
 }
 
 /**
- * Fetches the exact issue/PR plus its comment-window enrichment (ledger
- * included), cached under the same `GITHUB_DATA_TAG`/`DASHBOARD_CACHE_LIFE`
+ * Fetches the exact issue/PR plus its comment-window enrichment, cached
+ * under the same `GITHUB_DATA_TAG`/`DASHBOARD_CACHE_LIFE`
  * window as the rest of the dashboard's GitHub reads (see
  * `dashboard-data.ts`'s `getCachedActionItems`/`getCachedAgentActivity`).
  * Scoped to a single task lookup rather than widening the open-items-only
@@ -108,8 +108,7 @@ async function fetchTaskSource(
 
   const isPr = Boolean(issue.pull_request);
   // Reuses the same batched GraphQL enrichment the dashboard's board uses
-  // (item-enrichment.ts) rather than a bespoke comment fetch, so ledger
-  // parsing stays the one code path (see toEnrichment's `ledger` field).
+  // (item-enrichment.ts) rather than a bespoke comment fetch.
   const enrichment = await enrichItems(repo, [
     {
       number: issueNumber,
@@ -220,17 +219,13 @@ export async function getTaskDetail(
       (deliverable) => deliverable.number,
     ),
   );
-  // No `ledgers` map any more (#1183): the legacy dispatch-controller's
-  // `DispatchLedger` is gone from this page's own read path entirely.
-  // `deriveLogicalWork` still does the one join it's needed for here -
-  // attributing raw GitHub Actions attempts to `taskMeta`/`unavailableTaskKeys`
-  // - and degrades every task to its `legacy`/`unavailable` attempts-only
-  // provenance, exactly as it already does for any task with no ledger.
+  // `deriveLogicalWork` does the one join it's needed for here - attributing
+  // raw GitHub Actions attempts to `taskMeta`/`unavailableTaskKeys` - and
+  // yields the `legacy`/`unavailable` attempts-only provenance.
   // `applyOrchestratorTruth` below then overlays the real authoritative
   // truth - the orchestrator's own task+run history - on top of that.
   const { work } = deriveLogicalWork({
     attempts: allAttempts,
-    ledgers: new Map(),
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta: new Map([
       [
@@ -307,7 +302,7 @@ function applyOrchestratorTruth(
   const orchestratorState = stateFromOrchestratorTask(state);
   // Mirrors `deriveLogicalWork`'s own precedence (unavailable > anomaly >
   // human-needed > the derived base state) - `work.state` here is exactly
-  // that base state's result, computed with an empty `ledgers` map, so
+  // that base state's result, so
   // 'unavailable' can only mean the read genuinely failed (in which case
   // `state` above would also be undefined) and 'anomaly'/'human-needed' must
   // still outrank the orchestrator's own reading of "what's active".
@@ -351,9 +346,8 @@ function stateFromOrchestratorTask(
   return latest ? 'completed' : 'unknown';
 }
 
-/** Attributes GitHub Actions attempts to orchestrator runs by the same
- * `[dispatch:gN:intentId]` run-name marker the legacy ledger join used
- * (`attributeAttemptsToLedger` in logical-work.ts) - `orchestrator-dispatch.ts`
+/** Attributes GitHub Actions attempts to orchestrator runs by the
+ * `[dispatch:gN:intentId]` run-name marker - `orchestrator-dispatch.ts`
  * mints its workflow-dispatch inputs under the identical `broker_intent_id`/
  * `broker_generation` names, with `intentId` now literally the
  * orchestrator's own `runId` (`{repo}#{issue}/r{generation}`), so the same

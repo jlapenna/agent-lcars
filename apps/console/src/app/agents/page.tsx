@@ -26,9 +26,8 @@ import {
 import {
   deriveActivityMetrics,
   deriveLogicalWork,
-  ledgerAndTaskMetaFromItems,
+  taskMetaFromItems,
 } from '../../lib/logical-work';
-import { getCachedRecentTaskEnrichment } from '../../lib/recent-task-enrichment';
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
@@ -158,13 +157,6 @@ async function AgentsPageBody({
     matchesFilter(item.repo),
   );
 
-  const recentTaskEnrichment = await getCachedRecentTaskEnrichment(
-    filteredActivity.recentRuns.flatMap((run) =>
-      run.issueNumber === undefined
-        ? []
-        : [{ repo: run.repo, issueNumber: run.issueNumber }],
-    ),
-  );
   const authoritative = await readAuthoritativeTaskStates([
     ...filteredItems.map((item) => ({
       repository: item.repo,
@@ -177,43 +169,24 @@ async function AgentsPageBody({
     ),
   ]);
   const warnings = Array.from(
-    new Set([
-      ...baseWarnings,
-      ...recentTaskEnrichment.data.warnings,
-      ...authoritative.warnings,
-    ]),
+    new Set([...baseWarnings, ...authoritative.warnings]),
   );
 
   // #306: logical-task/execution-attempt/runner-occupancy as three
   // deliberately distinct numbers (see deriveActivityMetrics's own doc
-  // comment). Ledger data comes from each item's already-fetched comment
-  // enrichment (see action-items.ts's `wantsComments` and `ActionItem.ledger`)
-  // - no new per-item API call. Attempts include both live and recently
-  // finished runs so a task whose only visible attempt just completed still
-  // counts as logical work if its ledger says so; live/queued attempts are
-  // what actually feed the queued/running counts below.
+  // comment). Attempts include both live and recently finished runs;
+  // live/queued attempts are what actually feed the queued/running counts
+  // below. The richer per-task orchestrator overlay lives on the canonical
+  // `/task/<owner>/<repo>/<issue>` page - see task-detail.ts's
+  // `applyOrchestratorTruth`; every task here renders `deriveLogicalWork`'s
+  // attempts-only `legacy`/`unavailable` provenance.
   const logicalWorkItems = filteredItems.map((item) => ({
     ...item,
     humanNeeded: item.actionTypes.includes('needs-human'),
   }));
-  const { taskMeta } = ledgerAndTaskMetaFromItems(logicalWorkItems);
-  // #1183: the legacy dispatch-controller `DispatchLedger` this board used
-  // to read via `authoritative.states` is gone - `authoritative-task-state.ts`
-  // now projects `@agent-lcars/orchestrator`'s own task+run truth instead,
-  // which `deriveLogicalWork` has no ledger-shaped join for (that richer
-  // per-task overlay lives on the canonical `/task/<owner>/<repo>/<issue>`
-  // page - see task-detail.ts's `applyOrchestratorTruth`). Every task here
-  // degrades to `deriveLogicalWork`'s existing attempts-only
-  // `legacy`/`unavailable` provenance, exactly as it already does for any
-  // task that never had a ledger.
-  const mergedDeliverables = new Map<string, ReadonlySet<number>>();
-  for (const entry of recentTaskEnrichment.data.entries) {
-    const key = repoItemKey(entry.repo, entry.issueNumber);
-    mergedDeliverables.set(key, new Set(entry.mergedDeliverableNumbers));
-  }
+  const taskMeta = taskMetaFromItems(logicalWorkItems);
   // Closed anchors are absent from the open-item board. Seed their metadata
-  // from the exact recent run so the newly fetched ledger is not rendered as
-  // an anonymous task, and so its exact run/outcome join remains visible.
+  // from the exact recent run so it is not rendered as an anonymous task.
   for (const run of filteredActivity.recentRuns) {
     if (run.issueNumber === undefined) continue;
     const key = repoItemKey(run.repo, run.issueNumber);
@@ -228,10 +201,8 @@ async function AgentsPageBody({
   }
   const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
     attempts: [...filteredActivity.liveRuns, ...filteredActivity.recentRuns],
-    ledgers: new Map(),
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta,
-    mergedDeliverables,
   });
   const activityMetrics = deriveActivityMetrics(
     logicalWork,
@@ -254,17 +225,9 @@ async function AgentsPageBody({
       fleet={
         <>
           <DataFreshness
-            fetchedAt={oldestFetchedAt(
-              itemsFetchedAt,
-              activityFetchedAt,
-              recentTaskEnrichment.fetchedAt,
-            )}
+            fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
             initialLabel={formatRelativeTime(
-              oldestFetchedAt(
-                itemsFetchedAt,
-                activityFetchedAt,
-                recentTaskEnrichment.fetchedAt,
-              ),
+              oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
             )}
           />
           <FleetSnapshotBar

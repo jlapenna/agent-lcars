@@ -1,9 +1,3 @@
-import {
-  type DispatchLedger,
-  type ExpectedTask,
-  findLedgerCommentBody,
-  parseDispatchLedger,
-} from './dispatch-ledger';
 import { getGithubClient, repoKey, type WatchedRepo } from './github-client';
 
 /**
@@ -70,14 +64,6 @@ export interface ItemEnrichment {
   comments: EnrichedComment[];
   /** Absent for issues. */
   pr?: EnrichedPr;
-  /** Parsed from the pinned dispatch-broker ledger comment, when this
-   * item's comment window was fetched (see `wantsComments`) and carries a
-   * well-formed one (agent-lcars#306/agent-lcars#301) - the authoritative
-   * source for `LogicalWork`'s intent/attempt lineage (see
-   * `logical-work.ts`). Undefined for an item whose comments weren't
-   * fetched, an issue that predates the broker, or one whose ledger comment
-   * failed to parse (see `EnrichmentResult.warnings` for that last case). */
-  ledger?: DispatchLedger;
   /** Authoritative merged PRs GitHub associates with this anchor. Requested
    * only by reliability/task-detail reads; omitted from the open board's
    * ordinary enrichment to avoid paying for unused graph nodes. For a PR
@@ -304,19 +290,10 @@ function toReviewThreads(item: RawItem): {
   };
 }
 
-interface EnrichmentOutcome {
-  enrichment: ItemEnrichment;
-  /** A ledger comment was present but failed to parse - see
-   * `parseDispatchLedger`'s own doc comment for why this degrades to a
-   * warning rather than dropping the item's enrichment entirely. */
-  warning?: string;
-}
-
 function toEnrichment(
   item: RawItem,
-  expectedTask: ExpectedTask,
   wantsMergedDeliverables: boolean,
-): EnrichmentOutcome {
+): ItemEnrichment {
   const comments = (item.comments?.nodes ?? []).flatMap((node) =>
     node?.body
       ? [
@@ -328,22 +305,6 @@ function toEnrichment(
         ]
       : [],
   );
-
-  // Only ever set when this item's comment window was fetched at all (see
-  // `wantsComments`) - an item that skipped the comments field has no
-  // window to scan, so `ledger` stays undefined rather than reading as "no
-  // ledger comment exists." `expectedTask` is cross-checked against the
-  // parsed comment's own `task` field (see `parseDispatchLedger`'s doc
-  // comment) so a structurally valid ledger comment that actually names a
-  // different issue/repo is rejected rather than misattributed to this one.
-  const ledgerCommentBody = findLedgerCommentBody(comments);
-  let ledger: DispatchLedger | undefined;
-  let warning: string | undefined;
-  if (ledgerCommentBody) {
-    const parsed = parseDispatchLedger(ledgerCommentBody, expectedTask);
-    ledger = parsed.ledger;
-    warning = parsed.warning;
-  }
 
   if (item.__typename !== 'PullRequest') {
     const mergedDeliverables = wantsMergedDeliverables
@@ -359,10 +320,7 @@ function toEnrichment(
             : [],
         )
       : undefined;
-    return {
-      enrichment: { comments, ledger, mergedDeliverables },
-      warning,
-    };
+    return { comments, mergedDeliverables };
   }
 
   const mergeState = lower(item.mergeStateStatus) ?? 'unknown';
@@ -370,37 +328,31 @@ function toEnrichment(
   const { unresolvedReviewThreadCount, reviewThreadsTruncated } =
     toReviewThreads(item);
   return {
-    enrichment: {
-      comments,
-      ledger,
-      mergedDeliverables: wantsMergedDeliverables
-        ? item.number && item.url && item.mergedAt
-          ? [
-              {
-                number: item.number,
-                url: item.url,
-                mergedAt: item.mergedAt,
-              },
-            ]
-          : []
-        : undefined,
-      pr: {
-        draft: item.isDraft ?? false,
-        mergeableState: MERGE_STATES.has(mergeState) ? mergeState : 'unknown',
-        body: item.body,
-        requestedReviewerLogins: (item.reviewRequests?.nodes ?? []).flatMap(
-          (node) =>
-            node?.requestedReviewer?.login
-              ? [node.requestedReviewer.login]
-              : [],
-        ),
-        checkRuns,
-        checksTruncated,
-        unresolvedReviewThreadCount,
-        reviewThreadsTruncated,
-      },
+    comments,
+    mergedDeliverables: wantsMergedDeliverables
+      ? item.number && item.url && item.mergedAt
+        ? [
+            {
+              number: item.number,
+              url: item.url,
+              mergedAt: item.mergedAt,
+            },
+          ]
+        : []
+      : undefined,
+    pr: {
+      draft: item.isDraft ?? false,
+      mergeableState: MERGE_STATES.has(mergeState) ? mergeState : 'unknown',
+      body: item.body,
+      requestedReviewerLogins: (item.reviewRequests?.nodes ?? []).flatMap(
+        (node) =>
+          node?.requestedReviewer?.login ? [node.requestedReviewer.login] : [],
+      ),
+      checkRuns,
+      checksTruncated,
+      unresolvedReviewThreadCount,
+      reviewThreadsTruncated,
     },
-    warning,
   };
 }
 
@@ -448,16 +400,10 @@ export async function enrichItems(
     for (const request of chunk) {
       const raw = repository[alias(request.number)];
       if (!raw) continue;
-      const { enrichment, warning } = toEnrichment(
-        raw,
-        {
-          repository: repoKey(repo),
-          issue: request.number,
-        },
-        Boolean(request.wantsMergedDeliverables),
+      byNumber.set(
+        request.number,
+        toEnrichment(raw, Boolean(request.wantsMergedDeliverables)),
       );
-      byNumber.set(request.number, enrichment);
-      if (warning) warnings.push(warning);
     }
   }
   return { byNumber, warnings };

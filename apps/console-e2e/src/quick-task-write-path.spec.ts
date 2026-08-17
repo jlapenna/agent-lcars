@@ -18,17 +18,14 @@ import { seedOrchestratorTask } from './util/orchestrator-seed';
  * `lib/e2e-github-fixtures.ts` that now behaves like a small stateful
  * GitHub - it assigns a real-looking incrementing issue number, remembers
  * the created issue so a later idempotency-lookup GET reflects it, and
- * synthesizes the pinned dispatch-ledger comment plus bound workflow run a
- * real router + broker + worker would eventually produce for the same
- * create+label write (this suite never runs the actual broker action - see
- * that doc's security boundary).
+ * synthesizes the marker-carrying workflow run a real router + dispatcher +
+ * worker would eventually produce for the same create+label write (this
+ * suite never runs the actual dispatch - see that doc's security boundary).
  *
  * Together these prove, end to end and through real UI interaction:
  *  - canonical `TaskRef` identity (docs/quick-task-identity.md);
  *  - the one-write `intake:quick-task` + routed `agent:*` label contract;
  *  - request-ID idempotency (a retried request returns the same issue);
- *  - the broker's decision (ledger comment) rendering as one dispatch
- *    intent;
  *  - attempt presentation via #306's LogicalWork/ExecutionAttempt UI
  *    (already on main);
  *  - a definitive 4xx failing closed with no phantom issue.
@@ -178,14 +175,13 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     );
     await expect(page.getByRole('dialog')).toBeHidden();
 
-    // #1183/#1187: this fixture's quick-task creation still only simulates
-    // the legacy dispatch-broker's Firestore ledger write (a GitHub-comment
-    // fixture, not something the console reads any more), so seed a real
-    // `@agent-lcars/orchestrator` task directly against the emulator for
-    // this dynamically-created issue - same as populated-dashboard.spec.ts's
-    // #9008 case (see orchestrator-seed.ts's own doc comment for why a
-    // direct emulator write here is safe). The exact pipeline value doesn't
-    // matter: only the LogicalWork provenance line reads it exists at all -
+    // #1183/#1187: this fixture's quick-task creation only simulates the
+    // GitHub-side write, so seed a real `@agent-lcars/orchestrator` task
+    // directly against the emulator for this dynamically-created issue -
+    // same as populated-dashboard.spec.ts's #9008 case (see
+    // orchestrator-seed.ts's own doc comment for why a direct emulator
+    // write here is safe). The exact pipeline value doesn't matter: only
+    // the LogicalWork provenance line reads it exists at all -
     // state/attempts/anomalies below all come from the GitHub-side fixture,
     // never from the orchestrator seed.
     await seedOrchestratorTask({
@@ -206,18 +202,13 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
 
     // The orchestrator task seeded above gives the page a real authoritative
     // revision to render - stays at rev 1 even under Nx's CI test retries
-    // (seedOrchestratorTask's own idempotent-by-requestId contract). The
-    // ledger-generation-only "Dispatch intents" list this used to also
-    // assert on still never renders: the orchestrator has no such concept at
-    // all, so `work.intents` stays empty regardless of provenance - see
-    // logical-work-card.tsx's own conditional guard.
+    // (seedOrchestratorTask's own idempotent-by-requestId contract).
     await expect(card).toContainText('authoritative state rev 1');
-    await expect(card.getByTestId('logical-work-intents')).toHaveCount(0);
 
     // Attempt presentation (#306's ExecutionAttempt UI): one running attempt
     // bound to the fixture's own run-name marker - never collapsed, never a
     // bare title guess. Its attribution reads `run marker` rather than
-    // `ledger`/`orchestrator` (neither authoritative source corroborates it
+    // `orchestrator` (the authoritative source doesn't corroborate it
     // here), but the marker-derived generation badge still renders.
     const attempts = card.getByTestId('logical-work-attempts');
     await expect(attempts).toContainText('Execution attempts (1)');

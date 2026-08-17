@@ -1,5 +1,4 @@
 import { agentFleetLogin, maintainerLogin } from './deployment';
-import { type DispatchLedger, LEDGER_MARKER } from './dispatch-ledger';
 import {
   E2E_FIXTURE_BRANCH,
   E2E_FIXTURE_PR_NUMBER,
@@ -42,10 +41,8 @@ export const E2E_FIXTURE_REPO = {
   name: 'sprinkles',
 } as const;
 
-/** Stand-in for the real repo's numeric GitHub ID, which a ledger's `task`
- * carries (`LedgerTaskRef.repositoryId`) but nothing in this fixture suite
- * otherwise needs to look up. Numbered well clear of anything real, same as
- * `E2E_ITEM_NUMBERS`. */
+/** Stand-in for the real repo's numeric GitHub ID. Numbered well clear of
+ * anything real, same as `E2E_ITEM_NUMBERS`. */
 export const E2E_FIXTURE_REPOSITORY_ID = 900000000;
 
 /** Numbered well clear of anything real so a fixture leaking into a live
@@ -58,14 +55,13 @@ export const E2E_ITEM_NUMBERS = {
   silentError: 9005,
   readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
-  /** Carries a pinned dispatch-ledger comment AND two live workflow
-   * attempts of the same ledger generation (see `E2E_RUN_IDS.running` /
-   * `duplicateQueued`) - the #306 duplicate-attempt-anomaly scenario, with
-   * real ledger attribution behind it. Off the board on purpose (no
-   * board-qualifying label/assignee): the In Flight panel's "attempt
-   * history" link is what reaches its `/task/.../9008` detail page, not the
-   * board. */
-  ledgerDuplicateDispatch: 9008,
+  /** Carries two live workflow attempts bound to the same dispatch
+   * generation/intent marker (see `E2E_RUN_IDS.running` /
+   * `duplicateQueued`) - the #306 duplicate-attempt-anomaly scenario. Off
+   * the board on purpose (no board-qualifying label/assignee): the In
+   * Flight panel's "attempt history" link is what reaches its
+   * `/task/.../9008` detail page, not the board. */
+  duplicateDispatch: 9008,
   /** #538: green checks, no requested reviewer, mergeStateStatus BLOCKED
    * with real unresolved review threads - the retro (#521) scenario a
    * `gh pr checks` glance and an empty `reviewDecision` gave no hint about. */
@@ -101,66 +97,12 @@ const minutesAgo = (minutes: number) => secondsAgo(minutes * 60);
 const itemUrl = (number: number, kind: 'issues' | 'pull') =>
   `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/${kind}/${number}`;
 
-/** Shared by the ledger fixture below and the two duplicate live-attempt
- * run-name markers in FIXTURE_RUNS - both attempts deliberately carry the
- * SAME generation/intent, since that is exactly the anomaly #306's
+/** Shared by the two duplicate live-attempt run-name markers in
+ * FIXTURE_RUNS - both attempts deliberately carry the SAME
+ * generation/intent, since that is exactly the anomaly #306's
  * `deriveLogicalWork` exists to surface (two attempts genuinely bound to
  * one dispatch, not two different generations racing). */
-export const E2E_LEDGER_INTENT_ID = 'e2e-fixture-intent-9008';
-
-/**
- * A validated `agent-lcars.dispatch-ledger/v1` payload (see
- * dispatch-ledger.ts), standing in for what the dispatch broker
- * (`apps/dispatch-broker/src/broker.ts`) would have pinned to the
- * issue. Only `E2E_RUN_IDS.running` is actually bound in the ledger's own
- * `attempt` field - `duplicateQueued` shares its marker but was never the
- * generation's recorded binding, mirroring a genuinely anomalous second
- * dispatch rather than a normal retry.
- */
-export function authoritativeLedgerFixture(): DispatchLedger {
-  const sourceId = 'e2e-fixture-source-9008';
-  return {
-    schema: 'agent-lcars.dispatch-ledger/v1',
-    revision: 2,
-    task: {
-      repositoryId: E2E_FIXTURE_REPOSITORY_ID,
-      repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
-      issue: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
-    },
-    createdAt: minutesAgo(13),
-    updatedAt: minutesAgo(1),
-    control: { closed: false },
-    sources: [
-      {
-        sourceKind: 'labeled',
-        sourceId,
-        transportRunId: 500009008,
-        occurredAt: minutesAgo(13),
-      },
-    ],
-    generations: [
-      {
-        generation: 1,
-        intentId: E2E_LEDGER_INTENT_ID,
-        sourceId,
-        occurredAt: minutesAgo(13),
-        pipeline: 'claude',
-        mode: 'implement',
-        state: 'active',
-        attempt: { runId: E2E_RUN_IDS.running, status: 'in_progress' },
-      },
-    ],
-    anomalies: [],
-  };
-}
-
-/** Renders the same marker+JSON-block shape broker.mjs's own
- * `renderLedgerComment` produces (see that function's doc comment) - only
- * the human-readable summary line is simplified, since nothing here reads
- * it. */
-function ledgerCommentBody(ledger: DispatchLedger): string {
-  return `${LEDGER_MARKER}\nDispatch broker: g1 claude is active.\n\n\`\`\`json\n${JSON.stringify(ledger)}\n\`\`\``;
-}
+const E2E_DUPLICATE_INTENT_ID = 'e2e-fixture-intent-9008';
 
 interface FixtureItem {
   number: number;
@@ -339,12 +281,12 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     updatedAt: minutesAgo(52),
   },
   {
-    number: E2E_ITEM_NUMBERS.ledgerDuplicateDispatch,
+    number: E2E_ITEM_NUMBERS.duplicateDispatch,
     title: 'feat(console): repo filter chips',
     body: '',
     isPr: false,
     // No board-qualifying label/assignee on purpose - see this number's own
-    // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments/ledger)
+    // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments)
     // via item-enrichment.ts and readable via GET /issues/{number}
     // (task-detail.ts), both of which key off FIXTURE_ITEMS directly rather
     // than the filtered board.
@@ -352,17 +294,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     assignees: [],
     author: MAINTAINER,
     updatedAt: minutesAgo(1),
-    comments: [
-      {
-        author: FLEET,
-        // Deliberately stale: the authoritative fixture remains active and
-        // proves this compatibility projection cannot change console state.
-        body: ledgerCommentBody(authoritativeLedgerFixture()).replace(
-          '"state":"active"',
-          '"state":"completed"',
-        ),
-      },
-    ],
   },
 ];
 
@@ -384,12 +315,12 @@ const FIXTURE_RUNS: FixtureRun[] = [
     status: 'in_progress',
     conclusion: null,
     // Board membership is intentionally NOT what makes this render in In
-    // Flight (see E2E_ITEM_NUMBERS.ledgerDuplicateDispatch's own comment) -
+    // Flight (see E2E_ITEM_NUMBERS.duplicateDispatch's own comment) -
     // pointing a live run at, say, the run-failed fixture would hide the
-    // very card this fixture set exists to render. Carries the ledger's
-    // real generation/intent marker (E2E_LEDGER_INTENT_ID) so this attempt
-    // gets `ledger` attribution, not just a bare title-number parse.
-    displayTitle: `#${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_LEDGER_INTENT_ID}]`,
+    // very card this fixture set exists to render. Carries a real
+    // generation/intent marker (E2E_DUPLICATE_INTENT_ID) so this attempt
+    // gets `run-marker` attribution, not just a bare title-number parse.
+    displayTitle: `#${E2E_ITEM_NUMBERS.duplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_DUPLICATE_INTENT_ID}]`,
     createdAt: minutesAgo(13),
     startedAt: minutesAgo(12),
     updatedAt: minutesAgo(1),
@@ -409,13 +340,13 @@ const FIXTURE_RUNS: FixtureRun[] = [
     workflow: 'claude.yml',
     status: 'queued',
     conclusion: null,
-    // #306: same logical work AND the same ledger generation/intent as
+    // #306: same logical work AND the same generation/intent marker as
     // `running` above - a genuine duplicate dispatch, not a second
     // pipeline racing the item. The GitHub API really does expose both
     // attempts; the console must render both, grouped with a visible
     // duplicate-attempt anomaly, never silently pick one (see
     // agent-activity-panel.tsx's `duplicatePipelineSummary`).
-    displayTitle: `#${E2E_ITEM_NUMBERS.ledgerDuplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_LEDGER_INTENT_ID}]`,
+    displayTitle: `#${E2E_ITEM_NUMBERS.duplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_DUPLICATE_INTENT_ID}]`,
     // Past QUEUE_STALL_THRESHOLD_SECONDS (300), so queue health must still
     // inspect this raw attempt and render the stall alert even though the
     // group's other attempt is already running.
@@ -594,10 +525,9 @@ export function reassignFixtureIssuePipeline(
  * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
  * writes through `AGENT_CONSOLE_GITHUB_API_BASE_URL` - the claim tag/ref
- * ledger, the issue itself, and (standing in for the dispatch broker this
- * suite never runs for real - see docs/e2e-security-boundary.md) the pinned
- * `agent-lcars.dispatch-ledger/v1` comment and bound workflow run a
- * successful create+label write would eventually produce.
+ * ledger, the issue itself, and (standing in for the dispatcher this suite
+ * never runs for real - see docs/e2e-security-boundary.md) the bound
+ * workflow run a successful create+label write would eventually produce.
  *
  * Lives on `globalThis` for the same reason `POPULATED_KEY` does: Next
  * bundles `/api/e2e/github/*` and `/api/e2e/seed` as separate route modules
@@ -721,15 +651,13 @@ export function deleteQuickTaskClaimRef(ref: string): boolean {
 }
 
 /**
- * Creates the issue AND immediately synthesizes what a real deployment's
- * router + dispatch broker + worker would eventually produce from that
- * same create+label write: one accepted, dispatched, and bound generation
- * (`agent-lcars.dispatch-ledger/v1`) pinned as a comment, plus the workflow
- * run it bound to. This suite never runs the actual broker action (see
- * docs/e2e-security-boundary.md) - the point is that everything downstream
- * of this write (the console's own GET/GraphQL polling and
- * `deriveLogicalWork` rendering) still runs for real against a plausible,
- * internally-consistent end state.
+ * Creates the issue AND immediately synthesizes the marker-carrying workflow
+ * run a real deployment's router + dispatcher + worker would eventually
+ * produce from that same create+label write. This suite never runs the
+ * actual dispatch (see docs/e2e-security-boundary.md) - the point is that
+ * everything downstream of this write (the console's own GET/GraphQL
+ * polling and `deriveLogicalWork` rendering) still runs for real against a
+ * plausible, internally-consistent end state.
  */
 export function recordQuickTaskIssue(params: {
   title: string;
@@ -749,40 +677,6 @@ export function recordQuickTaskIssue(params: {
   const now = new Date().toISOString();
 
   const intentId = `e2e-quick-task-intent-${number}`;
-  const sourceId = `e2e-quick-task-source-${number}`;
-  const ledger: DispatchLedger = {
-    schema: 'agent-lcars.dispatch-ledger/v1',
-    revision: 1,
-    task: {
-      repositoryId: E2E_FIXTURE_REPOSITORY_ID,
-      repository: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
-      issue: number,
-    },
-    createdAt: now,
-    updatedAt: now,
-    control: { closed: false },
-    sources: [
-      {
-        sourceKind: 'labeled',
-        sourceId,
-        transportRunId: runId,
-        occurredAt: now,
-      },
-    ],
-    generations: [
-      {
-        generation: 1,
-        intentId,
-        sourceId,
-        occurredAt: now,
-        pipeline: params.pipeline,
-        mode: 'implement',
-        state: 'active',
-        attempt: { runId, status: 'in_progress' },
-      },
-    ],
-    anomalies: [],
-  };
 
   // Mirrors claude.yml/codex.yml/opencode.yml's real run-name templates:
   // claude has no pipeline prefix, codex/opencode repeat their own name
@@ -807,7 +701,7 @@ export function recordQuickTaskIssue(params: {
     body: params.body,
     labels: params.labels,
     createdAt: now,
-    comments: [{ author: FLEET, body: ledgerCommentBody(ledger) }],
+    comments: [],
   });
 
   return {
@@ -1013,7 +907,7 @@ export function openPulls() {
  */
 export function enrichmentGraphql() {
   // Quick Task-created issues are merged in unconditionally (unlike the
-  // FIXTURE_ITEMS loop below): `getTaskDetail`'s ledger/comment read must
+  // FIXTURE_ITEMS loop below): `getTaskDetail`'s comment read must
   // work regardless of whether populated mode is on, the same as `issue()`
   // above.
   const repository: Record<string, unknown> = quickTaskGraphqlEntries();

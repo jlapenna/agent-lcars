@@ -938,11 +938,8 @@ describe('getActionItems', () => {
     // Dispatched-but-unclaimed (runner never started): there is no session
     // yet, so there is no takeover command to find - the claim assignee,
     // not the dispatch label, is what says a session exists (#2783). #306
-    // changed the OTHER reason the comment window matters, though: an
-    // agent-labeled item is exactly the kind that may carry a pinned
-    // dispatch-broker ledger comment (see item-enrichment.ts's `ledger`
-    // field), so the window is now requested for it - still one batched
-    // GraphQL query per repo, not a new per-item call.
+    // still requests the comment window for an agent-labeled item - one
+    // batched GraphQL query per repo, not a new per-item call.
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(44, { labels: ['agent:claude'], comments: 3 }),
@@ -955,7 +952,6 @@ describe('getActionItems', () => {
 
     expect(result.items.map((i) => i.number)).toEqual([44]);
     expect(result.items[0].takeoverCommand).toBeUndefined();
-    expect(result.items[0].ledger).toBeUndefined();
     expect(graphql.queries[0]).toContain('comments(');
   });
 

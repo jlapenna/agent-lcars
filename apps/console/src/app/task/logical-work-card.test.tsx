@@ -43,7 +43,7 @@ function makeAttempt(
     createdAt: '2026-07-07T00:00:00Z',
     updatedAt: '2026-07-07T00:00:00Z',
     elapsedSeconds: 90,
-    attribution: 'ledger',
+    attribution: 'run-marker',
     generation: 1,
     intentId: 'intent-abc',
     ...overrides,
@@ -57,20 +57,9 @@ function makeWork(overrides: Partial<LogicalWork> = {}): LogicalWork {
     url: 'https://github.com/supersprinklesracing/sprinkles/issues/42',
     selectedPipeline: 'claude',
     state: 'active',
-    intents: [
-      {
-        intentId: 'intent-abc',
-        generation: 1,
-        sourceKind: 'labeled',
-        occurredAt: '2026-07-07T00:00:00Z',
-        pipeline: 'claude',
-        mode: 'implement',
-        state: 'active',
-      },
-    ],
     attempts: [makeAttempt()],
     anomalies: [],
-    provenance: { kind: 'ledger-v1', revision: 3 },
+    provenance: { kind: 'authoritative-v1', revision: 3 },
     ...overrides,
   };
 }
@@ -185,23 +174,9 @@ describe('LogicalWorkCard', () => {
     expect(within(attempt).getByText('timeout')).toBeTruthy();
   });
 
-  it('renders each dispatch intent with its generation and source kind', () => {
-    renderCard();
-    const intents = screen.getByTestId('logical-work-intents');
-    expect(within(intents).getByText('g1')).toBeTruthy();
-    expect(within(intents).getByText('via labeled')).toBeTruthy();
-  });
-
-  it('renders broker outcomes separately from the workflow conclusion', () => {
+  it('renders attempt outcomes separately from the workflow conclusion', () => {
     renderCard(
       makeWork({
-        intents: [
-          {
-            ...makeWork().intents[0],
-            state: 'completed',
-            outcome: 'no-op',
-          },
-        ],
         attempts: [
           makeAttempt({
             status: 'completed',
@@ -212,29 +187,9 @@ describe('LogicalWorkCard', () => {
       }),
     );
 
-    const intents = screen.getByTestId('logical-work-intents');
-    expect(within(intents).getByText('no-op')).toBeTruthy();
     const attempt = screen.getByTestId('logical-work-attempt-1');
     expect(within(attempt).getByText('failed')).toBeTruthy();
     expect(within(attempt).getByText('startup failure')).toBeTruthy();
-  });
-
-  it('auto-opens the intent disclosure when the task carries an anomaly', () => {
-    renderCard(
-      makeWork({
-        state: 'anomaly',
-        anomalies: [
-          {
-            kind: 'duplicate-active-attempts',
-            detail: '2 claude attempts live',
-          },
-        ],
-      }),
-    );
-    const intents = screen.getByTestId(
-      'logical-work-intents',
-    ) as HTMLDetailsElement;
-    expect(intents.open).toBe(true);
   });
 
   it('renders every anomaly as a visible alert (never a silent collapse)', () => {
@@ -260,12 +215,7 @@ describe('LogicalWorkCard', () => {
   });
 
   it('shows a legacy-provenance note when no authoritative state backs the task', () => {
-    renderCard(
-      makeWork({
-        provenance: { kind: 'legacy' },
-        intents: [],
-      }),
-    );
+    renderCard(makeWork({ provenance: { kind: 'legacy' } }));
     expect(screen.getByText(/no authoritative lifecycle state/)).toBeTruthy();
   });
 

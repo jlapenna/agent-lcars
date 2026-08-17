@@ -27,8 +27,6 @@ import {
 } from '../agent-activity-panel';
 import { formatDuration } from '../format';
 import { lcarsPanelStyle } from '../lcars';
-import { PersistedDetails } from '../persisted-details';
-import { RelativeTime } from '../relative-time';
 import { RunsSection } from './runs-section';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
@@ -54,7 +52,6 @@ const STATE_COLORS: Record<LogicalWorkState, string> = {
 };
 
 const ATTRIBUTION_LABELS: Record<AttemptAttribution, string> = {
-  ledger: 'ledger',
   orchestrator: 'orchestrator',
   'run-marker': 'run marker',
   'legacy-title': 'legacy title',
@@ -91,7 +88,7 @@ function attemptStatusBadge(attempt: ExecutionAttempt): {
 
 /**
  * The canonical logical-task card (#306): task identity, current state, the
- * intent (ledger generation) history, the orchestrator's own run history
+ * orchestrator's own run history
  * (when any exists), and every legacy execution attempt with nothing
  * collapsed away. Anomalies render as visible alerts, never a
  * silently-chosen representative row - this is the "operators can explain
@@ -161,9 +158,7 @@ export function LogicalWorkCard({
               ? `authoritative state rev ${work.provenance.revision}`
               : work.provenance.kind === 'unavailable'
                 ? 'authoritative lifecycle state unavailable'
-                : work.provenance.kind === 'ledger-v1'
-                  ? `dispatch ledger rev ${work.provenance.revision}`
-                  : 'no authoritative lifecycle state'}
+                : 'no authoritative lifecycle state'}
           </Text>
         </Group>
 
@@ -175,44 +170,6 @@ export function LogicalWorkCard({
               </Alert>
             ))}
           </Stack>
-        )}
-
-        {work.intents.length > 0 && (
-          <PersistedDetails
-            data-testid="logical-work-intents"
-            // An anomaly must not stay hidden behind a remembered "closed":
-            // omit the storage key and pin open when anomalies exist.
-            storageKey={work.anomalies.length > 0 ? undefined : 'task:intents'}
-            defaultOpen={work.anomalies.length > 0}
-            summary={
-              <Text component="span" size="sm" fw={600}>
-                Dispatch intents ({work.intents.length})
-              </Text>
-            }
-          >
-            <Stack gap={6} mt="xs">
-              {work.intents.map((intent) => (
-                <Group key={intent.intentId} gap="xs" wrap="wrap">
-                  <Badge variant="outline" size="xs" color="gray">
-                    g{intent.generation}
-                  </Badge>
-                  <PipelineBadge pipeline={intent.pipeline} />
-                  <Text size="xs">{intent.state}</Text>
-                  {intent.outcome && (
-                    <DispatchOutcomeBadge outcome={intent.outcome} />
-                  )}
-                  {intent.sourceKind && (
-                    <Text size="xs" c="dimmed">
-                      via {intent.sourceKind}
-                    </Text>
-                  )}
-                  <Text size="xs" c="dimmed">
-                    <RelativeTime iso={intent.occurredAt} />
-                  </Text>
-                </Group>
-              ))}
-            </Stack>
-          </PersistedDetails>
         )}
 
         {runs.length > 0 && <RunsSection runs={runs} />}

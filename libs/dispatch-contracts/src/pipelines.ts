@@ -17,7 +17,7 @@ export type AgentPipeline = 'claude' | 'codex' | 'opencode';
 export type DispatchPipeline = AgentPipeline;
 
 export interface PipelineContract {
-  /** Stable identifier used as the ledger's
+  /** Stable identifier used as the orchestrator's
    *   `pipeline` value and the router's `pipeline` workflow input. */
   pipeline: AgentPipeline;
   /** Worker workflow dispatched for this pipeline. */
