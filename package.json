@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@google-cloud/firestore": "9.0.0",
-    "@google-cloud/storage": "^7.22.0",
+    "@google-cloud/storage": "^8.0.0",
     "@google-cloud/tasks": "^7.0.0",
     "@mantine/core": "^9.0.2",
     "@mantine/modals": "^9.0.2",
