@@ -845,6 +845,7 @@ jobs:
           # on the secret. Defaulting here makes the fleet value unbreakable
           # by forwarding.
           workload_identity_provider: ${{ inputs.claude-token-wif-provider || 'projects/611425338852/locations/global/workloadIdentityPools/github/providers/github' }}
+          token_format: access_token
           service_account: ${{ inputs.claude-token-service-account || 'claude-token-reader@agent-lcars.iam.gserviceaccount.com' }}
           export_environment_variables: false
 
@@ -866,11 +867,36 @@ jobs:
         id: claude-token
         if: ${{ inputs.pipeline == 'claude' }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.claude-token-auth.outputs.credentials_file_path }}
-        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
-        with:
-          secrets: |-
-            token:${{ inputs.claude-token-secret }}
+          # The auth step performs the impersonation server-side and hands
+          # back a real access token, so this read does not depend on the
+          # client library rediscovering credentials through ADC. That
+          # rediscovery is what broke every consumer lane after #1351: auth
+          # succeeded, a credential file existed, and the read still reported
+          # "the caller does not have permission" against demonstrably
+          # correct IAM (see #1368). A failure here now prints the API's own
+          # error envelope instead of a generic message.
+          GCP_ACCESS_TOKEN: ${{ steps.claude-token-auth.outputs.access_token }}
+          SECRET_RESOURCE: ${{ inputs.claude-token-secret }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GCP_ACCESS_TOKEN:-}" ]; then
+            echo "::error::No access token from the subscription-token auth step; impersonation of the token reader failed."
+            exit 1
+          fi
+          body="$(curl -sS -H "Authorization: Bearer $GCP_ACCESS_TOKEN" \
+            "https://secretmanager.googleapis.com/v1/${SECRET_RESOURCE}:access")"
+          data="$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("payload",{}).get("data",""))')"
+          if [ -z "$data" ]; then
+            echo "::error::Secret Manager read failed for ${SECRET_RESOURCE}: $(printf '%s' "$body" | tr -d '\n' | head -c 400)"
+            exit 1
+          fi
+          token="$(printf '%s' "$data" | base64 -d)"
+          echo "::add-mask::$token"
+          {
+            echo "token<<CLAUDE_TOKEN_EOF"
+            echo "$token"
+            echo "CLAUDE_TOKEN_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # Fail here, by name, rather than letting an empty token surface as
       # an opaque 401 deep inside a billed agent turn.
