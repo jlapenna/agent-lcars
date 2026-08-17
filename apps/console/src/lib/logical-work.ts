@@ -36,7 +36,6 @@ import {
 
 export type LogicalWorkState =
   | 'unavailable'
-  | 'pending'
   | 'dispatching'
   | 'active'
   | 'human-needed'
@@ -125,7 +124,6 @@ const LOGICAL_STATE_PRIORITY: Record<LogicalWorkState, number> = {
   'human-needed': 1,
   active: 2,
   dispatching: 3,
-  pending: 4,
   completed: 5,
   unknown: 6,
 };
@@ -305,7 +303,6 @@ export interface ActivityMetrics {
 }
 
 const IN_FLIGHT_STATES = new Set<LogicalWorkState>([
-  'pending',
   'dispatching',
   'active',
   'human-needed',

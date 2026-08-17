@@ -1,4 +1,3 @@
-import type { DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { Stack } from '@mantine/core';
 
@@ -26,14 +25,11 @@ const PIPELINE_TITLES: Record<AgentPipeline, string> = {
 export function RecentOutcomesSection({
   recentRuns,
   sessionsByRunId = {},
-  outcomesByRunId = {},
 }: {
   recentRuns: AgentRun[];
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByNumericRunId` in run-classification.ts. */
   sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
-  /** Broker-owned lifecycle outcomes keyed by the exact bound workflow run. */
-  outcomesByRunId?: Record<number, DispatchOutcomeKind>;
 }) {
   // Recent outcomes are useful evidence only when there is evidence to
   // inspect. Suppressing the empty panel keeps the first viewport focused on
@@ -86,7 +82,6 @@ export function RecentOutcomesSection({
                     <FinishedRunRow
                       run={run}
                       session={sessionsByRunId[run.id]}
-                      outcome={outcomesByRunId[run.id]}
                     />
                   </div>
                 ))}

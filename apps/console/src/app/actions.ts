@@ -6,10 +6,6 @@ import { createAdminAction } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
 import {
-  type ActionItemsResult,
-  getActionItems as fetchActionItems,
-} from '../lib/action-items';
-import {
   ActionError,
   approveAndMergePr,
   approveAndRebasePr,
@@ -77,11 +73,6 @@ export type ActionResult =
 
 export type QuickTaskResult =
   ({ ok: true } & QuickTaskReceipt) | { ok: false; message: string };
-
-export async function getActionItems(): Promise<ActionItemsResult> {
-  await requireAdmin();
-  return fetchActionItems();
-}
 
 /**
  * Everything a mutation has to invalidate. `revalidatePath` alone would

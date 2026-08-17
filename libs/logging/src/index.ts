@@ -6,6 +6,5 @@ export * from './utils';
 export {
   forceStructuredLogging,
   getLogLevel,
-  getSlackLogLevel,
   isOnGoogleCloud,
 } from '@agent-lcars/env';

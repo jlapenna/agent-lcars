@@ -209,13 +209,6 @@ async function AgentsPageBody({
     [...logicalWork.flatMap((task) => task.attempts), ...unattributedAttempts],
     filteredActivity.fleet,
   );
-  const outcomesByRunId = Object.fromEntries(
-    logicalWork.flatMap((task) =>
-      task.attempts.flatMap((attempt) =>
-        attempt.outcome ? [[attempt.id, attempt.outcome] as const] : [],
-      ),
-    ),
-  );
 
   return (
     <AgentsWorkspace
@@ -263,7 +256,6 @@ async function AgentsPageBody({
           <RecentOutcomesSection
             recentRuns={filteredActivity.recentRuns}
             sessionsByRunId={sessionsByRunId}
-            outcomesByRunId={outcomesByRunId}
           />
         ) : null
       }

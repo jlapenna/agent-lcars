@@ -14,7 +14,6 @@
  */
 
 export type AgentPipeline = 'claude' | 'codex' | 'opencode';
-export type DispatchPipeline = AgentPipeline;
 
 export interface PipelineContract {
   /** Stable identifier used as the orchestrator's
@@ -134,16 +133,6 @@ export const REVIEW_LABELS: ReadonlyMap<string, AgentPipeline> = new Map(
 );
 
 /**
- * Every `agent:*`/`review:*` label a dispatch-capable issue or PR can carry.
- * GitHub's issues-list-by-label filter is an AND across a comma-separated
- * `labels` value, so reconcile discovery needs one query per label.
- */
-export const DISPATCH_LABELS: readonly string[] = Object.freeze([
-  ...AGENT_LABELS.keys(),
-  ...REVIEW_LABELS.keys(),
-]);
-
-/**
  * Exact comment command -> pipeline, aliases included.
  */
 export const REPLY_COMMANDS: ReadonlyMap<string, AgentPipeline> = new Map(
@@ -154,15 +143,6 @@ export const REPLY_COMMANDS: ReadonlyMap<string, AgentPipeline> = new Map(
     );
   }),
 );
-
-/**
- * The pipeline-agnostic command (#573). It does not name an integration: it
- * defers to whichever `agent:*` label the issue already carries at
- * comment-normalization time. Every other command keeps requiring an exact
- * match against that label — this only adds a second way to say "the one
- * that's already selected", it doesn't relax the existing ones.
- */
-export const GENERIC_REPLY_COMMAND = '@agent';
 
 /**
  * REST-shaped logins of every pipeline that opens pull requests or comments
@@ -187,11 +167,4 @@ export function pipelineContract(pipeline: AgentPipeline): PipelineContract {
   const contract = PIPELINE_CONTRACTS[pipeline];
   if (!contract) throw new Error(`Unsupported worker pipeline: ${pipeline}`);
   return contract;
-}
-
-/**
- * The worker workflow file for a pipeline.
- */
-export function workerWorkflow(pipeline: AgentPipeline): string {
-  return pipelineContract(pipeline).workflowFile;
 }

@@ -3,15 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_BOT_LOGINS,
   AGENT_LABELS,
-  DISPATCH_LABELS,
   DISPATCH_PIPELINES,
-  GENERIC_REPLY_COMMAND,
   PIPELINE_CONTRACTS,
   pipelineContract,
   REPLY_COMMANDS,
   REVIEW_LABELS,
   WORKER_WORKFLOW_FILES,
-  workerWorkflow,
 } from './pipelines';
 
 // These assert the literal values the registry replaced, on purpose. The
@@ -40,17 +37,6 @@ describe('pipeline registry', () => {
     ]);
   });
 
-  it('derives reconcile discovery labels in agent-then-review order', () => {
-    expect(DISPATCH_LABELS).toEqual([
-      'agent:claude',
-      'agent:codex',
-      'agent:opencode',
-      'review:claude',
-      'review:codex',
-      'review:opencode',
-    ]);
-  });
-
   it('maps every reply command, aliases included', () => {
     expect([...REPLY_COMMANDS]).toEqual([
       ['@claude', 'claude'],
@@ -58,12 +44,6 @@ describe('pipeline registry', () => {
       ['/oc', 'opencode'],
       ['/opencode', 'opencode'],
     ]);
-  });
-
-  it('keeps the pipeline-agnostic command out of the pipeline map', () => {
-    // normalize.mjs composes it back in as a `null` sentinel; it must not
-    // resolve to a pipeline here, or `@agent` would silently become one.
-    expect(REPLY_COMMANDS.has(GENERIC_REPLY_COMMAND)).toBe(false);
   });
 
   it('lists every worker workflow file', () => {
@@ -74,9 +54,9 @@ describe('pipeline registry', () => {
     ]);
   });
 
-  it('resolves a worker workflow and rejects an unknown pipeline', () => {
-    expect(workerWorkflow('opencode')).toBe('opencode.yml');
-    expect(() => workerWorkflow('gemini' as never)).toThrowError(
+  it('resolves a contract and rejects an unknown pipeline', () => {
+    expect(pipelineContract('opencode').workflowFile).toBe('opencode.yml');
+    expect(() => pipelineContract('gemini' as never)).toThrowError(
       /Unsupported worker pipeline/u,
     );
   });
@@ -112,7 +92,8 @@ describe('registry invariants', () => {
   });
 
   it('never lets two pipelines claim the same label or command', () => {
-    expect(new Set(DISPATCH_LABELS).size).toBe(DISPATCH_LABELS.length);
+    const labels = [...AGENT_LABELS.keys(), ...REVIEW_LABELS.keys()];
+    expect(new Set(labels).size).toBe(labels.length);
     expect(REPLY_COMMANDS.size).toBe(
       DISPATCH_PIPELINES.reduce(
         (total, pipeline) =>

@@ -176,14 +176,7 @@ ci_env_value() {
 
 BUILD_ENV=()
 for key in \
-  AUTH_SECRET \
-  NEXT_PUBLIC_FIREBASE_API_KEY \
-  NEXT_PUBLIC_FIREBASE_APP_ID \
-  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN \
-  NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST \
-  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID \
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID \
-  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET; do
+  AUTH_SECRET; do
   value="$(ci_env_value "$key")"
   if [ -z "$value" ]; then
     echo "e2e-hermetic: $key missing from tools/e2e/ci.env" >&2

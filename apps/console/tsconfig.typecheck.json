@@ -10,17 +10,14 @@
     "paths": {
       "@/*": ["apps/console/src/*"],
       "@agent-lcars/util": ["libs/util/src/index.ts"],
-      "@agent-lcars/util/*": ["libs/util/src/*"],
       "@agent-lcars/logging": ["libs/logging/src/index.ts"],
       "@agent-lcars/logging/browser": ["libs/logging/src/browser/index.ts"],
       "@agent-lcars/logging/error-reporting": [
         "libs/logging/src/error-reporting.ts"
       ],
       "@agent-lcars/logging/server": ["libs/logging/src/server/index.ts"],
-      "@agent-lcars/test-utils/*": ["libs/test-utils/src/*"],
       "@agent-lcars/env": ["libs/env-vars/src/index.ts"],
       "@agent-lcars/util-server": ["libs/util-server/src/index.ts"],
-      "@agent-lcars/util-server/*": ["libs/util-server/src/*"],
       "@agent-lcars/app-providers": ["libs/app-providers/src/index.ts"],
       "@agent-lcars/dispatch-contracts": [
         "libs/dispatch-contracts/src/index.ts"

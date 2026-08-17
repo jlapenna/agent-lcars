@@ -78,30 +78,14 @@ export const STATUS_COLORS: Record<RunStatusClassification, string> = {
 };
 
 export const OUTCOME_LABELS: Record<DispatchOutcomeKind, string> = {
-  'startup-failure': 'startup failure',
-  'trajectory-failure': 'trajectory failure',
-  'outcome-gate-failure': 'outcome gate failure',
-  park: 'park',
-  'no-op': 'no-op',
   'pull-request': 'pull request',
   'merged-deliverable': 'merged',
-  review: 'review',
-  comment: 'comment',
-  closed: 'closed',
   'unknown-success': 'unclassified success',
 };
 
 export const OUTCOME_COLORS: Record<DispatchOutcomeKind, string> = {
-  'startup-failure': 'red',
-  'trajectory-failure': 'red',
-  'outcome-gate-failure': 'orange',
-  park: 'yellow',
-  'no-op': 'blue',
   'pull-request': 'green',
   'merged-deliverable': 'green',
-  review: 'green',
-  comment: 'blue',
-  closed: 'green',
   'unknown-success': 'gray',
 };
 
@@ -646,12 +630,10 @@ export function LiveRunGroupList({
 export function FinishedRunRow({
   run,
   session,
-  outcome,
   variant = 'detail',
 }: {
   run: AgentRun;
   session?: IssueAgentSessionDoc;
-  outcome?: DispatchOutcomeKind;
   variant?: ActivityRowVariant;
 }) {
   const classification = classifyAgentRun(run, session);
@@ -681,7 +663,6 @@ export function FinishedRunRow({
             >
               {STATUS_LABELS[classification.status]}
             </Badge>
-            {outcome && <DispatchOutcomeBadge outcome={outcome} />}
             <RepoBadge repo={run.repo} />
           </Group>
           {classification.diagnosis && (
@@ -731,7 +712,6 @@ export function FinishedRunRow({
           {STATUS_LABELS[classification.status]}
         </Badge>
         <PipelineBadge pipeline={run.pipeline} />
-        {outcome && <DispatchOutcomeBadge outcome={outcome} />}
         <RepoBadge repo={run.repo} />
       </Group>
       <Group gap="xs" wrap="nowrap">

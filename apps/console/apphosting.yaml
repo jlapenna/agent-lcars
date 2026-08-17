@@ -39,11 +39,6 @@ env:
     value: '1'
     availability:
       - BUILD
-  - variable: PATH
-    value: /workspace/node_modules/.go/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    availability:
-      - BUILD
-
   # Project Identification (Plain config values)
   - variable: PROJECT_ID
     value: 'agent-lcars'
@@ -105,11 +100,6 @@ env:
 
   - variable: DISPATCH_FIRESTORE_DATABASE_ID
     value: 'dispatch-controller'
-    availability:
-      - RUNTIME
-
-  - variable: QUICK_TASK_EVIDENCE_BUCKET
-    value: 'agent-lcars-quick-task-evidence'
     availability:
       - RUNTIME
 
