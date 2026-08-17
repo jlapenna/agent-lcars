@@ -1,0 +1,68 @@
+name: Repo Validation
+
+# Fleet-published reusable workflow (docs/published-actions.md, #1340
+# A-R5): the minimal repository-validation surface the fleet's small repos
+# (www, girosf, sync-padd, nx-cache-server, sprinkles' actionlint adoption)
+# used to carry as byte-identical local validate.yml bodies. One job lints
+# every workflow file with actionlint; a fix or version bump lands once,
+# here, instead of N times.
+#
+# The caller owns what `workflow_call` cannot carry: triggers,
+# workflow-level permissions, and concurrency. Check-run naming: a
+# reusable workflow's job reports as "<caller job> / <this job's name>",
+# so a caller whose job key is `validate` produces the check
+# "validate / repository validation" — that composed string is what
+# rulesets and agent-automerge `required-checks` must name.
+#
+# actionlint's repo config (.github/actionlint.yaml, e.g. self-hosted
+# runner labels) is read from the caller's own checkout, so per-repo label
+# vocabularies keep working unchanged.
+
+on:
+  workflow_call:
+    inputs:
+      actionlint-version:
+        description: >-
+          rhysd/actionlint Docker image tag to run. The default tracks the
+          version baked into the fleet runner image
+          (apps/runner-autoscaler/runner-image/actionlint-version).
+        required: false
+        type: string
+        default: '1.7.7'
+      runs-on:
+        description: >-
+          Runner labels as a JSON array string, passed straight to
+          fromJSON(). Defaults to GitHub-hosted ubuntu-latest on purpose:
+          validation must stay green-capable before a repo's self-hosted
+          fleet capacity deploys, and glue checks must never queue behind
+          a long agent session. The runner must be able to `docker run`.
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+
+permissions: {}
+
+jobs:
+  validate:
+    name: repository validation
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # `docker run` rather than a `uses: docker://...` step because `uses:`
+      # cannot carry an expression, and the image tag is this workflow's one
+      # published version knob. Same image, same flags as the inlined step
+      # this replaces; the image bundles shellcheck and pyflakes, so script
+      # bodies inside workflows are linted too.
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            --workdir /repo \
+            "rhysd/actionlint:${ACTIONLINT_VERSION}" -color

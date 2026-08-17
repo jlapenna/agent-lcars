@@ -169,6 +169,21 @@ const PUBLISHED = {
     },
     outputs: [],
   },
+  // Post-deploy smoke verification (#1340 D4): the curl-until-below-500
+  // loop from sprinkles deploy.yml's smoke block, published so the
+  // fleet's private reimplementations converge. deployment-id/
+  // annotate-sha empty => the optional reporting steps no-op.
+  'deploy-verify': {
+    inputs: {
+      url: { required: true },
+      'max-attempts': { required: false, default: '10' },
+      interval: { required: false, default: '15' },
+      'deployment-id': { required: false, default: '' },
+      'annotate-sha': { required: false, default: '' },
+      token: { required: false, default: '${{ github.token }}' },
+    },
+    outputs: ['status-code', 'result'],
+  },
 };
 
 // Minimal indentation-scoped parser for prettier-formatted action.yml:
