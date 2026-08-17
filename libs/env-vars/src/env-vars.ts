@@ -3,12 +3,6 @@ export interface EnvVars {
   NEXT_PUBLIC_PROJECT_ID: string;
   GCLOUD_PROJECT?: string;
   FIREBASE_PROJECT_ID?: string;
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID?: string;
-  NEXT_PUBLIC_FIREBASE_API_KEY?: string;
-  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?: string;
-  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?: string;
-  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID?: string;
-  NEXT_PUBLIC_FIREBASE_APP_ID?: string;
 
   // Cloud Run
   K_SERVICE?: string;
@@ -19,12 +13,7 @@ export interface EnvVars {
   NODE_ENV?: 'development' | 'production' | 'test';
   CI?: string;
 
-  AUTH_ENABLED?: string;
-
   LOG_LEVEL?: string;
-  SLACK_LOG_LEVEL?: string;
-
-  SLACK_ADMINS?: string;
 
   AGENT_CONSOLE_GITHUB_API_BASE_URL?: string;
   AGENT_LCARS_ADMIN_GITHUB_LOGIN?: string;
@@ -48,14 +37,10 @@ export interface EnvVars {
   DISPATCH_FIRESTORE_DATABASE_ID?: string;
   QUICK_TASK_EVIDENCE_BUCKET?: string;
 
-  NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST?: string;
-  NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST?: string;
-
   /** Server Secrets **/
   AUTH_SECRET?: string; // Secret
   AUTH_URL?: string;
 
-  E2E_TESTING_USER?: string;
   E2E_TESTING?: string;
 
   PORT?: string;
@@ -65,10 +50,6 @@ export interface EnvVars {
 
   /** Local Development only. */
 
-  /** Dev only */
-  DEBUG?: string;
-  /** Dev only */
-  LOCAL?: string;
   /** Dev only */
   FUNCTIONS_EMULATOR?: string;
   /** Dev only */

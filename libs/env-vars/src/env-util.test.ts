@@ -54,27 +54,31 @@ describe('env-util', () => {
 
   describe('isTrue', () => {
     it('is case-insensitive', () => {
-      process.env.AUTH_ENABLED = 'TRUE';
-      expect(isTrue('AUTH_ENABLED')).toBe(true);
+      process.env.E2E_TESTING = 'TRUE';
+      expect(isTrue('E2E_TESTING')).toBe(true);
     });
 
     it('is false for anything other than "true"', () => {
-      process.env.AUTH_ENABLED = 'yes';
-      expect(isTrue('AUTH_ENABLED')).toBe(false);
-      delete process.env.AUTH_ENABLED;
-      expect(isTrue('AUTH_ENABLED')).toBe(false);
+      process.env.E2E_TESTING = 'yes';
+      expect(isTrue('E2E_TESTING')).toBe(false);
+      delete process.env.E2E_TESTING;
+      expect(isTrue('E2E_TESTING')).toBe(false);
     });
   });
 
   describe('splitEnvList', () => {
     it('splits on commas and colons, trimming whitespace', () => {
-      process.env.SLACK_ADMINS = ' U1, U2 :U3';
-      expect(splitEnvList('SLACK_ADMINS')).toEqual(['U1', 'U2', 'U3']);
+      process.env.AGENT_LCARS_WATCHED_REPOS = ' U1, U2 :U3';
+      expect(splitEnvList('AGENT_LCARS_WATCHED_REPOS')).toEqual([
+        'U1',
+        'U2',
+        'U3',
+      ]);
     });
 
     it('returns an empty array when unset', () => {
-      delete process.env.SLACK_ADMINS;
-      expect(splitEnvList('SLACK_ADMINS')).toEqual([]);
+      delete process.env.AGENT_LCARS_WATCHED_REPOS;
+      expect(splitEnvList('AGENT_LCARS_WATCHED_REPOS')).toEqual([]);
     });
   });
 

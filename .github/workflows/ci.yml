@@ -131,6 +131,12 @@ jobs:
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
 
+      # The check itself, against this checkout - the #1255 incident's
+      # self-referential skill symlink passed CI here and broke every
+      # consumer's whole-repo action download at 'Set up job' (#1265).
+      - name: Check repository symlink integrity
+        run: bash tools/check-repo-symlinks.sh
+
       - name: Test issue claiming
         run: bash .github/actions/claim-issue/claim.test.sh
 

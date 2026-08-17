@@ -22,5 +22,3 @@ export function forceStructuredLogging(): boolean {
 }
 
 export const getLogLevel = () => optional('LOG_LEVEL');
-
-export const getSlackLogLevel = () => optional('SLACK_LOG_LEVEL');

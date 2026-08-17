@@ -1,18 +1,14 @@
 /**
- * Durable worker-result categories. These describe what happened in the
- * worker lifecycle; GitHub's run conclusion alone cannot distinguish a
- * bootstrap failure from a model trajectory failure, a false-negative
- * deliverable gate, or a useful protocol outcome.
+ * Durable worker-result categories the console can actually derive.
+ *
+ * The orchestrator's completion boundary collapses the worker's
+ * fine-grained wire vocabulary (startup/trajectory/outcome-gate failures,
+ * park, no-op, comment, review, closed - see `orchestrator-routes.ts`'s
+ * `OK_OUTCOMES`, a separate wire-string constant) into `RunResult`'s
+ * boolean `ok` plus an optional PR `ref`. Only these three kinds are
+ * therefore reconstructible on the console side
+ * (`outcomeFromRunResult` in `apps/console/src/lib/task-detail.ts`);
+ * an unsuccessful run reports no outcome kind at all.
  */
 export type DispatchOutcomeKind =
-  | 'startup-failure'
-  | 'trajectory-failure'
-  | 'outcome-gate-failure'
-  | 'park'
-  | 'no-op'
-  | 'pull-request'
-  | 'merged-deliverable'
-  | 'review'
-  | 'comment'
-  | 'closed'
-  | 'unknown-success';
+  'pull-request' | 'merged-deliverable' | 'unknown-success';

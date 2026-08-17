@@ -38,10 +38,6 @@ vi.mock('next/cache', () => ({
   updateTag: vi.fn(),
 }));
 
-vi.mock('../lib/action-items', () => ({
-  getActionItems: vi.fn(),
-}));
-
 // Mocked in full (rather than jest.requireActual) because the real module
 // transitively pulls in @octokit/rest, which ships ESM Jest isn't
 // configured to transform.

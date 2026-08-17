@@ -181,7 +181,7 @@ describe('LogicalWorkCard', () => {
           makeAttempt({
             status: 'completed',
             conclusion: 'failure',
-            outcome: 'startup-failure',
+            outcome: 'unknown-success',
           }),
         ],
       }),
@@ -189,7 +189,7 @@ describe('LogicalWorkCard', () => {
 
     const attempt = screen.getByTestId('logical-work-attempt-1');
     expect(within(attempt).getByText('failed')).toBeTruthy();
-    expect(within(attempt).getByText('startup failure')).toBeTruthy();
+    expect(within(attempt).getByText('unclassified success')).toBeTruthy();
   });
 
   it('renders every anomaly as a visible alert (never a silent collapse)', () => {
@@ -220,7 +220,7 @@ describe('LogicalWorkCard', () => {
   });
 
   it('renders a friendly empty state when a task has zero attempts', () => {
-    renderCard(makeWork({ attempts: [], state: 'pending' }));
+    renderCard(makeWork({ attempts: [], state: 'dispatching' }));
     expect(
       screen.getByText('No workflow runs attributed to this task yet.'),
     ).toBeTruthy();

@@ -15,8 +15,7 @@ export const config = {
 
 // These control-plane routes do not use browser sessions. Reconcile and
 // completion verify GitHub Actions OIDC claims, while webhook verifies
-// raw-body HMACs. Task state is an explicitly public, read-only projection
-// with the private attempt capability redacted.
+// raw-body HMACs.
 // Exported (rather than kept inline in the createAuthProxy call below) so
 // proxy.test.ts can iterate the real list instead of maintaining its own
 // copy that can silently drift out of coverage as routes are added (#863).
@@ -47,9 +46,5 @@ export default createAuthProxy({
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page
   // that carries the X-e2e-auth-user header.
-  publicPrefixes: [
-    '/api/e2e/',
-    '/api/control-plane/task-state/',
-    '/api/quick-task-evidence/v1/',
-  ],
+  publicPrefixes: ['/api/e2e/', '/api/quick-task-evidence/v1/'],
 });

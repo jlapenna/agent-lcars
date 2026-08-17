@@ -3,7 +3,6 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   forceStructuredLogging,
   getLogLevel,
-  getSlackLogLevel,
   isOnGoogleCloud,
 } from './logging-accessors';
 
@@ -48,12 +47,10 @@ describe('logging-accessors', () => {
     });
   });
 
-  describe('getLogLevel / getSlackLogLevel', () => {
-    it('read their respective env vars', () => {
+  describe('getLogLevel', () => {
+    it('reads LOG_LEVEL', () => {
       process.env.LOG_LEVEL = 'debug';
-      process.env.SLACK_LOG_LEVEL = 'warn';
       expect(getLogLevel()).toBe('debug');
-      expect(getSlackLogLevel()).toBe('warn');
     });
   });
 });

@@ -48,8 +48,11 @@ it, is gone (as is the broker itself, deleted in #1199). Consumers import
 it through the tsconfig path alias:
 
 ```ts
-// e.g. apps/console — resolved through the tsconfig path alias
-import { PIPELINE_CONTRACTS } from '@agent-lcars/dispatch-contracts';
+// e.g. apps/console's watched-repo.ts — resolved through the tsconfig
+// path alias
+import { pipelineContract } from '@agent-lcars/dispatch-contracts';
+
+const contract = pipelineContract('claude');
 ```
 
 What survives that change is the reason this package must keep **zero

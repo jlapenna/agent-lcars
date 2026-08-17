@@ -94,10 +94,12 @@ full wiring instructions to bring a new repo onto this fleet.
 | `apps/runner-autoscaler`         | Go control plane for the shared GitHub Actions runner fleet, plus the JIT worker image                              |
 | `apps/github-actions-exporter`   | Durable, low-cardinality GitHub Actions metrics exporter and published image                                        |
 | `libs/telemetry`                 | Pure, source-agnostic reducer: a Claude Code transcript → a structured session summary; Firestore/transcript stores |
-| `libs/app-providers`             | Shared client-side React providers (Firebase client, browser error reporting)                                       |
+| `libs/app-providers`             | Shared client-side React providers (Mantine app providers, browser error reporting)                                 |
+| `libs/dispatch-contracts`        | The single published definition of the dispatch facts shared across systems (pipeline registry, markers, outcomes)  |
 | `libs/env-vars`                  | Typed environment-variable accessors                                                                                |
 | `libs/logging`                   | Structured logging shared by the console and the telemetry watcher                                                  |
-| `libs/util` / `libs/util-server` | Shared browser-safe and server-only utilities (dates, retries, rate limiting, secrets)                              |
+| `libs/orchestrator`              | Durable per-task dispatch mutex with an audit trail (admission, lease recovery, bounded retry)                      |
+| `libs/util` / `libs/util-server` | Browser-safe type/environment guards; server-only env accessors (emulator/E2E/Cloud Run detection, project id)      |
 | `libs/test-utils`                | Shared test helpers                                                                                                 |
 | `infra/terraform`                | GCP services, Firestore, storage, IAM, WIF, secrets and budget                                                      |
 | `.agents/skills`                 | The agent-protocol and repo-specific conventions dispatched agents follow                                           |

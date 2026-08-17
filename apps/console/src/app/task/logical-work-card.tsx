@@ -31,7 +31,6 @@ import { RunsSection } from './runs-section';
 
 const STATE_LABELS: Record<LogicalWorkState, string> = {
   unavailable: 'Unavailable',
-  pending: 'pending',
   dispatching: 'dispatching',
   active: 'active',
   'human-needed': 'needs human',
@@ -42,7 +41,6 @@ const STATE_LABELS: Record<LogicalWorkState, string> = {
 
 const STATE_COLORS: Record<LogicalWorkState, string> = {
   unavailable: 'gray',
-  pending: 'gray',
   dispatching: 'blue',
   active: 'blue',
   'human-needed': 'orange',
@@ -51,11 +49,16 @@ const STATE_COLORS: Record<LogicalWorkState, string> = {
   unknown: 'gray',
 };
 
-const ATTRIBUTION_LABELS: Record<AttemptAttribution, string> = {
+/** `unattributed` attempts never reach this card - `deriveLogicalWork`
+ * diverts them into its separate `unattributedAttempts` bucket - so the
+ * label map covers only the attributions a task's own attempts can carry. */
+const ATTRIBUTION_LABELS: Record<
+  Exclude<AttemptAttribution, 'unattributed'>,
+  string
+> = {
   orchestrator: 'orchestrator',
   'run-marker': 'run marker',
   'legacy-title': 'legacy title',
-  unattributed: 'unattributed',
 };
 
 /**
@@ -217,7 +220,16 @@ export function LogicalWorkCard({
                     </Badge>
                   )}
                   <Badge variant="outline" size="xs" color="gray">
-                    {ATTRIBUTION_LABELS[attempt.attribution]}
+                    {
+                      ATTRIBUTION_LABELS[
+                        // See ATTRIBUTION_LABELS: unattributed attempts are
+                        // structurally kept out of task cards.
+                        attempt.attribution as Exclude<
+                          AttemptAttribution,
+                          'unattributed'
+                        >
+                      ]
+                    }
                   </Badge>
                   <Anchor
                     href={issueUrlForRun(attempt) ?? attempt.url}

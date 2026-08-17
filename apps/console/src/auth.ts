@@ -13,8 +13,8 @@ import GitHub from 'next-auth/providers/github';
 const getAdminGithubLogin = () => required('AGENT_LCARS_ADMIN_GITHUB_LOGIN');
 
 /**
- * Mock session for the shared test-session adapter (LAN preview:
- * IMPERSONATE_AUTOMATIC_LOGIN=true + E2E_TESTING_USER=<name>).
+ * Mock session for the E2E test-session adapter (E2E_TESTING=true +
+ * an `x-e2e-auth-user` request header -- see testSession() below).
  * agent-lcars is a single-admin app, so the injected identity is an
  * admin — this replaces the old SKIP_AUTH_FOR_LAN_PREVIEW bypass.
  */

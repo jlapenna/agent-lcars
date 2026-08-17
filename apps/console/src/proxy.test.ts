@@ -88,14 +88,6 @@ describe('console proxy public control-plane routes', () => {
     }
   });
 
-  it('lets non-browser callers read the public authoritative task-state projection', () => {
-    const request = new NextRequest(
-      'https://lcars.jlapenna.net/api/control-plane/task-state/jlapenna/agent-lcars/779?repositoryId=1307149765',
-    );
-
-    expect(proxy(request).status).toBe(200);
-  });
-
   it('exposes only the exact evidence route prefix without a session', () => {
     const evidence = new NextRequest(
       'https://lcars.jlapenna.net/api/quick-task-evidence/v1/0d6a4b56-31d0-4d39-b0b2-5a2520cc4882',
