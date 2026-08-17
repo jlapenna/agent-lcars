@@ -27,18 +27,14 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # Referenced @main rather than as a local path on purpose: this
+      # workflow only ever runs from main (schedule/workflow_dispatch), and
+      # the remote reference keeps the job checkout-free.
       - name: Invoke hosted reconciler with GitHub Actions OIDC
-        env:
-          RECONCILE_URL: https://lcars.jlapenna.net/api/control-plane/reconcile
-          RECONCILE_AUDIENCE: agent-lcars-dispatch-reconcile
-        run: |
-          set -euo pipefail
-          token_response="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$RECONCILE_AUDIENCE")"
-          oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' \
-            <<<"$token_response")"
-          curl --fail-with-body --silent --show-error --max-time 360 \
-            -X POST \
-            -H "Authorization: Bearer $oidc_token" \
-            "$RECONCILE_URL"
+        uses: jlapenna/agent-lcars/.github/actions/request-control-plane@main # latest
+        with:
+          endpoint: https://lcars.jlapenna.net/api/control-plane/reconcile
+          audience: agent-lcars-dispatch-reconcile
+          # A full reconcile scan processes every discovered anchor
+          # synchronously; keep the pre-#1340 inline block's budget.
+          timeout-seconds: '360'

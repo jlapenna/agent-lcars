@@ -184,6 +184,23 @@ const PUBLISHED = {
     },
     outputs: ['status-code', 'result'],
   },
+  // The fleet's one OIDC-mint-then-POST dispatch snippet (#1340 A-R3/D7):
+  // consumers are sprinkles' pr-heal/playbook-unstick-prs/visual-refresh/
+  // post-deploy-verify and this repo's own dispatch-reconcile. Exactly one
+  // of payload/payloads may be set; `payloads` (newline-delimited compact
+  // JSON, one POST per line under a single minted token) is the
+  // mint-once-reuse batch shape post-deploy-verify's per-issue loop needs,
+  // and both empty means a bodyless POST (the reconcile endpoint's shape).
+  'request-control-plane': {
+    inputs: {
+      endpoint: { required: true },
+      audience: { required: true },
+      payload: { required: false, default: '' },
+      payloads: { required: false, default: '' },
+      'timeout-seconds': { required: false, default: '60' },
+    },
+    outputs: [],
+  },
 };
 
 // Minimal indentation-scoped parser for prettier-formatted action.yml:
