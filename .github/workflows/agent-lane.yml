@@ -834,9 +834,33 @@ jobs:
         if: ${{ inputs.pipeline == 'claude' }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
-          workload_identity_provider: ${{ inputs.claude-token-wif-provider }}
-          service_account: ${{ inputs.claude-token-service-account }}
+          # `|| <default>` rather than a bare input reference: a caller (or
+          # a shim forwarding an optional input the caller omitted) can pass
+          # an empty string, and an explicitly-empty value overrides the
+          # workflow_call default. That is exactly how every consumer repo's
+          # claude lane broke after #1351 — auth failed with "must specify a
+          # service_account", its credentials_file_path output was empty, and
+          # the read below silently fell back to the un-impersonated repo
+          # identity, surfacing as an opaque "caller does not have permission"
+          # on the secret. Defaulting here makes the fleet value unbreakable
+          # by forwarding.
+          workload_identity_provider: ${{ inputs.claude-token-wif-provider || 'projects/611425338852/locations/global/workloadIdentityPools/github/providers/github' }}
+          service_account: ${{ inputs.claude-token-service-account || 'claude-token-reader@agent-lcars.iam.gserviceaccount.com' }}
           export_environment_variables: false
+
+      # Fail loud if the auth step above produced no credential file: without
+      # this, `get-secretmanager-secrets` inherits ambient ADC (the
+      # un-impersonated repo identity) and the real cause — a failed
+      # impersonation — is reported as a permission error on the secret.
+      - name: Assert the Claude token credential was minted
+        if: ${{ inputs.pipeline == 'claude' }}
+        env:
+          CREDS: ${{ steps.claude-token-auth.outputs.credentials_file_path }}
+        run: |
+          if [ -z "$CREDS" ]; then
+            echo "::error::Claude subscription-token auth produced no credential file — the impersonation of the token-reader service account failed. Check the lane's claude-token-service-account/claude-token-wif-provider values and the repo's workloadIdentityUser binding."
+            exit 1
+          fi
 
       - name: Read the Claude subscription token
         id: claude-token
