@@ -1,3 +1,10 @@
+// This file (and its .spec.ts) has a maintained twin in
+// supersprinklesracing/sprinkles at the same tools/eslint-rules/rules/ path.
+// Cross-repo source sharing is forbidden (AGENTS.md), so behavioral changes
+// must land in both repos by hand. sprinkles CI keeps the pair honest via
+// its tools/check-lint-rule-drift.cjs, which pins the last-reconciled
+// content of both copies — see agent-lcars#1311.
+
 /**
  * ESLint rule: forbid value imports of server-only modules in `'use client'`
  * files.

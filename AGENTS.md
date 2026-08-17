@@ -55,6 +55,21 @@ consumption (consumers reference `jlapenna/agent-lcars/.github/actions/*`)
 is the sanctioned direction of dependency — consumers depend on this repo,
 never the reverse — see [docs/published-actions.md](docs/published-actions.md).
 
+That independence has a deliberate price (#1311): a tail of small foundation
+files is duplicated in both repos on purpose — per-lib `.swcrc`,
+`.prettierrc`, `tools/eslint-rules/tsconfig.lint.json`,
+`libs/test-utils/src/server-only-mock.js`, ambient `*.d.ts` declarations,
+`CODEOWNERS`, `LICENSE`, `tools/nx-remote-cache-read-failure.test.sh` — and
+that tail may drift freely; do not "fix" it by sharing files. The two
+ESLint-rule pairs under `tools/eslint-rules/rules/`
+(`no-server-only-imports-in-client` and `use-server-actions-only`, each with
+its spec) are correctness-critical twins instead: behavioral changes must
+land in both repos, and sprinkles CI keeps them honest with its drift
+detector (`tools/check-lint-rule-drift.cjs` in supersprinklesracing/
+sprinkles), which pins the last-reconciled content of each pair and fails
+when either side moves past the pin. Cross-repo source imports remain
+forbidden either way.
+
 Never commit credentials. Runtime secrets belong in GCP Secret Manager and the
 host writer credential belongs in the encrypted homelab secret store. Terraform
 owns secret containers but not secret values.

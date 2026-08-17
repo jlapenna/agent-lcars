@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Attach to (or inspect) Claude issue-agent sessions running on the
-# homelab fleet's ephemeral JIT runners (this repo's own
+# homelab fleet's ephemeral JIT runners (jlapenna/agent-lcars's
 # apps/runner-autoscaler, homelab#97). The agent advertises the exact
 # `resume` command for its run in its first issue comment, so the
 # maintainer can paste it to take over. See .github/workflows/claude.yml.
@@ -16,12 +16,15 @@
 # access, not the control plane's own dedicated fleet automation key
 # (which only that container can read).
 #
-# This is vendored, near-verbatim, from supersprinklesracing/sprinkles'
-# copy of the same script (members#3407 / this repo's own #46) -- both
-# repos share the identical fleet, so this was designed once and kept in
-# sync rather than solved twice independently. The only real differences
-# are the CLAUDE_SCALE_SETS/CLAUDE_AGENT_WORKDIR/
-# CLAUDE_AGENT_TRANSCRIPTS_BUCKET defaults below.
+# Fleet-canonical copy (agent-lcars#1307; it started life in
+# supersprinklesracing/sprinkles as members#3407): jlapenna/homelab and
+# sprinkles vendor this file byte-for-byte -- all three repos share the
+# identical fleet -- and the verify-fleet-scripts published action fails
+# their CI when a vendored copy drifts. Edit it HERE and re-sync the
+# consumers. The per-repo differences (scale set, checkout path,
+# transcripts bucket, extra hosts) are exactly the CLAUDE_* defaults
+# below: a consumer overrides them in a sibling claude-agent-session.conf,
+# never by editing its copy of this script.
 #
 # claude-code-action (the GitHub Action claude.yml uses to actually run
 # Claude) does not leave a standalone `claude` CLI on PATH inside the
@@ -42,6 +45,19 @@
 # unaffected by the fleet topology, since it never touches a runner host.
 set -euo pipefail
 
+# Repo-specific defaults: a sibling claude-agent-session.conf (same
+# directory as this script; not drift-checked) may pre-seed any CLAUDE_*
+# variable read below. Use the `: "${CLAUDE_X:=value}"` form there so an
+# explicit environment override still wins over the repo's conf. Without a
+# conf, the fallbacks below are jlapenna/agent-lcars's own registration --
+# a consumer repo MUST ship a conf or its copy targets the wrong scale
+# set, checkout path, and transcripts bucket.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$script_dir/claude-agent-session.conf" ]; then
+  # shellcheck source=/dev/null
+  . "$script_dir/claude-agent-session.conf"
+fi
+
 # Fleet hosts this queries. Keep in sync with jlapenna/homelab's
 # github-runner-autoscaler/orchestrator.yml `fleet.hosts` list -- there is
 # no live discovery endpoint for it (the control plane's own /metrics
@@ -54,28 +70,33 @@ set -euo pipefail
 read -r -a FLEET_HOSTS <<<"${CLAUDE_FLEET_HOSTS:-homelab pike laforge spark janeway}"
 FLEET_SSH_USER="${CLAUDE_FLEET_SSH_USER:-homelab}"
 FLEET_DOMAIN="${CLAUDE_FLEET_DOMAIN:-lan.jlapenna.net}"
+# Space-separated `host=fqdn` pairs for hosts that do not follow the
+# <name>.<CLAUDE_FLEET_DOMAIN> convention (generalizes homelab's
+# laptop=laptop.ts.jlapenna.net tailscale mapping; set it in the conf).
+FLEET_HOST_ENDPOINTS="${CLAUDE_FLEET_HOST_ENDPOINTS:-}"
 SSH_OPTS=(-o ConnectTimeout=8 -o BatchMode=yes)
 
-# Which scale set(s) to search. Every Claude run in this repo's claude.yml
-# runs on exactly this one (see its runs-on:). Override
-# (CLAUDE_SCALE_SETS, space-separated) for a different registration
-# sharing this same fleet -- e.g. supersprinklesracing/sprinkles' own
-# homelab-autoscale-claude-agent.
+# Which scale set(s) to search: the one the surrounding repo's claude.yml
+# runs on (see its runs-on:). Repos sharing this fleet each have their own
+# registration (agent-lcars: homelab-autoscale-claude-agent-lcars,
+# sprinkles: homelab-autoscale-claude-agent, homelab:
+# homelab-autoscale-homelab-agent) -- the conf sets CLAUDE_SCALE_SETS
+# (space-separated).
 read -r -a SCALE_SETS <<<"${CLAUDE_SCALE_SETS:-homelab-autoscale-claude-agent-lcars}"
 
 # Best-effort default for `resume`'s working directory inside the
 # container: actions/checkout's standard $GITHUB_WORKSPACE convention
 # (_work/<repo>/<repo>) under the runner image's HOME (confirmed via
-# apps/runner-autoscaler/runner-image/entrypoint.sh: HOME=/home/runner,
-# user `runner`). Not independently confirmed against a live container's
+# agent-lcars's apps/runner-autoscaler/runner-image/entrypoint.sh:
+# HOME=/home/runner, user `runner`). Not independently confirmed against a live container's
 # actual checkout path -- override with CLAUDE_AGENT_WORKDIR if wrong; a
 # wrong -w only affects relative-path display inside the resumed session,
 # not whether resume itself works.
 CLAUDE_AGENT_WORKDIR="${CLAUDE_AGENT_WORKDIR:-/home/runner/_work/agent-lcars/agent-lcars}"
 # Optional once-per-host token file so pasted commands need no env setup.
 TOKEN_FILE="${CLAUDE_AGENT_TOKEN_FILE:-$HOME/.config/claude-agent/oauth-token}"
-# Same bucket claude.yml's finalize step uploads to
-# (infra/terraform/main.tf's google_storage_bucket.transcripts).
+# Same bucket the surrounding repo's claude.yml finalize step uploads to
+# (agent-lcars's infra/terraform/main.tf, google_storage_bucket.transcripts).
 TRANSCRIPTS_BUCKET="${CLAUDE_AGENT_TRANSCRIPTS_BUCKET:-agent-lcars-session-transcripts}"
 
 usage() {
@@ -117,10 +138,23 @@ EOF
   exit 1
 }
 
+# user@endpoint for a fleet host: <host>.<FLEET_DOMAIN> unless
+# FLEET_HOST_ENDPOINTS carries an explicit override for it.
+fleet_target() {
+  local host="$1" endpoint pair
+  endpoint="$host.$FLEET_DOMAIN"
+  for pair in $FLEET_HOST_ENDPOINTS; do
+    case "$pair" in
+      "$host="*) endpoint="${pair#*=}" ;;
+    esac
+  done
+  printf '%s@%s' "$FLEET_SSH_USER" "$endpoint"
+}
+
 ssh_host() {
   local host="$1"
   shift
-  ssh "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" "$@"
+  ssh "${SSH_OPTS[@]}" "$(fleet_target "$host")" "$@"
 }
 
 # Print "mtime host container fullpath" for every live session across
@@ -169,8 +203,9 @@ resolve_archive_uri() {
   local matches=()
   # `**` (not `*`) to recurse into the adapter subdirectory the archive
   # writer actually uses (e.g. .../claude-code/<session-id>.jsonl -- see
-  # apps/telemetry-watcher/src/lib/finalize.ts) -- gcloud storage's `*`
-  # stays within one path segment, `**` crosses directory boundaries.
+  # agent-lcars's apps/telemetry-watcher/src/lib/finalize.ts) -- gcloud
+  # storage's `*` stays within one path segment, `**` crosses directory
+  # boundaries.
   mapfile -t matches < <(gcloud storage ls "${prefix}**/*.jsonl" 2>/dev/null || true)
   if [ ${#matches[@]} -eq 0 ]; then
     echo "No transcripts found under $prefix" >&2
@@ -219,7 +254,7 @@ case "$cmd" in
     read -r host container path <<<"$result"
     id="$(basename "$path" .jsonl)"
     echo "Tailing $id in $container on $host (ctrl-c to stop)" >&2
-    exec ssh -t "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" \
+    exec ssh -t "${SSH_OPTS[@]}" "$(fleet_target "$host")" \
       docker exec "$container" tail -f "$path"
     ;;
   resume)
@@ -248,7 +283,7 @@ case "$cmd" in
     if [ -z "$token" ]; then
       echo "No OAuth token found; Claude Code will prompt /login inside the container." >&2
       echo "(Set up $TOKEN_FILE via 'claude setup-token' to skip this.)" >&2
-      exec ssh -t "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" \
+      exec ssh -t "${SSH_OPTS[@]}" "$(fleet_target "$host")" \
         docker exec -it -w "$CLAUDE_AGENT_WORKDIR" "$container" \
         npx -y @anthropic-ai/claude-code@latest --resume "$id"
     fi
@@ -261,9 +296,9 @@ case "$cmd" in
     # before exporting the env var -- the token's VALUE never appears in
     # any process listing, only the command that reads it does.
     write_token_cmd="docker exec -i '$container' sh -c 'umask 077; cat > /tmp/.claude-agent-token'"
-    printf '%s' "$token" | ssh "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" "$write_token_cmd"
+    printf '%s' "$token" | ssh "${SSH_OPTS[@]}" "$(fleet_target "$host")" "$write_token_cmd"
     resume_cmd="docker exec -it -w '$CLAUDE_AGENT_WORKDIR' '$container' sh -c 'CLAUDE_CODE_OAUTH_TOKEN=\$(cat /tmp/.claude-agent-token 2>/dev/null); rm -f /tmp/.claude-agent-token; export CLAUDE_CODE_OAUTH_TOKEN; exec npx -y @anthropic-ai/claude-code@latest --resume $id'"
-    exec ssh -t "${SSH_OPTS[@]}" "$FLEET_SSH_USER@$host.$FLEET_DOMAIN" "$resume_cmd"
+    exec ssh -t "${SSH_OPTS[@]}" "$(fleet_target "$host")" "$resume_cmd"
     ;;
   resume-archive)
     [ $# -ge 1 ] || usage

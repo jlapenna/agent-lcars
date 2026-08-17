@@ -24,6 +24,13 @@ export GIT_CONFIG_SYSTEM=/dev/null
 export HOME="$temp_dir/home"
 mkdir -p "$HOME"
 
+# The hook deliberately no-ops under GITHUB_ACTIONS (homelab runs its whole
+# pre-commit suite in CI, where every checkout is a plain non-worktree
+# clone). This test DOES run in CI, so mask the variable for the cases that
+# assert rejection, and re-set it explicitly for the case that asserts the
+# CI no-op.
+unset -v GITHUB_ACTIONS
+
 git init --initial-branch=main "$temp_dir/repository" >/dev/null
 # Global config is masked above, so set identity explicitly for the commit
 # this fixture makes.
@@ -37,6 +44,41 @@ if (cd "$temp_dir/repository" && "$root/tools/require-feature-worktree.sh"); the
   echo "expected the primary checkout to be rejected" >&2
   exit 1
 fi
+
+# The rejection banner names what was rejected: the default wording without
+# an argument, the caller-supplied action word with one (sprinkles passes
+# COMMITS/PUSHES from its husky hooks).
+message="$( (cd "$temp_dir/repository" && "$root/tools/require-feature-worktree.sh" 2>&1) || true)"
+case "$message" in
+  *"commits and pushes must come from a feature worktree"*) ;;
+  *)
+    echo "expected the default action wording in: $message" >&2
+    exit 1
+    ;;
+esac
+message="$( (cd "$temp_dir/repository" && "$root/tools/require-feature-worktree.sh" pushes 2>&1) || true)"
+case "$message" in
+  *"pushes must come from a feature worktree"*) ;;
+  *)
+    echo "expected the caller-supplied action wording in: $message" >&2
+    exit 1
+    ;;
+esac
+
+# REQUIRE_WORKTREE_EXTRA_HINT is the documented repo-specific remediation
+# hook (sprinkles points at its deploy script through it).
+message="$( (cd "$temp_dir/repository" && REQUIRE_WORKTREE_EXTRA_HINT='Use the deploy script instead.' "$root/tools/require-feature-worktree.sh" 2>&1) || true)"
+case "$message" in
+  *"Use the deploy script instead."*) ;;
+  *)
+    echo "expected the extra hint in: $message" >&2
+    exit 1
+    ;;
+esac
+
+# Under GITHUB_ACTIONS the hook must no-op even in an otherwise-rejected
+# checkout (CI clones are never worktrees).
+(cd "$temp_dir/repository" && GITHUB_ACTIONS=true "$root/tools/require-feature-worktree.sh")
 
 git -C "$temp_dir/repository" worktree add "$temp_dir/feature" -b feature >/dev/null
 (cd "$temp_dir/feature" && "$root/tools/require-feature-worktree.sh")

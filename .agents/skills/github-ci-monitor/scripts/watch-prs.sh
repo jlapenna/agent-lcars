@@ -31,6 +31,13 @@
 #
 # Requires: gh (authenticated). Poll cost is two `gh` calls per PR per
 # interval; the default 120s keeps that well inside rate limits.
+#
+# Fleet-canonical copy (agent-lcars#1307): jlapenna/homelab and
+# supersprinklesracing/sprinkles vendor this file byte-for-byte inside
+# their own CI-monitor skills; the verify-fleet-scripts published action
+# fails their CI when a vendored copy drifts. Edit it HERE and re-sync the
+# consumers -- the script is already fully repo-neutral (repo identity is
+# discovered from cwd), so no parameterization hook is needed.
 
 set -euo pipefail
 

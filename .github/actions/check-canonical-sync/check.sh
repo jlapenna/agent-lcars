@@ -25,12 +25,14 @@ set -uo pipefail
 MANIFEST=".github/canonical-sync.conf"
 REF="${CANONICAL_SYNC_REF:-main}"
 BASE="${CANONICAL_SYNC_BASE:-https://raw.githubusercontent.com/jlapenna/agent-lcars}"
+FORBID_STRAYS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --manifest) MANIFEST="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
     --base) BASE="$2"; shift 2 ;;
+    --forbid-strays) FORBID_STRAYS=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -65,8 +67,29 @@ while read -r local canonical _rest; do
   fi
 done < "$MANIFEST"
 
-if [ "$drifted" -gt 0 ]; then
-  echo "canonical sync: $drifted of $checked file(s) differ from agent-lcars" >&2
+# --forbid-strays: a canonicalized script must exist ONLY at its declared
+# local path. A copy that grows back elsewhere silently escapes drift
+# checking -- exactly how the pre-#1307 duplication happened (agent-lcars
+# issue #1307's "otherwise this silently grows back").
+strays=0
+if [ "$FORBID_STRAYS" -eq 1 ]; then
+  declared="$tmp/declared"
+  basenames="$tmp/basenames"
+  awk 'NF && $1 !~ /^#/ { print $1 }' "$MANIFEST" > "$declared"
+  awk 'NF && $1 !~ /^#/ { n=split($1, a, "/"); print a[n] }' "$MANIFEST" | sort -u > "$basenames"
+  while read -r base; do
+    while IFS= read -r found; do
+      found="${found#./}"
+      grep -qxF "$found" "$declared" && continue
+      echo "  STRAY    $found duplicates canonicalized script $base at an undeclared path" >&2
+      echo "           declare it in $MANIFEST or delete the copy" >&2
+      strays=$((strays + 1))
+    done < <(find . \( -name .git -o -name node_modules -o -name dist -o -name .next \) -prune -o -type f -name "$base" -print)
+  done < "$basenames"
+fi
+
+if [ "$drifted" -gt 0 ] || [ "$strays" -gt 0 ]; then
+  echo "canonical sync: $drifted drifted/missing, $strays stray cop(ies) of $checked checked" >&2
   exit 1
 fi
 
