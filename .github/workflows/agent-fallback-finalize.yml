@@ -145,27 +145,6 @@ jobs:
             '[.[]?.jobs[]? | select(any(.steps[]?; .name as $n | $steps | index($n)))] | last // empty' \
             "$jobs_file")"
 
-          readiness_failure=''
-          if [ -n "$worker_job" ]; then
-            if [ "$WORKER_WORKFLOW" = 'codex.yml' ]; then
-              credential_failure="$(jq -r '
-                [ .steps[]?
-                  | select(.name == "Authenticate to GCP for the subscription credential"
-                      or .name == "Restore subscription authentication")
-                  | select(.conclusion == "failure")
-                ] | length' <<<"$worker_job")"
-              if [ "$credential_failure" -gt 0 ]; then
-                readiness_failure='credential'
-              fi
-            fi
-          fi
-
-          # Claude's structured execution file lives in the untrusted worker
-          # filesystem. A later GitHub step conclusion cannot make evidence
-          # derived from those bytes authoritative: the worker can rewrite the
-          # file after returning. Until Claude readiness has a distinct probe
-          # unavailable to the worker, omit that signal at this trust boundary.
-
           if [ "$WORKER_RESULT" != 'success' ]; then
             if [ -z "$worker_job" ]; then
               echo "::warning::Omitting unverified lifecycle outcome"
@@ -198,9 +177,6 @@ jobs:
               *) outcome_kind='trajectory-failure' ;;
             esac
             printf 'outcome-kind=%s\n' "$outcome_kind" >> "$GITHUB_OUTPUT"
-            if [ -n "$readiness_failure" ]; then
-              printf 'readiness-failure=%s\n' "$readiness_failure" >> "$GITHUB_OUTPUT"
-            fi
             exit 0
           fi
 
@@ -287,7 +263,6 @@ jobs:
           WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
           OUTCOME_KIND: ${{ steps.evidence.outputs.outcome-kind }}
           OUTCOME_REFERENCE: ${{ steps.evidence.outputs.outcome-reference }}
-          READINESS_FAILURE: ${{ steps.evidence.outputs.readiness-failure }}
           COMPLETION_URL: https://lcars.jlapenna.net/api/control-plane/completion
           OIDC_AUDIENCE: agent-lcars-dispatch-completion
         run: |
@@ -312,9 +287,6 @@ jobs:
                   kind: "pull-request",
                   number: (env.OUTCOME_REFERENCE | tonumber)
                 }
-              } else {} end)
-            + (if env.READINESS_FAILURE != "" then {
-                readinessFailure: env.READINESS_FAILURE
               } else {} end)
           ' > "$payload_file"
 

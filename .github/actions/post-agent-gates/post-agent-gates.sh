@@ -39,6 +39,14 @@
 # which could itself succeed even though the job was already red from an
 # earlier, real failure.
 #
+# This step publishes nothing: the independent hosted fallback finalizer
+# (agent-fallback-finalize.yml) deliberately re-derives lifecycle evidence
+# from GitHub's job metadata and exact attempt markers rather than trusting
+# any worker-side step output, and report-failure.sh is log-only -- the
+# finalizer's completion callback drives the orchestrator, the one writer
+# of visible failure state (#813; the direct-park path was retired per
+# maintainer decision 2026-08-17).
+#
 # Driven entirely by environment variables:
 #   Always required: GH_TOKEN, AGENT, REPO, SERVER_URL, RUN_ID, ISSUE,
 #     JOB_STATUS.
@@ -60,17 +68,6 @@
 #     structured runtime result for supplementary failure signals --
 #     claude.yml only, see claude-log-scan.sh; codex.yml/opencode.yml leave
 #     this unset and get none of claude's extra signals, exactly as before).
-#   #813/#1208: MAINTAINER is report-failure.sh's own standalone-mode
-#     toggle, pass-through here. LCARS's hosted workers leave it unset:
-#     report-failure.sh gets GH_TOKEN/ISSUE_NUM/MAINTAINER all blanked,
-#     byte-identical to the pre-#1208 hardcoded behavior, and stays
-#     log-only while the hosted finalizer's completion callback remains
-#     the one writer through the projector. A standalone consumer without
-#     that coupled finalizer sets MAINTAINER (e.g. `vars.MAINTAINER_LOGIN`)
-#     and this script forwards its own ambient GH_TOKEN plus ISSUE (as
-#     ISSUE_NUM) alongside it, so report-failure.sh takes its compatibility
-#     path and posts/parks the failure directly (#4388's contract, now
-#     reachable without hand-copying the step).
 set -uo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
@@ -83,38 +80,6 @@ set -uo pipefail
 WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
-AGENT_STEP_OUTCOME="${AGENT_STEP_OUTCOME:-}"
-READINESS_FAILURE="${READINESS_FAILURE:-}"
-MAINTAINER="${MAINTAINER:-}"
-
-case "$READINESS_FAILURE" in
-  ''|credential|provider|bootstrap) ;;
-  *)
-    echo "::error::Invalid READINESS_FAILURE: $READINESS_FAILURE"
-    exit 1
-    ;;
-esac
-
-# The worker job publishes this step output to its independent hosted
-# fallback finalizer. Write it only after either the clean success path needs
-# no report or the primary failure report actually landed. Missing/false means
-# the hosted job must take over; this also covers checkout/snapshot failure,
-# where this trusted script never existed on the self-hosted runner at all.
-mark_post_agent_gates_complete() {
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo 'complete=true' >> "$GITHUB_OUTPUT"
-  fi
-}
-
-publish_outcome_kind() {
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo "outcome-kind=$1" >> "$GITHUB_OUTPUT"
-  fi
-}
-
-if [ -n "$READINESS_FAILURE" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
-  echo "readiness-failure=$READINESS_FAILURE" >> "$GITHUB_OUTPUT"
-fi
 
 trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -154,22 +119,10 @@ if [ "$JOB_STATUS" = "success" ] && [ "$deliverable_failed" -eq 0 ]; then
   # Nothing failed and nothing needs reporting -- mirrors the original
   # "Determine failure reason"/"Report failure on the issue" steps both
   # being skipped by their own if: failure() || cancelled().
-  if ! grep -q '^outcome-kind=' "${GITHUB_OUTPUT:-/dev/null}" 2>/dev/null; then
-    publish_outcome_kind unknown-success
-  fi
-  mark_post_agent_gates_complete
   exit 0
 fi
 
-# --- Classify and determine failure reason: was if: failure() || cancelled() -
-if [ "$no_deliverable" -eq 1 ] || [ "$JOB_STATUS" = "success" ]; then
-  publish_outcome_kind outcome-gate-failure
-elif [ -z "$AGENT_STEP_OUTCOME" ] || [ "$AGENT_STEP_OUTCOME" = "skipped" ]; then
-  publish_outcome_kind startup-failure
-else
-  publish_outcome_kind trajectory-failure
-fi
-
+# --- Determine failure reason: was if: failure() || cancelled() -------------
 reason=""
 if [ "$no_deliverable" -eq 1 ]; then
   reason=$'\n\n'"$NO_DELIVERABLE_REASON"
@@ -178,29 +131,15 @@ elif [ -n "$FAILURE_LOG_SCAN_SCRIPT" ] && [ -f "$FAILURE_LOG_SCAN_SCRIPT" ]; the
 fi
 
 # --- Report failure on the issue: was if: failure() || cancelled() ---------
-# #813/#1208: MAINTAINER presence is report-failure.sh's own standalone-mode
-# toggle -- forward it unchanged. Absent (LCARS's hosted workers), blank the
-# compatibility tuple exactly as before: GH_TOKEN is otherwise ambient here
-# for deliverable lookups, but this hosted path must remain log-only while
-# the finalizer/projector owns GitHub state writes. Present (a standalone
-# consumer), forward the same ambient GH_TOKEN and ISSUE (as ISSUE_NUM)
-# alongside it so report-failure.sh takes its compatibility path.
-report_failure_gh_token=''
-report_failure_issue_num=''
-if [ -n "$MAINTAINER" ]; then
-  report_failure_gh_token="$GH_TOKEN"
-  report_failure_issue_num="$ISSUE"
-fi
-
-GH_TOKEN="$report_failure_gh_token" ISSUE_NUM="$report_failure_issue_num" MAINTAINER="$MAINTAINER" \
-  AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
+# report-failure.sh is log-only (#813): it annotates this run's own log,
+# and the hosted finalizer's completion callback reports the failure on
+# the anchor issue/PR through the orchestrator, the one writer. Its former
+# standalone direct-park mode was retired per maintainer decision
+# 2026-08-17, so no GitHub-write credentials are forwarded here.
+AGENT="$AGENT" REPO="$REPO" SERVER_URL="$SERVER_URL" \
   RUN_ID="$RUN_ID" REASON="$reason" JOB_STATUS="$JOB_STATUS" \
   bash "$trusted_dir/report-failure/report-failure.sh"
 report_status=$?
-
-if [ "$report_status" -eq 0 ]; then
-  mark_post_agent_gates_complete
-fi
 
 if [ "$deliverable_failed" -eq 1 ] || [ "$report_status" -ne 0 ]; then
   exit 1

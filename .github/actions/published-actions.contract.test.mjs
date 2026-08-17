@@ -124,18 +124,20 @@ const PUBLISHED = {
     },
     outputs: [],
   },
-  // #4388 restores token/issue/maintainer as optional compatibility inputs
-  // for standalone consumers. LCARS's own workers omit maintainer and keep
-  // #813's hosted projector as their one writer.
+  // Log-only (#813): the hosted finalizer/orchestrator owns visible
+  // failure reporting. The former standalone token/issue/maintainer
+  // direct-park inputs (#4388) were retired per maintainer decision
+  // 2026-08-17 -- every fleet consumer runs the coupled
+  // agent-fallback-finalize.yml, so the direct park had become a
+  // redundant second writer. Dropping an input is safe for a
+  // moving-@main consumer that still passes it: the runner emits an
+  // "Unexpected input(s)" WARNING, never an error.
   'report-failure': {
     inputs: {
-      token: { required: false, default: '' },
       agent: { required: true },
       'message-prefix': { required: false, default: '' },
       reason: { required: false, default: '' },
       'job-status': { required: true },
-      issue: { required: false, default: '' },
-      maintainer: { required: false, default: '' },
     },
     outputs: [],
   },
@@ -312,10 +314,13 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'WRITER_CREDENTIALS_FILE',
       'NO_DELIVERABLE_REASON',
       'FAILURE_LOG_SCAN_SCRIPT',
-      'AGENT_STEP_OUTCOME',
-      'READINESS_FAILURE',
-      // #1208: report-failure.sh's own standalone-mode toggle, forwarded.
-      'MAINTAINER',
+      // AGENT_STEP_OUTCOME, READINESS_FAILURE, and MAINTAINER were
+      // retired 2026-08-17: the first two only fed the step's own
+      // now-deleted $GITHUB_OUTPUT writes (nothing ever mapped
+      // steps.post_agent_gates.outputs.* -- the hosted fallback finalizer
+      // re-derives from job metadata by design), and MAINTAINER was
+      // report-failure.sh's standalone direct-park toggle, retired with
+      // that path.
     ].sort(),
     'post-agent-gates.sh: optional env-var set changed',
   );

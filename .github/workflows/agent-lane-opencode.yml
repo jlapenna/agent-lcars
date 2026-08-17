@@ -605,9 +605,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           ATTEMPT_ID: ${{ env.ATTEMPT_ID }}
           JOB_STATUS: ${{ job.status }}
-          MAINTAINER: ${{ (!inputs.dispatch-bootstrap && inputs.maintainer-login) || '' }}
           MESSAGE_PREFIX: ${{ inputs.message-prefix }}
-          AGENT_STEP_OUTCOME: ${{ (inputs.dispatch-bootstrap && steps.agent.outcome) || steps.agent-cli.outcome }}
           WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
           NO_DELIVERABLE_REASON: ${{ inputs.no-deliverable-reason }}
         run: bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"
