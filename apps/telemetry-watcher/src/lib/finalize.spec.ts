@@ -1,8 +1,13 @@
 import { SessionDoc, SessionWrite } from '@agent-lcars/telemetry';
-import { describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { finalizeSidecar } from './finalize';
 import { RunnerConfig } from './runner-config';
+import { executeSessionTitleAnnotationCommand } from './session-title-annotation-command';
+import { SESSION_STATE_DIRECTORY } from './session-title-paths';
 import { SessionStore } from './store';
 import { UploadTranscriptOptions } from './transcript-upload';
 
@@ -92,10 +97,18 @@ function createFakeUploader() {
   return { uploadTranscript, uploads };
 }
 
+/** Mirrors runner.spec.ts's own constant of the same name/purpose — see its
+ * doc comment. Every test below that doesn't explicitly exercise the
+ * status overlay (the "session-status overlay (issue #1289)" describe
+ * block) doubles as a regression guard that finalize behaves identically
+ * to before #1289 when no overlay exists. */
+const NO_OVERLAY_STATE_DIR = '/nonexistent/agent-lcars-session-state-fixture';
+
 function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
+    sessionStateDir: NO_OVERLAY_STATE_DIR,
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
     stalenessWindowMs: 50_000,
@@ -509,5 +522,93 @@ describe('finalizeSidecar', () => {
     ).resolves.toBeUndefined();
 
     expect(upserts).toHaveLength(0);
+  });
+
+  /**
+   * Issue #1289: `finalizeSidecar` now reads the session-status overlay
+   * once and joins it onto each summary before the authoritative `ended`
+   * write. Like runner.spec.ts's overlay tests, these write through the
+   * REAL CLI command into a real temp directory and let finalize read it
+   * back with the real `fs`-backed reader — no `readSessionStatusOverlay`
+   * seam is injected, since the point is proving the actual wiring, not a
+   * mock that always answers the same way regardless of what's really
+   * there.
+   */
+  describe('session-status overlay (issue #1289)', () => {
+    let homeDirectory: string;
+    let stateDirectory: string;
+
+    beforeEach(() => {
+      homeDirectory = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'lcars-finalize-overlay-'),
+      );
+      stateDirectory = path.join(homeDirectory, SESSION_STATE_DIRECTORY);
+    });
+
+    afterEach(() => {
+      fs.rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it('carries a declared status into the authoritative ended doc', async () => {
+      const { store, upserts } = createFakeStore();
+      const { uploadTranscript } = createFakeUploader();
+      const sessionId = 'session-status-ended';
+      const files = {
+        [`/home/runner/.claude/projects/proj/${sessionId}.jsonl`]:
+          ISSUE_AGENT_TRANSCRIPT(sessionId, '2026-07-19T10:00:00.000Z'),
+      };
+
+      const written = executeSessionTitleAnnotationCommand(
+        ['session', 'status', 'Opened the PR'],
+        { homeDirectory, env: { CLAUDE_CODE_SESSION_ID: sessionId } },
+      );
+      expect(written.ok).toBe(true);
+
+      await finalizeSidecar({
+        config: baseConfig({ sessionStateDir: stateDirectory }),
+        store,
+        discover: () => Object.keys(files),
+        readFile: (p: string) => files[p as keyof typeof files],
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+        uploadTranscript,
+      });
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).toMatchObject({
+        sessionId,
+        liveness: 'ended',
+        status: 'Opened the PR',
+      });
+      expect(upserts[0].statusUpdatedAt).toBeTruthy();
+    });
+
+    it('is fail-soft when sessionStateDir points at a directory that was never written to', async () => {
+      const { store, upserts } = createFakeStore();
+      const { uploadTranscript } = createFakeUploader();
+      const sessionId = 'session-status-ended-missing';
+      const files = {
+        [`/home/runner/.claude/projects/proj/${sessionId}.jsonl`]:
+          ISSUE_AGENT_TRANSCRIPT(sessionId, '2026-07-19T10:00:00.000Z'),
+      };
+
+      await expect(
+        finalizeSidecar({
+          // stateDirectory is a real, never-written-to temp path -- same
+          // shape as a container whose agent never ran `lcars session
+          // status`.
+          config: baseConfig({ sessionStateDir: stateDirectory }),
+          store,
+          discover: () => Object.keys(files),
+          readFile: (p: string) => files[p as keyof typeof files],
+          resolveGitBranch: async () => undefined,
+          resolveGitRepo: async () => undefined,
+          uploadTranscript,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]).not.toHaveProperty('status');
+    });
   });
 });

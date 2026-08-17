@@ -88,6 +88,18 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
     heartbeatIntervalMs: config.heartbeatIntervalMs,
     stalenessWindowMs: config.stalenessWindowMs,
     shareDir: undefined,
+    // Issue #1289: the one line that turns the overlay on for runner mode.
+    // `config.sessionStateDir` is always `defaultSessionStateDir()` (see
+    // `runner-config.ts`) — WatcherDaemon.tick() already reads both title
+    // channels and the status channel from this same root unconditionally
+    // whenever it's set (see daemon.ts's `sessionStateDir` handling), so a
+    // dispatched agent's `lcars session title`/`lcars session status`
+    // writes reach the live session doc with no other change here. Before
+    // #1289 this was deliberately never set (#1212) — a dispatch runner's
+    // container had a `lcars` CLI that couldn't run (0 references in
+    // runner-image/Dockerfile) writing to a directory this daemon never
+    // read, so there was nothing to turn on yet.
+    sessionStateDir: config.sessionStateDir,
     runId: config.runId,
     issueNumber: config.issueNumber,
     repo: config.repo,

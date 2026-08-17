@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { defaultSessionStateDir } from './config';
 import { loadRunnerConfig } from './runner-config';
 
 const ENV_KEYS = [
@@ -58,6 +59,15 @@ describe('loadRunnerConfig', () => {
     expect(config.issueNumber).toBeUndefined();
     expect(config.heartbeatIntervalMs).toBe(10_000);
     expect(config.claudeProjectsDir).toContain('.claude/projects');
+  });
+
+  // Issue #1289: `sessionStateDir` must always be set (never omitted the
+  // way `runId`/`issueNumber` are) — `startSidecar` and `finalizeSidecar`
+  // both key their overlay reads directly off this field, unconditionally.
+  it('always sets sessionStateDir to the same default the host watcher uses', () => {
+    const config = loadRunnerConfig([]);
+
+    expect(config.sessionStateDir).toBe(defaultSessionStateDir());
   });
 
   it('ignores unknown flags without breaking parsing of known ones after them', () => {

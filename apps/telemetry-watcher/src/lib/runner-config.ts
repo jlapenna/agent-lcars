@@ -1,6 +1,7 @@
 import {
   defaultClaudeProjectsDir,
   defaultCodexSessionsDir,
+  defaultSessionStateDir,
   loadSharedConfig,
   SharedWatcherConfig,
 } from './config';
@@ -41,6 +42,23 @@ export interface RunnerConfig extends Pick<
    * `GITHUB_REPOSITORY` (see `loadRunnerConfig`) when unset. Tags every doc
    * this run ships as `repo`. */
   repo?: { owner: string; name: string };
+  /** Session-title/status overlay root (issue #1289), threaded into
+   * `WatcherDaemonOptions.sessionStateDir` by `runner.ts`'s `startSidecar`
+   * and read directly by `finalize.ts`. Always `defaultSessionStateDir()`
+   * (`~/.local/state/agent-lcars` — `$HOME` is `/home/runner` in the
+   * runner image) — the same default the host watcher falls back to (see
+   * `config.ts`'s `loadConfig`), so a dispatched agent's `lcars session
+   * title`/`lcars session status` writes land exactly where this reads
+   * from with zero configuration. Unlike the host, runner mode has no env
+   * var to opt out: the whole point of #1289 was turning this on, and an
+   * ephemeral single-purpose container has no operator who'd ever want to
+   * flip it back off. A container with nothing written there yet (the CLI
+   * never ran, or ran before this issue existed) is not a config error —
+   * `readSessionTitleOverlay`/`readSessionStatusOverlay` already treat a
+   * missing directory as `available: false` and fail soft (see
+   * `session-title-annotation-source.ts`), the same as an ordinary
+   * workstation host that has never run `lcars session title` either. */
+  sessionStateDir: string;
 }
 
 interface RunnerFlags {
@@ -137,6 +155,7 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   return {
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
     codexSessionsDir: flags.codexSessionsDir ?? defaultCodexSessionsDir(),
+    sessionStateDir: defaultSessionStateDir(),
     host: base.host,
     heartbeatIntervalMs: base.heartbeatIntervalMs,
     stalenessWindowMs: base.stalenessWindowMs,
