@@ -1,9 +1,18 @@
 # Fleet credentials: what each token is and how to mint it
 
 Every credential the agent fleet consumes, who is able to mint it, where the
-canonical copy lives, and the exact commands. Written for the maintainer
-onboarding a new repo (the automation can provision _storage_ everywhere, but
-several of these can only be minted interactively by a human).
+canonical copy lives, and the exact commands. Written to be executable by an
+agent session driving the maintainer's workstation: every step is a concrete
+command, and the two OAuth mints are doable by an agent with browser tooling
+against the maintainer's already-signed-in browser (they only _require_ a
+human when no browser automation is available).
+
+**Preconditions** (verify before starting, don't assume): `gh auth status`
+shows the maintainer's login; `gcloud auth list` shows an account with
+Secret Manager access to the named projects; `ssh homelab@homelab true`
+succeeds. Never echo a secret value into terminal output, chat, or shell
+history — move values with pipes, `read -rs`, or files created under
+`umask 077`, and delete temporaries when done.
 
 | Credential                | Consumed by                               | Canonical home                                                       | Mintable by                        |
 | ------------------------- | ----------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
@@ -34,8 +43,11 @@ A long-lived OAuth token for the maintainer's Claude subscription. Not
 self-rotating: unlike the Codex lineage below, **one token may be shared
 across repos** safely.
 
-1. In any terminal: `claude setup-token` — completes a browser OAuth flow
-   and prints the token.
+1. Run `claude setup-token`. It prints an authorization URL and waits.
+   Open that URL in the maintainer's signed-in browser (an agent with
+   browser tooling can do this — navigate, click **Authorize**, and copy
+   the resulting code back into the waiting prompt if one is shown). The
+   command then prints the long-lived token exactly once.
 2. Store it on each repo without it ever touching a shell history or chat:
 
    ```bash
@@ -64,31 +76,62 @@ value:
 
 Per new repo:
 
-1. On a workstation with no live Codex session you care about:
-   `codex login` (browser flow), producing a fresh `~/.codex/auth.json`.
+1. On a workstation with no live Codex session you care about, run
+   `codex login`. Like the Claude mint, it prints an authorization URL and
+   waits — complete it in the maintainer's signed-in browser (an agent
+   with browser tooling: navigate, approve). Result: a fresh
+   `~/.codex/auth.json`.
 2. Upload it as that repo's own secret, then remove the local copy so no
-   competing lineage exists:
+   competing lineage exists. Pick the project deliberately: precedent is
+   the owning org's project (`supersprinklesracing` for that org's repos);
+   for `jlapenna`-account repos no convention exists yet — that is a
+   maintainer decision to make once and record here. Do **not** discard
+   errors on the create — a permission failure must stop the run;
+   "already exists" is the only acceptable one:
 
    ```bash
-   gcloud secrets create SYNC_PADD_CODEX_AUTH_JSON --project=<project> \
-     --replication-policy=automatic 2>/dev/null || true
-   gcloud secrets versions add SYNC_PADD_CODEX_AUTH_JSON \
-     --project=<project> --data-file="$HOME/.codex/auth.json"
-   rm "$HOME/.codex/auth.json"   # the lineage lives in Secret Manager now
+   proj=<project>
+   name=SYNC_PADD_CODEX_AUTH_JSON # <REPO>_CODEX_AUTH_JSON
+   gcloud secrets describe "$name" --project="$proj" >/dev/null 2>&1 ||
+     gcloud secrets create "$name" --project="$proj"
+   gcloud secrets versions add "$name" --project="$proj" \
+     --data-file="$HOME/.codex/auth.json"
+   rm "$HOME/.codex/auth.json" # the lineage lives in Secret Manager now
    ```
 
-3. Wire the caller inputs/vars: `codex-auth-secret-name` and
-   `gcp-project-id` in the repo's `codex.yml`, plus the WIF plumbing the
-   restore/persist steps authenticate with — a workload-identity provider
-   whose attribute condition trusts `repository == <repo>` and the
-   `agent-lane-codex.yml` `job_workflow_ref`, and a service account with
+3. Wire the WIF plumbing the lane's restore/persist steps authenticate
+   with. The live sprinkles provider is the template — pool
+   `claude-agent-pool`, provider `claude-agent-github`, project
+   `supersprinklesracing` — and its attribute condition has this shape:
+
+   ```text
+   assertion.repository=='<owner>/<repo>' &&
+     (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/codex.yml')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml'))
+   ```
+
+   To admit a new repo where the pool already exists, read the current
+   condition first
+   (`gcloud iam workload-identity-pools providers describe
+claude-agent-github --location=global
+--workload-identity-pool=claude-agent-pool --project=<proj>
+--format='value(attributeCondition)'`), extend it, and write it back
+   with `... providers update-oidc ... --attribute-condition='<full new
+condition>'` — the flag **replaces** the condition, so always start
+   from the read. For a `jlapenna`-account repo there is no pool at all
+   yet: creating one (`workload-identity-pools create` + `create-oidc`
+   against issuer `https://token.actions.githubusercontent.com`) is a
+   maintainer infrastructure decision, not something to improvise
+   mid-onboarding. The service account needs
    `roles/secretmanager.secretAccessor` **and** version-add on that one
-   secret (the writeback). sprinkles pins these inline
-   (`claude-agent-pool/claude-agent-github` in project
-   `supersprinklesracing`); the four 2026-08 onboarded repos read
-   `vars.GCP_WIF_PROVIDER` / `vars.GCP_CODEX_AGENT_SA` and stay dark until
-   those exist.
-4. Verify: `codex login status` inside the lane's restore step log.
+   secret (the rotate-writeback), plus `roles/iam.workloadIdentityUser`
+   for `principalSet://…/attribute.repository/<owner>/<repo>`.
+
+4. Set the repo side: caller inputs `codex-auth-secret-name` /
+   `gcp-project-id` in `codex.yml`; the four 2026-08 onboarded repos read
+   vars instead — `gh variable set GCP_WIF_PROVIDER` /
+   `GCP_CODEX_AGENT_SA`.
+5. Verify: `codex login status` inside the lane's restore step log.
 
 ## `OPENCODE_LLM_API_KEY` (opencode lane)
 
@@ -97,11 +140,14 @@ A **LiteLLM virtual key** (`sk-…`) for the homelab LiteLLM proxy
 scoped key rather than reusing the master key:
 
 ```bash
-# master key: litellm/.env on the homelab host (vaulted)
+# The master key lives only on the homelab host; read it without echoing:
+LITELLM_MASTER_KEY=$(ssh homelab@homelab \
+  "grep '^LITELLM_MASTER_KEY=' /home/homelab/p/homelab/litellm/.env" | cut -d= -f2-)
 curl -sS https://llm.jlapenna.net/key/generate \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"key_alias": "opencode-fleet-2026-08", "duration": null}'
+unset LITELLM_MASTER_KEY
 ```
 
 Copy the **`key` field** (`sk-…`) of the response — _not_ `token`, which is
