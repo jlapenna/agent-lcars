@@ -12,6 +12,20 @@ import {
   UnwatchedRepoError,
 } from './github-client';
 
+/**
+ * These suites reset the module registry in `beforeEach` (getGithubClient
+ * memoizes its client at module scope, so each test needs a fresh
+ * evaluation). A static import would bind the pre-reset instance once and
+ * every test after the first would assert against a stale module - so the
+ * dynamic import is the mechanism, not a style choice. Funnelled through
+ * one helper so the reason is stated once instead of at fourteen call
+ * sites.
+ */
+function freshGithubClientModule() {
+  // eslint-disable-next-line no-restricted-syntax -- see above: vi.resetModules() invalidates the registry a static import would have bound.
+  return import('./github-client');
+}
+
 const ENV_KEY = 'AGENT_LCARS_WATCHED_REPOS';
 const CLAUDE_INTEGRATION = {
   workflowFile: 'claude.yml',
@@ -65,7 +79,7 @@ describe('getGithubClient', () => {
   });
 
   it('configures a bounded retry budget and rate-limit throttling', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
 
     expect(octokitConstructorSpy).toHaveBeenCalledTimes(1);
@@ -78,7 +92,7 @@ describe('getGithubClient', () => {
   });
 
   it('caches the client across calls instead of constructing a new one', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
 
     const first = getGithubClient();
     const second = getGithubClient();
@@ -88,7 +102,7 @@ describe('getGithubClient', () => {
   });
 
   it('retries a rate-limited request within the wait budget, up to the attempt budget, then gives up', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
     const fakeRequest = {
@@ -111,7 +125,7 @@ describe('getGithubClient', () => {
   });
 
   it('declines a rate-limited retry whose retryAfter exceeds the wait budget, even on the first attempt', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
     const fakeRequest = {
@@ -130,7 +144,7 @@ describe('getGithubClient', () => {
   });
 
   it('retries a secondary rate limit within the wait budget, up to the attempt budget, then gives up', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
     const fakeRequest = {
@@ -152,7 +166,7 @@ describe('getGithubClient', () => {
   });
 
   it('declines a secondary-rate-limited retry whose retryAfter exceeds the wait budget', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
     const fakeRequest = {
@@ -167,7 +181,7 @@ describe('getGithubClient', () => {
   });
 
   it('retries a GET on a retryable 5xx but does not retry a mutating POST', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     const client = getGithubClient();
 
     const jsonResponse = (body: unknown, status: number) =>
@@ -210,7 +224,7 @@ describe('getGithubClient', () => {
   }, 10_000);
 
   it("adds a bounded timeout signal to requests that don't already have one", async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
 
@@ -225,7 +239,7 @@ describe('getGithubClient', () => {
   });
 
   it('preserves a caller-supplied signal instead of overriding it', async () => {
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     getGithubClient();
     const options = octokitConstructorSpy.mock.calls[0][0];
 
@@ -273,7 +287,7 @@ describe('getGithubClient auth', () => {
 
   it('#1284: throws when AGENT_LCARS_APP_CLIENT_ID is unset', async () => {
     process.env[PRIVATE_KEY_ENV_KEY] = FAKE_PRIVATE_KEY_PEM;
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     expect(() => getGithubClient()).toThrow(
       'process.env.AGENT_LCARS_APP_CLIENT_ID not defined',
     );
@@ -281,7 +295,7 @@ describe('getGithubClient auth', () => {
 
   it('#1284: throws when AGENT_LCARS_APP_PRIVATE_KEY is unset', async () => {
     process.env[CLIENT_ID_ENV_KEY] = 'Iv1.test0123456789ab';
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
     expect(() => getGithubClient()).toThrow(
       'process.env.AGENT_LCARS_APP_PRIVATE_KEY not defined',
     );
@@ -290,7 +304,7 @@ describe('getGithubClient auth', () => {
   it("#1284: wires the App authStrategy with both env vars and this client's own permission set", async () => {
     process.env[CLIENT_ID_ENV_KEY] = 'Iv1.test0123456789ab';
     process.env[PRIVATE_KEY_ENV_KEY] = FAKE_PRIVATE_KEY_PEM;
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
 
     getGithubClient();
 
@@ -311,7 +325,7 @@ describe('getGithubClient auth', () => {
 
   it('#1284: e2e mode (AGENT_CONSOLE_GITHUB_API_BASE_URL set) needs no App credentials and skips the authStrategy entirely', async () => {
     process.env[BASE_URL_ENV_KEY] = 'http://localhost:4200/api/e2e/github';
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
 
     // Would throw ('AGENT_LCARS_APP_CLIENT_ID not defined') if the e2e
     // branch fell through to the App path - it doesn't.
@@ -326,7 +340,7 @@ describe('getGithubClient auth', () => {
   it('#1284: throws at construction time (not first request) when the App private key does not parse', async () => {
     process.env[CLIENT_ID_ENV_KEY] = 'Iv1.test0123456789ab';
     process.env[PRIVATE_KEY_ENV_KEY] = 'not-a-real-pem';
-    const { getGithubClient } = await import('./github-client');
+    const { getGithubClient } = await freshGithubClientModule();
 
     expect(() => getGithubClient()).toThrow(
       'GitHub App private key is not a valid PEM-encoded RSA private key (PKCS1 or PKCS8)',
