@@ -50,6 +50,9 @@ promised one.
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `renovate-auto-approve.yml`    | Approve a `renovate[bot]` pull request via a minted Agent LCARS App installation token                          |
 | `agent-automerge-reusable.yml` | The whole agent auto-merge surface: arm squash auto-merge, restore the post-merge chain, sweep orphaned anchors |
+| `agent-lane-claude.yml`        | The canonical Claude issue-agent lane (see "Published reusable lane workflows" below)                           |
+| `agent-lane-codex.yml`         | The canonical Codex issue-agent lane                                                                            |
+| `agent-lane-opencode.yml`      | The canonical OpenCode issue-agent lane                                                                         |
 
 `agent-automerge-reusable.yml` (#1312 U4) is the union of this repo's own
 `agent-automerge.yml` and sprinkles' `claude-automerge.yml`, which had
@@ -275,6 +278,74 @@ and `snapshot-enforcement-scripts` copies sibling action directories from
 a supported pattern here, but each action that relies on one must say so in
 its `action.yml`.
 
+## Published reusable lane workflows
+
+`agent-lane-claude.yml`, `agent-lane-codex.yml`, and `agent-lane-opencode.yml`
+(issue #1312 U1) are the fleet's canonical issue-agent pipelines: each is the
+union of that pipeline's three per-repo lane implementations, with every
+repo-specific behavior behind a typed `workflow_call` input. This repo's own
+`claude.yml`/`codex.yml`/`opencode.yml` are thin same-repo callers
+(`uses: ./.github/workflows/agent-lane-<pipeline>.yml`); homelab and
+sprinkles collapse onto `@main` callers in the follow-up units.
+
+A caller keeps only what `workflow_call` cannot carry:
+
+- the `on: workflow_dispatch` input contract and the contract-tested
+  `run-name` (the console join key and dispatch marker),
+- top-level `permissions` and any `concurrency` group (codex's
+  `codex-subscription-auth` serialization lives on the caller's job — it is
+  repo-scoped, and homelab's carries a `queue:` key the others don't),
+- the repo-variable spellings: variables do not cross repos, so
+  `AGENT_RUNNER_LABEL`, `AGENT_FLEET_LOGIN`, `MAINTAINER_LOGIN`, WIF
+  provider/SA values, and the Nx cache URL are passed down as inputs,
+- the fully rendered `prompt` and `no-deliverable-reason` text — protocol
+  paths and redispatch vocabulary are repo-specific content,
+- its own `fallback-finalize` completion-callback job.
+
+Every toggle defaults to the consumer behavior; the extras
+(`dispatch-bootstrap`, `protected-snapshot`, `trajectory-export`,
+`long-run-budget`, `queue-drain`, …) carry a recorded divergence reason in
+each lane's header comment (the #1305 convention). Cross-org callers cannot
+`secrets: inherit`, so every secret is declared explicitly. Consumer wiring
+shape (claude, abbreviated):
+
+```yaml
+jobs:
+  claude:
+    if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    uses: jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml@main # latest
+    with:
+      issue: ${{ inputs.issue }}
+      mode: ${{ inputs.mode }}
+      reply: ${{ inputs.reply }}
+      runbook: ${{ inputs.runbook }}
+      context: ${{ inputs.context }}
+      broker-generation: ${{ inputs.broker_generation }}
+      broker-intent-id: ${{ inputs.broker_intent_id }}
+      runs-on-label: ${{ vars.AGENT_RUNNER_LABEL }}
+      agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
+      maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
+      agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+      telemetry-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
+      telemetry-service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
+      prompt: >-
+        <this repo's rendered agent prompt>
+      no-deliverable-reason: >-
+        <this repo's silent-stall wording>
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+```
+
+One infra note for consumers: the worker job now runs inside the reusable
+workflow, so an OIDC token minted by that job carries
+`job_workflow_ref: jlapenna/agent-lcars/.github/workflows/agent-lane-*.yml@...`
+while `workflow_ref` still names the caller's own lane file. A WIF provider
+whose attribute condition matches only on `assertion.repository` (this
+repo's pool, and the fleet-shared telemetry pool) is unaffected; a provider
+conditioned on `job_workflow_ref` must allow the lane files before a
+consumer adopts.
+
 ## Fleet-canonical workstation scripts (`check-canonical-sync`)
 
 The fleet's _session-side_ enforcement tooling — scripts that run on
@@ -433,7 +504,11 @@ cross-repo-called `workflow_call` workflow — was never added to this
 manifest either, for the same reason. A Published reusable workflow's
 `on.workflow_call.inputs`/`secrets` contract is instead guarded by
 `actionlint` (run in CI on every changed workflow) and by review of the
-manifest-shaped diff itself; extending the parser to a second file shape
-was left out rather than inventing a new registry mechanism for what were,
-at the time, one or two workflows. (`agent-automerge-reusable.yml`
-additionally carries the behavioral pins named in its table entry above.)
+manifest-shaped diff itself. Two carry real behavioral pins on top:
+`agent-automerge-reusable.yml` (the pins named in its table entry above),
+and the three `agent-lane-*.yml` lane workflows, whose full
+`workflow_call` input/secret surface (name, requiredness, type, default)
+is pinned by
+[`worker-workflow-contract.test.ts`](../tools/contract-tests/worker-workflow-contract.test.ts)
+the same way this file's manifest pins the composite actions — published
+surface is guarded surface.
