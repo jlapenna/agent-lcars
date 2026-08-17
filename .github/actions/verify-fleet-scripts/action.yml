@@ -1,0 +1,44 @@
+name: Verify fleet-canonical scripts
+description: >-
+  Fail a consumer repo's CI when its vendored copy of a fleet-canonical
+  enforcement script drifts from the canonical copy in
+  jlapenna/agent-lcars, or when a stray duplicate of one reappears at an
+  undeclared path (agent-lcars#1307). These scripts run on workstations
+  (session hooks, git hooks, skill scripts), so consumers must hold local
+  copies - this action is the mechanical contract that replaces the old
+  "keep behavioral changes mirrored" comment: copies are byte-identical
+  vendored files, and repo-specific behavior enters only through each
+  script's documented hooks (arguments, environment, a sibling conf file).
+  NOTE this action reads the canonical copies from the whole-repo actions
+  download via repo-relative paths above its own directory
+  ($GITHUB_ACTION_PATH/../../..) - a supported pattern here, see
+  docs/published-actions.md's "whole-repo-download caveat".
+
+inputs:
+  scripts:
+    description: >-
+      Newline-separated `canonical-path[=consumer-path]` entries. Each
+      names a fleet-canonical file (path in jlapenna/agent-lcars) and,
+      after an optional `=`, where the consumer's vendored copy lives when
+      that differs (e.g. homelab holds the guardrail under bin/). Without
+      `=`, the consumer path is the canonical path. Blank lines and
+      `#`-prefixed lines are ignored. The default lists every script
+      canonicalized by agent-lcars#1307; pass an explicit list only to
+      re-map paths - dropping a script from the list is opting out of its
+      drift protection, not a supported configuration.
+    required: false
+    default: |
+      tools/codex-issue-guardrail.cjs
+      tools/fleet-identity.cjs
+      tools/claude-agent-session.sh
+      tools/require-feature-worktree.sh
+      .agents/skills/github-ci-monitor/scripts/watch-prs.sh
+
+runs:
+  using: composite
+  steps:
+    - name: Verify fleet-canonical scripts
+      shell: bash
+      env:
+        SCRIPTS: ${{ inputs.scripts }}
+      run: bash "$GITHUB_ACTION_PATH/verify-fleet-scripts.sh"

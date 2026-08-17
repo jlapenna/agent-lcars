@@ -42,6 +42,7 @@ promised one.
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                         |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
+| `verify-fleet-scripts`         | Fail consumer CI when a vendored fleet-canonical workstation script drifts, or a stray copy reappears (see below)    |
 
 ### Published reusable workflows
 
@@ -253,6 +254,59 @@ and `snapshot-enforcement-scripts` copies sibling action directories from
 `$GITHUB_ACTION_PATH/..`. Repo-relative paths above the action directory are
 a supported pattern here, but each action that relies on one must say so in
 its `action.yml`.
+
+## Fleet-canonical workstation scripts (`verify-fleet-scripts`)
+
+The fleet's _session-side_ enforcement tooling — scripts that run on
+workstations, not CI, and therefore cannot be delivered by
+`snapshot-enforcement-scripts` or a cross-repo `uses:` at runtime — is
+canonical in this repo and **vendored byte-for-byte** into the consumer
+repos (agent-lcars#1307):
+
+| Canonical path                                          | Runs as                                                 | Repo-specific hook                                                     |
+| ------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `tools/codex-issue-guardrail.cjs`                       | Claude/Codex PostToolUse hook (`.claude/settings.json`) | none needed (project name from cwd; identity via `fleet-identity.cjs`) |
+| `tools/fleet-identity.cjs`                              | required by the guardrail                               | `AGENT_FLEET_LOGIN` env override                                       |
+| `tools/claude-agent-session.sh`                         | operator CLI for fleet runner sessions                  | sibling `claude-agent-session.conf` pre-seeds the `CLAUDE_*` defaults  |
+| `tools/require-feature-worktree.sh`                     | pre-commit/pre-push git hook                            | `$1` action word; `REQUIRE_WORKTREE_EXTRA_HINT` env                    |
+| `.agents/skills/github-ci-monitor/scripts/watch-prs.sh` | CI-monitor skill script                                 | none needed (repo discovered from cwd)                                 |
+
+A workstation hook must exist locally and work offline on every Bash
+command, so "consumers hold no copy" is not achievable here the way it is
+for CI actions. What IS achievable is making the copies mechanically
+un-driftable: each consumer's CI calls the `verify-fleet-scripts` action,
+which compares every vendored copy byte-for-byte against the canonical
+file shipped inside the action's own whole-repo download (no network
+fetch, no pin to go stale) and additionally fails if a **stray** copy of
+any canonicalized script's basename appears at an undeclared path — the
+"local copy quietly grows back" failure mode the issue exists to close.
+Repo-specific behavior never justifies editing a copy: it enters only
+through the hooks in the table, which each script documents in its header.
+
+Consumer wiring (homelab shown — it holds the guardrail pair under `bin/`
+and re-homes its watcher into the shared skill path):
+
+```yaml
+- uses: jlapenna/agent-lcars/.github/actions/verify-fleet-scripts@main # latest
+  with:
+    scripts: |
+      tools/codex-issue-guardrail.cjs=bin/codex-issue-guardrail.cjs
+      tools/fleet-identity.cjs=bin/fleet-identity.cjs
+      tools/claude-agent-session.sh
+      tools/require-feature-worktree.sh=bin/require-feature-worktree.sh
+      .agents/skills/github-ci-monitor/scripts/watch-prs.sh
+```
+
+Omitting `scripts` asserts the canonical paths themselves; the default
+manifest is published surface, guarded by
+`published-actions.contract.test.mjs` exactly like
+`snapshot-enforcement-scripts`' gate list. To update a script fleet-wide:
+edit the canonical file here, land it, then re-copy it verbatim in each
+consumer (their CI names the exact file and the `curl` re-sync command
+until they do). This repo deliberately does **not** run the action against
+itself — that comparison is file-vs-itself and can only pass vacuously;
+the action's own behavior is covered by
+`verify-fleet-scripts.test.sh` in CI instead.
 
 ## Security: post-agent gates run from a pre-agent snapshot
 

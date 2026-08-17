@@ -48,6 +48,33 @@ test('includes the session takeover reminder in violations', () => {
   assert.equal('systemMessage' in output, false);
 });
 
+test('falls back to a "repository-dev" banner when projectName is absent', () => {
+  // The dependencies() helper above deliberately omits projectName -- the
+  // reconciled canonical behavior (adopted from homelab's variant,
+  // agent-lcars#1307) must render "repository-dev", never "undefined-dev".
+  const output = runHook(
+    { tool_input: { command: 'gh issue view 642' } },
+    dependencies({ assignees: [] }),
+  );
+
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /^repository-dev guardrail violation:/,
+  );
+});
+
+test('uses the provided projectName in the violation banner', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue view 642' } },
+    { ...dependencies({ assignees: [] }), projectName: 'agent-lcars' },
+  );
+
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /^agent-lcars-dev guardrail violation:/,
+  );
+});
+
 test('accepts a correctly titled sub-issue session', () => {
   const output = runHook(
     { tool_input: { command: 'gh issue view 643' } },

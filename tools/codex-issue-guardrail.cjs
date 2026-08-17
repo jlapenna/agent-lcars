@@ -4,6 +4,15 @@
  * script invoked directly by node (see .codex/hooks.json), with no build
  * step, so it must use require(). */
 
+/**
+ * Fleet-canonical copy (agent-lcars#1307). Consumer repos (jlapenna/homelab,
+ * supersprinklesracing/sprinkles) vendor this file and its sibling
+ * fleet-identity.cjs byte-for-byte and load it from their own
+ * .claude/settings.json / .codex/hooks.json; the verify-fleet-scripts
+ * published action fails their CI when a vendored copy drifts. Edit it HERE
+ * and re-sync the consumers -- never patch a consumer copy in place.
+ */
+
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
@@ -110,11 +119,14 @@ function runHook(input, dependencies) {
     evaluateIssue(issueNumber, dependencies),
   );
   if (violations.length === 0) return null;
+  // Defensive fallback adopted from homelab's variant: a dependency object
+  // without projectName must not render an "undefined-dev" banner.
+  const projectName = dependencies.projectName ?? 'repository';
   return {
     hookSpecificOutput: {
       hookEventName: 'PostToolUse',
       additionalContext: [
-        `${dependencies.projectName}-dev guardrail violation:`,
+        `${projectName}-dev guardrail violation:`,
         ...violations.map((violation) => `- ${violation}`),
         'Before continuing hands-on work, claim the issue, post a session takeover comment, and pin this tmux window title.',
       ].join('\n'),
