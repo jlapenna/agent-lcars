@@ -29,23 +29,24 @@ promised one.
 
 ### Published
 
-| Action                         | Purpose                                                                                                              |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `mint-agent-token`             | Mint a scoped Agent LCARS App installation token (owner/repositories/permission-\* passthrough)                      |
-| `claim-issue`                  | Assign the fleet-claim login, optionally posting a pickup comment                                                    |
-| `agent-setup`                  | Agent git identity, run-start timestamp, optional shared Nx cache                                                    |
-| `verify-agent-identity`        | Assert the minted token's App identity and the push credential                                                       |
-| `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                                          |
-| `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                                                 |
-| `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                                       |
-| `report-failure`               | Log failure in the run's own log; the hosted finalizer/orchestrator owns visible reporting (run from snapshot)       |
-| `post-agent-gates`             | Single post-agent step driving verify-deliverable/report-failure/telemetry-finalize (script only, run from snapshot) |
-| `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                         |
-| `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
-| `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
-| `check-canonical-sync`         | Fail consumer CI when a vendored fleet-canonical file drifts (or, opt-in, when a stray copy reappears)               |
-| `setup-nx-remote-cache`        | Point trusted Nx jobs at the self-hosted L2 remote cache; fork PRs receive no cache capability                       |
-| `deploy-verify`                | Post-deploy smoke loop: poll a deployed URL until it answers below 500; optional Deployment status + PR annotation   |
+| Action                         | Purpose                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `mint-agent-token`             | Mint a scoped Agent LCARS App installation token (owner/repositories/permission-\* passthrough)                                       |
+| `claim-issue`                  | Assign the fleet-claim login, optionally posting a pickup comment                                                                     |
+| `agent-setup`                  | Agent git identity, run-start timestamp, optional shared Nx cache                                                                     |
+| `verify-agent-identity`        | Assert the minted token's App identity and the push credential                                                                        |
+| `prepare-agent-dispatch`       | Write the routed issue context as data for a headless agent                                                                           |
+| `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI                                                                                  |
+| `verify-deliverable`           | The fleet deliverable-evidence gate (post-agent: run from snapshot, see below)                                                        |
+| `report-failure`               | Log failure in the run's own log; the hosted finalizer/orchestrator owns visible reporting (run from snapshot)                        |
+| `post-agent-gates`             | Single post-agent step driving verify-deliverable/report-failure/telemetry-finalize (script only, run from snapshot)                  |
+| `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                                          |
+| `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                                 |
+| `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                                                |
+| `check-canonical-sync`         | Fail consumer CI when a vendored fleet-canonical file drifts (or, opt-in, when a stray copy reappears)                                |
+| `setup-nx-remote-cache`        | Point trusted Nx jobs at the self-hosted L2 remote cache; fork PRs receive no cache capability                                        |
+| `deploy-verify`                | Post-deploy smoke loop: poll a deployed URL until it answers below 500; optional Deployment status + PR annotation                    |
+| `request-control-plane`        | Mint an Actions OIDC token for an audience and POST a caller-assembled JSON payload (or bodyless request) to a control-plane endpoint |
 
 ### Published reusable workflows
 

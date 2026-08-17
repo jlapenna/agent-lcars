@@ -1,0 +1,52 @@
+name: Request control plane
+description: >-
+  Mint a GitHub Actions OIDC token for the given audience and POST a
+  caller-assembled JSON payload (or a bodyless request) to an Agent LCARS
+  control-plane endpoint with that token as the bearer. The single
+  implementation of the fleet's OIDC-mint-then-POST dispatch snippet
+  (jlapenna/agent-lcars#1340 A-R3/D7); the calling job must grant
+  `id-token: write`. Fails loud on any non-2xx response, with the response
+  body in the log.
+
+inputs:
+  endpoint:
+    description: Full URL of the control-plane endpoint to POST to.
+    required: true
+  audience:
+    description: OIDC audience the Actions ID token is minted for.
+    required: true
+  payload:
+    description: >-
+      Optional JSON document to POST as the request body - assembled
+      caller-side (jq), passed whole, and may span multiple lines. Empty,
+      together with an empty `payloads`, means a bodyless POST (the
+      reconcile endpoint's shape). Mutually exclusive with `payloads`.
+    required: false
+    default: ''
+  payloads:
+    description: >-
+      Optional newline-delimited JSON - one compact document per line, each
+      POSTed as its own request in order, all sharing one minted token (the
+      mint-once, POST-per-item shape post-deploy-verify.yml's per-issue
+      loop needs). Blank lines are ignored. Every line is attempted even
+      when an earlier one fails; any failure fails the step at the end.
+      Mutually exclusive with `payload`.
+    required: false
+    default: ''
+  timeout-seconds:
+    description: Per-request `curl --max-time`, in seconds.
+    required: false
+    default: '60'
+
+runs:
+  using: composite
+  steps:
+    - name: Mint the OIDC token and POST the request
+      shell: bash
+      env:
+        ENDPOINT: ${{ inputs.endpoint }}
+        AUDIENCE: ${{ inputs.audience }}
+        PAYLOAD: ${{ inputs.payload }}
+        PAYLOADS: ${{ inputs.payloads }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+      run: bash "$GITHUB_ACTION_PATH/request.sh"
