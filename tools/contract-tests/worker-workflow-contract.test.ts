@@ -288,7 +288,6 @@ const COMMON_LANE_INPUTS: Record<string, InputSpec> = {
   },
   'telemetry-service-account': { required: false, type: 'string', default: '' },
   'agent-fleet-login': { required: true, type: 'string' },
-  'maintainer-login': { required: true, type: 'string' },
   'agent-lcars-client-id': { required: true, type: 'string' },
   'nx-cache-url': { required: false, type: 'string', default: '' },
   'pnpm-store-dir': { required: false, type: 'string', default: '' },

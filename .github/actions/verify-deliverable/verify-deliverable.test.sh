@@ -141,13 +141,11 @@ JSON
     *"Deliverable evidence: PR carrying this run's attempt-claim marker (g1:test-intent)"*) ;;
     *) fail "PR message missing expected text" ;;
   esac
-  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its outcome kind"
-  grep -qx 'outcome-reference=99' "$GITHUB_OUTPUT" || fail "exact PR evidence must publish the exact PR number"
+  test ! -s "$GITHUB_OUTPUT" || fail "the verifier must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
 )
 
-# A duplicated exact marker still proves that at least one PR exists, but it
-# is ambiguous which PR a later merge should be credited to. The verifier
-# must therefore publish the outcome category without inventing a reference.
+# A duplicated exact marker still proves that at least one PR exists; the
+# gate passes on the evidence alone.
 (
   base_env
   case_dir="$test_root/claim-marker-on-two-prs"
@@ -157,10 +155,7 @@ JSON
 JSON
   run_case claim-marker-on-two-prs
   test "$status" = 0 || fail "duplicate exact PR markers still prove a PR deliverable"
-  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "duplicate exact PR markers must retain the PR outcome"
-  if grep -q '^outcome-reference=' "$GITHUB_OUTPUT"; then
-    fail "duplicate exact PR markers must not select an arbitrary merge reference"
-  fi
+  test ! -s "$GITHUB_OUTPUT" || fail "the verifier must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
 )
 
 # --- #1223: a HUMAN-authored artifact carrying the marker must NOT count ---
@@ -249,7 +244,7 @@ JSON
     *"evidence-backed structured no-op"*) ;;
     *) fail "expected structured no-op evidence" ;;
   esac
-  grep -qx 'outcome-kind=no-op' "$GITHUB_OUTPUT" || fail "structured no-op must publish its durable outcome kind"
+  test ! -s "$GITHUB_OUTPUT" || fail "the verifier must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
 )
 
 # A comment carrying the typed no-op marker WITHOUT this run's own exact
@@ -540,10 +535,11 @@ JSON
 JSON
   run_case exact-requires-human-comment-is-comment-outcome
   test "$status" = 0 || fail "an exact marked requires-human comment should pass"
-  grep -qx 'outcome-kind=comment' "$GITHUB_OUTPUT" || fail "requires-human prose and a label must remain a comment outcome"
-  if grep -q '^outcome-kind=park$' "$GITHUB_OUTPUT"; then
-    fail "the exact verifier must not fabricate a park outcome from projector-owned state"
-  fi
+  case "$output" in
+    *"comment carrying this run's attempt-claim marker"*) ;;
+    *) fail "requires-human prose and a label must remain plain comment evidence, never a fabricated park outcome" ;;
+  esac
+  test ! -s "$GITHUB_OUTPUT" || fail "the verifier must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
 )
 
 # --- N4: the issue closing, with no marker on any comment, no longer

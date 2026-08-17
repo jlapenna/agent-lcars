@@ -104,7 +104,6 @@ jobs:
       dispatch-bootstrap: true
       protected-snapshot: true
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
-      maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       nx-cache-url: ${{ vars.NX_CACHE_URL }}
       # Keep the pnpm store on the shared workdir mount. The autoscaler's
@@ -160,12 +159,6 @@ jobs:
       id-token: write
       issues: write
       pull-requests: read
-    # Deliberately no `secrets:`: the finalizer derives its evidence from
-    # GitHub job metadata and authenticates to the control plane with the
-    # job's own OIDC token — its optional CLAUDE_CODE_OAUTH_TOKEN
-    # declaration is unreferenced by any finalizer step, and the codex/
-    # opencode callers (and homelab's/sprinkles' consumers) already pass
-    # nothing.
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}
@@ -174,8 +167,6 @@ jobs:
       dispatch-token: ${{ inputs.broker_dispatch_token }}
       worker-workflow: claude.yml
       worker-result: ${{ needs.claude.result }}
-      mode: ${{ inputs.mode }}
-      runbook: ${{ inputs.runbook }}
       agent: Claude
       fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       maintainer: ${{ vars.MAINTAINER_LOGIN }}

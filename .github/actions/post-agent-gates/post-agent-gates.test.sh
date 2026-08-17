@@ -192,8 +192,7 @@ JSON
   if grep -q 'issue comment' "$FAKE_GH_DIR/calls"; then
     fail "a found deliverable must never post a failure comment"
   fi
-  grep -qx 'outcome-kind=pull-request' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its outcome kind"
-  grep -qx 'outcome-reference=7' "$GITHUB_OUTPUT" || fail "a PR deliverable must publish its exact reference"
+  test ! -s "$GITHUB_OUTPUT" || fail "the gates must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
 )
 
 # --- Case 2: JOB_STATUS success, genuinely no deliverable - NO_DELIVERABLE

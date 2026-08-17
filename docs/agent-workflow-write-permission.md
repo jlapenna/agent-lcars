@@ -138,7 +138,6 @@ tweak. When a dispatch does need it:
        broker-generation: ${{ inputs.broker-generation }}
        broker-intent-id: ${{ inputs.broker-intent-id }}
        agent-fleet-login: ${{ inputs.agent-fleet-login }}
-       maintainer-login: ${{ inputs.maintainer-login }}
        agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
        agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
        permission-workflows: ${{ inputs.permission-workflows }}

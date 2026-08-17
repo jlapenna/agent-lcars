@@ -59,9 +59,6 @@ inputs:
       the required-repo-vars assertion and as the issue claim's
       claim-login.
     required: true
-  maintainer-login:
-    description: Maintainer login (repo variable MAINTAINER_LOGIN), asserted present before dispatch proceeds.
-    required: true
   agent-lcars-client-id:
     description: Agent LCARS GitHub App client ID (repo variable AGENT_LCARS_CLIENT_ID).
     required: true
@@ -113,7 +110,6 @@ runs:
       with:
         vars: |
           AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
-          MAINTAINER_LOGIN=${{ inputs.maintainer-login }}
 
     # Thin executor (agent-lcars#1015): the dispatch inputs are already
     # trustworthy (see this action's own top-level description), so this
