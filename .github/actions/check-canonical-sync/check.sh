@@ -74,18 +74,33 @@ done < "$MANIFEST"
 strays=0
 if [ "$FORBID_STRAYS" -eq 1 ]; then
   declared="$tmp/declared"
-  basenames="$tmp/basenames"
+  scanlist="$tmp/scanlist"
   awk 'NF && $1 !~ /^#/ { print $1 }' "$MANIFEST" > "$declared"
-  awk 'NF && $1 !~ /^#/ { n=split($1, a, "/"); print a[n] }' "$MANIFEST" | sort -u > "$basenames"
-  while read -r base; do
+  # One scan entry per manifest line: "<mode> <needle>". Default mode is
+  # "basename" (strongest grows-back protection: ANY copy of that filename
+  # at an undeclared path is a stray, wherever it hides). A line may opt
+  # into "suffix" as a third column, matching the local path's last TWO
+  # components instead -- for generic filenames like SKILL.md where
+  # basename matching would flag every other skill directory (found the
+  # hard way in homelab#724).
+  awk 'NF && $1 !~ /^#/ {
+    n = split($1, a, "/");
+    if ($3 == "suffix" && n >= 2) print "suffix " a[n-1] "/" a[n];
+    else print "basename " a[n];
+  }' "$MANIFEST" | sort -u > "$scanlist"
+  while read -r mode needle; do
+    base="${needle##*/}"
     while IFS= read -r found; do
       found="${found#./}"
+      if [ "$mode" = "suffix" ]; then
+        case "/$found" in */"$needle") ;; *) continue ;; esac
+      fi
       grep -qxF "$found" "$declared" && continue
-      echo "  STRAY    $found duplicates canonicalized script $base at an undeclared path" >&2
+      echo "  STRAY    $found duplicates canonicalized script $needle at an undeclared path" >&2
       echo "           declare it in $MANIFEST or delete the copy" >&2
       strays=$((strays + 1))
     done < <(find . \( -name .git -o -name node_modules -o -name dist -o -name .next \) -prune -o -type f -name "$base" -print)
-  done < "$basenames"
+  done < "$scanlist"
 fi
 
 if [ "$drifted" -gt 0 ] || [ "$strays" -gt 0 ]; then
