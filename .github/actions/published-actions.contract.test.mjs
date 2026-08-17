@@ -98,14 +98,6 @@ const PUBLISHED = {
     inputs: { 'github-token': { required: true } },
     outputs: ['version'],
   },
-  'scan-image': {
-    inputs: {
-      'image-ref': { required: true },
-      platform: { required: false, default: '' },
-      category: { required: true },
-    },
-    outputs: [],
-  },
   // #4388 restores legacy inputs for standalone consumers without broker
   // attempt identity. Broker-bound callers still pass attempt-id and remain
   // exact-marker-only; inference is unreachable for them.

@@ -42,7 +42,6 @@ promised one.
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                         |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
-| `scan-image`                   | Trivy scan + SARIF upload + fail on fixable CRITICALs                                                                |
 
 ### Published reusable workflows
 
