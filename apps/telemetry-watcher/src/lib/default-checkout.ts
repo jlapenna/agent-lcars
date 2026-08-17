@@ -44,17 +44,7 @@ export function checkoutRoots(): string[] {
   return [...new Set(entries.map((entry) => normalizeRoot(entry, variable)))];
 }
 
-/** First configured root, retained for single-root compatibility callers. */
-export function checkoutRoot(): string {
-  return checkoutRoots()[0];
-}
-
 /** Claude Code project-directory encodings for every configured root. */
 export function checkoutSlugGlobs(): string[] {
   return checkoutRoots().map((root) => `${root.replace(/\//g, '-')}*`);
-}
-
-/** First configured slug, retained for single-root compatibility callers. */
-export function checkoutSlugGlob(): string {
-  return checkoutSlugGlobs()[0];
 }

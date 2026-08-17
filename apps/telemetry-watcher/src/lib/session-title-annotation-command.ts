@@ -267,7 +267,3 @@ export function executeSessionTitleAnnotationCommand(
 
   return invalidCommand();
 }
-
-/** Alias kept concise for standalone callers and focused command tests. */
-export const runSessionTitleAnnotationCommand =
-  executeSessionTitleAnnotationCommand;

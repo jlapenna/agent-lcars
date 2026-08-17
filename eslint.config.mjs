@@ -102,15 +102,6 @@ export default [
     },
   },
   {
-    // A file-level 'use server' directive defines Server Functions. Keep it
-    // limited to dedicated action modules so ordinary server code remains
-    // safely importable by Server Components.
-    files: ['apps/console/src/**/*.ts', 'apps/console/src/**/*.tsx'],
-    rules: {
-      '@nx/workspace-use-server-actions-only': 'error',
-    },
-  },
-  {
     files: ['**/*.{spec,test}.{ts,tsx,js,jsx,mts,mjs}'],
     plugins: { vitest },
     rules: {

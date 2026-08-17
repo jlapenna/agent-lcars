@@ -10,12 +10,6 @@ import { AgentOperationsPanel } from './agent-operations-panel';
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 const MOBILE_INITIAL_OUTCOME_COUNT = 5;
 
-const PIPELINE_TITLES: Record<AgentPipeline, string> = {
-  claude: 'claude',
-  codex: 'codex',
-  opencode: 'opencode',
-};
-
 /**
  * Recent conclusions grouped per pipeline - the same merged recent-runs
  * list the home page collapses behind "Recently finished", just always
@@ -69,7 +63,7 @@ export function RecentOutcomesSection({
               data-mobile-history-extra={groupStartsHidden || undefined}
             >
               <Eyebrow>
-                {PIPELINE_TITLES[pipeline]} ({runs.length})
+                {pipeline} ({runs.length})
               </Eyebrow>
               <Stack gap={6}>
                 {runs.map((run) => (
