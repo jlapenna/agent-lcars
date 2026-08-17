@@ -44,15 +44,6 @@ run "renders_exact_repository_authorization" {
   }
 
   override_resource {
-    target          = google_service_account.dispatch_preflight
-    override_during = plan
-    values = {
-      email = "dispatch-preflight@agent-lcars.iam.gserviceaccount.com"
-      name  = "projects/agent-lcars/serviceAccounts/dispatch-preflight@agent-lcars.iam.gserviceaccount.com"
-    }
-  }
-
-  override_resource {
     target          = google_project_iam_custom_role.quick_task_evidence_runtime
     override_during = plan
     values = {
@@ -61,8 +52,8 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab']"
-    error_message = "The WIF provider must authorize exactly Agent LCARS, Sprinkles, and Homelab."
+    condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'supersprinklesracing/www', 'supersprinklesracing/girosf', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
+    error_message = "The WIF provider must authorize exactly the seven fleet repositories, in order."
   }
 
   assert {
@@ -130,6 +121,43 @@ run "renders_exact_repository_authorization" {
     error_message = "Both Homelab grants must use roles/iam.workloadIdentityUser."
   }
 
+  # #1350: one shared, READ-ONLY Claude subscription token. The absence of a
+  # secretVersionAdder grant is the point - the lane reads, only a human
+  # writes - so assert the identity holds exactly one role on exactly one
+  # secret. Contrast the codex agents below, which must be able to rotate.
+  assert {
+    condition     = google_secret_manager_secret.claude_oauth.secret_id == "CLAUDE_CODE_OAUTH_TOKEN" && google_secret_manager_secret_iam_member.claude_oauth_accessor.role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.claude_oauth_accessor.member == "serviceAccount:${google_service_account.claude_token_reader.email}"
+    error_message = "The Claude subscription token must be one secret read by one dedicated read-only identity."
+  }
+
+  assert {
+    condition     = length(google_service_account_iam_member.claude_token_reader_impersonation) == length(local.github_repositories)
+    error_message = "Every authorized repository must be able to impersonate the Claude token reader, and no others."
+  }
+
+  # #1354: one lineage and one identity PER repo. A shared credential would
+  # let concurrent runs invalidate each other, and a shared identity would
+  # let one repo's agent rotate another's credential.
+  assert {
+    condition     = alltrue([for key, agent in local.fleet_codex_agents : google_secret_manager_secret.fleet_codex_auth[key].secret_id == agent.secret])
+    error_message = "Each fleet repository must have its own rotating Codex credential secret."
+  }
+
+  assert {
+    condition     = length(distinct([for key, _ in local.fleet_codex_agents : google_service_account.fleet_codex_agent[key].account_id])) == length(local.fleet_codex_agents)
+    error_message = "Each fleet repository must have its own Codex service account so rotating credentials cannot race across repositories."
+  }
+
+  assert {
+    condition     = alltrue([for key, _ in local.fleet_codex_agents : google_secret_manager_secret_iam_member.fleet_codex_auth_accessor[key].role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.fleet_codex_auth_version_adder[key].role == "roles/secretmanager.secretVersionAdder"])
+    error_message = "Each fleet Codex identity must read and append versions to its own secret - never secretAdmin."
+  }
+
+  assert {
+    condition     = alltrue([for key, _ in local.fleet_codex_agents : google_service_account_iam_member.fleet_codex_agent_impersonation[key].member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${key}"])
+    error_message = "Each fleet Codex identity must be impersonable only from its own repository."
+  }
+
   assert {
     condition     = google_project_iam_member.apphosting_dispatch_controller.role == "roles/datastore.user" && google_project_iam_member.apphosting_dispatch_controller.member == "serviceAccount:firebase-app-hosting-compute@agent-lcars.iam.gserviceaccount.com"
     error_message = "The hosted controller must hold the dedicated dispatch writer grant."
@@ -146,18 +174,8 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_service_account_iam_member.dispatch_preflight_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/agent-lcars" && google_service_account_iam_member.dispatch_preflight_impersonation.service_account_id == google_service_account.dispatch_preflight.name
-    error_message = "Workers may impersonate only the dedicated dispatch preflight reader through the shared pool."
-  }
-
-  assert {
-    condition     = google_project_iam_member.dispatch_preflight_firestore.role == "roles/datastore.viewer" && google_project_iam_member.dispatch_preflight_firestore.member == "serviceAccount:${google_service_account.dispatch_preflight.email}"
-    error_message = "Worker preflight must be read-only."
-  }
-
-  assert {
-    condition     = google_project_iam_member.apphosting_dispatch_controller.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/dispatch-controller\"" && google_project_iam_member.dispatch_preflight_firestore.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/dispatch-controller\""
-    error_message = "Hosted controller writer and preflight reader must be confined to the dedicated dispatch database."
+    condition     = google_project_iam_member.apphosting_dispatch_controller.condition[0].expression == "resource.name == \"projects/agent-lcars/databases/dispatch-controller\""
+    error_message = "The hosted controller writer must be confined to the dedicated dispatch database."
   }
 
   assert {
@@ -185,10 +203,11 @@ run "rejects_repository_wildcards" {
   command = plan
 
   variables {
-    github_owner         = "*"
-    github_repository    = "*"
-    sprinkles_repository = "supersprinklesracing/*"
-    homelab_repository   = "jlapenna/*"
+    github_owner                  = "*"
+    github_repository             = "*"
+    sprinkles_repository          = "supersprinklesracing/*"
+    homelab_repository            = "jlapenna/*"
+    additional_fleet_repositories = ["supersprinklesracing/*"]
   }
 
   expect_failures = [
@@ -196,5 +215,6 @@ run "rejects_repository_wildcards" {
     var.github_repository,
     var.sprinkles_repository,
     var.homelab_repository,
+    var.additional_fleet_repositories,
   ]
 }
