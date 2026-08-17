@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 
-/* eslint-disable no-restricted-syntax -- this is a standalone CommonJS
- * script invoked directly by node (see .codex/hooks.json), with no build
- * step, so it must use require(). */
-
 /**
  * Fleet-canonical copy (agent-lcars#1307). Consumer repos (jlapenna/homelab,
  * supersprinklesracing/sprinkles) vendor this file and its sibling

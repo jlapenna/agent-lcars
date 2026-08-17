@@ -92,6 +92,17 @@ export default [
     },
   },
   {
+    // A .cjs file is CommonJS by extension: require() is its only import
+    // mechanism, so the require() ban (and the rest of no-restricted-syntax)
+    // is meaningless ceremony there. sprinkles scopes its ban the same way,
+    // which keeps the fleet-canonical .cjs twins disable-comment-free in
+    // both repos.
+    files: ['**/*.cjs'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+  {
     // Nx workspace rule (#537/#566): a 'use client' file must not value-import
     // a server-only module. Tooling projects do not participate in the Next.js
     // graph and may load ESLint before workspace rules are registered.
