@@ -306,7 +306,16 @@ jobs:
           # so widening this would let an external App trigger agent-mode
           # behavior via a labeled event it didn't legitimately cause.
           # github-actions[bot] is the actor of workflow_dispatch runs.
-          allowed_bots: 'claude[bot],github-actions[bot]'
+          # agent-lcars[bot] is this repo's own App, and became the
+          # triggering actor when dispatch moved onto App installation
+          # tokens (#1287). The allowlist did not move with it, so every
+          # dispatch failed at the action's non-human-actor gate before the
+          # agent step started -- a total outage that looked like a run
+          # failure rather than a config gap. Still scoped to this repo's
+          # own bots, deliberately not '*': this repo is public, and a
+          # wildcard would let any App that can reach the trigger start a
+          # privileged agent step.
+          allowed_bots: 'claude[bot],github-actions[bot],agent-lcars[bot]'
           # Both trigger paths get an explicit prompt so every run uses
           # agent mode consistently; an empty prompt would silently fall
           # back to tag mode with different tool rules and no
