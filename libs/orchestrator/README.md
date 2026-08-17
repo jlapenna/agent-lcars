@@ -2,9 +2,7 @@
 
 A durable **per-task mutex with an audit trail** for agent dispatch. See
 [`docs/lifecycle-systems.md`](../../docs/lifecycle-systems.md) for how this
-fits into the rest of the fleet, and
-[`docs/attempt-service.md`](../../docs/attempt-service.md) for the larger,
-never-built design this replaced.
+fits into the rest of the fleet.
 
 ## Purpose
 
@@ -122,5 +120,4 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
 - **Provide multi-tenant or cross-repository authority.** One task is keyed
   by `(repo, issue)`; there is no tenant concept above that. The consumer
   repos' formerly separate dispatch loops have since migrated onto this
-  orchestrator (#1198, #1200; `docs/consumer-lifecycle-inventory.md` is now
-  a historical snapshot of what they replaced).
+  orchestrator (#1198, #1200).

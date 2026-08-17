@@ -36,8 +36,6 @@ sharing a contract for them is unbuilt, not landed here.
 The provider-neutral Lifecycle Control Plane v1 boundary that used to live
 under `src/control-plane/` was deleted with the lifecycle control plane
 itself (#1171); [`libs/orchestrator`](../orchestrator) owns admission now.
-The retired target architecture is preserved in
-[`docs/attempt-service.md`](../../docs/attempt-service.md).
 
 ## Why it has zero dependencies
 
