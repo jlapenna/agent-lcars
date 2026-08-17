@@ -1,5 +1,8 @@
 # Onboarding a repo to the Agent LCARS console + telemetry
 
+> Credential minting (Claude OAuth token, Codex auth lineage, LiteLLM key,
+> App keys) is documented in [fleet-credentials.md](fleet-credentials.md).
+
 How to wire a new repo into this console: its dispatched agent runs show up
 in the dashboard/queue, live turns and transcripts show up in Sessions, and
 takeover/parking work the same way they do for any already-onboarded repo.
