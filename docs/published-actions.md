@@ -178,15 +178,21 @@ sweep and bounded auto-retry (sprinkles#4453, homelab#660) and no repo's
 (`apps/rerun-infra-killed-runs`) were deleted outright rather than carved
 further.
 
-`report-failure` keeps LCARS's #813 architecture and a standalone-consumer
-compatibility path. LCARS workers omit `maintainer`, so the action only logs;
-the hosted finalizer's completion callback and dispatch-controller projector
-remain their one idempotent writer. A consumer without that coupled finalizer
-may provide `token`, `issue`, and `maintainer` to post the visible failure,
-add `status:needs-human`, and assign the maintainer directly. When running the
-script from `snapshot-enforcement-scripts`, the equivalent opt-in is the
-`GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only part of
-that tuple fails closed instead of silently losing the report (#4388).
+`report-failure` keeps LCARS's #813 architecture plus a direct-park path.
+LCARS workers omit `maintainer`, so the action only logs; the hosted
+finalizer's completion callback and dispatch-controller projector remain
+their one idempotent writer. The `token`/`issue`/`maintainer` inputs — which
+post the visible failure, add `status:needs-human`, and assign the
+maintainer directly — were built as a standalone-consumer compatibility
+path, but no such consumer exists today: every fleet repo that calls this
+action is a control-plane tenant whose lanes also run the coupled fallback
+finalizer. The inputs therefore stand as belt-and-braces redundancy
+alongside the finalizer; whether to retire one of the two writers is an
+open maintainer decision this doc deliberately does not make. When running
+the script from `snapshot-enforcement-scripts`, the equivalent opt-in is
+the `GH_TOKEN`/`ISSUE_NUM`/`MAINTAINER` environment tuple. Supplying only
+part of that tuple fails closed instead of silently losing the report
+(#4388).
 
 `post-agent-gates` (script only — see "Security: post-agent gates run from a
 pre-agent snapshot" below; there is deliberately no `action.yml`, since a

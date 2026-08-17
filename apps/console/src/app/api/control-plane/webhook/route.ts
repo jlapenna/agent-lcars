@@ -7,10 +7,12 @@ import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
 const ADMITTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
 
-// Only the field this route actually reads. The legacy admission decision
-// loop's fuller WebhookEvent shape (apps/dispatch-broker/src/normalize.ts)
-// was retired in #1015 Wave 4; this route only needs to know which
-// repository a delivery is for before enqueueing it.
+// Only the field this route actually reads. Fuller payload parsing and the
+// admission decision itself live behind the queue, in the process route's
+// `handleWebhookDelivery` (`@/lib/orchestrator-routes.ts`); the legacy
+// broker's fuller WebhookEvent shape was retired in #1015 Wave 4. This
+// route only needs to know which repository a delivery is for before
+// enqueueing it.
 interface GitHubWebhookPayload {
   repository?: { id?: number; full_name?: string };
 }

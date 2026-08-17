@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # #813 centralizes LCARS worker failure writes in the hosted projector. Those
 # workers leave MAINTAINER unset, so this script only annotates their log and
-# never creates a second writer. Published-action consumers such as Sprinkles
-# do not have LCARS's coupled agent-fallback-finalize workflow, however. They
-# opt into the backward-compatible standalone path by supplying MAINTAINER,
-# GH_TOKEN, and ISSUE_NUM; that path posts and parks the anchor directly.
+# never creates a second writer. Supplying MAINTAINER, GH_TOKEN, and
+# ISSUE_NUM opts into the direct path that posts and parks the anchor
+# itself. Every current consumer is a control-plane tenant whose lanes also
+# run the coupled agent-fallback-finalize workflow, so today the direct path
+# is belt-and-braces redundancy alongside the finalizer, pending a
+# maintainer decision on retiring one of the two writers.
 set -euo pipefail
 
 : "${AGENT:?AGENT is required}"

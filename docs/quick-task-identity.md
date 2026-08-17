@@ -82,8 +82,10 @@ verifies the existing marker against the current content and original pipeline,
 then rewrites that issue marker with a digest of the edited content. The claim
 tag remains the immutable record of the original create attempt. A later retry
 of the original browser request therefore conflicts instead of silently
-overwriting or duplicating the now-edited task; broker normalization continues
-to validate and dispatch the edited task normally.
+overwriting or duplicating the now-edited task; the hosted orchestrator's
+webhook admission path continues to validate and dispatch the edited task
+normally (the standalone dispatch broker that once did this was deleted in
+#1199/#1300).
 
 A definitive GitHub 4xx other than `408 Request Timeout` proves no issue was
 created, so its claim is released. A 408 is ambiguous just like a transport

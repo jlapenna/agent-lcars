@@ -166,8 +166,9 @@ const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
   'status:post-deploy-action',
 ]);
 
-// The agent's kickoff prompt (see .github/workflows/claude.yml) makes it
-// post its exact takeover command in its first ack comment. Since
+// The lcars protocol skill (.agents/skills/lcars/lcars-protocol.md,
+// "Takeover comment") tells a dispatched agent to post its exact takeover
+// command in its first ack comment. Since
 // agent-lcars#1328 that is `fleet-claude-agent-session resume <id>` (the
 // PATH bin); historical comments say
 // `~/p/members/tools/claude-agent-session.sh resume <id>`. The pattern

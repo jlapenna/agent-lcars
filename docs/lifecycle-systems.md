@@ -187,13 +187,21 @@ produced.
 
 **Code:**
 
-- `.github/workflows/claude.yml`, `codex.yml`, `opencode.yml` — one
-  self-hosted job each: checkout → snapshot enforcement scripts → publish
-  attempt identity → mint agent token → claim issue → agent setup → verify
-  agent identity → prepare dispatch context → start telemetry sidecar → run
-  the agent → run post-agent gates. Each also calls the shared
-  GitHub-hosted `agent-fallback-finalize.yml` when the primary path cannot
-  prove it completed (#639) — a bootstrap-independent safety path.
+- `.github/workflows/claude.yml`, `codex.yml`, `opencode.yml` — thin
+  callers (#1312 U1): each keeps only what `workflow_call` cannot carry
+  (the `workflow_dispatch` input contract, the contract-tested run-name,
+  the permissions grant, and the repo-variable spellings passed down as
+  inputs) and delegates the whole self-hosted worker job to its published
+  reusable lane, `.github/workflows/agent-lane-<agent>.yml`, consumed
+  same-repo. The lane owns the step sequence: snapshot enforcement
+  scripts → publish attempt identity → mint agent token → claim issue →
+  checkout → dispatch bootstrap → agent handoff/setup → verify agent
+  identity → prepare dispatch context → start telemetry sidecar → run the
+  agent → run post-agent gates. Each caller also runs a second,
+  GitHub-hosted `fallback-finalize` job (`needs` the lane job,
+  `if: always()`) that calls the shared `agent-fallback-finalize.yml`
+  when the primary path cannot prove it completed (#639) — a
+  bootstrap-independent safety path.
 - `.github/actions/dispatch-bootstrap` (Coupled, see `published-actions.md`)
   — **a thin executor** (#1015/#1179): it derives this attempt's
   `g<generation>:<intentId>` identity directly from the trusted
