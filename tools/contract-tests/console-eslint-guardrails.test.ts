@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { loadESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
 
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
@@ -24,7 +25,6 @@ describe('console eslint guardrail rules', () => {
     'resolves both RSC guardrail rules at error severity for console sources',
     { timeout: 60_000 },
     async () => {
-      const { loadESLint } = await import('eslint');
       const FlatESLint = await loadESLint({ useFlatConfig: true });
       const eslint = new FlatESLint({ cwd: workspaceRoot });
       const config: {

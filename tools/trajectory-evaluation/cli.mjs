@@ -3,6 +3,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { collectRecentCorpus } from './github-source.mjs';
 import { runOfflineComparison } from './offline-replay.mjs';
 import { assertPrivacySafe } from './redact.mjs';
 import { buildReport, renderMarkdown } from './report.mjs';
@@ -99,7 +100,6 @@ async function main() {
     if (!repository || !parsed.days || !parsed.output) {
       throw new Error('collect requires --repository, --days, and --output');
     }
-    const { collectRecentCorpus } = await import('./github-source.mjs');
     const corpus = await collectRecentCorpus({
       repository,
       days: Number(parsed.days),

@@ -21,6 +21,7 @@ vi.mock('./agent-activity', () => ({
 }));
 
 const { getCachedActionItems, getCachedAgentActivity } =
+  // eslint-disable-next-line no-restricted-syntax -- imported dynamically so it evaluates AFTER the vi.mock factories above; a static import would bind the unmocked module.
   await import('./dashboard-data');
 
 describe('dashboard data cache boundary', () => {

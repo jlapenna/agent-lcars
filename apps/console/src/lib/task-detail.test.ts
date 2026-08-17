@@ -53,6 +53,7 @@ vi.mock('./dashboard-data', () => ({
 }));
 
 // Imported after the mocks above so it picks up the mocked modules.
+// eslint-disable-next-line no-restricted-syntax -- imported dynamically so it evaluates AFTER the vi.mock factories above; a static import would bind the unmocked module.
 const { getTaskDetail } = await import('./task-detail');
 
 beforeEach(() => {
@@ -239,6 +240,7 @@ describe('getTaskDetail', () => {
     // amounted to - see task-detail.ts's own doc comment on `generatedAt`).
     const OLD_ACTIVITY_FETCH = '2020-01-01T00:00:00Z';
     vi.mocked(
+      // eslint-disable-next-line no-restricted-syntax -- imported dynamically so it evaluates AFTER the vi.mock factories above; a static import would bind the unmocked module.
       (await import('./dashboard-data')).getCachedAgentActivity,
     ).mockResolvedValueOnce({
       data: EMPTY_ACTIVITY,

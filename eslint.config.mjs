@@ -5,6 +5,8 @@ import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
 
+import { fleetBaseline } from './tools/eslint-rules/fleet-baseline.mjs';
+
 export default [
   ...nx.configs['flat/base'],
   ...nx.configs['flat/typescript'],
@@ -23,30 +25,15 @@ export default [
       '**/vitest.config.*.timestamp*',
     ],
   },
+  // Import-order, unused-symbol, and restricted-syntax hygiene the whole
+  // fleet shares (#1340 C4). Byte-identical to sprinkles' copy; see the
+  // file's own header for why the vehicle is a pinned copy rather than a
+  // cross-repo import.
+  ...fleetBaseline({ simpleImportSort, unusedImports }),
   {
     files: ['**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
-    plugins: {
-      'simple-import-sort': simpleImportSort,
-      'unused-imports': unusedImports,
-    },
     rules: {
       '@typescript-eslint/triple-slash-reference': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
-      'simple-import-sort/imports': 'error',
-      'simple-import-sort/exports': 'error',
-      'unused-imports/no-unused-imports': 'error',
-      'unused-imports/no-unused-vars': [
-        'error',
-        {
-          args: 'all',
-          argsIgnorePattern: '^_',
-          caughtErrors: 'all',
-          caughtErrorsIgnorePattern: '^_',
-          destructuredArrayIgnorePattern: '^_',
-          varsIgnorePattern: '^_',
-          ignoreRestSiblings: true,
-        },
-      ],
       '@nx/enforce-module-boundaries': [
         'error',
         {
@@ -76,30 +63,6 @@ export default [
           ],
         },
       ],
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: "CallExpression[callee.name='require']",
-          message: 'Use an ES static import instead of require().',
-        },
-        {
-          selector:
-            'CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.length=0]',
-          message:
-            'Pin the locale and timezone; runtime defaults cause server/client mismatches.',
-        },
-      ],
-    },
-  },
-  {
-    // A .cjs file is CommonJS by extension: require() is its only import
-    // mechanism, so the require() ban (and the rest of no-restricted-syntax)
-    // is meaningless ceremony there. sprinkles scopes its ban the same way,
-    // which keeps the fleet-canonical .cjs twins disable-comment-free in
-    // both repos.
-    files: ['**/*.cjs'],
-    rules: {
-      'no-restricted-syntax': 'off',
     },
   },
   {
