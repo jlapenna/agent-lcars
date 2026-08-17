@@ -85,9 +85,12 @@ admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
 nx-cache-server) carried, and gives sprinkles its first actionlint
 coverage (`actionlint.yml`). The caller owns triggers, permissions, and
 concurrency; inputs are `actionlint-version` (default `1.7.7`, tracking
-`apps/runner-autoscaler/runner-image/actionlint-version`) and `runs-on`
+`apps/runner-autoscaler/runner-image/actionlint-version`), `runs-on`
 (JSON array string, default `'["ubuntu-latest"]'` — the runner must be
-able to `docker run`). Check-run naming composes as
+able to `docker run`), and `canonical-sync` (default `false`; `true` runs
+`check-canonical-sync` with `forbid-strays` against the caller's
+`.github/canonical-sync.conf`, which is how the small fleet repos got
+drift detection without each growing its own job — #1340 B8). Check-run naming composes as
 `<caller job> / repository validation`; a caller whose job key is
 `validate` therefore produces `validate / repository validation`, and
 that composed string is what a ruleset or an `agent-automerge.yml`

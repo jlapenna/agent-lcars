@@ -41,6 +41,14 @@ files directly from `.agents/skills/<name>/`.
 > [`.agents/skills/agent-lcars-dev/SKILL.md`](.agents/skills/agent-lcars-dev/SKILL.md#hard-guardrails).
 > Read them there — this section intentionally does not restate them.
 
+The fleet doctrine every member repository shares — dispatch topology,
+`@main` reference policy, agent conventions, the `agent-lcars-bot` claim
+identity, fleet tooling, and the credential rule — is canonical here in
+[`.agents/fleet-membership.md`](.agents/fleet-membership.md) and distributed
+byte-for-byte to member repos by their `.github/canonical-sync.conf`
+(#1340 B9). Edit it here, never in a member repo; repo-local facts stay in
+each member's own `AGENTS.md`.
+
 Keep this repository independent from the supersprinklesracing source tree.
 Shared telemetry integration is delivered by baking
 `apps/telemetry-watcher`'s bundle into the shared runner image at
