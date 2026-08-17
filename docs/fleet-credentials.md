@@ -14,13 +14,13 @@ succeeds. Never echo a secret value into terminal output, chat, or shell
 history — move values with pipes, `read -rs`, or files created under
 `umask 077`, and delete temporaries when done.
 
-| Credential                | Consumed by                               | Canonical home                                                       | Mintable by                        |
-| ------------------------- | ----------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane.yml`, run time)  | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)     | maintainer only (browser OAuth)    |
-| Codex `auth.json` lineage | codex lane (`agent-lane-codex.yml`)       | GCP Secret Manager, one secret **per repo**                          | maintainer only (`codex login`)    |
-| `OPENCODE_LLM_API_KEY`    | opencode lane (`agent-lane-opencode.yml`) | age store + repo Actions secret                                      | anyone with the LiteLLM master key |
-| `AGENT_LCARS_PRIVATE_KEY` | all three lanes' token mint; console      | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`) | maintainer (App settings UI)       |
-| Autoscaler App key        | runner registration (homelab autoscaler)  | homelab vault `github_autoscaler_lcars_app_private_key`              | maintainer (App settings UI)       |
+| Credential                | Consumed by                              | Canonical home                                                       | Mintable by                        |
+| ------------------------- | ---------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane.yml`, run time) | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)     | maintainer only (browser OAuth)    |
+| Codex `auth.json` lineage | codex lane (`agent-lane.yml`, run time)  | GCP Secret Manager, one secret **per repo**                          | maintainer only (`codex login`)    |
+| `OPENCODE_LLM_API_KEY`    | opencode lane (`agent-lane.yml`)         | age store + repo Actions secret                                      | anyone with the LiteLLM master key |
+| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console     | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`) | maintainer (App settings UI)       |
+| Autoscaler App key        | runner registration (homelab autoscaler) | homelab vault `github_autoscaler_lcars_app_private_key`              | maintainer (App settings UI)       |
 
 Two GitHub Apps exist and are easy to confuse:
 
@@ -54,6 +54,15 @@ conditioned on `assertion.repository` alone
 identity is `claude-token-reader@agent-lcars.iam.gserviceaccount.com`: it
 holds `secretAccessor` on this one secret and nothing else, and is never
 exported as ambient ADC into the agent's shell.
+
+The read itself is a direct Secret Manager REST call authorized by the
+`access_token` the auth step returns (`google-github-actions/auth` with
+`token_format: access_token`), **not** `get-secretmanager-secrets` or any
+client library that rediscovers credentials through ADC. That rediscovery
+is what broke every consumer lane after #1351 — auth succeeded, a
+credential file existed, and the read still reported "the caller does not
+have permission" against demonstrably correct IAM (#1368). #1370 replaced
+it; if you are changing this step, keep the explicit access token.
 
 1. Run `claude setup-token`. It prints an authorization URL and waits.
    Open that URL in the maintainer's signed-in browser (an agent with
@@ -162,13 +171,13 @@ repo vars provisioned (#1354), so only the mint is left.
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))
    ```
 
-   To extend it, read the current condition first
-   (`gcloud iam workload-identity-pools providers describe
-claude-agent-github --location=global
---workload-identity-pool=claude-agent-pool --project=<proj>
---format='value(attributeCondition)'`) and write back the full new
-   string — `update-oidc --attribute-condition` **replaces**, never
-   appends. The shared `github` pool needs none of this: it matches on
+   That pool and provider are no longer hand-managed: `jlapenna/homelab`'s
+   root Terraform adopted them in homelab#750
+   (`terraform/gcp_sprinkles_wif.tf`), so extend the condition **there**
+   and apply, rather than with `gcloud ... update-oidc`, whose
+   `--attribute-condition` **replaces** rather than appends and whose
+   result that root's scheduled drift check would report. The shared
+   `github` pool needs none of this: it matches on
    `assertion.repository` alone.
 
 4. Set the repo side: caller inputs `codex-auth-secret-name` /

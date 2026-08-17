@@ -62,8 +62,10 @@ promised one.
 | `codeql-reusable.yml`          | The CodeQL analyze job; the caller owns triggers (weekly cron included) and passes its language list            |
 
 `agent-automerge-reusable.yml` (#1312 U4) is the union of this repo's own
-`agent-automerge.yml` and sprinkles' `claude-automerge.yml`, which had
-drifted from a common ancestor. The caller keeps what `workflow_call`
+`agent-automerge.yml` and sprinkles' then-`claude-automerge.yml` (renamed
+`agent-automerge.yml` in sprinkles#4510, which also gave it the hourly
+`schedule` cron the orphaned-anchor sweep needs), which had drifted from a
+common ancestor. The caller keeps what `workflow_call`
 cannot carry — triggers (the cron schedule, `pull_request`/
 `pull_request_review`, the repo's own `workflow_run` workflow names,
 `workflow_dispatch` and its targeted-monitor inputs), workflow-level

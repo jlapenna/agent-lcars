@@ -55,8 +55,8 @@ there.
   `permission-workflows` unset. `workflows` stays available only to a
   caller that deliberately sets it. Since agent-lcars#823, the "Mint agent
   token" step itself lives inside the shared
-  `.github/actions/dispatch-bootstrap` composite (all three lanes call it
-  the same way); `dispatch-bootstrap` forwards its own
+  `.github/actions/dispatch-bootstrap` composite (one step in the unified
+  lane, invoked identically for all three pipelines); `dispatch-bootstrap` forwards its own
   `permission-workflows` input straight through to `mint-agent-token`
   unchanged, so the opt-in stays exactly as per-caller as it was before
   that extraction — see "Using the capability" below for the updated call
@@ -112,21 +112,26 @@ No dispatch requests `permission-workflows` yet — #868's own acceptance
 criteria defer redispatching agent-lcars#823/#815/#813 and
 supersprinklesracing/sprinkles#4179 (already merged) to a future task, once
 this capability is live. Since #1312 U1 the "Dispatch bootstrap" step lives
-in the published reusable lanes
-(`.github/workflows/agent-lane-<agent>.yml`), fed from `inputs.*` the thin
-caller passes down, and each lane's `workflow_call` input surface is pinned
-by `tools/contract-tests/worker-workflow-contract.test.ts` — so granting
+in a published reusable lane rather than each caller, and since #1340 A-R1
+there is exactly one copy of it: `.github/workflows/agent-lane.yml`, the
+single parameterized worker lane the three `agent-lane-<agent>.yml` shims
+delegate to. It is fed from `inputs.*` the thin caller passes down, and both
+the shim surfaces and the unified lane's are pinned by
+`tools/contract-tests/worker-workflow-contract.test.ts` — so granting
 the capability is a deliberate lane-contract edit, not a one-line YAML
 tweak. When a dispatch does need it:
 
-1. Declare a new optional `workflow_call` input on the lane workflow(s)
-   that should be able to carry it, and add the same input to the
+1. Declare a new optional `workflow_call` input on the shim(s) that should
+   be able to carry it **and** on `agent-lane.yml`, forwarding it from each
+   shim, then add the same input to the
    `LANE_SURFACES` manifest in
    `tools/contract-tests/worker-workflow-contract.test.ts` (the test fails
-   on any undeclared surface drift).
-2. Forward it in that lane's "Dispatch bootstrap" step (agent-lcars#823
-   moved "Mint agent token" itself inside the shared `dispatch-bootstrap`
-   composite, which forwards this one input through unchanged):
+   on any undeclared surface drift, and separately on a shim input the
+   unified lane does not declare).
+2. Forward it in the unified lane's "Dispatch bootstrap" step
+   (agent-lcars#823 moved "Mint agent token" itself inside the shared
+   `dispatch-bootstrap` composite, which forwards this one input through
+   unchanged):
 
    ```yaml
    - name: Dispatch bootstrap
@@ -149,8 +154,8 @@ tweak. When a dispatch does need it:
 
 The other five `permission-*` values (`actions`/`contents`/`issues`/
 `metadata`/`pull-requests`) are fixed inside `dispatch-bootstrap` itself,
-not exposed as inputs — they have never varied across the three lane
-callers. `permission-workflows` is the one deliberate exception.
+not exposed as inputs — they have never varied across the three
+pipelines. `permission-workflows` is the one deliberate exception.
 
 Only a reviewed workflow-YAML change can set this — nothing in an issue
 comment, PR body, or an agent's own tool calls can reach it at runtime, so

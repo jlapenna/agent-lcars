@@ -100,8 +100,12 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
 - `.github/workflows/agent-automerge.yml`: thin caller of
   `agent-automerge-reusable.yml@main`. Inert until `AGENT_BOT_LOGINS`
   exists — it skips cleanly, not red.
-- `.github/workflows/validate.yml`: actionlint on GitHub-hosted runners
-  (must stay green-capable before self-hosted capacity exists).
+- `.github/workflows/validate.yml`: a thin caller of
+  `repo-validation.yml@main` with `canonical-sync: true` (#1340 A-R5/B8) —
+  it owns only triggers, permissions, and concurrency. Keep it on
+  GitHub-hosted runners (the reusable's default): it must stay
+  green-capable before self-hosted capacity exists. Its composed check
+  name is `validate / repository validation`.
 - `.claude/settings.json` + `.codex/hooks.json`: the issue-workflow
   guardrail hook invoking the PATH command, guarded so uninstalled
   machines degrade quietly:
@@ -117,8 +121,16 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
   (`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`),
   the `fleet-*` commands, and the worktree mandate.
 
-**No vendored scripts. No `canonical-sync.conf`.** If a repo has stale
-pre-#1328 copies on its main, delete them in this PR.
+- `.github/canonical-sync.conf`: the byte-pinned canonical-file manifest
+  `validate.yml`'s `canonical-sync: true` checks. A new repo starts with
+  the single line `.agents/fleet-membership.md .agents/fleet-membership.md`
+  and grows only as it genuinely acquires more canonical files (a repo
+  that ships the `worktree-hygiene` skill adds that pair with the `suffix`
+  column).
+
+**No vendored scripts.** `canonical-sync.conf` covers documents and
+must-be-identical non-script files only — never a fleet script. If a repo
+has stale pre-#1328 script copies on its main, delete them in this PR.
 
 ## 5. Provision vars and secrets
 
@@ -165,14 +177,16 @@ grant that needs explicit maintainer approval.
 
 Don't declare the repo onboarded on green config — run one real dispatch:
 
-1. Label a real issue `agent:opencode` (the lane whose credential is
-   automatable, so it works first).
+1. Label a real issue `agent:opencode` (its LiteLLM key is automatable
+   from the age store, so it works without a maintainer mint).
 2. Watch the run: the run-name must carry the orchestrator's
    `[dispatch:g<gen>:<intent>]` marker (a bare run-name means the
    dispatch bypassed the control plane), and the job must land on
    `<repo>-default`.
-3. After the maintainer mints the Claude token, repeat with
-   `agent:claude`.
+3. Repeat with `agent:claude`. Since #1350 that needs no per-repo
+   credential work — the lane reads the fleet's one canonical
+   subscription token at run time — so it only needs the repo admitted by
+   the shared `github` WIF pool (§5).
 
 The 2026-08 onboarding's first real dispatch (girosf#15) validated
 admission, listener, token mint, and failure reporting in one run —

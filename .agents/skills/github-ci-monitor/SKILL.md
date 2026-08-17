@@ -8,7 +8,7 @@ description: Watches armed auto-merge PRs until they land or need attention. Use
 After `gh pr merge --squash --auto`, the question a session actually has
 is: **did my PRs land, and if not, what needs fixing?** An armed PR whose
 `Verify` fails waits silently forever — auto-merge never fires and
-nothing pings the session. `watch-prs.sh` closes that gap:
+nothing pings the session. `fleet-watch-prs` closes that gap:
 
 ```bash
 fleet-watch-prs [--strict] [--interval <s>] <pr> [<pr>...]
