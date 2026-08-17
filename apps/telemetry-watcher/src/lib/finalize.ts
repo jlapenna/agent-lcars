@@ -1,5 +1,6 @@
 import { logger } from '@agent-lcars/logging';
 import {
+  applySessionTitleOverlay,
   buildSessionWrite,
   getTranscriptAdapter,
   RUNNER_CAPTURE_AGENTS,
@@ -18,6 +19,7 @@ import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
 import { RunnerConfig } from './runner-config';
 import {
   readSessionStatusOverlay as defaultReadSessionStatusOverlay,
+  readSessionTitleOverlay as defaultReadSessionTitleOverlay,
   SessionStatusDirectoryRead,
 } from './session-title-annotation-source';
 import { SessionStore } from './store';
@@ -67,6 +69,11 @@ export interface FinalizeSidecarOptions {
   readSessionStatusOverlay?: (
     stateDirectory: string,
   ) => SessionStatusDirectoryRead;
+  /** Test-only injection point, mirrored from `readSessionStatusOverlay`
+   * above — production callers never set this. */
+  readSessionTitleOverlay?: (
+    stateDirectory: string,
+  ) => ReturnType<typeof defaultReadSessionTitleOverlay>;
 }
 
 /**
@@ -84,20 +91,32 @@ export interface FinalizeSidecarOptions {
  * process this session's transcript belonged to is unconditionally gone;
  * there is no `/proc` check left to make.
  *
- * Reads the session-status overlay exactly once, the same
+ * Reads BOTH overlay channels exactly once, from the same
  * `config.sessionStateDir` root the live sidecar's `WatcherDaemon.tick()`
  * reads on every tick (issue #1289) — see `finalizeSummary` below for how
- * each summary is joined against it. This is deliberately status-only: the
- * title channels need no equivalent wiring here, because every prior
- * `live`/`idle` tick already applied them and this write's Firestore
- * `set(..., {merge: true})` leaves an omitted `title` exactly as that last
- * tick left it (see `store.ts`'s `upsertSession`) — there is no "last
- * write reverts the title" failure mode to guard against. Status has no
- * such free ride: `buildSessionWrite` unconditionally REQUESTS A CLEAR of
- * `status`/`statusUpdatedAt` whenever a summary carries no status (see
- * that function's own doc comment), so a finalize pass that never joined
- * this overlay would blank a status the agent declared moments before job
- * end — the exact accident-of-container-teardown issue #1289 rejected.
+ * each summary is joined against them.
+ *
+ * #1289 wired only the status channel here, on the reasoning that a merge
+ * write leaves an omitted `title` as the last live tick left it. That
+ * premise was false and #1293 caught it in production: `buildSessionDoc`
+ * emits `...(summary.title && { title })`, and the summary this pass hands
+ * it is the pristine reducer output carrying the transcript's GENERATED
+ * title. So this write does not omit `title` — it includes the generated
+ * one and overwrites whatever a declared-title tick had applied. Title is
+ * omitted only when the transcript yields none, which is the rare case;
+ * the reasoning described the exception and shipped it as the rule.
+ *
+ * A dispatched agent that declared a title therefore lost it at job end,
+ * while its status survived. Both channels are joined here now, and
+ * neither depends on tick timing: a title declared after the last `live`
+ * tick still lands, which it must, because a feature that works only when
+ * the agent speaks early enough is not working.
+ *
+ * Status additionally has no free ride: `buildSessionWrite`
+ * unconditionally REQUESTS A CLEAR of `status`/`statusUpdatedAt` whenever
+ * a summary carries no status (see that function's own doc comment), so a
+ * finalize pass that never joined it would blank a status declared moments
+ * before job end.
  *
  * Fails soft throughout, per-transcript and per-session: one broken read,
  * reduce, upload, or upsert must never stop the others from shipping, and
@@ -125,8 +144,15 @@ export async function finalizeSidecar(
   // ENOENT/EACCES/etc. and reports `available: false` rather than
   // throwing (see `session-title-annotation-source.ts`), so this call
   // never needs its own try/catch.
+  const readTitleOverlay =
+    options.readSessionTitleOverlay ?? defaultReadSessionTitleOverlay;
   const statusAnnotations = config.sessionStateDir
     ? readStatusOverlay(config.sessionStateDir).annotations
+    : undefined;
+  // Same root, same once-per-pass discipline, same fail-soft contract as
+  // the status read above. Both channel maps come back from one call.
+  const titleOverlay = config.sessionStateDir
+    ? readTitleOverlay(config.sessionStateDir)
     : undefined;
 
   // The single runner-mode watch-root contract (@agent-lcars/telemetry,
@@ -189,6 +215,7 @@ export async function finalizeSidecar(
         resolveGitRepo,
         uploadTranscript,
         statusAnnotations,
+        titleOverlay,
       });
     }
   }
@@ -229,6 +256,7 @@ async function finalizeSummary(
      * pass ships — see `finalizeSidecar`'s own read of this, and
      * `undefined` when `config.sessionStateDir` was unset there. */
     statusAnnotations?: ReadonlyMap<string, SessionStatusAnnotationV1>;
+    titleOverlay?: ReturnType<typeof defaultReadSessionTitleOverlay>;
   },
 ): Promise<void> {
   const { config, store } = deps;
@@ -277,14 +305,28 @@ async function finalizeSummary(
   // doc comment). That is correct here too: a session that never declared
   // a status, or whose declaration this pass couldn't read, should not
   // retain a stale one in the `ended` doc either.
+  // #1293: apply the title overlay too, exactly as `daemon.ts` does per
+  // tick. This write CARRIES `title` (buildSessionDoc emits it whenever the
+  // summary has one), so leaving it to merge semantics overwrote a declared
+  // title with the transcript's generated one. Applied to `finalSummary`,
+  // never back onto `summary`, matching the status join below.
+  const finalSummaryWithTitle = deps.titleOverlay
+    ? applySessionTitleOverlay(finalSummary, {
+        declared: deps.titleOverlay.declared.annotations.get(summary.sessionId),
+        generated: deps.titleOverlay.generated.annotations.get(
+          summary.sessionId,
+        ),
+      })
+    : finalSummary;
+
   const statusAnnotation = deps.statusAnnotations?.get(summary.sessionId);
   const summaryWithStatus = statusAnnotation
     ? {
-        ...finalSummary,
+        ...finalSummaryWithTitle,
         status: statusAnnotation.status,
         statusUpdatedAt: statusAnnotation.updatedAt,
       }
-    : finalSummary;
+    : finalSummaryWithTitle;
 
   const write = buildSessionWrite(summaryWithStatus, 'ended', {
     runId: config.runId,
