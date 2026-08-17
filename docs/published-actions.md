@@ -46,9 +46,29 @@ promised one.
 
 ### Published reusable workflows
 
-| Workflow                    | Purpose                                                                                |
-| --------------------------- | -------------------------------------------------------------------------------------- |
-| `renovate-auto-approve.yml` | Approve a `renovate[bot]` pull request via a minted Agent LCARS App installation token |
+| Workflow                       | Purpose                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `renovate-auto-approve.yml`    | Approve a `renovate[bot]` pull request via a minted Agent LCARS App installation token                          |
+| `agent-automerge-reusable.yml` | The whole agent auto-merge surface: arm squash auto-merge, restore the post-merge chain, sweep orphaned anchors |
+
+`agent-automerge-reusable.yml` (#1312 U4) is the union of this repo's own
+`agent-automerge.yml` and sprinkles' `claude-automerge.yml`, which had
+drifted from a common ancestor. The caller keeps what `workflow_call`
+cannot carry — triggers (the cron schedule, `pull_request`/
+`pull_request_review`, the repo's own `workflow_run` workflow names,
+`workflow_dispatch` and its targeted-monitor inputs), workflow-level
+permissions — and passes repo parameters: `bot-logins`
+(`vars.AGENT_BOT_LOGINS`), `fleet-login` (`vars.AGENT_FLEET_LOGIN`),
+`runs-on`, `required-checks`, and the optional restore-chain inputs
+(`ci-workflow`, `extra-main-workflows`, `deploy-workflow`,
+`post-deploy-verify-workflow`, `post-submit-enabled`,
+`check-wait-minutes`, `restore-timeout-minutes`, `monitor-pr`/
+`monitor-head-sha`). It needs no explicit `secrets:` — everything runs on
+the caller's own `github.token`. This repo's `agent-automerge.yml` is the
+reference caller; beyond actionlint and review, its embedded required-check
+jq evaluation is behaviorally pinned by
+`tools/contract-tests/agent-automerge-required-checks.test.ts` and its
+admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
 
 ### Internal
 
@@ -408,11 +428,12 @@ is the review signal that consumers are affected.
 
 Its manifest and parser are scoped to composite-action `action.yml` files
 under `.github/actions/`; they do not cover `.github/workflows/*.yml`
-reusable workflows. `agent-fallback-finalize.yml` — this repo's only other
+reusable workflows. `agent-fallback-finalize.yml` — the Coupled
 cross-repo-called `workflow_call` workflow — was never added to this
 manifest either, for the same reason. A Published reusable workflow's
 `on.workflow_call.inputs`/`secrets` contract is instead guarded by
 `actionlint` (run in CI on every changed workflow) and by review of the
 manifest-shaped diff itself; extending the parser to a second file shape
-was left out rather than inventing a new registry mechanism for one
-workflow.
+was left out rather than inventing a new registry mechanism for what were,
+at the time, one or two workflows. (`agent-automerge-reusable.yml`
+additionally carries the behavioral pins named in its table entry above.)
