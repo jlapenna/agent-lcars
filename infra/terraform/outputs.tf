@@ -4,7 +4,6 @@ output "deployer_service_account" { value = google_service_account.github_deploy
 output "github_app_webhook_configurator_service_account" { value = google_service_account.github_app_webhook_configurator.email }
 output "github_app_webhook_configurator_workload_identity_provider" { value = google_iam_workload_identity_pool_provider.github_app_webhook_configurator.name }
 output "telemetry_writer_service_account" { value = google_service_account.telemetry_writer.email }
-output "dispatch_preflight_service_account" { value = google_service_account.dispatch_preflight.email }
 output "dispatch_firestore_database_id" { value = google_firestore_database.dispatch_controller.name }
 output "transcript_bucket" { value = google_storage_bucket.transcripts.name }
 output "quick_task_evidence_bucket" { value = google_storage_bucket.quick_task_evidence.name }
