@@ -1,12 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { isAllowedProjectDir } from './allowlist';
-import {
-  checkoutRoot,
-  checkoutRoots,
-  checkoutSlugGlob,
-  checkoutSlugGlobs,
-} from './default-checkout';
+import { checkoutRoots, checkoutSlugGlobs } from './default-checkout';
 
 const ROOTS_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOTS';
 const LEGACY_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOT';
@@ -28,8 +23,6 @@ describe('checkout roots', () => {
       '-srv-checkouts-thing*',
       '-srv-checkouts-another*',
     ]);
-    expect(checkoutRoot()).toBe('/srv/checkouts/thing');
-    expect(checkoutSlugGlob()).toBe('-srv-checkouts-thing*');
   });
 
   it('keeps the legacy single-root variable compatible', () => {
@@ -85,8 +78,8 @@ describe('checkout roots', () => {
 
   it('re-reads the environment per call rather than freezing at import', () => {
     process.env[ROOTS_VAR] = '/srv/checkouts/one';
-    expect(checkoutRoot()).toBe('/srv/checkouts/one');
+    expect(checkoutRoots()).toEqual(['/srv/checkouts/one']);
     process.env[ROOTS_VAR] = '/srv/checkouts/two';
-    expect(checkoutRoot()).toBe('/srv/checkouts/two');
+    expect(checkoutRoots()).toEqual(['/srv/checkouts/two']);
   });
 });

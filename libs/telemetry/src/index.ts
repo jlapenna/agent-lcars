@@ -8,7 +8,6 @@ export * from './lib/session-doc';
 export * from './lib/session-status-annotation';
 export * from './lib/session-title-annotation';
 export * from './lib/session-title-selection';
-export * from './lib/stub-summary';
 export * from './lib/tokens';
 export * from './lib/transcript-adapter';
 export * from './lib/transcript-timeline';

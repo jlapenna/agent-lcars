@@ -3132,20 +3132,6 @@ func (r *runnerState) markDoneWithState(name string) (runnerRef, string, bool) {
 	return runnerRef{}, "", false
 }
 
-func (r *runnerState) markDoneUnlocked(name string) (runnerRef, bool) {
-	ref, ok := r.busy[name]
-	if ok {
-		delete(r.busy, name)
-		return ref, true
-	}
-	ref, ok = r.idle[name]
-	if ok {
-		delete(r.idle, name)
-		return ref, true
-	}
-	return runnerRef{}, false
-}
-
 func (r *runnerState) addIdle(name, host, containerID string, startedAt time.Time) {
 	r.mu.Lock()
 	r.idle[name] = runnerRef{host: host, containerID: containerID, startedAt: startedAt}
