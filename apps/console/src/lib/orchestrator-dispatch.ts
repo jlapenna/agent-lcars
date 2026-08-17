@@ -233,7 +233,7 @@ async function describeLostOutcome(
   store: OrchestratorStore,
   run: Run,
 ): Promise<{ body: string; needsHumanLabel: boolean }> {
-  const lostPrefix = `⚠️ Run ${run.runId} was lost (no report before its lease expired). `;
+  const lostPrefix = `⚠️ Run ${run.runId} ${lostCause(run)}. `;
   const task = await store.readTask(run.task);
   const activeRunId = task?.task.activeRunId;
   const activeRun =
@@ -262,6 +262,22 @@ async function describeLostOutcome(
       `agent label) when ready.`,
     needsHumanLabel: true,
   };
+}
+
+/**
+ * Why a `lost` run was lost, in the reader's terms. Both settle paths reach
+ * `lost` (see decide.ts's `expireLease` and `settleTerminal`), but for very
+ * different reasons, and saying "no report before its lease expired" about a
+ * run whose workflow died at `startup_failure` ten minutes in is simply
+ * false. The run's own last event already records which path settled it and
+ * what the evidence was, so read that rather than assuming.
+ */
+function lostCause(run: Run): string {
+  const last = run.events.at(-1);
+  if (last?.by === 'infra') {
+    return `was lost (${last.note ?? 'its executor failed'}, no completion report)`;
+  }
+  return 'was lost (no report before its lease expired)';
 }
 
 /** Flags the issue for human attention once the auto-retry budget is
