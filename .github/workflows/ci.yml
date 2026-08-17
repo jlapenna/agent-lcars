@@ -131,12 +131,8 @@ jobs:
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
 
-      # The checker's logic only. The drift check itself runs on a schedule
-      # (cross-repo-drift.yml), not here: drift is normally introduced by a
-      # change in a consumer, so failing this repo's PRs would block work
-      # that did not cause it.
-      - name: Test the cross-repo drift checker
-        run: bash tools/check-cross-repo-drift.test.sh
+      - name: Test the canonical-sync checker
+        run: bash .github/actions/check-canonical-sync/check.test.sh
 
       # The check itself, against this checkout - the #1255 incident's
       # self-referential skill symlink passed CI here and broke every
