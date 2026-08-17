@@ -26,7 +26,10 @@ inputs:
 
 outputs:
   started-at:
-    description: UTC timestamp used by the deliverable gate.
+    description: >-
+      UTC run-start timestamp. Its only remaining consumer is
+      archive-opencode-trajectory (via the opencode lane); the deliverable
+      gate stopped reading it when #1303 removed inference mode.
     # Bracket notation matches every existing reader of this same
     # agent-setup output (each lane workflow's own STARTED_AT/started-at
     # references, pre-dating this composite).

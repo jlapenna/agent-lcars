@@ -111,25 +111,42 @@ there.
 No dispatch requests `permission-workflows` yet — #868's own acceptance
 criteria defer redispatching agent-lcars#823/#815/#813 and
 supersprinklesracing/sprinkles#4179 (already merged) to a future task, once
-this capability is live. When a lane workflow does need it for a specific
-dispatch, add the input to that lane's own "Dispatch bootstrap" step
-(agent-lcars#823 moved "Mint agent token" itself inside the shared
-`dispatch-bootstrap` composite, which forwards this one input through
-unchanged):
+this capability is live. Since #1312 U1 the "Dispatch bootstrap" step lives
+in the published reusable lanes
+(`.github/workflows/agent-lane-<agent>.yml`), fed from `inputs.*` the thin
+caller passes down, and each lane's `workflow_call` input surface is pinned
+by `tools/contract-tests/worker-workflow-contract.test.ts` — so granting
+the capability is a deliberate lane-contract edit, not a one-line YAML
+tweak. When a dispatch does need it:
 
-```yaml
-- name: Dispatch bootstrap
-  uses: ./.github/actions/dispatch-bootstrap
-  with:
-    issue: ${{ inputs.issue }}
-    broker-generation: ${{ inputs.broker_generation }}
-    broker-intent-id: ${{ inputs.broker_intent_id }}
-    agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
-    maintainer-login: ${{ vars.MAINTAINER_LOGIN }}
-    agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
-    agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-    permission-workflows: write
-```
+1. Declare a new optional `workflow_call` input on the lane workflow(s)
+   that should be able to carry it, and add the same input to the
+   `LANE_SURFACES` manifest in
+   `tools/contract-tests/worker-workflow-contract.test.ts` (the test fails
+   on any undeclared surface drift).
+2. Forward it in that lane's "Dispatch bootstrap" step (agent-lcars#823
+   moved "Mint agent token" itself inside the shared `dispatch-bootstrap`
+   composite, which forwards this one input through unchanged):
+
+   ```yaml
+   - name: Dispatch bootstrap
+     id: dispatch-bootstrap
+     if: ${{ inputs.dispatch-bootstrap }}
+     uses: ./.github/actions/dispatch-bootstrap
+     with:
+       issue: ${{ inputs.issue }}
+       broker-generation: ${{ inputs.broker-generation }}
+       broker-intent-id: ${{ inputs.broker-intent-id }}
+       agent-fleet-login: ${{ inputs.agent-fleet-login }}
+       maintainer-login: ${{ inputs.maintainer-login }}
+       agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
+       agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+       permission-workflows: ${{ inputs.permission-workflows }}
+   ```
+
+3. Set the value in the thin caller (`claude.yml`/`codex.yml`/
+   `opencode.yml`) for the dispatches that need it — as a YAML literal,
+   never wired from a `workflow_dispatch` input.
 
 The other five `permission-*` values (`actions`/`contents`/`issues`/
 `metadata`/`pull-requests`) are fixed inside `dispatch-bootstrap` itself,

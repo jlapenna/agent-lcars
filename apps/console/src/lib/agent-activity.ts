@@ -133,14 +133,16 @@ export function issueNumberFromDisplayTitle(
 /**
  * claude.yml/codex.yml/opencode.yml's `run-name` templates all append
  * `[dispatch:g<generation>:<intentId>]` after the `#<issue>:` join key -
- * the hosted controller's own dispatch marker
- * (`apps/dispatch-broker/src/controller-core.ts` renders
- * the identical `[dispatch:g${generation}:${intentId}]` string when binding
- * a run, both via `@agent-lcars/dispatch-contracts`' `formatDispatchMarker`).
+ * the hosted orchestrator's own dispatch marker
+ * (`orchestrator-dispatch.ts` mints the `broker_generation`/
+ * `broker_intent_id` workflow-dispatch inputs — `intentId` is literally
+ * the orchestrator run's own `runId` — and each workflow's `run-name`
+ * template renders them into this exact string; the parse side is
+ * `@agent-lcars/dispatch-contracts`' `parseDispatchMarker`).
  * Parsing it back out lets the console attribute a raw workflow run to the
  * exact dispatch generation/intent that dispatched it (see `logical-work.ts`'s
  * `toExecutionAttempt`) instead of only knowing the issue it worked.
- * Undefined for runs that predate the broker rollout, or any run dispatched
+ * Undefined for runs that predate the marker rollout, or any run dispatched
  * by hand outside it (a manual `workflow_dispatch` leaves the input blank,
  * which GitHub Actions renders as an empty `[dispatch:g:]`) - both cases
  * fall back to title/issue-number attribution only.

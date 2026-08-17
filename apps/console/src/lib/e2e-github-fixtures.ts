@@ -483,8 +483,10 @@ export type ReassignFixtureIssuePipelineResult =
     };
 
 /**
- * The fixture stand-in for `applyPipelineReassignment`'s own three typed
- * rejections (`apps/dispatch-broker/src/controller-core.ts`) - real
+ * The fixture stand-in for the real pipeline-reassignment path's typed
+ * rejections (today `reassignPipeline` in `@/lib/backend-actions.ts`; the
+ * broker-era `applyPipelineReassignment` these reasons originally mirrored
+ * was deleted with `apps/dispatch-broker`) - real
  * controller logic never runs against this fixture
  * (docs/e2e-security-boundary.md). Validates against the issue's current
  * fixture snapshot but, like every other GitHub label write this fixture

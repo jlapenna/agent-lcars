@@ -15,7 +15,10 @@ inputs:
     default: auto
 outputs:
   started-at:
-    description: UTC timestamp used by the deliverable gate.
+    description: >-
+      UTC run-start timestamp. Its only remaining consumer is
+      archive-opencode-trajectory (via the opencode lane); the deliverable
+      gate stopped reading it when #1303 removed inference mode.
     value: ${{ steps.start.outputs.started_at }}
 runs:
   using: composite

@@ -46,7 +46,13 @@ homelab operation. Select:
   telemetry-watcher bundle input: the watcher app, `libs/telemetry`,
   `libs/logging`, `libs/env-vars`, `libs/util`, `libs/util-server`,
   `package.json`, `pnpm-lock.yaml`, or `patches`.
-- `homelab-runner` alone for its runner-image-only inputs.
+- `homelab-runner` alone for its runner-image-only inputs. These go beyond
+  `apps/runner-autoscaler/runner-image/**`: the image also bakes in
+  `packages/fleet-tools/**` (installed globally via `npm install -g` from
+  the same fresh-`main` checkout the telemetry stage builds from, #1328)
+  and an action-archive cache derived from the repo's own `.github` tree
+  (`populate-action-archive-cache.sh`, #1330) — a change to either
+  requires re-publishing `homelab-runner`.
 - `github-actions-exporter` for its Dockerfile, `exporter.py`, or
   `requirements.lock`.
 - `e2e` and `e2e-runner` together when `tools/e2e/Dockerfile` changes.
