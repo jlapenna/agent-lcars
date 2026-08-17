@@ -114,11 +114,16 @@ admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
   `AGENT_FLEET_LOGIN`/`MAINTAINER_LOGIN` repo-variable vocabulary and the
   attempt-identity format it publishes are this repo's own dispatch
   contract, not a general-purpose interface.
-- `telemetry-start` / `telemetry-finalize` — depend on
+- `telemetry-start` — depends on
   `/usr/local/lib/agent-lcars/sidecar-lifecycle.sh`, baked into the shared
-  runner image (consumers on that image may still call them; the coupling
+  runner image (consumers on that image may still call it; the coupling
   is to the image, not the repo checkout — see
   [onboarding-console-and-telemetry.md](onboarding-console-and-telemetry.md)).
+- `telemetry-finalize` — a snapshot-delivered script, not an action: the
+  directory carries only `telemetry-finalize.sh` (no `action.yml`), frozen
+  pre-agent by `snapshot-enforcement-scripts` and run post-agent by
+  `post-agent-gates.sh` from that snapshot. It shares `telemetry-start`'s
+  runner-image coupling to `sidecar-lifecycle.sh`.
 
 ## Referencing from a consumer repo
 
