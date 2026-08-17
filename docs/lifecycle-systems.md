@@ -212,9 +212,11 @@ produced.
   gate. A run passes only when a PR, issue/PR comment, or (review dispatches
   only) a pull request review carries **this run's own** hidden
   `<!-- attempt-claim:<attempt-id> -->` marker (#815) — no time window, no
-  bot-login comparison, no author exclusion for LCARS's broker-bound lanes.
-  Standalone Published-action consumers without an attempt ID use a
-  separate, guarded legacy-inference compatibility path (#4388).
+  bot-login comparison, no author exclusion, for every consumer. The
+  guarded legacy-inference compatibility path standalone Published-action
+  consumers once used (#4388) was removed after every fleet consumer
+  flipped to passing an attempt ID (homelab#697, sprinkles' exact-marker
+  flip); `attempt-id` is required.
 
 **Credential boundaries, concretely** (worker workflow, `claude.yml` as the
 example — the other two lanes match): the agent step never receives

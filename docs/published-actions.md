@@ -160,17 +160,18 @@ steps into the one snapshot-run step LCARS's own workers already use, without
 losing their existing visible-failure reporting (issue #1208; the consumer-side
 rewiring is tracked as a follow-up, not part of this change).
 
-`post-agent-gates`'s own `ATTEMPT_ID` requirement is likewise optional
-(#1208 Phase 2, found while wiring sprinkles onto this script): when
-`JOB_STATUS` is `success`, it forwards straight to `verify-deliverable.sh`
-and mirrors that script's own `if [ -z "$ATTEMPT_ID" ]` contract exactly —
-`ATTEMPT_ID` set, or the legacy inference pair `STARTED_AT` +
-`EXPECTED_COMMENT_LOGIN` when it is unset. Passing a synthetic `ATTEMPT_ID`
-just to satisfy an unconditional requirement was never a safe workaround:
-any non-empty value forces `verify-deliverable.sh` into exact-marker-only
-mode, which silently disables the legacy inference clauses a standalone
-consumer without broker attempt identity (sprinkles, homelab) actually
-relies on.
+`post-agent-gates` requires `ATTEMPT_ID` whenever `JOB_STATUS` is
+`success` — the verify phase is exact-marker-only, and the requirement is
+unconditional. An earlier revision made it optional (#1208 Phase 2/#1237),
+mirroring `verify-deliverable.sh`'s then-dual contract so a standalone
+consumer without broker attempt identity could take the legacy
+`STARTED_AT` + `EXPECTED_COMMENT_LOGIN` inference pair instead; that
+optionality was removed together with the inference mode itself once every
+fleet consumer passed `ATTEMPT_ID` (agent-lcars's own three lanes,
+homelab#697, sprinkles' exact-marker flip). A missing `ATTEMPT_ID` now
+fails closed with a named diagnostic before any lookup fires. Do not pass
+a synthetic value to satisfy it: the marker names one specific attempt,
+and a fabricated identity can never match a real stamped deliverable.
 
 `verify-deliverable`'s exact-marker clause additionally requires the matching
 artifact to be **bot-authored** (`.user.type == "Bot"`, agent-lcars#1223).
@@ -188,13 +189,17 @@ an `agent:*`-on-PR takeover of a **human-authored** PR, stamping that PR's
 body no longer counts — post a bot-authored comment carrying the marker
 instead.
 
-`verify-deliverable` likewise has two deliberately separated modes. LCARS's
-broker-bound workers pass `attempt-id` and remain exact-marker-only (#815):
-no timestamp or shared-login inference can satisfy them. Standalone consumers
-without broker attempt identity leave `attempt-id` empty and provide
-`started-at` plus `expected-comment-login`; only that compatibility mode uses
-the protocol's guarded time-window/login inference. This preserves moving
-`@main` consumers without weakening the hosted control plane (#4388).
+`verify-deliverable` is exact-marker-only: `attempt-id` is required, and no
+timestamp or shared-login inference can satisfy the gate (#815). The
+guarded legacy inference compatibility mode (`started-at` plus
+`expected-comment-login` with `attempt-id` empty, #4388) was removed once
+every fleet consumer passed `attempt-id` — agent-lcars's own three lanes,
+homelab's three lanes (homelab#697), and sprinkles' three lanes (the
+exact-marker flip). Its retired inputs (`started-at`,
+`expected-comment-login`, `exclude-pr-author`, `exclude-comment-id`,
+`runbook`) were dropped from the action; a moving-`@main` consumer that
+still passes one gets a runner warning ("Unexpected input(s)"), never a
+failure.
 
 `prepare-agent-dispatch` keeps its richer runtime contract backward-compatible
 for moving-`main` consumers: `token` falls back to the caller's

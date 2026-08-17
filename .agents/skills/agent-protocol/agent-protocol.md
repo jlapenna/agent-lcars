@@ -162,13 +162,14 @@ add the repository maintainer as an assignee. These updates are additive: keep
 the selected `agent:*` label for explicit redispatch, preserve an independent
 `status:blocked` label, and never remove an existing assignee.
 
-**Stamp the deliverable with your attempt's claim marker.** A finalizer that
-only infers a deliverable from a time window and a shared bot login cannot
-tell your run's own PR/comment/review apart from an unrelated one touched by
-the same identity during the same window. Include this exact hidden marker,
-literally, somewhere in the body of the specific artifact that fulfills this
-rule — the PR description, the evidence/summary comment, the review body, or
-the comment accompanying an issue close:
+**Stamp the deliverable with your attempt's claim marker.** This is the only
+evidence the finalizer accepts: the fleet's earlier time-window/bot-login
+inference mode was removed, because it could not tell your run's own
+PR/comment/review apart from an unrelated one touched by the same identity
+during the same window. Include this exact hidden marker, literally,
+somewhere in the body of the specific artifact that fulfills this rule — the
+PR description, the evidence/summary comment, the review body, or the
+comment accompanying an issue close:
 
 ```
 <!-- attempt-claim:$ATTEMPT_ID -->
@@ -178,13 +179,16 @@ Substitute your run's own `$ATTEMPT_ID` value (exported to your environment
 by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. Some
 dispatch harnesses stamp this marker onto the artifact for you at creation
 time, so you may find it already present — that is fine, and adding it twice
-is harmless; check your repo's delta skill for whether yours does. If it
-is unset, skip the marker entirely rather than inventing a value — an older
-or hand-triggered dispatch has none, and a finalizer that supports this
-marker falls back to the time-window/bot-login inference above when no
-marker is found. Stamp only the artifact that IS your deliverable, never your
-takeover or progress comment (§1, §3): the marker is a claim of authorship
-over one specific object, not a running commentary tag.
+is harmless; check your repo's delta skill for whether yours does. Every
+fleet dispatch exports `ATTEMPT_ID`; if yours is somehow unset, do not
+invent a value — the marker names one specific attempt, and a fabricated
+one claims work for an attempt that does not exist. There is no fallback: a
+run whose deliverable carries no exact marker fails its deliverable gate
+(the earlier time-window/bot-login inference that used to catch this case
+was removed once every consumer passed attempt identity). Stamp only the
+artifact that IS your deliverable, never your takeover or progress comment
+(§1, §3): the marker is a claim of authorship over one specific object, not
+a running commentary tag.
 
 When the requested result already exists before the run starts, finish with
 one evidence-backed structured no-op comment. Name the existing commit, PR,
