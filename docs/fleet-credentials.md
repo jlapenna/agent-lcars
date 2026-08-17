@@ -93,35 +93,51 @@ value:
 > documents this). Mint an independent login per repo — same ChatGPT
 > subscription, separate rotating token.
 
-Per new repo:
+Per new repo. **Steps 1-2 are the whole job for a repo Terraform already
+covers** — the four 2026-08 additions (`www`, `girosf`, `nx-cache-server`,
+`sync-padd`) have their secret containers, service accounts, grants, and
+repo vars provisioned (#1354), so only the mint is left.
 
 1. On a workstation with no live Codex session you care about, run
    `codex login`. Like the Claude mint, it prints an authorization URL and
    waits — complete it in the maintainer's signed-in browser (an agent
    with browser tooling: navigate, approve). Result: a fresh
    `~/.codex/auth.json`.
-2. Upload it as that repo's own secret, then remove the local copy so no
-   competing lineage exists. Pick the project deliberately: precedent is
-   the owning org's project (`supersprinklesracing` for that org's repos);
-   for `jlapenna`-account repos no convention exists yet — that is a
-   maintainer decision to make once and record here. Do **not** discard
-   errors on the create — a permission failure must stop the run;
-   "already exists" is the only acceptable one:
+2. Publish it as that repo's own lineage, then remove the local copy so no
+   competing lineage exists:
 
    ```bash
-   proj=<project>
-   name=SYNC_PADD_CODEX_AUTH_JSON # <REPO>_CODEX_AUTH_JSON
-   gcloud secrets describe "$name" --project="$proj" >/dev/null 2>&1 ||
-     gcloud secrets create "$name" --project="$proj"
-   gcloud secrets versions add "$name" --project="$proj" \
-     --data-file="$HOME/.codex/auth.json"
+   gcloud secrets versions add SYNC_PADD_CODEX_AUTH_JSON \
+     --project=agent-lcars --data-file="$HOME/.codex/auth.json"
    rm "$HOME/.codex/auth.json" # the lineage lives in Secret Manager now
    ```
 
-3. Wire the WIF plumbing the lane's restore/persist steps authenticate
-   with. The live sprinkles provider is the template — pool
-   `claude-agent-pool`, provider `claude-agent-github`, project
-   `supersprinklesracing` — and its attribute condition has this shape:
+   Secret naming is `<REPO>_CODEX_AUTH_JSON`. **Project `agent-lcars` for
+   every repo**, settled in #1354 including the two `supersprinklesracing`
+   ones: the shared `github` pool that admits them lives there, a
+   WIF-impersonated service account must live in its pool's project, and
+   one control plane beats matching each repo's owning org. `sprinkles`
+   predates the decision and keeps its lineage in project
+   `supersprinklesracing`; that is history, not a pattern to copy.
+
+3. Infrastructure, for a repo Terraform does **not** yet cover: add it to
+   `local.fleet_codex_agents` in `infra/terraform/main.tf` and to
+   `var.additional_fleet_repositories`, then apply. That one map entry
+   yields the secret container, a dedicated `<slug>-codex-agent` service
+   account, `secretAccessor` + `secretVersionAdder` on that secret alone,
+   and `workloadIdentityUser` for the repo's own principal.
+
+   Per-repo identities are not ceremony: the codex lane exports ambient ADC
+   so its `gcloud secrets` calls work, so agent-authored code in that job
+   can reach whatever the identity can reach. A shared service account
+   would let one repo's agent read and rotate another repo's credential.
+   `secretVersionAdder`, never `secretAdmin` — a bad refresh must stay
+   recoverable by pinning an earlier version (#1192).
+
+   `sprinkles` is the exception again: it authenticates against pool
+   `claude-agent-pool` / provider `claude-agent-github` in project
+   `supersprinklesracing`, which is conditioned on `job_workflow_ref` and
+   must name each lane file it admits:
 
    ```text
    assertion.repository=='<owner>/<repo>' &&
@@ -130,34 +146,19 @@ Per new repo:
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))
    ```
 
-   This is the **sprinkles-project** pool (`claude-agent-pool` in project
-   `supersprinklesracing`), conditioned on `job_workflow_ref`, so it must
-   name each lane file it admits. Do not confuse it with the shared
-   `github` pool in project `agent-lcars` that the Claude
-   subscription-token read uses, which matches on `assertion.repository`
-   alone and needs no per-lane entry.
-
-   To admit a new repo where the pool already exists, read the current
-   condition first
+   To extend it, read the current condition first
    (`gcloud iam workload-identity-pools providers describe
 claude-agent-github --location=global
 --workload-identity-pool=claude-agent-pool --project=<proj>
---format='value(attributeCondition)'`), extend it, and write it back
-   with `... providers update-oidc ... --attribute-condition='<full new
-condition>'` — the flag **replaces** the condition, so always start
-   from the read. For a `jlapenna`-account repo there is no pool at all
-   yet: creating one (`workload-identity-pools create` + `create-oidc`
-   against issuer `https://token.actions.githubusercontent.com`) is a
-   maintainer infrastructure decision, not something to improvise
-   mid-onboarding. The service account needs
-   `roles/secretmanager.secretAccessor` **and** version-add on that one
-   secret (the rotate-writeback), plus `roles/iam.workloadIdentityUser`
-   for `principalSet://…/attribute.repository/<owner>/<repo>`.
+--format='value(attributeCondition)'`) and write back the full new
+   string — `update-oidc --attribute-condition` **replaces**, never
+   appends. The shared `github` pool needs none of this: it matches on
+   `assertion.repository` alone.
 
 4. Set the repo side: caller inputs `codex-auth-secret-name` /
    `gcp-project-id` in `codex.yml`; the four 2026-08 onboarded repos read
-   vars instead — `gh variable set GCP_WIF_PROVIDER` /
-   `GCP_CODEX_AGENT_SA`.
+   vars instead — `GCP_WIF_PROVIDER`, `GCP_CODEX_AGENT_SA`,
+   `GCP_PROJECT_ID`, all already set.
 5. Verify: `codex login status` inside the lane's restore step log.
 
 ## `OPENCODE_LLM_API_KEY` (opencode lane)

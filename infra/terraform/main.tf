@@ -559,6 +559,74 @@ resource "google_secret_manager_secret_iam_member" "homelab_codex_auth_version_a
   member    = "serviceAccount:${google_service_account.homelab_codex_agent.email}"
 }
 
+# The 2026-08 fleet additions (#1354). Same shape as codex_auth and
+# homelab_codex_auth above, expressed once: each repo gets its own lineage
+# and its own identity, because Codex rotates the credential on every run
+# and two repos sharing one blob invalidate each other. The pair above are
+# left as explicit resources deliberately - folding them in would move
+# state for two working lineages to save a few lines.
+#
+# Project agent-lcars for all four, including the two supersprinklesracing
+# repos (#1354): the shared `github` pool that admits them lives here, a
+# WIF-impersonated service account must live in the pool's project, and one
+# control plane beats matching each repo's owning org. This settles the
+# convention fleet-credentials.md flagged as unmade.
+locals {
+  fleet_codex_agents = {
+    "supersprinklesracing/www"    = { slug = "www", secret = "WWW_CODEX_AUTH_JSON" }
+    "supersprinklesracing/girosf" = { slug = "girosf", secret = "GIROSF_CODEX_AUTH_JSON" }
+    "jlapenna/nx-cache-server"    = { slug = "nx-cache-server", secret = "NX_CACHE_SERVER_CODEX_AUTH_JSON" }
+    "jlapenna/sync-padd"          = { slug = "sync-padd", secret = "SYNC_PADD_CODEX_AUTH_JSON" }
+  }
+}
+
+# Container only - the value is minted per repo with `codex login` and
+# published with `gcloud secrets versions add`. Never copy a blob between
+# repos: the lane rotates it and writes the new one back.
+resource "google_secret_manager_secret" "fleet_codex_auth" {
+  for_each  = local.fleet_codex_agents
+  secret_id = each.value.secret
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_service_account" "fleet_codex_agent" {
+  for_each     = local.fleet_codex_agents
+  account_id   = "${each.value.slug}-codex-agent"
+  display_name = "${each.key} Codex issue agent"
+}
+
+# Scoped to this repo's ONE secret, not a project-level role and not the
+# other repos' lineages. The codex lane exports ambient ADC so its `gcloud
+# secrets` calls work, which means agent-authored code in that job can
+# reach whatever this identity can reach - a shared service account would
+# let one repo's agent read and rotate another's credential.
+resource "google_secret_manager_secret_iam_member" "fleet_codex_auth_accessor" {
+  for_each  = local.fleet_codex_agents
+  secret_id = google_secret_manager_secret.fleet_codex_auth[each.key].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.fleet_codex_agent[each.key].email}"
+}
+
+# secretVersionAdder, NOT secretAdmin: the run appends a refreshed version
+# and can never delete or disable prior ones, so a bad refresh stays
+# recoverable by pinning an earlier version (#1192).
+resource "google_secret_manager_secret_iam_member" "fleet_codex_auth_version_adder" {
+  for_each  = local.fleet_codex_agents
+  secret_id = google_secret_manager_secret.fleet_codex_auth[each.key].id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${google_service_account.fleet_codex_agent[each.key].email}"
+}
+
+resource "google_service_account_iam_member" "fleet_codex_agent_impersonation" {
+  for_each           = local.fleet_codex_agents
+  service_account_id = google_service_account.fleet_codex_agent[each.key].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${each.key}"
+}
+
 resource "google_service_account_iam_member" "homelab_codex_agent_impersonation" {
   service_account_id = google_service_account.homelab_codex_agent.name
   role               = "roles/iam.workloadIdentityUser"
