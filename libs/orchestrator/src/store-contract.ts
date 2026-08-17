@@ -301,6 +301,27 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('live-run listing', () => {
+      it('lists a live run regardless of its lease, and drops it once settled', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const live = await started(orchestrator, 'req-1');
+        await orchestrator.confirmDispatch(live.run.runId);
+
+        // Nowhere near its lease, so the expiry feed is empty -- but the
+        // live feed still has it. That difference is the whole reason this
+        // method exists (#1361): a terminal executor is settled on the
+        // evidence, not on the lease.
+        clock.advanceMinutes(1);
+        expect(await store.listExpiredRuns(clock.now())).toEqual([]);
+        expect((await store.listLiveRuns()).map((run) => run.runId)).toEqual([
+          live.run.runId,
+        ]);
+
+        await orchestrator.report(live.run.runId, { ok: true });
+        expect(await store.listLiveRuns()).toEqual([]);
+      });
+    });
+
     describe('a stale run can never overwrite its successor', () => {
       it('refuses a renew from a run that already lost the lock, after a fresh run took it', async () => {
         const { clock, store, orchestrator } = await fixture();

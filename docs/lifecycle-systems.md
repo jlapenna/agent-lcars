@@ -95,6 +95,25 @@ same params) as long as the task hasn't gone `lost` more than `MAX_AUTO_RETRIES`
 that, the task is left parked for a manual request, and the outcome comment
 says so.
 
+**Terminal-run settling (#1361):** waiting out a lease is the slowest
+recovery path available, and for the failure mode where the worker workflow
+dies at `startup_failure` (or is `cancelled` before its first job) it is
+also the least necessary — that run never executes a step, so neither the
+worker nor `agent-fallback-finalize` (a job in the same workflow) ever
+reports, while the terminal GitHub run sits there as evidence the whole
+time. The same reconcile cycle therefore probes first:
+`apps/console/src/lib/orchestrator-terminal-runs.ts` lists every live run,
+reads its workflow run's status through the repo's App installation token
+(joining the two on the `[dispatch:gN:<intentId>]` `run-name` marker, whose
+`intentId` is the orchestrator runId), and hands the terminal ones to
+`Orchestrator.settleTerminalRuns()`. That settles them `lost` with
+`by: 'infra'` and the conclusion recorded — deliberately distinct from an
+agent-_reported_ failure — on exactly the same auto-retry budget, parking
+behaviour, and `pendingRequest` precedence as the lease sweep. The lease
+remains the backstop for anything the probe cannot resolve (API
+unreachable, no marker, ambiguous conclusion). The reconcile response
+carries the settled runs under `terminal`.
+
 **Deliverable evidence is unchanged.** The orchestrator's `report()` only
 records whatever the worker's completion callback claims; it does not
 verify the deliverable itself. `.github/actions/verify-deliverable` still

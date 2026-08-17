@@ -14,6 +14,7 @@ import {
   handleWebhookDelivery,
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
+import { settleTerminalRuns } from './orchestrator-terminal-runs';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
 // falls back to this deployment's default -- see deployment.ts/.test.ts.
@@ -42,13 +43,17 @@ interface FetchCall {
   init: RequestInit;
 }
 
-/** Dispatch (`/actions/workflows/...`) succeeds with 204, an outcome
- *  comment (`/issues/.../comments`) succeeds with 201 -- matching what
- *  `drainOutbox` (orchestrator-dispatch.ts) expects from each endpoint. */
+/** Dispatch (`/actions/workflows/.../dispatches`) succeeds with 204, an
+ *  outcome comment (`/issues/.../comments`) succeeds with 201 -- matching
+ *  what `drainOutbox` (orchestrator-dispatch.ts) expects from each endpoint.
+ *  The workflow-runs listing (`/actions/workflows/.../runs?...`, read by
+ *  `settleTerminalRuns`) serves `workflowRuns`, empty unless a test arms it,
+ *  so the reconcile route's terminal probe runs for real here. */
 function fakeFetch(
   overrides: {
     dispatchStatus?: number;
     commentStatus?: number;
+    workflowRuns?: () => unknown[];
   } = {},
 ): { fetchImpl: typeof fetch; calls: FetchCall[] } {
   const { dispatchStatus = 204, commentStatus = 201 } = overrides;
@@ -56,6 +61,12 @@ function fakeFetch(
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, init: init ?? {} });
+    if (url.includes('/runs?event=workflow_dispatch')) {
+      return new Response(
+        JSON.stringify({ workflow_runs: overrides.workflowRuns?.() ?? [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
     const status = url.includes('/actions/workflows/')
       ? dispatchStatus
       : commentStatus;
@@ -73,6 +84,8 @@ function fixture(overrides?: Parameters<typeof fakeFetch>[0]) {
     store,
     orchestrator,
     drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
+    settleTerminal: () =>
+      settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
   };
   return { clock, store, orchestrator, deps, calls };
 }
@@ -402,10 +415,15 @@ describe('handleReconcile', () => {
     expect(newRun?.requestId).toBe(`retry:${runId}`);
     expect(newRun?.pipeline).toBe('claude');
 
-    expect(calls).toHaveLength(2);
+    // Three calls: the terminal probe's workflow-runs listing (which found
+    // nothing terminal here, so the lease sweep did the settling), then the
+    // retry's dispatch and the lost run's outcome comment.
+    expect(calls).toHaveLength(3);
     expect(calls.map((c) => c.url).sort()).toEqual(
       [
         `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
+        `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/runs` +
+          `?event=workflow_dispatch&per_page=100`,
         `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
       ].sort(),
     );
@@ -415,6 +433,47 @@ describe('handleReconcile', () => {
     };
     expect(commentBody.body).toContain(newRunId);
     expect(commentBody.body).toContain('attempt 2 of 3');
+    expect(result.body['terminal']).toEqual([]);
+  });
+
+  it('settles a run whose workflow run is already terminal, minutes into its lease (#1361)', async () => {
+    let terminal: unknown[] = [];
+    const { deps, clock, calls, store } = fixture({
+      workflowRuns: () => terminal,
+    });
+    const runId = await dispatchedRun(deps);
+    terminal = [
+      {
+        display_title: `#${ISSUE.issue}: Claude issue agent [dispatch:g1:${runId}]`,
+        status: 'completed',
+        conclusion: 'startup_failure',
+      },
+    ];
+    calls.length = 0;
+    // One minute in. The lease has another 119 minutes to run, so before
+    // #1361 this whole cycle reported `{lost: [], retried: []}` and the task
+    // stayed wedged -- exactly the girosf#15 symptom.
+    clock.advanceMinutes(1);
+
+    const result = await handleReconcile(deps);
+
+    expect(result.status).toBe(200);
+    expect(result.body['lost']).toEqual([]); // nothing expired: not the sweep
+    expect(result.body['terminal']).toEqual([
+      { runId, conclusion: 'startup_failure' },
+    ]);
+    const retried = result.body['retried'] as {
+      lostRunId: string;
+      newRunId: string;
+    }[];
+    expect(retried).toHaveLength(1);
+    expect(retried[0]?.lostRunId).toBe(runId);
+    const newRunId = retried[0]?.newRunId as string;
+    // Released AND re-dispatched inside this one reconcile cycle.
+    expect(result.body['dispatched']).toEqual([newRunId]);
+    expect((await store.readRun(runId))?.state).toBe('lost');
+    expect((await store.readRun(newRunId))?.state).toBe('running');
+    expect((await store.readActiveRun(ISSUE))?.runId).toBe(newRunId);
   });
 });
 
@@ -433,6 +492,8 @@ describe('error handling', () => {
       store,
       orchestrator,
       drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
+      settleTerminal: () =>
+        settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
     };
 
     const result = await handleCompletion(deps, {

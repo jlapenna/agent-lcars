@@ -1,6 +1,6 @@
 import { type Decision, isQueued, type Queued } from './decide';
 import type { OutboxEntry, Run, TaskId } from './model';
-import { taskKey } from './model';
+import { isLive, taskKey } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -86,11 +86,15 @@ export class MemoryStore implements OrchestratorStore {
   async listExpiredRuns(now: string): Promise<Run[]> {
     const cutoff = Date.parse(now);
     return structuredClone(
-      [...this.#runs.values()].filter(
-        (run) =>
-          (run.state === 'pending' || run.state === 'running') &&
-          Date.parse(run.leaseExpiresAt) <= cutoff,
+      (await this.listLiveRuns()).filter(
+        (run) => Date.parse(run.leaseExpiresAt) <= cutoff,
       ),
+    );
+  }
+
+  async listLiveRuns(): Promise<Run[]> {
+    return structuredClone(
+      [...this.#runs.values()].filter((run) => isLive(run.state)),
     );
   }
 }

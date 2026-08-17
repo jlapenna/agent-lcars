@@ -35,6 +35,14 @@ export interface OrchestratorStore {
 
   /** Live runs whose lease expired at or before `now`; the sweeper's feed. */
   listExpiredRuns(now: string): Promise<Run[]>;
+
+  /** Every live (`pending`/`running`) run, lease or no lease. The feed for
+   *  settling runs whose *executor* is already terminal -- a fact only
+   *  something outside the orchestrator can observe, so the caller resolves
+   *  it and hands the verdicts back to
+   *  `Orchestrator.settleTerminalRuns`. Deliberately unfiltered by lease:
+   *  the whole point is to catch a run long before its lease runs out. */
+  listLiveRuns(): Promise<Run[]>;
 }
 
 export interface VersionedTask {

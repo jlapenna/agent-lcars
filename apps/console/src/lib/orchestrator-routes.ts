@@ -13,6 +13,7 @@ import {
 } from '@/lib/control-plane-request';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
+import type { SettleTerminalRunsResult } from '@/lib/orchestrator-terminal-runs';
 
 /**
  * Pure-ish HTTP handlers for the three control-plane routes, kept out of
@@ -28,6 +29,11 @@ export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   drain: () => Promise<DrainOutboxResult>;
+  /** Settles live runs whose GitHub workflow run is already terminal (see
+   *  `orchestrator-terminal-runs.ts`). Injected rather than called directly
+   *  for the same reason `drain` is: it does GitHub I/O, and these handlers
+   *  stay drivable in tests without it. */
+  settleTerminal: () => Promise<SettleTerminalRunsResult>;
 }
 
 export type HostedCompletionRequestBody = ReturnType<
@@ -267,19 +273,45 @@ export async function handleCompletion(
   }
 }
 
+/**
+ * One reconcile cycle: settle first, then dispatch what the settling
+ * produced.
+ *
+ * Terminal-run settling (#1361) runs *before* the lease sweep on purpose.
+ * Both settle a live run to `lost` and release its task's mutex, but the
+ * terminal probe knows *why* (the workflow run is over), where the sweep
+ * only knows the run went quiet for a full lease. Running it first means a
+ * run whose executor already died is settled on this evidence, with its
+ * conclusion recorded, rather than waiting out the lease that would settle
+ * it hours later; a run the probe cannot resolve falls through to the sweep
+ * exactly as before, which is what keeps the lease a backstop rather than a
+ * competing mechanism.
+ *
+ * The response keeps every key `dispatch-reconcile.yml`'s log already shows
+ * and adds `terminal` (the runs settled from a terminal workflow run, with
+ * the conclusion that proved it). `retried` is the union of both settle
+ * paths' auto-retries -- they are the same mechanism, on the same
+ * `MAX_AUTO_RETRIES` budget, and a reader wants one list of "what got
+ * retried this cycle".
+ */
 export async function handleReconcile(
   deps: OrchestratorRouteDeps,
 ): Promise<RouteResult> {
   try {
+    const terminal = await deps.settleTerminal();
     const swept = await deps.orchestrator.sweepExpired();
     const drained = await deps.drain();
     return {
       status: 200,
       body: {
         lost: swept.lost.map((run) => run.runId),
-        retried: swept.retried,
+        terminal: terminal.settled,
+        retried: [...terminal.retried, ...swept.retried],
         dispatched: drained.dispatched,
         reported: drained.reported,
+        ...(terminal.failed.length === 0
+          ? {}
+          : { terminalProbeFailed: terminal.failed }),
       },
     };
   } catch (error) {

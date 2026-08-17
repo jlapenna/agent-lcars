@@ -29,6 +29,7 @@ import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { settleTerminalRuns } from './orchestrator-terminal-runs';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
@@ -70,6 +71,15 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
   const fetchImpl = (async (input: RequestInfo | URL) => {
     const url = String(input);
     calls.push({ url });
+    // The reconcile sweep's terminal-run probe (#1361) lists a workflow's
+    // runs; serve it an empty listing so nothing is settled that way here
+    // and these tests keep exercising the lease sweep they are about.
+    if (url.includes('/runs?event=workflow_dispatch')) {
+      return new Response(JSON.stringify({ workflow_runs: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const status = url.includes('/actions/workflows/') ? 204 : 201;
     return new Response(null, { status });
   }) as typeof fetch;
@@ -85,10 +95,13 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
       tokens,
       fetchImpl,
     });
+  const settleTerminal = () =>
+    settleTerminalRuns({ store, orchestrator, tokens, fetchImpl });
   (createOrchestratorRuntime as Mock).mockReturnValue({
     store,
     orchestrator,
     drain,
+    settleTerminal,
   });
   return { store, orchestrator, calls };
 }
