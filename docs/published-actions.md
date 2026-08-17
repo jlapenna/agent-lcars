@@ -44,6 +44,7 @@ promised one.
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                               |
 | `check-canonical-sync`         | Fail consumer CI when a vendored fleet-canonical file drifts (or, opt-in, when a stray copy reappears)               |
+| `setup-nx-remote-cache`        | Point trusted Nx jobs at the self-hosted L2 remote cache; fork PRs receive no cache capability                       |
 
 ### Published reusable workflows
 
@@ -86,22 +87,6 @@ admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
   `verify-agent-identity` actions directly instead, which remain Published.
 - `archive-opencode-trajectory` — export sanitized OpenCode sessions from
   this run for durable trajectory diagnosis.
-- `setup-nx-remote-cache` — points trusted Nx jobs at the self-hosted L2
-  remote cache. Deliberately kept Internal, not harmonized into a shared
-  implementation: sprinkles maintains its own independent rebuild of the
-  same self-hosted-cache-guard logic (same interface, same env var names,
-  drifted empty-URL handling — fleet survey finding #7, agent-lcars#1206).
-  This repo's own contract — `url` empty ⇒ no-op, `write-token` empty ⇒
-  notice-and-skip, both documented in the action's own `inputs` block — is
-  the version of record here, but this repo has no access to sprinkles'
-  checkout to verify or edit its copy directly, and the
-  `supersprinklesracing` source-tree independence rule (see the top-level
-  `AGENTS.md`) means this repo does not reach into it to force a shared
-  implementation either. Promoting to Published tier remains open and
-  would need a contract test
-  (`published-actions.contract.test.mjs`) plus a sprinkles-side PR
-  adopting it — sequencing for whoever picks that up next, not something
-  this repo can complete unilaterally.
 
 ### Coupled — do not consume
 
@@ -360,14 +345,15 @@ consumer adopts.
 
 The fleet's _session-side_ tooling — scripts that run on workstations and
 inside agent sessions, not as CI steps — is a real package in this repo,
-`packages/fleet-tools`, exposing six commands:
+`packages/fleet-tools`, exposing seven commands:
 
 | Command                       | Runs as                                                 | Repo-specific hook                                                     |
 | ----------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `fleet-codex-issue-guardrail` | Claude/Codex PostToolUse hook (`.claude/settings.json`) | none needed (project name from cwd; identity via `fleet-identity.cjs`) |
 | `fleet-claude-agent-session`  | operator CLI for fleet runner sessions                  | `tools/claude-agent-session.conf` at the launching repo's root         |
 | `fleet-require-worktree`      | pre-commit/pre-push git hook                            | `$1` action word; `REQUIRE_WORKTREE_EXTRA_HINT` env                    |
-| `fleet-watch-prs`             | CI-monitor skill command                                | none needed (repo discovered from cwd)                                 |
+| `fleet-watch-prs`             | CI-monitor skill command (auto-merge lifecycle)         | none needed (repo discovered from cwd)                                 |
+| `fleet-watch-run`             | CI-monitor skill command (single run pass/fail)         | none needed (repo discovered from cwd)                                 |
 | `fleet-safe-remove-worktree`  | worktree-hygiene skill command                          | none needed                                                            |
 | `fleet-scan-live-processes`   | worktree-hygiene skill command                          | none needed                                                            |
 

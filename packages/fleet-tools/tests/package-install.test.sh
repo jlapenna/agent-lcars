@@ -12,8 +12,8 @@ trap 'rm -rf "$tmp"' EXIT
 npm install -g --prefix "$tmp" "$pkg_dir" >/dev/null 2>&1
 
 for cmd in fleet-claude-agent-session fleet-codex-issue-guardrail \
-  fleet-require-worktree fleet-watch-prs fleet-safe-remove-worktree \
-  fleet-scan-live-processes; do
+  fleet-require-worktree fleet-watch-prs fleet-watch-run \
+  fleet-safe-remove-worktree fleet-scan-live-processes; do
   if [ ! -x "$tmp/bin/$cmd" ]; then
     echo "FAIL: $cmd not installed or not executable" >&2
     exit 1

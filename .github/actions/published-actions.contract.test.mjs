@@ -157,6 +157,18 @@ const PUBLISHED = {
     },
     outputs: ['path'],
   },
+  // Promoted from Internal when sprinkles retired its independent rebuild
+  // of the same self-hosted-cache-guard logic and adopted this copy
+  // (fleet survey finding #7, agent-lcars#1206). Contract: `url` empty =>
+  // no-op, `write-token` empty => notice-and-skip; fork PRs receive no
+  // cache capability.
+  'setup-nx-remote-cache': {
+    inputs: {
+      url: { required: false, default: '' },
+      'write-token': { required: false, default: '' },
+    },
+    outputs: [],
+  },
 };
 
 // Minimal indentation-scoped parser for prettier-formatted action.yml:

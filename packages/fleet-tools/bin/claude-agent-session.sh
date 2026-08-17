@@ -16,15 +16,16 @@
 # access, not the control plane's own dedicated fleet automation key
 # (which only that container can read).
 #
-# Fleet-canonical copy (agent-lcars#1307; it started life in
-# supersprinklesracing/sprinkles as members#3407): jlapenna/homelab and
-# sprinkles vendor this file byte-for-byte -- all three repos share the
-# identical fleet -- and the verify-fleet-scripts published action fails
-# their CI when a vendored copy drifts. Edit it HERE and re-sync the
-# consumers. The per-repo differences (scale set, checkout path,
-# transcripts bucket, extra hosts) are exactly the CLAUDE_* defaults
-# below: a consumer overrides them in a sibling claude-agent-session.conf,
-# never by editing its copy of this script.
+# This is the fleet's single copy (packages/fleet-tools, agent-lcars#1328;
+# it started life in supersprinklesracing/sprinkles as members#3407):
+# consumer repos hold no copies -- the package installs it on PATH as
+# `fleet-claude-agent-session` (workstations via a global pnpm install
+# tracking main, the runner image at image build), and every fleet repo
+# shares the identical runner fleet. The per-repo differences (scale set,
+# checkout path, transcripts bucket, extra hosts) are exactly the CLAUDE_*
+# defaults below: a consumer overrides them in a
+# tools/claude-agent-session.conf at its own repo root, never by editing
+# this script.
 #
 # claude-code-action (the GitHub Action claude.yml uses to actually run
 # Claude) does not leave a standalone `claude` CLI on PATH inside the
@@ -48,17 +49,51 @@ set -euo pipefail
 # Repo-specific defaults: tools/claude-agent-session.conf at the top of
 # the repository this command is launched from may pre-seed any CLAUDE_*
 # variable read below. Use the `: "${CLAUDE_X:=value}"` form there so an
-# explicit environment override still wins over the repo's conf. Without a
-# conf, the fallbacks below are jlapenna/agent-lcars's own registration --
-# a consumer repo MUST ship a conf or its sessions target the wrong scale
-# set, checkout path, and transcripts bucket. (This script lives only in
-# agent-lcars and runs from PATH as fleet-claude-agent-session — see
-# tools/install-fleet-tools.sh — so the conf is resolved from the caller's
-# repo, never from the script's own directory.)
+# explicit environment override still wins over the repo's conf. (This
+# script lives only in agent-lcars and runs from PATH as
+# fleet-claude-agent-session -- the packages/fleet-tools install -- so the
+# conf is resolved from the caller's repo, never from the script's own
+# directory.)
 launch_repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$launch_repo_root" ] && [ -f "$launch_repo_root/tools/claude-agent-session.conf" ]; then
   # shellcheck source=/dev/null
   . "$launch_repo_root/tools/claude-agent-session.conf"
+fi
+
+# When neither the environment nor a conf pins them, the two values every
+# repo CAN derive are derived from the launching repo instead of
+# hard-coding agent-lcars's own registration:
+#   - repo name -> workdir: actions/checkout puts every fleet repo's
+#     checkout at /home/runner/_work/<repo>/<repo>, and the repo name is
+#     the origin remote's basename (gh repo view as fallback).
+#   - AGENT_RUNNER_LABEL repo variable -> scale set: the label is the
+#     runs-on every fleet lane caller passes (runs-on-label), and the
+#     autoscaler's registered scale-set name -- what the container's
+#     autoscaler.scale-set docker label carries -- is always
+#     homelab-autoscale-<label> (homelab's github-runner-autoscaler/
+#     orchestrator.yml). Some repos store the already-prefixed full name
+#     in the variable; that passes through untouched.
+# Any derivation failure (not in a repo, gh unauthenticated, variable
+# unset) falls back to agent-lcars's own registration below -- the
+# pre-derivation behavior. Values no repo can derive (transcripts bucket,
+# extra hosts, endpoint overrides) still come from a conf; homelab and
+# sprinkles ship one.
+launch_repo_name=""
+if [ -n "$launch_repo_root" ] && [ -z "${CLAUDE_AGENT_WORKDIR:-}" ]; then
+  origin_url="$(git -C "$launch_repo_root" remote get-url origin 2>/dev/null || true)"
+  if [ -n "$origin_url" ]; then
+    launch_repo_name="$(basename "$origin_url" .git)"
+  else
+    launch_repo_name="$(cd "$launch_repo_root" && gh repo view --json name --jq .name 2>/dev/null || true)"
+  fi
+fi
+if [ -n "$launch_repo_root" ] && [ -z "${CLAUDE_SCALE_SETS:-}" ]; then
+  runner_label="$(cd "$launch_repo_root" && gh variable get AGENT_RUNNER_LABEL 2>/dev/null || true)"
+  case "$runner_label" in
+    "") ;;
+    homelab-autoscale-*) CLAUDE_SCALE_SETS="$runner_label" ;;
+    *) CLAUDE_SCALE_SETS="homelab-autoscale-$runner_label" ;;
+  esac
 fi
 
 # Fleet hosts this queries. Keep in sync with jlapenna/homelab's
@@ -80,22 +115,21 @@ FLEET_HOST_ENDPOINTS="${CLAUDE_FLEET_HOST_ENDPOINTS:-}"
 SSH_OPTS=(-o ConnectTimeout=8 -o BatchMode=yes)
 
 # Which scale set(s) to search: the one the surrounding repo's claude.yml
-# runs on (see its runs-on:). Repos sharing this fleet each have their own
-# registration (agent-lcars: homelab-autoscale-claude-agent-lcars,
-# sprinkles: homelab-autoscale-claude-agent, homelab:
-# homelab-autoscale-homelab-agent) -- the conf sets CLAUDE_SCALE_SETS
-# (space-separated).
+# runs on (see its runs-on:). Normally derived from AGENT_RUNNER_LABEL
+# above; a conf or the environment may pin CLAUDE_SCALE_SETS
+# (space-separated) instead, and agent-lcars's own registration is the
+# last-resort fallback.
 read -r -a SCALE_SETS <<<"${CLAUDE_SCALE_SETS:-homelab-autoscale-claude-agent-lcars}"
 
 # Best-effort default for `resume`'s working directory inside the
 # container: actions/checkout's standard $GITHUB_WORKSPACE convention
 # (_work/<repo>/<repo>) under the runner image's HOME (confirmed via
 # agent-lcars's apps/runner-autoscaler/runner-image/entrypoint.sh:
-# HOME=/home/runner, user `runner`). Not independently confirmed against a live container's
-# actual checkout path -- override with CLAUDE_AGENT_WORKDIR if wrong; a
-# wrong -w only affects relative-path display inside the resumed session,
-# not whether resume itself works.
-CLAUDE_AGENT_WORKDIR="${CLAUDE_AGENT_WORKDIR:-/home/runner/_work/agent-lcars/agent-lcars}"
+# HOME=/home/runner, user `runner`), using the launching repo's own name
+# when derivable. Override with CLAUDE_AGENT_WORKDIR if wrong; a wrong -w
+# only affects relative-path display inside the resumed session, not
+# whether resume itself works.
+CLAUDE_AGENT_WORKDIR="${CLAUDE_AGENT_WORKDIR:-/home/runner/_work/${launch_repo_name:-agent-lcars}/${launch_repo_name:-agent-lcars}}"
 # Optional once-per-host token file so pasted commands need no env setup.
 TOKEN_FILE="${CLAUDE_AGENT_TOKEN_FILE:-$HOME/.config/claude-agent/oauth-token}"
 # Same bucket the surrounding repo's claude.yml finalize step uploads to

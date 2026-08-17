@@ -9,6 +9,7 @@
     "fleet-codex-issue-guardrail": "bin/codex-issue-guardrail.cjs",
     "fleet-require-worktree": "bin/require-feature-worktree.sh",
     "fleet-watch-prs": "bin/watch-prs.sh",
+    "fleet-watch-run": "bin/watch-run.cjs",
     "fleet-safe-remove-worktree": "bin/safe-remove-worktree.sh",
     "fleet-scan-live-processes": "bin/scan-live-processes.sh"
   },
