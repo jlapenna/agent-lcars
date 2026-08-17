@@ -14,13 +14,11 @@
 > `RecoveryObservation`/`recovery/v1:...` contract landing "in this same
 > change" as describing work that was later un-landed, not current state.
 >
-> **What's still live in the consumer repos, unchanged by #1015.** Group A
-> (`jlapenna/homelab`'s `agent-router.yml` + `dispatch-reconcile.yml`) is
-> still the forked, pre-cutover copy of this repo's dispatch broker
-> described below — it does not talk to `libs/orchestrator` and did not
-> retire when this repo's own decision loop did; that loop retires only if
-> and when that lane's dispatch is migrated onto the central orchestrator,
-> which is a real design decision that has not been made or scheduled.
+> **Group A no longer applies as described below either**: homelab's forked
+> `agent-router.yml` + `dispatch-reconcile.yml` copy of this repo's dispatch
+> broker was retired by homelab#660 when that lane moved onto the central
+> orchestrator (homelab admitted in #1200; #1201 cutover, 2026-08-16). No
+> consumer repo runs its own dispatch decision loop any more.
 > **Group C no longer applies as described below**: both `homelab` and
 > `sprinkles` have since migrated their `rerun-infra-killed-runs.yml` crons
 > onto the central orchestrator's own lease sweep and bounded auto-retry

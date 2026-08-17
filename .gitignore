@@ -17,31 +17,6 @@ dist
 out-tsc
 __pycache__/
 
-# dispatch-broker/dist is a committed build artifact, not throwaway compiled
-# output: action.yml runs it directly (there is no build step at Action-run
-# time), so it must be tracked despite the blanket `dist` ignore above. A
-# directory match above still hides everything under it from git even with
-# a file-level negation, so both the directory and its contents need their
-# own negation.
-!.github/actions/dispatch-broker/dist
-!.github/actions/dispatch-broker/dist/**
-
-# run-dispatch-canary/dist is the same committed-bundle pattern as
-# dispatch-broker/dist above (same `build-canary` Nx target, same reason).
-!.github/actions/run-dispatch-canary/dist
-!.github/actions/run-dispatch-canary/dist/**
-
-# deliverable-watchdog/dist is #721's scheduled observer bundle, built and
-# drift-checked by the sibling `build-deliverable-watchdog` Nx target.
-!.github/actions/deliverable-watchdog/dist
-!.github/actions/deliverable-watchdog/dist/**
-
-# run-webhook-ingress-canary/dist is #796's real GitHub App ingress probe.
-# It executes directly from a GitHub-hosted workflow and must be committed,
-# rebuilt, and drift-checked like the operational action bundles above.
-!.github/actions/run-webhook-ingress-canary/dist
-!.github/actions/run-webhook-ingress-canary/dist/**
-
 # dependencies
 node_modules
 # pnpm falls back to a project-local store here when run inside

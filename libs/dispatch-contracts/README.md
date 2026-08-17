@@ -33,11 +33,10 @@ a consumer repo ever gained trust to call it — see #870). `pr-heal.yml`'s
 idempotency keys (see [#864](https://github.com/jlapenna/agent-lcars/issues/864));
 sharing a contract for them is unbuilt, not landed here.
 
-The provider-neutral Lifecycle Control Plane v1 boundary lives under
-`src/control-plane/`. It defines strict, versioned facts for central task,
-intent, attempt, outcome, projection, credential-grant, and activation
-authority. The target architecture and the reducer/storage invariants that are
-intentionally outside these schemas are documented in
+The provider-neutral Lifecycle Control Plane v1 boundary that used to live
+under `src/control-plane/` was deleted with the lifecycle control plane
+itself (#1171); [`libs/orchestrator`](../orchestrator) owns admission now.
+The retired target architecture is preserved in
 [`docs/attempt-service.md`](../../docs/attempt-service.md).
 
 ## Why it has zero dependencies
@@ -45,13 +44,11 @@ intentionally outside these schemas are documented in
 This package is TypeScript now — `.github/actions/dispatch-broker`'s old
 bare-`node`-with-no-build-step constraint, which once forced a plain-JS +
 JSDoc source so a real TypeScript file could not be a shared definition for
-it, is gone. The broker is `apps/dispatch-broker`, an Nx app bundled by
-esbuild before it ever runs, and it imports this package the same way any
-other consumer does:
+it, is gone (as is the broker itself, deleted in #1199). Consumers import
+it through the tsconfig path alias:
 
 ```ts
-// apps/console and apps/dispatch-broker — resolved through the tsconfig
-// path alias
+// e.g. apps/console — resolved through the tsconfig path alias
 import { PIPELINE_CONTRACTS } from '@agent-lcars/dispatch-contracts';
 ```
 
@@ -63,12 +60,12 @@ would break a `'use client'` bundle.
 ## What cannot import it
 
 GitHub Actions YAML and repo variables cannot import JavaScript. Two things
-are therefore pinned by contract test instead of by import, and both must be
-edited alongside this package:
+must therefore be edited alongside this package by hand:
 
-- the four worker workflows' `run-name:` and per-lane `env:` values —
-  `apps/dispatch-broker/src/workflow-contract.spec.ts` derives every
-  expected value from this registry;
+- the three worker workflows' `run-name:` and per-lane `env:` values —
+  formerly pinned by `apps/dispatch-broker/src/workflow-contract.spec.ts`,
+  deleted with the broker in #1199; #1298 tracks restoring that derivation
+  as a standalone contract test;
 - the `AGENT_BOT_LOGINS` repo variable that `agent-automerge.yml` reads, which
   must equal this package's `AGENT_BOT_LOGINS`.
 
