@@ -121,16 +121,12 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
   (`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`),
   the `fleet-*` commands, and the worktree mandate.
 
-- `.github/canonical-sync.conf`: the byte-pinned canonical-file manifest
-  `validate.yml`'s `canonical-sync: true` checks. A new repo starts with
-  the single line `.agents/fleet-membership.md .agents/fleet-membership.md`
-  and grows only as it genuinely acquires more canonical files (a repo
-  that ships the `worktree-hygiene` skill adds that pair with the `suffix`
-  column).
-
-**No vendored scripts.** `canonical-sync.conf` covers documents and
-must-be-identical non-script files only — never a fleet script. If a repo
-has stale pre-#1328 script copies on its main, delete them in this PR.
+**No vendored scripts, and no `canonical-sync.conf` by default.** A new
+repo copies nothing from this one — it reads the fleet's conventions here.
+A manifest (and `validate.yml`'s `canonical-sync: true`) is warranted only
+once the repo genuinely acquires a file that must be byte-identical to one
+of ours, such as the `worktree-hygiene` skill doc. If a repo has stale
+pre-#1328 script copies on its main, delete them in this PR.
 
 ## 5. Provision vars and secrets
 

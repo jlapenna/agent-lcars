@@ -373,12 +373,6 @@ design remains.
   actions in `.github/actions/` are fleet-consumable, and the post-agent
   snapshot-then-`run:` pattern that keeps an agent's unrestricted Bash
   access from being able to tamper with its own finalization gates.
-- [`docs/attempt-service.md`](attempt-service.md) — a superseded design
-  document (the "Lifecycle Control Plane"), kept only as a historical
-  pointer to this one.
 - [`docs/github-label-contract.md`](github-label-contract.md) — the
   `agent:*`/`status:*`/`review:*` label vocabulary referenced throughout
   this document.
-- [`docs/consumer-lifecycle-inventory.md`](consumer-lifecycle-inventory.md)
-  — which consumer-repository recovery workflows exist outside this repo
-  and how they relate to the orchestrator.
