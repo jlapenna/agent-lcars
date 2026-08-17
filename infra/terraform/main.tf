@@ -123,24 +123,6 @@ resource "google_project_iam_member" "writer_firestore" {
   }
 }
 
-# Worker preflight deliberately has no write permission. Agent code can mint
-# this identity, so it must remain harmless even when fully compromised.
-resource "google_service_account" "dispatch_preflight" {
-  account_id   = "dispatch-preflight"
-  display_name = "Agent LCARS dispatch preflight reader"
-}
-
-resource "google_project_iam_member" "dispatch_preflight_firestore" {
-  project = var.project_id
-  role    = "roles/datastore.viewer"
-  member  = "serviceAccount:${google_service_account.dispatch_preflight.email}"
-  condition {
-    title       = "dispatch-controller-reader"
-    description = "Workers may verify bindings but cannot mutate controller state."
-    expression  = "resource.name == \"projects/${var.project_id}/databases/${google_firestore_database.dispatch_controller.name}\""
-  }
-}
-
 resource "google_project_iam_member" "apphosting_firestore" {
   project    = var.project_id
   role       = "roles/datastore.viewer"
@@ -340,12 +322,6 @@ resource "google_service_account_iam_member" "members_writer_impersonation" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.sprinkles_repository}"
 }
 
-resource "google_service_account_iam_member" "dispatch_preflight_impersonation" {
-  service_account_id = google_service_account.dispatch_preflight.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
-}
-
 # This repo's own claude.yml now ships its issue-agent sessions' telemetry
 # too (mirroring supersprinklesracing/sprinkles's sidecar wiring) - the WIF
 # provider's attribute_condition above already trusts
@@ -443,7 +419,6 @@ resource "google_secret_manager_secret" "nx_cache_access_token" {
 resource "google_secret_manager_secret_iam_member" "nx_cache_access_token_accessor" {
   for_each = toset([
     google_service_account.codex_agent.email,
-    google_service_account.dispatch_preflight.email,
   ])
   secret_id = google_secret_manager_secret.nx_cache_access_token.id
   role      = "roles/secretmanager.secretAccessor"
