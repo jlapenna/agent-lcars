@@ -302,6 +302,21 @@ RUN chmod +x /entrypoint.sh
 # (above) and the control plane's periodic idle-host maintenance sweep
 # (scaler.go:sweepHostWorkDir, agent-lcars#392) -- see that file's own
 # comment for why both call sites must share one copy of this logic.
+# agent-lcars#1330: pre-populate the runner's action-archive cache so job
+# setup survives codeload.github.com outages on the trusted path. The list
+# derives from the fresh-main checkout in the telemetry stage (SHA pins
+# cached directly; tag refs resolved at build time), so it tracks main with
+# no hand-kept pin list. ~90MB. entrypoint.sh exports
+# ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE at this path; a cache miss falls back
+# to the normal codeload download. Owned by runner: the variable requires a
+# writable directory, and job-time downloads then warm it for the container's
+# lifetime.
+COPY populate-action-archive-cache.sh /usr/local/lib/agent-lcars/populate-action-archive-cache.sh
+COPY --from=telemetry-watcher-build /repo/.github /tmp/fleet-repo-github/.github
+RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /tmp/fleet-repo-github /opt/actions-archive-cache && \
+    rm -rf /tmp/fleet-repo-github && \
+    chown -R runner:runner /opt/actions-archive-cache
+
 COPY externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
