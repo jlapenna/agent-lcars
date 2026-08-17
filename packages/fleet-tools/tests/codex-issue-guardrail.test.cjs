@@ -6,6 +6,7 @@ const { test } = require('node:test');
 
 const {
   extractIssueNumbers,
+  extractIssueReferences,
   runHook,
   titleMatchesIssue,
 } = require('../bin/codex-issue-guardrail.cjs');
@@ -147,4 +148,79 @@ test('does not require tmux outside a tmux session', () => {
   );
 
   assert.equal(output, null);
+});
+
+// A bare issue number means "in the cwd's repository" to gh, so a cross-repo
+// command must carry its own repository or the guardrail checks the wrong
+// issue entirely - silently passing an unclaimed issue elsewhere, and
+// flagging an unrelated local one.
+test('carries the repository named by -R / --repo', () => {
+  assert.deepEqual(
+    extractIssueReferences('gh issue view 761 -R jlapenna/homelab'),
+    [{ number: 761, repo: 'jlapenna/homelab' }],
+  );
+  assert.deepEqual(
+    extractIssueReferences('gh issue edit 12 --repo=owner/name --add-label x'),
+    [{ number: 12, repo: 'owner/name' }],
+  );
+});
+
+test('uses the URL own repository, not a -R elsewhere in the segment', () => {
+  assert.deepEqual(
+    extractIssueReferences(
+      'gh issue view https://github.com/other/repo/issues/5 -R jlapenna/homelab',
+    ),
+    [{ number: 5, repo: 'other/repo' }],
+  );
+});
+
+test('leaves the repository unset when the command does not name one', () => {
+  assert.deepEqual(extractIssueReferences('gh issue edit 642 --add-label c'), [
+    { number: 642, repo: null },
+  ]);
+});
+
+test('treats the same number in different repositories as distinct issues', () => {
+  assert.deepEqual(
+    extractIssueReferences(
+      'gh issue view 761 -R jlapenna/homelab && gh issue view 761',
+    ),
+    [
+      { number: 761, repo: 'jlapenna/homelab' },
+      { number: 761, repo: null },
+    ],
+  );
+});
+
+test('asks gh for the named repository, not the working directory one', () => {
+  const seen = [];
+  runHook(
+    { tool_input: { command: 'gh issue view 761 -R jlapenna/homelab' } },
+    {
+      getIssue: (issueNumber, repo) => {
+        seen.push([issueNumber, repo]);
+        return { assignees: ['agent-lcars-bot'], parentIssueNumber: null };
+      },
+      getTmuxPane: () => '',
+      getTmuxTitle: () => '',
+    },
+  );
+
+  assert.deepEqual(seen, [[761, 'jlapenna/homelab']]);
+});
+
+test('names the repository in a cross-repo violation', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue view 761 -R jlapenna/homelab' } },
+    {
+      getIssue: () => ({ assignees: [], parentIssueNumber: null }),
+      getTmuxPane: () => '',
+      getTmuxTitle: () => '',
+    },
+  );
+
+  assert.match(
+    output.hookSpecificOutput.additionalContext,
+    /issue jlapenna\/homelab#761 is not assigned to/,
+  );
 });

@@ -17,19 +17,51 @@ const { fleetLogin } = require('./fleet-identity.cjs');
 
 const CLAIM_ASSIGNEE = fleetLogin();
 
-function extractIssueNumbers(command) {
+// An issue number alone is ambiguous across repositories. `gh` resolves a
+// bare number against the working directory's repo, so a cross-repo command
+// (`gh issue view 761 -R jlapenna/homelab`) used to be checked against THIS
+// repo's #761 - a different issue entirely, yielding both false violations
+// and, worse, silence when the named repo's issue really was unclaimed.
+// Carry the repository alongside every number.
+function extractIssueReferences(command) {
   if (typeof command !== 'string') return [];
-  const issueNumbers = new Set();
+  const references = new Map();
   const commandPattern =
     /\bgh\s+issue\s+(?:view|edit)\b([\s\S]*?)(?=(?:&&|\|\||;|\n|$))/g;
-  const referencePattern =
-    /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/(\d+)|(?:^|\s)#?(\d+)(?=\s|$)/g;
+  const urlPattern =
+    /https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/(\d+)/g;
+  const numberPattern = /(?:^|\s)#?(\d+)(?=\s|$)/g;
+  // -R owner/repo, --repo owner/repo, --repo=owner/repo
+  const repoFlagPattern = /(?:^|\s)(?:-R|--repo)(?:[=\s]+)(\S+)/;
   for (const commandMatch of command.matchAll(commandPattern)) {
-    for (const referenceMatch of commandMatch[1].matchAll(referencePattern)) {
-      issueNumbers.add(Number(referenceMatch[1] ?? referenceMatch[2]));
+    const segment = commandMatch[1];
+    const flagMatch = segment.match(repoFlagPattern);
+    const segmentRepo = flagMatch ? flagMatch[1] : null;
+    for (const urlMatch of segment.matchAll(urlPattern)) {
+      const reference = { number: Number(urlMatch[2]), repo: urlMatch[1] };
+      references.set(`${reference.repo}#${reference.number}`, reference);
+    }
+    // A URL's digits would otherwise be re-counted as a bare number against
+    // the segment's repo, so scan the segment with URLs removed.
+    for (const numberMatch of segment
+      .replace(urlPattern, ' ')
+      .matchAll(numberPattern)) {
+      const reference = { number: Number(numberMatch[1]), repo: segmentRepo };
+      references.set(`${segmentRepo ?? ''}#${reference.number}`, reference);
     }
   }
-  return [...issueNumbers];
+  return [...references.values()];
+}
+
+// Retained for callers that only need the numbers.
+function extractIssueNumbers(command) {
+  return [
+    ...new Set(extractIssueReferences(command).map(({ number }) => number)),
+  ];
+}
+
+function formatIssue({ number, repo }) {
+  return repo ? `${repo}#${number}` : `#${number}`;
 }
 
 function titleMatchesIssue(title, issueNumber, parentIssueNumber = null) {
@@ -42,10 +74,13 @@ function titleMatchesIssue(title, issueNumber, parentIssueNumber = null) {
 function defaultDependencies(cwd) {
   return {
     projectName: path.basename(cwd),
-    getIssue(issueNumber) {
+    getIssue(issueNumber, repo = null) {
+      // `{owner}/{repo}` is gh's placeholder for the cwd's repository; use it
+      // only when the command did not name one.
+      const slug = repo ?? '{owner}/{repo}';
       const output = execFileSync(
         'gh',
-        ['api', `repos/{owner}/{repo}/issues/${issueNumber}`],
+        ['api', `repos/${slug}/issues/${issueNumber}`],
         {
           cwd,
           encoding: 'utf8',
@@ -78,18 +113,19 @@ function defaultDependencies(cwd) {
   };
 }
 
-function evaluateIssue(issueNumber, dependencies) {
+function evaluateIssue(reference, dependencies) {
+  const { number: issueNumber, repo = null } =
+    typeof reference === 'number' ? { number: reference } : reference;
+  const label = formatIssue({ number: issueNumber, repo });
   const violations = [];
   let issue;
   try {
-    issue = dependencies.getIssue(issueNumber);
+    issue = dependencies.getIssue(issueNumber, repo);
     if (!issue.assignees.includes(CLAIM_ASSIGNEE)) {
-      violations.push(
-        `issue #${issueNumber} is not assigned to ${CLAIM_ASSIGNEE}`,
-      );
+      violations.push(`issue ${label} is not assigned to ${CLAIM_ASSIGNEE}`);
     }
   } catch {
-    violations.push(`could not verify the assignees for issue #${issueNumber}`);
+    violations.push(`could not verify the assignees for issue ${label}`);
   }
   const tmuxPane = dependencies.getTmuxPane();
   if (tmuxPane) {
@@ -99,7 +135,7 @@ function evaluateIssue(issueNumber, dependencies) {
         !titleMatchesIssue(title, issueNumber, issue?.parentIssueNumber ?? null)
       ) {
         violations.push(
-          `tmux pane ${tmuxPane} is not titled for issue #${issueNumber}`,
+          `tmux pane ${tmuxPane} is not titled for issue ${label}`,
         );
       }
     } catch {
@@ -110,10 +146,10 @@ function evaluateIssue(issueNumber, dependencies) {
 }
 
 function runHook(input, dependencies) {
-  const issueNumbers = extractIssueNumbers(input?.tool_input?.command);
-  if (issueNumbers.length === 0) return null;
-  const violations = issueNumbers.flatMap((issueNumber) =>
-    evaluateIssue(issueNumber, dependencies),
+  const references = extractIssueReferences(input?.tool_input?.command);
+  if (references.length === 0) return null;
+  const violations = references.flatMap((reference) =>
+    evaluateIssue(reference, dependencies),
   );
   if (violations.length === 0) return null;
   // Defensive fallback adopted from homelab's variant: a dependency object
@@ -162,6 +198,7 @@ if (require.main === module) main();
 module.exports = {
   evaluateIssue,
   extractIssueNumbers,
+  extractIssueReferences,
   runHook,
   titleMatchesIssue,
 };
