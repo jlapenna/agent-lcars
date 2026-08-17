@@ -280,6 +280,8 @@ importers:
         specifier: workspace:*
         version: link:../util
 
+  packages/fleet-tools: {}
+
 packages:
 
   '@adobe/css-tools@4.5.0':
