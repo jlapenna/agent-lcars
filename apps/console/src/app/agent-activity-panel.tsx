@@ -24,7 +24,6 @@ import type {
   FleetSummary,
 } from '../lib/agent-activity';
 import {
-  displayRunTitle,
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
   groupLiveRunsByIssue,
@@ -128,7 +127,7 @@ function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
 }
 
 function operationsRunTitle(run: AgentRun): string {
-  return displayRunTitle(run).replace(/\s+\[dispatch:[^\]]+\]\s*$/, '');
+  return run.displayTitle.replace(/\s+\[dispatch:[^\]]+\]\s*$/, '');
 }
 
 const PIPELINE_LABELS: Record<AgentPipeline, string> = {
@@ -419,7 +418,7 @@ export function LiveRunRow({
         style={{ minWidth: 0 }}
         data-testid="live-run-issue-link"
       >
-        {item ? `#${item.number} ${item.title}` : displayRunTitle(run)}
+        {item ? `#${item.number} ${item.title}` : run.displayTitle}
       </Anchor>
       <Group gap="xs" wrap="wrap">
         <Badge
@@ -699,7 +698,7 @@ export function FinishedRunRow({
         style={{ minWidth: 0 }}
         data-testid="recent-run-issue-link"
       >
-        {displayRunTitle(run)}
+        {run.displayTitle}
       </Anchor>
       <Group gap="xs" wrap="wrap">
         <Badge

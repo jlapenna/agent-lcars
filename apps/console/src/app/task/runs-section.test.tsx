@@ -3,7 +3,6 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentRun } from '../../lib/agent-activity';
 import { RunsSection } from './runs-section';
 
 // Mirrors logical-work-card.test.tsx's own mock of this module: it pulls in
@@ -14,7 +13,6 @@ import { RunsSection } from './runs-section';
 // functions themselves.
 vi.mock('../../lib/agent-activity', () => ({
   RUN_TIMEOUT_MINUTES: 90,
-  displayRunTitle: (run: AgentRun) => run.displayTitle,
   issueUrlForRun: () => undefined,
 }));
 

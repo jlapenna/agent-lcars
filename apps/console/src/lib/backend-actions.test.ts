@@ -770,8 +770,10 @@ describe('cancelWorkflowRun', () => {
     }
   });
 
-  it('parses the anchor from an opencode-prefixed display title the same way the dashboard does', async () => {
-    mockOctokit({ displayTitle: 'opencode #777: Investigate the outage' });
+  it('parses the anchor from an opencode display title the same way the dashboard does', async () => {
+    mockOctokit({
+      displayTitle: '#777: OpenCode issue agent [dispatch:g1:intent-777]',
+    });
     const { store, orchestrator } = fixtureOrchestratorRuntime();
     const taskId = { repo: CONTROL_PLANE_REPO, issue: 777 };
     const requested = await orchestrator.request({

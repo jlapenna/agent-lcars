@@ -10,7 +10,7 @@ import {
   Title,
 } from '@mantine/core';
 
-import { displayRunTitle, issueUrlForRun } from '../../lib/agent-activity';
+import { issueUrlForRun } from '../../lib/agent-activity';
 import type {
   AttemptAttribution,
   ExecutionAttempt,
@@ -238,7 +238,7 @@ export function LogicalWorkCard({
                     size="xs"
                     truncate
                   >
-                    {displayRunTitle(attempt)}
+                    {attempt.displayTitle}
                   </Anchor>
                   <Text size="xs" c="dimmed">
                     {formatDuration(attempt.elapsedSeconds)}
