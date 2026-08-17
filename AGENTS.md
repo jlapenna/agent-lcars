@@ -63,11 +63,12 @@ files is duplicated in both repos on purpose — per-lib `.swcrc`,
 that tail may drift freely; do not "fix" it by sharing files. The two
 ESLint-rule pairs under `tools/eslint-rules/rules/`
 (`no-server-only-imports-in-client` and `use-server-actions-only`, each with
-its spec) are correctness-critical twins instead: behavioral changes must
-land in both repos, and sprinkles CI keeps them honest with its drift
-detector (`tools/check-lint-rule-drift.cjs` in supersprinklesracing/
-sprinkles), which pins the last-reconciled content of each pair and fails
-when either side moves past the pin. Cross-repo source imports remain
+its spec) are correctness-critical twins instead: they are kept
+byte-identical and repo-neutral, this repo holds the canonical copy, and
+sprinkles CI keeps them honest through its `.github/canonical-sync.conf`
+with this repo's check-canonical-sync published action (the mechanism that
+replaced the short-lived drift detector, sprinkles#4496). Behavioral
+changes land here first and are re-copied verbatim. Cross-repo source imports remain
 forbidden either way.
 
 Never commit credentials. Runtime secrets belong in GCP Secret Manager and the

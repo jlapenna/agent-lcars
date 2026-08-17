@@ -1,9 +1,9 @@
-// This file (and its .spec.ts) has a maintained twin in
-// supersprinklesracing/sprinkles at the same tools/eslint-rules/rules/ path.
-// Cross-repo source sharing is forbidden (AGENTS.md), so behavioral changes
-// must land in both repos by hand. sprinkles CI keeps the pair honest via
-// its tools/check-lint-rule-drift.cjs, which pins the last-reconciled
-// content of both copies — see agent-lcars#1311.
+// Fleet-canonical twin (agent-lcars#1311): this file (and its .spec.ts) is
+// maintained byte-identical in jlapenna/agent-lcars (the canonical copy) and
+// supersprinklesracing/sprinkles. Cross-repo source sharing is forbidden
+// (AGENTS.md), so behavioral changes land in the canonical copy first and
+// are re-copied verbatim; sprinkles CI enforces byte-identity through its
+// .github/canonical-sync.conf via the check-canonical-sync published action.
 
 /**
  * ESLint rule: forbid value imports of server-only modules in `'use client'`
@@ -471,7 +471,7 @@ function addServerPrefix(
   }
 
   // A project/package boundary knows how to permit an explicit safe entry
-  // point. A narrower marker-only alias (for example @agent-lcars/logging/server)
+  // point. A narrower marker-only alias (for example @repo/logging/server)
   // remains server-only throughout its own namespace.
   if (
     existing.safeSubpathsRequireExplicitAlias &&
