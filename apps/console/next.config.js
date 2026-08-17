@@ -65,6 +65,16 @@ const nextConfig = {
   // Lets the dev server accept requests from a LAN device during preview
   // (tools/serve-lan.sh / the local-lan-preview skill export FQDN).
   allowedDevOrigins: process.env.FQDN ? [process.env.FQDN] : undefined,
+  // `next build` sizes its static-generation worker pool from the runner's
+  // CPU count, and a GitHub-hosted/self-hosted CI runner's kernel OOM-kills
+  // it under memory pressure -- NODE_OPTIONS' --max-old-space-size is NOT
+  // the operative ceiling there (fleet finding, sprinkles#4474). Cap it in
+  // CI/E2E only; local dev builds keep full parallelism.
+  experimental: process.env.CI
+    ? {
+        cpus: 2,
+      }
+    : undefined,
 };
 
 const plugins = [withNx];
