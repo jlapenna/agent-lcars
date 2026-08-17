@@ -167,6 +167,12 @@ jobs:
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs
 
+      - name: Test codex issue guardrail hook
+        run: node --test tools/codex-issue-guardrail.test.cjs
+
+      - name: Test quick-task evidence revoke tool
+        run: node --test tools/quick-task-evidence-revoke.test.mjs
+
       - name: Test e2e-docker isolation (#908)
         run: bash tools/e2e-docker-isolation.test.sh
 
