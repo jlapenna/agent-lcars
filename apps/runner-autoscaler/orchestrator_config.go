@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -99,25 +98,12 @@ type OrchestratorFleet struct {
 	MaxRunners int                `yaml:"max_runners"`
 	Hosts      []FleetHostConfig  `yaml:"hosts"`
 	Placement  FleetPlacementFile `yaml:"placement,omitempty"`
-	// DockerSocketAllowlist names the only scale sets, across every
-	// registration, permitted to set mount_docker_socket: true (root-
-	// equivalent access on their placement host). Left empty (the default,
-	// and today's only shipped shape), no allowlist is enforced -- this
-	// stays backward compatible with existing deployments. Once populated,
-	// any scale set with mount_docker_socket: true whose name is not on
-	// this list fails config validation outright, so the privilege
-	// boundary documented on Config.MountDockerSocket is enforced in code
-	// rather than by comment-and-convention alone.
-	DockerSocketAllowlist []string `yaml:"docker_socket_allowlist,omitempty"`
 	// FileMountAllowlist bounds which host paths a scale set's file_mounts
 	// may read from. Every source must sit at or beneath one of these
 	// prefixes.
 	//
-	// Unlike DockerSocketAllowlist -- which is fail-OPEN when empty, purely
-	// to stay backward compatible with deployments that predate it -- this
-	// is fail-CLOSED. file_mounts is a new option with no existing users,
-	// so there is no compatibility to preserve, and an unset allowlist
-	// means no scale set may mount anything at all.
+	// Fail-CLOSED: an unset allowlist means no scale set may mount anything
+	// at all.
 	FileMountAllowlist []string `yaml:"file_mount_allowlist,omitempty"`
 }
 
@@ -144,7 +130,6 @@ type FleetHostConfig struct {
 	// host's workdir_size_cap (resolve() below) -- the store is one tenant
 	// of the shared workdir, not a separate budget.
 	PnpmStoreBudgetRaw string `yaml:"pnpm_store_budget,omitempty"`
-	DockerSocketGID    string `yaml:"docker_socket_gid,omitempty"`
 }
 
 type FleetPlacementFile struct {
@@ -189,13 +174,12 @@ type ScaleSetConfigFile struct {
 	// PidsLimit and ShmSize are homelab additions restoring what e2e.yml's
 	// dropped job-level `container:` block carried (homelab#148); see
 	// Config.RunnerPidsLimit / Config.RunnerShmSize.
-	PidsLimit         int64  `yaml:"pids_limit,omitempty"`
-	ShmSize           string `yaml:"shm_size,omitempty"`
-	MinRunners        int    `yaml:"min_runners"`
-	MaxRunners        int    `yaml:"max_runners"`
-	Weight            int    `yaml:"weight,omitempty"`
-	MountDockerSocket bool   `yaml:"mount_docker_socket,omitempty"`
-	ShareWorkDir      bool   `yaml:"share_workdir,omitempty"`
+	PidsLimit    int64  `yaml:"pids_limit,omitempty"`
+	ShmSize      string `yaml:"shm_size,omitempty"`
+	MinRunners   int    `yaml:"min_runners"`
+	MaxRunners   int    `yaml:"max_runners"`
+	Weight       int    `yaml:"weight,omitempty"`
+	ShareWorkDir bool   `yaml:"share_workdir,omitempty"`
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.
 	FileMounts []string `yaml:"file_mounts,omitempty"`
@@ -216,8 +200,9 @@ const dockerSocketPath = "/var/run/docker.sock"
 // /var/run read-only still lets a process inside the container connect to
 // the socket sitting in it -- read-only restricts writes to the directory,
 // not connections to a socket within. Either form would hand back the
-// root-equivalent host access that fleet.docker_socket_allowlist exists to
-// gate, which is the whole point of agent-lcars#101.
+// root-equivalent host access agent-lcars#101 removed; file_mounts has no
+// path back to it, full stop -- there is no flag anywhere in this config
+// that can expose the socket.
 var dockerSocketPaths = []string{"/var/run/docker.sock", "/run/docker.sock"}
 
 // containsPath reports whether ancestor is, or is a parent directory of,
@@ -248,7 +233,7 @@ func validateFileMountAllowlist(allowlist []string) error {
 		}
 		for _, sock := range dockerSocketPaths {
 			if containsPath(prefix, sock) {
-				return fmt.Errorf("fleet.file_mount_allowlist entry %q is or contains the Docker socket %s; allowlisting it would bypass fleet.docker_socket_allowlist", entry, sock)
+				return fmt.Errorf("fleet.file_mount_allowlist entry %q is or contains the Docker socket %s, which may never be exposed to a runner", entry, sock)
 			}
 		}
 	}
@@ -279,7 +264,7 @@ func parseFileMounts(scaleSetName string, raw []string, allowlist []string) ([]F
 		}
 		for _, sock := range dockerSocketPaths {
 			if containsPath(hostPath, sock) {
-				return nil, fmt.Errorf("scale set %q may not mount %q via file_mounts: it is or contains the Docker socket %s; use mount_docker_socket, which is gated by fleet.docker_socket_allowlist", scaleSetName, hostPath, sock)
+				return nil, fmt.Errorf("scale set %q may not mount %q via file_mounts: it is or contains the Docker socket %s, which may never be exposed to a runner", scaleSetName, hostPath, sock)
 			}
 		}
 		if !underAllowlist(hostPath, allowlist) {
@@ -313,7 +298,6 @@ type resolvedOrchestratorConfig struct {
 	RunnerLimits        map[string]int
 	WorkDirSizeCaps     map[string]int64
 	PnpmStoreBudgets    map[string]int64
-	DockerSocketGID     map[string]string
 	MainsRequired       map[string]bool
 	MetricsViaSSH       map[string]bool
 	HostMetricsTimeouts map[string]time.Duration
@@ -376,7 +360,6 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	r.RunnerLimits = map[string]int{}
 	r.WorkDirSizeCaps = map[string]int64{}
 	r.PnpmStoreBudgets = map[string]int64{}
-	r.DockerSocketGID = map[string]string{}
 	r.HostMetricsTimeouts = map[string]time.Duration{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
@@ -449,13 +432,6 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			if budget >= capBytes {
 				return fmt.Errorf("host %q pnpm store budget %d bytes must be less than its workdir_size_cap %d bytes", h.Name, budget, capBytes)
 			}
-		}
-		if h.DockerSocketGID != "" {
-			gid, err := strconv.Atoi(h.DockerSocketGID)
-			if err != nil || gid < 1 {
-				return fmt.Errorf("host %q has invalid docker_socket_gid %q", h.Name, h.DockerSocketGID)
-			}
-			r.DockerSocketGID[h.Name] = h.DockerSocketGID
 		}
 	}
 
@@ -664,20 +640,8 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			seenLabels[key] = s.Name
 			s.Labels[j] = label
 		}
-		if s.MountDockerSocket {
-			if allowlist := r.Raw.Fleet.DockerSocketAllowlist; len(allowlist) > 0 && !slices.Contains(allowlist, s.Name) {
-				return nil, 0, fmt.Errorf("scale set %q sets mount_docker_socket but is not in fleet.docker_socket_allowlist", s.Name)
-			}
-			for _, h := range r.Raw.Fleet.Hosts {
-				if r.DockerSocketGID[h.Name] == "" {
-					return nil, 0, fmt.Errorf("socket-enabled scale set %q requires docker_socket_gid for host %q", s.Name, h.Name)
-				}
-			}
-		}
 		// workdir_size_cap guards the SHARED _work tree, so it is required
-		// by share_workdir rather than by the socket: a socket-only pool on
-		// a host that deliberately omits the cap must not be refused, and a
-		// shared-workdir pool must not skip the requirement.
+		// by share_workdir specifically, not by every scale set.
 		if s.ShareWorkDir {
 			for _, h := range r.Raw.Fleet.Hosts {
 				if _, ok := r.WorkDirSizeCaps[h.Name]; !ok {
@@ -709,7 +673,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
 			RunnerMemory: s.RunnerMemory, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
 			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
-			MountDockerSocket: s.MountDockerSocket, ShareWorkDir: s.ShareWorkDir, FileMounts: fileMounts,
+			ShareWorkDir: s.ShareWorkDir, FileMounts: fileMounts,
 			LogLevel: r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
 		})
 	}

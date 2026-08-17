@@ -865,7 +865,7 @@ jobs:
         # directory is root-owned 0755 and the runner executes as uid 1001,
         # so every attempt dies with EACCES. Install into a user-writable
         # prefix instead of reaching for sudo: this pool deliberately runs
-        # agent-authored code unprivileged (mount_docker_socket: false), and
+        # agent-authored code unprivileged, with no Docker-socket access, and
         # a global install is not a reason to hand it root.
         #
         # $GITHUB_PATH, not a bare export: later steps run in their own

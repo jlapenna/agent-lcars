@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -20,7 +19,6 @@ type FleetCoordinator struct {
 	sharedWorkDirReservations map[string]int
 	startInFlight             map[string]bool
 	lastFleetCounts           map[string]int
-	dockerSocketGIDs          map[string]string
 	workDirSizeCaps           map[string]int64
 	// pnpmStoreBudgets: configured per-host budget for the shared pnpm
 	// store (agent-lcars#852), consulted by pickHostLocked. See
@@ -63,11 +61,11 @@ type hostReservation struct {
 	once          sync.Once
 }
 
-func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[string]int64, socketGIDs map[string]string, weights map[string]int, order []string) *FleetCoordinator {
+func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[string]int64, weights map[string]int, order []string) *FleetCoordinator {
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
 		reservations: map[string]int{}, sharedWorkDirReservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
-		hostRunnerLimits: limits, workDirSizeCaps: workCaps, dockerSocketGIDs: socketGIDs, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
+		hostRunnerLimits: limits, workDirSizeCaps: workCaps, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		pnpmStoreBytes: map[string]int64{},
 		gate:           newWeightedPlacementGate(weights, order),
@@ -167,14 +165,6 @@ func (r *hostReservation) release(scaleSet string) {
 		r.fleet.mu.Unlock()
 		reservationGauge.WithLabelValues(scaleSet, r.host).Dec()
 	})
-}
-
-func (f *FleetCoordinator) socketGID(host string) (string, error) {
-	gid := f.dockerSocketGIDs[host]
-	if gid == "" {
-		return "", fmt.Errorf("host %q has no configured docker socket GID", host)
-	}
-	return gid, nil
 }
 
 // weightedPlacementGate serializes only host selection/reservation and picks

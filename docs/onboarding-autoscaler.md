@@ -63,8 +63,6 @@ fleet:
       # Optional per-host override; telemetry probes otherwise time out in 1s.
       metrics_timeout: 5s
       workdir_size_cap: 30g
-      docker_socket_gid: '983' # only required if any scale set on this
-      # host sets mount_docker_socket: true (see §2 below)
     # ... more hosts -- see the live file for the fleet's current,
     # actively-changing host list; don't treat this as authoritative.
   placement:
@@ -132,18 +130,15 @@ registrations:
         min_runners: 0
         max_runners: 2
         weight: 1
-        mount_docker_socket: false # see the split below before setting true
 ```
 
 ### Choosing a scale set: don't just reuse whichever pool already has the right label
 
-Privilege (`mount_docker_socket`) isn't the only reason a job needs its
-**own** scale set instead of joining an existing one that happens to run
-the right image — **runtime duration is a placement concern too.** A scale
-set's `max_runners` is a hard ceiling on how many jobs with that label can
-run at once; pointing a new, long-running (double-digit-minute) job at a
-pool sized for small, fast jobs starves everything else waiting on that
-same label for as long as the long job runs.
+**Runtime duration is a placement concern.** A scale set's `max_runners` is
+a hard ceiling on how many jobs with that label can run at once; pointing a
+new, long-running (double-digit-minute) job at a pool sized for small, fast
+jobs starves everything else waiting on that same label for as long as the
+long job runs.
 
 This actually happened (agent-lcars#408/#451): `ci.yml`'s `verify`/`e2e`
 jobs (20-30 min) landed on `lcars-default`, a 2-runner pool
@@ -158,8 +153,8 @@ Before pointing a new (or newly self-hosted) job at an existing label,
 ask: **how long does this job run, and what else already uses this
 label?** If the answer is "several minutes or more" and the existing pool
 backs anything latency-sensitive, give the new job its own scale set —
-same `runner_image`, same privilege posture, just a different `name`/
-`labels`/`max_runners`, mirroring `homelab-autoscale-lcars-ci` alongside
+same `runner_image`, just a different `name`/`labels`/`max_runners`,
+mirroring `homelab-autoscale-lcars-ci` alongside
 `homelab-autoscale-lcars-default` in the live `orchestrator.yml`.
 
 ### Building images: use the canonical publisher
@@ -177,34 +172,29 @@ and final promotion tag. The shared publisher stages a commit-SHA tag,
 attests provenance/SBOM, scans every platform, and promotes only after scans
 pass. See `docs/registry.md` there for the runbook.
 
-### If you still think you need the socket — split by trust level
+### There is no Docker socket to mount
 
-**Never let arbitrary agent-authored code hold the Docker socket.** A
-scale set that AI-agent-dispatched jobs run on (a `claude`/`opencode`/
-`agent:codex` label pipeline) must have `mount_docker_socket: false`.
+`orchestrator.yml` has no `mount_docker_socket` option — that capability
+was removed entirely. No spawned runner can ever be handed the placement
+host's `docker.sock`, and `file_mounts` unconditionally rejects it as a
+source too (see `dockerSocketPaths` in `orchestrator_config.go`), so there
+is no way around this via config.
 
-The socket is root-equivalent on the placement host: anything that can call
-it can ask the host daemon to start a privileged container with arbitrary
-host mounts. Reach for it only when a job genuinely needs `docker run` —
-starting containers, e2e-docker-style tests — not merely `docker build`,
-which the builder above covers. When you do need it, give it a **separate**
-scale set with `mount_docker_socket: true`; never flip the agent-dispatch
-pool's flag to get it. `homelab-autoscale-e2e-docker` (docker-enabled) is
-kept separate from `homelab-autoscale-claude-agent` (agent-dispatch, no
-socket) for exactly this reason. Mirror that shape rather than reusing one
-pool for both purposes.
+It existed once, gated per scale set, with `homelab-autoscale-e2e-docker`
+(docker-enabled) kept strictly separate from agent-dispatch pools like
+`homelab-autoscale-claude-agent` — never let arbitrary agent-authored code
+anywhere near the socket, since it is root-equivalent on the placement
+host. It was removed once every scale set that used to need it (the E2E
+pools) was rebuilt so the runner itself is the pinned sandbox image, with
+no inner container to create and therefore no reason to hold the socket.
 
-Note that a socket-enabled lane constrains where the BuildKit builder can
-live: it must not run on a host that a socket-enabled scale set can be
-placed on, or a job in that lane could read the builder's TLS key.
-
-If any scale set in the whole file sets `mount_docker_socket: true`,
-**every** host in `fleet.hosts` needs **both** `docker_socket_gid` **and**
-`workdir_size_cap` set (`resolveScaleSets()` checks both, independently,
-for every host — missing either one refuses to start with "socket-enabled
-scale set ... requires docker_socket_gid/workdir_size_cap for host ...")
-— check the existing `fleet:` block; this is very likely already
-satisfied fleet-wide, but verify rather than assume.
+If a genuine future need for `docker run` semantics on a runner shows up,
+that is a design decision requiring its own scale-set-level trust
+boundary, not a flag to flip — see the `MountDockerSocket`/
+`docker_socket_gid`/`fleet.docker_socket_allowlist` history in this repo's
+git log (`apps/runner-autoscaler`) for the shape it used to take. Building
+images (`docker build`) never needs this at all — use the canonical
+publisher above.
 
 `runner_image` is normally the existing shared JIT image
 (`docker-registry.lan.jlapenna.net/homelab-runner:jit-node24`) — reuse it
@@ -258,8 +248,8 @@ docker compose run --rm --no-deps runner-autoscaler --check-config
 ```
 
 Catches YAML/schema errors, duplicate labels across registrations, and the
-`docker_socket_gid`/`workdir_size_cap` invariants above — all without
-touching any live listener or Docker mutation.
+`workdir_size_cap` invariant above — all without touching any live listener
+or Docker mutation.
 
 ## 5. Deploy — **this must run on the `homelab` host itself**
 
