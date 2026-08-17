@@ -152,12 +152,19 @@ on:
         default: '45'
         type: string
       prompt:
-        description: "The agent prompt, fully rendered in the caller's context"
-        required: true
+        description: 'Override the canonical dispatch prompt (empty renders the lane default)'
+        required: false
+        default: ''
+        type: string
+      protocol-note:
+        description: "Extra clause naming a repo's own protocol file, spliced into the default prompt's reading order"
+        required: false
+        default: ''
         type: string
       no-deliverable-reason:
-        description: 'Silent-stall wording, rendered with the caller redispatch vocabulary'
-        required: true
+        description: 'Override the canonical silent-stall wording (empty renders the lane default)'
+        required: false
+        default: ''
         type: string
       message-prefix:
         description: 'Optional prefix for post-agent gate failure reports'
@@ -231,6 +238,7 @@ jobs:
       brief-artifact-checkpoint-minutes: ${{ inputs.brief-artifact-checkpoint-minutes }}
       brief-finalize-checkpoint-minutes: ${{ inputs.brief-finalize-checkpoint-minutes }}
       prompt: ${{ inputs.prompt }}
+      protocol-note: ${{ inputs.protocol-note }}
       no-deliverable-reason: ${{ inputs.no-deliverable-reason }}
       message-prefix: ${{ inputs.message-prefix }}
       claude-token-secret: ${{ inputs.claude-token-secret }}

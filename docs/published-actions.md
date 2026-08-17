@@ -341,9 +341,17 @@ A caller keeps only what `workflow_call` cannot carry:
 - the repo-variable spellings: variables do not cross repos, so
   `AGENT_RUNNER_LABEL`, `AGENT_FLEET_LOGIN`, `MAINTAINER_LOGIN`, WIF
   provider/SA values, and the Nx cache URL are passed down as inputs,
-- the fully rendered `prompt` and `no-deliverable-reason` text — protocol
-  paths and redispatch vocabulary are repo-specific content,
 - its own `fallback-finalize` completion-callback job.
+
+The prompt is no longer a caller responsibility (#1340 A-R2). The lane
+renders the fleet-canonical dispatch prompt and silent-stall wording
+itself, including the `<!-- attempt-claim:g<gen>:<intent> -->` block it
+builds from the broker generation/intent it already receives, and the
+per-pipeline label/redispatch vocabulary it resolves from `pipeline`. A
+caller passes only `protocol-note` — one clause naming its own protocol
+file, spliced into the reading order after `$AGENT_PROTOCOL_PATH` — and
+overrides `prompt` / `no-deliverable-reason` only where the content
+genuinely differs (sprinkles' mode-conditional runbook prompt).
 
 Every toggle defaults to the consumer behavior; the extras
 (`dispatch-bootstrap`, `protected-snapshot`, `trajectory-export`,
@@ -370,10 +378,8 @@ jobs:
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       telemetry-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
       telemetry-service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
-      prompt: >-
-        <this repo's rendered agent prompt>
-      no-deliverable-reason: >-
-        <this repo's silent-stall wording>
+      # Optional; omit unless this repo has its own protocol file.
+      protocol-note: 'then .agents/skills/<repo>-agent/protocol.md,'
     secrets:
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 ```
