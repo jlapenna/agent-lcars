@@ -66,24 +66,20 @@ type Scaler struct {
 	// queuedJobs is GitHub's latest desired-count signal: jobs waiting for
 	// this scale set, before minRunners' warm capacity is added.
 	queuedJobs atomic.Int64
-	// mountDockerSocket: see Config.MountDockerSocket. Applied at ContainerCreate
-	// against whichever host's daemon actually places the runner — the bind
-	// source path is resolved by THAT daemon, so this is correct for every
-	// host in the pool, not just "local".
-	mountDockerSocket bool
 	// shareWorkDir: see Config.ShareWorkDir. Gates everything that exists
-	// because the host workdir is SHARED, independently of the socket.
+	// because the host workdir is SHARED.
 	shareWorkDir bool
 	// fileMounts: see Config.FileMounts. Appended to the container's binds
-	// with an explicit :ro, independently of mountDockerSocket -- the
-	// socketless build-client lane uses these and nothing else.
+	// with an explicit :ro -- the build-client lane uses these and nothing
+	// else.
 	fileMounts []FileMount
 	// workDirSizeCapBytes: size ceiling for the shared /home/runner/_work
 	// directory bind-mounted into every runner when ShareWorkDir is
 	// set -- that shared dir has no per-container lifecycle to clean it up,
 	// unlike a normal container's writable layer. Only enforced by
 	// RunWorkDirSweeper, which is only started when ShareWorkDir is true
-	// (split from MountDockerSocket in agent-lcars#101/#136).
+	// (split from the old MountDockerSocket flag in agent-lcars#101/#136;
+	// MountDockerSocket itself was later removed entirely).
 	workDirSizeCapBytes int64
 	workDirSizeCaps     map[string]int64
 	// pnpmStoreBudgetBytes/pnpmStoreBudgets (agent-lcars#852): the budget
@@ -236,7 +232,7 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 		return a.fleet
 	}
 	a.localFleetOnce.Do(func() {
-		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, a.workDirSizeCaps, map[string]string{}, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
+		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, a.workDirSizeCaps, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
 		a.localFleet.pnpmStoreBudgets = a.pnpmStoreBudgets
 	})
 	return a.localFleet
@@ -1076,15 +1072,15 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // the opposite of absent data, and conflating the two would turn a telemetry
 // outage into a fleet outage.
 //
-// When mountDockerSocket is set, reachable hosts that already have >=1
-// runner from this scale set placed on them are excluded outright rather
-// than just deprioritized: socket-mounted runners share the placement
-// host's /home/runner/_work bind mount, so two same-scale-set runners on one
-// host resolve the same repo to the same checkout directory
-// (_PipelineMapping) and can corrupt each other's checkout mid-job. This
-// mirrors the one-per-host layout the retired static runners used. If that
-// leaves zero candidate hosts, pickHost returns an error -- the caller's
-// reconciliation is level-triggered, so it retries once a host frees up.
+// When shareWorkDir is set, reachable hosts that already have >=1 runner
+// from this scale set placed on them are excluded outright rather than just
+// deprioritized: shared-workdir runners share the placement host's
+// /home/runner/_work bind mount, so two same-scale-set runners on one host
+// resolve the same repo to the same checkout directory (_PipelineMapping)
+// and can corrupt each other's checkout mid-job. This mirrors the
+// one-per-host layout the retired static runners used. If that leaves zero
+// candidate hosts, pickHost returns an error -- the caller's reconciliation
+// is level-triggered, so it retries once a host frees up.
 //
 // Returns an error rather than falling back to dockerHosts[0] when every
 // configured host is unreachable, so the caller can skip the placement
@@ -1884,9 +1880,10 @@ func topHasRunnerWorker(top container.TopResponse) bool {
 // RunOrphanSweeper periodically reaps runner containers leaked outside the
 // normal HandleJobCompleted path (see cleanupOrphans's boot=false doc for
 // the leak this closes). Started unconditionally for every scale set, not
-// just the socket-mounted one -- any scale set can leak a container this
-// way. Deliberately does NOT run an initial sweep on entry: the boot-time
-// cleanupOrphans(ctx, true) call in main.go's run() already covers startup.
+// just a shareWorkDir one (unlike RunWorkDirSweeper) -- any scale set can
+// leak a container this way. Deliberately does NOT run an initial sweep on
+// entry: the boot-time cleanupOrphans(ctx, true) call in main.go's run()
+// already covers startup.
 func (a *Scaler) RunOrphanSweeper(ctx context.Context) {
 	ticker := time.NewTicker(orphanSweepInterval)
 	defer ticker.Stop()
@@ -1916,27 +1913,19 @@ func dockerSafeNamePart(s string) string {
 }
 
 // runnerBinds builds the bind list for a spawned runner. Split out of
-// startRunner so the privilege-sensitive part -- root-equivalent socket
-// access versus scoped read-only files -- is unit testable without a
-// docker daemon.
+// startRunner so the shared-workdir bind versus scoped read-only file
+// mounts are unit testable without a docker daemon.
 //
 // File mounts are ALWAYS :ro. Config validation already bounds their
 // sources to fleet.file_mount_allowlist and rejects the docker socket
-// outright; read-only is the last of those three guards and the cheapest.
-func runnerBinds(mountDockerSocket, shareWorkDir bool, fileMounts []FileMount) []string {
+// outright; read-only is the last of those two guards and the cheapest.
+func runnerBinds(shareWorkDir bool, fileMounts []FileMount) []string {
 	var binds []string
-	// Persistence and privilege are independent: a pool can keep a warm
-	// checkout without being handed the host's Docker socket. These were one
-	// flag until agent-lcars#101, which is how removing the socket from the
-	// e2e pool silently discarded its cross-job caches too.
 	if shareWorkDir {
 		binds = append(binds,
 			"/home/runner/_work:/home/runner/_work",
 			"/home/runner/externals:/home/runner/externals",
 		)
-	}
-	if mountDockerSocket {
-		binds = append(binds, dockerSocketPath+":"+dockerSocketPath)
 	}
 	for _, m := range fileMounts {
 		binds = append(binds, fmt.Sprintf("%s:%s:ro", m.HostPath, m.ContainerPath))
@@ -1950,7 +1939,7 @@ func runnerBinds(mountDockerSocket, shareWorkDir bool, fileMounts []FileMount) [
 // pidsLimit means "no limit" -- container.Resources.PidsLimit is a pointer
 // specifically so that omitting it (nil) reads as "don't change/unlimited"
 // to the Docker API, which a literal 0 would not.
-func runnerHostConfig(binds, groupAdd []string, memory, pidsLimit, shmSize int64) *container.HostConfig {
+func runnerHostConfig(binds []string, memory, pidsLimit, shmSize int64) *container.HostConfig {
 	resources := container.Resources{Memory: memory}
 	if pidsLimit > 0 {
 		limit := pidsLimit
@@ -1958,7 +1947,6 @@ func runnerHostConfig(binds, groupAdd []string, memory, pidsLimit, shmSize int64
 	}
 	return &container.HostConfig{
 		Binds:     binds,
-		GroupAdd:  groupAdd,
 		ShmSize:   shmSize,
 		Resources: resources,
 	}
@@ -2033,26 +2021,17 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
-	binds := runnerBinds(a.mountDockerSocket, a.shareWorkDir, a.fileMounts)
-	var groupAdd []string
-	if a.mountDockerSocket {
-		gid, gidErr := a.coordinator().socketGID(host)
-		if gidErr != nil {
-			return "", gidErr
-		}
-		groupAdd = []string{gid}
-	}
-	// Ownership normalization belongs to the WORKDIR, not the socket. Docker
-	// creates a missing _work/externals as root:root on a host's first
-	// placement, and the runner is non-root -- so a socketless
-	// shared-workdir pool could not create the entrypoint lock or populate
-	// externals, and every placement would crash-loop.
+	binds := runnerBinds(a.shareWorkDir, a.fileMounts)
+	// Docker creates a missing _work/externals as root:root on a host's
+	// first placement, and the runner is non-root -- so a shared-workdir
+	// pool could not create the entrypoint lock or populate externals, and
+	// every placement would crash-loop.
 	if a.shareWorkDir {
 		if err := a.ensureWorkDirOwnership(ctx, client, host); err != nil {
 			a.logger.Warn("Failed to normalize shared workdir ownership before runner start", slog.String("host", host), slog.String("error", err.Error()))
 		}
 	}
-	hostConfig := runnerHostConfig(binds, groupAdd, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
+	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
 
 	c, err := a.createContainerWithImageRecovery(
 		ctx,
@@ -2288,7 +2267,7 @@ func (a *Scaler) checkHostRunnerLimit(ctx context.Context, client *dockerclient.
 }
 
 // ensureWorkDirOwnership chowns BOTH shared bind mounts used when
-// mountDockerSocket is set (_work and externals) to runner:runner, but only
+// shareWorkDir is set (_work and externals) to runner:runner, but only
 // when top-level ownership is actually wrong. A host whose
 // /home/runner/{_work,externals} paths don't already exist (e.g. one never
 // running the pre-autoscaler static runner) gets them auto-created by
@@ -2305,7 +2284,7 @@ func (a *Scaler) checkHostRunnerLimit(ctx context.Context, client *dockerclient.
 // doesn't already match runner:runner -- i.e. only on a host's first-ever
 // placement, the fresh-dir case above. Without that guard this ran `chown -R`
 // over the whole shared _work + externals tree (potentially tens of GB /
-// hundreds of thousands of files, e.g. .pnpm-store) on EVERY socket-mounted
+// hundreds of thousands of files, e.g. .pnpm-store) on EVERY shared-workdir
 // placement. Root-owned files deep inside an already-runner-owned tree (e.g.
 // written by a docker-using job running as root) are out of scope for this
 // guard, same as they always were on the retired static runners -- this only
@@ -2378,9 +2357,10 @@ const workDirSweepTimeout = 10 * time.Minute
 
 // RunWorkDirSweeper periodically enforces workDirSizeCapBytes on the shared
 // /home/runner/_work directory across the fleet. Only started when
-// mountDockerSocket is true (see main.go) -- that's the only scale set that
-// bind-mounts the shared dir in the first place. Runs an initial sweep
-// immediately so a restart doesn't wait a full interval to reclaim space.
+// shareWorkDir is true (see orchestrator.go's runOrchestrator) -- that's the
+// only scale set that bind-mounts the shared dir in the first place. Runs an
+// initial sweep immediately so a restart doesn't wait a full interval to
+// reclaim space.
 func (a *Scaler) RunWorkDirSweeper(ctx context.Context) {
 	a.sweepWorkDirsWithTimeout(ctx, workDirSweepTimeout)
 	ticker := time.NewTicker(workDirSweepInterval)

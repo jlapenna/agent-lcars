@@ -44,42 +44,38 @@ type Config struct {
 	// "name=target" (target "local" or "ssh://user@host"). Empty means the
 	// single local socket (original single-host behavior). See hosts.go.
 	DockerHosts []string
-	// MountDockerSocket is a homelab addition: bind-mount the PLACEMENT
-	// host's own docker.sock into every spawned runner (root-equivalent —
-	// only for a scale set standing in for the e2e-docker label; default and
-	// claude-agent must stay false, mirroring the static runners' privilege
-	// boundary, members#1976).
-	MountDockerSocket bool
 	// ShareWorkDir is a homelab addition: bind-mount the PLACEMENT host's
 	// /home/runner/{_work,externals} into every runner this scale set
 	// spawns, so checkouts, node_modules and caches persist across jobs.
 	//
-	// Split out of MountDockerSocket (agent-lcars#101). Those were one flag
-	// because the only pool that wanted a persistent workdir also happened
-	// to want the socket, so removing the socket silently took the workdir
-	// bind with it -- and with it every cross-job cache. They are unrelated
-	// concerns: this one is about persistence, MountDockerSocket is about
-	// privilege. A pool can now have a warm workdir without being handed
-	// root on the placement host.
+	// Split out of the old MountDockerSocket flag (agent-lcars#101), which
+	// bind-mounted the placement host's docker.sock into every spawned
+	// runner. The two were one flag because the only pool that wanted a
+	// persistent workdir also happened to want the socket, so removing the
+	// socket silently took the workdir bind with it -- and with it every
+	// cross-job cache. They were unrelated concerns: this one is about
+	// persistence, MountDockerSocket was about privilege. MountDockerSocket
+	// itself was later removed entirely -- no scale set ever needed it once
+	// the E2E pools were rebuilt around a container-free runner image, and
+	// leaving root-equivalent host access on the menu for zero live users
+	// was a needless standing risk.
 	//
-	// Everything that exists BECAUSE the workdir is shared keys off this,
-	// not the socket: the per-host placement exclusion (two runners of one
-	// scale set on a host resolve the same repo to the same checkout
-	// directory and corrupt each other), the workdir lock, the size-cap
-	// sweeper, and the shared-workdir container label.
+	// Everything that exists BECAUSE the workdir is shared keys off this:
+	// the per-host placement exclusion (two runners of one scale set on a
+	// host resolve the same repo to the same checkout directory and corrupt
+	// each other), the workdir lock, the size-cap sweeper, and the
+	// shared-workdir container label.
 	ShareWorkDir bool
 	// FileMounts is a homelab addition: specific host files exposed
 	// read-only inside every runner this scale set spawns (agent-lcars#101).
-	// It exists so the socketless BuildKit publish lane can receive its
-	// client certificate from the encrypted homelab secret store instead of
-	// GitHub Actions secrets.
+	// It exists so the BuildKit publish lane can receive its client
+	// certificate from the encrypted homelab secret store instead of GitHub
+	// Actions secrets.
 	//
-	// Deliberately far narrower than MountDockerSocket: every source must
-	// sit under a fleet.file_mount_allowlist prefix, mounts are always
-	// read-only, and the docker socket is rejected as a source outright --
-	// otherwise this would be a trivial way around
-	// fleet.docker_socket_allowlist, reintroducing the exact
-	// root-equivalent access agent-lcars#101 removes.
+	// Every source must sit under a fleet.file_mount_allowlist prefix,
+	// mounts are always read-only, and the Docker socket is rejected as a
+	// source outright, unconditionally -- there is no flag anywhere in this
+	// config that can expose it.
 	FileMounts []FileMount
 	// RunnerMemory is a homelab addition: optional memory limit for spawned
 	// runner containers (e.g. 16g, 4g, 512m). Empty means no limit.

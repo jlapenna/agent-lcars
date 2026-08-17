@@ -41,7 +41,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	if err != nil {
 		return fmt.Errorf("connecting fleet docker hosts: %w", err)
 	}
-	fleet := newFleetCoordinator(0, nil, nil, nil, nil, nil)
+	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
 	configureFleet(fleet, resolved)
 	managedHosts := placementHosts
 
@@ -369,7 +369,6 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.hostRunnerLimits = resolved.RunnerLimits
 	fleet.workDirSizeCaps = resolved.WorkDirSizeCaps
 	fleet.pnpmStoreBudgets = resolved.PnpmStoreBudgets
-	fleet.dockerSocketGIDs = resolved.DockerSocketGID
 	fleet.mainsRequired = resolved.MainsRequired
 	fleet.metricsViaSSH = resolved.MetricsViaSSH
 	fleet.readinessRequired = resolved.ReadinessRequired
@@ -502,7 +501,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage: c.RunnerImage, runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
-		dockerHosts: dockerHosts, placementHosts: placementHosts, mountDockerSocket: c.MountDockerSocket, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
+		dockerHosts: dockerHosts, placementHosts: placementHosts, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMetricsTimeouts: c.HostMetricsTimeouts,

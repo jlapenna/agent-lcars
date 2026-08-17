@@ -21,7 +21,6 @@ fleet:
       docker: local
       runner_limit: 1
       workdir_size_cap: 30g
-      docker_socket_gid: "108"
   placement: {}
 scale_sets:
   - name: default
@@ -34,7 +33,7 @@ scale_sets:
     runner_image: example/e2e:latest
     min_runners: 0
     max_runners: 1
-    mount_docker_socket: true
+    share_workdir: true
 `
 
 func writeConfig(t *testing.T, body string) string {
@@ -53,9 +52,6 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	}
 	if got := resolved.RunnerLimits["janeway"]; got != 1 {
 		t.Fatalf("runner limit = %d, want 1", got)
-	}
-	if got := resolved.DockerSocketGID["janeway"]; got != "108" {
-		t.Fatalf("socket gid = %q, want 108", got)
 	}
 	if len(resolved.ScaleSets) != 2 || resolved.Weights["default"] != 1 {
 		t.Fatalf("unexpected resolved scale sets: %#v", resolved.ScaleSets)
@@ -178,7 +174,7 @@ func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	e2eScaleSet := "\n  - name: e2e\n    labels: [e2e]\n    runner_image: example/e2e:latest\n    min_runners: 0\n    max_runners: 1\n    mount_docker_socket: true\n"
+	e2eScaleSet := "\n  - name: e2e\n    labels: [e2e]\n    runner_image: example/e2e:latest\n    min_runners: 0\n    max_runners: 1\n    share_workdir: true\n"
 	tests := []struct {
 		name string
 		body string
@@ -228,12 +224,12 @@ func TestValidateReloadCompatibilityAllowsFleetHostChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	addedHost := `      docker_socket_gid: "108"
+	addedHost := `      workdir_size_cap: 30g
     - name: laforge
       docker: ssh://runner@laforge
-      docker_socket_gid: "108"
+      workdir_size_cap: 30g
 `
-	next, err := loadOrchestratorConfig(writeConfig(t, strings.Replace(validOrchestratorYAML, "      docker_socket_gid: \"108\"\n", addedHost, 1)))
+	next, err := loadOrchestratorConfig(writeConfig(t, strings.Replace(validOrchestratorYAML, "      workdir_size_cap: 30g\n", addedHost, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,11 +342,11 @@ func TestOrchestratorConfigRejectsDuplicateLabel(t *testing.T) {
 	}
 }
 
-func TestOrchestratorConfigRequiresSocketHostPolicy(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "      docker_socket_gid: \"108\"\n", "", 1)
+func TestOrchestratorConfigRequiresWorkDirSizeCapForSharedWorkDir(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      workdir_size_cap: 30g\n", "", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "requires docker_socket_gid") {
-		t.Fatalf("expected missing socket GID error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "requires workdir_size_cap") {
+		t.Fatalf("expected missing workdir_size_cap error, got %v", err)
 	}
 }
 
@@ -364,25 +360,10 @@ func TestOrchestratorConfigDefaultsMetricsAddrToLocalhost(t *testing.T) {
 	}
 }
 
-func TestOrchestratorConfigDockerSocketAllowlistRejectsUnlisted(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n", "  placement: {}\n  docker_socket_allowlist: [default]\n", 1)
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "not in fleet.docker_socket_allowlist") {
-		t.Fatalf("expected docker_socket_allowlist rejection, got %v", err)
-	}
-}
-
-func TestOrchestratorConfigDockerSocketAllowlistAllowsListed(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n", "  placement: {}\n  docker_socket_allowlist: [e2e]\n", 1)
-	if _, err := loadOrchestratorConfig(writeConfig(t, body)); err != nil {
-		t.Fatalf("expected e2e to pass the allowlist, got %v", err)
-	}
-}
-
 func TestOrchestratorConfigParsesPidsLimitAndShmSize(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML,
-		"    mount_docker_socket: true\n",
-		"    mount_docker_socket: true\n    pids_limit: 8192\n    shm_size: 1g\n", 1)
+		"    share_workdir: true\n",
+		"    share_workdir: true\n    pids_limit: 8192\n    shm_size: 1g\n", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err != nil {
 		t.Fatal(err)
@@ -406,8 +387,8 @@ func TestOrchestratorConfigParsesPidsLimitAndShmSize(t *testing.T) {
 
 func TestOrchestratorConfigRejectsNegativePidsLimit(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML,
-		"    mount_docker_socket: true\n",
-		"    mount_docker_socket: true\n    pids_limit: -1\n", 1)
+		"    share_workdir: true\n",
+		"    share_workdir: true\n    pids_limit: -1\n", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "invalid pids_limit") {
 		t.Fatalf("expected invalid pids_limit error, got %v", err)
@@ -416,8 +397,8 @@ func TestOrchestratorConfigRejectsNegativePidsLimit(t *testing.T) {
 
 func TestOrchestratorConfigRejectsInvalidShmSize(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML,
-		"    mount_docker_socket: true\n",
-		"    mount_docker_socket: true\n    shm_size: not-a-size\n", 1)
+		"    share_workdir: true\n",
+		"    share_workdir: true\n    shm_size: not-a-size\n", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "invalid shm_size") {
 		t.Fatalf("expected invalid shm_size error, got %v", err)
@@ -731,8 +712,6 @@ func TestParseFileMounts(t *testing.T) {
 		wantErr string
 	}{
 		{name: "valid", raw: []string{"/etc/buildkit/client.pem:/secrets/client.pem"}, allow: allow},
-		// file_mounts is new, so it fails closed rather than fail-open the
-		// way docker_socket_allowlist does for backward compatibility.
 		{name: "no allowlist", raw: []string{"/etc/buildkit/client.pem:/secrets/client.pem"}, allow: nil,
 			wantErr: "fleet.file_mount_allowlist is empty"},
 		{name: "outside allowlist", raw: []string{"/etc/other/client.pem:/secrets/client.pem"}, allow: allow,
@@ -741,8 +720,8 @@ func TestParseFileMounts(t *testing.T) {
 		// merely starts with an allowed prefix must not match.
 		{name: "prefix is not a path boundary", raw: []string{"/etc/buildkit-evil/x.pem:/secrets/x.pem"}, allow: allow,
 			wantErr: "not under any fleet.file_mount_allowlist prefix"},
-		// Without this, file_mounts would be a way around
-		// fleet.docker_socket_allowlist -- see dockerSocketPath.
+		// Without this, file_mounts would be a way to smuggle in the Docker
+		// socket -- see dockerSocketPath.
 		{name: "docker socket rejected", raw: []string{"/var/run/docker.sock:/var/run/docker.sock"},
 			allow: []string{"/var/run"}, wantErr: "is or contains the Docker socket"},
 		{name: "traversal in source", raw: []string{"/etc/buildkit/../../root/.ssh/id_rsa:/secrets/k"}, allow: allow,
@@ -776,7 +755,7 @@ func TestParseFileMounts(t *testing.T) {
 func TestOrchestratorConfigResolvesFileMounts(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n",
 		"  placement: {}\n  file_mount_allowlist: [/etc/buildkit]\n", 1)
-	body = strings.Replace(body, "    max_runners: 1\n    mount_docker_socket: true\n",
+	body = strings.Replace(body, "    max_runners: 1\n    share_workdir: true\n",
 		"    max_runners: 1\n    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err != nil {
@@ -789,16 +768,13 @@ func TestOrchestratorConfigResolvesFileMounts(t *testing.T) {
 		if len(s.FileMounts) != 1 || s.FileMounts[0].ContainerPath != "/secrets/client.pem" {
 			t.Fatalf("unexpected file mounts: %#v", s.FileMounts)
 		}
-		if s.MountDockerSocket {
-			t.Fatal("file_mounts must not imply mount_docker_socket")
-		}
 		return
 	}
 	t.Fatal("scale set e2e not found")
 }
 
 func TestOrchestratorConfigFileMountsFailClosedWithoutAllowlist(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "    mount_docker_socket: true\n",
+	body := strings.Replace(validOrchestratorYAML, "    share_workdir: true\n",
 		"    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "fleet.file_mount_allowlist is empty") {
@@ -898,7 +874,7 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 	}
 
 	hosts := []DockerHost{{Name: "janeway"}}
-	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.WorkDirSizeCaps, resolved.DockerSocketGID, resolved.Weights, nil)
+	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.WorkDirSizeCaps, resolved.Weights, nil)
 	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)

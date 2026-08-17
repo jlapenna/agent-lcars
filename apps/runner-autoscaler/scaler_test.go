@@ -1572,14 +1572,13 @@ func TestPickHostAllUnreachable(t *testing.T) {
 	}
 }
 
-// TestPickHostSocketMountedNoColocation verifies that when mountDockerSocket
-// is set, pickHost refuses to place a second same-scale-set runner on a host
+// TestPickHostSharedWorkDirNoColocation verifies that when shareWorkDir is
+// set, pickHost refuses to place a second same-scale-set runner on a host
 // that already has one, and errors once every reachable host is occupied.
 //
-// Keys off shareWorkDir, not the socket: the exclusion exists because two
-// runners of one scale set on a host resolve the same repo to the same
-// checkout directory and corrupt each other, which is a property of the
-// SHARED WORKDIR, not of holding docker.sock (agent-lcars#101).
+// The exclusion exists because two runners of one scale set on a host
+// resolve the same repo to the same checkout directory and corrupt each
+// other, which is a property of the SHARED WORKDIR (agent-lcars#101).
 func TestPickHostSharedWorkDirNoColocation(t *testing.T) {
 	fa := newFakeDockerServer(t)
 	fb := newFakeDockerServer(t)
@@ -1782,66 +1781,51 @@ func TestIsDigestRef(t *testing.T) {
 	}
 }
 
-// TestRunnerBinds pins the privilege boundary the socketless build-client
-// lane depends on, and that persistence is now independent of privilege:
-// a pool can share the host workdir WITHOUT being handed the docker
-// socket, which is the whole point of splitting the two flags
-// (agent-lcars#101). File mounts stay read-only and never drag either
-// along with them.
+// TestRunnerBinds pins that a shared workdir and file mounts compose
+// independently: file mounts are appended read-only regardless of
+// shareWorkDir, and neither implies the other.
 func TestRunnerBinds(t *testing.T) {
 	mounts := []FileMount{{HostPath: "/etc/buildkit/client.pem", ContainerPath: "/secrets/client.pem"}}
 
-	socketless := runnerBinds(false, false, mounts)
-	if len(socketless) != 1 || socketless[0] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
-		t.Fatalf("socketless binds = %#v", socketless)
+	onlyMounts := runnerBinds(false, mounts)
+	if len(onlyMounts) != 1 || onlyMounts[0] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
+		t.Fatalf("mounts-only binds = %#v", onlyMounts)
 	}
-	for _, b := range socketless {
-		if strings.Contains(b, "docker.sock") || strings.Contains(b, "/home/runner/_work") {
-			t.Fatalf("socketless lane leaked a privileged bind: %q", b)
+	for _, b := range onlyMounts {
+		if strings.Contains(b, "/home/runner/_work") {
+			t.Fatalf("mounts-only lane leaked the shared workdir bind: %q", b)
 		}
 	}
 
-	if got := runnerBinds(false, false, nil); got != nil {
-		t.Fatalf("no socket, no workdir and no mounts should yield no binds, got %#v", got)
+	if got := runnerBinds(false, nil); got != nil {
+		t.Fatalf("no workdir and no mounts should yield no binds, got %#v", got)
 	}
 
-	// The case the split exists for: a warm workdir with NO socket.
-	warm := runnerBinds(false, true, nil)
+	warm := runnerBinds(true, nil)
 	if len(warm) != 2 {
 		t.Fatalf("shared-workdir binds = %#v", warm)
 	}
-	for _, b := range warm {
-		if strings.Contains(b, "docker.sock") {
-			t.Fatalf("sharing the workdir must not imply the socket: %q", b)
-		}
-	}
-
-	// And the inverse: a socket with no shared workdir.
-	sockOnly := runnerBinds(true, false, nil)
-	if len(sockOnly) != 1 || !strings.Contains(sockOnly[0], "docker.sock") {
-		t.Fatalf("socket-only binds = %#v", sockOnly)
-	}
 
 	// Both, plus mounts appended read-only last.
-	both := runnerBinds(true, true, mounts)
-	if len(both) != 4 {
-		t.Fatalf("socket+workdir binds = %#v", both)
+	both := runnerBinds(true, mounts)
+	if len(both) != 3 {
+		t.Fatalf("workdir+mounts binds = %#v", both)
 	}
-	if both[3] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
-		t.Fatalf("file mount not appended read-only: %q", both[3])
+	if both[2] != "/etc/buildkit/client.pem:/secrets/client.pem:ro" {
+		t.Fatalf("file mount not appended read-only: %q", both[2])
 	}
 }
 
 func TestRunnerHostConfig(t *testing.T) {
 	t.Run("zero pids limit means unlimited, not zero", func(t *testing.T) {
-		hc := runnerHostConfig(nil, nil, 0, 0, 0)
+		hc := runnerHostConfig(nil, 0, 0, 0)
 		if hc.Resources.PidsLimit != nil {
 			t.Fatalf("PidsLimit = %v, want nil (unlimited)", *hc.Resources.PidsLimit)
 		}
 	})
 
 	t.Run("memory, pids limit and shm size are all set", func(t *testing.T) {
-		hc := runnerHostConfig([]string{"/a:/b"}, []string{"999"}, 12<<30, 8192, 1<<30)
+		hc := runnerHostConfig([]string{"/a:/b"}, 12<<30, 8192, 1<<30)
 		if hc.Resources.Memory != 12<<30 {
 			t.Fatalf("Memory = %d, want %d", hc.Resources.Memory, int64(12<<30))
 		}
@@ -1853,9 +1837,6 @@ func TestRunnerHostConfig(t *testing.T) {
 		}
 		if len(hc.Binds) != 1 || hc.Binds[0] != "/a:/b" {
 			t.Fatalf("Binds = %#v", hc.Binds)
-		}
-		if len(hc.GroupAdd) != 1 || hc.GroupAdd[0] != "999" {
-			t.Fatalf("GroupAdd = %#v", hc.GroupAdd)
 		}
 	})
 }
@@ -1908,7 +1889,7 @@ func readinessScaler(t *testing.T, metricName string, maxAge time.Duration, hand
 	metrics := httptest.NewServer(handler)
 	t.Cleanup(metrics.Close)
 
-	fleet := newFleetCoordinator(4, nil, nil, nil, map[string]int{"set": 1}, []string{"set"})
+	fleet := newFleetCoordinator(4, nil, nil, map[string]int{"set": 1}, []string{"set"})
 	fleet.readinessRequired = map[string]bool{"roamer": true}
 
 	return &Scaler{
