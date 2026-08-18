@@ -1129,7 +1129,7 @@ jobs:
         # v1.0.191 tag (the fleet hit a real breakage on a later version —
         # do not bump without confirming the new version against a live
         # test dispatch first).
-        uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1.0.191
+        uses: anthropics/claude-code-action@459ad358ae43fea66bfefd0a1f8d840b4b9791fb # v1.0.194
         env:
           # Turns on the marker-stamping gh wrapper agent-handoff installed
           # (agent-lcars#1213) — dispatch-bootstrap era only; consumer
