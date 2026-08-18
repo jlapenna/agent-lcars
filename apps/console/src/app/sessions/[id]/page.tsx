@@ -7,15 +7,19 @@ import { Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../../auth';
+import { consoleRepositoryUrl } from '../../../lib/deployment';
 import { getWatchedRepos } from '../../../lib/github-client';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
 import { ConsoleAppShell } from '../../console-app-shell';
 import { ConsoleFooter } from '../../console-footer';
+import { repoScopedConsoleHrefs } from '../../console-hrefs';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
+import { QueueUtilityMenu } from '../../queue-utility-menu';
 import { QuickTaskButton } from '../../quick-task-button';
 import { RefreshButton } from '../../refresh-button';
+import { SignOutButton } from '../../sign-out-button';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
 
@@ -122,10 +126,30 @@ async function SessionDetailPageContent({ params }: PageProps) {
       title={title}
       subtitle={subtitle}
       utilities={
-        <RefreshButton
-          generatedAt={generatedAt}
-          initialLabel={formatRelativeTime(generatedAt)}
-        />
+        <>
+          <div className="session-detail-utilities session-detail-utilities--desktop">
+            <RefreshButton
+              generatedAt={generatedAt}
+              initialLabel={formatRelativeTime(generatedAt)}
+            />
+          </div>
+          <div className="session-detail-utilities session-detail-utilities--mobile">
+            <RefreshButton
+              generatedAt={generatedAt}
+              initialLabel={formatRelativeTime(generatedAt)}
+            />
+            <QueueUtilityMenu
+              repositoryUrl={consoleRepositoryUrl()}
+              includeNavigation
+              navigationHrefs={repoScopedConsoleHrefs(
+                detail.status === 'ok' && detail.doc.repo
+                  ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                  : undefined,
+              )}
+              signOutControl={<SignOutButton />}
+            />
+          </div>
+        </>
       }
       footer={
         <ConsoleFooter
