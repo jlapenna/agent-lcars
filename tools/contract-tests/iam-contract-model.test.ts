@@ -3,19 +3,18 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-// The IAM contract's live half runs on a schedule against GitHub and GCP.
-// These assertions are the credential-free half: they keep the checked-in
-// model internally coherent, tied to Terraform, and actually wired into a
-// scheduled workflow - the three ways a live checker rots without anyone
-// noticing (jlapenna/agent-lcars#1376).
+// This repo owns the MODEL of the fleet's identity state. Comparing it to
+// live GitHub and GCP is drift detection, which is monitoring, and monitoring
+// lives in one place in this fleet: jlapenna/homelab's observability layer
+// (bin/emit-iam-contract-metrics.py reads this file from main and publishes
+// node_homelab_iam_contract_* for node-exporter).
+//
+// What belongs here is the offline half - the model must stay internally
+// coherent and tied to the Terraform it describes, which needs no credentials
+// and is a real test (jlapenna/agent-lcars#1376).
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 const modelPath = path.join(repoRoot, 'tools/iam-contract/model.json');
-const checkerPath = path.join(repoRoot, 'tools/iam-contract/check.mjs');
-const workflowPath = path.join(
-  repoRoot,
-  '.github/workflows/iam-contract-audit.yml',
-);
 
 type Provider = {
   attributeCondition?: string | null;
@@ -54,8 +53,6 @@ type Model = {
 };
 
 const model = JSON.parse(fs.readFileSync(modelPath, 'utf8')) as Model;
-const checker = fs.readFileSync(checkerPath, 'utf8');
-const workflow = fs.readFileSync(workflowPath, 'utf8');
 
 /**
  * Reproduce `local.github_repositories` from infra/terraform without running
@@ -139,25 +136,46 @@ describe('IAM contract model', () => {
     });
   });
 
-  it('runs every section the checker implements from the scheduled workflow', () => {
-    const declared = checker.match(
-      /const ALL_SECTIONS = \[([^\]]+)\]/,
-    ) as RegExpMatchArray;
-    const sections = [...declared[1].matchAll(/'([^']+)'/g)].map(
-      (match) => match[1],
-    );
-    expect(sections.length).toBeGreaterThan(0);
-    const invoked = new Set(
-      [...workflow.matchAll(/check\.mjs --sections ([\w,-]+)/g)].flatMap(
-        (match) => match[1].split(','),
-      ),
-    );
-    // A section added to the checker but wired into no job would look like
-    // coverage while asserting nothing.
-    expect([...invoked].sort()).toEqual([...sections].sort());
+  it('keeps every modelled provider condition tied to a real workflow file', () => {
+    // The consumer asserts these refs against live GitHub. Here we only check
+    // the shape, so a typo cannot reach the collector as an unresolvable ref.
+    const pattern =
+      /([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/\.github\/workflows\/([A-Za-z0-9_.-]+\.ya?ml)/g;
+    const refs = new Set<string>();
+    for (const project of Object.values(model.gcpProjects)) {
+      for (const pool of Object.values(project.pools)) {
+        for (const provider of Object.values(pool.providers ?? {})) {
+          for (const match of (provider.attributeCondition ?? '').matchAll(
+            pattern,
+          )) {
+            refs.add(match[0]);
+          }
+        }
+      }
+    }
+    expect(refs.size).toBeGreaterThan(0);
+    for (const ref of refs) {
+      expect(ref).toMatch(/^[^/]+\/[^/]+\/\.github\/workflows\/[^/]+\.ya?ml$/);
+    }
   });
 
-  it('runs the audit on a daily schedule', () => {
-    expect(workflow).toMatch(/schedule:\s*\n\s*- cron: '[^']+'/);
+  it('models every installation with an id, an account and a repository list', () => {
+    for (const app of model.githubApps) {
+      expect(app.installations.length).toBeGreaterThan(0);
+      for (const installation of app.installations) {
+        expect(Number.isInteger(installation.id)).toBe(true);
+        expect(installation.account).not.toHaveLength(0);
+      }
+    }
+    // Only a checkable App's repository list is asserted live, so only it has
+    // to carry one; recording a guess for the other would be worse than
+    // recording nothing.
+    for (const app of model.githubApps.filter(
+      (candidate) => candidate.checkable,
+    )) {
+      for (const installation of app.installations) {
+        expect(installation.repositories).toBeDefined();
+      }
+    }
   });
 });

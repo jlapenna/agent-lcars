@@ -41,9 +41,10 @@ is "All repositories".
 
 > Everything above is prose, and prose rots — this file documented the
 > private-key lineage two contradictory ways until a live JWT mint settled it.
-> The machine-checkable half now lives in `tools/iam-contract/model.json` and
-> runs daily against live GitHub and GCP state: see
-> [docs/iam-contract.md](iam-contract.md) (#1376). Change the two together.
+> The machine-checkable half now lives in `tools/iam-contract/model.json`, and
+> homelab's observability layer diffs it against live GitHub and GCP state on a
+> schedule: see [docs/iam-contract.md](iam-contract.md) (#1376). Change the two
+> together.
 > It already found one thing this table implied but reality did not have:
 > `supersprinklesracing/www` is trusted by the shared WIF pool but the fleet
 > App is **not** installed on it.
