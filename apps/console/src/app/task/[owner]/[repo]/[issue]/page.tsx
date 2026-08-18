@@ -5,15 +5,19 @@ import { Suspense } from 'react';
 import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../../../../auth';
+import { consoleRepositoryUrl } from '../../../../../lib/deployment';
 import { getWatchedRepos } from '../../../../../lib/github-client';
 import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleAppShell } from '../../../../console-app-shell';
 import { ConsoleFooter } from '../../../../console-footer';
+import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
 import { formatRelativeTime } from '../../../../format';
 import { ItemOverflowMenu } from '../../../../item-overflow-menu';
 import { NavPageLoading } from '../../../../page-loading';
+import { QueueUtilityMenu } from '../../../../queue-utility-menu';
 import { QuickTaskButton } from '../../../../quick-task-button';
 import { RefreshButton } from '../../../../refresh-button';
+import { SignOutButton } from '../../../../sign-out-button';
 import { LogicalWorkCard } from '../../../logical-work-card';
 
 interface PageProps {
@@ -66,16 +70,38 @@ async function TaskDetailPageContent({ params }: PageProps) {
       title={title}
       subtitle={subtitle}
       utilities={
-        <Group gap="xs" wrap="nowrap">
-          <RefreshButton
-            generatedAt={generatedAt}
-            initialLabel={formatRelativeTime(generatedAt)}
-            bustsGithubCache
-          />
-          {detail.status === 'ok' && detail.item.kind === 'issue' && (
-            <ItemOverflowMenu item={detail.item} />
-          )}
-        </Group>
+        <>
+          <div className="task-utilities task-utilities--desktop">
+            <Group gap="xs" wrap="nowrap">
+              <RefreshButton
+                generatedAt={generatedAt}
+                initialLabel={formatRelativeTime(generatedAt)}
+                bustsGithubCache
+              />
+              {detail.status === 'ok' && detail.item.kind === 'issue' && (
+                <ItemOverflowMenu item={detail.item} />
+              )}
+            </Group>
+          </div>
+          <div className="task-utilities task-utilities--mobile">
+            <Group gap="xs" wrap="nowrap">
+              <RefreshButton
+                generatedAt={generatedAt}
+                initialLabel={formatRelativeTime(generatedAt)}
+                bustsGithubCache
+              />
+              <QueueUtilityMenu
+                repositoryUrl={consoleRepositoryUrl()}
+                includeNavigation
+                navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
+                signOutControl={<SignOutButton />}
+              />
+              {detail.status === 'ok' && detail.item.kind === 'issue' && (
+                <ItemOverflowMenu item={detail.item} />
+              )}
+            </Group>
+          </div>
+        </>
       }
       footer={
         <ConsoleFooter

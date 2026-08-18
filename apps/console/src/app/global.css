@@ -400,6 +400,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   display: none;
 }
 
+.task-utilities--mobile {
+  display: none;
+}
+
+.session-detail-utilities--mobile {
+  display: none;
+}
+
 /* Shuttlebay carries utilities through its compact/tablet command rail. Hide
    the empty shared wrapper only once the full desktop navigation is present,
    so tablet users retain the overflow menu for the destinations hidden there. */
@@ -1483,7 +1491,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .agents-utilities--desktop,
   .shuttlebay-utilities--desktop,
   .sessions-utilities--desktop,
-  .costs-utilities--desktop {
+  .costs-utilities--desktop,
+  .task-utilities--desktop,
+  .session-detail-utilities--desktop {
     display: none;
   }
 
@@ -1492,7 +1502,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .agents-utilities--mobile,
   .shuttlebay-utilities--mobile,
   .sessions-utilities--mobile,
-  .costs-utilities--mobile {
+  .costs-utilities--mobile,
+  .task-utilities--mobile,
+  .session-detail-utilities--mobile {
     display: block;
   }
 }
@@ -1674,7 +1686,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .agents-utilities--desktop,
   .shuttlebay-utilities--desktop,
   .sessions-utilities--desktop,
-  .costs-utilities--desktop {
+  .costs-utilities--desktop,
+  .task-utilities--desktop,
+  .session-detail-utilities--desktop {
     display: none;
   }
 
@@ -1683,7 +1697,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .agents-utilities--mobile,
   .shuttlebay-utilities--mobile,
   .sessions-utilities--mobile,
-  .costs-utilities--mobile {
+  .costs-utilities--mobile,
+  .task-utilities--mobile,
+  .session-detail-utilities--mobile {
     display: block;
   }
 
