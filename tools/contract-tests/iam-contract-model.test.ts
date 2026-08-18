@@ -26,6 +26,7 @@ type Pool = {
 type Installation = {
   id: number;
   account: string;
+  repositorySelection?: string;
   repositories?: string[];
 };
 type Model = {
@@ -36,6 +37,7 @@ type Model = {
     clientId: string;
     checkable: boolean;
     uncheckableReason?: string;
+    permissions?: Record<string, string>;
     installations: Installation[];
   }[];
   gcpProjects: Record<
@@ -107,8 +109,38 @@ describe('IAM contract model', () => {
 
   it('documents why every unassertable App is unassertable', () => {
     for (const app of model.githubApps) {
-      if (app.checkable) continue;
-      expect(app.uncheckableReason ?? '').not.toHaveLength(0);
+      // Every App is either asserted against live GitHub, or says why not.
+      // Written unconditionally so it keeps testing something once every App
+      // is checkable, which is the state this repo is trying to reach.
+      expect({
+        slug: app.slug,
+        explained: app.checkable || (app.uncheckableReason ?? '').length > 0,
+      }).toEqual({ slug: app.slug, explained: true });
+    }
+  });
+
+  it('models the permission set of every App', () => {
+    // An App gaining a permission is the other half of what makes
+    // repository_selection load-bearing: administration:write over "all
+    // repositories" is admin over every repo in the account.
+    for (const app of model.githubApps) {
+      expect(Object.keys(app.permissions ?? {}).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('records repository_selection for every installation', () => {
+    // The autoscaler App's installations are both "all", which is exactly why
+    // this has to be modelled: a scope widening must be drift, not a surprise.
+    for (const app of model.githubApps) {
+      for (const installation of app.installations) {
+        expect({
+          installation: installation.id,
+          selection: installation.repositorySelection,
+        }).toEqual({
+          installation: installation.id,
+          selection: expect.stringMatching(/^(all|selected)$/),
+        });
+      }
     }
   });
 

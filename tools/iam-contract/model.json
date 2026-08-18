@@ -41,9 +41,9 @@
           "repositorySelection": "selected",
           "repositories": [
             "supersprinklesracing/girosf",
-            "supersprinklesracing/sprinkles"
-          ],
-          "_note": "supersprinklesracing/www is deliberately absent - see fleetCoverageExceptions."
+            "supersprinklesracing/sprinkles",
+            "supersprinklesracing/www"
+          ]
         },
         {
           "id": 154278523,
@@ -56,14 +56,23 @@
           ],
           "_note": "Non-fleet personal org. repository_selection is 'all', so this installation's repository list grows whenever a repo is created in jlaorg; a new repo here is expected drift and the fix is to update this list."
         }
-      ]
+      ],
+      "permissions": {
+        "actions": "write",
+        "administration": "read",
+        "checks": "read",
+        "contents": "write",
+        "issues": "write",
+        "metadata": "read",
+        "pull_requests": "write",
+        "workflows": "write"
+      }
     },
     {
       "key": "autoscaler",
       "slug": "agent-lcars-autoscaler",
       "clientId": "Iv23lir3t9e2k4RAkWxw",
-      "checkable": false,
-      "uncheckableReason": "GET /app and GET /app/installations only accept a JWT signed by that App's own private key, and this App's key lives in the homelab vault (github_autoscaler_lcars_app_private_key), never in this repo. Documented installations: 154210710 (jlapenna) and 154210731 (supersprinklesracing). Asserting them needs the same check run from homelab with that key - jlapenna/homelab#763.",
+      "checkable": true,
       "owner": {
         "login": "agent-lcars",
         "type": "User"
@@ -71,22 +80,42 @@
       "installations": [
         {
           "id": 154210710,
-          "account": "jlapenna"
+          "account": "jlapenna",
+          "repositorySelection": "selected",
+          "repositories": [
+            "jlapenna/agent-lcars",
+            "jlapenna/homegit",
+            "jlapenna/homelab",
+            "jlapenna/nx-cache-server",
+            "jlapenna/sync-padd"
+          ],
+          "_note": "Narrowed from 'all' (23 repos) to these five on 2026-08-17 (#1381). jlapenna/homegit is covered but has NO registrations: entry in github-runner-autoscaler/orchestrator.yml - covered-but-unregistered, not drift. Its only self-hosted runner is 'homelab-runner', registered with a manual short-lived RUNNER_TOKEN by the github-runner service in homelab's ansible/docker-compose.yml, not by this App, and no homegit workflow targets a self-hosted runner."
         },
         {
           "id": 154210731,
-          "account": "supersprinklesracing"
+          "account": "supersprinklesracing",
+          "repositorySelection": "all",
+          "repositories": [
+            "supersprinklesracing/ghost-theme-supersprinkles",
+            "supersprinklesracing/girosf",
+            "supersprinklesracing/pos",
+            "supersprinklesracing/preem-machine",
+            "supersprinklesracing/sprinkles",
+            "supersprinklesracing/www"
+          ],
+          "_note": "Still 'all'. #1381 decided to narrow this one to the three fleet repos (sprinkles, www, girosf), dropping ghost-theme-supersprinkles, pos and preem-machine - none of which hold a self-hosted runner or a workflow targeting one. Today's live value is modelled so the check is green now; when the maintainer makes the UI change this entry takes one edit (selection -> 'selected', three repositories)."
         }
-      ]
+      ],
+      "permissions": {
+        "administration": "write",
+        "metadata": "read"
+      },
+      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong.",
+      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. Scope is asymmetric today: jlapenna is 'selected' (5), supersprinklesracing is still 'all' (6). Recorded as observed, not endorsed - #1381 is the execution record for narrowing both to the fleet repos. The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
     }
   ],
-  "fleetCoverageExceptions": [
-    {
-      "repository": "supersprinklesracing/www",
-      "reason": "The shared 'github' WIF pool trusts www and Terraform provisions its codex lineage (#1354), but the fleet App is not installed on it yet: adding a repo to an installation needs a GitHub-App user token, so it is a maintainer UI action. Discovered by this check on its first live run (#1376). Remove this entry once www is added to installation 150568991."
-    }
-  ],
-  "_fleetCoverageNote": "Every entry in fleetRepositories must appear in exactly one checkable App installation's repositories list, unless it is listed above with a reason. An exception whose repository has since been installed is itself a failure, so the list can only shrink.",
+  "fleetCoverageExceptions": [],
+  "_fleetCoverageNote": "Every entry in fleetRepositories must appear in exactly one checkable App installation's repositories list, unless listed in fleetCoverageExceptions with a reason. The list is empty and should stay that way: supersprinklesracing/www was the one entry, added when this check found the fleet App was not installed on it (#1380), and removed the same day once the maintainer installed it - the check reported the stale exception as drift within one run.",
   "_userManagedKeyNote": "No fleet service account should hold a user-managed key. The allowlists above are a ratchet: an unlisted key is a failure, and a listed account that no longer holds a key is ALSO a failure, so a retired exemption cannot be silently inherited by the next key.",
   "gcpProjects": {
     "agent-lcars": {

@@ -30,7 +30,11 @@ Two GitHub Apps exist and are easy to confuse:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):
-  what runner scale-set listeners register with (Administration R/W).
+  what runner scale-set listeners register with (Administration R/W). Its
+  scope is **asymmetric and measured, not assumed**: the jlapenna installation
+  is "Only select repositories" (5), the supersprinklesracing one is still
+  "All repositories" (6, three of them non-fleet). Narrowing the second is
+  proposed in #1381.
   Installations `154210710` (jlapenna) / `154210731` (supersprinklesracing).
 
 The fleet App's two fleet installations use "Only select repositories" — a new
@@ -45,9 +49,12 @@ is "All repositories".
 > homelab's observability layer diffs it against live GitHub and GCP state on a
 > schedule: see [docs/iam-contract.md](iam-contract.md) (#1376). Change the two
 > together.
-> It already found one thing this table implied but reality did not have:
-> `supersprinklesracing/www` is trusted by the shared WIF pool but the fleet
-> App is **not** installed on it.
+> It already earned that: on its first live run it found the fleet App was not
+> installed on `supersprinklesracing/www` (#1380, since fixed — and the check
+> then reported the now-stale exception, so the model could not be left
+> behind), and it measured the autoscaler App's installation scope, which this
+> file had described as select-repositories when one installation was not
+> (#1381).
 
 ## `CLAUDE_CODE_OAUTH_TOKEN` (claude lane)
 
