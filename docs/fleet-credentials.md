@@ -33,9 +33,20 @@ Two GitHub Apps exist and are easy to confuse:
   what runner scale-set listeners register with (Administration R/W).
   Installations `154210710` (jlapenna) / `154210731` (supersprinklesracing).
 
-Both use "Only select repositories" — a new repo must be added to the right
-installation(s) in the GitHub UI (the REST endpoint for this only accepts a
-GitHub-App _user_ token, so `gh` cannot do it).
+The fleet App's two fleet installations use "Only select repositories" — a new
+repo must be added to the right installation(s) in the GitHub UI (the REST
+endpoint for this only accepts a GitHub-App _user_ token, so `gh` cannot do
+it). It has a third, non-fleet installation on the `jlaorg` org, and that one
+is "All repositories".
+
+> Everything above is prose, and prose rots — this file documented the
+> private-key lineage two contradictory ways until a live JWT mint settled it.
+> The machine-checkable half now lives in `tools/iam-contract/model.json` and
+> runs daily against live GitHub and GCP state: see
+> [docs/iam-contract.md](iam-contract.md) (#1376). Change the two together.
+> It already found one thing this table implied but reality did not have:
+> `supersprinklesracing/www` is trusted by the shared WIF pool but the fleet
+> App is **not** installed on it.
 
 ## `CLAUDE_CODE_OAUTH_TOKEN` (claude lane)
 

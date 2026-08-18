@@ -1,0 +1,211 @@
+{
+  "_readme": "Expected fleet identity state, asserted against live GitHub and GCP by tools/iam-contract/check.mjs and scheduled by .github/workflows/iam-contract-audit.yml. docs/fleet-credentials.md is the prose; this file is the part a machine can check. Change them together (jlapenna/agent-lcars#1376).",
+  "fleetRepositories": [
+    "jlapenna/agent-lcars",
+    "jlapenna/homelab",
+    "jlapenna/nx-cache-server",
+    "jlapenna/sync-padd",
+    "supersprinklesracing/sprinkles",
+    "supersprinklesracing/www",
+    "supersprinklesracing/girosf"
+  ],
+  "_fleetRepositoriesNote": "Must stay identical to local.github_repositories in infra/terraform/main.tf - the shared 'github' WIF pool's attribute_condition is generated from it, and tools/contract-tests/iam-contract-model.test.ts asserts the two agree without needing any credentials.",
+  "githubApps": [
+    {
+      "key": "fleet",
+      "slug": "agent-lcars",
+      "clientId": "Iv23liO6X8pLJLcTFzyv",
+      "checkable": true,
+      "_note": "What the agent lanes and the console authenticate as - claims, PRs and comments land as agent-lcars[bot]. Private key: Secret Manager AGENT_LCARS_APP_PRIVATE_KEY (project agent-lcars) / repo secret AGENT_LCARS_PRIVATE_KEY.",
+      "owner": {
+        "login": "agent-lcars",
+        "type": "User"
+      },
+      "installations": [
+        {
+          "id": 150568943,
+          "account": "jlapenna",
+          "repositorySelection": "selected",
+          "repositories": [
+            "jlapenna/agent-lcars",
+            "jlapenna/homegit",
+            "jlapenna/homelab",
+            "jlapenna/nx-cache-server",
+            "jlapenna/sync-padd"
+          ],
+          "_note": "jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. Listed here so its presence is documented rather than surprising."
+        },
+        {
+          "id": 150568991,
+          "account": "supersprinklesracing",
+          "repositorySelection": "selected",
+          "repositories": [
+            "supersprinklesracing/girosf",
+            "supersprinklesracing/sprinkles"
+          ],
+          "_note": "supersprinklesracing/www is deliberately absent - see fleetCoverageExceptions."
+        },
+        {
+          "id": 154278523,
+          "account": "jlaorg",
+          "repositorySelection": "all",
+          "repositories": [
+            "jlaorg/ha-smartwings-levitate",
+            "jlaorg/news-digest",
+            "jlaorg/replicator"
+          ],
+          "_note": "Non-fleet personal org. repository_selection is 'all', so this installation's repository list grows whenever a repo is created in jlaorg; a new repo here is expected drift and the fix is to update this list."
+        }
+      ]
+    },
+    {
+      "key": "autoscaler",
+      "slug": "agent-lcars-autoscaler",
+      "clientId": "Iv23lir3t9e2k4RAkWxw",
+      "checkable": false,
+      "uncheckableReason": "GET /app and GET /app/installations only accept a JWT signed by that App's own private key, and this App's key lives in the homelab vault (github_autoscaler_lcars_app_private_key), never in this repo. Documented installations: 154210710 (jlapenna) and 154210731 (supersprinklesracing). Asserting them needs the same check run from homelab with that key - jlapenna/homelab#763.",
+      "owner": {
+        "login": "agent-lcars",
+        "type": "User"
+      },
+      "installations": [
+        {
+          "id": 154210710,
+          "account": "jlapenna"
+        },
+        {
+          "id": 154210731,
+          "account": "supersprinklesracing"
+        }
+      ]
+    }
+  ],
+  "fleetCoverageExceptions": [
+    {
+      "repository": "supersprinklesracing/www",
+      "reason": "The shared 'github' WIF pool trusts www and Terraform provisions its codex lineage (#1354), but the fleet App is not installed on it yet: adding a repo to an installation needs a GitHub-App user token, so it is a maintainer UI action. Discovered by this check on its first live run (#1376). Remove this entry once www is added to installation 150568991."
+    }
+  ],
+  "_fleetCoverageNote": "Every entry in fleetRepositories must appear in exactly one checkable App installation's repositories list, unless it is listed above with a reason. An exception whose repository has since been installed is itself a failure, so the list can only shrink.",
+  "_userManagedKeyNote": "No fleet service account should hold a user-managed key. The allowlists above are a ratchet: an unlisted key is a failure, and a listed account that no longer holds a key is ALSO a failure, so a retired exemption cannot be silently inherited by the next key.",
+  "gcpProjects": {
+    "agent-lcars": {
+      "projectNumber": "611425338852",
+      "_note": "Terraform-managed by infra/terraform in this repo.",
+      "pools": {
+        "github-app-webhook-config": {
+          "state": "ACTIVE",
+          "providers": {
+            "github": {
+              "state": "ACTIVE",
+              "issuerUri": "https://token.actions.githubusercontent.com",
+              "attributeMapping": {
+                "attribute.repository": "assertion.repository",
+                "google.subject": "assertion.sub"
+              },
+              "attributeCondition": "assertion.repository == 'jlapenna/agent-lcars' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == 'jlapenna/agent-lcars/.github/workflows/configure-github-app-webhook.yml@refs/heads/main'"
+            }
+          }
+        },
+        "github": {
+          "state": "ACTIVE",
+          "providers": {
+            "github": {
+              "state": "ACTIVE",
+              "issuerUri": "https://token.actions.githubusercontent.com",
+              "attributeMapping": {
+                "attribute.repository": "assertion.repository",
+                "google.subject": "assertion.sub"
+              },
+              "attributeCondition": "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'supersprinklesracing/www', 'supersprinklesracing/girosf', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
+            }
+          }
+        },
+        "github-deployer": {
+          "state": "ACTIVE",
+          "providers": {
+            "github": {
+              "state": "ACTIVE",
+              "issuerUri": "https://token.actions.githubusercontent.com",
+              "attributeMapping": {
+                "attribute.repository": "assertion.repository",
+                "google.subject": "assertion.sub"
+              },
+              "attributeCondition": "assertion.repository == 'jlapenna/agent-lcars' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == 'jlapenna/agent-lcars/.github/workflows/deploy-console.yml@refs/heads/main'"
+            }
+          }
+        }
+      },
+      "userManagedKeyAllowlist": [
+        {
+          "serviceAccount": "telemetry-writer@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The host writer credential (Secret Manager AGENT_TELEMETRY_WRITER_KEY_JSON) is consumed by the homelab telemetry watcher outside GitHub Actions, which has no OIDC identity to federate. Every other fleet identity authenticates over WIF and must hold no key."
+        }
+      ]
+    },
+    "supersprinklesracing": {
+      "projectNumber": "972941236852",
+      "_note": "claude-agent-pool is Terraform-managed by jlapenna/homelab (terraform/gcp_sprinkles_wif.tf, homelab#750): change its condition THERE. gcloud ... update-oidc --attribute-condition replaces rather than appends.",
+      "pools": {
+        "supersprinklesracing.svc.id.goog": {
+          "state": "ACTIVE",
+          "providersListable": false,
+          "_note": "GKE workload-identity pool, created and owned by GCP. ListWorkloadIdentityPoolProviders is not supported on it, so only its existence and state are asserted."
+        },
+        "claude-agent-pool": {
+          "state": "ACTIVE",
+          "providers": {
+            "claude-agent-github": {
+              "state": "ACTIVE",
+              "issuerUri": "https://token.actions.githubusercontent.com",
+              "attributeMapping": {
+                "attribute.job_workflow_ref": "assertion.job_workflow_ref",
+                "attribute.repository": "assertion.repository",
+                "google.subject": "assertion.sub"
+              },
+              "attributeCondition": "assertion.repository=='supersprinklesracing/sprinkles' && (assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy.yml') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-rules-and-indexes.yml') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-qbp-appsscript.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))"
+            }
+          }
+        }
+      },
+      "userManagedKeyAllowlist": [
+        {
+          "serviceAccount": "sprinklesbot@supersprinklesracing.iam.gserviceaccount.com",
+          "reason": "Pre-existing sprinkles key, recorded as of #1376; retirement tracked by sprinkles' runtime-key work."
+        },
+        {
+          "serviceAccount": "firebase-adminsdk-9yym9@supersprinklesracing.iam.gserviceaccount.com",
+          "reason": "Pre-existing Firebase Admin SDK key, recorded as of #1376."
+        },
+        {
+          "serviceAccount": "tasks-sa@supersprinklesracing.iam.gserviceaccount.com",
+          "reason": "Pre-existing sprinkles key, recorded as of #1376."
+        },
+        {
+          "serviceAccount": "jclaw-bot@supersprinklesracing.iam.gserviceaccount.com",
+          "reason": "Pre-existing sprinkles key, recorded as of #1376."
+        },
+        {
+          "serviceAccount": "firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com",
+          "reason": "Pre-existing App Hosting compute key, recorded as of #1376."
+        },
+        {
+          "serviceAccount": "github-deploy@supersprinklesracing.iam.gserviceaccount.com",
+          "reason": "Pre-existing sprinkles deploy key, recorded as of #1376."
+        }
+      ]
+    }
+  },
+  "secretIamPolicies": [
+    {
+      "project": "agent-lcars",
+      "secret": "CLAUDE_CODE_OAUTH_TOKEN",
+      "rationale": "Exactly one binding. Two speculative accessor grants were added while chasing #1368 and pruned the same night; nothing but this check stops the next ones from persisting. The reader is claude-token-reader, impersonated by every fleet repo through the shared 'github' pool.",
+      "bindings": {
+        "roles/secretmanager.secretAccessor": [
+          "serviceAccount:claude-token-reader@agent-lcars.iam.gserviceaccount.com"
+        ]
+      }
+    }
+  ]
+}
