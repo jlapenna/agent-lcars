@@ -28,7 +28,7 @@ const NOTIFICATIONS_Z_INDEX = getDefaultZIndex('modal') - 1;
 export function AppProviders({
   children,
   theme,
-  colorScheme = 'light',
+  colorScheme = 'dark',
 }: AppProvidersProps) {
   return (
     <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
