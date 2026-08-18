@@ -40,12 +40,17 @@ async function ShuttlebayPageShell() {
       title="Shuttlebay"
       subtitle="Live runner fleet and queue status"
       utilities={
-        <div className="shuttlebay-utilities shuttlebay-utilities--mobile">
-          <ConsoleCommandUtilities
-            watchedRepos={watchedRepos}
-            includeNavigation
-          />
-        </div>
+        <>
+          <div className="shuttlebay-utilities shuttlebay-utilities--desktop">
+            <ConsoleCommandUtilities watchedRepos={watchedRepos} />
+          </div>
+          <div className="shuttlebay-utilities shuttlebay-utilities--mobile">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              includeNavigation
+            />
+          </div>
+        </>
       }
     >
       <Suspense fallback={<PageLoading rows={4} header={false} />}>
