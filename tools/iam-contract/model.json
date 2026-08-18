@@ -89,7 +89,7 @@
             "jlapenna/nx-cache-server",
             "jlapenna/sync-padd"
           ],
-          "_note": "Narrowed from 'all' (23 repos) to these five on 2026-08-17, after this check measured the scope. jlapenna/homegit carries no autoscaler registration - it holds one long-lived classic runner registered with a manual RUNNER_TOKEN (ansible/docker-compose.yml github-runner service), not by this App."
+          "_note": "Narrowed from 'all' (23 repos) to these five on 2026-08-17 (#1381). jlapenna/homegit is covered but has NO registrations: entry in github-runner-autoscaler/orchestrator.yml - covered-but-unregistered, not drift. Its only self-hosted runner is 'homelab-runner', registered with a manual short-lived RUNNER_TOKEN by the github-runner service in homelab's ansible/docker-compose.yml, not by this App, and no homegit workflow targets a self-hosted runner."
         },
         {
           "id": 154210731,
@@ -103,7 +103,7 @@
             "supersprinklesracing/sprinkles",
             "supersprinklesracing/www"
           ],
-          "_note": "Still 'all': covers three non-fleet repos (ghost-theme-supersprinkles, pos, preem-machine) that hold no self-hosted runners and whose workflows are all GitHub-hosted. Narrowing proposed in jlapenna/agent-lcars#1381."
+          "_note": "Still 'all'. #1381 decided to narrow this one to the three fleet repos (sprinkles, www, girosf), dropping ghost-theme-supersprinkles, pos and preem-machine - none of which hold a self-hosted runner or a workflow targeting one. Today's live value is modelled so the check is green now; when the maintainer makes the UI change this entry takes one edit (selection -> 'selected', three repositories)."
         }
       ],
       "permissions": {
@@ -111,7 +111,7 @@
         "metadata": "read"
       },
       "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong.",
-      "_scopeNote": "This App holds administration:write, so its installation scope is authority over every repository it covers. The jlapenna installation was narrowed to 'selected' on 2026-08-17 once this check measured it; the supersprinklesracing installation is still 'all'. Recorded as observed, NOT endorsed - scoping is a maintainer decision (jlapenna/agent-lcars#1381). The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
+      "_scopeNote": "This App holds administration:write, so an installation's scope is authority over every repository it covers. Scope is asymmetric today: jlapenna is 'selected' (5), supersprinklesracing is still 'all' (6). Recorded as observed, not endorsed - #1381 is the execution record for narrowing both to the fleet repos. The full repository lists are modelled deliberately even though an 'all' installation's list churns: for an administration:write App, a new repository silently gaining an admin-capable installation is exactly the change worth being told about."
     }
   ],
   "fleetCoverageExceptions": [],

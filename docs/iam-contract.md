@@ -73,9 +73,9 @@ while it lasts, so a gap cannot quietly become permanent.
   collector reads it there in place, so both Apps are now asserted
   (jlapenna/homelab#768).
 
-## An open question the model records but does not endorse
+## A decided change the model is waiting on
 
-The autoscaler App holds `administration: write`, so its installation scope is
+The autoscaler App holds `administration: write`, so an installation's scope is
 authority over every repository it covers. That scope is asymmetric today:
 
 | Installation | Account              | Selection  | Repos           |
@@ -84,8 +84,27 @@ authority over every repository it covers. That scope is asymmetric today:
 | `154210731`  | supersprinklesracing | `all`      | 6 (3 non-fleet) |
 
 The jlapenna installation was narrowed from `all` (23 repositories) once this
-check measured it. The supersprinklesracing one still covers
-`ghost-theme-supersprinkles`, `pos` and `preem-machine`, none of which hold a
-self-hosted runner or a workflow targeting one. Narrowing it is proposed in
-#1381; nothing here changes it, and the model records the live values either
-way so a widening is drift rather than a surprise.
+check measured it. #1381 is the execution record for narrowing the other one to
+`sprinkles`, `www` and `girosf` — the evidence is there too: none of
+`ghost-theme-supersprinkles`, `pos` or `preem-machine` holds a self-hosted
+runner, and no workflow in any of them targets a fleet runner label.
+
+The model records **today's** live values, so the check is green now rather
+than red against an intention. When the UI change lands, installation
+`154210731` takes one edit — `repositorySelection` to `selected` and three
+repositories — and until then the drift the check would report is the change
+itself, which is the system working.
+
+`jlapenna/homegit` is covered by `154210710` but has no `registrations:` entry
+in homelab's `orchestrator.yml`: covered-but-unregistered, modelled as such
+rather than treated as drift. Its one runner is registered with a manual
+`RUNNER_TOKEN`, not by this App.
+
+## The key file is part of the contract
+
+The autoscaler App's private key is deployed on the controller and read there
+in place. Its **mode and owner are modelled facts** (`600`, `homelab:homelab`),
+asserted with `stat()` — which needs no read permission, so a key the collector
+cannot open still produces a finding naming the mode rather than only an
+unexplained blind section. This is not hypothetical: the mode went `600` → `000`
+and back inside one evening.
