@@ -1453,6 +1453,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .deck-utilities--desktop,
   .inbox-utilities--desktop,
   .agents-utilities--desktop,
+  .shuttlebay-utilities--desktop,
   .sessions-utilities--desktop,
   .costs-utilities--desktop {
     display: none;
@@ -1643,6 +1644,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .deck-utilities--desktop,
   .inbox-utilities--desktop,
   .agents-utilities--desktop,
+  .shuttlebay-utilities--desktop,
   .sessions-utilities--desktop,
   .costs-utilities--desktop {
     display: none;
