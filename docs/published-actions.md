@@ -365,8 +365,23 @@ Every toggle defaults to the consumer behavior; the extras
 (`dispatch-bootstrap`, `protected-snapshot`, `trajectory-export`,
 `long-run-budget`, `queue-drain`, …) carry a recorded divergence reason in
 each lane's header comment (the #1305 convention). Cross-org callers cannot
-`secrets: inherit`, so every secret is declared explicitly. Consumer wiring
-shape (claude, abbreviated):
+`secrets: inherit`, so every secret is declared explicitly.
+
+**The opencode agent step is era-split and deliberately diverges from the
+published path (issue #1205).** agent-lcars' own hosted worker runs the
+SHA-pinned upstream `anomalyco/opencode/github` published action plus an
+authenticated-release curl wrapper (#218, #673), while consumers run the
+published `setup-opencode` composite and the same `opencode github run`
+entry point as a plain step. That divergence is deliberate: agent-lcars is
+the fleet's reference implementation, so its own worker stays on the
+SHA-pinned upstream invocation to guard the critical path against
+supply-chain drift, and the curl wrapper works around the action's
+unauthenticated release lookup without exposing the token process-wide.
+Consumers dogfood `setup-opencode`, which resolves the release through the
+workflow's own token (`gh api`), caches that exact release, and installs it
+without modifying runner shell configuration. Re-unifying the two paths
+onto `setup-opencode` is deferred until a live test dispatch verifies the
+hosted worker on the composite. Consumer wiring shape (claude, abbreviated):
 
 ```yaml
 jobs:
