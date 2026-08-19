@@ -25,15 +25,15 @@ The audit sorts revisions by their recorded creation timestamp. It alerts only
 when the backend Ready condition is `False` and the newest Cloud Run revision's
 Ready condition is `True`. The report lists only revisions whose Ready
 condition is `False`, whose total recorded traffic is explicitly zero, and
-whose App Hosting build and rollout linkage is present and belongs to the
-audited backend. Missing or malformed fields are not guessed into an alert.
+whose App Hosting build-and-rollout linkage is present and belongs to the
+audited backend. Missing or malformed fields are never guessed into an alert.
 
 ## Safe remediation
 
 The alert is evidence for an operator, not an authorization to change the
 control plane. First inspect the linked build and rollout in the App Hosting
-console or approved read-only API path, confirm the serving revision and
-traffic state, and follow the platform's documented rollback/revision cleanup
+console or an approved read-only API path, confirm the serving revision and
+traffic state, and follow the platform's documented rollback/revision-cleanup
 procedure with maintainer approval. Any eventual cleanup or traffic change is a
 separate, explicitly reviewed operation. Do not delete a revision, change
 traffic, or deploy from this audit command.
