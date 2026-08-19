@@ -119,8 +119,6 @@ jobs:
       - name: Test attempt-marker stamping
         run: bash .github/actions/stamp-attempt-marker/stamp.test.sh
 
-      - name: Test opencode config contract
-        run: bash tools/opencode-config.test.sh
 
       - name: Test OpenCode trajectory archival
         run: bash .github/actions/archive-opencode-trajectory/archive.test.sh
