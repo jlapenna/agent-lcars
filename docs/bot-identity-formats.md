@@ -1,15 +1,6 @@
 # Canonical format for agent bot identities: REST vs GraphQL
 
-`claude[bot]`/`app/claude` and `agent-lcars[bot]`/`app/agent-lcars` are pairs
-of different string encodings of the _same_ underlying GitHub App
-installation. They are not accounts that can drift apart; they are two
-serializations of one identity that happen to look nothing alike. Mixing
-them without translating is what silently broke the CI → deploy chain for
-every agent-merged PR (#175): the auto-merge workflow's `restore-main-checks`
-job read a GraphQL-shaped login (`app/claude`) and compared it against
-`vars.AGENT_BOT_LOGINS`, a REST-shaped list (`["claude[bot]", ...]`) —
-the two never matched, so the job always took the "not agent-authored"
-branch and skipped the manual CI/deploy dispatch it exists to perform.
+`claude[bot]`/`app/claude` and `agent-lcars[bot]`/`app/agent-lcars` are pairs of different string encodings of the _same_ GitHub App installation — two serializations of one identity, not accounts that can drift apart. Mixing them without translating is what broke the CI → deploy chain for every agent-merged PR (#175): the auto-merge workflow's `restore-main-checks` job read a GraphQL-shaped login (`app/claude`) and compared it against `vars.AGENT_BOT_LOGINS`, a REST-shaped list (`["claude[bot]", ...]`) — they never matched, so the job always took the "not agent-authored" branch and skipped the manual CI/deploy dispatch.
 
 ## Why the two shapes exist
 
