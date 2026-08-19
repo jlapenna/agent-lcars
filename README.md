@@ -12,7 +12,7 @@ Adding the `claude` (or `opencode`) label to an issue in a watched repo
 dispatches a coding agent on this fleet's own ephemeral, self-hosted GitHub
 Actions runners. That agent works the issue headlessly — commenting,
 opening a PR, asking a clarifying question — following the shared
-conventions in [`.agents/skills/agent-protocol`](.agents/skills/agent-protocol/agent-protocol.md)
+conventions in [`.agents/skills/agent-protocol`](.agents/skills/agent-protocol/reference/agent-protocol.md)
 and this repo's own [`.agents/skills/lcars`](.agents/skills/lcars/lcars-protocol.md)
 delta. Agent LCARS is the console that makes that fleet observable and
 operable: what needs a human right now, what's actively running, and a full
@@ -161,7 +161,7 @@ issues and pull requests. GitHub App identities, including
 - [docs/bot-identity-formats.md](docs/bot-identity-formats.md) — why
   `claude[bot]` (REST) and `app/claude` (GraphQL) are the same identity in
   two shapes, and which one is canonical here.
-- [.agents/skills/agent-protocol/agent-protocol.md](.agents/skills/agent-protocol/agent-protocol.md)
+- [.agents/skills/agent-protocol/reference/agent-protocol.md](.agents/skills/agent-protocol/reference/agent-protocol.md)
   and [.agents/skills/lcars/lcars-protocol.md](.agents/skills/lcars/lcars-protocol.md)
   — the conventions this repo's own dispatched agents follow.
 

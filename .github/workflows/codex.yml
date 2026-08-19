@@ -18,7 +18,7 @@ name: Codex Issue Agent
 # credential on every run and two repos sharing one lineage invalidate
 # each other.
 #
-# See .agents/skills/agent-protocol/agent-protocol.md and
+# See agents/shared/skills/agent-protocol/reference/agent-protocol.md and
 # .agents/skills/lcars/lcars-protocol.md for the conventions this agent
 # follows.
 

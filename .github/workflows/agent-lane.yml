@@ -1371,6 +1371,9 @@ jobs:
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+          # opencode.json lives under agents/opencode/, not the repo root
+          # opencode auto-discovers by default — point it there explicitly.
+          OPENCODE_CONFIG: agents/opencode/opencode.json
           # Marker-stamping gh wrapper installed by agent-handoff
           # (agent-lcars#1213) — deliberately set ONLY here; the post-agent
           # gates use the same gh, and stamping their reports would let the
@@ -1396,6 +1399,9 @@ jobs:
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
+          # opencode.json lives under agents/opencode/, not the repo root
+          # opencode auto-discovers by default — point it there explicitly.
+          OPENCODE_CONFIG: agents/opencode/opencode.json
           # use_github_token needs this passed explicitly — it does not
           # fall back to the job's ambient token.
           GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}

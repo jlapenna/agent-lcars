@@ -116,7 +116,9 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
 
 - Git hooks (husky/pre-commit, whatever the repo uses):
   `if command -v fleet-require-worktree >/dev/null 2>&1; then fleet-require-worktree; fi`
-- `opencode.json`: the homelab LiteLLM provider block.
+- `agents/opencode/opencode.json`: the homelab LiteLLM provider block (the
+  lane sets `OPENCODE_CONFIG` to this path since opencode's own
+  auto-discovery only looks at the repo root).
 - `AGENTS.md`: a fleet section naming the install
   (`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`),
   the `fleet-*` commands, and the worktree mandate.

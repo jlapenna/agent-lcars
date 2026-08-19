@@ -159,7 +159,7 @@ One credential deserves its own note, because what it must **not** be is the
 point of it.
 
 Agents are allowed to rerun their own failed CI
-(`.agents/skills/agent-protocol/agent-protocol.md` §8). That needs
+(`.agents/skills/agent-protocol/reference/agent-protocol.md` §8). That needs
 `actions: write`, which the token the Claude action vends does not have. The
 obvious source is the workflow's own `GITHUB_TOKEN` — and that is exactly
 what this must never be: it carries the job's full

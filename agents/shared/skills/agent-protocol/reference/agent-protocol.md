@@ -232,7 +232,7 @@ converging and is indistinguishable, from the outside, from a stuck run.
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
 **Situational** — moved to
-[`agent-protocol-reference.md`](agent-protocol-reference.md#8-ci-reruns-and-the-bot-push--action_required-platform-fact).
+[`index.md`](index.md#8-ci-reruns-and-the-bot-push--action_required-platform-fact).
 Read it when a check never starts on your own push, or when you are deciding
 whether you may rerun one yourself. The section number is unchanged there.
 
@@ -249,7 +249,7 @@ proof anything was delivered — see §5.
 ## 10. GitHub Apps bot-identity assignment gotcha
 
 **Situational** — moved to
-[`agent-protocol-reference.md`](agent-protocol-reference.md#10-github-apps-bot-identity-assignment-gotcha).
+[`index.md`](index.md#10-github-apps-bot-identity-assignment-gotcha).
 Read it when an "assign myself" call silently did nothing. The section number
 is unchanged there.
 
@@ -274,3 +274,40 @@ protected infra directory, a deploy pipeline that must run some other way,
 etc.). Those limits are additive except where the delta invokes one of the
 explicit approval exceptions above; approval for one named operation does not
 relax any other limit.
+
+## 12. Session status channel
+
+Every dispatched run appears in this fleet's own operations console the
+moment it starts — a channel your takeover/progress comment (§1, §3) does
+not reach on its own, since someone scanning the console for what is
+running right now is not also reading every anchor thread. This is fixed
+vocabulary like `status:needs-human` (§4), not a per-repo choice: the same
+console watches every repo this protocol is pulled into. Two commands
+control what your run says there; neither needs a session id, since the CLI
+reads it from your own CLI's environment (e.g. `CLAUDE_CODE_SESSION_ID`,
+`CODEX_THREAD_ID`):
+
+```bash
+lcars session title  "Land session titles end to end"   # the session's stable NAME
+lcars session status "waiting on CI for #1247"          # what it is doing RIGHT NOW
+```
+
+- **Title** — set once, early, when you know what the session actually is.
+  Left alone it stays whatever your CLI wrote at start (the prompt that
+  opened it), which drifts from reality the moment work moves past that
+  prompt.
+- **Status** — update on state changes someone might act on (`waiting on CI
+for #1247`, `blocked on review`, `rerunning after a flake`), and clear it
+  (`lcars session status --clear`) the moment it stops being true — the
+  console shows a status's age, so a stale one reads as visibly wrong
+  rather than silently vanishing. Status is not narration: if you would not
+  say it out loud to someone walking past, it is not a status. A useful
+  test — would this change what someone decides to do? "waiting on CI"
+  tells them not to bother you; "reading daemon.ts" does not.
+
+These write to local session state, never the repo, so a read-only
+checkout is not a reason to skip them. The `lcars` command may be absent on
+some hosts, or missing a newer subcommand: check once (`command -v lcars`),
+try it, and if it is missing or errors, carry on silently — never fail a
+task over telemetry, and never report a status you did not actually manage
+to set.

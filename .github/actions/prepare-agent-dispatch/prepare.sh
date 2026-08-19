@@ -38,7 +38,7 @@ fi
 
 dispatch_dir="$RUNNER_TEMP/agent-dispatch"
 context_path="$dispatch_dir/context.json"
-protocol_path="$(realpath "$GITHUB_ACTION_PATH/../../../.agents/skills/agent-protocol/agent-protocol.md")"
+protocol_path="$(realpath "$GITHUB_ACTION_PATH/../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md")"
 
 if [ ! -f "$protocol_path" ]; then
   echo "::error::Shared agent protocol is missing at $protocol_path" >&2
@@ -52,7 +52,7 @@ fi
 # -- which in agent-lcars is a symlink into the checkout.
 skills_dest="${HOME:-/root}/.claude/skills"
 skills_digest="$(bash "$GITHUB_ACTION_PATH/install-skills.sh" \
-  "$GITHUB_ACTION_PATH/../../../.agents/skills" "$skills_dest" || true)"
+  "$GITHUB_ACTION_PATH/../../../agents/shared/skills" "$skills_dest" || true)"
 
 mkdir -p "$dispatch_dir"
 

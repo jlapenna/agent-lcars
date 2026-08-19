@@ -306,7 +306,7 @@ A cross-repo `uses:` downloads this entire repository at the resolved ref
 into the runner's `_actions` directory — not just the action directory.
 That is load-bearing, not incidental: `prepare-agent-dispatch` resolves
 the fleet protocol document via
-`$GITHUB_ACTION_PATH/../../../.agents/skills/agent-protocol/agent-protocol.md`,
+`$GITHUB_ACTION_PATH/../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md`,
 and `snapshot-enforcement-scripts` copies sibling action directories from
 `$GITHUB_ACTION_PATH/..`. Repo-relative paths above the action directory are
 a supported pattern here, but each action that relies on one must say so in

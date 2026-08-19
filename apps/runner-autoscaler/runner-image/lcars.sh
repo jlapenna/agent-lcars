@@ -19,7 +19,7 @@
 # meaning to the command parser -- the ONLY thing that makes `session
 # status "..."` the command surface a dispatched agent runs is that this
 # file is installed as `lcars`, matching what
-# `.agents/skills/lcars-session-updates` already tells every agent to type.
+# `agents/shared/skills/lcars-session-updates` already tells every agent to type.
 #
 # Node resolution deliberately does NOT mirror the host launcher's fnm
 # fallback dance: that complexity exists because the host's Node is
