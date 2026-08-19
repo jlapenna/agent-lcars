@@ -100,7 +100,7 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
 - `.github/workflows/agent-automerge.yml`: thin caller of
   `agent-automerge-reusable.yml@main`. Inert until `AGENT_BOT_LOGINS`
   exists — it skips cleanly, not red.
-- `.github/workflows/validate.yml`: a thin caller of
+- `.github/workflows/repo-validation.yml`: a thin caller of
   `repo-validation.yml@main` with `canonical-sync: true` (#1340 A-R5/B8) —
   it owns only triggers, permissions, and concurrency. Keep it on
   GitHub-hosted runners (the reusable's default): it must stay
@@ -125,7 +125,7 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
 
 **No vendored scripts, and no `canonical-sync.conf` by default.** A new
 repo copies nothing from this one — it reads the fleet's conventions here.
-A manifest (and `validate.yml`'s `canonical-sync: true`) is warranted only
+A manifest (and `repo-validation.yml`'s `canonical-sync: true`) is warranted only
 once the repo genuinely acquires a file that must be byte-identical to one
 of ours, such as the `worktree-hygiene` skill doc. If a repo has stale
 pre-#1328 script copies on its main, delete them in this PR.
