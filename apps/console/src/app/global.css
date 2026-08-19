@@ -1036,6 +1036,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   opacity: 1;
 }
 
+.queue-item-row__chevron {
+  flex: 0 0 auto;
+  color: var(--queue-row-accent);
+  opacity: 0.55;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.queue-item-row:hover .queue-item-row__chevron,
+.queue-item-row:focus-within .queue-item-row__chevron,
+.queue-item-row[data-selected] .queue-item-row__chevron {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
 .queue-kind-badge,
 .queue-reason-badge,
 .queue-label-count,

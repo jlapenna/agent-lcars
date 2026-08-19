@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { IconChevronRight } from '@tabler/icons-react';
 import Link from 'next/link';
 
 import { repoDisplayName } from '../lib/watched-repo';
@@ -95,6 +96,11 @@ export function QueueItemRow({
               {item.title}
             </Text>
           </Tooltip>
+          <IconChevronRight
+            size={16}
+            aria-hidden="true"
+            className="queue-item-row__chevron"
+          />
 
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text component="span" size="xs" c="dimmed" truncate>
