@@ -18,6 +18,11 @@
       "matchManagers": ["gomod"],
       "matchPackageNames": ["github.com/google/uuid"],
       "registryUrls": ["https://proxy.golang.org"]
+    },
+    {
+      "description": "Match pnpm 11's own default 24-hour minimumReleaseAge install-time policy (pnpm-workspace.yaml). Without this, Renovate can open and auto-merge an npm bump for a package published hours ago, landing a lockfile entry that pnpm itself then rejects on the very next install (#1345/#1391) — a same-day-published version cleared pnpm's own gate only because #964-era exclusions predate this repo pinning pnpm 11.",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "1 day"
     }
   ],
   "vulnerabilityAlerts": {
