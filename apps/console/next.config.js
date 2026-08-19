@@ -31,6 +31,27 @@ const cloudTasksProtoInclude = path
   .split(path.sep)
   .join('/');
 
+// @swc/core-emitted ESM interop helpers (e.g. _interop_require_default.js)
+// are required dynamically by Next's own require-hook depending on the
+// calling module's type, so the standalone trace sometimes copies only
+// @swc/helpers' cjs/ output and misses esm/ — a server request for a route
+// that needed one then crashes at runtime with MODULE_NOT_FOUND (only
+// reproduces after the standalone bundle is restored from Nx cache, not on
+// a from-scratch build in the same job — surfaced by #1345's @swc/core
+// 1.15.47 -> 1.16.0 bump). Same fix shape as the Cloud Tasks proto above:
+// force-include the whole esm/ directory from the one physical package this
+// install resolved.
+const swcHelpersEsmInclude = path
+  .relative(
+    __dirname,
+    path.join(
+      path.dirname(require.resolve('@swc/helpers/package.json')),
+      'esm/**',
+    ),
+  )
+  .split(path.sep)
+  .join('/');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -45,6 +66,7 @@ const nextConfig = {
   // pnpm peer variants that are not part of the install.
   outputFileTracingIncludes: {
     '/api/control-plane/webhook*': [cloudTasksProtoInclude],
+    '/**': [swcHelpersEsmInclude],
   },
   // Next 16's native cache model, enabling `"use cache"` +
   // `cacheTag`/`cacheLife` (see lib/dashboard-data.ts for why the legacy
