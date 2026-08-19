@@ -9,21 +9,11 @@ this file. Headless-CI-dispatch conventions (takeover comment, parking,
 identity, dispatch/reconciliation) are defined by the **agent-protocol** and
 **lcars** skills instead — read those when dispatched as a headless agent.
 
-The project skills live in `.agents/skills/`. Depending on your agent
-runtime:
-
-- **Claude Code**: these skills are exposed via symlinks under
-  `.claude/skills/`. Invoke them with the `Skill` tool (e.g.
-  `agent-lcars-dev`) — they are auto-discovered from their `description:`
-  frontmatter, which is written to match broadly for this repo (including
-  generic-seeming tasks), so no explicit forced load is needed here. There
-  is no `activate_skill` tool.
-- **Codex**: repository skills are catalogued by the local plugin
-  marketplace manifest in `.agents/skills/.claude-plugin/marketplace.json`.
-  Trusted Codex sessions load `.codex/hooks.json`, and Claude sessions load
-  `.claude/settings.json`; both run the shared issue-workflow hook after Bash
-  commands. When a command uses `gh issue view` or `gh issue edit`, the hook
-  verifies `agent-lcars-bot` ownership and the issue-specific tmux title.
+Skills are auto-discovered per-runtime from `.agents/skills/` — don't skip
+checking for one just because a task looks generic. A `PostToolUse` hook
+runs after Bash commands and blocks premature `gh issue view`/`gh issue
+edit` calls; see the github-issue-workflow skill for the claim/ownership
+flow it enforces.
 
 Local initialization uses `pnpm install`, whose `prepare` lifecycle installs
 and verifies Husky through `tools/setup-git-hooks.sh`. Linked worktrees use
@@ -81,7 +71,3 @@ forbidden either way.
 Never commit credentials. Runtime secrets belong in GCP Secret Manager and the
 host writer credential belongs in the encrypted homelab secret store. Terraform
 owns secret containers but not secret values.
-
-Checkout safety, worktree mandate, and the full hard-limits list live in
-[agent-lcars-dev's SKILL.md](.agents/skills/agent-lcars-dev/SKILL.md#hard-guardrails)
-— read it before editing files or running any git-mutating command.

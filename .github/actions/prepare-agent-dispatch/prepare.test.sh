@@ -65,7 +65,7 @@ context_path="$(sed -n 's/^path=//p' "$GITHUB_OUTPUT")"
 protocol_path="$(sed -n 's/^protocol-path=//p' "$GITHUB_OUTPUT")"
 
 test "$context_path" = "$runner_temp/agent-dispatch/context.json"
-test "$protocol_path" = "$(realpath "$action_dir/../../../.agents/skills/agent-protocol/agent-protocol.md")"
+test "$protocol_path" = "$(realpath "$action_dir/../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md")"
 test "$(find "$consumer" -mindepth 1 -print -quit)" = ""
 
 jq -e \

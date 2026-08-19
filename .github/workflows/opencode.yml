@@ -15,7 +15,7 @@ name: OpenCode Issue Agent
 # the contract-tested run-name, the permissions grant, and the
 # repo-variable spellings passed down as inputs.
 #
-# See .agents/skills/agent-protocol/agent-protocol.md and
+# See agents/shared/skills/agent-protocol/reference/agent-protocol.md and
 # .agents/skills/lcars/lcars-protocol.md for the agent conventions. The
 # lane's deliverable-verification gate intentionally does not trust a bare
 # agent success conclusion: the agent must communicate a visible result.

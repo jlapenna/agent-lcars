@@ -1,7 +1,7 @@
 # LCARS Protocol — `agent-lcars` Repo Delta
 
 Repo-specific conventions for `jlapenna/agent-lcars`. This is a short delta
-on top of `.agents/skills/agent-protocol/agent-protocol.md` — read that file
+on top of `.agents/skills/agent-protocol/reference/agent-protocol.md` — read that file
 first; everything here just fills in the repo-specific parameters it leaves
 open, plus a few hard limits unique to this repo. Where the two disagree,
 this file wins for this repo.
@@ -160,8 +160,8 @@ gh variable set AGENT_BOT_LOGINS --repo jlapenna/agent-lcars \
 No lcars delta — general dev guardrails (worktrees, hard limits) and the PR
 and verify workflows now live once in the
 [agent-lcars-dev](../agent-lcars-dev/SKILL.md) skill; read
-[references/verify.md](../agent-lcars-dev/references/verify.md) before
-ending your turn with a PR open.
+[references/verify.md](../agent-lcars-dev/references/verify.md)
+before ending your turn with a PR open.
 
 ## Hard limits specific to this repo
 

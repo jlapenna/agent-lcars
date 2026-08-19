@@ -363,7 +363,7 @@ RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars
 # agent-lcars#1289: the `lcars` CLI (`lcars session title "..."`/`lcars
 # session status "..."`), built above as a second, independent bundle
 # (session-title-cli target). This closes the gap #1289 exists for: the
-# `.agents/skills/lcars-session-updates` layer-1 skill surface has been
+# `agents/shared/skills/lcars-session-updates` layer-1 skill surface has been
 # installed into every dispatched agent's $HOME/.claude/skills since #1269,
 # and that skill already teaches `lcars session status "..."` -- but until
 # now this image shipped no `lcars` binary at all, so every dispatched

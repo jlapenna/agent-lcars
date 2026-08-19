@@ -107,7 +107,7 @@ credential expiry.
 
 ## Where OpenCode's standing orders live, and why not in `agent.*.prompt`
 
-`opencode.json`'s `instructions` points at `.agents/opencode-standing-orders.md`.
+`opencode.json`'s `instructions` points at `agents/opencode/instructions.md`.
 Measured 2026-08-16 against opencode 1.18.18, by pointing the provider
 `baseURL` at a local server and reading the request off the wire:
 

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-config="$repo_root/opencode.json"
+config="$repo_root/agents/opencode/opencode.json"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -27,17 +27,18 @@ mapfile -t instruction_paths < <(jq -r '.instructions[]? // empty' "$config")
 if [ "${#instruction_paths[@]}" -eq 0 ]; then
   fail "opencode.json declares no instructions; the standing orders reach the model through that field (#1242)"
 fi
+config_dir="$(dirname "$config")"
 for path in "${instruction_paths[@]}"; do
   case "$path" in
     http://* | https://*) continue ;;
   esac
-  test -f "$repo_root/${path#./}" ||
+  test -f "$config_dir/$path" ||
     fail "instructions entry '$path' does not exist; OpenCode drops missing files silently"
 done
 
 # --- the standing orders must still say the thing they exist to say ----------
-orders="$repo_root/.agents/opencode-standing-orders.md"
-test -f "$orders" || fail ".agents/opencode-standing-orders.md is missing"
+orders="$repo_root/agents/opencode/instructions.md"
+test -f "$orders" || fail "agents/opencode/instructions.md is missing"
 grep -Fq "Commit and push at the first working slice" "$orders" ||
   fail "the standing orders no longer carry the commit-early rule they exist for"
 
