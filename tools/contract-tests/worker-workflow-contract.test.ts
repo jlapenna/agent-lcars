@@ -435,7 +435,7 @@ const LANE_SURFACES: Record<
       'codex-auth-secret-name': {
         required: false,
         type: 'string',
-        default: 'CODEX_AUTH_JSON',
+        default: '',
       },
       'gcp-access-verify-projects': {
         required: false,

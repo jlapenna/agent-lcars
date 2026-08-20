@@ -141,12 +141,13 @@ repo vars provisioned (#1354), so only the mint is left.
    This is why the old "run it on a workstation with no live Codex session
    you care about" advice is obsolete: run it on your normal machine.
 
-2. Publish it as that repo's own lineage, then shred the isolated home so
+2. Publish it to that repo's own GCS object, then shred the isolated home so
    no competing lineage is left on disk:
 
    ```bash
-   gcloud secrets versions add SYNC_PADD_CODEX_AUTH_JSON \
-     --project=agent-lcars --data-file="$CODEX_HOME/auth.json"
+   gcloud storage cp "$CODEX_HOME/auth.json" \
+     gs://agent-lcars-codex-auth/jlapenna/sync-padd/auth.json \
+     --if-generation-match=0
    rm -rf "$CODEX_HOME"; unset CODEX_HOME
    ```
 
@@ -156,20 +157,20 @@ repo vars provisioned (#1354), so only the mint is left.
    minted: `~/p/mint-fleet-codex-lineages.sh`, discussed in
    jlapenna/homelab#758 (kept out of this public repo deliberately).
 
-   Secret naming is `<REPO>_CODEX_AUTH_JSON`. **Project `agent-lcars` for
-   every repo**, settled in #1354 including the two `supersprinklesracing`
-   ones: the shared `github` pool that admits them lives there, a
-   WIF-impersonated service account must live in its pool's project, and
-   one control plane beats matching each repo's owning org. `sprinkles`
-   predates the decision and keeps its lineage in project
-   `supersprinklesracing`; that is history, not a pattern to copy.
+   The object layout is `gs://agent-lcars-codex-auth/<owner>/<repo>/auth.json`.
+   **Project `agent-lcars` for every repo**, settled in #1354 including the
+   two `supersprinklesracing` ones: the shared `github` pool that admits them
+   lives there, and the bucket IAM condition confines each identity to its own
+   prefix. The lane reads one exact generation and persists only with that
+   generation as `--if-generation-match`; a conflict is terminal and must not
+   be retried.
 
-3. Infrastructure, for a repo Terraform does **not** yet cover: add it to
-   `local.fleet_codex_agents` in `infra/terraform/main.tf` and to
-   `var.additional_fleet_repositories`, then apply. That one map entry
-   yields the secret container, a dedicated `<slug>-codex-agent` service
-   account, `secretAccessor` + `secretVersionAdder` on that secret alone,
-   and `workloadIdentityUser` for the repo's own principal.
+3. Infrastructure, for a repo Terraform does **not** yet cover: add its
+   existing runtime service account to `local.codex_auth_runtime_identities`
+   in `infra/terraform/main.tf`, then apply. That one map entry yields a
+   conditional `storage.objects.get/create/delete` grant restricted to the
+   repository's own object prefix; it grants neither object listing nor
+   access to another repository's credential.
 
    Per-repo identities are not ceremony: the codex lane exports ambient ADC
    so its `gcloud secrets` calls work, so agent-authored code in that job
@@ -199,10 +200,9 @@ repo vars provisioned (#1354), so only the mint is left.
    `github` pool needs none of this: it matches on
    `assertion.repository` alone.
 
-4. Set the repo side: caller inputs `codex-auth-secret-name` /
-   `gcp-project-id` in `codex.yml`; the four 2026-08 onboarded repos read
-   vars instead — `GCP_WIF_PROVIDER`, `GCP_CODEX_AGENT_SA`,
-   `GCP_PROJECT_ID`, all already set.
+4. Set the repo side: callers need only `gcp-project-id` plus their existing
+   WIF provider and service-account values. The object path derives from
+   `github.repository`; there is no per-repository secret-name input.
 5. Verify: `codex login status` inside the lane's restore step log.
 
 ## `OPENCODE_LLM_API_KEY` (opencode lane)

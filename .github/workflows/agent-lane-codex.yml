@@ -99,13 +99,13 @@ on:
         required: true
         type: string
       gcp-project-id:
-        description: 'GCP project holding the subscription-credential secret'
+        description: 'GCP project used to authenticate the subscription-credential identity'
         required: true
         type: string
       codex-auth-secret-name:
-        description: "Secret Manager name of this repo's own auth.json lineage"
+        description: 'Deprecated: legacy Secret Manager credential name; retained only while callers migrate to GCS generation-CAS'
         required: false
-        default: 'CODEX_AUTH_JSON'
+        default: ''
         type: string
       gcp-access-verify-projects:
         description: 'Space-separated projects to preflight read-only access against (empty skips)'

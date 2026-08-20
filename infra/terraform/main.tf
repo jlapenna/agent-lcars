@@ -676,6 +676,11 @@ locals {
     {
       "jlapenna/agent-lcars" = google_service_account.codex_agent.email
       "jlapenna/homelab"     = google_service_account.homelab_codex_agent.email
+      # Sprinkles authenticates through its own WIF pool in the
+      # supersprinklesracing project, so it has no agent-lcars service
+      # account to derive here. Its conditional bucket grant is still
+      # confined to this one repository prefix.
+      "supersprinklesracing/sprinkles" = "claude-agent-readonly@supersprinklesracing.iam.gserviceaccount.com"
     },
     { for repository, agent in google_service_account.fleet_codex_agent : repository => agent.email },
   )

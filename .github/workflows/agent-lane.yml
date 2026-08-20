@@ -56,10 +56,10 @@
 # - gcp-auth (claude/opencode): sprinkles' agents self-verify production
 #   through a read-only WIF identity; the other repos grant the agent no
 #   ambient GCP.
-# - codex-auth-secret-name / gcp-project-id (codex): every repo minted its
-#   own independent subscription credential on purpose — two repos sharing
-#   one blob invalidate each other, because Codex rotates the credential
-#   on every run and nothing can serialize runs across repos.
+# - gcp-project-id (codex): every repo receives its own independent object
+#   in the GCS CAS store — two repos sharing one blob invalidate each other,
+#   because Codex rotates the credential on every run and nothing can
+#   serialize runs across repos.
 # - gcp-access-verify-projects (codex): sprinkles fails before starting a
 #   costly agent turn if its cross-project read-only viewer grants
 #   regressed.
@@ -215,14 +215,14 @@ on:
         default: 'claude-token-reader@agent-lcars.iam.gserviceaccount.com'
         type: string
       gcp-project-id:
-        description: 'Codex: GCP project holding the subscription-credential secret (required)'
+        description: 'Codex: GCP project used to authenticate the subscription-credential identity (required)'
         required: false
         default: ''
         type: string
       codex-auth-secret-name:
-        description: "Codex: Secret Manager name of this repo's own auth.json lineage"
+        description: 'Codex: deprecated legacy Secret Manager credential name; use GCS generation-CAS by leaving blank'
         required: false
-        default: 'CODEX_AUTH_JSON'
+        default: ''
         type: string
       gcp-access-verify-projects:
         description: 'Codex: space-separated projects to preflight read-only access against (empty skips)'
@@ -947,7 +947,7 @@ jobs:
 
       - name: Restore subscription authentication
         # DO NOT populate this secret by copying the blob out of another
-        # repository's auth.json secret, however tempting the shortcut
+        # repository's auth.json object, however tempting the shortcut
         # looks. Codex rotates the credential on every run and the
         # "Persist refreshed..." step below writes the new one back.
         #
@@ -958,19 +958,34 @@ jobs:
         # repos, so there is no configuration that makes a shared
         # credential safe.
         #
-        # Mint an independent one instead (`codex login`) — same ChatGPT
-        # subscription, separate token, rotating on its own.
+        # Each repository has its own object (`codex login` mints a
+        # separate token under the same ChatGPT subscription).
         id: restore-auth
         if: ${{ inputs.pipeline == 'codex' }}
         env:
-          GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
-          CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
+          CODEX_AUTH_OBJECT: gs://agent-lcars-codex-auth/${{ github.repository }}/auth.json
+          LEGACY_CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
         run: |
           mkdir -p "$HOME/.codex"
           chmod 700 "$HOME/.codex"
-          gcloud secrets versions access latest \
-            --project="$GCP_PROJECT_ID" \
-            --secret="$CODEX_AUTH_SECRET_NAME" > "$HOME/.codex/auth.json"
+          if [ -n "$LEGACY_CODEX_AUTH_SECRET_NAME" ]; then
+            echo "::warning::Using deprecated Secret Manager Codex auth compatibility path. Migrate this caller by removing codex-auth-secret-name."
+            gcloud secrets versions access latest --secret="$LEGACY_CODEX_AUTH_SECRET_NAME" > "$HOME/.codex/auth.json"
+            chmod 600 "$HOME/.codex/auth.json"
+            codex login status
+            echo "auth-store=secret-manager" >> "$GITHUB_OUTPUT"
+            echo "restored-sha256=$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          restored_generation="$(gcloud storage objects describe "$CODEX_AUTH_OBJECT" --format='value(generation)')" || {
+            echo "::error::Codex subscription authentication is not seeded for ${{ github.repository }} at $CODEX_AUTH_OBJECT. Run the fleet Codex credential seed procedure before dispatching this lane."
+            exit 1
+          }
+          if [ -z "$restored_generation" ]; then
+            echo "::error::Codex subscription authentication is not seeded for ${{ github.repository }} at $CODEX_AUTH_OBJECT."
+            exit 1
+          fi
+          gcloud storage cp "${CODEX_AUTH_OBJECT}#${restored_generation}" "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
           codex login status
           # #1192: fingerprint the credential as-restored, before Codex gets
@@ -980,6 +995,8 @@ jobs:
           # to persist) doesn't burn a new secret version identical to the
           # one already stored.
           echo "restored-sha256=$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "restored-generation=$restored_generation" >> "$GITHUB_OUTPUT"
+          echo "auth-store=gcs" >> "$GITHUB_OUTPUT"
 
       # The published action resolves its cache key with an unauthenticated
       # GitHub Releases API request. Shared runners can exhaust that
@@ -1271,8 +1288,9 @@ jobs:
         # failure.
         if: always() && inputs.pipeline == 'codex' && steps.restore-auth.outcome == 'success'
         env:
-          GCP_PROJECT_ID: ${{ inputs.gcp-project-id }}
-          CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
+          CODEX_AUTH_OBJECT: gs://agent-lcars-codex-auth/${{ github.repository }}/auth.json
+          LEGACY_CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
+          RESTORED_GENERATION: ${{ steps.restore-auth.outputs.restored-generation }}
           RESTORED_SHA256: ${{ steps.restore-auth.outputs.restored-sha256 }}
         run: |
           if [ ! -s "$HOME/.codex/auth.json" ]; then
@@ -1333,7 +1351,7 @@ jobs:
           fi
 
           if [ -n "$auth_failure_reason" ]; then
-            echo "::warning::Skipping credential persist: $auth_failure_reason. The restored credential lineage is burned; a human must re-seed $CODEX_AUTH_SECRET_NAME (see #1192). Not writing auth.json back as a new secret version."
+            echo "::warning::Skipping credential persist: $auth_failure_reason. The restored credential is burned; a human must re-seed $CODEX_AUTH_OBJECT (see #1192). Not writing auth.json back."
             exit 0
           fi
 
@@ -1349,9 +1367,15 @@ jobs:
             fi
           fi
 
-          gcloud secrets versions add "$CODEX_AUTH_SECRET_NAME" \
-            --project="$GCP_PROJECT_ID" \
-            --data-file="$HOME/.codex/auth.json"
+          if [ "${{ steps.restore-auth.outputs.auth-store }}" = 'secret-manager' ]; then
+            gcloud secrets versions add "$LEGACY_CODEX_AUTH_SECRET_NAME" --data-file="$HOME/.codex/auth.json"
+            exit 0
+          fi
+
+          if ! gcloud storage cp "$HOME/.codex/auth.json" "$CODEX_AUTH_OBJECT" --if-generation-match="$RESTORED_GENERATION"; then
+            echo "::error::Codex auth persistence failed its generation precondition: another run already rotated this repository's credential. Refusing to overwrite it; do not retry this write."
+            exit 1
+          fi
 
       # ---- Era-split opencode agent step (see header). #51: two
       # dispatches retried a persistent LiteLLM 429 with a backoff growing
