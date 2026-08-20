@@ -22,6 +22,23 @@ if ! [[ "$actionlint_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+dockerfile="$here/Dockerfile"
+if ! grep -Fqx 'RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#main' "$dockerfile"; then
+  echo "runner image must install agent-tools and public repo-tools separately" >&2
+  exit 1
+fi
+
+runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
+plugin_line="$(grep -n '^RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \\' "$dockerfile" | cut -d: -f1)"
+if [[ -z "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" ]]; then
+  echo "runner image must enable the public repo-tools plugin as runner" >&2
+  exit 1
+fi
+if ! grep -Fqx '    codex plugin add repo-tools@repo-tools' "$dockerfile"; then
+  echo "runner image must enable the repo-tools plugin after adding its marketplace" >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

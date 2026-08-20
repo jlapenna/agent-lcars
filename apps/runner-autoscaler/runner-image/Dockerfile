@@ -389,12 +389,11 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
     /usr/local/lib/agent-lcars/lcars-session-title.cjs
 
-# agent-lcars#1328: the fleet workstation tools (`fleet-*` commands),
-# single-sourced from packages/fleet-tools and installed globally from the
-# same fresh-`main` checkout the telemetry stage already builds from — so
-# this tracks main with no version pin and no extra network, cache-busted
-# per publish like the rest of that stage. Consumer repos carry no copies;
-# their hooks/skills invoke these commands from PATH.
+# Agent-runtime commands are single-sourced from packages/fleet-tools and
+# installed globally from the same fresh-`main` checkout the telemetry stage
+# already builds from. General repository-management commands are installed
+# separately from the public repo-tools artifact: they are not an agent-tools
+# dependency and can evolve on their own cadence.
 COPY --from=telemetry-watcher-build /repo/packages/fleet-tools /opt/agent-tools
 RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#main
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
@@ -408,6 +407,13 @@ COPY lcars.sh /usr/local/bin/lcars
 RUN chmod +x /usr/local/bin/lcars
 
 USER runner
+
+# General repository-management guidance is a separate Codex plugin, not an
+# agent-tools dependency. Install the public @main marketplace into the runner
+# user's own Codex state so dispatched sessions load the one worktree-hygiene
+# skill instead of a repository-local copy.
+RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \
+    codex plugin add repo-tools@repo-tools
 
 # Corepack's downloaded package-manager cache is per-user. The root-side
 # `pnpm --version` smoke above proves installation but warms only /root;
