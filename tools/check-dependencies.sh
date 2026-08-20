@@ -20,14 +20,6 @@ if [ "$violations" -ne 0 ]; then
   exit 1
 fi
 
-echo "Checking frozen lockfile..."
-pnpm install --frozen-lockfile --lockfile-only --ignore-scripts
-
-echo "Checking dependency tree..."
-tree_output=$(pnpm ls --depth=10 2>&1 || true)
-if echo "$tree_output" | grep -Eq 'invalid:|missing:'; then
-  echo "$tree_output"
-  exit 1
-fi
-
-echo "Dependency checks passed."
+# The shared pnpm lockfile/tree behavior is owned by public repo-tools. This
+# repository keeps only its @agent-lcars workspace policy above.
+pnpm exec repo-check-dependencies
