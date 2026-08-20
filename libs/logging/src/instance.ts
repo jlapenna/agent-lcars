@@ -1,6 +1,5 @@
 import { forceStructuredLogging, isOnGoogleCloud } from '@agent-lcars/env';
-
-import { Logger } from './console-logger';
+import { Logger } from '@jlapenna/fleet-runtime/logging';
 
 // Use the static resolver, which falls back to DEBUG when LOG_LEVEL is unset.
 // Reading the raw env directly yields `undefined`, and shouldLog(undefined, …)

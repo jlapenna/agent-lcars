@@ -3,7 +3,11 @@ import 'server-only';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { formatWithOptions } from 'node:util';
 
-import { setLogEnricher, setLogFormatter } from '../console-logger';
+import {
+  setLogEnricher,
+  setLogFormatter,
+} from '@jlapenna/fleet-runtime/logging';
+
 import {
   getContext,
   injectLoggingContext,

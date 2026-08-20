@@ -58,9 +58,10 @@ never the reverse — see [docs/published-actions.md](docs/published-actions.md)
 
 That independence has a deliberate price (#1311): a tail of small foundation
 files is duplicated in both repos on purpose — per-lib `.swcrc`,
-`.prettierrc`, `libs/test-utils/src/server-only-mock.js`, ambient `*.d.ts` declarations,
-`CODEOWNERS`, `LICENSE`, `tools/nx-remote-cache-read-failure.test.sh` — and
-that tail may drift freely; do not "fix" it by sharing files. The two
+`.prettierrc`, ambient `*.d.ts` declarations, `CODEOWNERS`, `LICENSE`, and
+`tools/nx-remote-cache-read-failure.test.sh` — and that tail may drift freely;
+do not "fix" it by sharing files. Generic runtime helpers and Vitest fixtures
+are supplied by the current `@jlapenna/fleet-runtime` artifact. The two
 Nx-aware ESLint rules and fleet baseline are supplied by the current
 `@jlapenna/repo-tools/eslint` artifact; this repository owns only its local
 configuration and contract assertions. Do not recreate local copies or

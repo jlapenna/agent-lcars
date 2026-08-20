@@ -1,4 +1,7 @@
-import { isTrue, optional } from './env-util';
+import {
+  isTrueEnv as isTrue,
+  optionalEnv as optional,
+} from '@jlapenna/fleet-runtime/env';
 
 /**
  * Dependency-free home for the handful of env accessors `@agent-lcars/logging`

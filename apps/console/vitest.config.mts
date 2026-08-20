@@ -31,10 +31,7 @@ export default createVitestConfig({
         // nested `resolve.alias` isn't reliable enough to skip
         // re-declaring it here — matches Sprinkles/OneCake frontend
         // precedent).
-        'server-only': path.join(
-          import.meta.dirname,
-          '../../libs/test-utils/src/server-only-mock.js',
-        ),
+        'server-only': '@jlapenna/fleet-runtime/vitest/server-only-mock',
         'next/server': path.join(
           import.meta.dirname,
           '../../node_modules/next/server.js',
