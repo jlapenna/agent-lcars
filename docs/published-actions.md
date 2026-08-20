@@ -413,48 +413,31 @@ conditioned on `job_workflow_ref` must allow `agent-lane.yml` (and, for
 in-flight runs dispatched before #1340 A-R1, the historical
 `agent-lane-*.yml` refs) before a consumer adopts.
 
-## Fleet workstation tools (`packages/fleet-tools`, installed from main)
+## Two independent workstation tool systems
 
-The fleet's _session-side_ tooling — scripts that run on workstations and
-inside agent sessions, not as CI steps — is a real package in this repo,
-`packages/fleet-tools`, exposing seven commands:
+Agent LCARS owns only agent-runtime behavior, in `packages/fleet-tools`
+(published as `@agent-lcars/agent-tools`):
 
-| Command                       | Runs as                                                 | Repo-specific hook                                                     |
-| ----------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `fleet-codex-issue-guardrail` | Claude/Codex PostToolUse hook (`.claude/settings.json`) | none needed (project name from cwd; identity via `fleet-identity.cjs`) |
-| `fleet-claude-agent-session`  | operator CLI for fleet runner sessions                  | `tools/claude-agent-session.conf` at the launching repo's root         |
-| `fleet-require-worktree`      | pre-commit/pre-push git hook                            | `$1` action word; `REQUIRE_WORKTREE_EXTRA_HINT` env                    |
-| `fleet-watch-prs`             | CI-monitor skill command (auto-merge lifecycle)         | none needed (repo discovered from cwd)                                 |
-| `fleet-watch-run`             | CI-monitor skill command (single run pass/fail)         | none needed (repo discovered from cwd)                                 |
-| `fleet-safe-remove-worktree`  | worktree-hygiene skill command                          | none needed                                                            |
-| `fleet-scan-live-processes`   | worktree-hygiene skill command                          | none needed                                                            |
+| Command                       | Runs as                                                 |
+| ----------------------------- | ------------------------------------------------------- |
+| `fleet-codex-issue-guardrail` | Claude/Codex PostToolUse hook (`.claude/settings.json`) |
+| `fleet-claude-agent-session`  | operator CLI for LCARS runner sessions                  |
 
-Consumer repos hold **no copies** (the agent-lcars#1307 vendor-and-byte-pin
-mechanism is retired, #1328). Distribution tracks `main` — first-party
-software is never version-pinned in this fleet (the #29/#30 stale-pin
-lesson):
+General repository management is public
+[`jlapenna/repo-tools`](https://github.com/jlapenna/repo-tools), independent
+of LCARS agent identity and session behavior. Its `repo-*` commands cover
+worktree enforcement, process inspection, CI watching, cleanup, and Nx; its
+Codex plugin owns the authoritative `worktree-hygiene` skill. Consumer repos
+link to that source rather than copy its body. Both artifacts track `main`;
+neither depends on the other.
 
-- **Workstations**: one global install per machine, refreshed whenever it
-  is re-run —
+The runner image installs both artifacts independently: its local Agent LCARS
+agent-tools build and the public repo-tools Git artifact. Consumer hooks guard
+the relevant command with `command -v`, so a machine without an optional local
+install degrades quietly rather than carrying a stale fork.
 
-  ```
-  pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"
-  ```
-
-- **Runner image**: `apps/runner-autoscaler/runner-image/Dockerfile`
-  installs the package from the same fresh-`main` checkout it already
-  builds the telemetry bundle from — no extra network, cache-busted per
-  publish like everything else in that stage.
-- **Consumer hooks** invoke the command guarded by `command -v` (e.g.
-  `command -v fleet-codex-issue-guardrail >/dev/null 2>&1 && fleet-codex-issue-guardrail; exit 0`),
-  so a machine without the install degrades quietly. Repo-specific
-  behavior enters only through the hooks in the table — never a diverging
-  copy.
-
-`packages/fleet-tools/tests/package-install.test.sh` (Verify) pins the
-command set and the `fleet-identity.cjs` sibling-module invariant; the
-guardrail and worktree-hook behavior tests live beside it in
-`packages/fleet-tools/tests/`.
+`packages/fleet-tools/tests/package-install.test.sh` (Verify) covers only the
+agent-tools command set and its `fleet-identity.cjs` sibling-module invariant.
 
 ## Security: post-agent gates run from a pre-agent snapshot
 

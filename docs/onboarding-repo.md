@@ -11,9 +11,9 @@ bootstrap).
 Two principles shape every step:
 
 - **Nothing is copied.** Lanes and automerge are `workflow_call` references
-  to this repo's published reusables `@main`; workstation/session tooling
-  comes from the `fleet-tools` package on PATH (#1328) — a bootstrap PR
-  that vendors a script body is wrong.
+  to this repo's published reusables `@main`; Agent LCARS session/claim tools
+  and public `repo-tools` repository-management commands stay independent — a
+  bootstrap PR that vendors a script body is wrong.
 - **Nothing first-party is pinned.** Every cross-repo reference is `@main`;
   the runner image builds from fresh `main`.
 
@@ -115,13 +115,13 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
   ```
 
 - Git hooks (husky/pre-commit, whatever the repo uses):
-  `if command -v fleet-require-worktree >/dev/null 2>&1; then fleet-require-worktree; fi`
+  `if command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree; fi`
 - `agents/opencode/opencode.json`: the homelab LiteLLM provider block (the
   lane sets `OPENCODE_CONFIG` to this path since opencode's own
   auto-discovery only looks at the repo root).
-- `AGENTS.md`: a fleet section naming the install
-  (`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`),
-  the `fleet-*` commands, and the worktree mandate.
+- `AGENTS.md`: distinguish Agent LCARS's agent-specific `fleet-*` commands
+  from public `jlapenna/repo-tools` `repo-*` repository commands, and link
+  rather than copy the public plugin's worktree-hygiene guidance.
 
 **No vendored scripts or synchronized copies.** A new repo copies nothing
 from this one — it reads the fleet's conventions here and invokes shared
