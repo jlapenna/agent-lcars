@@ -728,24 +728,6 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           app-slug: ${{ steps.dispatch-bootstrap.outputs.app-slug }}
 
-      # Current runner images carry the shared config at $HOME/.config. This
-      # action creates a workspace fallback only while an older image is being
-      # drained, so publishing the workflow never breaks in-flight image
-      # promotion.
-      - name: Ensure OpenCode configuration (bootstrap era)
-        id: opencode-config-bootstrap
-        if: ${{ inputs.pipeline == 'opencode' && inputs.dispatch-bootstrap }}
-        uses: ./.github/actions/ensure-opencode-config
-        with:
-          github-token: ${{ steps.dispatch-bootstrap.outputs.token }}
-
-      - name: Ensure OpenCode configuration (published)
-        id: opencode-config-published
-        if: ${{ inputs.pipeline == 'opencode' && !inputs.dispatch-bootstrap }}
-        uses: jlapenna/agent-lcars/.github/actions/ensure-opencode-config@main # latest
-        with:
-          github-token: ${{ steps.agent-lcars-token.outputs.token }}
-
       # ---- Shared trunk. Codex uses two distinct GCP identities,
       # deliberately kept separate:
       #
@@ -1389,10 +1371,6 @@ jobs:
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
-          # The shared provider and standing instructions are baked into the
-          # managed runner image at the runner user's global config path.
-          # A repository may add a project opencode.json for local policy.
-          OPENCODE_CONFIG: ${{ steps.opencode-config-bootstrap.outputs.config-path }}
           # Marker-stamping gh wrapper installed by agent-handoff
           # (agent-lcars#1213) — deliberately set ONLY here; the post-agent
           # gates use the same gh, and stamping their reports would let the
@@ -1418,10 +1396,6 @@ jobs:
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
-          # The shared provider and standing instructions are baked into the
-          # managed runner image at the runner user's global config path.
-          # A repository may add a project opencode.json for local policy.
-          OPENCODE_CONFIG: ${{ steps.opencode-config-published.outputs.config-path }}
           # use_github_token needs this passed explicitly — it does not
           # fall back to the job's ambient token.
           GITHUB_TOKEN: ${{ steps.agent-lcars-token.outputs.token }}
