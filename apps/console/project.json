@@ -14,7 +14,11 @@
     },
     "build": {
       "executor": "@nx/next:build",
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}",
+        "{options.outputPath}/.next/static",
+        "{options.outputPath}/.next/standalone"
+      ],
       "defaultConfiguration": "production",
       "inputs": [
         "production",
