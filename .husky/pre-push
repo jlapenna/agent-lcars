@@ -22,7 +22,7 @@ else
   git lfs pre-push "$@" </dev/null
 fi
 
-printf '%s\n' "$refs" | ./packages/fleet-tools/bin/require-feature-worktree.sh pushes
+printf '%s\n' "$refs" | repo-require-worktree pushes
 
 ./tools/check-dependencies.sh
 ./tools/nx format:check --base=origin/main

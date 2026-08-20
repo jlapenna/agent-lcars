@@ -139,10 +139,7 @@ jobs:
       - name: Test OpenCode trajectory archival
         run: bash .github/actions/archive-opencode-trajectory/archive.test.sh
 
-      - name: Test the feature-worktree requirement
-        run: bash packages/fleet-tools/tests/require-feature-worktree.test.sh
-
-      - name: Test the fleet-tools package install
+      - name: Test the agent-tools package install
         run: bash packages/fleet-tools/tests/package-install.test.sh
 
       - name: Test repository symlink integrity
