@@ -405,7 +405,7 @@ RUN npm install -g /opt/agent-tools
 # pnpm-linked Nx dependency tree in this image. Install it in a private
 # prefix, then expose only its public commands on PATH.
 RUN mkdir -p /opt/repo-tools && \
-    pnpm --dir /opt/repo-tools add github:jlapenna/repo-tools#main && \
+    pnpm --dir /opt/repo-tools add --ignore-scripts github:jlapenna/repo-tools#main && \
     ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
