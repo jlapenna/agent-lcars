@@ -23,7 +23,8 @@ if ! [[ "$actionlint_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 dockerfile="$here/Dockerfile"
-if ! grep -Fqx 'RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#main' "$dockerfile"; then
+if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
+  ! grep -Fqx 'RUN npm install -g github:jlapenna/repo-tools#main' "$dockerfile"; then
   echo "runner image must install agent-tools and public repo-tools separately" >&2
   exit 1
 fi
