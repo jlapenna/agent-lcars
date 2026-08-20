@@ -102,11 +102,6 @@ on:
         description: 'GCP project used to authenticate the subscription-credential identity'
         required: true
         type: string
-      codex-auth-secret-name:
-        description: 'Deprecated: legacy Secret Manager credential name; retained only while callers migrate to GCS generation-CAS'
-        required: false
-        default: ''
-        type: string
       gcp-access-verify-projects:
         description: 'Space-separated projects to preflight read-only access against (empty skips)'
         required: false
@@ -216,7 +211,6 @@ jobs:
       gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
       gcp-service-account: ${{ inputs.gcp-service-account }}
       gcp-project-id: ${{ inputs.gcp-project-id }}
-      codex-auth-secret-name: ${{ inputs.codex-auth-secret-name }}
       gcp-access-verify-projects: ${{ inputs.gcp-access-verify-projects }}
       telemetry-workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
       telemetry-service-account: ${{ inputs.telemetry-service-account }}

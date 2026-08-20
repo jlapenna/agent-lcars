@@ -219,11 +219,6 @@ on:
         required: false
         default: ''
         type: string
-      codex-auth-secret-name:
-        description: 'Codex: deprecated legacy Secret Manager credential name; use GCS generation-CAS by leaving blank'
-        required: false
-        default: ''
-        type: string
       gcp-access-verify-projects:
         description: 'Codex: space-separated projects to preflight read-only access against (empty skips)'
         required: false
@@ -964,19 +959,9 @@ jobs:
         if: ${{ inputs.pipeline == 'codex' }}
         env:
           CODEX_AUTH_OBJECT: gs://agent-lcars-codex-auth/${{ github.repository }}/auth.json
-          LEGACY_CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
         run: |
           mkdir -p "$HOME/.codex"
           chmod 700 "$HOME/.codex"
-          if [ -n "$LEGACY_CODEX_AUTH_SECRET_NAME" ]; then
-            echo "::warning::Using deprecated Secret Manager Codex auth compatibility path. Migrate this caller by removing codex-auth-secret-name."
-            gcloud secrets versions access latest --secret="$LEGACY_CODEX_AUTH_SECRET_NAME" > "$HOME/.codex/auth.json"
-            chmod 600 "$HOME/.codex/auth.json"
-            codex login status
-            echo "auth-store=secret-manager" >> "$GITHUB_OUTPUT"
-            echo "restored-sha256=$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           restored_generation="$(gcloud storage objects describe "$CODEX_AUTH_OBJECT" --format='value(generation)')" || {
             echo "::error::Codex subscription authentication is not seeded for ${{ github.repository }} at $CODEX_AUTH_OBJECT. Run the fleet Codex credential seed procedure before dispatching this lane."
             exit 1
@@ -1289,7 +1274,6 @@ jobs:
         if: always() && inputs.pipeline == 'codex' && steps.restore-auth.outcome == 'success'
         env:
           CODEX_AUTH_OBJECT: gs://agent-lcars-codex-auth/${{ github.repository }}/auth.json
-          LEGACY_CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
           RESTORED_GENERATION: ${{ steps.restore-auth.outputs.restored-generation }}
           RESTORED_SHA256: ${{ steps.restore-auth.outputs.restored-sha256 }}
         run: |
@@ -1365,11 +1349,6 @@ jobs:
               echo "::notice::Skipping credential persist: auth.json is byte-identical to the restored credential; nothing rotated this run"
               exit 0
             fi
-          fi
-
-          if [ "${{ steps.restore-auth.outputs.auth-store }}" = 'secret-manager' ]; then
-            gcloud secrets versions add "$LEGACY_CODEX_AUTH_SECRET_NAME" --data-file="$HOME/.codex/auth.json"
-            exit 0
           fi
 
           if ! gcloud storage cp "$HOME/.codex/auth.json" "$CODEX_AUTH_OBJECT" --if-generation-match="$RESTORED_GENERATION"; then

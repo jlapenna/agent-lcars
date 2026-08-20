@@ -13,10 +13,8 @@ name: Codex Issue Agent
 # subscription-auth concurrency group, the permissions grant, and the
 # repo-variable spellings passed down as inputs.
 #
-# The subscription credential is this repo's own (infra/terraform/main.tf's
-# CODEX_AUTH_JSON) — never copy another repo's blob; Codex rotates the
-# credential on every run and two repos sharing one lineage invalidate
-# each other.
+# The subscription credential is this repository's own GCS object. Codex
+# rotates it on every run, so no two repositories may share a lineage.
 #
 # See agents/shared/skills/agent-protocol/reference/agent-protocol.md and
 # .agents/skills/lcars/lcars-protocol.md for the conventions this agent

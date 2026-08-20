@@ -125,21 +125,6 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_secret_manager_secret.homelab_codex_auth.secret_id == "HOMELAB_CODEX_AUTH_JSON"
-    error_message = "Homelab must use its own rotating Codex credential secret."
-  }
-
-  assert {
-    condition     = google_secret_manager_secret_iam_member.homelab_codex_auth_accessor.role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.homelab_codex_auth_accessor.member == "serviceAccount:${google_service_account.homelab_codex_agent.email}"
-    error_message = "The Homelab Codex service account must be able to read only its dedicated secret."
-  }
-
-  assert {
-    condition     = google_secret_manager_secret_iam_member.homelab_codex_auth_version_adder.role == "roles/secretmanager.secretVersionAdder" && google_secret_manager_secret_iam_member.homelab_codex_auth_version_adder.member == "serviceAccount:${google_service_account.homelab_codex_agent.email}"
-    error_message = "The Homelab Codex service account must be able to append refreshed versions to its dedicated secret."
-  }
-
-  assert {
     condition     = google_service_account_iam_member.homelab_writer_impersonation.role == "roles/iam.workloadIdentityUser" && google_service_account_iam_member.homelab_codex_agent_impersonation.role == "roles/iam.workloadIdentityUser"
     error_message = "Both Homelab grants must use roles/iam.workloadIdentityUser."
   }
@@ -158,22 +143,11 @@ run "renders_exact_repository_authorization" {
     error_message = "Every authorized repository must be able to impersonate the Claude token reader, and no others."
   }
 
-  # #1354: one lineage and one identity PER repo. A shared credential would
-  # let concurrent runs invalidate each other, and a shared identity would
-  # let one repo's agent rotate another's credential.
-  assert {
-    condition     = alltrue([for key, agent in local.fleet_codex_agents : google_secret_manager_secret.fleet_codex_auth[key].secret_id == agent.secret])
-    error_message = "Each fleet repository must have its own rotating Codex credential secret."
-  }
-
+  # Each Codex caller keeps its own identity; conditional bucket IAM grants
+  # it access only to its own generation-CAS object.
   assert {
     condition     = length(distinct([for key, _ in local.fleet_codex_agents : google_service_account.fleet_codex_agent[key].account_id])) == length(local.fleet_codex_agents)
-    error_message = "Each fleet repository must have its own Codex service account so rotating credentials cannot race across repositories."
-  }
-
-  assert {
-    condition     = alltrue([for key, _ in local.fleet_codex_agents : google_secret_manager_secret_iam_member.fleet_codex_auth_accessor[key].role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.fleet_codex_auth_version_adder[key].role == "roles/secretmanager.secretVersionAdder"])
-    error_message = "Each fleet Codex identity must read and append versions to its own secret - never secretAdmin."
+    error_message = "Each fleet repository must retain its own Codex service account."
   }
 
   assert {
