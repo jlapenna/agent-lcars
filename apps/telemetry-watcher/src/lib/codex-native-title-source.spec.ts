@@ -55,7 +55,7 @@ function tempDir(): string {
 function fixtureDb(
   filePath: string,
   rows: readonly ThreadFixtureRow[],
-  options: { omitTitleColumn?: boolean } = {},
+  options: { omitNameColumn?: boolean; omitTitleColumn?: boolean } = {},
 ): void {
   const db = new DatabaseSync(filePath);
   try {
@@ -64,22 +64,27 @@ function fixtureDb(
         ? `CREATE TABLE threads (
             id TEXT PRIMARY KEY,
             rollout_path TEXT,
-            name TEXT NULL,
+            ${options.omitNameColumn ? '' : 'name TEXT NULL,'}
             cwd TEXT,
             updated_at INTEGER
           )`
         : `CREATE TABLE threads (
             id TEXT PRIMARY KEY,
             rollout_path TEXT,
-            name TEXT NULL,
+            ${options.omitNameColumn ? '' : 'name TEXT NULL,'}
             title TEXT NOT NULL DEFAULT '',
             cwd TEXT,
             updated_at INTEGER
           )`,
     );
-    const columns = options.omitTitleColumn
-      ? ['id', 'rollout_path', 'name', 'cwd', 'updated_at']
-      : ['id', 'rollout_path', 'name', 'title', 'cwd', 'updated_at'];
+    const columns = [
+      'id',
+      'rollout_path',
+      ...(!options.omitNameColumn ? ['name'] : []),
+      ...(!options.omitTitleColumn ? ['title'] : []),
+      'cwd',
+      'updated_at',
+    ];
     const insert = db.prepare(
       `INSERT INTO threads (${columns.join(', ')}) VALUES (${columns
         .map(() => '?')
@@ -142,6 +147,30 @@ describe('pollCodexNativeTitles', () => {
 
     expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
       { sessionId: 'codex-session-2', title: 'My deliberate rename' },
+    ]);
+  });
+
+  it('reads generated titles from current Codex stores without a name column', () => {
+    const dbPath = path.join(tempDir(), 'state_5.sqlite');
+    fixtureDb(
+      dbPath,
+      [
+        {
+          id: 'current-codex-session',
+          rollout_path: '/rollouts/current-codex-session.jsonl',
+          name: null,
+          title: 'Current schema title',
+          updated_at: recentUpdatedAt(),
+        },
+      ],
+      { omitNameColumn: true },
+    );
+
+    expect(pollCodexNativeTitles(dbPath, { now: () => WHEN })).toEqual([
+      {
+        sessionId: 'current-codex-session',
+        title: 'Current schema title',
+      },
     ]);
   });
 

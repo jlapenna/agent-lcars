@@ -175,6 +175,10 @@ interface ThreadRow {
   [COL_TITLE]: unknown;
 }
 
+interface TableInfoRow {
+  name: unknown;
+}
+
 /**
  * Maps one `threads` row to a title candidate, or `undefined` if the row
  * can't be trusted/used: an unsafe id, a missing/blank `rollout_path` (the
@@ -295,6 +299,20 @@ export function pollCodexNativeTitles(
       Math.floor(nowMs / 1000) -
       CODEX_NATIVE_TITLE_RECENCY_WINDOW_DAYS * SECONDS_PER_DAY;
 
+    // `name` was present in Codex 0.147.0 but was removed from the current
+    // state_5 schema. Keep deliberate-name preference for older stores while
+    // treating its absence as a supported schema variant; selecting the
+    // missing column directly makes SQLite reject the whole import before a
+    // generated `title` can be read.
+    const columns = db
+      .prepare(`PRAGMA table_info(${TABLE})`)
+      .all() as unknown as TableInfoRow[];
+    const hasNameColumn = columns.some((column) => column.name === COL_NAME);
+    const nameSelection = hasNameColumn ? COL_NAME : `NULL AS ${COL_NAME}`;
+    const titlePredicate = hasNameColumn
+      ? `(trim(coalesce(${COL_NAME}, '')) <> '' OR trim(coalesce(${COL_TITLE}, '')) <> '')`
+      : `trim(coalesce(${COL_TITLE}, '')) <> ''`;
+
     // The qualifying predicate below (rollout_path present, name-or-title
     // present) is pushed into SQL so `LIMIT` bounds rows that can actually
     // produce a title -- see issue #1230. Earlier, `LIMIT` bounded the raw,
@@ -344,13 +362,10 @@ export function pollCodexNativeTitles(
     // for the pinned regression.
     const rows = db
       .prepare(
-        `SELECT ${COL_ID}, ${COL_ROLLOUT_PATH}, ${COL_NAME}, ${COL_TITLE} FROM ${TABLE}
+        `SELECT ${COL_ID}, ${COL_ROLLOUT_PATH}, ${nameSelection}, ${COL_TITLE} FROM ${TABLE}
          WHERE ${COL_UPDATED_AT} >= ?
            AND trim(coalesce(${COL_ROLLOUT_PATH}, '')) <> ''
-           AND (
-             trim(coalesce(${COL_NAME}, '')) <> ''
-             OR trim(coalesce(${COL_TITLE}, '')) <> ''
-           )
+           AND ${titlePredicate}
          ORDER BY ${COL_UPDATED_AT} DESC
          LIMIT ?`,
       )
