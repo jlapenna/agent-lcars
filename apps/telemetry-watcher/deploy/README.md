@@ -10,6 +10,15 @@ This directory is the deployment config's canonical home — moved from
 deployment config should live with the image that builds it and the
 semantics (allowlists, entrypoint, uid) it depends on.
 
+> [!IMPORTANT]
+> The deploy is **not** run from this checkout directly. `deploy.sh` only
+> needs `docker-compose.yml` beside it, but the `homelab` service account
+> cannot read this jlapenna-owned checkout on laforge (`Permission denied`
+> traversing into `~/p/agent-lcars`) and janeway has no persistent checkout at
+> all. Instead, sync the deploy files into a homelab-readable directory once
+> per deploy (issue #1304): run `sync-deploy.sh` from a checkout on the host,
+> then deploy from the synced directory. See [Deploying](#deploying) below.
+
 ## Files
 
 - `docker-compose.yml` — the compose service definition. Almost every
@@ -97,13 +106,33 @@ checkout" mode.
 
 ## Deploying
 
-On each watcher host, as the identity that owns
+The deploy runs from a homelab-readable directory, synced from a checkout on
+the host — never from the checkout itself.
+
+**1. Sync the deploy files** (run from a checkout of this repo on the watcher
+host, as the checkout owner — normally `jlapenna`):
+
+```bash
+apps/telemetry-watcher/deploy/sync-deploy.sh
+```
+
+This copies `deploy.sh`, `docker-compose.yml`, and `.env.example` into
+`/home/homelab/agent-lcars-telemetry-watcher/` (override the target with
+`AGENT_TELEMETRY_DEPLOY_DIR`, the same override `deploy.sh` honors). Re-run it
+after any change to these files lands on `main` — it is idempotent and the
+canonical refresh step, so the synced copy never silently goes stale.
+
+**2. Deploy** — on each watcher host, as the identity that owns
 `/home/homelab/agent-lcars-telemetry-watcher` (normally the `homelab` service
 account, with `sudo` available for ownership fixups):
 
 ```bash
-./deploy.sh
+cd /home/homelab/agent-lcars-telemetry-watcher && ./deploy.sh
 ```
+
+This invocation is runnable verbatim on all three hosts (pike, laforge,
+janeway): `homelab` owns the synced directory on each, so no checkout
+readability or persistence is required.
 
 ## Session titles (issue #1212)
 
