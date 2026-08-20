@@ -10,6 +10,9 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config="$repo_root/agents/opencode/opencode.json"
+runner_dockerfile="$repo_root/apps/runner-autoscaler/runner-image/Dockerfile"
+setup_action="$repo_root/.github/actions/setup-opencode/action.yml"
+agent_lane="$repo_root/.github/workflows/agent-lane.yml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -65,5 +68,27 @@ while read -r model context output; do
   [ "$output" -ge 4096 ] ||
     fail "$model output $output cannot emit a whole component file in one turn"
 done < <(jq -r '.provider.homelab.models | to_entries[] | "\(.key) \(.value.limit.context) \(.value.limit.output)"' "$config")
+
+# --- the runner owns the shared configuration --------------------------------
+# The provider config and standing instructions apply to every agent job, so
+# they belong in the one managed runner image, not in each consumer checkout.
+# A source-level contract catches either half of a relative instructions path
+# being moved without the other, and prevents a later workspace download from
+# recreating the retired copy-on-every-run design.
+grep -Fq '/repo/agents/opencode/opencode.json' "$runner_dockerfile" ||
+  fail "runner image no longer installs the shared opencode.json"
+grep -Fq '/home/runner/.config/opencode/opencode.json' "$runner_dockerfile" ||
+  fail "runner image does not install opencode.json at the runner global config path"
+grep -Fq '/repo/agents/opencode/instructions.md' "$runner_dockerfile" ||
+  fail "runner image no longer installs the OpenCode standing instructions"
+grep -Fq '/home/runner/.config/opencode/instructions.md' "$runner_dockerfile" ||
+  fail "runner image does not preserve opencode.json's relative instructions path"
+if grep -Fq 'Install OpenCode config' "$setup_action" ||
+  grep -Fq 'agents/opencode/opencode.json' "$setup_action"; then
+  fail "setup-opencode must install the CLI only; runner configuration is managed by the image"
+fi
+if grep -Fq 'OPENCODE_CONFIG:' "$agent_lane"; then
+  fail "agent lane must not override managed runner configuration with a workspace copy"
+fi
 
 echo "opencode-config: ok"

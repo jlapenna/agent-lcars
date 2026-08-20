@@ -116,9 +116,10 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
 
 - Git hooks (husky/pre-commit, whatever the repo uses):
   `if command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree; fi`
-- `agents/opencode/opencode.json`: the homelab LiteLLM provider block (the
-  lane sets `OPENCODE_CONFIG` to this path since opencode's own
-  auto-discovery only looks at the repo root).
+- The managed runner image supplies the shared OpenCode provider and standing
+  instructions at the runner user's global configuration path. Add a project
+  `opencode.json` only for a genuinely repository-specific setting; OpenCode
+  loads it after the managed global configuration.
 - `AGENTS.md`: distinguish Agent LCARS's agent-specific `fleet-*` commands
   from public `jlapenna/repo-tools` `repo-*` repository commands, and link
   rather than copy the public plugin's worktree-hygiene guidance.

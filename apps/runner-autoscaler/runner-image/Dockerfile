@@ -423,6 +423,19 @@ RUN chmod +x /usr/local/bin/lcars
 # runner is an integrated first-party delivery surface, not a pinned artifact.
 RUN npm install -g @openai/codex
 
+# OpenCode reads this runner user's global configuration before any optional
+# project-level config. Keep the fleet-wide provider, safe defaults, and
+# standing instructions here rather than copying them into every Actions
+# workspace via OPENCODE_CONFIG. A repository can still add its own project
+# opencode.json when it has an actual local requirement; OpenCode loads that
+# later in its documented precedence order.
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/opencode.json \
+    /home/runner/.config/opencode/opencode.json
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/instructions.md \
+    /home/runner/.config/opencode/instructions.md
+
 USER runner
 
 # General repository-management guidance is a separate Codex plugin, not an
