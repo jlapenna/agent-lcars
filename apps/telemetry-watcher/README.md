@@ -256,5 +256,7 @@ and this app's `/metrics` dead-man signal — see
 `tag@digest`, and Renovate is disabled for that LAN registry in this repo's
 own `renovate.json` (its runner can't reach
 `docker-registry.lan.jlapenna.net`), so moving the pin is still a human
-step — run [`deploy/deploy.sh`](deploy/deploy.sh) on each watcher host after
-updating it.
+step. Run [`deploy/sync-deploy.sh`](deploy/sync-deploy.sh) from a checkout on
+each watcher host, then
+[`deploy.sh`](deploy/README.md#deploying) from the synced homelab-readable
+directory — the deploy is never run from the checkout itself (issue #1304).
