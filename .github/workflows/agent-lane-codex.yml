@@ -102,11 +102,6 @@ on:
         description: 'GCP project holding the subscription-credential secret'
         required: true
         type: string
-      codex-auth-secret-name:
-        description: "Secret Manager name of this repo's own auth.json lineage"
-        required: false
-        default: 'CODEX_AUTH_JSON'
-        type: string
       gcp-access-verify-projects:
         description: 'Space-separated projects to preflight read-only access against (empty skips)'
         required: false
@@ -216,7 +211,6 @@ jobs:
       gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
       gcp-service-account: ${{ inputs.gcp-service-account }}
       gcp-project-id: ${{ inputs.gcp-project-id }}
-      codex-auth-secret-name: ${{ inputs.codex-auth-secret-name }}
       gcp-access-verify-projects: ${{ inputs.gcp-access-verify-projects }}
       telemetry-workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
       telemetry-service-account: ${{ inputs.telemetry-service-account }}

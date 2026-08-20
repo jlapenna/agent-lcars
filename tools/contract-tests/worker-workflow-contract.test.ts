@@ -432,11 +432,6 @@ const LANE_SURFACES: Record<
       'gcp-workload-identity-provider': { required: true, type: 'string' },
       'gcp-service-account': { required: true, type: 'string' },
       'gcp-project-id': { required: true, type: 'string' },
-      'codex-auth-secret-name': {
-        required: false,
-        type: 'string',
-        default: 'CODEX_AUTH_JSON',
-      },
       'gcp-access-verify-projects': {
         required: false,
         type: 'string',
