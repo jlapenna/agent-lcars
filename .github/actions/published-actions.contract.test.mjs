@@ -98,14 +98,6 @@ const PUBLISHED = {
     inputs: { 'github-token': { required: true } },
     outputs: ['version'],
   },
-  'check-canonical-sync': {
-    inputs: {
-      manifest: { required: false, default: '.github/canonical-sync.conf' },
-      ref: { required: false, default: 'main' },
-      'forbid-strays': { required: false, default: 'false' },
-    },
-    outputs: [],
-  },
   // Exact-marker only: attempt-id is required, and the legacy inference
   // inputs #4388 once restored (started-at, runbook,
   // expected-comment-login, exclude-pr-author, exclude-comment-id) were

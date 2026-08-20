@@ -148,9 +148,6 @@ jobs:
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
 
-      - name: Test the canonical-sync checker
-        run: bash .github/actions/check-canonical-sync/check.test.sh
-
       - name: Test the control-plane request action (#1340)
         run: bash .github/actions/request-control-plane/request.test.sh
 
