@@ -395,7 +395,12 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 # separately from the public repo-tools artifact: they are not an agent-tools
 # dependency and can evolve on their own cadence.
 COPY --from=telemetry-watcher-build /repo/packages/fleet-tools /opt/agent-tools
-RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#main
+# npm's global installer resolves a local package and a Git package through
+# one shared staging tree. repo-tools carries Nx as a runtime dependency, and
+# that combined transaction can race the pnpm-linked tree while npm packs it.
+# Keep the two independent tool systems independently installed as well.
+RUN npm install -g /opt/agent-tools
+RUN npm install -g github:jlapenna/repo-tools#main
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
 # change needed), named literally `lcars` rather than
