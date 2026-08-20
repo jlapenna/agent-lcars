@@ -17,6 +17,9 @@ importers:
       '@google-cloud/tasks':
         specifier: ^7.0.0
         version: 7.0.0(supports-color@7.2.0)
+      '@jlapenna/fleet-runtime':
+        specifier: github:jlapenna/fleet-runtime#main
+        version: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/92fb2722cc2c84cb16b60213962eaf39d95287a2(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.1)(vitest@4.1.11))(@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(vitest@4.1.11)
       '@mantine/core':
         specifier: ^9.0.2
         version: 9.5.1(@mantine/hooks@9.5.1(react@19.2.8))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1755,6 +1758,21 @@ packages:
   '@jest/types@30.4.1':
     resolution: {integrity: sha512-f1x/vJXIfjOlEmejYpbkbgw1gOqpPECwMvMEtBqe47j7H2Hg8h8w3o3ikhSXq3MI15kg+oQ0exWO0uCtTNJLoQ==}
     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
+
+  '@jlapenna/fleet-runtime@https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/92fb2722cc2c84cb16b60213962eaf39d95287a2':
+    resolution: {gitHosted: true, integrity: sha512-BXiNaOhqY4DqQUel6uKhQmRhtMGkpB69wxE2+YQE2W86umQnkAhW8Qzc2QR89EuGjMnoyzD+GfDrh16MefRlQw==, tarball: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/92fb2722cc2c84cb16b60213962eaf39d95287a2}
+    version: 0.0.0
+    peerDependencies:
+      '@testing-library/jest-dom': ^7.0.0
+      '@testing-library/react': ^16.0.0
+      vitest: ^4.0.0
+    peerDependenciesMeta:
+      '@testing-library/jest-dom':
+        optional: true
+      '@testing-library/react':
+        optional: true
+      vitest:
+        optional: true
 
   '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/11c8ddd4e5886da3a0e5d179bcb9257b38cf5ecd':
     resolution: {gitHosted: true, integrity: sha512-cSY9wbie5Jn/SHC4Ckdajr6Cpi0pbx0GQ+z4jKwnIXMRDftXf+x89uqghMUF7rc9ltUHCiaNA8AihJx4y0MYKw==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/11c8ddd4e5886da3a0e5d179bcb9257b38cf5ecd}
@@ -12132,6 +12150,12 @@ snapshots:
       '@types/node': 24.13.3
       '@types/yargs': 17.0.35
       chalk: 4.1.2
+
+  '@jlapenna/fleet-runtime@https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/92fb2722cc2c84cb16b60213962eaf39d95287a2(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.1)(vitest@4.1.11))(@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(vitest@4.1.11)':
+    optionalDependencies:
+      '@testing-library/jest-dom': 7.0.1(@testing-library/dom@10.4.1)(vitest@4.1.11)
+      '@testing-library/react': 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0(supports-color@7.2.0))(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(less@4.5.1)(sass-embedded@1.99.0)(sass@1.99.0)(sugarss@5.0.1(postcss@8.5.26))(terser@5.48.0)(tsx@4.23.12)(yaml@2.9.0))
 
   '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/11c8ddd4e5886da3a0e5d179bcb9257b38cf5ecd(eslint@10.8.1(jiti@2.7.0)(supports-color@7.2.0))(nx@23.1.1(@swc-node/register@1.12.1(@swc/core@1.16.0(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.0(@swc/helpers@0.5.23)))(supports-color@7.2.0)(typescript@6.0.3)':
     dependencies:

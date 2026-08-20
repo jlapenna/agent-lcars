@@ -73,28 +73,13 @@ export function createVitestConfig(options: {
     // comment) - needsJestFnShim covers the latter for projects that mock
     // fetch but don't touch FakeFirestore.
     ...(needsFirestoreMockShim || needsJestFnShim
-      ? [
-          path.join(
-            import.meta.dirname,
-            'libs/test-utils/src/firestore/vitest-jest-shim.ts',
-          ),
-        ]
+      ? ['@jlapenna/fleet-runtime/vitest/jest-shim']
       : []),
     ...(needsJestDomMatchers
-      ? [
-          path.join(
-            import.meta.dirname,
-            'libs/test-utils/src/dom/vitest-jest-dom-setup.ts',
-          ),
-        ]
+      ? ['@jlapenna/fleet-runtime/vitest/jest-dom-setup']
       : []),
     ...(needsMatchMediaMock
-      ? [
-          path.join(
-            import.meta.dirname,
-            'libs/test-utils/src/dom/vitest-matchmedia-mock.ts',
-          ),
-        ]
+      ? ['@jlapenna/fleet-runtime/vitest/matchmedia-mock']
       : []),
     ...additionalSetupFiles,
   ];
@@ -112,8 +97,8 @@ export function createVitestConfig(options: {
       publicDir: false,
       plugins: [vitestTsconfigPaths(tsconfigProjects)],
       resolve: {
-        // Mirrors jest.preset.js's workspace-wide `server-only` ->
-        // server-only-mock.js moduleNameMapper entry. Without this, any
+        // Mirrors jest.preset.js's workspace-wide `server-only` no-op alias.
+        // Without this, any
         // test that imports (directly, or transitively via automocking) a
         // module whose chain touches the real `server-only` package throws
         // "This module cannot be imported from a Client Component module" —
@@ -121,10 +106,7 @@ export function createVitestConfig(options: {
         // importing module itself is mocked; Vitest needs the equivalent
         // as a resolve alias since it has no moduleNameMapper concept.
         alias: {
-          'server-only': path.join(
-            import.meta.dirname,
-            'libs/test-utils/src/server-only-mock.js',
-          ),
+          'server-only': '@jlapenna/fleet-runtime/vitest/server-only-mock',
         },
       },
       test: {

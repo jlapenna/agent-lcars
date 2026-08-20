@@ -29,6 +29,7 @@
     "@google-cloud/firestore": "9.0.0",
     "@google-cloud/storage": "^8.0.0",
     "@google-cloud/tasks": "^7.0.0",
+    "@jlapenna/fleet-runtime": "github:jlapenna/fleet-runtime#main",
     "@mantine/core": "^9.0.2",
     "@mantine/modals": "^9.0.2",
     "@mantine/notifications": "^9.0.2",

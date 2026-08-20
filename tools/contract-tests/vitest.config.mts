@@ -35,10 +35,7 @@ export default defineConfig({
     // config: server modules remain marked for Next.js, while Node-based test
     // runners resolve that marker to the existing no-op test shim.
     alias: {
-      'server-only': path.resolve(
-        import.meta.dirname,
-        '../../libs/test-utils/src/server-only-mock.js',
-      ),
+      'server-only': '@jlapenna/fleet-runtime/vitest/server-only-mock',
     },
   },
   test: {
