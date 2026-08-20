@@ -35,13 +35,15 @@ provider "google-beta" {
   user_project_override = true
 }
 
-# No CI runs Terraform today (#900), so this credential is always
-# operator-supplied, never a repo secret. The provider reads the token from
-# the GITHUB_TOKEN env var by default (no `token` argument here, so none can
-# ever be committed) -- an operator with admin on this repository exports it
-# themselves, e.g. `export GITHUB_TOKEN=$(gh auth token)`, before `plan` or
-# `apply`. Ruleset reads/writes require admin, which is why this can't be a
-# narrower classic PAT the way apps/dispatch-broker's tokens are scoped.
+# CI initializes with `-backend=false` and runs credential-free validation and
+# mock-provider tests only; it never reads real GitHub resources. A real plan
+# or apply therefore still uses an operator-supplied credential, never a repo
+# secret. The provider reads the token from the GITHUB_TOKEN env var by default
+# (no `token` argument here, so none can ever be committed) -- an operator with
+# admin on this repository exports it themselves, e.g.
+# `export GITHUB_TOKEN=$(gh auth token)`, before `plan` or `apply`. Ruleset
+# reads/writes require admin, which is why this can't be a narrower classic PAT
+# the way apps/dispatch-broker's tokens are scoped.
 provider "github" {
   owner = var.github_owner
 }
