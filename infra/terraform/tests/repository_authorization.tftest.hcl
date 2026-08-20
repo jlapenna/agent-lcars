@@ -35,6 +35,14 @@ run "renders_exact_repository_authorization" {
   }
 
   override_resource {
+    target          = google_project_iam_custom_role.codex_auth_runtime
+    override_during = plan
+    values = {
+      name = "projects/agent-lcars/roles/codexAuthRuntime"
+    }
+  }
+
+  override_resource {
     target          = google_service_account.homelab_codex_agent
     override_during = plan
     values = {
@@ -54,6 +62,21 @@ run "renders_exact_repository_authorization" {
   assert {
     condition     = google_iam_workload_identity_pool_provider.github.attribute_condition == "assertion.repository in ['jlapenna/agent-lcars', 'supersprinklesracing/sprinkles', 'jlapenna/homelab', 'supersprinklesracing/www', 'supersprinklesracing/girosf', 'jlapenna/nx-cache-server', 'jlapenna/sync-padd']"
     error_message = "The WIF provider must authorize exactly the seven fleet repositories, in order."
+  }
+
+  assert {
+    condition     = google_storage_bucket.codex_auth.name == "agent-lcars-codex-auth" && google_storage_bucket.codex_auth.uniform_bucket_level_access && google_storage_bucket.codex_auth.public_access_prevention == "enforced" && google_storage_bucket.codex_auth.versioning[0].enabled && google_storage_bucket.codex_auth.soft_delete_policy[0].retention_duration_seconds == 0 && alltrue([for lifecycle in google_storage_bucket.codex_auth.lifecycle_rule : alltrue([for condition in lifecycle.condition : condition.days_since_noncurrent_time == 7 && condition.with_state == "ARCHIVED"])])
+    error_message = "Codex auth must use a private versioned bucket with seven-day noncurrent recovery and no soft-delete retention."
+  }
+
+  assert {
+    condition     = google_project_iam_custom_role.codex_auth_runtime.role_id == "codexAuthRuntime" && toset(google_project_iam_custom_role.codex_auth_runtime.permissions) == toset(["storage.objects.create", "storage.objects.get", "storage.objects.delete"])
+    error_message = "The Codex auth runtime role must grant only generation-CAS read/replace operations."
+  }
+
+  assert {
+    condition     = length(google_storage_bucket_iam_member.codex_auth_runtime) == 6 && alltrue([for repository, binding in google_storage_bucket_iam_member.codex_auth_runtime : binding.bucket == google_storage_bucket.codex_auth.name && binding.role == google_project_iam_custom_role.codex_auth_runtime.name && binding.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${repository}/\")"])
+    error_message = "Each Codex identity must be confined to its own object prefix in the auth bucket."
   }
 
   assert {
