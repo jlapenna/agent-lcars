@@ -24,7 +24,8 @@ fi
 
 dockerfile="$here/Dockerfile"
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
-  ! grep -Fqx 'RUN npm install -g github:jlapenna/repo-tools#main' "$dockerfile"; then
+  ! grep -Fqx '    pnpm --dir /opt/repo-tools add github:jlapenna/repo-tools#main && \' "$dockerfile" ||
+  ! grep -Fqx '    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/' "$dockerfile"; then
   echo "runner image must install agent-tools and public repo-tools separately" >&2
   exit 1
 fi
