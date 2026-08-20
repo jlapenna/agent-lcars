@@ -14,13 +14,13 @@ succeeds. Never echo a secret value into terminal output, chat, or shell
 history — move values with pipes, `read -rs`, or files created under
 `umask 077`, and delete temporaries when done.
 
-| Credential                | Consumed by                              | Canonical home                                                       | Mintable by                        |
-| ------------------------- | ---------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane.yml`, run time) | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)     | maintainer only (browser OAuth)    |
-| Codex `auth.json` lineage | codex lane (`agent-lane.yml`, run time)  | GCP Secret Manager, one secret **per repo**                          | maintainer only (`codex login`)    |
-| `OPENCODE_LLM_API_KEY`    | opencode lane (`agent-lane.yml`)         | age store + repo Actions secret                                      | anyone with the LiteLLM master key |
-| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console     | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`) | maintainer (App settings UI)       |
-| Autoscaler App key        | runner registration (homelab autoscaler) | homelab vault `github_autoscaler_lcars_app_private_key`              | maintainer (App settings UI)       |
+| Credential                | Consumed by                              | Canonical home                                                                      | Mintable by                        |
+| ------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane.yml`, run time) | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                    | maintainer only (browser OAuth)    |
+| Codex `auth.json` lineage | codex lane (`agent-lane.yml`, run time)  | GCS `gs://agent-lcars-codex-auth/<owner>/<repo>/auth.json`, one object **per repo** | maintainer only (`codex login`)    |
+| `OPENCODE_LLM_API_KEY`    | opencode lane (`agent-lane.yml`)         | age store + repo Actions secret                                                     | anyone with the LiteLLM master key |
+| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console     | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                | maintainer (App settings UI)       |
+| Autoscaler App key        | runner registration (homelab autoscaler) | homelab vault `github_autoscaler_lcars_app_private_key`                             | maintainer (App settings UI)       |
 
 Two GitHub Apps exist and are easy to confuse:
 
@@ -110,21 +110,20 @@ it; if you are changing this step, keep the explicit access token.
 
 ## Codex `auth.json` lineage (codex lane)
 
-The codex lane restores `~/.codex/auth.json` from GCP Secret Manager, and
-Codex **rotates the credential on every run** — the lane's "Persist
-refreshed subscription authentication" step writes the rotated blob back as
-a new secret version. That makes each repo's secret a _lineage_, not a
-value:
+The codex lane restores `~/.codex/auth.json` from its repository-scoped GCS
+object. Codex can refresh the credential during a run; the lane persists a
+changed file only with that exact restored object's generation as its
+precondition. That makes each repository's object a _lineage_, not a value:
 
-> **Never copy the blob from another repo's secret.** Two repos sharing one
+> **Never copy the blob from another repo's object.** Two repos sharing one
 > lineage invalidate each other on every run (the lane's own comment block
 > documents this). Mint an independent login per repo — same ChatGPT
 > subscription, separate rotating token.
 
 Per new repo. **Steps 1-2 are the whole job for a repo Terraform already
 covers** — the four 2026-08 additions (`www`, `girosf`, `nx-cache-server`,
-`sync-padd`) have their secret containers, service accounts, grants, and
-repo vars provisioned (#1354), so only the mint is left.
+`sync-padd`) have their service accounts and prefix-restricted object grants
+provisioned (#1354), so only the mint is left.
 
 1. Mint into an **isolated `CODEX_HOME`**, not your real one. `codex login`
    writes `$CODEX_HOME/auth.json`, and `CODEX_HOME` defaults to `~/.codex`
@@ -173,11 +172,11 @@ repo vars provisioned (#1354), so only the mint is left.
    access to another repository's credential.
 
    Per-repo identities are not ceremony: the codex lane exports ambient ADC
-   so its `gcloud secrets` calls work, so agent-authored code in that job
-   can reach whatever the identity can reach. A shared service account
-   would let one repo's agent read and rotate another repo's credential.
-   `secretVersionAdder`, never `secretAdmin` — a bad refresh must stay
-   recoverable by pinning an earlier version (#1192).
+   for its GCS calls, so agent-authored code in that job can reach whatever
+   the identity can reach. A shared service account would let one repo's
+   agent read and rotate another repo's credential. Versioning keeps a
+   seven-day noncurrent recovery window; CAS prevents a stale run from
+   overwriting the current object (#1192).
 
    `sprinkles` is the exception again: it authenticates against pool
    `claude-agent-pool` / provider `claude-agent-github` in project

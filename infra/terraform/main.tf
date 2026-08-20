@@ -424,8 +424,7 @@ resource "google_secret_manager_secret" "telemetry_writer_key" {
 
 # Write credential for the self-hosted Nx remote cache on spark. Terraform
 # owns the container; the VALUE is minted by hand with `openssl rand -hex 32`
-# on the cache host and copied here with `gcloud secrets versions add`, the
-# same split used by codex_auth below.
+# on the cache host and copied here with `gcloud secrets versions add`.
 #
 # This is the second of the two sources tools/setup-nx-remote-cache.sh tries,
 # and it exists for the case the first cannot serve: a run outside the

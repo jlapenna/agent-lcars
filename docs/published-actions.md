@@ -319,7 +319,7 @@ repo-specific behavior behind a typed `workflow_call` input. This repo's own
 sprinkles collapse onto `@main` callers in the follow-up units.
 
 Since #1340 A-R1 the three published lane files are minimal **shims**: each
-re-declares its historical `workflow_call` input/secret surface unchanged
+declares its current typed `workflow_call` input/secret surface
 and delegates to one internal parameterized lane,
 `.github/workflows/agent-lane.yml`, passing `pipeline: <claude|codex|opencode>`
 and forwarding every input and secret. The unified lane carries the single
