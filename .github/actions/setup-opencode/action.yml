@@ -41,3 +41,12 @@ runs:
     - name: Add OpenCode to PATH
       shell: bash
       run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+    - name: Install OpenCode config
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE/agents/opencode"
+        gh api repos/jlapenna/agent-lcars/contents/agents/opencode/opencode.json \
+          --jq '.content' | base64 -d > "$GITHUB_WORKSPACE/agents/opencode/opencode.json"
