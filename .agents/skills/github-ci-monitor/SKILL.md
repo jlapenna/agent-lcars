@@ -8,10 +8,10 @@ description: Watches armed auto-merge PRs until they land or need attention. Use
 After `gh pr merge --squash --auto`, the question a session actually has
 is: **did my PRs land, and if not, what needs fixing?** An armed PR whose
 `Verify` fails waits silently forever — auto-merge never fires and
-nothing pings the session. `fleet-watch-prs` closes that gap:
+nothing pings the session. `repo-watch-prs` closes that gap:
 
 ```bash
-fleet-watch-prs [--strict] [--interval <s>] <pr> [<pr>...]
+repo-watch-prs [--strict] [--interval <s>] <pr> [<pr>...]
 ```
 
 In an agent session, run it as a **background task** so its exit
@@ -39,9 +39,8 @@ The watcher checks paginated review-thread state after required checks are
 green. It keeps each attention reason as one whitespace-free token so agent
 consumers can parse verdicts even when GitHub check names contain spaces.
 
-This is the only copy of the watcher in the fleet (#1307, de-vendored in
-#1328): it lives in `packages/fleet-tools` and consumer repos do not carry
-the script. On any machine with the fleet tools installed
-(`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`;
-the runner image bakes the same) it is on PATH as `fleet-watch-prs`, so
-sessions in any repo run the identical command.
+This is the only copy of the watcher: it lives in public
+[`jlapenna/repo-tools`](https://github.com/jlapenna/repo-tools), and consumer
+repositories do not carry its script or skill body. Its Codex plugin loads the
+same guidance and the package exposes `repo-watch-prs` on PATH, so sessions in
+any repository run the identical command.
