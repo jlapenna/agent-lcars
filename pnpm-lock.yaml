@@ -87,6 +87,9 @@ importers:
       '@eslint/markdown':
         specifier: ^8.0.1
         version: 8.0.3(supports-color@7.2.0)
+      '@jlapenna/repo-tools':
+        specifier: github:jlapenna/repo-tools#main
+        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/bcc5acc08dc585a1458a0418a0d6bfeb5356bb07
       '@naxodev/gonx':
         specifier: 4.1.1
         version: 4.1.1(@nx/devkit@23.1.1(nx@23.1.1(@swc-node/register@1.12.1(@swc/core@1.16.0(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.0(@swc/helpers@0.5.23))))(nx@23.1.1(@swc-node/register@1.12.1(@swc/core@1.16.0(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.0(@swc/helpers@0.5.23)))
@@ -1752,6 +1755,11 @@ packages:
   '@jest/types@30.4.1':
     resolution: {integrity: sha512-f1x/vJXIfjOlEmejYpbkbgw1gOqpPECwMvMEtBqe47j7H2Hg8h8w3o3ikhSXq3MI15kg+oQ0exWO0uCtTNJLoQ==}
     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
+
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/bcc5acc08dc585a1458a0418a0d6bfeb5356bb07':
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/bcc5acc08dc585a1458a0418a0d6bfeb5356bb07}
+    version: 0.0.0
+    hasBin: true
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -12087,6 +12095,8 @@ snapshots:
       '@types/node': 24.13.3
       '@types/yargs': 17.0.35
       chalk: 4.1.2
+
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/bcc5acc08dc585a1458a0418a0d6bfeb5356bb07': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
