@@ -400,7 +400,13 @@ COPY --from=telemetry-watcher-build /repo/packages/fleet-tools /opt/agent-tools
 # that combined transaction can race the pnpm-linked tree while npm packs it.
 # Keep the two independent tool systems independently installed as well.
 RUN npm install -g /opt/agent-tools
-RUN npm install -g github:jlapenna/repo-tools#main
+# repo-tools is a Git-hosted first-party artifact. pnpm is its supported
+# consumer path: npm 11's global Git installer cannot materialize its
+# pnpm-linked Nx dependency tree in this image. Install it in a private
+# prefix, then expose only its public commands on PATH.
+RUN mkdir -p /opt/repo-tools && \
+    pnpm --dir /opt/repo-tools add github:jlapenna/repo-tools#main && \
+    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
 # change needed), named literally `lcars` rather than
