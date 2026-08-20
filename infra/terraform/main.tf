@@ -96,6 +96,40 @@ resource "google_storage_bucket" "quick_task_evidence" {
   depends_on = [google_project_service.services]
 }
 
+# Codex refreshes the subscription credential during an agent run.  The
+# current Secret Manager lineage remains the rollback path until the fleet
+# has been seeded and the lane is cut over, but it cannot safely be the
+# durable writer: version adds are not conditional.  This bucket is the
+# additive Phase 1 destination.  Each repository receives one object and
+# can replace it only through the object's generation precondition.
+resource "google_storage_bucket" "codex_auth" {
+  name                        = "${var.project_id}-codex-auth"
+  location                    = "US"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  versioning { enabled = true }
+  soft_delete_policy { retention_duration_seconds = 0 }
+  lifecycle_rule {
+    condition {
+      age        = 7
+      with_state = "ARCHIVED"
+    }
+    action { type = "Delete" }
+  }
+  depends_on = [google_project_service.services]
+}
+
+resource "google_project_iam_custom_role" "codex_auth_runtime" {
+  role_id     = "codexAuthRuntime"
+  title       = "Codex auth runtime"
+  description = "Read and generation-CAS replace the repository's Codex auth object."
+  permissions = [
+    "storage.objects.create",
+    "storage.objects.get",
+    "storage.objects.delete",
+  ]
+}
+
 resource "google_project_iam_custom_role" "quick_task_evidence_runtime" {
   role_id     = "quickTaskEvidenceRuntime"
   title       = "Quick Task evidence runtime"
@@ -631,6 +665,33 @@ resource "google_service_account_iam_member" "homelab_codex_agent_impersonation"
   service_account_id = google_service_account.homelab_codex_agent.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
+}
+
+# Phase 1 grants the existing per-repository Codex identities only the three
+# operations GCS needs for a conditional overwrite.  The condition is the
+# security boundary: an agent may never list, read, or replace another
+# repository's credential object.
+locals {
+  codex_auth_runtime_identities = merge(
+    {
+      "jlapenna/agent-lcars" = google_service_account.codex_agent.email
+      "jlapenna/homelab"     = google_service_account.homelab_codex_agent.email
+    },
+    { for repository, agent in google_service_account.fleet_codex_agent : repository => agent.email },
+  )
+}
+
+resource "google_storage_bucket_iam_member" "codex_auth_runtime" {
+  for_each = local.codex_auth_runtime_identities
+
+  bucket = google_storage_bucket.codex_auth.name
+  role   = google_project_iam_custom_role.codex_auth_runtime.name
+  member = "serviceAccount:${each.value}"
+  condition {
+    title       = "${replace(each.key, "/", "-")}-codex-auth"
+    description = "Confines the Codex agent to its own auth.json object."
+    expression  = "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${each.key}/\")"
+  }
 }
 
 # Per-repo GitHub App installation tokens for the orchestrator drain (#1204,
