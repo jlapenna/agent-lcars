@@ -16,6 +16,14 @@ run `firebase apphosting:backends:create --project agent-lcars` and select
 `jlapenna/agent-lcars`, root `apps/console`, backend id `agent-lcars`, and region
 `us-central1`. Thereafter pushes to `main` deploy through App Hosting.
 
+## CI verification
+
+The required `Verify` job initializes this root with `-backend=false`, checks
+formatting and configuration validity, and runs its mock-provider tests. That
+path reads neither GCS state nor live Google or GitHub resources and requires
+no cloud credentials. Real plans and applies remain operator-only operations
+with the normal backend and credentials.
+
 ## GitHub ruleset (`Protect main`)
 
 Branch protection for this repo is now managed in the **homelab** repo's
