@@ -1,11 +1,10 @@
 import markdown from '@eslint/markdown';
+import { fleetBaseline, fleetEslintPlugin } from '@jlapenna/repo-tools/eslint';
 import nx from '@nx/eslint-plugin';
 import vitest from '@vitest/eslint-plugin';
 import simpleImportSort from 'eslint-plugin-simple-import-sort';
 import unusedImports from 'eslint-plugin-unused-imports';
 import * as jsoncParser from 'jsonc-eslint-parser';
-
-import { fleetBaseline } from './tools/eslint-rules/fleet-baseline.mjs';
 
 export default [
   ...nx.configs['flat/base'],
@@ -70,8 +69,9 @@ export default [
     // graph and may load ESLint before workspace rules are registered.
     files: ['**/*.{ts,tsx}'],
     ignores: ['tools/**/*'],
+    plugins: { fleet: fleetEslintPlugin },
     rules: {
-      '@nx/workspace-no-server-only-imports-in-client': 'error',
+      'fleet/no-server-only-imports-in-client': 'error',
     },
   },
   {

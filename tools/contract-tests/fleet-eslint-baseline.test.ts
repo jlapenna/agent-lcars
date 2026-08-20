@@ -1,12 +1,11 @@
 import path from 'node:path';
 
-import { loadESLint } from 'eslint';
-import { describe, expect, it } from 'vitest';
-
 import {
   FLEET_RESTRICTED_SYNTAX,
   FLEET_UNUSED_VARS_OPTIONS,
-} from '../eslint-rules/fleet-baseline.mjs';
+} from '@jlapenna/repo-tools/eslint';
+import { loadESLint } from 'eslint';
+import { describe, expect, it } from 'vitest';
 
 /**
  * The fleet ESLint baseline (#1340 C4) is a shared definition, and a shared

@@ -1,4 +1,5 @@
 import eslintReact from '@eslint-react/eslint-plugin';
+import { fleetEslintPlugin } from '@jlapenna/repo-tools/eslint';
 import nextEslintPluginNext from '@next/eslint-plugin-next';
 import nx from '@nx/eslint-plugin';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
@@ -41,8 +42,9 @@ export default [
     // 'apps/console/src/**' pattern never matches from here (verified with a
     // deliberate violation in #third-pass; the registration had been inert).
     files: ['src/**/*.{ts,tsx}'],
+    plugins: { fleet: fleetEslintPlugin },
     rules: {
-      '@nx/workspace-use-server-actions-only': 'error',
+      'fleet/use-server-actions-only': 'error',
     },
   },
   {

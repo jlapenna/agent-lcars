@@ -62,11 +62,11 @@ multi-minute feedback loop:
    Reusable Console modules that touch secrets, data stores, or Node-only
    dependencies start with `import 'server-only';`. That framework-native
    marker is the authoritative transitive build guard. The
-   `@nx/workspace-no-server-only-imports-in-client` rule
-   (`tools/eslint-rules/rules/no-server-only-imports-in-client.ts`) derives
-   its package and local-module coverage from Nx `platform:server` tags plus
-   the actual `server-only`/`assertNotBrowser()` markers, and catches direct
-   imports in the editor without a second hand-maintained denylist.
+   `fleet/no-server-only-imports-in-client` rule from
+   `@jlapenna/repo-tools/eslint` derives its package and local-module coverage
+   from Nx `platform:server` tags plus the actual
+   `server-only`/`assertNotBrowser()` markers, and catches direct imports in
+   the editor without a second hand-maintained denylist.
 3. **Server code calling a function exported from a client module.**
    Fails at runtime with "Attempted to call X() from the server."
 4. **Cross-page `next/link` transitions leaving the previous page's DOM
