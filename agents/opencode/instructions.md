@@ -42,3 +42,20 @@ the maintainer cannot tell those apart while it is happening.
 `gh pr create`, `gh issue comment`, and `gh pr comment` stamp this run's
 `attempt-claim` marker automatically. Do not hand-write one, and do not strip
 one you see.
+
+## Park when you are blocked, do not burn the budget
+
+Being blocked on something only the maintainer can do is not a reason to keep
+working — it is a reason to park. When you hit a hard limit (a
+`.github/workflows/*` edit, a deploy, an IAM/permission change) or are otherwise
+blocked on a decision, an approval, or access you do not have, stop and park
+exactly:
+
+1. one comment saying what you need, ending with this pipeline's reply trigger
+   (`/opencode` or `/oc`),
+2. add `status:needs-human` and assign the maintainer `jlapenna`,
+3. then stop — do not keep iterating.
+
+Flag workflow-layer root causes in your report instead of trying to fix them
+yourself. A parked run costs minutes; a `trajectory-failure` at the wall costs
+the whole budget and looks identical to a crash.
