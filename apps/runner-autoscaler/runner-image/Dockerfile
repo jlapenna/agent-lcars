@@ -395,8 +395,8 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 # this tracks main with no version pin and no extra network, cache-busted
 # per publish like the rest of that stage. Consumer repos carry no copies;
 # their hooks/skills invoke these commands from PATH.
-COPY --from=telemetry-watcher-build /repo/packages/fleet-tools /opt/fleet-tools
-RUN npm install -g /opt/fleet-tools
+COPY --from=telemetry-watcher-build /repo/packages/fleet-tools /opt/agent-tools
+RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#main
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
 # change needed), named literally `lcars` rather than
