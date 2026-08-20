@@ -48,5 +48,10 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE/agents/opencode"
+        # opencode.json references ./instructions.md; consumers with no
+        # agents/opencode tree would silently drop the standing orders if
+        # only the config were fetched (opencode-config.test.sh codifies this).
         gh api repos/jlapenna/agent-lcars/contents/agents/opencode/opencode.json \
           --jq '.content' | base64 -d > "$GITHUB_WORKSPACE/agents/opencode/opencode.json"
+        gh api repos/jlapenna/agent-lcars/contents/agents/opencode/instructions.md \
+          --jq '.content' | base64 -d > "$GITHUB_WORKSPACE/agents/opencode/instructions.md"
