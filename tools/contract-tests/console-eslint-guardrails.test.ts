@@ -38,11 +38,11 @@ describe('console eslint guardrail rules', () => {
       };
       // 2 is "error" in ESLint's normalized numeric severity.
       expect(
-        severityOf('@nx/workspace-use-server-actions-only'),
+        severityOf('fleet/use-server-actions-only'),
         'use-server-actions-only must be active on console sources',
       ).toBe(2);
       expect(
-        severityOf('@nx/workspace-no-server-only-imports-in-client'),
+        severityOf('fleet/no-server-only-imports-in-client'),
         'no-server-only-imports-in-client must be active on console sources',
       ).toBe(2);
     },

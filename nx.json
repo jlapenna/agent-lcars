@@ -84,7 +84,6 @@
         "^default",
         "{workspaceRoot}/eslint.config.mjs",
         "{projectRoot}/eslint.config.mjs",
-        "{workspaceRoot}/tools/eslint-rules/**/*",
         "{workspaceRoot}/tsconfig.base.json",
         "{workspaceRoot}/**/project.json",
         "{workspaceRoot}/**/package.json",

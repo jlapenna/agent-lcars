@@ -54,15 +54,13 @@ never the reverse — see [docs/published-actions.md](docs/published-actions.md)
 
 That independence has a deliberate price (#1311): a tail of small foundation
 files is duplicated in both repos on purpose — per-lib `.swcrc`,
-`.prettierrc`, `tools/eslint-rules/tsconfig.lint.json`,
-`libs/test-utils/src/server-only-mock.js`, ambient `*.d.ts` declarations,
+`.prettierrc`, `libs/test-utils/src/server-only-mock.js`, ambient `*.d.ts` declarations,
 `CODEOWNERS`, `LICENSE`, `tools/nx-remote-cache-read-failure.test.sh` — and
 that tail may drift freely; do not "fix" it by sharing files. The two
-ESLint-rule pairs under `tools/eslint-rules/rules/`
-(`no-server-only-imports-in-client` and `use-server-actions-only`, each with
-its spec) remain local to this repository until they are moved to a shared
-fleet artifact. Do not recreate file-copy synchronization or cross-repository
-source imports as an interim mechanism.
+Nx-aware ESLint rules and fleet baseline are supplied by the current
+`@jlapenna/repo-tools/eslint` artifact; this repository owns only its local
+configuration and contract assertions. Do not recreate local copies or
+cross-repository source imports.
 
 Never commit credentials. Runtime secrets belong in GCP Secret Manager and the
 host writer credential belongs in the encrypted homelab secret store. Terraform
