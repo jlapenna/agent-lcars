@@ -15,6 +15,10 @@ runs after Bash commands and blocks premature `gh issue view`/`gh issue
 edit` calls; see the github-issue-workflow skill for the claim/ownership
 flow it enforces.
 
+The general `worktree-hygiene` skill is supplied by the installed public
+`repo-tools` plugin. Do not mirror its body in this repository; local skills
+own only Agent LCARS-specific behavior.
+
 Local initialization uses `pnpm install`, whose `prepare` lifecycle installs
 and verifies Husky through `tools/setup-git-hooks.sh`. Linked worktrees use
 `tools/setup-worktree.sh`; the primary checkout remains a clean `main`.
