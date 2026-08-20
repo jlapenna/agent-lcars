@@ -101,7 +101,7 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
   `agent-automerge-reusable.yml@main`. Inert until `AGENT_BOT_LOGINS`
   exists — it skips cleanly, not red.
 - `.github/workflows/repo-validation.yml`: a thin caller of
-  `repo-validation.yml@main` with `canonical-sync: true` (#1340 A-R5/B8) —
+  `repo-validation.yml@main` —
   it owns only triggers, permissions, and concurrency. Keep it on
   GitHub-hosted runners (the reusable's default): it must stay
   green-capable before self-hosted capacity exists. Its composed check
@@ -123,12 +123,10 @@ girosf#14 / nx-cache-server#18 / sync-padd#53):
   (`pnpm add -g "github:jlapenna/agent-lcars#main&path:packages/fleet-tools"`),
   the `fleet-*` commands, and the worktree mandate.
 
-**No vendored scripts, and no `canonical-sync.conf` by default.** A new
-repo copies nothing from this one — it reads the fleet's conventions here.
-A manifest (and `repo-validation.yml`'s `canonical-sync: true`) is warranted only
-once the repo genuinely acquires a file that must be byte-identical to one
-of ours, such as the `worktree-hygiene` skill doc. If a repo has stale
-pre-#1328 script copies on its main, delete them in this PR.
+**No vendored scripts or synchronized copies.** A new repo copies nothing
+from this one — it reads the fleet's conventions here and invokes shared
+artifacts directly. If a repo has stale pre-#1328 script copies on its main,
+delete them in this PR.
 
 ## 5. Provision vars and secrets
 

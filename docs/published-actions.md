@@ -43,7 +43,6 @@ promised one.
 | `snapshot-enforcement-scripts` | Pre-agent freeze of the post-agent gates into `$RUNNER_TEMP`                                                                          |
 | `assert-repo-vars`             | Fail fast, naming every missing repo variable at once                                                                                 |
 | `merge-live-base`              | Merge the live base branch into the PR head so CI tests what will land                                                                |
-| `check-canonical-sync`         | Fail consumer CI when a vendored fleet-canonical file drifts (or, opt-in, when a stray copy reappears)                                |
 | `setup-nx-remote-cache`        | Point trusted Nx jobs at the self-hosted L2 remote cache; fork PRs receive no cache capability                                        |
 | `deploy-verify`                | Post-deploy smoke loop: poll a deployed URL until it answers below 500; optional Deployment status + PR annotation                    |
 | `request-control-plane`        | Mint an Actions OIDC token for an audience and POST a caller-assembled JSON payload (or bodyless request) to a control-plane endpoint |
@@ -87,12 +86,9 @@ admission gates by `tools/contract-tests/worker-workflow-contract.test.ts`.
 nx-cache-server) carried, and gives sprinkles its first actionlint
 coverage (`actionlint.yml`). The caller owns triggers, permissions, and
 concurrency; inputs are `actionlint-version` (default `1.7.7`, tracking
-`apps/runner-autoscaler/runner-image/actionlint-version`), `runs-on`
+`apps/runner-autoscaler/runner-image/actionlint-version`) and `runs-on`
 (JSON array string, default `'["ubuntu-latest"]'` — the runner must be
-able to `docker run`), and `canonical-sync` (default `false`; `true` runs
-`check-canonical-sync` with `forbid-strays` against the caller's
-`.github/canonical-sync.conf`, which is how the small fleet repos got
-drift detection without each growing its own job — #1340 B8). Check-run naming composes as
+able to `docker run`). Check-run naming composes as
 `<caller job> / repository validation`; a caller whose job key is
 `validate` therefore produces `validate / repository validation`, and
 that composed string is what a ruleset or an `agent-automerge.yml`
@@ -459,13 +455,6 @@ lesson):
 command set and the `fleet-identity.cjs` sibling-module invariant; the
 guardrail and worktree-hook behavior tests live beside it in
 `packages/fleet-tools/tests/`.
-
-`check-canonical-sync` (above) remains published for consumers'
-genuinely-must-be-identical _non-script_ files while those still exist,
-but no fleet script is distributed by copying any more. (For file pairs
-_allowed_ to diverge in bounded ways — the ESLint-rule twins of
-agent-lcars#1311 — byte-identity plus repo-neutral content is the current
-mechanism; see sprinkles#4496.)
 
 ## Security: post-agent gates run from a pre-agent snapshot
 

@@ -60,13 +60,9 @@ files is duplicated in both repos on purpose — per-lib `.swcrc`,
 that tail may drift freely; do not "fix" it by sharing files. The two
 ESLint-rule pairs under `tools/eslint-rules/rules/`
 (`no-server-only-imports-in-client` and `use-server-actions-only`, each with
-its spec) are correctness-critical twins instead: they are kept
-byte-identical and repo-neutral, this repo holds the canonical copy, and
-sprinkles CI keeps them honest through its `.github/canonical-sync.conf`
-with this repo's check-canonical-sync published action (the mechanism that
-replaced the short-lived drift detector, sprinkles#4496). Behavioral
-changes land here first and are re-copied verbatim. Cross-repo source imports remain
-forbidden either way.
+its spec) remain local to this repository until they are moved to a shared
+fleet artifact. Do not recreate file-copy synchronization or cross-repository
+source imports as an interim mechanism.
 
 Never commit credentials. Runtime secrets belong in GCP Secret Manager and the
 host writer credential belongs in the encrypted homelab secret store. Terraform

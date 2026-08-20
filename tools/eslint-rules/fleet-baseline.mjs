@@ -1,12 +1,8 @@
 /**
  * Fleet ESLint baseline — the hygiene rules that are the same everywhere.
  *
- * CANONICAL-SYNCED (agent-lcars#1340 C4). This file exists byte-identically
- * in agent-lcars and in supersprinklesracing/sprinkles, pinned by
- * `.github/canonical-sync.conf` in the consuming repo. A source import
- * across repos would recreate the cross-repository build coupling both
- * repos deliberately forbid, so the vehicle is a byte-pinned copy — the
- * same vehicle the two `tools/eslint-rules/rules/*` twins already use.
+ * This is local configuration. If the fleet needs shared lint behavior, it
+ * must be supplied by a shared fleet artifact rather than copied source.
  *
  * Repo-neutral by construction: nothing here may name a repo's own package
  * scope, issue numbers, or paths. Anything repo-specific stays in that
@@ -123,8 +119,7 @@ export function fleetBaseline({ simpleImportSort, unusedImports }) {
       // so the syntax bans are unsatisfiable ceremony there. Import-order
       // and unused-symbol hygiene above still apply. Both repos already
       // exempted .cjs this way (one explicitly, one by never globbing it),
-      // which is what keeps the canonical-synced .cjs twins free of
-      // eslint-disable comments in either repo.
+      // which keeps local CommonJS helpers free of eslint-disable comments.
       files: ['**/*.cjs'],
       rules: {
         'no-restricted-syntax': 'off',

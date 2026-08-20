@@ -1,9 +1,6 @@
-// Fleet-canonical twin (agent-lcars#1311): this file (and its .spec.ts) is
-// maintained byte-identical in jlapenna/agent-lcars (the canonical copy) and
-// supersprinklesracing/sprinkles. Cross-repo source sharing is forbidden
-// (AGENTS.md), so behavioral changes land in the canonical copy first and
-// are re-copied verbatim; sprinkles CI enforces byte-identity through its
-// .github/canonical-sync.conf via the check-canonical-sync published action.
+// This rule and its spec are local to this repository. Cross-repo source
+// sharing is forbidden (AGENTS.md). Do not copy or synchronize this source
+// into another repo; shared lint behavior needs a shared fleet artifact.
 
 import * as path from 'node:path';
 

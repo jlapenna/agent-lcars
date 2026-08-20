@@ -1,6 +1,4 @@
-// Fleet-canonical (agent-lcars#1307): byte-identical copy consumed by
-// supersprinklesracing/sprinkles via its .github/canonical-sync.conf.
-// Edit the canonical copy in jlapenna/agent-lcars and re-copy verbatim.
+// Regression coverage for the fleet issue guardrail command.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 

@@ -25,10 +25,9 @@ export default [
       '**/vitest.config.*.timestamp*',
     ],
   },
-  // Import-order, unused-symbol, and restricted-syntax hygiene the whole
-  // fleet shares (#1340 C4). Byte-identical to sprinkles' copy; see the
-  // file's own header for why the vehicle is a pinned copy rather than a
-  // cross-repo import.
+  // Import-order, unused-symbol, and restricted-syntax hygiene for this
+  // repository. Shared fleet lint behavior must use a shared artifact, not a
+  // synchronized source file.
   ...fleetBaseline({ simpleImportSort, unusedImports }),
   {
     files: ['**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}'],
