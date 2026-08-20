@@ -65,7 +65,7 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_storage_bucket.codex_auth.name == "agent-lcars-codex-auth" && google_storage_bucket.codex_auth.uniform_bucket_level_access && google_storage_bucket.codex_auth.public_access_prevention == "enforced" && google_storage_bucket.codex_auth.versioning[0].enabled && google_storage_bucket.codex_auth.soft_delete_policy[0].retention_duration_seconds == 0 && alltrue([for lifecycle in google_storage_bucket.codex_auth.lifecycle_rule : alltrue([for condition in lifecycle.condition : condition.age == 7 && condition.with_state == "ARCHIVED"])])
+    condition     = google_storage_bucket.codex_auth.name == "agent-lcars-codex-auth" && google_storage_bucket.codex_auth.uniform_bucket_level_access && google_storage_bucket.codex_auth.public_access_prevention == "enforced" && google_storage_bucket.codex_auth.versioning[0].enabled && google_storage_bucket.codex_auth.soft_delete_policy[0].retention_duration_seconds == 0 && alltrue([for lifecycle in google_storage_bucket.codex_auth.lifecycle_rule : alltrue([for condition in lifecycle.condition : condition.days_since_noncurrent_time == 7 && condition.with_state == "ARCHIVED"])])
     error_message = "Codex auth must use a private versioned bucket with seven-day noncurrent recovery and no soft-delete retention."
   }
 

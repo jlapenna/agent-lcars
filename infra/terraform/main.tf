@@ -111,8 +111,8 @@ resource "google_storage_bucket" "codex_auth" {
   soft_delete_policy { retention_duration_seconds = 0 }
   lifecycle_rule {
     condition {
-      age        = 7
-      with_state = "ARCHIVED"
+      days_since_noncurrent_time = 7
+      with_state                 = "ARCHIVED"
     }
     action { type = "Delete" }
   }
