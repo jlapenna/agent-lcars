@@ -1,0 +1,38 @@
+name: Ensure OpenCode configuration
+description: Use runner-managed OpenCode configuration, with a temporary fallback for an unpromoted runner image.
+
+inputs:
+  github-token:
+    description: Token used to fetch the fallback configuration only when the runner image is stale.
+    required: true
+
+outputs:
+  config-path:
+    description: Empty when the runner image supplies configuration; otherwise the fallback workspace config path.
+    value: ${{ steps.config.outputs.config-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: config
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        managed_dir="$HOME/.config/opencode"
+        if [ -f "$managed_dir/opencode.json" ] && [ -f "$managed_dir/instructions.md" ]; then
+          echo "config-path=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Compatibility during image promotion only. The source remains the
+        # one Agent LCARS config; a current runner does not create a workspace
+        # copy at all.
+        fallback_dir="$GITHUB_WORKSPACE/agents/opencode"
+        mkdir -p "$fallback_dir"
+        gh api 'repos/jlapenna/agent-lcars/contents/agents/opencode/opencode.json?ref=main' \
+          --jq '.content' | base64 -d > "$fallback_dir/opencode.json"
+        gh api 'repos/jlapenna/agent-lcars/contents/agents/opencode/instructions.md?ref=main' \
+          --jq '.content' | base64 -d > "$fallback_dir/instructions.md"
+        echo "config-path=agents/opencode/opencode.json" >> "$GITHUB_OUTPUT"

@@ -50,6 +50,8 @@ homelab operation. Select:
   `apps/runner-autoscaler/runner-image/**`: the image also bakes in
   `packages/fleet-tools/**` (installed globally via `npm install -g` from
   the same fresh-`main` checkout the telemetry stage builds from, #1328)
+  and `agents/opencode/**` (the managed provider configuration and its
+  referenced standing instructions)
   and an action-archive cache derived from the repo's own `.github` tree
   (`populate-action-archive-cache.sh`, #1330) — a change to either
   requires re-publishing `homelab-runner`.

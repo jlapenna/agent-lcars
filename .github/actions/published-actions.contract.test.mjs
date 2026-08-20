@@ -98,6 +98,10 @@ const PUBLISHED = {
     inputs: { 'github-token': { required: true } },
     outputs: ['version'],
   },
+  'ensure-opencode-config': {
+    inputs: { 'github-token': { required: true } },
+    outputs: ['config-path'],
+  },
   // Exact-marker only: attempt-id is required, and the legacy inference
   // inputs #4388 once restored (started-at, runbook,
   // expected-comment-login, exclude-pr-author, exclude-comment-id) were
