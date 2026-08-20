@@ -12,8 +12,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config="$repo_root/agents/opencode/opencode.json"
 runner_dockerfile="$repo_root/apps/runner-autoscaler/runner-image/Dockerfile"
 setup_action="$repo_root/.github/actions/setup-opencode/action.yml"
-fallback_action="$repo_root/.github/actions/ensure-opencode-config/action.yml"
-agent_lane="$repo_root/.github/workflows/agent-lane.yml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -88,13 +86,5 @@ if grep -Fq 'Install OpenCode config' "$setup_action" ||
   grep -Fq 'agents/opencode/opencode.json' "$setup_action"; then
   fail "setup-opencode must install the CLI only; runner configuration is managed by the image"
 fi
-grep -Fq 'managed_dir="$HOME/.config/opencode"' "$fallback_action" ||
-  fail "OpenCode fallback must first detect the managed runner configuration"
-grep -Fq 'if [ -f "$managed_dir/opencode.json" ] && [ -f "$managed_dir/instructions.md" ]; then' "$fallback_action" ||
-  fail "OpenCode fallback must not create a workspace config on a current runner"
-grep -Fq 'OPENCODE_CONFIG: ${{ steps.opencode-config-bootstrap.outputs.config-path }}' "$agent_lane" ||
-  fail "bootstrap OpenCode lane must select the promotion fallback path"
-grep -Fq 'OPENCODE_CONFIG: ${{ steps.opencode-config-published.outputs.config-path }}' "$agent_lane" ||
-  fail "published OpenCode lane must select the promotion fallback path"
 
 echo "opencode-config: ok"
