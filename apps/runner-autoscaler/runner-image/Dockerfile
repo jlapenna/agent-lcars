@@ -406,6 +406,12 @@ RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#main
 COPY lcars.sh /usr/local/bin/lcars
 RUN chmod +x /usr/local/bin/lcars
 
+# The public repository-tools skill is a Codex plugin. Install the Codex CLI
+# before switching to the unprivileged runner user, then install the plugin
+# into that user's state below. This deliberately tracks the current CLI: the
+# runner is an integrated first-party delivery surface, not a pinned artifact.
+RUN npm install -g @openai/codex
+
 USER runner
 
 # General repository-management guidance is a separate Codex plugin, not an

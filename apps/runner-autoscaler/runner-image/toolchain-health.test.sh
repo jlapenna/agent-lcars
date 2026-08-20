@@ -29,8 +29,9 @@ if ! grep -Fqx 'RUN npm install -g /opt/agent-tools github:jlapenna/repo-tools#m
 fi
 
 runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
+codex_install_line="$(grep -n '^RUN npm install -g @openai/codex$' "$dockerfile" | cut -d: -f1)"
 plugin_line="$(grep -n '^RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \\' "$dockerfile" | cut -d: -f1)"
-if [[ -z "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" ]]; then
+if [[ -z "$runner_user_line" || -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" ]]; then
   echo "runner image must enable the public repo-tools plugin as runner" >&2
   exit 1
 fi
