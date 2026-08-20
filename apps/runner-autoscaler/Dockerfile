@@ -4,7 +4,7 @@
 # in go.mod (a normal `require`) — NOT a fork/overlay of its example. The Go
 # source here was seeded from that example's `dockerscaleset` template and is
 # now a single multi-scale-set orchestrator with fleet-wide placement.
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
