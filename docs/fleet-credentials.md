@@ -165,12 +165,12 @@ repo vars provisioned (#1354), so only the mint is left.
    generation as `--if-generation-match`; a conflict is terminal and must not
    be retried.
 
-3. Infrastructure, for a repo Terraform does **not** yet cover: add it to
-   `local.fleet_codex_agents` in `infra/terraform/main.tf` and to
-   `var.additional_fleet_repositories`, then apply. That one map entry
-   yields the secret container, a dedicated `<slug>-codex-agent` service
-   account, `secretAccessor` + `secretVersionAdder` on that secret alone,
-   and `workloadIdentityUser` for the repo's own principal.
+3. Infrastructure, for a repo Terraform does **not** yet cover: add its
+   existing runtime service account to `local.codex_auth_runtime_identities`
+   in `infra/terraform/main.tf`, then apply. That one map entry yields a
+   conditional `storage.objects.get/create/delete` grant restricted to the
+   repository's own object prefix; it grants neither object listing nor
+   access to another repository's credential.
 
    Per-repo identities are not ceremony: the codex lane exports ambient ADC
    so its `gcloud secrets` calls work, so agent-authored code in that job

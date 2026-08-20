@@ -75,8 +75,8 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = length(google_storage_bucket_iam_member.codex_auth_runtime) == 6 && alltrue([for repository, binding in google_storage_bucket_iam_member.codex_auth_runtime : binding.bucket == google_storage_bucket.codex_auth.name && binding.role == google_project_iam_custom_role.codex_auth_runtime.name && binding.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${repository}/\")"])
-    error_message = "Each Codex identity must be confined to its own object prefix in the auth bucket."
+    condition     = length(google_storage_bucket_iam_member.codex_auth_runtime) == 7 && google_storage_bucket_iam_member.codex_auth_runtime["supersprinklesracing/sprinkles"].member == "serviceAccount:claude-agent-readonly@supersprinklesracing.iam.gserviceaccount.com" && alltrue([for repository, binding in google_storage_bucket_iam_member.codex_auth_runtime : binding.bucket == google_storage_bucket.codex_auth.name && binding.role == google_project_iam_custom_role.codex_auth_runtime.name && binding.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${repository}/\")"])
+    error_message = "Each Codex identity, including Sprinkles' cross-project identity, must be confined to its own object prefix in the auth bucket."
   }
 
   assert {
