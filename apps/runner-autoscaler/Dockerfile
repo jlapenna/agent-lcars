@@ -4,12 +4,21 @@
 # in go.mod (a normal `require`) — NOT a fork/overlay of its example. The Go
 # source here was seeded from that example's `dockerscaleset` template and is
 # now a single multi-scale-set orchestrator with fleet-wide placement.
-FROM golang:1.27 AS build
+# Compile on the native builder platform and cross-compile the static binary
+# for each requested target. Letting this stage inherit TARGETPLATFORM made
+# the arm64 image run the entire Go compiler under QEMU on the amd64 BuildKit
+# host, which added roughly 17 minutes to the 2026-08-21 publication.
+FROM --platform=$BUILDPLATFORM golang:1.27 AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -o /out/runner-autoscaler .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+      go build -trimpath -o /out/runner-autoscaler .
 
 # Runtime needs a real `ssh` client: connhelper (hosts.go's ssh:// targets)
 # shells out to the `ssh` binary to proxy each remote host's Docker socket —
