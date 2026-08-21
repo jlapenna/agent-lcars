@@ -214,6 +214,47 @@ describe('drainOutbox: dispatch-run', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('does not pre-lease later entries while an earlier delivery is slow', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const firstRun = await started(orchestrator, 'req-1');
+    await orchestrator.report(firstRun.run.runId, { ok: true });
+    const secondRun = await started(orchestrator, 'req-2');
+    const claimSpy = vi.spyOn(store, 'claimPendingOutbox');
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/actions/workflows/')) {
+        return new Response(null, { status: 204 });
+      }
+      // Simulate a slow-but-successful earlier delivery. The next entry's
+      // lease must begin at this later time, not share the drain's start time.
+      clock.advanceMinutes(6);
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(result.reported).toEqual([firstRun.run.runId]);
+    expect(result.dispatched).toEqual([secondRun.run.runId]);
+    expect(claimSpy.mock.calls.map(([input]) => input.limit)).toEqual([
+      1, 1, 1, 1,
+    ]);
+    expect(claimSpy.mock.calls.map(([input]) => input.now)).toEqual([
+      T0,
+      T0,
+      '2026-08-15T12:06:00.000Z',
+      '2026-08-15T12:06:00.000Z',
+    ]);
+    expect(claimSpy.mock.calls[2]?.[0]).toMatchObject({
+      leaseExpiresAt: '2026-08-15T12:11:00.000Z',
+    });
+  });
+
   it('forwards mode/reply from run params verbatim', async () => {
     const { store, orchestrator } = fixture();
     const { run } = await started(orchestrator, 'req-1', {

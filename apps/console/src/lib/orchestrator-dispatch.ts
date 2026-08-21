@@ -62,21 +62,28 @@ export async function drainOutbox(
   deps: DispatchDeps,
   limit?: number,
 ): Promise<DrainOutboxResult> {
-  const claimedAt = now(deps);
-  const entries = await deps.store.claimPendingOutbox({
-    limit: limit ?? 10,
-    now: claimedAt,
-    leaseExpiresAt: new Date(
-      Date.parse(claimedAt) + OUTBOX_LEASE_MS,
-    ).toISOString(),
-  });
   const result: DrainOutboxResult = {
     dispatched: [],
     reported: [],
     failed: [],
   };
 
-  for (const entry of entries) {
+  // Claim immediately before delivery, not as one upfront batch. Otherwise a
+  // slow first GitHub call can consume the leases of later entries before
+  // their first attempt, allowing another drain to recover them while this
+  // invocation still intends to deliver them.
+  for (let claimed = 0; claimed < (limit ?? 10); claimed += 1) {
+    const claimedAt = now(deps);
+    const [entry] = await deps.store.claimPendingOutbox({
+      limit: 1,
+      now: claimedAt,
+      leaseExpiresAt: new Date(
+        Date.parse(claimedAt) + OUTBOX_LEASE_MS,
+      ).toISOString(),
+    });
+    if (entry === undefined) break;
+
+    const failuresBefore = result.failed.length;
     try {
       if (entry.kind === 'dispatch-run') {
         await handleDispatchRun(deps, entry, result);
@@ -93,6 +100,10 @@ export async function drainOutbox(
       // retries it, which is always safe.
       await settleQuietly(deps, entry, 'pending');
     }
+    // An explicit failure releases the current entry for a future invocation.
+    // Stop here so this same drain cannot immediately reclaim it and consume
+    // the rest of its limit retrying one persistent failure.
+    if (result.failed.length > failuresBefore) break;
   }
 
   return result;
