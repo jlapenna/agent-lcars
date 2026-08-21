@@ -141,15 +141,33 @@ export type Task = z.infer<typeof taskSchema>;
  * Effects that must survive the transaction that decided them. A worker
  * drains this; the decision and its side effect are never in one step.
  */
-export const outboxEntrySchema = z.strictObject({
+const outboxEntryBaseSchema = z.strictObject({
   entryId: z.string().min(1).max(128),
   kind: z.enum(['dispatch-run', 'report-outcome']),
   task: taskIdSchema,
   runId: z.string().min(1).max(64),
-  /** Delivery bookkeeping, owned by the drain worker. */
-  state: z.enum(['pending', 'done']),
   attempts: z.number().int().nonnegative(),
   createdAt: isoUtc,
   updatedAt: isoUtc,
 });
+
+/**
+ * Delivery bookkeeping, owned by the drain worker. A `leased` entry has one
+ * exclusive owner until `leaseExpiresAt`; `claimId` fences settlement so an
+ * expired owner cannot overwrite a later retry's claim.
+ *
+ * `pending` and `done` deliberately retain their original document shape so
+ * entries written before leasing was introduced remain valid without a data
+ * migration.
+ */
+export const outboxEntrySchema = z.discriminatedUnion('state', [
+  outboxEntryBaseSchema.extend({ state: z.literal('pending') }),
+  outboxEntryBaseSchema.extend({
+    state: z.literal('leased'),
+    claimId: z.uuid(),
+    leaseExpiresAt: isoUtc,
+  }),
+  outboxEntryBaseSchema.extend({ state: z.literal('done') }),
+]);
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
+export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;

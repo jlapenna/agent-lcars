@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { FirestoreStore } from './firestore-store';
 import { MemoryStore } from './memory-store';
-import { taskSchema } from './model';
+import { outboxEntrySchema, taskSchema } from './model';
 import { runOrchestratorStoreContract } from './store-contract';
 
 runOrchestratorStoreContract('MemoryStore', () => new MemoryStore());
@@ -23,6 +23,26 @@ describe('taskSchema', () => {
     expect(parsed.pendingRequest).toBeUndefined();
     expect(parsed.consecutiveLost).toBeUndefined();
   });
+});
+
+describe('outboxEntrySchema', () => {
+  it.each(['pending', 'done'] as const)(
+    'reads a legacy %s entry without lease fields',
+    (state) => {
+      expect(
+        outboxEntrySchema.parse({
+          entryId: 'dispatch/octo/example#7/r1',
+          kind: 'dispatch-run',
+          task: { repo: 'octo/example', issue: 7 },
+          runId: 'octo/example#7/r1',
+          state,
+          attempts: 0,
+          createdAt: '2026-08-15T12:00:00.000Z',
+          updatedAt: '2026-08-15T12:00:00.000Z',
+        }),
+      ).toMatchObject({ state });
+    },
+  );
 });
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;

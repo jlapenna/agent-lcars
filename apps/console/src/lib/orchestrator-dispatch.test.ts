@@ -4,6 +4,7 @@ import {
   MAX_AUTO_RETRIES,
   MemoryStore,
   Orchestrator,
+  OUTBOX_LEASE_MS,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
@@ -170,6 +171,49 @@ describe('drainOutbox: dispatch-run', () => {
     expect(calls).toHaveLength(1); // no additional fetch call
   });
 
+  it('sends one workflow_dispatch request across two concurrent drains', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    let releaseFetch!: () => void;
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const calls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      markFetchStarted();
+      await fetchReleased;
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const deps = {
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    };
+
+    const firstDrain = drainOutbox(deps);
+    await fetchStarted;
+    const overlappingDrain = await drainOutbox(deps);
+
+    expect(calls).toHaveLength(1);
+    expect(overlappingDrain).toEqual({
+      dispatched: [],
+      reported: [],
+      failed: [],
+    });
+
+    releaseFetch();
+    const firstResult = await firstDrain;
+    expect(firstResult.dispatched).toEqual([run.runId]);
+    expect(calls).toHaveLength(1);
+  });
+
   it('forwards mode/reply from run params verbatim', async () => {
     const { store, orchestrator } = fixture();
     const { run } = await started(orchestrator, 'req-1', {
@@ -240,7 +284,7 @@ describe('drainOutbox: dispatch-run', () => {
   });
 
   it('settles a stale dispatch entry (run already finished) without any fetch call', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
 
     // The run finishes (still legal from `pending`, before ever being
@@ -251,7 +295,21 @@ describe('drainOutbox: dispatch-run', () => {
     }
     // Isolate the dispatch-run entry: settle the report-outcome entry that
     // came with it out of band so this drain call only sees the stale one.
-    await store.settleOutbox(`outcome/${run.runId}`, 'done');
+    const claims = await store.claimPendingOutbox({
+      limit: 10,
+      now: clock.now(),
+      leaseExpiresAt: new Date(
+        Date.parse(clock.now()) + OUTBOX_LEASE_MS,
+      ).toISOString(),
+    });
+    for (const claim of claims) {
+      await store.settleOutbox({
+        entryId: claim.entryId,
+        claimId: claim.claimId,
+        state: claim.kind === 'report-outcome' ? 'done' : 'pending',
+        now: clock.now(),
+      });
+    }
 
     const neverCalled = vi.fn<typeof fetch>();
 

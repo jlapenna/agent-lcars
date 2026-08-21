@@ -85,11 +85,12 @@ calls `/api/control-plane/reconcile` every 30 minutes (also
   it is not blocked by the exhausted auto-retry budget, only unattempted by
   the sweep itself.
 - **The outbox drain also retries stuck deliveries.** A `dispatch-run` or
-  `report-outcome` entry that failed a prior GitHub call (rate limit,
-  transient 5xx) stays `pending` and is retried on the next drain — dispatch
-  or completion, or this scheduled sweep, whichever runs next. This is why
-  an outcome comment can appear on the issue noticeably after your run
-  actually finished.
+  `report-outcome` entry is transactionally leased to one drain at a time.
+  An explicit GitHub-call failure (rate limit, transient 5xx) releases it to
+  `pending`; a crashed drain's lease expires after five minutes. Either path
+  makes the entry eligible for the next drain — dispatch or completion, or
+  this scheduled sweep, whichever runs next. This is why an outcome comment
+  can appear on the issue noticeably after your run actually finished.
 
 None of this involves a ledger comment, a `generation` counter, or a
 Firestore authority lease on a shared document that a headless agent could

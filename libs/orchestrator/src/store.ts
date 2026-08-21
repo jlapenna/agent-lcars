@@ -1,6 +1,10 @@
 import type { Decision, Queued } from './decide';
-import type { OutboxEntry, Run, Task, TaskId } from './model';
+import type { LeasedOutboxEntry, Run, Task, TaskId } from './model';
 import { taskKey } from './model';
+
+/** GitHub delivery normally takes seconds; five minutes tolerates a slow call
+ *  while still making a crashed drain retryable promptly. */
+export const OUTBOX_LEASE_MS = 5 * 60_000;
 
 /**
  * Durability boundary. One method per question the decision layer asks, one
@@ -29,9 +33,26 @@ export interface OrchestratorStore {
     expectedRevision: number | undefined;
   }): Promise<void>;
 
-  /** Outbox draining, used by the delivery worker, not the decision layer. */
-  claimPendingOutbox(limit: number): Promise<OutboxEntry[]>;
-  settleOutbox(entryId: string, state: 'pending' | 'done'): Promise<void>;
+  /**
+   * Atomically leases up to `limit` pending or expired outbox entries. Every
+   * returned entry is exclusively owned by its `claimId` until
+   * `leaseExpiresAt`; attempts increments only for claims actually acquired.
+   */
+  claimPendingOutbox(input: {
+    limit: number;
+    now: string;
+    leaseExpiresAt: string;
+  }): Promise<LeasedOutboxEntry[]>;
+  /**
+   * Completes or releases a lease only while `claimId` still owns it. Returns
+   * false for missing entries and stale claims without changing stored state.
+   */
+  settleOutbox(input: {
+    entryId: string;
+    claimId: string;
+    state: 'pending' | 'done';
+    now: string;
+  }): Promise<boolean>;
 
   /** Live runs whose lease expired at or before `now`; the sweeper's feed. */
   listExpiredRuns(now: string): Promise<Run[]>;
