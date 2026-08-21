@@ -157,6 +157,22 @@ describe('settleTerminalRuns', () => {
     expect((await store.readRun(runId))?.state).toBe('running');
   });
 
+  it('lists workflow runs against an injected GitHub API root', async () => {
+    const { orchestrator, deps, urls, arm } = fixture();
+    const runId = await liveRun(orchestrator);
+    arm([workflowRun(runId, null, 'in_progress')]);
+
+    await settleTerminalRuns({
+      ...deps,
+      githubApiBaseUrl: 'https://fixture.invalid/github/',
+    });
+
+    expect(urls).toEqual([
+      'https://fixture.invalid/github/repos/octo/example/actions/workflows/claude.yml/runs' +
+        '?event=workflow_dispatch&per_page=100',
+    ]);
+  });
+
   it('does not double-settle a run whose completion callback already arrived', async () => {
     const { store, orchestrator, deps, urls, arm } = fixture();
     const runId = await liveRun(orchestrator);

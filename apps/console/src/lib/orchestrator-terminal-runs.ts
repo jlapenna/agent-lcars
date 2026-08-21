@@ -90,6 +90,8 @@ export interface TerminalRunsDeps {
   tokens: DispatchTokenProvider;
   /** Injectable for tests; defaults to the ambient `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Injectable GitHub REST root; defaults to the production API. */
+  githubApiBaseUrl?: string;
 }
 
 export interface SettleTerminalRunsResult {
@@ -151,8 +153,9 @@ async function terminalConclusions(
 ): Promise<Map<string, string>> {
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
   const token = await deps.tokens.tokenFor(repo);
+  const apiBaseUrl = (deps.githubApiBaseUrl ?? GITHUB_API).replace(/\/+$/u, '');
   const url =
-    `${GITHUB_API}/repos/${repo}/actions/workflows/${pipeline}.yml/runs` +
+    `${apiBaseUrl}/repos/${repo}/actions/workflows/${pipeline}.yml/runs` +
     `?event=workflow_dispatch&per_page=${RUNS_PAGE_SIZE}`;
   const response = await fetchImpl(url, {
     headers: {

@@ -689,7 +689,10 @@ export function recordQuickTaskIssue(params: {
   const runId = state.nextRunId++;
   const now = new Date().toISOString();
 
-  const intentId = `e2e-quick-task-intent-${number}`;
+  // The orchestrator's first run id is deterministic and is the exact value
+  // the real dispatch puts into the workflow marker. The E2E test seeds that
+  // same task directly in the emulator after the GitHub-side issue write.
+  const intentId = `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}#${number}/r1`;
 
   // Mirrors claude.yml/codex.yml/opencode.yml's real run-name templates:
   // claude has no pipeline prefix, codex/opencode repeat their own name

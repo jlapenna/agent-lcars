@@ -7,7 +7,11 @@ import {
 } from './seed';
 import { expectMobileBridgeHeader } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
-import { seedOrchestratorTask } from './util/orchestrator-seed';
+import {
+  E2E_CONTROL_PLANE_REPOSITORY,
+  readActiveOrchestratorRun,
+  seedOrchestratorTask,
+} from './util/orchestrator-seed';
 
 /**
  * #40: the initial LCARS redesign coverage used an empty environment, so
@@ -121,6 +125,14 @@ test.describe('populated dashboard', () => {
     await retrigger.click();
     await page.getByRole('button', { name: 'Retrigger now' }).click();
     await expect(page.getByText('#9001 retriggered')).toBeVisible();
+    await expect
+      .poll(() =>
+        readActiveOrchestratorRun({
+          issue: E2E_ITEM_NUMBERS.humanNeeded,
+          repository: E2E_CONTROL_PLANE_REPOSITORY,
+        }),
+      )
+      .toMatchObject({ pipeline: 'claude', state: 'running' });
     await expect(retrigger).toBeEnabled();
 
     const overflow = detail.getByRole('button', {
@@ -129,6 +141,14 @@ test.describe('populated dashboard', () => {
     await overflow.click();
     await page.getByRole('menuitem', { name: 'Reassign to codex' }).click();
     await expect(page.getByText('#9001 reassigned to codex')).toBeVisible();
+    await expect
+      .poll(() =>
+        readActiveOrchestratorRun({
+          issue: E2E_ITEM_NUMBERS.humanNeeded,
+          repository: E2E_CONTROL_PLANE_REPOSITORY,
+        }),
+      )
+      .toMatchObject({ pipeline: 'codex', state: 'running' });
     // Both controls bind their `useTransition` state to disabled/loading;
     // enabled again is the user-visible proof that the refreshed RSC
     // payload settled before Playwright closes this test's page.

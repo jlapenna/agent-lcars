@@ -19,8 +19,9 @@ import { seedOrchestratorTask } from './util/orchestrator-seed';
  * GitHub - it assigns a real-looking incrementing issue number, remembers
  * the created issue so a later idempotency-lookup GET reflects it, and
  * synthesizes the marker-carrying workflow run a real router + dispatcher +
- * worker would eventually produce for the same create+label write (this
- * suite never runs the actual dispatch - see that doc's security boundary).
+ * worker would eventually produce for the same create+label write. Broker
+ * interactions exercised elsewhere in the suite stay inside the same local
+ * GitHub fixture boundary (see that doc's security boundary).
  *
  * Together these prove, end to end and through real UI interaction:
  *  - canonical `TaskRef` identity (docs/quick-task-identity.md);
@@ -181,13 +182,13 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // same as populated-dashboard.spec.ts's #9008 case (see
     // orchestrator-seed.ts's own doc comment for why a direct emulator
     // write here is safe). The exact pipeline value doesn't matter: only
-    // the LogicalWork provenance line reads it exists at all -
-    // state/attempts/anomalies below all come from the GitHub-side fixture,
-    // never from the orchestrator seed.
+    // the fixture workflow marker and the authoritative run are the same
+    // deterministic first-generation intent, as they are in production.
     await seedOrchestratorTask({
       issue: Number(issueNumber),
       pipeline: 'claude',
       requestId: `e2e-fixture-seed:quick-task-write-path:${issueNumber}`,
+      state: 'running',
     });
 
     // Canonical task detail page (agent-lcars#306's route) - the real read
@@ -200,20 +201,17 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await expect(card.getByTestId('logical-work-state')).toHaveText('active');
     await expect(card).toContainText(`#${issueNumber}`);
 
-    // The orchestrator task seeded above gives the page a real authoritative
-    // revision to render - stays at rev 1 even under Nx's CI test retries
-    // (seedOrchestratorTask's own idempotent-by-requestId contract).
-    await expect(card).toContainText('authoritative state rev 1');
+    // Request + dispatch confirmation are two authoritative state changes.
+    // The fixed request id keeps that history stable under a retried seed.
+    await expect(card).toContainText('authoritative state rev 2');
 
     // Attempt presentation (#306's ExecutionAttempt UI): one running attempt
     // bound to the fixture's own run-name marker - never collapsed, never a
-    // bare title guess. Its attribution reads `run marker` rather than
-    // `orchestrator` (the authoritative source doesn't corroborate it
-    // here), but the marker-derived generation badge still renders.
+    // bare title guess. The marker is corroborated by authoritative state.
     const attempts = card.getByTestId('logical-work-attempts');
     await expect(attempts).toContainText('Execution attempts (1)');
     await expect(attempts).toContainText('running');
-    await expect(attempts).toContainText('run marker');
+    await expect(attempts).toContainText('orchestrator');
     await expect(attempts).toContainText('g1');
 
     // A clean single-run dispatch renders no anomaly banner at all.
@@ -365,16 +363,16 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await openQuickTask(page);
     const intake = page.getByRole('dialog');
     await intake.getByLabel('Description').fill(originalDescription);
-    await intake
-      .getByLabel('Screenshot')
-      .fill('https://example.invalid/evidence');
+    // Screenshot intake is now an upload/dropzone, not a URL field. Keep
+    // this identity test on the uniquely named user-facing control without
+    // crossing the hermetic suite's no-cloud-storage boundary.
+    await expect(
+      intake.getByRole('button', { name: 'Paste or drop a screenshot' }),
+    ).toBeVisible();
 
     const previewTitle = intake.getByTestId('quick-task-preview-title');
     const previewBody = intake.getByTestId('quick-task-preview-body');
     await expect(previewTitle).toHaveText(originalDescription);
-    await expect(previewBody).toContainText(
-      '## Screenshot\nhttps://example.invalid/evidence',
-    );
     await expect(previewBody).toContainText('## Source context');
     await expect(previewBody).toContainText(
       '- Repository: `supersprinklesracing/sprinkles`',

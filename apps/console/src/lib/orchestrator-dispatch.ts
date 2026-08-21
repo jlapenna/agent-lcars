@@ -40,6 +40,8 @@ export interface DispatchDeps {
   tokens: DispatchTokenProvider;
   /** Injectable for tests; defaults to the ambient `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Injectable GitHub REST root; defaults to the production API. */
+  githubApiBaseUrl?: string;
   /** Injectable for deterministic lease tests; defaults to wall-clock UTC. */
   now?: () => string;
 }
@@ -139,7 +141,7 @@ async function handleDispatchRun(
     broker_generation: parseGeneration(run.runId),
     broker_dispatch_token: crypto.randomUUID(),
   };
-  const url = `${GITHUB_API}/repos/${run.task.repo}/actions/workflows/${run.pipeline}.yml/dispatches`;
+  const url = `${githubApiBaseUrl(deps)}/repos/${run.task.repo}/actions/workflows/${run.pipeline}.yml/dispatches`;
 
   let response: Response;
   try {
@@ -197,7 +199,7 @@ async function handleReportOutcome(
     run.state === 'lost'
       ? await describeLostOutcome(store, run)
       : { body: outcomeCommentBody(run), needsHumanLabel: false };
-  const url = `${GITHUB_API}/repos/${run.task.repo}/issues/${run.task.issue}/comments`;
+  const url = `${githubApiBaseUrl(deps)}/repos/${run.task.repo}/issues/${run.task.issue}/comments`;
 
   let response: Response;
   try {
@@ -223,7 +225,12 @@ async function handleReportOutcome(
   }
 
   if (outcome.needsHumanLabel) {
-    await addNeedsHumanLabelBestEffort(fetchImpl, tokens, run.task);
+    await addNeedsHumanLabelBestEffort(
+      fetchImpl,
+      tokens,
+      run.task,
+      githubApiBaseUrl(deps),
+    );
   }
 
   await settleClaim(deps, entry, 'done');
@@ -310,11 +317,12 @@ async function addNeedsHumanLabelBestEffort(
   fetchImpl: typeof fetch,
   tokens: DispatchTokenProvider,
   task: TaskId,
+  apiBaseUrl: string,
 ): Promise<void> {
   try {
     const token = await tokens.tokenFor(task.repo);
     await fetchImpl(
-      `${GITHUB_API}/repos/${task.repo}/issues/${task.issue}/labels`,
+      `${apiBaseUrl}/repos/${task.repo}/issues/${task.issue}/labels`,
       {
         method: 'POST',
         headers: githubHeaders(token),
@@ -377,6 +385,12 @@ function outcomeCommentBody(run: Run): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function githubApiBaseUrl(
+  deps: Pick<DispatchDeps, 'githubApiBaseUrl'>,
+): string {
+  return (deps.githubApiBaseUrl ?? GITHUB_API).replace(/\/+$/u, '');
 }
 
 async function settleQuietly(
