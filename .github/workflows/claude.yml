@@ -11,9 +11,7 @@ name: Claude Issue Agent
 # ref). This file keeps only what workflow_call cannot carry: the
 # workflow_dispatch input contract, the contract-tested run-name, the
 # permissions grant, and the repo-variable spellings passed down as
-# inputs. See agents/shared/skills/agent-protocol/reference/agent-protocol.md and
-# .agents/skills/lcars/lcars-protocol.md for the conventions the agent
-# follows.
+# inputs. The shared agent protocol is the complete behavioral contract.
 
 # Keep the console's leading issue-number join key and add the immutable
 # broker marker used to reconcile a dispatch after an interrupted bind.
@@ -114,11 +112,6 @@ jobs:
       brief-budget-minutes: '60'
       brief-artifact-checkpoint-minutes: '25'
       brief-finalize-checkpoint-minutes: '45'
-      # The one seam the canonical prompt leaves per repo (#1340 A-R2):
-      # this repo's own protocol file, read after the shared one. The rest
-      # of the prompt - including this attempt's claim marker - and the
-      # silent-stall wording are rendered by the lane.
-      protocol-note: 'then .agents/skills/lcars/lcars-protocol.md,'
     secrets:
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
       NX_CACHE_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}

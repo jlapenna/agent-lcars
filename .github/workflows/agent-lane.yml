@@ -85,8 +85,9 @@
 #   prompt BODY only: the attempt-claim marker block and the
 #   push-before-you-end paragraph are always the lane's, so no caller can
 #   drift the one byte-exact string the deliverable gate greps for.
-#   `protocol-note` is the one small seam on the body: an extra clause
-#   naming a repo's own protocol file, spliced into the reading order.
+#   `protocol-note` is an optional clause for genuinely repo-specific
+#   headless behavior. Most consumers omit it; normal repo facts belong in
+#   `AGENTS.md` or a development skill.
 
 on:
   workflow_call:
@@ -416,9 +417,9 @@ jobs:
       #   drift it, mis-render it, or forget it — which is how 21 hand-kept
       #   copies of a byte-exact marker were a standing hazard.
       #
-      # `protocol-note` is the per-repo seam on the body: a clause naming
-      # that repo's own protocol file, spliced into the reading order after
-      # the shared protocol. Written with a randomized heredoc delimiter
+      # `protocol-note` is an optional trusted instruction clause, spliced into
+      # the reading order after the shared protocol. Written with a randomized
+      # heredoc delimiter
       # because GITHUB_ENV's multi-line form is delimiter-terminated.
       - name: Resolve the canonical dispatch prompt
         env:

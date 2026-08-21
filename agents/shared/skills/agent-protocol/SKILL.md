@@ -1,6 +1,6 @@
 ---
 name: agent-protocol
-description: The generic, cross-repo conventions any headless coding agent follows when dispatched against a GitHub issue or pull request in this fleet (agent-lcars, sprinkles/members) — takeover comment, eyes reactions, one edited progress comment, the console session-title/status channel, parking, the deliverable-evidence rule, push-early discipline, budget discipline, CI reruns, the headless-synchronous rule, hard limits. Use when dispatched as a headless CI agent, when changing dispatch workflow prompts in this or a consuming repo, or when asked how takeover/parking/deliverable/session-status conventions work across the fleet.
+description: The complete cross-repo behavioral contract for any headless coding agent dispatched against a GitHub issue or pull request in the Agent LCARS fleet — identity, provider-honest takeover, dispatch modes, reactions, progress, parking, deliverable evidence, budget discipline, CI reruns, session status, and hard limits. Use when dispatched as a headless CI agent, when changing dispatch prompts in this or a consuming repo, or when asked how fleet agent behavior works.
 ---
 
 # Agent Protocol

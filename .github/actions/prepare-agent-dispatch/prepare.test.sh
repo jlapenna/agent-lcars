@@ -36,6 +36,7 @@ cat > "$FAKE_COMMENTS" <<'JSON'
 JSON
 
 export GITHUB_ACTION_PATH="$action_dir"
+export GITHUB_WORKSPACE="$consumer"
 export GITHUB_ENV="$test_root/github-env"
 export GITHUB_OUTPUT="$test_root/github-output"
 export GITHUB_REPOSITORY="example/consumer"
@@ -148,7 +149,7 @@ export RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT REPLY CONTEXT
 
 (
   cd "$oversized_root/consumer"
-  bash "$action_dir/prepare.sh"
+  GITHUB_WORKSPACE="$oversized_root/consumer" bash "$action_dir/prepare.sh"
 )
 
 oversized_path="$RUNNER_TEMP/agent-dispatch/context.json"

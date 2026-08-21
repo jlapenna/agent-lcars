@@ -15,9 +15,10 @@ Add exactly one routing label to an issue in an onboarded repository:
 | `agent:codex`    | Codex       |
 | `agent:opencode` | OpenCode    |
 
-The agent protocol is the behavioral contract for a dispatched run:
-[shared protocol](.agents/skills/agent-protocol/reference/agent-protocol.md)
-and [LCARS additions](.agents/skills/lcars/lcars-protocol.md).
+The [shared agent protocol](.agents/skills/agent-protocol/reference/agent-protocol.md)
+is the complete behavioral contract for every dispatched run. The
+[LCARS skill](.agents/skills/lcars/SKILL.md) is a situational control-plane
+reference for developers changing dispatch and reconciliation machinery.
 
 ## Operating surfaces
 

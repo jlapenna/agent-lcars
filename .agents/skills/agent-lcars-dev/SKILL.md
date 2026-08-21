@@ -1,6 +1,6 @@
 ---
 name: agent-lcars-dev
-description: Developer toolkit and mandatory guardrails for the agent-lcars repo — worktree/checkout safety, creating and verifying pull requests, and repo-wide hard limits (Terraform, deploy, Firestore, cross-repo independence). Load it at the start of every session in this repo, even if the task seems generic, because it defines the mandatory guardrails for git and deployment. Headless CI dispatch conventions (takeover comment, parking, identity, dispatch ledger) live in the agent-protocol and lcars skills instead.
+description: Developer toolkit and mandatory guardrails for the agent-lcars repo — worktree/checkout safety, creating and verifying pull requests, and repo-wide hard limits (Terraform, deploy, Firestore, cross-repo independence). Load it at the start of every session in this repo, even if the task seems generic, because it defines the mandatory guardrails for git and deployment. Headless CI behavior lives in agent-protocol; LCARS control-plane internals live in the situational lcars skill.
 ---
 
 # Agent LCARS Dev Toolkit
@@ -153,10 +153,9 @@ Read the reference before starting the corresponding task:
 
 Load these when the task enters their domain:
 
-- **[agent-protocol](../agent-protocol/SKILL.md)** / **[lcars](../lcars/SKILL.md)**
-  — headless CI dispatch conventions and this repo's own dispatch/orchestrator,
-  auto-merge, and identity delta. Not needed for ordinary interactive
-  development.
+- **[agent-protocol](../agent-protocol/SKILL.md)** — complete headless CI
+  behavior. **[lcars](../lcars/SKILL.md)** — situational dispatch/orchestrator,
+  telemetry, and auto-merge implementation reference.
 - **[verifying-console-session](../verifying-console-session/SKILL.md)** —
   capture and reuse a real authenticated LCARS browser session for approved
   production UI verification when hermetic E2E cannot prove the live auth or

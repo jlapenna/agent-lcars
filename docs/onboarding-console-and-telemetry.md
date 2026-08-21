@@ -22,14 +22,15 @@ but the console only becomes useful once all three are in place:
 
 ## 1. Agent protocol
 
-Pull in the shared skill and follow it. Every dispatch workflow (however
-many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
+Use the shared protocol as the complete fleet behavior contract. Every dispatch
+workflow (however many of `claude.yml`, `opencode.yml`, and `codex.yml` the
+repo runs) should:
 
 - Use the `prepare-agent-dispatch` action (ref per the convention in
   [published-actions.md](published-actions.md) — the moving `main` ref with a
   `# latest` comment) and have the agent read the
-  shared protocol at `$AGENT_PROTOCOL_PATH` first, before its own repo-specific
-  delta skill. The action is already downloaded outside the consumer's Git
+  shared protocol at `$AGENT_PROTOCOL_PATH`. The action is already downloaded
+  outside the consumer's Git
   worktree, so it exposes its bundled protocol file and writes the dispatch
   brief under `$RUNNER_TEMP`:
 
@@ -52,56 +53,30 @@ many of `claude.yml` / `opencode.yml` / `codex.yml` the repo runs) should:
   timeout. Do not check this repository out inside the consumer repository;
   runtime-only files must never appear in the consumer's Git status.
 
-- Write that delta skill (mirror `.agents/skills/lcars/lcars-protocol.md`
-  in this repo): name the fleet-claim identity, the PR reviewer/park
-  assignee, the reply triggers, the repo's own verify commands, any hard
-  limits additive to `agent-protocol.md §11`, **and — required, not
-  optional — which CLI(s) (if any) have real live-resume tooling in this
-  repo, with the exact command to post.** agent-protocol.md §1 defaults
-  every CLI the delta skill doesn't explicitly name to "no live-resume
-  tooling," so installing a working script per the next bullet without
-  also declaring it here leaves the capability silently unreported: an
-  agent that only reads §1's default posts an honest-but-wrong "no resume
-  tooling exists" comment despite the script actually working, and the
-  console's takeover affordance stays dark for no reason. Mirror
-  `.agents/skills/lcars/lcars-protocol.md`'s "Session-resume script"
-  section, which is exactly this declaration for this repo.
-- **For a Claude dispatch that ships genuinely Claude-capable resume
-  tooling:** the takeover comment must name `fleet-claude-agent-session`
-  (the fleet-tools bin, installed machine-wide and baked into the runner
-  image — agent-lcars#1328) — the console's takeover-command scanner
-  (`apps/console/src/lib/action-items.ts`'s `TAKEOVER_COMMAND_RE`)
-  matches the literal substring `claude-agent-session` (with optional
-  `.sh` for historical comments) and does not generalize per agent, so a
-  takeover comment referencing any other command name never surfaces in
-  the console UI.
-- **For Codex, OpenCode, or any pipeline without real live-resume tooling
-  in the new repo:** do not cite that command just to satisfy the
-  scanner, and do not name
-  `fleet-claude-agent-session` in that pipeline's takeover comment — it is a
-  Claude-only tool and citing it from a different CLI's comment is a false
-  handoff, not an honest gap disclosure. Follow agent-protocol.md §1's
-  provider-honest default instead: state plainly that no live-resume
-  tooling exists for that CLI, and point at the pushed branch/PR. This
-  repo's own `.agents/skills/lcars/lcars-protocol.md` ("Session-resume
-  script") is a worked example of the split between the Claude case and
-  the Codex/OpenCode case.
-- Use the exact fixed vocabulary agent-protocol.md calls out: the
-  `status:needs-human` label (never renamed/localized), the assignee-plus-label
-  parking pattern, the eyes-reaction acknowledgement, one continuously
-  edited progress comment.
+- Do not copy `agent-protocol` or centrally published plugin skills into the
+  repository. The action installs the shared layer-1 skill surface into the
+  runner's agent home and exports the source protocol path.
+- Keep repository-local facts in `AGENTS.md` or the repository's development
+  skill: bootstrap and verification commands, protected infrastructure, deploy
+  policy, and other additive hard limits. Pass `protocol-note` only for a
+  genuinely repo-specific headless behavior that cannot live in those normal
+  instruction surfaces; most repositories should omit it.
+- Keep the fleet-wide `agent-lcars-bot` claim identity, `jlapenna` maintainer,
+  reply triggers, dispatch modes, provider handoffs, parking vocabulary, and
+  deliverable semantics in the shared protocol. A consumer must not redefine
+  them locally.
 
 None of this requires touching this repo. It's entirely the new repo's own
 dispatch-workflow work, following a file this repo publishes.
 
 ## 2. Telemetry
 
-**Claude Code dispatches only, for now** — there's no OpenCode or Codex
-transcript adapter yet. Wiring the steps below into a non-Claude dispatch
-workflow will not fail loudly: every telemetry step is deliberately
-fail-soft, so the workflow stays green while silently producing no live or
-final session data. Skip this section for a non-Claude pipeline until that
-adapter exists.
+Provider coverage differs: Claude Code reports live session data and archived
+transcripts; Codex reports session telemetry and archives raw JSONL to GCS but
+does not expose a live-resume command; OpenCode currently has no transcript
+adapter or archive. Telemetry steps are deliberately fail-soft, so verify the
+expected provider-specific result rather than treating a green workflow as
+proof that session data arrived.
 
 This is also the part that requires per-repo setup in **both** directions:
 the new repo's runner environment, and a GCP IAM grant here.
@@ -197,7 +172,7 @@ wrote, with no browsable archived transcript.
 
 The `telemetry-writer` service account's WIF principal set needs the new
 repo added so its Actions runs can mint a token for that SA. This repo's
-own `AGENTS.md`/`lcars-protocol.md` rules deny Terraform and IAM changes by
+own `AGENTS.md`/development-skill rules deny Terraform and IAM changes by
 default. The named maintainer may explicitly approve a specific issue,
 operation, and target; without that approval, flag the step and wait. With
 approval, use a dedicated worktree, add regression coverage, review the

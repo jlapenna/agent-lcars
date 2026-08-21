@@ -16,9 +16,7 @@ name: Codex Issue Agent
 # The subscription credential is this repository's own GCS object. Codex
 # rotates it on every run, so no two repositories may share a lineage.
 #
-# See agents/shared/skills/agent-protocol/reference/agent-protocol.md and
-# .agents/skills/lcars/lcars-protocol.md for the conventions this agent
-# follows.
+# The shared agent protocol is the complete behavioral contract.
 
 # This workflow is workflow_dispatch-only (the hosted controller owns event
 # admission). Keep the console's leading issue-number join key and add the
@@ -115,11 +113,6 @@ jobs:
       brief-budget-minutes: '60'
       brief-artifact-checkpoint-minutes: '25'
       brief-finalize-checkpoint-minutes: '45'
-      # The one seam the canonical prompt leaves per repo (#1340 A-R2):
-      # this repo's own protocol file, read after the shared one. The rest
-      # of the prompt - including this attempt's claim marker - and the
-      # silent-stall wording are rendered by the lane.
-      protocol-note: 'then .agents/skills/lcars/lcars-protocol.md,'
     secrets:
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
       NX_CACHE_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
