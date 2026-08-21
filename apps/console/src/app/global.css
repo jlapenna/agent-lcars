@@ -72,11 +72,22 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   cursor: pointer;
   font-family: var(--font-display), sans-serif;
   letter-spacing: 0.035em;
-  list-style-position: inside;
 }
 
-.lcars-disclosure > .lcars-disclosure__summary::marker {
+.lcars-disclosure > .lcars-disclosure__summary::before {
+  flex: 0 0 auto;
   color: currentColor;
+  content: '▸';
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.lcars-disclosure[open] > .lcars-disclosure__summary::before {
+  content: '▾';
+}
+
+.lcars-disclosure > .lcars-disclosure__summary::-webkit-details-marker {
+  display: none;
 }
 
 .lcars-disclosure > .lcars-disclosure__summary:hover {
