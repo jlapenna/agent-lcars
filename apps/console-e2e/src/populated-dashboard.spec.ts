@@ -517,6 +517,12 @@ test.describe('responsive decision inbox', () => {
 
     const filter = workspace.getByRole('button', { name: 'Filter and sort' });
     await filter.focus();
+    const selectedItemUrl = page.url();
+    await page.keyboard.press('j');
+    await page.keyboard.press('/');
+    await expect(filter).toBeFocused();
+    await expect(page).toHaveURL(selectedItemUrl);
+
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
     await expect(choices).toHaveCount(10);

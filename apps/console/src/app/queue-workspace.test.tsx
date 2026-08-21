@@ -470,6 +470,25 @@ describe('inbox keyboard navigation', () => {
     fireEvent.keyDown(input, { key: 'j' });
     expect(mockReplace).not.toHaveBeenCalled();
   });
+
+  it('ignores shortcuts while a non-text control has focus', () => {
+    renderWorkspace([
+      makeCard(),
+      makeCard({
+        number: 250,
+        title: 'Review the next item',
+        actionTypes: ['review-requested'],
+      }),
+    ]);
+    const control = screen.getByRole('button', { name: 'Filter and sort' });
+    control.focus();
+
+    fireEvent.keyDown(control, { key: 'j' });
+    fireEvent.keyDown(control, { key: '/' });
+
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(control);
+  });
 });
 
 describe('parseQueueFilter / parseQueueSort', () => {
