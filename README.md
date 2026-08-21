@@ -1,16 +1,17 @@
 # Agent LCARS
 
 Agent LCARS is the operations console, telemetry pipeline, and self-hosted
-runner fleet for headless coding agents (Claude Code, and experimentally
-OpenCode) dispatched against GitHub issues.
+runner fleet for headless Claude Code, Codex, and OpenCode agents dispatched
+against GitHub issues.
 
 ![Agent LCARS console — Queue tab showing the action-item board and in-flight CLI sessions](docs/images/console-dashboard.png)
 
 ## What it does
 
-Adding the `claude` (or `opencode`) label to an issue in a watched repo
-dispatches a coding agent on this fleet's own ephemeral, self-hosted GitHub
-Actions runners. That agent works the issue headlessly — commenting,
+Adding exactly one routing label — `agent:claude`, `agent:codex`, or
+`agent:opencode` — to an issue in a watched repo dispatches that coding agent
+on the fleet's own ephemeral, self-hosted GitHub Actions runners. The agent
+works the issue headlessly — commenting,
 opening a PR, asking a clarifying question — following the shared
 conventions in [`.agents/skills/agent-protocol`](.agents/skills/agent-protocol/reference/agent-protocol.md)
 and this repo's own [`.agents/skills/lcars`](.agents/skills/lcars/lcars-protocol.md)
@@ -48,8 +49,8 @@ transient Firestore hiccup never takes the whole console down.
 
 ## How it's wired together
 
-1. **Agent protocol** — every dispatch workflow (`claude.yml`, experimentally
-   `opencode.yml`) follows the shared, cross-repo conventions in
+1. **Agent protocol** — every dispatch workflow (`claude.yml`, `codex.yml`,
+   and `opencode.yml`) follows the shared, cross-repo conventions in
    `.agents/skills/agent-protocol`: a takeover comment with a resume command,
    👀 reactions as the agent reads a thread, one continuously edited status
    comment, and — when waiting on a human — the fixed `status:needs-human` label
