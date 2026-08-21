@@ -1521,7 +1521,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .costs-utilities--mobile,
   .task-utilities--mobile,
   .session-detail-utilities--mobile {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 }
 
