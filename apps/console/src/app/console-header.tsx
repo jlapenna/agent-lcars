@@ -176,14 +176,17 @@ export function DataWarnings({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null;
 
   return (
-    <details data-testid="data-warnings">
-      <summary style={{ cursor: 'pointer' }}>
+    <details
+      className="lcars-disclosure lcars-data-warnings"
+      data-testid="data-warnings"
+    >
+      <summary className="lcars-disclosure__summary">
         <Text size="sm" c="yellow" component="span">
           ⚠ {warnings.length} data warning{warnings.length === 1 ? '' : 's'} —
           some sections may be incomplete
         </Text>
       </summary>
-      <Stack gap={4} mt="xs">
+      <Stack gap={4} mt="xs" className="lcars-disclosure__content">
         {warnings.map((warning) => (
           <Text key={warning} size="xs" c="dimmed">
             {warning}

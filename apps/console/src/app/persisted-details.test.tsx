@@ -72,4 +72,15 @@ describe('PersistedDetails', () => {
     renderDisclosure({ defaultOpen: true });
     expect(screen.getByTestId('disclosure')).toHaveAttribute('open');
   });
+
+  it('gives persisted disclosures the shared console treatment', () => {
+    renderDisclosure({ className: 'queue-muted-items' });
+    expect(screen.getByTestId('disclosure')).toHaveClass(
+      'lcars-disclosure',
+      'queue-muted-items',
+    );
+    expect(screen.getByText('Section').closest('summary')).toHaveClass(
+      'lcars-disclosure__summary',
+    );
+  });
 });
