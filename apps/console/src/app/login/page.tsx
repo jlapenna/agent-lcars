@@ -1,4 +1,4 @@
-import { Button, Center, Stack, Text, Title } from '@mantine/core';
+import { Button, Center, Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -32,7 +32,6 @@ async function LoginContent({
   return (
     <Center mih="60vh">
       <Stack align="center" gap="xs" style={{ maxWidth: 360 }}>
-        <Title order={1}>Agent LCARS</Title>
         <Text c="dimmed" ta="center" mb="md">
           {consoleDescription()}
         </Text>

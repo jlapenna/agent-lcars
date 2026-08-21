@@ -53,6 +53,7 @@ async function expectOneSharedMobileHeader(page: Page, current: string) {
   await expect(header).toBeVisible();
   await expect(header.locator('.lcars-header')).toHaveCount(1);
   await expect(header.locator('.lcars-header-title')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
   await expect(header.locator('.lcars-header-bar')).toHaveCount(1);
   await expect(header.locator('.lcars-command-row')).toHaveCount(1);
   await expect(
