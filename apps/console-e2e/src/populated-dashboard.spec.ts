@@ -398,6 +398,28 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
   });
 
+  test('keeps a loaded item inspectable after it leaves the decision queue', async ({
+    page,
+  }) => {
+    await page.goto(
+      `/inbox?item=supersprinklesracing%2Fsprinkles%23${E2E_ITEM_NUMBERS.postDeploy}`,
+    );
+
+    const workspace = page.getByRole('region', { name: 'Decision Inbox' });
+    await expect(
+      workspace.getByText(
+        'Verify the session-cost budget alert after the next deploy',
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(
+      workspace.getByRole('heading', { name: 'Item unavailable' }),
+    ).toHaveCount(0);
+    await expect(
+      workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.postDeploy}`),
+    ).toHaveCount(0);
+  });
+
   test('preserves repository scope between Deck and Inbox navigation', async ({
     page,
   }) => {

@@ -20,6 +20,7 @@ import {
 import { derivePrimaryAction } from '../../lib/primary-action';
 import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
+import { repoItemKey } from '../../lib/watched-repo';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
 import { DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
@@ -66,6 +67,13 @@ async function InboxBody({
   const queueView = buildQueueView(items, activity, sessionsByRunId);
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
+  const selectedCard = selectedItemKey
+    ? queueView.items.find(
+        (item) =>
+          matchesFilter(item.repo) &&
+          repoItemKey(item.repo, item.number) === selectedItemKey,
+      )
+    : undefined;
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
@@ -86,6 +94,7 @@ async function InboxBody({
         yourQueue={queueView.yourQueue
           .filter((item) => matchesFilter(item.repo))
           .map(toCard)}
+        selectedCard={selectedCard ? toCard(selectedCard) : undefined}
         selectedItemKey={selectedItemKey}
         mobileDataFreshness={
           <DataFreshness
