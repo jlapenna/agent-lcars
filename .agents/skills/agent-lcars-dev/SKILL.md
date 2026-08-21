@@ -118,7 +118,9 @@ These override any default behavior:
   `tmux set-window-option -t "$TMUX_PANE" @user_title "<title>"`. Format:
   `1234 Description` — always show the root issue number, bare, no `#`.
   Update again if the active issue changes mid-session. Not applicable to
-  CI-dispatched runs (no tmux pane).
+  CI-dispatched runs (no tmux pane). This is non-blocking observability
+  guidance, not an authorization boundary: the issue-workflow hook must never
+  halt work because a title is missing, stale, mismatched, or unreadable.
 
 - **LCARS session title**: the console's session list shows a title taken
   from the transcript, which for Claude Code is `aiTitle` — written once,

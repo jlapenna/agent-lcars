@@ -423,6 +423,12 @@ Agent LCARS owns only agent-runtime behavior, in `packages/fleet-tools`
 | `fleet-codex-issue-guardrail` | Claude/Codex PostToolUse hook (`.claude/settings.json`) |
 | `fleet-claude-agent-session`  | operator CLI for LCARS runner sessions                  |
 
+The issue guardrail enforces the durable ownership boundary: an issue named
+by `gh issue view` or `gh issue edit` must be assigned to the fleet identity.
+Tmux `@user_title` values are observability hints for humans managing many
+interactive sessions, not authorization state, so a missing, stale, or
+unreadable title never blocks work or produces a guardrail violation.
+
 General repository management is public
 [`jlapenna/repo-tools`](https://github.com/jlapenna/repo-tools), independent
 of LCARS agent identity and session behavior. Its `repo-*` commands cover
