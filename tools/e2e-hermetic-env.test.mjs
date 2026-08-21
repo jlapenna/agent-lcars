@@ -1,6 +1,7 @@
 /* eslint-disable vitest/no-import-node-test -- CI runs this boundary test with node --test before installing workspace dependencies. */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -145,6 +146,14 @@ test('tool caches stay durable while HOME remains isolated', () => {
     callerHome,
     '.cache/firebase/emulators',
   );
+  const lockFingerprint = createHash('sha256')
+    .update(fs.readFileSync(path.join(root, 'pnpm-lock.yaml')))
+    .digest('hex');
+  const expectedNativeCache = path.join(
+    callerHome,
+    '.cache/nx-native-file-cache/agent-lcars',
+    lockFingerprint,
+  );
   const probe = `
     if (process.env.HOME === ${JSON.stringify(callerHome)}) process.exit(9);
     if (process.env.COREPACK_HOME !== ${JSON.stringify(expectedCorepackHome)}) {
@@ -153,11 +162,18 @@ test('tool caches stay durable while HOME remains isolated', () => {
     if (process.env.FIREBASE_EMULATORS_PATH !== ${JSON.stringify(expectedFirebaseHome)}) {
       process.exit(11);
     }
+    if (process.env.NX_NATIVE_FILE_CACHE_DIRECTORY !== ${JSON.stringify(expectedNativeCache)}) {
+      process.exit(12);
+    }
     process.stdout.write('tool caches verified\\n');
   `;
 
   try {
-    const result = runThroughE2eBoundary(probe, { HOME: callerHome });
+    const result = runThroughE2eBoundary(probe, {
+      CI: '',
+      HOME: callerHome,
+      XDG_CACHE_HOME: '',
+    });
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, 'tool caches verified\n');
@@ -272,7 +288,7 @@ test('ambient mode cannot select a non-hermetic live implementation', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(fs.readFileSync(argsFile, 'utf8').trim().split('\n'), [
       'exec',
-      'nx',
+      'repo-nx',
       'run',
       '@agent-lcars/console-e2e:e2e-implementation:emulator',
     ]);

@@ -121,6 +121,13 @@ VALIDATOR="$ROOT/tools/e2e/validate-env.mjs"
 CALLER_HOME="${HOME:-}"
 PLATFORM="$(uname -s)"
 
+# A developer can invoke this script directly rather than through tools/nx.
+# Establish the same durable native binding cache before the hermetic child
+# starts so that path does not depend on an outer Nx process having set it.
+# shellcheck source=nx-native-file-cache.sh
+. "$ROOT/tools/nx-native-file-cache.sh"
+configure_agent_lcars_nx_native_file_cache "$ROOT"
+
 if [ ! -f "$CI_ENV" ]; then
   echo "e2e-hermetic: missing $CI_ENV" >&2
   exit 1
