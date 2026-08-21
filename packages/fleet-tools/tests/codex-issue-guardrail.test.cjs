@@ -6,19 +6,11 @@ const {
   extractIssueNumbers,
   extractIssueReferences,
   runHook,
-  titleMatchesIssue,
 } = require('../bin/codex-issue-guardrail.cjs');
 
-function dependencies({
-  assignees = ['agent-lcars-bot'],
-  parentIssueNumber = null,
-  tmuxPane = '%20',
-  tmuxTitle = '642 unified guardrail',
-} = {}) {
+function dependencies({ assignees = ['agent-lcars-bot'] } = {}) {
   return {
-    getIssue: () => ({ assignees, parentIssueNumber }),
-    getTmuxPane: () => tmuxPane,
-    getTmuxTitle: () => tmuxTitle,
+    getIssue: () => ({ assignees }),
   };
 }
 
@@ -35,15 +27,7 @@ test('ignores unrelated commands', () => {
   assert.deepEqual(extractIssueNumbers('git status --short'), []);
 });
 
-test('accepts a title for the issue, and a bare or starred root title for a sub-issue', () => {
-  assert.equal(titleMatchesIssue('642 unified guardrail', 642), true);
-  assert.equal(titleMatchesIssue('642 follow-up', 643, 642), true);
-  assert.equal(titleMatchesIssue('642* verify follow-up', 643, 642), true);
-  assert.equal(titleMatchesIssue('643 follow-up', 643, 642), false);
-  assert.equal(titleMatchesIssue('641 another task', 642), false);
-});
-
-test('returns no output when the issue is claimed and tmux is titled', () => {
+test('returns no output when the issue is claimed', () => {
   const output = runHook(
     { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
     dependencies(),
@@ -104,48 +88,34 @@ test('uses the provided projectName in the violation banner', () => {
   );
 });
 
-test('reports a mismatched tmux title', () => {
+test('does not inspect tmux title state for a claimed issue', () => {
   const output = runHook(
     { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
-    dependencies({ tmuxTitle: '641 another task' }),
+    {
+      ...dependencies(),
+      getTmuxPane: () => '%20',
+      getTmuxTitle: () => {
+        throw new Error('tmux title lookup must remain non-blocking');
+      },
+    },
+  );
+
+  assert.equal(output, null);
+});
+
+test('reports ownership violations without requiring a tmux title', () => {
+  const output = runHook(
+    { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
+    dependencies({
+      assignees: [],
+    }),
   );
 
   assert.match(
     output.hookSpecificOutput.additionalContext,
-    /tmux pane %20 is not titled for issue #642/,
+    /issue #642 is not assigned to agent-lcars-bot/,
   );
-});
-
-test('accepts a correctly titled sub-issue session', () => {
-  const output = runHook(
-    { tool_input: { command: 'gh issue view 643' } },
-    dependencies({ parentIssueNumber: 642, tmuxTitle: '642 follow-up' }),
-  );
-
-  assert.equal(output, null);
-});
-
-test('accepts the starred root title marker for a sub-issue', () => {
-  const output = runHook(
-    { tool_input: { command: 'gh issue edit 643 --add-label chore' } },
-    dependencies({
-      parentIssueNumber: 642,
-      tmuxTitle: '642* verify follow-up',
-    }),
-  );
-
-  assert.equal(output, null);
-});
-
-test('does not require tmux outside a tmux session', () => {
-  // The mismatched title would be a violation inside tmux; with no pane the
-  // title check must be skipped entirely, so the hook stays silent.
-  const output = runHook(
-    { tool_input: { command: 'gh issue edit 642 --add-label chore' } },
-    dependencies({ tmuxPane: '', tmuxTitle: 'unrelated window title' }),
-  );
-
-  assert.equal(output, null);
+  assert.doesNotMatch(output.hookSpecificOutput.additionalContext, /tmux/i);
 });
 
 // A bare issue number means "in the cwd's repository" to gh, so a cross-repo
@@ -197,10 +167,8 @@ test('asks gh for the named repository, not the working directory one', () => {
     {
       getIssue: (issueNumber, repo) => {
         seen.push([issueNumber, repo]);
-        return { assignees: ['agent-lcars-bot'], parentIssueNumber: null };
+        return { assignees: ['agent-lcars-bot'] };
       },
-      getTmuxPane: () => '',
-      getTmuxTitle: () => '',
     },
   );
 
@@ -211,9 +179,7 @@ test('names the repository in a cross-repo violation', () => {
   const output = runHook(
     { tool_input: { command: 'gh issue view 761 -R jlapenna/homelab' } },
     {
-      getIssue: () => ({ assignees: [], parentIssueNumber: null }),
-      getTmuxPane: () => '',
-      getTmuxTitle: () => '',
+      getIssue: () => ({ assignees: [] }),
     },
   );
 

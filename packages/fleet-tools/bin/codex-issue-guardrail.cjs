@@ -64,13 +64,6 @@ function formatIssue({ number, repo }) {
   return repo ? `${repo}#${number}` : `#${number}`;
 }
 
-function titleMatchesIssue(title, issueNumber, parentIssueNumber = null) {
-  if (typeof title !== 'string') return false;
-  const normalizedTitle = title.trim();
-  const number = parentIssueNumber ?? issueNumber;
-  return new RegExp(`^${number}(?:\\*|\\s|$)`).test(normalizedTitle);
-}
-
 function defaultDependencies(cwd) {
   return {
     projectName: path.basename(cwd),
@@ -88,27 +81,11 @@ function defaultDependencies(cwd) {
         },
       );
       const issue = JSON.parse(output);
-      const parentMatch = issue.parent_issue_url?.match(/\/issues\/(\d+)$/);
       return {
         assignees: Array.isArray(issue.assignees)
           ? issue.assignees.map(({ login }) => login)
           : [],
-        parentIssueNumber: parentMatch ? Number(parentMatch[1]) : null,
       };
-    },
-    getTmuxPane() {
-      return process.env.TMUX_PANE ?? '';
-    },
-    getTmuxTitle(tmuxPane) {
-      return execFileSync(
-        'tmux',
-        ['show-window-options', '-v', '-t', tmuxPane, '@user_title'],
-        {
-          cwd,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        },
-      ).trim();
     },
   };
 }
@@ -118,29 +95,13 @@ function evaluateIssue(reference, dependencies) {
     typeof reference === 'number' ? { number: reference } : reference;
   const label = formatIssue({ number: issueNumber, repo });
   const violations = [];
-  let issue;
   try {
-    issue = dependencies.getIssue(issueNumber, repo);
+    const issue = dependencies.getIssue(issueNumber, repo);
     if (!issue.assignees.includes(CLAIM_ASSIGNEE)) {
       violations.push(`issue ${label} is not assigned to ${CLAIM_ASSIGNEE}`);
     }
   } catch {
     violations.push(`could not verify the assignees for issue ${label}`);
-  }
-  const tmuxPane = dependencies.getTmuxPane();
-  if (tmuxPane) {
-    try {
-      const title = dependencies.getTmuxTitle(tmuxPane);
-      if (
-        !titleMatchesIssue(title, issueNumber, issue?.parentIssueNumber ?? null)
-      ) {
-        violations.push(
-          `tmux pane ${tmuxPane} is not titled for issue ${label}`,
-        );
-      }
-    } catch {
-      violations.push(`could not verify the title for tmux pane ${tmuxPane}`);
-    }
   }
   return violations;
 }
@@ -161,7 +122,7 @@ function runHook(input, dependencies) {
       additionalContext: [
         `${projectName}-dev guardrail violation:`,
         ...violations.map((violation) => `- ${violation}`),
-        'Before continuing hands-on work, claim the issue, post a session takeover comment, and pin this tmux window title.',
+        'Before continuing hands-on work, claim the issue and post a session takeover comment.',
       ].join('\n'),
     },
   };
@@ -200,5 +161,4 @@ module.exports = {
   extractIssueNumbers,
   extractIssueReferences,
   runHook,
-  titleMatchesIssue,
 };
