@@ -55,23 +55,9 @@ USER root
 # /home/runner must be owned by whoever executes run.sh, hence --chown on
 # the COPY below.
 #
-# 1002 is ALSO a load-bearing match with sprinkles' own e2e-runner image
-# (which independently chose the same uid, for the same 1001-collision
-# reason -- see that Dockerfile), not just a coincidence to leave alone: the
-# homelab orchestrator's `share_workdir: true` (set on both pools' scale
-# sets) bind-mounts the SAME host `/home/runner/{_work,externals}` paths
-# (scaler.go's `runnerBinds`, gated on `shareWorkDir`), and `ensureWorkDir
-# Ownership` chowns them to whichever scale set's own image last placed a
-# runner there (`id runner` inside `a.runnerImage`) -- see the id checks
-# earlier in this file's own build verification. Both pools draw from the
-# SAME shared fleet host pool (orchestrator.yml's own header comment), so
-# they WILL land on the same hosts over time. If this image's uid ever
-# drifts from sprinkles' e2e-runner image's uid, two share_workdir pools
-# alternating on one host would flip-flop ownership of that shared tree and
-# jobs could fail to write their own workspace (caught in PR #929 review) --
-# keep the two in lockstep, or migrate away from a raw uid match by
-# isolating the shared paths per pool (an orchestrator-level change, out of
-# scope here).
+# 1002 also matches Sprinkles' independently built E2E image, but runner
+# filesystems are isolated per container; no host checkout ownership contract
+# couples the two images anymore.
 RUN groupadd -g 1002 runner \
   && useradd -m -u 1002 -g 1002 -s /bin/bash runner
 
@@ -80,20 +66,7 @@ RUN groupadd -g 1002 runner \
 # the scaler's container spec needs no change to drive this image.
 COPY --from=agent --chown=runner:runner /home/runner /home/runner
 
-# Backup the baked-in externals directory BEFORE share_workdir's host bind
-# mount ever masks it at runtime (mirrors apps/runner-autoscaler/runner-image/
-# Dockerfile's own identical step) -- entrypoint.sh's repair_externals_if_needed
-# restores from this backup whenever the host-side directory turns out to be
-# empty, root-owned, or stale (see that entrypoint's own COPY below). `cp -r`
-# as root preserves the runner:runner ownership the COPY above just set.
-RUN cp -r /home/runner/externals /home/runner/externals_backup
-
-# Shared externals self-heal/health-check logic (agent-lcars#920 fix, PR #930
-# review) -- the SAME file apps/runner-autoscaler/runner-image/entrypoint.sh
-# and the control plane's own periodic idle-host maintenance sweep
-# (scaler.go:sweepHostWorkDir) use, not a second hand-copied version that
-# could drift. Repo-root build context (see this file's own header) is what
-# lets this COPY reach outside tools/e2e-runner/.
+# Runtime checks for the Actions Node runtimes copied into this image.
 COPY apps/runner-autoscaler/runner-image/externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
@@ -109,17 +82,9 @@ RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 #
 # gh CLI and Git LFS remain deliberately absent because this repo's
 # console-e2e suite reads neither live PR state nor committed pixel goldens.
-# A minimal entrypoint wrapper IS needed here, unlike sprinkles' own
-# e2e-runner image -- this pool sets share_workdir: true without
-# mount_docker_socket in homelab's orchestrator.yml (scaler.go's
-# `runnerBinds` gates the shared /home/runner/{_work,externals} bind on
-# `shareWorkDir`, NOT `mountDockerSocket` -- those were one flag until
-# agent-lcars#101 split them apart), so a cold host -- one neither this pool
-# nor sprinkles' e2e pool has ever populated -- would otherwise boot straight
-# into an empty or root-owned externals directory and fail actions/checkout@v7
-# before the suite ever starts (PR #930 review). Everything else the generic
-# JIT worker image's own wrapper does (pnpm/Java preflight, telemetry
-# sidecar) stays out of scope -- see entrypoint.sh's own comment.
+# A minimal entrypoint wrapper verifies the baked Actions runtimes before the
+# runner registers with GitHub. Everything else the generic JIT worker image's
+# wrapper does remains out of scope.
 COPY tools/e2e-runner/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

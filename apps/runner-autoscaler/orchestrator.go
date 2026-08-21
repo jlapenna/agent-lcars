@@ -41,7 +41,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	if err != nil {
 		return fmt.Errorf("connecting fleet docker hosts: %w", err)
 	}
-	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
+	fleet := newFleetCoordinator(0, nil, nil, nil)
 	configureFleet(fleet, resolved)
 	managedHosts := placementHosts
 
@@ -367,31 +367,12 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.mu.Lock()
 	fleet.maxRunners = resolved.Raw.Fleet.MaxRunners
 	fleet.hostRunnerLimits = resolved.RunnerLimits
-	fleet.workDirSizeCaps = resolved.WorkDirSizeCaps
-	fleet.pnpmStoreBudgets = resolved.PnpmStoreBudgets
 	fleet.mainsRequired = resolved.MainsRequired
 	fleet.metricsViaSSH = resolved.MetricsViaSSH
 	fleet.readinessRequired = resolved.ReadinessRequired
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
-	// Published once per host at config load/reload, independent of which
-	// (if any) scale set targets it -- an operator diffing store size
-	// against budget in Grafana/PromQL should never have to hardcode the
-	// number from orchestrator.yml (agent-lcars#853). Walks
-	// resolved.DockerHosts (via ParseDockerHosts), not resolved.Raw.Fleet
-	// .Hosts directly: the latter's Name is never trimmed back onto the Raw
-	// struct (only a local copy inside resolve()), so it would not
-	// necessarily match the trimmed keys resolved.PnpmStoreBudgets uses.
-	if _, hostOrder, err := ParseDockerHosts(resolved.DockerHosts); err == nil {
-		for _, name := range hostOrder {
-			budget := int64(defaultPnpmStoreBudgetBytes)
-			if override, ok := resolved.PnpmStoreBudgets[name]; ok {
-				budget = override
-			}
-			pnpmStoreBudgetBytesGauge.WithLabelValues(name).Set(float64(budget))
-		}
-	}
 }
 
 func pullConfiguredRunnerImages(ctx context.Context, dockerHosts []DockerHost, scaleSets []Config, logger *slog.Logger) {
@@ -461,13 +442,6 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	go func() { defer wg.Done(); runFleetTrackedRunnerReconciler(ctx, runtimes) }()
 	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
 	for _, runtime := range runtimes {
-		if runtime.config.ShareWorkDir {
-			wg.Add(1)
-			go func(scaler *Scaler) { defer wg.Done(); scaler.RunWorkDirSweeper(ctx) }(runtime.scaler)
-			break
-		}
-	}
-	for _, runtime := range runtimes {
 		wg.Add(1)
 		go func(rt *scaleSetRuntime) { defer wg.Done(); runListenerSupervisor(ctx, rt, logger) }(runtime)
 	}
@@ -501,7 +475,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage: c.RunnerImage, runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
-		dockerHosts: dockerHosts, placementHosts: placementHosts, shareWorkDir: c.ShareWorkDir, fileMounts: c.FileMounts,
+		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMetricsTimeouts: c.HostMetricsTimeouts,
@@ -509,12 +483,9 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		readinessMetricsURL: c.ReadinessMetricsURL,
 		readinessMetric:     c.ReadinessMetric,
 		readinessMaxAge:     c.ReadinessMaxAge,
-		workDirSizeCapBytes: defaultWorkDirSizeCapBytes,
-		workDirSizeCaps:     fleet.workDirSizeCaps, hostRunnerLimits: fleet.hostRunnerLimits,
-		pnpmStoreBudgetBytes: defaultPnpmStoreBudgetBytes,
-		pnpmStoreBudgets:     fleet.pnpmStoreBudgets,
-		fleet:                fleet,
-		checkpoints:          checkpoints, bootCheckpoint: boot,
+		hostRunnerLimits:    fleet.hostRunnerLimits,
+		fleet:               fleet,
+		checkpoints:         checkpoints, bootCheckpoint: boot,
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)

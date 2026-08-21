@@ -44,28 +44,6 @@ type Config struct {
 	// "name=target" (target "local" or "ssh://user@host"). Empty means the
 	// single local socket (original single-host behavior). See hosts.go.
 	DockerHosts []string
-	// ShareWorkDir is a homelab addition: bind-mount the PLACEMENT host's
-	// /home/runner/{_work,externals} into every runner this scale set
-	// spawns, so checkouts, node_modules and caches persist across jobs.
-	//
-	// Split out of the old MountDockerSocket flag (agent-lcars#101), which
-	// bind-mounted the placement host's docker.sock into every spawned
-	// runner. The two were one flag because the only pool that wanted a
-	// persistent workdir also happened to want the socket, so removing the
-	// socket silently took the workdir bind with it -- and with it every
-	// cross-job cache. They were unrelated concerns: this one is about
-	// persistence, MountDockerSocket was about privilege. MountDockerSocket
-	// itself was later removed entirely -- no scale set ever needed it once
-	// the E2E pools were rebuilt around a container-free runner image, and
-	// leaving root-equivalent host access on the menu for zero live users
-	// was a needless standing risk.
-	//
-	// Everything that exists BECAUSE the workdir is shared keys off this:
-	// the per-host placement exclusion (two runners of one scale set on a
-	// host resolve the same repo to the same checkout directory and corrupt
-	// each other), the workdir lock, the size-cap sweeper, and the
-	// shared-workdir container label.
-	ShareWorkDir bool
 	// FileMounts is a homelab addition: specific host files exposed
 	// read-only inside every runner this scale set spawns (agent-lcars#101).
 	// It exists so the BuildKit publish lane can receive its client

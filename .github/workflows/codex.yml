@@ -109,8 +109,8 @@ jobs:
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       nx-cache-url: ${{ vars.NX_CACHE_URL }}
-      # Keep the pnpm store on the shared workdir mount. The autoscaler's
-      # idle-host sweep prunes and, above its disk cap, evicts this cache.
+      # Keep pnpm's store inside this ephemeral runner workspace. The whole
+      # container, including this cache, is discarded after the job.
       pnpm-store-dir: /home/runner/_work/.pnpm-store
       brief-budget-minutes: '60'
       brief-artifact-checkpoint-minutes: '25'

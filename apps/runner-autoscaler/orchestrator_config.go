@@ -119,17 +119,8 @@ type FleetHostConfig struct {
 	// perfectly reachable while it is somewhere, or in some state, the
 	// operator does not want CI running on. What "ready" means is entirely
 	// the operator's to define -- this only consumes the verdict.
-	RequireReadiness  bool   `yaml:"require_readiness,omitempty"`
-	RunnerLimit       *int   `yaml:"runner_limit,omitempty"`
-	WorkDirSizeCapRaw string `yaml:"workdir_size_cap,omitempty"`
-	// PnpmStoreBudgetRaw bounds the shared pnpm content-addressable store
-	// (agent-lcars#852). Unlike WorkDirSizeCapRaw, this is OPTIONAL: it falls
-	// back to defaultPnpmStoreBudgetBytes when unset, so retrofitting this
-	// field never breaks an existing deployment's orchestrator.yml the way
-	// making it required would. Always validated to sit below the same
-	// host's workdir_size_cap (resolve() below) -- the store is one tenant
-	// of the shared workdir, not a separate budget.
-	PnpmStoreBudgetRaw string `yaml:"pnpm_store_budget,omitempty"`
+	RequireReadiness bool `yaml:"require_readiness,omitempty"`
+	RunnerLimit      *int `yaml:"runner_limit,omitempty"`
 }
 
 type FleetPlacementFile struct {
@@ -174,12 +165,11 @@ type ScaleSetConfigFile struct {
 	// PidsLimit and ShmSize are homelab additions restoring what e2e.yml's
 	// dropped job-level `container:` block carried (homelab#148); see
 	// Config.RunnerPidsLimit / Config.RunnerShmSize.
-	PidsLimit    int64  `yaml:"pids_limit,omitempty"`
-	ShmSize      string `yaml:"shm_size,omitempty"`
-	MinRunners   int    `yaml:"min_runners"`
-	MaxRunners   int    `yaml:"max_runners"`
-	Weight       int    `yaml:"weight,omitempty"`
-	ShareWorkDir bool   `yaml:"share_workdir,omitempty"`
+	PidsLimit  int64  `yaml:"pids_limit,omitempty"`
+	ShmSize    string `yaml:"shm_size,omitempty"`
+	MinRunners int    `yaml:"min_runners"`
+	MaxRunners int    `yaml:"max_runners"`
+	Weight     int    `yaml:"weight,omitempty"`
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.
 	FileMounts []string `yaml:"file_mounts,omitempty"`
@@ -296,8 +286,6 @@ type resolvedOrchestratorConfig struct {
 	Raw                 OrchestratorConfig
 	DockerHosts         []string
 	RunnerLimits        map[string]int
-	WorkDirSizeCaps     map[string]int64
-	PnpmStoreBudgets    map[string]int64
 	MainsRequired       map[string]bool
 	MetricsViaSSH       map[string]bool
 	HostMetricsTimeouts map[string]time.Duration
@@ -358,8 +346,6 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 
 	r.RunnerLimits = map[string]int{}
-	r.WorkDirSizeCaps = map[string]int64{}
-	r.PnpmStoreBudgets = map[string]int64{}
 	r.HostMetricsTimeouts = map[string]time.Duration{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
@@ -402,36 +388,6 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 				return fmt.Errorf("host %q runner_limit must be at least 1", h.Name)
 			}
 			r.RunnerLimits[h.Name] = *h.RunnerLimit
-		}
-		if h.WorkDirSizeCapRaw != "" {
-			sz, err := units.RAMInBytes(h.WorkDirSizeCapRaw)
-			if err != nil || sz <= 0 {
-				return fmt.Errorf("host %q has invalid workdir_size_cap %q", h.Name, h.WorkDirSizeCapRaw)
-			}
-			r.WorkDirSizeCaps[h.Name] = sz
-		}
-		if h.PnpmStoreBudgetRaw != "" {
-			sz, err := units.RAMInBytes(h.PnpmStoreBudgetRaw)
-			if err != nil || sz <= 0 {
-				return fmt.Errorf("host %q has invalid pnpm_store_budget %q", h.Name, h.PnpmStoreBudgetRaw)
-			}
-			r.PnpmStoreBudgets[h.Name] = sz
-		}
-		// The pnpm store budget must sit strictly below the workdir cap: it
-		// is one tenant of that shared tree, not an independent ceiling
-		// (agent-lcars#852). Compared against the RESOLVED budget (explicit
-		// override or defaultPnpmStoreBudgetBytes) so a too-small
-		// workdir_size_cap fails --check-config even when pnpm_store_budget
-		// itself is left at its default rather than silently never letting a
-		// shared-workdir runner place on that host.
-		if capBytes, hasCap := r.WorkDirSizeCaps[h.Name]; hasCap {
-			budget := int64(defaultPnpmStoreBudgetBytes)
-			if override, ok := r.PnpmStoreBudgets[h.Name]; ok {
-				budget = override
-			}
-			if budget >= capBytes {
-				return fmt.Errorf("host %q pnpm store budget %d bytes must be less than its workdir_size_cap %d bytes", h.Name, budget, capBytes)
-			}
 		}
 	}
 
@@ -640,15 +596,6 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			seenLabels[key] = s.Name
 			s.Labels[j] = label
 		}
-		// workdir_size_cap guards the SHARED _work tree, so it is required
-		// by share_workdir specifically, not by every scale set.
-		if s.ShareWorkDir {
-			for _, h := range r.Raw.Fleet.Hosts {
-				if _, ok := r.WorkDirSizeCaps[h.Name]; !ok {
-					return nil, 0, fmt.Errorf("shared-workdir scale set %q requires workdir_size_cap for host %q", s.Name, h.Name)
-				}
-			}
-		}
 		if s.RunnerMemory != "" {
 			if n, err := units.RAMInBytes(s.RunnerMemory); err != nil || n <= 0 {
 				return nil, 0, fmt.Errorf("scale set %q has invalid runner_memory %q", s.Name, s.RunnerMemory)
@@ -673,8 +620,8 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
 			RunnerMemory: s.RunnerMemory, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
 			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
-			ShareWorkDir: s.ShareWorkDir, FileMounts: fileMounts,
-			LogLevel: r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
+			FileMounts: fileMounts,
+			LogLevel:   r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
 		})
 	}
 	return out, maxSum, nil

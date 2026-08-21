@@ -10,65 +10,42 @@ import (
 // scale-set listener in this process. Reservations close the count/create
 // race without serializing slow image/JIT/container work across hosts.
 type FleetCoordinator struct {
-	mu           sync.Mutex
-	maxRunners   int
-	reservations map[string]int
-	// sharedWorkDirReservations: hosts with an in-flight placement from a
-	// scale set that shares the host workdir. Tracks occupancy of the
-	// CHECKOUT, not possession of docker.sock -- see Config.ShareWorkDir.
-	sharedWorkDirReservations map[string]int
-	startInFlight             map[string]bool
-	lastFleetCounts           map[string]int
-	workDirSizeCaps           map[string]int64
-	// pnpmStoreBudgets: configured per-host budget for the shared pnpm
-	// store (agent-lcars#852), consulted by pickHostLocked. See
-	// Scaler.pnpmStoreBudgetBytes/pnpmStoreBudgets for the fallback-default
-	// resolution.
-	pnpmStoreBudgets  map[string]int64
+	mu                sync.Mutex
+	maxRunners        int
+	reservations      map[string]int
+	startInFlight     map[string]bool
+	lastFleetCounts   map[string]int
 	hostRunnerLimits  map[string]int
 	mainsRequired     map[string]bool
 	metricsViaSSH     map[string]bool
 	readinessRequired map[string]bool
 	gate              *weightedPlacementGate
 
-	hostSampleMu     sync.Mutex
-	hostSamples      map[string]hostSample
-	hostLoadCache    map[string]hostLoad
-	overloadMu       sync.Mutex
-	overloadedUntil  map[string]time.Time
-	placementMu      sync.Mutex
-	placementCursor  int
-	hostWorkDirLocks sync.Map
-
-	// pnpmStoreMu guards pnpmStoreBytes, the last-known shared pnpm-store
-	// size per host (agent-lcars#852/#853). Populated by sweepHostWorkDir on
-	// every idle-host sweep -- periodic and immediately after each job
-	// completes on that host -- and read by pickHostLocked's budget gate. A
-	// dedicated mutex, not hostSampleMu/mu: this cache is written from the
-	// sweep's own goroutine, never under fleet.mu, and updating it must
-	// never contend with (or be mistaken for) host-load telemetry.
-	pnpmStoreMu    sync.Mutex
-	pnpmStoreBytes map[string]int64
+	hostSampleMu    sync.Mutex
+	hostSamples     map[string]hostSample
+	hostLoadCache   map[string]hostLoad
+	overloadMu      sync.Mutex
+	overloadedUntil map[string]time.Time
+	placementMu     sync.Mutex
+	placementCursor int
 }
 
 // hostReservation tracks one in-flight placement decision so its release
-// (on success or failure) always decrements the matching reservation/socket
-// counters exactly once, even if release is called from multiple defers.
+// (on success or failure) always decrements the matching reservation counter
+// exactly once, even if release is called from multiple defers.
 type hostReservation struct {
-	fleet         *FleetCoordinator
-	host          string
-	sharedWorkDir bool
-	once          sync.Once
+	fleet *FleetCoordinator
+	host  string
+	once  sync.Once
 }
 
-func newFleetCoordinator(maxRunners int, limits map[string]int, workCaps map[string]int64, weights map[string]int, order []string) *FleetCoordinator {
+func newFleetCoordinator(maxRunners int, limits map[string]int, weights map[string]int, order []string) *FleetCoordinator {
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
-		reservations: map[string]int{}, sharedWorkDirReservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
-		hostRunnerLimits: limits, workDirSizeCaps: workCaps, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
+		reservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
+		hostRunnerLimits: limits, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
-		pnpmStoreBytes: map[string]int64{},
-		gate:           newWeightedPlacementGate(weights, order),
+		gate: newWeightedPlacementGate(weights, order),
 	}
 }
 
@@ -142,11 +119,8 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 	}
 	f.reservations[host]++
 	f.startInFlight[host] = true
-	if scaler.shareWorkDir {
-		f.sharedWorkDirReservations[host]++
-	}
 	reservationGauge.WithLabelValues(scaler.scaleSetName, host).Inc()
-	return &hostReservation{fleet: f, host: host, sharedWorkDir: scaler.shareWorkDir}, nil
+	return &hostReservation{fleet: f, host: host}, nil
 }
 
 func (r *hostReservation) release(scaleSet string) {
@@ -157,9 +131,6 @@ func (r *hostReservation) release(scaleSet string) {
 		r.fleet.mu.Lock()
 		if r.fleet.reservations[r.host] > 0 {
 			r.fleet.reservations[r.host]--
-		}
-		if r.sharedWorkDir && r.fleet.sharedWorkDirReservations[r.host] > 0 {
-			r.fleet.sharedWorkDirReservations[r.host]--
 		}
 		r.fleet.startInFlight[r.host] = false
 		r.fleet.mu.Unlock()

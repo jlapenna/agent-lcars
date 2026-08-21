@@ -12,7 +12,6 @@ import (
 	"math"
 	"net/http"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,35 +65,11 @@ type Scaler struct {
 	// queuedJobs is GitHub's latest desired-count signal: jobs waiting for
 	// this scale set, before minRunners' warm capacity is added.
 	queuedJobs atomic.Int64
-	// shareWorkDir: see Config.ShareWorkDir. Gates everything that exists
-	// because the host workdir is SHARED.
-	shareWorkDir bool
 	// fileMounts: see Config.FileMounts. Appended to the container's binds
 	// with an explicit :ro -- the build-client lane uses these and nothing
 	// else.
-	fileMounts []FileMount
-	// workDirSizeCapBytes: size ceiling for the shared /home/runner/_work
-	// directory bind-mounted into every runner when ShareWorkDir is
-	// set -- that shared dir has no per-container lifecycle to clean it up,
-	// unlike a normal container's writable layer. Only enforced by
-	// RunWorkDirSweeper, which is only started when ShareWorkDir is true
-	// (split from the old MountDockerSocket flag in agent-lcars#101/#136;
-	// MountDockerSocket itself was later removed entirely).
-	workDirSizeCapBytes int64
-	workDirSizeCaps     map[string]int64
-	// pnpmStoreBudgetBytes/pnpmStoreBudgets (agent-lcars#852): the budget
-	// pickHostLocked enforces against the shared pnpm content-addressable
-	// store's LAST KNOWN size (cached by sweepHostWorkDir, refreshed on
-	// every idle-host sweep and immediately after each job completes on
-	// that host). A host at or above budget is excluded from new
-	// shared-workdir placements -- see pnpmStoreOverBudget -- so a fat
-	// store never grows further from a NEW job while the existing idle
-	// sweep prunes/evicts it back down. Mirrors workDirSizeCapBytes/
-	// workDirSizeCaps exactly, one level down: the store is one tenant of
-	// the shared workdir, not an independent cap.
-	pnpmStoreBudgetBytes int64
-	pnpmStoreBudgets     map[string]int64
-	hostRunnerLimits     map[string]int
+	fileMounts       []FileMount
+	hostRunnerLimits map[string]int
 	// hostImageLocks prevent multiple scale-set listeners from concurrently
 	// pulling the same image after a host-side prune removes it.
 	hostImageLocks sync.Map // map[host+image]*sync.Mutex
@@ -232,8 +207,7 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 		return a.fleet
 	}
 	a.localFleetOnce.Do(func() {
-		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, a.workDirSizeCaps, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
-		a.localFleet.pnpmStoreBudgets = a.pnpmStoreBudgets
+		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
 	})
 	return a.localFleet
 }
@@ -241,18 +215,6 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 const (
 	hostMetricsTimeout = time.Second
 	hostSampleInterval = 15 * time.Second
-	// defaultWorkDirSizeCapBytes is the shared /home/runner/_work size
-	// ceiling when a fleet host has no per-host override (see
-	// resolvedOrchestratorConfig.WorkDirSizeCaps / FleetCoordinator.workDirSizeCaps).
-	defaultWorkDirSizeCapBytes = 50 * 1024 * 1024 * 1024
-	// defaultPnpmStoreBudgetBytes is the shared pnpm-store budget
-	// (agent-lcars#852) when a fleet host has no per-host pnpm_store_budget
-	// override. 20 GiB comfortably fits under every workdir_size_cap
-	// deployed today (the smallest is 30 GiB), leaving headroom for
-	// checkouts, _tool/_actions caches, and e2e artifacts sharing the same
-	// tree, while still bounding the store itself well below the point a
-	// fat store alone could exhaust a tight host.
-	defaultPnpmStoreBudgetBytes = 20 * 1024 * 1024 * 1024
 )
 
 type hostLoad struct {
@@ -858,17 +820,6 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 		a.logger.Error("Failed to remove completed runner container; will be swept by the next cleanupOrphans pass", slog.String("host", runner.host), slog.String("containerID", runner.containerID), slog.String("error", err.Error()))
 		return nil
 	}
-	if a.shareWorkDir {
-		// Completion is the natural maintenance boundary. Run asynchronously so
-		// a large du/rm cannot stall GitHub's listener; the per-host lock blocks
-		// new placement only while an idle-host sweep is actually in progress.
-		go func() {
-			sweepCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
-			defer cancel()
-			a.sweepHostIfIdle(sweepCtx, client, runner.host)
-		}()
-	}
-
 	return nil
 }
 
@@ -1072,16 +1023,6 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 // the opposite of absent data, and conflating the two would turn a telemetry
 // outage into a fleet outage.
 //
-// When shareWorkDir is set, reachable hosts that already have >=1 runner
-// from this scale set placed on them are excluded outright rather than just
-// deprioritized: shared-workdir runners share the placement host's
-// /home/runner/_work bind mount, so two same-scale-set runners on one host
-// resolve the same repo to the same checkout directory (_PipelineMapping)
-// and can corrupt each other's checkout mid-job. This mirrors the
-// one-per-host layout the retired static runners used. If that leaves zero
-// candidate hosts, pickHost returns an error -- the caller's reconciliation
-// is level-triggered, so it retries once a host frees up.
-//
 // Returns an error rather than falling back to dockerHosts[0] when every
 // configured host is unreachable, so the caller can skip the placement
 // attempt entirely instead of burning a GitHub JIT registration on a
@@ -1103,18 +1044,16 @@ var errFleetAtCapacity = errors.New("no docker host has placement capacity right
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
-	counts := a.runners.countsByHost()
 	placementHosts := a.placementHostSet()
 
 	type pingResult struct {
-		host                 DockerHost
-		ok                   bool
-		eligible             bool
-		err                  error
-		load                 hostLoad
-		loadErr              error
-		fleetRunners         int
-		sharedWorkDirRunners int
+		host         DockerHost
+		ok           bool
+		eligible     bool
+		err          error
+		load         hostLoad
+		loadErr      error
+		fleetRunners int
 		// readinessBlocked distinguishes "this host was withheld by its
 		// readiness gate" from "this host is unreachable", so exhausting the
 		// fleet reports the real cause instead of blaming the network.
@@ -1137,7 +1076,6 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			cancel()
 			load, loadErr := a.currentHostLoad(ctx, dh.Name)
 			fleetRunners := 0
-			sharedWorkDirRunners := 0
 			if err == nil {
 				allRunners, listErr := dh.Client.ContainerList(ctx, container.ListOptions{
 					Filters: filters.NewArgs(filters.Arg("label", runnerScaleSetLabelKey)),
@@ -1146,11 +1084,6 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					loadErr = errors.Join(loadErr, fmt.Errorf("counting fleet runners: %w", listErr))
 				} else {
 					fleetRunners = len(allRunners)
-					for _, runner := range allRunners {
-						if runner.Labels[runnerSharedWorkDirLabelKey] == "true" {
-							sharedWorkDirRunners++
-						}
-					}
 				}
 			}
 			eligible := err == nil && placementHosts[dh.Name]
@@ -1171,7 +1104,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
 				}
 			}
-			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, sharedWorkDirRunners: sharedWorkDirRunners, readinessBlocked: readinessBlocked}
+			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, readinessBlocked: readinessBlocked}
 		}(h)
 	}
 
@@ -1190,13 +1123,11 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	var results []pingResult
 	hostLoads := make(map[string]hostLoad, len(a.dockerHosts))
 	fleetCounts := make(map[string]int, len(a.dockerHosts))
-	sharedWorkDirCounts := make(map[string]int, len(a.dockerHosts))
 	scaleSet := a.scaleSetLabel()
 	for res := range ch {
 		results = append(results, res)
 		if res.ok {
 			fleetCounts[res.host.Name] = res.fleetRunners
-			sharedWorkDirCounts[res.host.Name] = res.sharedWorkDirRunners
 			hostFleetRunnersGauge.WithLabelValues(res.host.Name).Set(float64(res.fleetRunners))
 			if res.loadErr != nil {
 				res.load.penalty = a.policy().telemetryPenalty
@@ -1309,47 +1240,6 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	withinHostLimits = notOverloaded
 
 	candidates := withinHostLimits
-	if a.shareWorkDir {
-		var withCapacity []DockerHost
-		// Preserve the fleet-wide policy filter above. Iterating reachableHosts
-		// here used to reintroduce hosts already removed by runner_limit, which
-		// let E2E placements bypass Janeway's limit while other scale sets
-		// enforced it correctly.
-		for _, h := range withinHostLimits {
-			if counts[h.Name] == 0 && sharedWorkDirCounts[h.Name] == 0 && fleet.sharedWorkDirReservations[h.Name] == 0 {
-				withCapacity = append(withCapacity, h)
-			}
-		}
-		if len(withCapacity) == 0 {
-			// Exclusivity saturation is a real placement-capacity cause and
-			// belongs alongside fleet_limit/host_limits, not only in the logs:
-			// without its own reason, a pending backlog on a shared-workdir
-			// scale set is indistinguishable in Prometheus from a listener or
-			// host outage.
-			placementBlocked.WithLabelValues(scaleSet, placementReasonSharedWorkDirExclusive).Inc()
-			return "", fmt.Errorf("shared-workdir scale set %q: every reachable docker host already has a runner placed: %w", scaleSet, errFleetAtCapacity)
-		}
-		candidates = withCapacity
-
-		// agent-lcars#852: refuse a NEW shared-workdir placement on a host
-		// whose pnpm store is already at/over budget, rather than let it grow
-		// further before the next idle sweep prunes/evicts it. Every
-		// candidate here is already confirmed idle (the loop above), so
-		// excluding one here never touches an active job -- it just leaves
-		// that host idle a little longer, which is exactly what lets the
-		// sweep clear it.
-		var underPnpmBudget []DockerHost
-		for _, h := range candidates {
-			if !a.pnpmStoreOverBudget(fleet, h.Name) {
-				underPnpmBudget = append(underPnpmBudget, h)
-			}
-		}
-		if len(underPnpmBudget) == 0 {
-			placementBlocked.WithLabelValues(scaleSet, placementReasonPnpmStoreBudget).Inc()
-			return "", fmt.Errorf("shared-workdir scale set %q: every host with placement capacity is over its pnpm store budget: %w", scaleSet, errFleetAtCapacity)
-		}
-		candidates = underPnpmBudget
-	}
 
 	effectiveCount := func(hostName string) int {
 		c := fleetCounts[hostName] + fleet.reservations[hostName] + hostLoads[hostName].penalty
@@ -1375,48 +1265,6 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	fleet.placementMu.Unlock()
 	placementDecisions.WithLabelValues(scaleSet, best).Inc()
 	return best, nil
-}
-
-// pnpmStoreOverBudget reports whether host's last-known shared pnpm-store
-// size is at or above its configured budget (agent-lcars#852). Reads
-// fleet.pnpmStoreBytes, a cache populated by sweepHostWorkDir on every
-// idle-host sweep -- periodic (workDirSweepInterval) and immediately after
-// each job completes on that host (see HandleJobCompleted) -- rather than
-// measuring live: the sweep already keeps this fresh at every natural
-// idle boundary, and a synchronous du(1) here would add filesystem latency
-// to every placement decision for no material gain in freshness.
-//
-// A host with no cached measurement yet (never swept, e.g. brand new or
-// freshly booted) fails OPEN, same policy as probeHostLoad's missing-
-// telemetry handling: excluding it would otherwise permanently lock out a
-// host until its first sweep, which only runs once it has capacity to be
-// picked in the first place.
-func (a *Scaler) pnpmStoreOverBudget(fleet *FleetCoordinator, host string) bool {
-	fleet.pnpmStoreMu.Lock()
-	bytes, ok := fleet.pnpmStoreBytes[host]
-	fleet.pnpmStoreMu.Unlock()
-	if !ok {
-		return false
-	}
-	budget := a.resolvedPnpmStoreBudget(host)
-	if budget <= 0 {
-		return false
-	}
-	return bytes >= budget
-}
-
-// resolvedPnpmStoreBudget returns host's effective pnpm-store budget: its
-// per-host override if configured, else the scale set's default
-// (pnpmStoreBudgetBytes, itself defaultPnpmStoreBudgetBytes unless the
-// process overrides it). Shared by pnpmStoreOverBudget (the placement gate)
-// and sweepHostWorkDir (which threads it into workDirSweepScript as the
-// SECOND, independent maintenance trigger) so the two can never resolve a
-// different number for the same host.
-func (a *Scaler) resolvedPnpmStoreBudget(host string) int64 {
-	if override, has := a.pnpmStoreBudgets[host]; has {
-		return override
-	}
-	return a.pnpmStoreBudgetBytes
 }
 
 // hostOnMains is deliberately fail-closed for mains-required hosts: a missing
@@ -1663,8 +1511,7 @@ func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
 // The single orchestrator still needs this boundary so per-set lifecycle and
 // GitHub deregistration never cross-kill another set's runners.
 const (
-	runnerScaleSetLabelKey      = "autoscaler.scale-set"
-	runnerSharedWorkDirLabelKey = "autoscaler.shared-workdir"
+	runnerScaleSetLabelKey = "autoscaler.scale-set"
 	// runnerRegistrationLabelKey is a homelab#97 addition: which GitHub
 	// registration (account/repo) minted this runner. Purely descriptive --
 	// ownership/orphan-cleanup logic keys off runnerScaleSetLabelKey alone,
@@ -1880,8 +1727,8 @@ func topHasRunnerWorker(top container.TopResponse) bool {
 // RunOrphanSweeper periodically reaps runner containers leaked outside the
 // normal HandleJobCompleted path (see cleanupOrphans's boot=false doc for
 // the leak this closes). Started unconditionally for every scale set, not
-// just a shareWorkDir one (unlike RunWorkDirSweeper) -- any scale set can
-// leak a container this way. Deliberately does NOT run an initial sweep on
+// just one special-purpose pool -- any scale set can leak a container this
+// way. Deliberately does NOT run an initial sweep on
 // entry: the boot-time cleanupOrphans(ctx, true) call in main.go's run()
 // already covers startup.
 func (a *Scaler) RunOrphanSweeper(ctx context.Context) {
@@ -1913,20 +1760,14 @@ func dockerSafeNamePart(s string) string {
 }
 
 // runnerBinds builds the bind list for a spawned runner. Split out of
-// startRunner so the shared-workdir bind versus scoped read-only file
-// mounts are unit testable without a docker daemon.
+// startRunner so scoped read-only file mounts are unit testable without a
+// docker daemon.
 //
 // File mounts are ALWAYS :ro. Config validation already bounds their
 // sources to fleet.file_mount_allowlist and rejects the docker socket
 // outright; read-only is the last of those two guards and the cheapest.
-func runnerBinds(shareWorkDir bool, fileMounts []FileMount) []string {
+func runnerBinds(fileMounts []FileMount) []string {
 	var binds []string
-	if shareWorkDir {
-		binds = append(binds,
-			"/home/runner/_work:/home/runner/_work",
-			"/home/runner/externals:/home/runner/externals",
-		)
-	}
 	for _, m := range fileMounts {
 		binds = append(binds, fmt.Sprintf("%s:%s:ro", m.HostPath, m.ContainerPath))
 	}
@@ -1982,11 +1823,6 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 	host := reservation.host
 	defer reservation.release(scaleSet)
-	if a.shareWorkDir {
-		workDirLock := a.hostWorkDirLock(host)
-		workDirLock.Lock()
-		defer workDirLock.Unlock()
-	}
 	client, err := a.hostClient(host)
 	if err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
@@ -2021,16 +1857,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to generate JIT config: %w", err)
 	}
 
-	binds := runnerBinds(a.shareWorkDir, a.fileMounts)
-	// Docker creates a missing _work/externals as root:root on a host's
-	// first placement, and the runner is non-root -- so a shared-workdir
-	// pool could not create the entrypoint lock or populate externals, and
-	// every placement would crash-loop.
-	if a.shareWorkDir {
-		if err := a.ensureWorkDirOwnership(ctx, client, host); err != nil {
-			a.logger.Warn("Failed to normalize shared workdir ownership before runner start", slog.String("host", host), slog.String("error", err.Error()))
-		}
-	}
+	binds := runnerBinds(a.fileMounts)
 	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
 
 	c, err := a.createContainerWithImageRecovery(
@@ -2042,9 +1869,8 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			User:  "runner",
 			Cmd:   []string{"/home/runner/run.sh"},
 			Labels: map[string]string{
-				runnerScaleSetLabelKey:      a.scaleSetName,
-				runnerRegistrationLabelKey:  a.registrationName,
-				runnerSharedWorkDirLabelKey: strconv.FormatBool(a.shareWorkDir),
+				runnerScaleSetLabelKey:     a.scaleSetName,
+				runnerRegistrationLabelKey: a.registrationName,
 			},
 			Env: []string{
 				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", jit.EncodedJITConfig),
@@ -2063,7 +1889,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		// the 2026-07-20 missing-image outage, homelab#46). On SIGTERM, ctx
 		// is already canceled here -- often WHY ContainerCreate just failed
 		// -- so cleanup uses a detached context, same as
-		// ensureWorkDirOwnership/sweepHostWorkDir's deferred removes;
+		// helper containers' deferred removes;
 		// otherwise the deregister would fail instantly for the same reason
 		// and leak the exact ghost this call exists to prevent.
 		cleanupCtx := context.WithoutCancel(ctx)
@@ -2199,6 +2025,24 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 	return nil
 }
 
+func lockMutexContext(ctx context.Context, lock *sync.Mutex) bool {
+	if lock.TryLock() {
+		return true
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if lock.TryLock() {
+				return true
+			}
+		}
+	}
+}
+
 // createContainerWithImageRecovery closes the remaining inspect/create race
 // around ensureRunnerImage (#478). A host-side `docker image prune -a` runs
 // outside this process and can delete an otherwise valid, digest-pinned image
@@ -2209,9 +2053,8 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 // Retry exactly once and only for not-found. Re-preparing through the normal
 // host+image lock preserves the existing pull serialization and streamed-error
 // handling; a second miss or any other create error stays loud. All three
-// containers built from runnerImage use this boundary (the real JIT runner,
-// workdir ownership helper, and workdir sweep helper), so the same external
-// prune cannot reappear under a different caller.
+// JIT runner containers use this boundary, so an external prune cannot reopen
+// the inspect/create race at another call site.
 func (a *Scaler) createContainerWithImageRecovery(
 	ctx context.Context,
 	client *dockerclient.Client,
@@ -2264,541 +2107,6 @@ func (a *Scaler) checkHostRunnerLimit(ctx context.Context, client *dockerclient.
 		return fmt.Errorf("host %q reached runner limit %d before container creation", host, limit)
 	}
 	return nil
-}
-
-// ensureWorkDirOwnership chowns BOTH shared bind mounts used when
-// shareWorkDir is set (_work and externals) to runner:runner, but only
-// when top-level ownership is actually wrong. A host whose
-// /home/runner/{_work,externals} paths don't already exist (e.g. one never
-// running the pre-autoscaler static runner) gets them auto-created by
-// dockerd on first bind-mount, owned root:root -- entrypoint.sh's populate
-// step then fails "Permission denied" as the non-root runner user, and every
-// runner placed there crash-loops before ever reaching a real job (see
-// deregisterRunner's doc comment for the GitHub-ghost fallout this causes).
-// Confirmed live 2026-07-18: this used to chown only _work, leaving
-// externals root-owned on a newly onboarded host -- 100% of e2e-docker
-// placements on it failed (see jlapenna/homelab's docs/incidents.md for the
-// postmortem).
-//
-// The recursive chown only RUNS when the top-level directory's ownership
-// doesn't already match runner:runner -- i.e. only on a host's first-ever
-// placement, the fresh-dir case above. Without that guard this ran `chown -R`
-// over the whole shared _work + externals tree (potentially tens of GB /
-// hundreds of thousands of files, e.g. .pnpm-store) on EVERY shared-workdir
-// placement. Root-owned files deep inside an already-runner-owned tree (e.g.
-// written by a docker-using job running as root) are out of scope for this
-// guard, same as they always were on the retired static runners -- this only
-// ever protected against the fresh-mount case.
-func (a *Scaler) ensureWorkDirOwnership(ctx context.Context, client *dockerclient.Client, host string) error {
-	const script = `set -e
-want="$(id -u runner):$(id -g runner)"
-for d in /home/runner/_work /home/runner/externals; do
-  if [ "$(stat -c %u:%g "$d")" != "$want" ]; then
-    chown -R runner:runner "$d"
-  fi
-done
-`
-	resp, err := a.createContainerWithImageRecovery(
-		ctx,
-		client,
-		host,
-		&container.Config{
-			Image:      a.runnerImage,
-			User:       "root",
-			Entrypoint: []string{"sh", "-c"},
-			Cmd:        []string{script},
-		},
-		&container.HostConfig{
-			Binds: []string{
-				"/home/runner/_work:/home/runner/_work",
-				"/home/runner/externals:/home/runner/externals",
-			},
-		},
-		"",
-	)
-	if err != nil {
-		return fmt.Errorf("creating workdir-chown helper on host %q: %w", host, err)
-	}
-	defer func() {
-		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), dockerContainerOperationTimeout)
-		defer cancelRemove()
-		_ = client.ContainerRemove(removeCtx, resp.ID, container.RemoveOptions{Force: true})
-	}()
-	startCtx, cancelStart := context.WithTimeout(ctx, dockerContainerOperationTimeout)
-	err = client.ContainerStart(startCtx, resp.ID, container.StartOptions{})
-	cancelStart()
-	if err != nil {
-		return fmt.Errorf("starting workdir-chown helper on host %q: %w", host, err)
-	}
-	waitCtx, cancelWait := context.WithTimeout(ctx, dockerContainerWaitTimeout)
-	defer cancelWait()
-	statusCh, errCh := client.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return fmt.Errorf("waiting for workdir-chown helper on host %q: %w", host, err)
-		}
-	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			return fmt.Errorf("workdir-chown helper on host %q exited %d", host, status.StatusCode)
-		}
-	}
-	return nil
-}
-
-// workDirSweepInterval is how often RunWorkDirSweeper checks the shared
-// /home/runner/_work directory against workDirSizeCapBytes. A constant
-// rather than a flag: one less number to tune per deployment.
-const workDirSweepInterval = 15 * time.Minute
-
-// workDirSweepTimeout bounds one fleet-wide maintenance pass. A slow Docker
-// daemon, image registry, or du must not pin the periodic sweeper indefinitely.
-const workDirSweepTimeout = 10 * time.Minute
-
-// RunWorkDirSweeper periodically enforces workDirSizeCapBytes on the shared
-// /home/runner/_work directory across the fleet. Only started when
-// shareWorkDir is true (see orchestrator.go's runOrchestrator) -- that's the
-// only scale set that bind-mounts the shared dir in the first place. Runs an
-// initial sweep immediately so a restart doesn't wait a full interval to
-// reclaim space.
-func (a *Scaler) RunWorkDirSweeper(ctx context.Context) {
-	a.sweepWorkDirsWithTimeout(ctx, workDirSweepTimeout)
-	ticker := time.NewTicker(workDirSweepInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			a.sweepWorkDirsWithTimeout(ctx, workDirSweepTimeout)
-		}
-	}
-}
-
-func (a *Scaler) sweepWorkDirsWithTimeout(ctx context.Context, timeout time.Duration) {
-	sweepCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	a.SweepWorkDirs(sweepCtx)
-}
-
-// SweepWorkDirs checks/reclaims the shared /home/runner/_work directory on
-// every fleet host. A host is swept only while it has no E2E runner, idle or
-// busy. The per-host lock is also held across startRunner's create->addIdle
-// window, so a runner cannot appear after this check and race cache deletion.
-// A continuously busy host can defer cleanup; disk-pressure handling must
-// drain that host rather than delete files underneath a running job.
-func (a *Scaler) SweepWorkDirs(ctx context.Context) {
-	// A removed host stays in dockerHosts only to finish and clean up an
-	// existing runner. It is deliberately not swept: once cordoned, the
-	// autoscaler must not make unrelated filesystem changes on it.
-	for _, h := range a.placementDockerHosts() {
-		a.sweepHostIfIdle(ctx, h.Client, h.Name)
-	}
-}
-
-func (a *Scaler) sweepHostIfIdle(ctx context.Context, client *dockerclient.Client, host string) {
-	if a.runners.hasHost(host) {
-		a.logger.Debug("Skipping workdir sweep while tracked shared-workdir runner is active", slog.String("host", host))
-		return
-	}
-	// Preparing the helper image can require a multi-gigabyte pull after the
-	// fleet's scheduled prune. Keep that network and disk work outside the
-	// workdir exclusion lock so a newly reserved runner can start meanwhile.
-	// Once preparation finishes, the checks under the lock below make the
-	// sweep stand down if placement claimed the host in the meantime.
-	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
-		a.logger.Warn("Skipping workdir sweep because runner image preparation failed", slog.String("host", host), slog.String("error", err.Error()))
-		return
-	}
-	workDirLock := a.hostWorkDirLock(host)
-	if !lockMutexContext(ctx, workDirLock) {
-		a.logger.Debug("Skipping workdir sweep while waiting for workdir lock", slog.String("host", host), slog.String("error", ctx.Err().Error()))
-		return
-	}
-	defer workDirLock.Unlock()
-	fleet := a.coordinator()
-	fleet.mu.Lock()
-	pending := fleet.sharedWorkDirReservations[host]
-	fleet.mu.Unlock()
-	if a.runners.hasHost(host) {
-		a.logger.Debug("Skipping workdir sweep while tracked shared-workdir runner is active", slog.String("host", host))
-		return
-	}
-	sharedRunners, err := client.ContainerList(ctx, container.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("label", runnerSharedWorkDirLabelKey+"=true")),
-	})
-	if err != nil {
-		a.logger.Warn("Skipping workdir sweep because shared-runner inventory failed", slog.String("host", host), slog.String("error", err.Error()))
-		return
-	}
-	if pending > 0 || len(sharedRunners) > 0 {
-		a.logger.Debug("Skipping workdir sweep while host has a shared-workdir runner or reservation", slog.String("host", host))
-		return
-	}
-	if err := a.sweepHostWorkDir(ctx, client, host); err != nil {
-		a.logger.Warn("Workdir sweep failed", slog.String("host", host), slog.String("error", err.Error()))
-	}
-}
-
-func (a *Scaler) hostWorkDirLock(host string) *sync.Mutex {
-	lock, _ := a.coordinator().hostWorkDirLocks.LoadOrStore(host, &sync.Mutex{})
-	return lock.(*sync.Mutex)
-}
-
-func lockMutexContext(ctx context.Context, lock *sync.Mutex) bool {
-	if lock.TryLock() {
-		return true
-	}
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-ticker.C:
-			if lock.TryLock() {
-				return true
-			}
-		}
-	}
-}
-
-// sweepStaleMinutes is the mtime staleness threshold sweepHostWorkDir uses to
-// decide a top-level workdir entry is abandoned rather than a live checkout.
-// Must exceed the longest read-only stretch of any fleet CI job: read-mostly
-// phases (e2e suites, docker builds) can go well past 5 minutes without
-// touching the checkout's mtime under relatime, and a threshold shorter than
-// that window lets the sweep rm -rf a LIVE checkout mid-job during cap
-// pressure. 60 minutes comfortably exceeds every known fleet job's
-// read-only stretch while still reclaiming space well within a day.
-const sweepStaleMinutes = 60
-
-// sweepHostWorkDir always clears /home/runner/_work/_temp's contents (always
-// safe -- GitHub Actions' own scratch dir) and, only once the shared
-// directory exceeds workDirSizeCapBytes, deletes every top-level entry that
-// isn't a known persistent cache (_tool, _actions, _PipelineMapping,
-// .pnpm-store, cache) AND hasn't been modified in the last sweepStaleMinutes
-// minutes. SweepWorkDirs' host-idle gate protects live jobs; the mtime check
-// prevents recently-finished data from being discarded immediately. A
-// finished job's leftover checkout eventually becomes a candidate.
-// Deleting a checkout costs a fresh clone next time it's needed -- the same
-// class of thing a non-shared runner container's writable layer would have
-// discarded on its own when removed. See jlapenna/homelab's docs/incidents.md
-// 2026-07-18: this shared dir has no per-container lifecycle, so without this
-// nothing else ever reclaims it.
-//
-// The pnpm content-addressable store's own maintenance (prune, then evict as
-// a last resort) is gated SEPARATELY, on pnpmBudgetBytes OR capBytes,
-// whichever is exceeded (agent-lcars#852): the store can drift over its own
-// (deliberately tighter) budget while the rest of the shared workdir stays
-// comfortably under its cap, and nothing else would ever shrink it back down
-// in that case. Without this second trigger, pickHostLocked's placement-time
-// budget gate (pnpmStoreOverBudget) could block a host indefinitely -- the
-// generic cap-only condition below would never fire to let prune/evict run,
-// so the very sweep the gate depends on to self-heal would never happen. A
-// future install can restore an evicted store, whereas leaving it to consume
-// the host filesystem (or leaving a host permanently excluded from
-// placement) can prevent every unrelated runner from starting.
-func workDirSweepScript(capBytes, pnpmBudgetBytes int64) string {
-	return fmt.Sprintf(`set -e
-rm -rf /home/runner/_work/_temp/* 2>/dev/null || true
-before=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); before=${before:-0}
-cap=%d
-pnpm_budget=%d
-pnpm_store=/home/runner/_work/.pnpm-store
-pnpm_store_bytes=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); pnpm_store_bytes=${pnpm_store_bytes:-0}
-pnpm_prune=skipped
-pnpm_evict=skipped
-if [ "$before" -gt "$cap" ]; then
-  # E2E caches are intentionally host-local (node_modules and browser HOME
-  # are unsafe/slow on network storage), but they are not immortal. Evict
-  # stale per-project caches first until this host is back under its cap.
-  for d in /home/runner/_work/cache/e2e-docker/*/; do
-    [ -d "$d" ] || continue
-    current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
-    [ "$current" -le "$cap" ] && break
-    if ! find "$d" -mmin -%d 2>/dev/null | grep -q .; then
-      rm -rf "$d"
-    fi
-  done
-  for d in /home/runner/_work/*/; do
-    name=$(basename "$d")
-    case "$name" in
-      _tool|_actions|_PipelineMapping|.pnpm-store|cache|_temp) ;;
-      *)
-        if ! find "$d" -mmin -%d 2>/dev/null | grep -q .; then
-          rm -rf "$d"
-        fi
-        ;;
-    esac
-  done
-fi
-
-# The shared pnpm content-addressable store is not tied to a runner
-# container. First let pnpm remove packages no project references. If the
-# store (or the whole workdir) is still over its threshold, evict the store
-# entirely: all of its contents are reproducible and the next install will
-# repopulate it. sweepHostIfIdle holds the same host lock used by runner
-# placement, so this cannot race an install or a newly starting
-# shared-workdir runner.
-#
-# Both steps report a result (success/failure/skipped) instead of relying on
-# set -e -- a failing "pnpm store prune" or "rm -rf" must not abort this
-# script before the SWEEP/PNPM_* lines below print, or the whole sweep (and
-# its metrics) goes dark instead of just this one step (agent-lcars#853).
-if [ -d "$pnpm_store" ] && { [ "$before" -gt "$cap" ] || [ "$pnpm_store_bytes" -gt "$pnpm_budget" ]; }; then
-  if command -v pnpm >/dev/null 2>&1; then
-    if pnpm --store-dir "$pnpm_store" store prune; then
-      pnpm_prune=success
-    else
-      pnpm_prune=failure
-    fi
-  fi
-  current=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); current=${current:-0}
-  current_pnpm=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); current_pnpm=${current_pnpm:-0}
-  if [ "$current" -gt "$cap" ] || [ "$current_pnpm" -gt "$pnpm_budget" ]; then
-    if rm -rf "$pnpm_store"; then
-      pnpm_evict=success
-    else
-      pnpm_evict=failure
-    fi
-  fi
-fi
-after=$(du -sb /home/runner/_work 2>/dev/null | cut -f1); after=${after:-0}
-# Measured unconditionally (not just when maintenance ran): the steady-state
-# size is exactly what operators watch for sustained growth (agent-lcars
-# #853), not only the value at the moment maintenance ran.
-pnpm_store_bytes=$(du -sb "$pnpm_store" 2>/dev/null | cut -f1); pnpm_store_bytes=${pnpm_store_bytes:-0}
-echo "SWEEP before=$before after=$after cap=$cap"
-echo "PNPM_STORE_BYTES=$pnpm_store_bytes"
-echo "PNPM_PRUNE=$pnpm_prune"
-echo "PNPM_EVICT=$pnpm_evict"
-
-# Proactively verify (and repair) the shared required Actions Node runtimes as
-# part of this same idle-host maintenance pass (agent-lcars#392), using the
-# identical self-heal logic and lock file entrypoint.sh uses (baked into
-# this same image), so a broken host is caught between real jobs instead of
-# only when one happens to hit it, and this can never race a booting
-# runner's own repair attempt.
-#
-# Guarded: this file is only baked into agent-lcars' own homelab-runner
-# image. RunWorkDirSweeper (and this script) also runs against any other
-# share_workdir pool's own configured runner_image -- e.g.
-# homelab-autoscale-e2e's supersprinklesracing/sprinkles/e2e-runner, which
-# has no reason to carry an agent-lcars-specific health check. Without this
-# guard the sweep died here on every attempt, on every host, before ever
-# reaching the disk-cap eviction above (agent-lcars#464).
-if [ -f /usr/local/lib/agent-lcars/externals-health.sh ]; then
-  . /usr/local/lib/agent-lcars/externals-health.sh
-  repair_externals_if_needed
-  if required_node_runtimes_run; then
-    echo "EXTERNALS_HEALTHY=1"
-  else
-    echo "EXTERNALS_HEALTHY=0"
-  fi
-else
-  echo "EXTERNALS_HEALTHY_SKIPPED"
-fi
-`, capBytes, pnpmBudgetBytes, sweepStaleMinutes, sweepStaleMinutes)
-}
-
-func (a *Scaler) sweepHostWorkDir(ctx context.Context, client *dockerclient.Client, host string) error {
-	capBytes := a.workDirSizeCapBytes
-	if override, ok := a.workDirSizeCaps[host]; ok {
-		capBytes = override
-	}
-	script := workDirSweepScript(capBytes, a.resolvedPnpmStoreBudget(host))
-
-	resp, err := a.createContainerWithImageRecovery(
-		ctx,
-		client,
-		host,
-		&container.Config{
-			Image:      a.runnerImage,
-			User:       "root",
-			Entrypoint: []string{"sh", "-c"},
-			Cmd:        []string{script},
-			Tty:        true,
-		},
-		&container.HostConfig{
-			Binds: []string{
-				"/home/runner/_work:/home/runner/_work",
-				"/home/runner/externals:/home/runner/externals",
-			},
-		},
-		"",
-	)
-	if err != nil {
-		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonContainerCreate).Inc()
-		return fmt.Errorf("creating workdir-sweep helper on host %q: %w", host, err)
-	}
-	defer func() {
-		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), dockerContainerOperationTimeout)
-		defer cancelRemove()
-		_ = client.ContainerRemove(removeCtx, resp.ID, container.RemoveOptions{Force: true})
-	}()
-	startCtx, cancelStart := context.WithTimeout(ctx, dockerContainerOperationTimeout)
-	err = client.ContainerStart(startCtx, resp.ID, container.StartOptions{})
-	cancelStart()
-	if err != nil {
-		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonContainerStart).Inc()
-		return fmt.Errorf("starting workdir-sweep helper on host %q: %w", host, err)
-	}
-	waitCtx, cancelWait := context.WithTimeout(ctx, dockerContainerWaitTimeout)
-	defer cancelWait()
-	statusCh, errCh := client.ContainerWait(waitCtx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonContainerWait).Inc()
-			return fmt.Errorf("waiting for workdir-sweep helper on host %q: %w", host, err)
-		}
-	case status := <-statusCh:
-		if status.StatusCode != 0 {
-			workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonExitNonzero).Inc()
-			return fmt.Errorf("workdir-sweep helper on host %q exited %d", host, status.StatusCode)
-		}
-	}
-
-	logs, err := client.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonLogsRead).Inc()
-		return fmt.Errorf("reading workdir-sweep helper logs on host %q: %w", host, err)
-	}
-	defer func() { _ = logs.Close() }()
-	out, err := io.ReadAll(logs)
-	if err != nil {
-		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonLogsRead).Inc()
-		return fmt.Errorf("reading workdir-sweep helper output on host %q: %w", host, err)
-	}
-
-	before, after, ok := parseSweepOutput(string(out))
-	if !ok {
-		workdirSweepFailuresTotal.WithLabelValues(host, sweepFailureReasonOutputUnparseable).Inc()
-		a.logger.Warn("Could not parse workdir-sweep output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
-		return nil
-	}
-	workdirSweepSuccessTotal.WithLabelValues(host).Inc()
-	workdirBytesGauge.WithLabelValues(host).Set(float64(after))
-	if reclaimed := before - after; reclaimed > 0 {
-		workdirSweptBytesTotal.WithLabelValues(host).Add(float64(reclaimed))
-		a.logger.Info("Swept shared workdir", slog.String("host", host), slog.Int64("before_bytes", before), slog.Int64("after_bytes", after), slog.Int64("reclaimed_bytes", reclaimed))
-	}
-	a.recordPnpmStoreSweepResult(host, string(out))
-
-	if externalsHealthSkipped(string(out)) {
-		// This runner_image has no agent-lcars externals-health.sh baked in
-		// (e.g. homelab-autoscale-e2e's third-party-built e2e-runner) -- the
-		// check never applies here, not a failure worth a WARN. Delete rather
-		// than leave any prior value in place: validateReloadCompatibility
-		// permits a scale set's runner_image to change on a live reload, and
-		// this gauge is a process-lifetime resource that survives generation
-		// replacement -- if this host previously reported 0/1 under an image
-		// that HAD the health script, an image swap to one that doesn't must
-		// not leave that now-inapplicable reading exported forever.
-		hostExternalsHealthyGauge.DeleteLabelValues(host)
-		return nil
-	}
-	healthy, healthOK := parseExternalsHealthOutput(string(out))
-	if !healthOK {
-		a.logger.Warn("Could not parse externals-health output", slog.String("host", host), slog.String("output", strings.TrimSpace(string(out))))
-		return nil
-	}
-	if healthy {
-		hostExternalsHealthyGauge.WithLabelValues(host).Set(1)
-	} else {
-		hostExternalsHealthyGauge.WithLabelValues(host).Set(0)
-		a.logger.Warn("Shared required Actions Node runtime is still unhealthy after a repair attempt", slog.String("host", host))
-	}
-	return nil
-}
-
-// recordPnpmStoreSweepResult parses workDirSweepScript's PNPM_* lines and
-// updates the pnpm-store metrics plus the fleet's cached last-known size
-// (agent-lcars#852/#853). Best-effort: an unparseable/missing PNPM_STORE_
-// BYTES line only logs a Warn (the sweep itself already succeeded per
-// parseSweepOutput above -- this is observability on top of it, not a
-// second sweep-level failure mode with its own metric).
-func (a *Scaler) recordPnpmStoreSweepResult(host, out string) {
-	if bytes, ok := parsePnpmStoreBytes(out); ok {
-		pnpmStoreBytesGauge.WithLabelValues(host).Set(float64(bytes))
-		fleet := a.coordinator()
-		fleet.pnpmStoreMu.Lock()
-		if fleet.pnpmStoreBytes == nil {
-			fleet.pnpmStoreBytes = map[string]int64{}
-		}
-		fleet.pnpmStoreBytes[host] = bytes
-		fleet.pnpmStoreMu.Unlock()
-	} else {
-		a.logger.Warn("Could not parse pnpm store size from workdir-sweep output", slog.String("host", host), slog.String("output", strings.TrimSpace(out)))
-	}
-	if result, ok := parsePnpmMaintenanceResult(pnpmPruneResultRe, out); ok {
-		pnpmStorePruneTotal.WithLabelValues(host, result).Inc()
-	}
-	if result, ok := parsePnpmMaintenanceResult(pnpmEvictResultRe, out); ok {
-		pnpmStoreEvictionTotal.WithLabelValues(host, result).Inc()
-		if result == pnpmMaintenanceResultSuccess {
-			a.logger.Info("Evicted shared pnpm store", slog.String("host", host))
-		} else if result == pnpmMaintenanceResultFailure {
-			a.logger.Warn("Failed to evict shared pnpm store", slog.String("host", host))
-		}
-	}
-}
-
-var pnpmStoreBytesRe = regexp.MustCompile(`PNPM_STORE_BYTES=(\d+)`)
-
-func parsePnpmStoreBytes(out string) (int64, bool) {
-	m := pnpmStoreBytesRe.FindStringSubmatch(out)
-	if m == nil {
-		return 0, false
-	}
-	n, err := strconv.ParseInt(m[1], 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
-}
-
-var (
-	pnpmPruneResultRe = regexp.MustCompile(`PNPM_PRUNE=(success|failure|skipped)`)
-	pnpmEvictResultRe = regexp.MustCompile(`PNPM_EVICT=(success|failure|skipped)`)
-)
-
-func parsePnpmMaintenanceResult(re *regexp.Regexp, out string) (string, bool) {
-	m := re.FindStringSubmatch(out)
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
-}
-
-func externalsHealthSkipped(out string) bool {
-	return strings.Contains(out, "EXTERNALS_HEALTHY_SKIPPED")
-}
-
-var externalsHealthRe = regexp.MustCompile(`EXTERNALS_HEALTHY=([01])`)
-
-func parseExternalsHealthOutput(out string) (healthy, ok bool) {
-	m := externalsHealthRe.FindStringSubmatch(out)
-	if m == nil {
-		return false, false
-	}
-	return m[1] == "1", true
-}
-
-var sweepOutputRe = regexp.MustCompile(`SWEEP before=(\d+) after=(\d+)`)
-
-func parseSweepOutput(out string) (before, after int64, ok bool) {
-	m := sweepOutputRe.FindStringSubmatch(out)
-	if m == nil {
-		return 0, 0, false
-	}
-	before, errB := strconv.ParseInt(m[1], 10, 64)
-	after, errA := strconv.ParseInt(m[2], 10, 64)
-	if errB != nil || errA != nil {
-		return 0, 0, false
-	}
-	return before, after, true
 }
 
 // removeIdleRunnerTimeout bounds each idle runner's teardown. This whole
@@ -3008,35 +2316,6 @@ func (r *runnerState) count() int {
 
 // countsByHost returns the number of idle+busy runners per host name, used
 // by pickHost to balance placement.
-func (r *runnerState) countsByHost() map[string]int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	counts := make(map[string]int)
-	for _, ref := range r.idle {
-		counts[ref.host]++
-	}
-	for _, ref := range r.busy {
-		counts[ref.host]++
-	}
-	return counts
-}
-
-func (r *runnerState) hasHost(host string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, ref := range r.idle {
-		if ref.host == host {
-			return true
-		}
-	}
-	for _, ref := range r.busy {
-		if ref.host == host {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *runnerState) hosts() map[string]bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

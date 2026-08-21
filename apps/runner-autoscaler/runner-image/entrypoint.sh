@@ -1,20 +1,14 @@
 #!/bin/bash
 set -e
 
-# See externals-health.sh for required_node_runtimes_run and why the
-# populate/repair check must actually invoke each required Node runtime rather
-# than just stat it. Shared with the control plane's periodic idle-host
-# maintenance sweep (scaler.go:sweepHostWorkDir, agent-lcars#392) so both call
-# sites use identical logic instead of two copies that can drift apart.
+# Invoke each required Actions Node runtime rather than merely checking that
+# its binary exists.
 # shellcheck source=externals-health.sh
 source /usr/local/lib/agent-lcars/externals-health.sh
 # shellcheck source=toolchain-health.sh
 source /usr/local/lib/agent-lcars/toolchain-health.sh
 
-repair_externals_if_needed
-
-# Preflight: fail the boot loudly if node24 STILL doesn't run after that
-# repair attempt (e.g. externals_backup itself is broken), rather than
+# Preflight: fail the boot loudly if a required runtime does not run, rather than
 # silently proceeding to run.sh, which registers with GitHub and can accept
 # a real job doomed to fail before checkout even starts. A container that
 # exits here without registering is swept by the scaler's existing

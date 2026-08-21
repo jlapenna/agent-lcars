@@ -20,7 +20,6 @@ fleet:
     - name: janeway
       docker: local
       runner_limit: 1
-      workdir_size_cap: 30g
   placement: {}
 scale_sets:
   - name: default
@@ -33,7 +32,6 @@ scale_sets:
     runner_image: example/e2e:latest
     min_runners: 0
     max_runners: 1
-    share_workdir: true
 `
 
 func writeConfig(t *testing.T, body string) string {
@@ -174,7 +172,7 @@ func TestValidateReloadCompatibilityRejectsProcessLifetimeChanges(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	e2eScaleSet := "\n  - name: e2e\n    labels: [e2e]\n    runner_image: example/e2e:latest\n    min_runners: 0\n    max_runners: 1\n    share_workdir: true\n"
+	e2eScaleSet := "\n  - name: e2e\n    labels: [e2e]\n    runner_image: example/e2e:latest\n    min_runners: 0\n    max_runners: 1\n"
 	tests := []struct {
 		name string
 		body string
@@ -224,12 +222,10 @@ func TestValidateReloadCompatibilityAllowsFleetHostChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	addedHost := `      workdir_size_cap: 30g
-    - name: laforge
+	addedHost := `    - name: laforge
       docker: ssh://runner@laforge
-      workdir_size_cap: 30g
 `
-	next, err := loadOrchestratorConfig(writeConfig(t, strings.Replace(validOrchestratorYAML, "      workdir_size_cap: 30g\n", addedHost, 1)))
+	next, err := loadOrchestratorConfig(writeConfig(t, strings.Replace(validOrchestratorYAML, "  placement: {}\n", addedHost+"  placement: {}\n", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,19 +330,26 @@ func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestOrchestratorConfigRejectsRetiredSharedWorkDirFields(t *testing.T) {
+	tests := map[string]string{
+		"scale set share_workdir": strings.Replace(validOrchestratorYAML, "    max_runners: 1\n", "    max_runners: 1\n    share_workdir: true\n", 1),
+		"host workdir_size_cap":   strings.Replace(validOrchestratorYAML, "      runner_limit: 1\n", "      runner_limit: 1\n      workdir_size_cap: 30g\n", 1),
+		"host pnpm_store_budget":  strings.Replace(validOrchestratorYAML, "      runner_limit: 1\n", "      runner_limit: 1\n      pnpm_store_budget: 10g\n", 1),
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := loadOrchestratorConfig(writeConfig(t, body)); err == nil {
+				t.Fatal("retired shared-workdir field was accepted")
+			}
+		})
+	}
+}
+
 func TestOrchestratorConfigRejectsDuplicateLabel(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "labels: [e2e]", "labels: [default]", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "label \"default\" is shared") {
 		t.Fatalf("expected duplicate-label error, got %v", err)
-	}
-}
-
-func TestOrchestratorConfigRequiresWorkDirSizeCapForSharedWorkDir(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "      workdir_size_cap: 30g\n", "", 1)
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "requires workdir_size_cap") {
-		t.Fatalf("expected missing workdir_size_cap error, got %v", err)
 	}
 }
 
@@ -362,8 +365,8 @@ func TestOrchestratorConfigDefaultsMetricsAddrToLocalhost(t *testing.T) {
 
 func TestOrchestratorConfigParsesPidsLimitAndShmSize(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML,
-		"    share_workdir: true\n",
-		"    share_workdir: true\n    pids_limit: 8192\n    shm_size: 1g\n", 1)
+		"    labels: [e2e]\n",
+		"    labels: [e2e]\n    pids_limit: 8192\n    shm_size: 1g\n", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err != nil {
 		t.Fatal(err)
@@ -387,8 +390,8 @@ func TestOrchestratorConfigParsesPidsLimitAndShmSize(t *testing.T) {
 
 func TestOrchestratorConfigRejectsNegativePidsLimit(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML,
-		"    share_workdir: true\n",
-		"    share_workdir: true\n    pids_limit: -1\n", 1)
+		"    labels: [e2e]\n",
+		"    labels: [e2e]\n    pids_limit: -1\n", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "invalid pids_limit") {
 		t.Fatalf("expected invalid pids_limit error, got %v", err)
@@ -397,81 +400,11 @@ func TestOrchestratorConfigRejectsNegativePidsLimit(t *testing.T) {
 
 func TestOrchestratorConfigRejectsInvalidShmSize(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML,
-		"    share_workdir: true\n",
-		"    share_workdir: true\n    shm_size: not-a-size\n", 1)
+		"    labels: [e2e]\n",
+		"    labels: [e2e]\n    shm_size: not-a-size\n", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "invalid shm_size") {
 		t.Fatalf("expected invalid shm_size error, got %v", err)
-	}
-}
-
-// TestLoadOrchestratorConfigResolvesPnpmStoreBudget covers agent-lcars#852's
-// optional per-host override, mirroring workdir_size_cap's own resolution.
-func TestLoadOrchestratorConfigResolvesPnpmStoreBudget(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML,
-		"      workdir_size_cap: 30g\n",
-		"      workdir_size_cap: 30g\n      pnpm_store_budget: 10g\n", 1)
-	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := int64(10 * 1024 * 1024 * 1024)
-	if got := resolved.PnpmStoreBudgets["janeway"]; got != want {
-		t.Fatalf("pnpm store budget = %d, want %d", got, want)
-	}
-}
-
-// TestLoadOrchestratorConfigDefaultsPnpmStoreBudgetWhenUnset proves
-// pnpm_store_budget is optional -- unlike workdir_size_cap, retrofitting it
-// onto an existing deployment's orchestrator.yml must never fail
-// --check-config by itself.
-func TestLoadOrchestratorConfigDefaultsPnpmStoreBudgetWhenUnset(t *testing.T) {
-	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := resolved.PnpmStoreBudgets["janeway"]; ok {
-		t.Fatalf("expected no explicit pnpm_store_budget entry for janeway, got %d", resolved.PnpmStoreBudgets["janeway"])
-	}
-}
-
-func TestOrchestratorConfigRejectsInvalidPnpmStoreBudget(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML,
-		"      workdir_size_cap: 30g\n",
-		"      workdir_size_cap: 30g\n      pnpm_store_budget: not-a-size\n", 1)
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "invalid pnpm_store_budget") {
-		t.Fatalf("expected invalid pnpm_store_budget error, got %v", err)
-	}
-}
-
-// TestOrchestratorConfigRejectsPnpmStoreBudgetAtOrAboveWorkDirCap covers the
-// documented invariant between the two (agent-lcars#852's "document the
-// relationship" acceptance criterion, enforced rather than left as prose):
-// an explicit budget that does not sit strictly below its host's
-// workdir_size_cap fails --check-config instead of silently never letting a
-// shared-workdir runner place there.
-func TestOrchestratorConfigRejectsPnpmStoreBudgetAtOrAboveWorkDirCap(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML,
-		"      workdir_size_cap: 30g\n",
-		"      workdir_size_cap: 30g\n      pnpm_store_budget: 30g\n", 1)
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "pnpm store budget") || !strings.Contains(err.Error(), "workdir_size_cap") {
-		t.Fatalf("expected a pnpm store budget vs workdir_size_cap error, got %v", err)
-	}
-}
-
-// TestOrchestratorConfigRejectsDefaultPnpmStoreBudgetAtOrAboveWorkDirCap is
-// the same invariant, but for a host that leaves pnpm_store_budget unset --
-// the DEFAULT must still be validated against a too-small workdir_size_cap,
-// not just an explicit override.
-func TestOrchestratorConfigRejectsDefaultPnpmStoreBudgetAtOrAboveWorkDirCap(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML,
-		"      workdir_size_cap: 30g\n",
-		"      workdir_size_cap: 1g\n", 1)
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "pnpm store budget") || !strings.Contains(err.Error(), "workdir_size_cap") {
-		t.Fatalf("expected the default pnpm store budget to be validated against a too-small workdir_size_cap, got %v", err)
 	}
 }
 
@@ -755,8 +688,8 @@ func TestParseFileMounts(t *testing.T) {
 func TestOrchestratorConfigResolvesFileMounts(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "  placement: {}\n",
 		"  placement: {}\n  file_mount_allowlist: [/etc/buildkit]\n", 1)
-	body = strings.Replace(body, "    max_runners: 1\n    share_workdir: true\n",
-		"    max_runners: 1\n    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
+	body = strings.Replace(body, "    labels: [e2e]\n",
+		"    labels: [e2e]\n    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err != nil {
 		t.Fatal(err)
@@ -774,8 +707,8 @@ func TestOrchestratorConfigResolvesFileMounts(t *testing.T) {
 }
 
 func TestOrchestratorConfigFileMountsFailClosedWithoutAllowlist(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "    share_workdir: true\n",
-		"    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
+	body := strings.Replace(validOrchestratorYAML, "    labels: [e2e]\n",
+		"    labels: [e2e]\n    file_mounts: [\"/etc/buildkit/client.pem:/secrets/client.pem\"]\n", 1)
 	_, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "fleet.file_mount_allowlist is empty") {
 		t.Fatalf("expected fail-closed rejection, got %v", err)
@@ -874,7 +807,7 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 	}
 
 	hosts := []DockerHost{{Name: "janeway"}}
-	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.WorkDirSizeCaps, resolved.Weights, nil)
+	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.Weights, nil)
 	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)

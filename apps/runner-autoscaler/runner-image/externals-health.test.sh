@@ -9,8 +9,6 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 AGENT_LCARS_EXTERNALS_DIR="$tmp/externals"
-AGENT_LCARS_EXTERNALS_BACKUP_DIR="$tmp/externals_backup"
-AGENT_LCARS_WORK_DIR="$tmp/work"
 
 make_runtime() {
   root="$1"
@@ -23,9 +21,6 @@ make_runtime() {
 
 make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node20 0
 make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node24 0
-make_runtime "$AGENT_LCARS_EXTERNALS_BACKUP_DIR" node20 0
-make_runtime "$AGENT_LCARS_EXTERNALS_BACKUP_DIR" node24 0
-
 required_node_runtimes_run || {
   echo "healthy node20/node24 runtimes were rejected" >&2
   exit 1
@@ -37,11 +32,9 @@ if required_node_runtimes_run; then
   echo "missing node20 runtime was accepted" >&2
   exit 1
 fi
-repair_externals_if_needed
-required_node_runtimes_run || {
-  echo "missing node20 runtime was not repaired" >&2
-  exit 1
-}
+
+# Restore the fixture before checking a broken executable independently.
+make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node20 0
 
 # Invocation matters: an executable-but-broken runtime must also trigger repair.
 make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node24 1
@@ -49,18 +42,4 @@ if required_node_runtimes_run; then
   echo "broken node24 runtime was accepted" >&2
   exit 1
 fi
-repair_externals_if_needed
-required_node_runtimes_run || {
-  echo "broken node24 runtime was not repaired" >&2
-  exit 1
-}
-
-# Healthy runtimes should not pay the copy cost.
-touch "$AGENT_LCARS_EXTERNALS_BACKUP_DIR/backup-only-sentinel"
-repair_externals_if_needed
-if [[ -e "$AGENT_LCARS_EXTERNALS_DIR/backup-only-sentinel" ]]; then
-  echo "healthy externals tree was copied unnecessarily" >&2
-  exit 1
-fi
-
 echo "externals-health.test.sh: all cases passed"
