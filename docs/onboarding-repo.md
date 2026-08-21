@@ -79,7 +79,11 @@ canonical homelab repository. Add a registration for the target repository
 and a starter scale set named and labeled for that repository. A practical
 starting point is an ephemeral, general-purpose pool with a minimum of zero
 and a small maximum; split pools only when workload duration or isolation
-demands it.
+demands it. Add the repository to homelab's `protect-main` ruleset module as
+well. A nascent repository may begin with no required checks, but it must
+still retain linear history, protection against force-push and deletion, and
+required review-thread resolution. Terraform plan/apply remains a separately
+approved maintainer operation.
 
 The registration uses the autoscaler GitHub App, not the fleet App. Its App
 key belongs in the homelab encrypted secret store; it never belongs in this
@@ -96,7 +100,10 @@ repository to both installations:
   console reads.
 - **Autoscaler App**: runner registration and scale-set listener.
 
-Use least privilege: select only the repository being onboarded. Verify
+Use least privilege: add the target repository while retaining the
+installation's other approved repositories. The selected-repository list is
+the installation's complete access set, so replacing it with just the new
+repository would silently revoke access from existing fleet members. Verify
 membership with an installation token and `/installation/repositories` rather
 than assuming that an account-wide installation includes it. The exact App
 identifiers and installation guidance live in
@@ -111,6 +118,10 @@ do not vendor copies of their implementation.
   call the reusable workflows from `jlapenna/agent-lcars@main` and retain only
   repository-specific triggers, permissions, concurrency, inputs, and
   configuration.
+- Add the coupled `agent-fallback-finalize.yml@main` job on GitHub-hosted
+  infrastructure to each enabled lane caller. It records the completion
+  observation when a self-hosted worker fails before its reporting steps;
+  omitting it leaves an otherwise completed attempt without a durable outcome.
 - Add the thin `agent-automerge` and `repo-validation` callers. Keep
   repository validation runnable on GitHub-hosted runners so it can establish
   a baseline before self-hosted capacity is healthy.
