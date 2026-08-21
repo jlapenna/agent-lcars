@@ -69,8 +69,9 @@
 #   baton to the next unclaimed issue explicitly (sprinkles#3489).
 # - install-workspace-deps: sprinkles' Nx worktree-aware resolution needs
 #   the primary checkout's node_modules installed (sprinkles#4003).
-# - telemetry-workload-identity-provider empty skips the telemetry
-#   sidecar entirely.
+# - telemetry inputs may override the fleet identity for a specialized
+#   deployment. Empty values use the canonical Agent LCARS telemetry writer;
+#   consumers must not silently lose telemetry because a repo variable drifted.
 # - opencode-model is caller-chosen: the LiteLLM route name encodes each
 #   repo's own thinking/fallback policy (#1227, homelab#44).
 # - ACTIONS_RERUN_TOKEN source is era-tied: agent-lcars hands the agent a
@@ -226,12 +227,12 @@ on:
         default: ''
         type: string
       telemetry-workload-identity-provider:
-        description: 'WIF provider for the telemetry sidecar (empty skips it)'
+        description: 'WIF provider override for telemetry (empty uses the fleet default)'
         required: false
         default: ''
         type: string
       telemetry-service-account:
-        description: 'Write-only telemetry service account'
+        description: 'Telemetry writer override (empty uses the fleet default)'
         required: false
         default: ''
         type: string
@@ -342,6 +343,8 @@ jobs:
       # recompute, so this can never block the agent.
       NX_SELF_HOSTED_REMOTE_CACHE_SERVER: ${{ inputs.nx-cache-url }}
       NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: ${{ secrets.NX_CACHE_TOKEN }}
+      FLEET_TELEMETRY_WIF_PROVIDER: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
+      FLEET_TELEMETRY_SERVICE_ACCOUNT: telemetry-writer@agent-lcars.iam.gserviceaccount.com
     steps:
       # The union surface makes one-lane-required values optional at the
       # `workflow_call` layer, so enforce them here instead: fail fast,
@@ -793,17 +796,17 @@ jobs:
         if: always() && inputs.dispatch-bootstrap
         uses: ./.github/actions/telemetry-start
         with:
-          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
-          service-account: ${{ inputs.telemetry-service-account }}
+          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider || env.FLEET_TELEMETRY_WIF_PROVIDER }}
+          service-account: ${{ inputs.telemetry-service-account || env.FLEET_TELEMETRY_SERVICE_ACCOUNT }}
           issue: ${{ inputs.issue }}
 
       - name: Start telemetry sidecar (published)
         id: telemetry-start-published
-        if: always() && !inputs.dispatch-bootstrap && inputs.telemetry-workload-identity-provider != ''
+        if: always() && !inputs.dispatch-bootstrap
         uses: jlapenna/agent-lcars/.github/actions/telemetry-start@main # latest
         with:
-          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider }}
-          service-account: ${{ inputs.telemetry-service-account }}
+          workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider || env.FLEET_TELEMETRY_WIF_PROVIDER }}
+          service-account: ${{ inputs.telemetry-service-account || env.FLEET_TELEMETRY_SERVICE_ACCOUNT }}
           issue: ${{ inputs.issue }}
 
       # Claude's subscription token, read from Secret Manager per run

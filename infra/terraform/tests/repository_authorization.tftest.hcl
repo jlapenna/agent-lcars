@@ -85,18 +85,8 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_service_account_iam_member.agent_lcars_writer_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/agent-lcars"
-    error_message = "The Agent LCARS telemetry-writer grant must remain intact."
-  }
-
-  assert {
-    condition     = google_service_account_iam_member.members_writer_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/supersprinklesracing/sprinkles"
-    error_message = "The Sprinkles telemetry-writer grant must remain intact."
-  }
-
-  assert {
-    condition     = google_service_account_iam_member.homelab_writer_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/homelab"
-    error_message = "The Homelab telemetry-writer grant must use the exact repository principal."
+    condition     = length(google_service_account_iam_member.fleet_writer_impersonation) == length(local.github_repositories) && alltrue([for repository, binding in google_service_account_iam_member.fleet_writer_impersonation : binding.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${repository}" && binding.role == "roles/iam.workloadIdentityUser"])
+    error_message = "Every authorized fleet repository, and no others, must impersonate the telemetry writer through its exact repository principal."
   }
 
   assert {
@@ -125,7 +115,7 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = google_service_account_iam_member.homelab_writer_impersonation.role == "roles/iam.workloadIdentityUser" && google_service_account_iam_member.homelab_codex_agent_impersonation.role == "roles/iam.workloadIdentityUser"
+    condition     = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/homelab"].role == "roles/iam.workloadIdentityUser" && google_service_account_iam_member.homelab_codex_agent_impersonation.role == "roles/iam.workloadIdentityUser"
     error_message = "Both Homelab grants must use roles/iam.workloadIdentityUser."
   }
 

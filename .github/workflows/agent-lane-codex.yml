@@ -108,12 +108,12 @@ on:
         default: ''
         type: string
       telemetry-workload-identity-provider:
-        description: 'WIF provider for the telemetry sidecar (empty skips it)'
+        description: 'WIF provider override for telemetry (empty uses the fleet default)'
         required: false
         default: ''
         type: string
       telemetry-service-account:
-        description: 'Write-only telemetry service account'
+        description: 'Telemetry writer override (empty uses the fleet default)'
         required: false
         default: ''
         type: string

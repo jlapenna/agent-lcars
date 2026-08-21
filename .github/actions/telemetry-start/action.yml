@@ -5,10 +5,10 @@ description: >-
 
 inputs:
   workload-identity-provider:
-    description: Terraform-managed WIF provider (repo variable GCP_WIF_PROVIDER).
+    description: Terraform-managed WIF provider selected by the shared lane.
     required: true
   service-account:
-    description: Telemetry-writer service account to impersonate (repo variable GCP_TELEMETRY_WRITER_SA).
+    description: Telemetry-writer service account selected by the shared lane.
     required: true
   issue:
     description: Issue or pull request number this run is working, forwarded to the sidecar.

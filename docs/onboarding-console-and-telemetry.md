@@ -78,8 +78,10 @@ adapter or archive. Telemetry steps are deliberately fail-soft, so verify the
 expected provider-specific result rather than treating a green workflow as
 proof that session data arrived.
 
-This is also the part that requires per-repo setup in **both** directions:
-the new repo's runner environment, and a GCP IAM grant here.
+The shared lane owns the standard WIF provider and telemetry-writer service
+account. A new repo therefore needs no duplicated workflow steps or repository
+variables for telemetry; it needs the shared runner image and membership in
+this repo's Terraform-managed fleet repository list.
 
 ### 2a. The sidecar tool needs to be on the runner
 
@@ -103,75 +105,24 @@ step.
   shipping some other way. Don't reintroduce a publish-and-pin scheme —
   build-time bake-in from this repo's own `main` is the supported pattern.
 
-### 2b. Dispatch workflow steps
+### 2b. Dispatch workflow contract
 
-Add these three steps to the dispatch workflow. The process-management
-logic (existence/credential guards, backgrounding, PID tracking,
-kill-and-wait) is consolidated into
-`/usr/local/lib/agent-lcars/sidecar-lifecycle.sh`, baked into the runner
-image alongside `sidecar.cjs` — each workflow step is a thin,
-copy-pasteable wrapper around calling it, not a place to re-duplicate that
-logic (see that script's own header comment if the underlying behavior
-needs to change; a fix there reaches every consumer on the next image
-pull).
+Use the published Agent LCARS Claude, Codex, and OpenCode lanes. Their shared
+`agent-lane.yml` authenticates, starts, and finalizes telemetry with the
+canonical provider and writer identity when the caller leaves the optional
+override inputs empty. Do not copy those steps into consumers, and do not make
+telemetry depend on per-repository `GCP_TELEMETRY_WRITER_SA` variables.
 
-```yaml
-- name: Authenticate telemetry writer
-  id: telemetry-auth
-  if: always()
-  continue-on-error: true
-  uses: google-github-actions/auth@v3
-  with:
-    workload_identity_provider: projects/611425338852/locations/global/workloadIdentityPools/github/providers/github
-    service_account: telemetry-writer@agent-lcars.iam.gserviceaccount.com
-    token_format: access_token
-
-# ... your own agent-specific auth step, if any, must run AFTER this one
-# if it also sets GOOGLE_APPLICATION_CREDENTIALS job-wide, so its
-# credentials (not this step's) are what later steps inherit ambiently.
-
-- name: Start telemetry sidecar
-  continue-on-error: true
-  env:
-    WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-    RUN_ID: ${{ github.run_id }}
-    NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-  run: |
-    SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-    if [ -x "$SCRIPT" ]; then
-      "$SCRIPT" start
-    else
-      echo "Sidecar tooling not found at $SCRIPT (runner image predates this bake-in); skipping telemetry sidecar."
-    fi
-
-# ... your own "Run <agent>" step goes here ...
-
-- name: Finalize telemetry sidecar
-  if: always()
-  continue-on-error: true
-  env:
-    WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
-    RUN_ID: ${{ github.run_id }}
-    NUM: ${{ github.event.issue.number || github.event.inputs.issue }}
-  run: |
-    SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
-    if [ -x "$SCRIPT" ]; then
-      "$SCRIPT" finalize
-    else
-      echo "Sidecar tooling not found at $SCRIPT; skipping telemetry finalize."
-    fi
-```
-
-`continue-on-error: true` on every step matters — a broken/rotated WIF
-config, or a runner image that predates the bake-in, must never turn a
-healthy agent run red. The finalize step is not optional: skip it and a
-session doc freezes at whatever `live`/`idle` snapshot the sidecar last
-wrote, with no browsable archived transcript.
+The composite and sidecar remain fail-soft: broken WIF or an old runner image
+must not turn a healthy agent deliverable red. That makes live console/storage
+verification mandatory; a green Actions run alone is not telemetry proof.
 
 ### 2c. IAM grant (requires explicit maintainer approval)
 
-The `telemetry-writer` service account's WIF principal set needs the new
-repo added so its Actions runs can mint a token for that SA. This repo's
+Add the repository to `local.github_repositories`. The same curated list owns
+both the WIF provider admission condition and the per-repository
+`roles/iam.workloadIdentityUser` grants on `telemetry-writer`; do not add a
+one-off writer resource that can drift from fleet membership. This repo's
 own `AGENTS.md`/development-skill rules deny Terraform and IAM changes by
 default. The named maintainer may explicitly approve a specific issue,
 operation, and target; without that approval, flag the step and wait. With

@@ -68,10 +68,12 @@ evaluating this host-only privacy scope.
 ### 3. Workflows — repo variables
 
 Not extractable by relocation (`.github/workflows/` is a fixed path), so
-these live as **repo variables** instead. Every one fails _closed_ if unset:
-an unset variable interpolates to an empty string, which makes a `runs-on`
-unschedulable, an auth step fail, and the `github.actor == vars.MAINTAINER_LOGIN`
-dispatch guard evaluate false. Nothing silently falls back to a default.
+these live as **repo variables** instead. Identity and deployment variables
+fail _closed_ if unset: an empty value makes a `runs-on` unschedulable, an
+auth step fail, or the `github.actor == vars.MAINTAINER_LOGIN` dispatch guard
+evaluate false. Telemetry is the deliberate exception: the shared lane owns
+its non-secret fleet WIF/provider identity and uses that canonical default
+when a caller omits or empties the legacy override variables.
 
 | Variable                          | This deployment                                                                  | Used by                                                                                                                                      |
 | --------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -83,7 +85,7 @@ dispatch guard evaluate false. Nothing silently falls back to a default.
 | `GCP_DEPLOYER_WIF_PROVIDER`       | `projects/611425338852/…/workloadIdentityPools/github-deployer/providers/github` | deploy-console only; provider accepts `deploy-console.yml` from `main`                                                                       |
 | `GCP_DEPLOYER_SA`                 | `github-deployer@agent-lcars…`                                                   | deploy-console only; the App Hosting deploy impersonates it through `GCP_DEPLOYER_WIF_PROVIDER`                                              |
 | `GCP_WEBHOOK_CONFIG_WIF_PROVIDER` | Terraform output `github_app_webhook_configurator_workload_identity_provider`    | configure-github-app-webhook only; provider accepts that workflow from `main`                                                                |
-| `GCP_TELEMETRY_WRITER_SA`         | `telemetry-writer@agent-lcars…`                                                  | claude / codex                                                                                                                               |
+| `GCP_TELEMETRY_WRITER_SA`         | optional override; shared default is `telemetry-writer@agent-lcars…`             | claude / codex / opencode                                                                                                                    |
 | `GCP_CODEX_AGENT_SA`              | `codex-agent@agent-lcars…`                                                       | codex                                                                                                                                        |
 | `GCP_WEBHOOK_CONFIG_SA`           | Terraform output `github_app_webhook_configurator_service_account`               | configure-github-app-webhook; reads only the webhook HMAC secret                                                                             |
 | `MAINTAINER_LOGIN`                | `jlapenna`                                                                       | dispatch guards, failure assignment                                                                                                          |
