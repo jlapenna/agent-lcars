@@ -86,6 +86,27 @@ test.describe('shared mobile header on every console page and view @mobile-layou
       }
     });
 
+    test(`keeps the session-detail header controls to one row at ${viewport.width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await setE2eAdminUser(page);
+      await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
+
+      const header = page.locator(
+        '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+      );
+      await expectOneSharedMobileHeader(page, 'sessions');
+
+      // The session timestamp belongs on the desktop command rail. At a phone
+      // width it used to force the refresh and overflow controls into a second
+      // row, leaving the shared title bay unusably narrow.
+      await expect(header.getByText(/^Updated /)).toBeHidden();
+      await expect(
+        header.getByRole('button', { name: 'Refresh' }),
+      ).toBeVisible();
+    });
+
     test(`renders the inherited header on login at ${viewport.width}px`, async ({
       page,
     }) => {
