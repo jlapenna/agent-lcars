@@ -24,8 +24,10 @@ configure_agent_lcars_nx_native_file_cache() {
   fi
 
   if [ ! -f "$repo_root/node_modules/nx/package.json" ]; then
-    echo "tools/nx: node_modules/nx is missing; run pnpm install first" >&2
-    return 1
+    # Some contract tests deliberately exercise wrappers before dependencies
+    # are installed. Leave the variable unset; the downstream package-manager
+    # command will provide its normal missing-install error.
+    return 0
   fi
 
   nx_version="$(

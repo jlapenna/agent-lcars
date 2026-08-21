@@ -23,13 +23,19 @@ make_fake_repo() {
 make_fake_repo "$TEST_DIR/repo-a" 'native artifact A'
 make_fake_repo "$TEST_DIR/repo-b" 'native artifact A'
 make_fake_repo "$TEST_DIR/repo-c" 'native artifact B'
-mkdir -p "$TEST_DIR/cache" "$TEST_DIR/home"
+mkdir -p "$TEST_DIR/cache" "$TEST_DIR/home" "$TEST_DIR/repo-uninstalled"
 
 cache_path() {
   env -u CI -u NX_NATIVE_FILE_CACHE_DIRECTORY -u NX_SKIP_NATIVE_FILE_CACHE \
     HOME="$TEST_DIR/home" XDG_CACHE_HOME="$TEST_DIR/cache" \
     bash -c '. "$1"; configure_agent_lcars_nx_native_file_cache "$2"; printf "%s\n" "$NX_NATIVE_FILE_CACHE_DIRECTORY"' \
     bash "$ROOT/tools/nx-native-file-cache.sh" "$1"
+}
+
+uninstalled_path="$(cache_path "$TEST_DIR/repo-uninstalled")"
+[ -z "$uninstalled_path" ] || {
+  echo "pre-install invocation unexpectedly configured a native cache" >&2
+  exit 1
 }
 
 # Exercise concurrent first use before any process has populated the target.

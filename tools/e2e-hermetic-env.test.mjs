@@ -1,7 +1,6 @@
 /* eslint-disable vitest/no-import-node-test -- CI runs this boundary test with node --test before installing workspace dependencies. */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -146,40 +145,6 @@ test('tool caches stay durable while HOME remains isolated', () => {
     callerHome,
     '.cache/firebase/emulators',
   );
-  const nxVersion = JSON.parse(
-    fs.readFileSync(path.join(root, 'node_modules/nx/package.json'), 'utf8'),
-  ).version;
-  const pnpmStore = path.join(root, 'node_modules/.pnpm');
-  const nativePackageEntry = fs
-    .readdirSync(pnpmStore)
-    .find(
-      (entry) => entry.startsWith('@nx+nx-') && entry.endsWith(`@${nxVersion}`),
-    );
-  assert.ok(nativePackageEntry, `expected an Nx ${nxVersion} native package`);
-  const nativePackageRoot = path.join(
-    pnpmStore,
-    nativePackageEntry,
-    'node_modules/@nx',
-  );
-  const nativePackage = fs
-    .readdirSync(nativePackageRoot)
-    .find((entry) => entry.startsWith('nx-'));
-  assert.ok(nativePackage, 'expected a platform-specific Nx native package');
-  const nativeBinding = path.join(
-    nativePackageRoot,
-    nativePackage,
-    fs
-      .readdirSync(path.join(nativePackageRoot, nativePackage))
-      .find((entry) => entry.endsWith('.node')),
-  );
-  const nativeFingerprint = createHash('sha256')
-    .update(fs.readFileSync(nativeBinding))
-    .digest('hex');
-  const expectedNativeCache = path.join(
-    callerHome,
-    '.cache/nx-native-file-cache/agent-lcars',
-    nativeFingerprint,
-  );
   const probe = `
     if (process.env.HOME === ${JSON.stringify(callerHome)}) process.exit(9);
     if (process.env.COREPACK_HOME !== ${JSON.stringify(expectedCorepackHome)}) {
@@ -188,18 +153,11 @@ test('tool caches stay durable while HOME remains isolated', () => {
     if (process.env.FIREBASE_EMULATORS_PATH !== ${JSON.stringify(expectedFirebaseHome)}) {
       process.exit(11);
     }
-    if (process.env.NX_NATIVE_FILE_CACHE_DIRECTORY !== ${JSON.stringify(expectedNativeCache)}) {
-      process.exit(12);
-    }
     process.stdout.write('tool caches verified\\n');
   `;
 
   try {
-    const result = runThroughE2eBoundary(probe, {
-      CI: '',
-      HOME: callerHome,
-      XDG_CACHE_HOME: '',
-    });
+    const result = runThroughE2eBoundary(probe, { HOME: callerHome });
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, 'tool caches verified\n');
