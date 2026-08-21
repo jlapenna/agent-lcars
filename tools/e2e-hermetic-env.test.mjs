@@ -146,13 +146,39 @@ test('tool caches stay durable while HOME remains isolated', () => {
     callerHome,
     '.cache/firebase/emulators',
   );
-  const lockFingerprint = createHash('sha256')
-    .update(fs.readFileSync(path.join(root, 'pnpm-lock.yaml')))
+  const nxVersion = JSON.parse(
+    fs.readFileSync(path.join(root, 'node_modules/nx/package.json'), 'utf8'),
+  ).version;
+  const pnpmStore = path.join(root, 'node_modules/.pnpm');
+  const nativePackageEntry = fs
+    .readdirSync(pnpmStore)
+    .find(
+      (entry) => entry.startsWith('@nx+nx-') && entry.endsWith(`@${nxVersion}`),
+    );
+  assert.ok(nativePackageEntry, `expected an Nx ${nxVersion} native package`);
+  const nativePackageRoot = path.join(
+    pnpmStore,
+    nativePackageEntry,
+    'node_modules/@nx',
+  );
+  const nativePackage = fs
+    .readdirSync(nativePackageRoot)
+    .find((entry) => entry.startsWith('nx-'));
+  assert.ok(nativePackage, 'expected a platform-specific Nx native package');
+  const nativeBinding = path.join(
+    nativePackageRoot,
+    nativePackage,
+    fs
+      .readdirSync(path.join(nativePackageRoot, nativePackage))
+      .find((entry) => entry.endsWith('.node')),
+  );
+  const nativeFingerprint = createHash('sha256')
+    .update(fs.readFileSync(nativeBinding))
     .digest('hex');
   const expectedNativeCache = path.join(
     callerHome,
     '.cache/nx-native-file-cache/agent-lcars',
-    lockFingerprint,
+    nativeFingerprint,
   );
   const probe = `
     if (process.env.HOME === ${JSON.stringify(callerHome)}) process.exit(9);
