@@ -62,7 +62,6 @@ fleet:
       docker: local # or ssh://<user>@<host>.<domain> for a remote host
       # Optional per-host override; telemetry probes otherwise time out in 1s.
       metrics_timeout: 5s
-      workdir_size_cap: 30g
     # ... more hosts -- see the live file for the fleet's current,
     # actively-changing host list; don't treat this as authoritative.
   placement:
@@ -247,9 +246,8 @@ cd github-runner-autoscaler
 docker compose run --rm --no-deps runner-autoscaler --check-config
 ```
 
-Catches YAML/schema errors, duplicate labels across registrations, and the
-`workdir_size_cap` invariant above — all without touching any live listener
-or Docker mutation.
+Catches YAML/schema errors and duplicate labels across registrations without
+touching any live listener or Docker mutation.
 
 ## 5. Deploy — **this must run on the `homelab` host itself**
 

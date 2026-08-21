@@ -291,17 +291,11 @@ RUN set -eux; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
-# Backup the original externals directory populated by the base image
-RUN cp -r /home/runner/externals /home/runner/externals_backup
-
 # Add entrypoint wrapper
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Externals self-heal/health-check functions, shared between entrypoint.sh
-# (above) and the control plane's periodic idle-host maintenance sweep
-# (scaler.go:sweepHostWorkDir, agent-lcars#392) -- see that file's own
-# comment for why both call sites must share one copy of this logic.
+# Actions runtime health-check functions consumed by entrypoint.sh.
 # agent-lcars#1330: pre-populate the runner's action-archive cache so job
 # setup survives codeload.github.com outages on the trusted path. The list
 # derives from the fresh-main checkout in the telemetry stage (SHA pins

@@ -15,7 +15,7 @@ func TestFleetReservationMakesHostLimitAtomicAcrossScalers(t *testing.T) {
 	fake := newFakeDockerServer(t)
 	fake.setContainers([]container.Summary{})
 	host := DockerHost{Name: "janeway", Client: fake.client(t)}
-	fleet := newFleetCoordinator(24, map[string]int{"janeway": 1}, nil,
+	fleet := newFleetCoordinator(24, map[string]int{"janeway": 1},
 		map[string]int{"default": 1, "e2e": 1}, []string{"default", "e2e"})
 	newScaler := func(name string) *Scaler {
 		return &Scaler{
@@ -40,7 +40,7 @@ func TestFleetReservationEnforcesGlobalLimit(t *testing.T) {
 	fake := newFakeDockerServer(t)
 	fake.setContainers([]container.Summary{})
 	host := DockerHost{Name: "host", Client: fake.client(t)}
-	fleet := newFleetCoordinator(1, nil, nil,
+	fleet := newFleetCoordinator(1, nil,
 		map[string]int{"a": 1, "b": 1}, []string{"a", "b"})
 	newScaler := func(name string) *Scaler {
 		return &Scaler{
@@ -58,25 +58,6 @@ func TestFleetReservationEnforcesGlobalLimit(t *testing.T) {
 	}
 }
 
-func TestSharedWorkDirPlacementRejectsOtherSetsSharedWorkdirRunner(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	fake.setContainers([]container.Summary{{
-		ID: "existing", State: container.StateRunning,
-		Labels: map[string]string{runnerScaleSetLabelKey: "other", runnerSharedWorkDirLabelKey: "true"},
-	}})
-	host := DockerHost{Name: "host", Client: fake.client(t)}
-	fleet := newFleetCoordinator(4, nil, nil,
-		map[string]int{"e2e": 1}, []string{"e2e"})
-	scaler := &Scaler{
-		scaleSetName: "e2e", maxRunners: 1, shareWorkDir: true,
-		dockerHosts: []DockerHost{host}, logger: slog.Default(),
-		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}}, fleet: fleet,
-	}
-	if _, err := fleet.reserve(context.Background(), scaler); err == nil {
-		t.Fatal("shared-workdir placement overlapped another set's shared-workdir runner")
-	}
-}
-
 func TestRetiredHostIsCordonedFromNewPlacements(t *testing.T) {
 	retired := newFakeDockerServer(t)
 	active := newFakeDockerServer(t)
@@ -84,7 +65,7 @@ func TestRetiredHostIsCordonedFromNewPlacements(t *testing.T) {
 	active.setContainers([]container.Summary{})
 	retiredHost := DockerHost{Name: "retired", Client: retired.client(t)}
 	activeHost := DockerHost{Name: "active", Client: active.client(t)}
-	fleet := newFleetCoordinator(2, nil, nil, map[string]int{"set": 1}, []string{"set"})
+	fleet := newFleetCoordinator(2, nil, map[string]int{"set": 1}, []string{"set"})
 	scaler := &Scaler{
 		scaleSetName: "set", maxRunners: 2,
 		dockerHosts: []DockerHost{activeHost, retiredHost}, placementHosts: []DockerHost{activeHost},
@@ -117,7 +98,7 @@ func TestFleetReservationsAreAtomicUnderConcurrentGoroutines(t *testing.T) {
 	hostA := DockerHost{Name: "host-a", Client: fake.client(t)}
 	hostB := DockerHost{Name: "host-b", Client: fake.client(t)}
 	const fleetMax = 50 // effectively unbounded; the invariant under test is per-host exclusivity, not this cap.
-	fleet := newFleetCoordinator(fleetMax, nil, nil,
+	fleet := newFleetCoordinator(fleetMax, nil,
 		map[string]int{"set-a": 1, "set-b": 1}, []string{"set-a", "set-b"})
 	newScaler := func(name string) *Scaler {
 		return &Scaler{
