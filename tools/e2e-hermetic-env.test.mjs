@@ -533,6 +533,17 @@ test('E2E affected-path fallback consumes the complete changed-file list', () =>
   assert.doesNotMatch(workflow, /git diff --name-only[^\n]*\|\s*grep[^\n]*q/u);
 });
 
+test('CI E2E uses the repository operational switch', () => {
+  const workflow = fs.readFileSync(
+    path.join(root, '.github/workflows/ci.yml'),
+    'utf8',
+  );
+  const e2eJob = workflow.slice(workflow.indexOf('\n  e2e:'));
+
+  assert.match(e2eJob, /if: \$\{\{ vars\.E2E_ENABLED == 'true' \}\}/u);
+  assert.doesNotMatch(e2eJob, /if: \$\{\{ false \}\}/u);
+});
+
 test('E2E retires only the stale Git LFS hook before checkout', () => {
   const workflow = fs.readFileSync(
     path.join(root, '.github/workflows/ci.yml'),
