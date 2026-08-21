@@ -171,6 +171,24 @@ describe('drainOutbox: dispatch-run', () => {
     expect(calls).toHaveLength(1); // no additional fetch call
   });
 
+  it('dispatches against an injected GitHub API root', async () => {
+    const { store, orchestrator } = fixture();
+    await started(orchestrator);
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      githubApiBaseUrl: 'https://fixture.invalid/github/',
+    });
+
+    expect(calls[0]?.url).toBe(
+      'https://fixture.invalid/github/repos/octo/example/actions/workflows/claude.yml/dispatches',
+    );
+  });
+
   it('sends one workflow_dispatch request across two concurrent drains', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
@@ -403,11 +421,12 @@ describe('drainOutbox: report-outcome', () => {
       orchestrator,
       tokens,
       fetchImpl,
+      githubApiBaseUrl: 'https://fixture.invalid/github',
     });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(
-      'https://api.github.com/repos/octo/example/issues/7/comments',
+      'https://fixture.invalid/github/repos/octo/example/issues/7/comments',
     );
     const body = callBody(calls[0]!).body as string;
     expect(body).toContain(`Run ${run.runId} finished.`);
@@ -448,12 +467,13 @@ describe('drainOutbox: report-outcome', () => {
       orchestrator,
       tokens,
       fetchImpl,
+      githubApiBaseUrl: 'https://fixture.invalid/github',
     });
 
     expect(calls).toHaveLength(2); // the retry's dispatch + the lost comment
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
     expect(commentCall?.url).toBe(
-      'https://api.github.com/repos/octo/example/issues/7/comments',
+      'https://fixture.invalid/github/repos/octo/example/issues/7/comments',
     );
     const body = callBody(commentCall!).body as string;
     expect(body).toBe(
@@ -524,11 +544,12 @@ describe('drainOutbox: report-outcome', () => {
       orchestrator,
       tokens,
       fetchImpl,
+      githubApiBaseUrl: 'https://fixture.invalid/github',
     });
 
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
     expect(commentCall?.url).toBe(
-      'https://api.github.com/repos/octo/example/issues/7/comments',
+      'https://fixture.invalid/github/repos/octo/example/issues/7/comments',
     );
     const commentBody = callBody(commentCall!).body as string;
     expect(commentBody).toBe(
@@ -539,7 +560,7 @@ describe('drainOutbox: report-outcome', () => {
 
     const labelCall = calls.find((c) => c.url.endsWith('/labels'));
     expect(labelCall?.url).toBe(
-      'https://api.github.com/repos/octo/example/issues/7/labels',
+      'https://fixture.invalid/github/repos/octo/example/issues/7/labels',
     );
     expect(labelCall?.init.method).toBe('POST');
     expect(JSON.parse(String(labelCall?.init.body))).toEqual({

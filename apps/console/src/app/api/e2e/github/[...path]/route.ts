@@ -191,6 +191,58 @@ export async function POST(
   if (path[0] === 'graphql') {
     return NextResponse.json({ data: enrichmentGraphql() });
   }
+  // The broker's outbox drain uses raw fetch rather than Octokit. These two
+  // handlers keep retrigger/reassignment coverage inside the same local
+  // GitHub boundary while validating the production request shape.
+  if (
+    path[0] === 'repos' &&
+    path.length === 7 &&
+    path[1] === E2E_FIXTURE_REPO.owner &&
+    path[2] === E2E_FIXTURE_REPO.name &&
+    path[3] === 'actions' &&
+    path[4] === 'workflows' &&
+    path[6] === 'dispatches'
+  ) {
+    const body = (await req.json()) as {
+      ref?: unknown;
+      inputs?: Record<string, unknown>;
+    };
+    const inputs = body.inputs;
+    const valid =
+      body.ref === 'main' &&
+      inputs !== undefined &&
+      typeof inputs['issue'] === 'string' &&
+      ['implement', 'plan'].includes(String(inputs['mode'])) &&
+      typeof inputs['broker_intent_id'] === 'string' &&
+      typeof inputs['broker_generation'] === 'string' &&
+      typeof inputs['broker_dispatch_token'] === 'string';
+    return valid
+      ? new NextResponse(null, { status: 204 })
+      : NextResponse.json(
+          { message: 'Invalid workflow dispatch fixture request' },
+          { status: 422 },
+        );
+  }
+  if (
+    path[0] === 'repos' &&
+    path.length === 6 &&
+    path[1] === E2E_FIXTURE_REPO.owner &&
+    path[2] === E2E_FIXTURE_REPO.name &&
+    path[3] === 'issues' &&
+    path[5] === 'comments'
+  ) {
+    const body = (await req.json()) as { body?: unknown };
+    const fixtureIssue = issue(Number(path[4]));
+    return fixtureIssue && typeof body.body === 'string' && body.body.length > 0
+      ? NextResponse.json(
+          { id: Number(path[4]) * 1000, body: body.body },
+          { status: 201 },
+        )
+      : NextResponse.json(
+          { message: 'Invalid issue comment fixture request' },
+          { status: 422 },
+        );
+  }
   if (path[0] === 'controller-commands' && path.length === 1) {
     const body = (await req.json()) as Record<string, unknown>;
     const repository = body['repository'] as Record<string, unknown>;

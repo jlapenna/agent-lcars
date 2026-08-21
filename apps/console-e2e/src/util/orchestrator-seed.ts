@@ -53,11 +53,9 @@ function firestoreStore(): FirestoreStore {
 /**
  * Requests one orchestrator run for a fixture task, giving
  * `readAuthoritativeTaskState` real state to project instead of the "no
- * authoritative lifecycle state" fallback. Deliberately left `pending`
- * (never confirmed/reported): nothing in these specs asserts on the run's
- * own lifecycle state, only that authoritative provenance exists at all -
- * see `logical-work.ts`'s `provenance` derivation, which reads only whether
- * a task document was found, never the run's state.
+ * authoritative lifecycle state" fallback. Defaults to `pending`; a test
+ * that pairs the seed with an already-running GitHub fixture can request
+ * `running` so both authoritative and external lifecycle facts agree.
  *
  * Idempotent by design: `requestId` is fixed per call site, and
  * `Orchestrator.request`'s own duplicate-request contract maps a repeat
@@ -71,6 +69,7 @@ export async function seedOrchestratorTask(params: {
   pipeline: string;
   requestId: string;
   repository?: string;
+  state?: 'pending' | 'running';
 }): Promise<void> {
   const now = new Date().toISOString();
   const clock: Clock = { now: () => now };
@@ -88,5 +87,9 @@ export async function seedOrchestratorTask(params: {
     throw new Error(
       `seedOrchestratorTask: request for ${params.repository ?? E2E_FIXTURE_REPOSITORY}#${params.issue} was refused (${outcome.reason}) - a real run already holds this task's lock`,
     );
+  }
+  const run = 'refused' in outcome ? outcome.existingRun : outcome.run;
+  if (params.state === 'running' && run?.state === 'pending') {
+    await orchestrator.confirmDispatch(run.runId);
   }
 }
