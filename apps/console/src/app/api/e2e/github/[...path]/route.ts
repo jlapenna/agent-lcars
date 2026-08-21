@@ -2,6 +2,7 @@ import { parseQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
+import { controlPlaneRepository } from '../../../../../lib/deployment';
 import {
   checkRuns,
   createQuickTaskClaimRef,
@@ -197,8 +198,7 @@ export async function POST(
   if (
     path[0] === 'repos' &&
     path.length === 7 &&
-    path[1] === E2E_FIXTURE_REPO.owner &&
-    path[2] === E2E_FIXTURE_REPO.name &&
+    path.slice(1, 3).join('/') === controlPlaneRepository() &&
     path[3] === 'actions' &&
     path[4] === 'workflows' &&
     path[6] === 'dispatches'
@@ -226,8 +226,7 @@ export async function POST(
   if (
     path[0] === 'repos' &&
     path.length === 6 &&
-    path[1] === E2E_FIXTURE_REPO.owner &&
-    path[2] === E2E_FIXTURE_REPO.name &&
+    path.slice(1, 3).join('/') === controlPlaneRepository() &&
     path[3] === 'issues' &&
     path[5] === 'comments'
   ) {
