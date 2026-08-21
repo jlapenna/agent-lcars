@@ -73,8 +73,6 @@ general-purpose reusable workflow. See [Agent dispatch ownership](lifecycle-syst
 jobs:
   task:
     uses: jlapenna/agent-lcars/.github/workflows/<workflow>.yml@main
-    with:
-      runs-on: ${{ vars.CI_RUNS_ON }}
 ```
 
 `@main` intentionally follows current fleet behavior. Consumers that require
@@ -83,8 +81,9 @@ permission change requires a major release.
 
 Reusable-workflow callers retain their triggers, workflow-level permissions,
 concurrency, repository-variable spellings, and any required fallback job.
-The workflow's `action.yml` or `workflow_call` declaration is authoritative
-for required inputs and secrets.
+Each workflow's `workflow_call` declaration is authoritative for required
+inputs and secrets; add a `with:` block only for inputs that declaration
+accepts.
 
 ## Security invariants
 
@@ -112,9 +111,9 @@ workflow-contract tests; review their `workflow_call` surfaces as public API.
 
 ## Related documents
 
-| Topic                            | Document                                                                       |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| Dispatch and worker ownership    | [Agent dispatch ownership](lifecycle-systems.md)                               |
-| Credential and variable boundary | [Deployment boundary](deployment-boundary.md)                                  |
-| Fleet protocol                   | [Agent protocol](../.agents/skills/agent-protocol/reference/agent-protocol.md) |
-| Workstation agent tools          | `packages/fleet-tools/`                                                        |
+| Topic                            | Document                                                                             |
+| -------------------------------- | ------------------------------------------------------------------------------------ |
+| Dispatch and worker ownership    | [Agent dispatch ownership](lifecycle-systems.md)                                     |
+| Credential and variable boundary | [Deployment boundary](deployment-boundary.md)                                        |
+| Fleet protocol                   | [Agent protocol](../agents/shared/skills/agent-protocol/reference/agent-protocol.md) |
+| Workstation agent tools          | `packages/fleet-tools/`                                                              |
