@@ -1521,7 +1521,9 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .costs-utilities--mobile,
   .task-utilities--mobile,
   .session-detail-utilities--mobile {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 }
 
@@ -1716,7 +1718,20 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .costs-utilities--mobile,
   .task-utilities--mobile,
   .session-detail-utilities--mobile {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* A timestamp is useful beside the desktop session refresh action, but it
+     consumes the title bay on a phone. Keep the accessible refresh button and
+     place the timestamp in the refreshed page content instead. */
+  .session-detail-utilities--mobile .mantine-Group-root {
+    gap: 0;
+  }
+
+  .session-detail-utilities--mobile .mantine-Text-root {
+    display: none;
   }
 
   .agents-workspace {

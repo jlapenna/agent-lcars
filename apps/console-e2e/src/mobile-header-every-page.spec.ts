@@ -11,6 +11,7 @@ const PHONE_VIEWPORTS = [
   { width: 320, height: 720 },
   { width: 390, height: 844 },
 ] as const;
+const TABLET_VIEWPORT = { width: 768, height: 1024 } as const;
 
 const AUTHENTICATED_VIEWS = [
   { name: 'Bridge', path: '/', current: 'deck' },
@@ -86,6 +87,43 @@ test.describe('shared mobile header on every console page and view @mobile-layou
       }
     });
 
+    test(`keeps the session-detail header controls to one row at ${viewport.width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await setE2eAdminUser(page);
+      await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
+
+      const header = page.locator(
+        '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+      );
+      const mobileUtilities = header.locator(
+        '.session-detail-utilities--mobile',
+      );
+      const refreshButton = mobileUtilities.getByRole('button', {
+        name: 'Refresh',
+      });
+      const overflowButton = mobileUtilities.getByRole('button', {
+        name: 'More console options',
+      });
+      await expectOneSharedMobileHeader(page, 'sessions');
+
+      // The session timestamp belongs on the desktop command rail. At a phone
+      // width it used to force the refresh and overflow controls into a second
+      // row, leaving the shared title bay unusably narrow.
+      await expect(mobileUtilities.getByText(/^Updated /)).toBeHidden();
+      await expect(refreshButton).toBeVisible();
+      await expect(overflowButton).toBeVisible();
+
+      const [refreshBox, overflowBox] = await Promise.all([
+        refreshButton.boundingBox(),
+        overflowButton.boundingBox(),
+      ]);
+      expect(refreshBox).not.toBeNull();
+      expect(overflowBox).not.toBeNull();
+      expect(Math.abs(refreshBox!.y - overflowBox!.y)).toBeLessThanOrEqual(1);
+    });
+
     test(`renders the inherited header on login at ${viewport.width}px`, async ({
       page,
     }) => {
@@ -97,4 +135,34 @@ test.describe('shared mobile header on every console page and view @mobile-layou
       ).toBeVisible();
     });
   }
+
+  test('keeps the session-detail header controls to one row at tablet width', async ({
+    page,
+  }) => {
+    await page.setViewportSize(TABLET_VIEWPORT);
+    await setE2eAdminUser(page);
+    await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
+
+    const header = page.locator(
+      '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
+    );
+    const mobileUtilities = header.locator('.session-detail-utilities--mobile');
+    const refreshButton = mobileUtilities.getByRole('button', {
+      name: 'Refresh',
+    });
+    const overflowButton = mobileUtilities.getByRole('button', {
+      name: 'More console options',
+    });
+    await expectOneSharedMobileHeader(page, 'sessions');
+    await expect(refreshButton).toBeVisible();
+    await expect(overflowButton).toBeVisible();
+
+    const [refreshBox, overflowBox] = await Promise.all([
+      refreshButton.boundingBox(),
+      overflowButton.boundingBox(),
+    ]);
+    expect(refreshBox).not.toBeNull();
+    expect(overflowBox).not.toBeNull();
+    expect(Math.abs(refreshBox!.y - overflowBox!.y)).toBeLessThanOrEqual(1);
+  });
 });

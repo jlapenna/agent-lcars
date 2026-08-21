@@ -142,6 +142,7 @@ const SessionDetailView = withConsolePageShell(
           <RefreshButton
             generatedAt={generatedAt}
             initialLabel={formatRelativeTime(generatedAt)}
+            compact
           />
           <QueueUtilityMenu
             repositoryUrl={consoleRepositoryUrl()}
