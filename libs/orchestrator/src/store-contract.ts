@@ -7,9 +7,13 @@ import {
   isRefusal,
   requestRun,
 } from './decide';
-import type { TaskId } from './model';
+import type { LeasedOutboxEntry, TaskId } from './model';
 import { type Clock, Orchestrator } from './orchestrator';
-import { type OrchestratorStore, StoreConflict } from './store';
+import {
+  type OrchestratorStore,
+  OUTBOX_LEASE_MS,
+  StoreConflict,
+} from './store';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
@@ -36,6 +40,21 @@ async function started(orchestrator: Orchestrator, requestId = 'req-1') {
     throw new Error(`unexpected refusal: ${outcome.reason}`);
   }
   return outcome;
+}
+
+function claimOutbox(store: OrchestratorStore, now: string, limit = 10) {
+  return store.claimPendingOutbox({
+    limit,
+    now,
+    leaseExpiresAt: new Date(Date.parse(now) + OUTBOX_LEASE_MS).toISOString(),
+  });
+}
+
+function onlyClaim(entries: readonly LeasedOutboxEntry[]): LeasedOutboxEntry {
+  expect(entries).toHaveLength(1);
+  const entry = entries[0];
+  if (entry === undefined) throw new Error('expected one outbox claim');
+  return entry;
 }
 
 /**
@@ -253,35 +272,82 @@ export function runOrchestratorStoreContract(
     });
 
     describe('the outbox', () => {
-      it('claims pending entries, increments attempts on each claim, and settles them', async () => {
-        const { store, orchestrator } = await fixture();
-        const { run } = await started(orchestrator);
-        await orchestrator.report(run.runId, { ok: true });
+      it('gives exactly one of two concurrent claimants each entry', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator);
 
-        const firstClaim = await store.claimPendingOutbox(10);
-        expect(firstClaim.map((entry) => entry.kind).sort()).toEqual([
-          'dispatch-run',
-          'report-outcome',
+        const [first, second] = await Promise.all([
+          claimOutbox(store, clock.now()),
+          claimOutbox(store, clock.now()),
         ]);
-        // A claimed entry reflects its state as of the claim, before that
-        // claim's own increment -- matching MemoryStore, whose returned
-        // entries are a pre-increment snapshot even though the increment
-        // is durably recorded.
-        expect(firstClaim.every((entry) => entry.attempts === 0)).toBe(true);
+        const claimed = [...first, ...second];
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0]).toMatchObject({
+          kind: 'dispatch-run',
+          state: 'leased',
+          attempts: 1,
+        });
+        expect(await claimOutbox(store, clock.now())).toEqual([]);
 
-        // Not yet settled, so it's still 'pending' and claimable again;
-        // this second claim's snapshot proves the first claim's increment
-        // landed in storage.
-        const secondClaim = await store.claimPendingOutbox(10);
-        expect(secondClaim.map((entry) => entry.entryId).sort()).toEqual(
-          firstClaim.map((entry) => entry.entryId).sort(),
-        );
-        expect(secondClaim.every((entry) => entry.attempts === 1)).toBe(true);
+        const entry = onlyClaim(claimed);
+        expect(
+          await store.settleOutbox({
+            entryId: entry.entryId,
+            claimId: entry.claimId,
+            state: 'done',
+            now: clock.now(),
+          }),
+        ).toBe(true);
+        expect(await claimOutbox(store, clock.now())).toEqual([]);
+      });
 
-        for (const entry of secondClaim) {
-          await store.settleOutbox(entry.entryId, 'done');
-        }
-        expect(await store.claimPendingOutbox(10)).toEqual([]);
+      it('recovers an expired lease and fences the stale claimant', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator);
+        const first = onlyClaim(await claimOutbox(store, clock.now()));
+
+        clock.advanceMinutes(6);
+        const recovered = onlyClaim(await claimOutbox(store, clock.now()));
+        expect(recovered.entryId).toBe(first.entryId);
+        expect(recovered.claimId).not.toBe(first.claimId);
+        expect(recovered.attempts).toBe(2);
+
+        expect(
+          await store.settleOutbox({
+            entryId: first.entryId,
+            claimId: first.claimId,
+            state: 'done',
+            now: clock.now(),
+          }),
+        ).toBe(false);
+        expect(await claimOutbox(store, clock.now())).toEqual([]);
+        expect(
+          await store.settleOutbox({
+            entryId: recovered.entryId,
+            claimId: recovered.claimId,
+            state: 'done',
+            now: clock.now(),
+          }),
+        ).toBe(true);
+      });
+
+      it('releases an explicit failure for immediate retry', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator);
+        const first = onlyClaim(await claimOutbox(store, clock.now()));
+        expect(
+          await store.settleOutbox({
+            entryId: first.entryId,
+            claimId: first.claimId,
+            state: 'pending',
+            now: clock.now(),
+          }),
+        ).toBe(true);
+
+        const retry = onlyClaim(await claimOutbox(store, clock.now()));
+        expect(retry.entryId).toBe(first.entryId);
+        expect(retry.claimId).not.toBe(first.claimId);
+        expect(retry.attempts).toBe(2);
       });
     });
 

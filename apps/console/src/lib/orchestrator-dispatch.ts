@@ -1,8 +1,9 @@
 import {
+  type LeasedOutboxEntry,
   MAX_AUTO_RETRIES,
   type Orchestrator,
   type OrchestratorStore,
-  type OutboxEntry,
+  OUTBOX_LEASE_MS,
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
@@ -39,6 +40,8 @@ export interface DispatchDeps {
   tokens: DispatchTokenProvider;
   /** Injectable for tests; defaults to the ambient `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Injectable for deterministic lease tests; defaults to wall-clock UTC. */
+  now?: () => string;
 }
 
 export interface DrainOutboxResult {
@@ -50,23 +53,37 @@ export interface DrainOutboxResult {
 }
 
 /**
- * Claims up to `limit` pending outbox entries and attempts to deliver each.
- * Never throws: every entry is either settled (`done`) or left `pending`
- * with its failure recorded, so a caller can simply invoke this again later
- * to retry.
+ * Claims up to `limit` available outbox entries and attempts to deliver each.
+ * Never throws: every handled entry is either settled (`done`) or explicitly
+ * released (`pending`) with its failure recorded. If the process itself dies,
+ * the durable lease expires so a later invocation can retry it.
  */
 export async function drainOutbox(
   deps: DispatchDeps,
   limit?: number,
 ): Promise<DrainOutboxResult> {
-  const entries = await deps.store.claimPendingOutbox(limit ?? 10);
   const result: DrainOutboxResult = {
     dispatched: [],
     reported: [],
     failed: [],
   };
 
-  for (const entry of entries) {
+  // Claim immediately before delivery, not as one upfront batch. Otherwise a
+  // slow first GitHub call can consume the leases of later entries before
+  // their first attempt, allowing another drain to recover them while this
+  // invocation still intends to deliver them.
+  for (let claimed = 0; claimed < (limit ?? 10); claimed += 1) {
+    const claimedAt = now(deps);
+    const [entry] = await deps.store.claimPendingOutbox({
+      limit: 1,
+      now: claimedAt,
+      leaseExpiresAt: new Date(
+        Date.parse(claimedAt) + OUTBOX_LEASE_MS,
+      ).toISOString(),
+    });
+    if (entry === undefined) break;
+
+    const failuresBefore = result.failed.length;
     try {
       if (entry.kind === 'dispatch-run') {
         await handleDispatchRun(deps, entry, result);
@@ -81,8 +98,12 @@ export async function drainOutbox(
       // Best-effort: the entry may already be settled by the failed
       // handler; leaving it `pending` here just means a later drain
       // retries it, which is always safe.
-      await settleQuietly(deps.store, entry.entryId, 'pending');
+      await settleQuietly(deps, entry, 'pending');
     }
+    // An explicit failure releases the current entry for a future invocation.
+    // Stop here so this same drain cannot immediately reclaim it and consume
+    // the rest of its limit retrying one persistent failure.
+    if (result.failed.length > failuresBefore) break;
   }
 
   return result;
@@ -96,7 +117,7 @@ export async function drainOutbox(
  */
 async function handleDispatchRun(
   deps: DispatchDeps,
-  entry: OutboxEntry,
+  entry: LeasedOutboxEntry,
   result: DrainOutboxResult,
 ): Promise<void> {
   const { store, orchestrator, tokens } = deps;
@@ -104,7 +125,7 @@ async function handleDispatchRun(
 
   const run = await store.readRun(entry.runId);
   if (run === undefined || run.state !== 'pending') {
-    await store.settleOutbox(entry.entryId, 'done');
+    await settleClaim(deps, entry, 'done');
     return;
   }
 
@@ -129,13 +150,13 @@ async function handleDispatchRun(
       body: JSON.stringify({ ref: 'main', inputs }),
     });
   } catch (error) {
-    await store.settleOutbox(entry.entryId, 'pending');
+    await settleClaim(deps, entry, 'pending');
     result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
     return;
   }
 
   if (response.status !== 204) {
-    await store.settleOutbox(entry.entryId, 'pending');
+    await settleClaim(deps, entry, 'pending');
     result.failed.push({
       entryId: entry.entryId,
       error: `workflow_dispatch returned ${response.status}`,
@@ -144,14 +165,14 @@ async function handleDispatchRun(
   }
 
   await orchestrator.confirmDispatch(run.runId);
-  await store.settleOutbox(entry.entryId, 'done');
+  await settleClaim(deps, entry, 'done');
   result.dispatched.push(run.runId);
 }
 
 /** Posts the run's outcome onward as an issue comment. */
 async function handleReportOutcome(
   deps: DispatchDeps,
-  entry: OutboxEntry,
+  entry: LeasedOutboxEntry,
   result: DrainOutboxResult,
 ): Promise<void> {
   const { store, tokens } = deps;
@@ -164,7 +185,7 @@ async function handleReportOutcome(
     // expireLease), so this should not happen. Guard it anyway rather than
     // throw: leave the entry for a later drain in case of a transient
     // read issue.
-    await store.settleOutbox(entry.entryId, 'pending');
+    await settleClaim(deps, entry, 'pending');
     result.failed.push({
       entryId: entry.entryId,
       error: `no such run: ${entry.runId}`,
@@ -187,13 +208,13 @@ async function handleReportOutcome(
       body: JSON.stringify({ body: outcome.body }),
     });
   } catch (error) {
-    await store.settleOutbox(entry.entryId, 'pending');
+    await settleClaim(deps, entry, 'pending');
     result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
     return;
   }
 
   if (response.status !== 201) {
-    await store.settleOutbox(entry.entryId, 'pending');
+    await settleClaim(deps, entry, 'pending');
     result.failed.push({
       entryId: entry.entryId,
       error: `issue comment returned ${response.status}`,
@@ -205,7 +226,7 @@ async function handleReportOutcome(
     await addNeedsHumanLabelBestEffort(fetchImpl, tokens, run.task);
   }
 
-  await store.settleOutbox(entry.entryId, 'done');
+  await settleClaim(deps, entry, 'done');
   result.reported.push(run.runId);
 }
 
@@ -359,14 +380,31 @@ function errorMessage(error: unknown): string {
 }
 
 async function settleQuietly(
-  store: OrchestratorStore,
-  entryId: string,
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
   state: 'pending' | 'done',
 ): Promise<void> {
   try {
-    await store.settleOutbox(entryId, state);
+    await settleClaim(deps, entry, state);
   } catch {
     // Already recorded as a failure by the caller; a settle failure here
     // just means the next drain reclaims it, which is fine.
   }
+}
+
+function now(deps: DispatchDeps): string {
+  return deps.now?.() ?? new Date().toISOString();
+}
+
+async function settleClaim(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+  state: 'pending' | 'done',
+): Promise<boolean> {
+  return deps.store.settleOutbox({
+    entryId: entry.entryId,
+    claimId: entry.claimId,
+    state,
+    now: now(deps),
+  });
 }

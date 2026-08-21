@@ -4,6 +4,7 @@ import {
   MAX_AUTO_RETRIES,
   MemoryStore,
   Orchestrator,
+  OUTBOX_LEASE_MS,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
@@ -170,6 +171,90 @@ describe('drainOutbox: dispatch-run', () => {
     expect(calls).toHaveLength(1); // no additional fetch call
   });
 
+  it('sends one workflow_dispatch request across two concurrent drains', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    let releaseFetch!: () => void;
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const calls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      markFetchStarted();
+      await fetchReleased;
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const deps = {
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    };
+
+    const firstDrain = drainOutbox(deps);
+    await fetchStarted;
+    const overlappingDrain = await drainOutbox(deps);
+
+    expect(calls).toHaveLength(1);
+    expect(overlappingDrain).toEqual({
+      dispatched: [],
+      reported: [],
+      failed: [],
+    });
+
+    releaseFetch();
+    const firstResult = await firstDrain;
+    expect(firstResult.dispatched).toEqual([run.runId]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not pre-lease later entries while an earlier delivery is slow', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const firstRun = await started(orchestrator, 'req-1');
+    await orchestrator.report(firstRun.run.runId, { ok: true });
+    const secondRun = await started(orchestrator, 'req-2');
+    const claimSpy = vi.spyOn(store, 'claimPendingOutbox');
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/actions/workflows/')) {
+        return new Response(null, { status: 204 });
+      }
+      // Simulate a slow-but-successful earlier delivery. The next entry's
+      // lease must begin at this later time, not share the drain's start time.
+      clock.advanceMinutes(6);
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(result.reported).toEqual([firstRun.run.runId]);
+    expect(result.dispatched).toEqual([secondRun.run.runId]);
+    expect(claimSpy.mock.calls.map(([input]) => input.limit)).toEqual([
+      1, 1, 1, 1,
+    ]);
+    expect(claimSpy.mock.calls.map(([input]) => input.now)).toEqual([
+      T0,
+      T0,
+      '2026-08-15T12:06:00.000Z',
+      '2026-08-15T12:06:00.000Z',
+    ]);
+    expect(claimSpy.mock.calls[2]?.[0]).toMatchObject({
+      leaseExpiresAt: '2026-08-15T12:11:00.000Z',
+    });
+  });
+
   it('forwards mode/reply from run params verbatim', async () => {
     const { store, orchestrator } = fixture();
     const { run } = await started(orchestrator, 'req-1', {
@@ -240,7 +325,7 @@ describe('drainOutbox: dispatch-run', () => {
   });
 
   it('settles a stale dispatch entry (run already finished) without any fetch call', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
 
     // The run finishes (still legal from `pending`, before ever being
@@ -251,7 +336,21 @@ describe('drainOutbox: dispatch-run', () => {
     }
     // Isolate the dispatch-run entry: settle the report-outcome entry that
     // came with it out of band so this drain call only sees the stale one.
-    await store.settleOutbox(`outcome/${run.runId}`, 'done');
+    const claims = await store.claimPendingOutbox({
+      limit: 10,
+      now: clock.now(),
+      leaseExpiresAt: new Date(
+        Date.parse(clock.now()) + OUTBOX_LEASE_MS,
+      ).toISOString(),
+    });
+    for (const claim of claims) {
+      await store.settleOutbox({
+        entryId: claim.entryId,
+        claimId: claim.claimId,
+        state: claim.kind === 'report-outcome' ? 'done' : 'pending',
+        now: clock.now(),
+      });
+    }
 
     const neverCalled = vi.fn<typeof fetch>();
 

@@ -30,9 +30,11 @@ orchestrator. A task may be worked any number of times, sequentially. See
   reconstructable from the document itself.
 - **`OutboxEntry`** — effects that must survive the transaction that decided
   them (`dispatch-run`, `report-outcome`). A decision and its side effect
-  are never committed in one step; a separate drain worker claims and
-  delivers pending entries. See `apps/console/src/lib/orchestrator-dispatch.ts`
-  for the real drain (GitHub `workflow_dispatch` + issue comments).
+  are never committed in one step; a separate drain worker transactionally
+  leases and delivers pending entries. A unique claim id fences completion or
+  release, while an expired lease makes a crashed attempt retryable. See
+  `apps/console/src/lib/orchestrator-dispatch.ts` for the real drain (GitHub
+  `workflow_dispatch` + issue comments).
 
 ## The decision layer
 
@@ -112,11 +114,12 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
   caller opts in with `queueIfBusy: true` (see Queueing, above); no caller
   in this repo does yet, so observed behavior is unchanged.
 - **Guarantee exactly-once dispatch or delivery.** The invariant is mutual
-  exclusion — at most one live run per task — not exactly-once execution. A
-  lost run's work may have partially landed; the outbox drain retries a
-  failed GitHub call until it succeeds, which can mean an outcome comment
-  or a `workflow_dispatch` call is attempted more than once for the same
-  entry (each is written to be safe under that retry, not to prevent it).
+  exclusion — at most one live run per task and at most one drain owning an
+  outbox delivery lease — not exactly-once execution. A lost run's work may
+  have partially landed; likewise, a process can still crash after GitHub
+  accepted a request but before the outbox entry was confirmed. Lease recovery
+  retries that ambiguous delivery, which can mean an outcome comment or a
+  `workflow_dispatch` call is attempted more than once across crashed attempts.
 - **Provide multi-tenant or cross-repository authority.** One task is keyed
   by `(repo, issue)`; there is no tenant concept above that. The consumer
   repos' formerly separate dispatch loops have since migrated onto this

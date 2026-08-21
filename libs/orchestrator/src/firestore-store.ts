@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { type Decision, isQueued, type Queued } from './decide';
 import {
   isLive,
+  type LeasedOutboxEntry,
   type OutboxEntry,
   outboxEntrySchema,
   type Run,
@@ -137,41 +138,80 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
-  async claimPendingOutbox(limit: number): Promise<OutboxEntry[]> {
-    const snapshot = await this.#outbox
-      .where('state', '==', 'pending')
-      .limit(limit)
-      .get();
-    const claimed: OutboxEntry[] = [];
-    for (const doc of snapshot.docs) {
-      // Mirrors MemoryStore's own behaviour: the stored `attempts` is
-      // incremented as claim bookkeeping (for whoever looks next time),
-      // but the entry handed back here reflects the pre-claim snapshot,
-      // not the post-increment one.
-      const claimedEntry = outboxEntrySchema.parse(doc.data());
-      // A transaction per entry is fine at this scale; it guarantees the
-      // increment is never lost to a racing claim of the same entry.
-      await this.#firestore.runTransaction(async (tx) => {
-        const current = await tx.get(doc.ref);
-        if (!current.exists) return;
-        const parsed = outboxEntrySchema.parse(current.data());
-        tx.set(doc.ref, { ...parsed, attempts: parsed.attempts + 1 });
+  async claimPendingOutbox(input: {
+    limit: number;
+    now: string;
+    leaseExpiresAt: string;
+  }): Promise<LeasedOutboxEntry[]> {
+    if (input.limit <= 0) return [];
+
+    return this.#firestore.runTransaction(async (tx) => {
+      // Keep this index-free: both queries are single-field equality queries.
+      // The leased population is bounded by active drains and the short lease,
+      // so reading it to filter expiry client-side stays small. Crucially, the
+      // query and every claim write share one transaction: concurrent drains
+      // cannot both return ownership of the same document.
+      const leasedSnapshot = await tx.get(
+        this.#outbox.where('state', '==', 'leased'),
+      );
+      const pendingSnapshot = await tx.get(
+        this.#outbox.where('state', '==', 'pending').limit(input.limit),
+      );
+      const cutoff = Date.parse(input.now);
+      const expired = leasedSnapshot.docs.filter((doc) => {
+        const entry = outboxEntrySchema.parse(doc.data());
+        return (
+          entry.state === 'leased' && Date.parse(entry.leaseExpiresAt) <= cutoff
+        );
       });
-      claimed.push(claimedEntry);
-    }
-    return claimed;
+      const eligible = [...expired, ...pendingSnapshot.docs].slice(
+        0,
+        input.limit,
+      );
+
+      return eligible.map((doc): LeasedOutboxEntry => {
+        const entry = outboxEntrySchema.parse(doc.data());
+        const { state: _state, ...rest } = entry;
+        const claimed: LeasedOutboxEntry = {
+          ...rest,
+          state: 'leased',
+          claimId: crypto.randomUUID(),
+          leaseExpiresAt: input.leaseExpiresAt,
+          attempts: entry.attempts + 1,
+          updatedAt: input.now,
+        };
+        tx.set(doc.ref, claimed);
+        return claimed;
+      });
+    });
   }
 
-  async settleOutbox(
-    entryId: string,
-    state: 'pending' | 'done',
-  ): Promise<void> {
-    const ref = this.#outboxRef(entryId);
-    await this.#firestore.runTransaction(async (tx) => {
+  async settleOutbox(input: {
+    entryId: string;
+    claimId: string;
+    state: 'pending' | 'done';
+    now: string;
+  }): Promise<boolean> {
+    const ref = this.#outboxRef(input.entryId);
+    return this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
-      if (!snapshot.exists) return; // no-op, matching MemoryStore
+      if (!snapshot.exists) return false; // no-op, matching MemoryStore
       const current = outboxEntrySchema.parse(snapshot.data());
-      tx.set(ref, { ...current, state });
+      if (current.state !== 'leased' || current.claimId !== input.claimId) {
+        return false;
+      }
+      const {
+        claimId: _claimId,
+        leaseExpiresAt: _leaseExpiresAt,
+        ...rest
+      } = current;
+      const settled: OutboxEntry = {
+        ...rest,
+        state: input.state,
+        updatedAt: input.now,
+      };
+      tx.set(ref, settled);
+      return true;
     });
   }
 

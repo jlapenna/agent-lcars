@@ -1,5 +1,5 @@
 import { type Decision, isQueued, type Queued } from './decide';
-import type { OutboxEntry, Run, TaskId } from './model';
+import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
 import { isLive, taskKey } from './model';
 import {
   type OrchestratorStore,
@@ -62,25 +62,64 @@ export class MemoryStore implements OrchestratorStore {
     }
   }
 
-  async claimPendingOutbox(limit: number): Promise<OutboxEntry[]> {
-    const pending = [...this.#outbox.values()]
-      .filter((entry) => entry.state === 'pending')
-      .slice(0, limit);
-    for (const entry of pending) {
-      this.#outbox.set(entry.entryId, {
-        ...entry,
+  async claimPendingOutbox(input: {
+    limit: number;
+    now: string;
+    leaseExpiresAt: string;
+  }): Promise<LeasedOutboxEntry[]> {
+    if (input.limit <= 0) return [];
+
+    const now = Date.parse(input.now);
+    const entries = [...this.#outbox.values()];
+    const eligible = [
+      ...entries.filter(
+        (entry) =>
+          entry.state === 'leased' && Date.parse(entry.leaseExpiresAt) <= now,
+      ),
+      ...entries.filter((entry) => entry.state === 'pending'),
+    ].slice(0, input.limit);
+
+    const claimed = eligible.map((entry): LeasedOutboxEntry => {
+      const { state: _state, ...rest } = entry;
+      const next: LeasedOutboxEntry = {
+        ...rest,
+        state: 'leased',
+        claimId: crypto.randomUUID(),
+        leaseExpiresAt: input.leaseExpiresAt,
         attempts: entry.attempts + 1,
-      });
-    }
-    return structuredClone(pending);
+        updatedAt: input.now,
+      };
+      this.#outbox.set(entry.entryId, next);
+      return next;
+    });
+    return structuredClone(claimed);
   }
 
-  async settleOutbox(
-    entryId: string,
-    state: 'pending' | 'done',
-  ): Promise<void> {
-    const entry = this.#outbox.get(entryId);
-    if (entry !== undefined) this.#outbox.set(entryId, { ...entry, state });
+  async settleOutbox(input: {
+    entryId: string;
+    claimId: string;
+    state: 'pending' | 'done';
+    now: string;
+  }): Promise<boolean> {
+    const entry = this.#outbox.get(input.entryId);
+    if (
+      entry === undefined ||
+      entry.state !== 'leased' ||
+      entry.claimId !== input.claimId
+    ) {
+      return false;
+    }
+    const {
+      claimId: _claimId,
+      leaseExpiresAt: _leaseExpiresAt,
+      ...rest
+    } = entry;
+    this.#outbox.set(input.entryId, {
+      ...rest,
+      state: input.state,
+      updatedAt: input.now,
+    });
+    return true;
   }
 
   async listExpiredRuns(now: string): Promise<Run[]> {

@@ -10,6 +10,7 @@ import {
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
 import { Orchestrator, type RequestInput } from './orchestrator';
+import { OUTBOX_LEASE_MS } from './store';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
@@ -34,6 +35,14 @@ function fixture() {
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, clock);
   return { clock, store, orchestrator };
+}
+
+function claimOutbox(store: MemoryStore, now = T0, limit = 10) {
+  return store.claimPendingOutbox({
+    limit,
+    now,
+    leaseExpiresAt: new Date(Date.parse(now) + OUTBOX_LEASE_MS).toISOString(),
+  });
 }
 
 /** Test double for exercising `sweepExpired`'s refusal-handling branch: on
@@ -655,7 +664,7 @@ describe('queueing (opt-in)', () => {
     );
     // Both dispatch-run entries (the original request's, still unclaimed,
     // and the follow-up run's) plus the settled run's report-outcome.
-    const outboxKinds = (await store.claimPendingOutbox(10))
+    const outboxKinds = (await claimOutbox(store))
       .map((entry) => entry.kind)
       .sort();
     expect(outboxKinds).toEqual([
@@ -716,17 +725,23 @@ describe('queueing (opt-in)', () => {
 
 describe('the outbox', () => {
   it('hands out pending entries once and settles them', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
     await orchestrator.report(run.runId, { ok: true });
-    const claimed = await store.claimPendingOutbox(10);
+    const claimed = await claimOutbox(store, clock.now());
     expect(claimed.map((entry) => entry.kind).sort()).toEqual([
       'dispatch-run',
       'report-outcome',
     ]);
-    for (const entry of claimed)
-      await store.settleOutbox(entry.entryId, 'done');
-    expect(await store.claimPendingOutbox(10)).toEqual([]);
+    for (const entry of claimed) {
+      await store.settleOutbox({
+        entryId: entry.entryId,
+        claimId: entry.claimId,
+        state: 'done',
+        now: clock.now(),
+      });
+    }
+    expect(await claimOutbox(store, clock.now())).toEqual([]);
   });
 });
 
