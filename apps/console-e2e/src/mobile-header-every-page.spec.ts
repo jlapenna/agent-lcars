@@ -96,15 +96,31 @@ test.describe('shared mobile header on every console page and view @mobile-layou
       const header = page.locator(
         '.console-header[data-current="sessions"]:not([data-streaming-fallback])',
       );
+      const mobileUtilities = header.locator(
+        '.session-detail-utilities--mobile',
+      );
+      const refreshButton = mobileUtilities.getByRole('button', {
+        name: 'Refresh',
+      });
+      const overflowButton = mobileUtilities.getByRole('button', {
+        name: 'More console options',
+      });
       await expectOneSharedMobileHeader(page, 'sessions');
 
       // The session timestamp belongs on the desktop command rail. At a phone
       // width it used to force the refresh and overflow controls into a second
       // row, leaving the shared title bay unusably narrow.
-      await expect(header.getByText(/^Updated /)).toBeHidden();
-      await expect(
-        header.getByRole('button', { name: 'Refresh' }),
-      ).toBeVisible();
+      await expect(mobileUtilities.getByText(/^Updated /)).toBeHidden();
+      await expect(refreshButton).toBeVisible();
+      await expect(overflowButton).toBeVisible();
+
+      const [refreshBox, overflowBox] = await Promise.all([
+        refreshButton.boundingBox(),
+        overflowButton.boundingBox(),
+      ]);
+      expect(refreshBox).not.toBeNull();
+      expect(overflowBox).not.toBeNull();
+      expect(Math.abs(refreshBox!.y - overflowBox!.y)).toBeLessThanOrEqual(1);
     });
 
     test(`renders the inherited header on login at ${viewport.width}px`, async ({
