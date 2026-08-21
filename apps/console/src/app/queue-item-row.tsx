@@ -1,8 +1,9 @@
 'use client';
 
-import { Badge, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Badge, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
 import { IconChevronRight } from '@tabler/icons-react';
 import Link from 'next/link';
+import type { MouseEvent } from 'react';
 
 import { repoDisplayName } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
@@ -14,23 +15,41 @@ export function QueueItemRow({
   card,
   href,
   selected,
+  loading,
   muted,
+  onNavigate,
   onToggleMute,
 }: {
   card: BoardCard;
   href: string;
   selected: boolean;
+  loading?: boolean;
   muted?: boolean;
+  onNavigate?: () => void;
   onToggleMute?: () => void;
 }) {
   const { item } = card;
   const reason = queueReasonFor(item);
   const hiddenLabels = queueDisclosureLabels(item);
+  const handleNavigate = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    onNavigate?.();
+  };
 
   return (
     <div
       className="queue-item-row"
       data-selected={selected ? '' : undefined}
+      data-loading={loading ? '' : undefined}
       data-reason={reason?.type}
       data-testid={`queue-row-${item.number}`}
     >
@@ -39,6 +58,8 @@ export function QueueItemRow({
         scroll={false}
         className="queue-item-row__link"
         aria-current={selected ? 'true' : undefined}
+        aria-busy={loading || undefined}
+        onClick={handleNavigate}
       >
         <Stack gap={5}>
           <Group justify="space-between" gap="xs" wrap="nowrap">
@@ -96,11 +117,19 @@ export function QueueItemRow({
               {item.title}
             </Text>
           </Tooltip>
-          <IconChevronRight
-            size={16}
-            aria-hidden="true"
-            className="queue-item-row__chevron"
-          />
+          {loading ? (
+            <Loader
+              size={16}
+              className="queue-item-row__loader"
+              aria-label="Loading item details"
+            />
+          ) : (
+            <IconChevronRight
+              size={16}
+              aria-hidden="true"
+              className="queue-item-row__chevron"
+            />
+          )}
 
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text component="span" size="xs" c="dimmed" truncate>
