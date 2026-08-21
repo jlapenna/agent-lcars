@@ -29,6 +29,12 @@ const workflowsDirectory = path.join(repoRoot, '.github/workflows');
 interface WorkflowJob {
   if?: string;
   env?: Record<string, string | number | boolean>;
+  steps?: Array<{
+    name?: string;
+    if?: string;
+    uses?: string;
+    with?: Record<string, string | number | boolean>;
+  }>;
   uses?: string;
   with?: Record<string, string | number | boolean>;
   secrets?: Record<string, string>;
@@ -643,5 +649,31 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
         value,
       );
     }
+  });
+
+  it('uses the canonical telemetry identity when a caller omits or empties repo variables', () => {
+    const job = unified.doc.jobs?.agent;
+    expect(job?.env).toMatchObject({
+      FLEET_TELEMETRY_WIF_PROVIDER:
+        'projects/611425338852/locations/global/workloadIdentityPools/github/providers/github',
+      FLEET_TELEMETRY_SERVICE_ACCOUNT:
+        'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
+    });
+
+    const local = job?.steps?.find(
+      (step) => step.name === 'Start telemetry sidecar',
+    );
+    const published = job?.steps?.find(
+      (step) => step.name === 'Start telemetry sidecar (published)',
+    );
+    for (const step of [local, published]) {
+      expect(step?.with?.['workload-identity-provider']).toBe(
+        '${{ inputs.telemetry-workload-identity-provider || env.FLEET_TELEMETRY_WIF_PROVIDER }}',
+      );
+      expect(step?.with?.['service-account']).toBe(
+        '${{ inputs.telemetry-service-account || env.FLEET_TELEMETRY_SERVICE_ACCOUNT }}',
+      );
+    }
+    expect(published?.if).toBe('always() && !inputs.dispatch-bootstrap');
   });
 });

@@ -350,29 +350,30 @@ resource "google_service_account_iam_member" "github_app_webhook_configurator_im
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_app_webhook_configurator.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
-resource "google_service_account_iam_member" "members_writer_impersonation" {
+resource "google_service_account_iam_member" "fleet_writer_impersonation" {
+  for_each           = toset(local.github_repositories)
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.sprinkles_repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${each.value}"
 }
 
-# This repo's own claude.yml now ships its issue-agent sessions' telemetry
-# too (mirroring supersprinklesracing/sprinkles's sidecar wiring) - the WIF
-# provider's attribute_condition above already trusts
-# ${var.github_owner}/${var.github_repository} (this repo) for OIDC token
-# issuance, but that alone doesn't grant impersonation of any specific SA;
-# this is the matching grant on telemetry_writer, parallel to
-# members_writer_impersonation above.
-resource "google_service_account_iam_member" "agent_lcars_writer_impersonation" {
-  service_account_id = google_service_account.telemetry_writer.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
+# Preserve the three pre-fleet resource addresses while making the curated
+# repository list the single source for both WIF admission and writer
+# impersonation. A plan should therefore add only the four newly onboarded
+# repositories, not churn the existing grants.
+moved {
+  from = google_service_account_iam_member.agent_lcars_writer_impersonation
+  to   = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/agent-lcars"]
 }
 
-resource "google_service_account_iam_member" "homelab_writer_impersonation" {
-  service_account_id = google_service_account.telemetry_writer.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
+moved {
+  from = google_service_account_iam_member.members_writer_impersonation
+  to   = google_service_account_iam_member.fleet_writer_impersonation["supersprinklesracing/sprinkles"]
+}
+
+moved {
+  from = google_service_account_iam_member.homelab_writer_impersonation
+  to   = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/homelab"]
 }
 
 resource "google_secret_manager_secret" "runtime" {
