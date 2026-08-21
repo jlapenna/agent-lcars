@@ -25,7 +25,6 @@ their operating constraints.
 | `setup-opencode` | Resolve, cache, and install a versioned OpenCode CLI. |
 | `verify-deliverable` | Require an exact attempt marker on a deliverable artifact. |
 | `report-failure` | Record failure in the run log for the hosted finalizer. |
-| `post-agent-gates` | Run deliverable verification, failure reporting, and telemetry finalization from a trusted snapshot. |
 | `snapshot-enforcement-scripts` | Freeze post-agent gate scripts before the agent runs. |
 | `assert-repo-vars` | Report all missing required repository variables. |
 | `merge-live-base` | Merge the live base into a PR head before validation. |
@@ -46,6 +45,13 @@ their operating constraints.
 The lane shims are the published interface. They delegate to the internal
 parameterized `agent-lane.yml`; callers must not call that internal workflow
 directly.
+
+## Published script-only contract
+
+`post-agent-gates` is a script, not a composite action. Snapshot it before the
+agent runs, then invoke it only with
+`bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"`.
+Do not use it through `uses:` after the agent step.
 
 ## Not consumer surfaces
 
