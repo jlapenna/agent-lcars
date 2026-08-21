@@ -121,6 +121,13 @@ VALIDATOR="$ROOT/tools/e2e/validate-env.mjs"
 CALLER_HOME="${HOME:-}"
 PLATFORM="$(uname -s)"
 
+# A developer can invoke this script directly rather than through tools/nx.
+# Establish the same durable native binding cache before the hermetic child
+# starts so that path does not depend on an outer Nx process having set it.
+# shellcheck source=nx-native-file-cache.sh
+. "$ROOT/tools/nx-native-file-cache.sh"
+configure_agent_lcars_nx_native_file_cache "$ROOT"
+
 if [ ! -f "$CI_ENV" ]; then
   echo "e2e-hermetic: missing $CI_ENV" >&2
   exit 1
@@ -206,6 +213,14 @@ SAFE_ENV=(
   "E2E_ENV_FILE=$CI_ENV"
   "E2E_ENV_LOCAL_FILE=$TEMP_HOME/.env.e2e.local"
 )
+
+# The outer tools/nx process configured this non-secret, content-fingerprinted
+# native binding cache before Node started. Preserve only that exact cache
+# location across the hermetic env boundary so the inner Nx processes reuse
+# the binding without falling back to a worktree-hashed directory in /tmp.
+if [ -n "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ]; then
+  SAFE_ENV+=("NX_NATIVE_FILE_CACHE_DIRECTORY=$NX_NATIVE_FILE_CACHE_DIRECTORY")
+fi
 
 case "${CI:-}" in
   1 | true) SAFE_ENV+=("CI=1") ;;
@@ -297,7 +312,7 @@ env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
 (
   exec 9>&-
   exec env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
-    pnpm exec nx run \
+    ./tools/nx run \
       "${PROJECT}:e2e-implementation:emulator"
 ) &
 CHILD_PID=$!

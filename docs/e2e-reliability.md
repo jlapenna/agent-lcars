@@ -56,7 +56,7 @@ not become the default assertion for an entire page.
 
 ## Harness rules
 
-- Use `pnpm exec nx run @agent-lcars/console-e2e:e2e-local` so the documented
+- Use `./tools/nx run @agent-lcars/console-e2e:e2e-local` so the documented
   credential-free environment is created consistently.
 - Give each host-direct run a run-scoped Nx L1 cache. Another worktree must not
   be able to delete build output while the suite is using it.

@@ -9,7 +9,7 @@ pnpm check:dependencies    # lockfile / workspace-mandate integrity
 pnpm format:check          # prettier, nx format:check --all
 pnpm lint                  # nx run-many -t lint --all
 pnpm lint:circular          # madge circular-dependency check
-pnpm exec nx run-many -t test typecheck build --all
+./tools/nx run-many -t test typecheck build --all
 ```
 
 Or run the composite `pnpm verify`, which chains the above (minus
@@ -40,7 +40,7 @@ anything the dashboard renders or fetches — `apps/console/src/lib`, a Server
 Action, the e2e GitHub fixture — run it too:
 
 ```bash
-pnpm exec nx run @agent-lcars/console-e2e:e2e-local
+./tools/nx run @agent-lcars/console-e2e:e2e-local
 ```
 
 ### RSC client/server boundary traps
@@ -115,5 +115,5 @@ To scope a run, drive Playwright directly — `:e2e` sets
 and the whole suite runs anyway:
 
 ```bash
-pnpm exec nx run @agent-lcars/console-e2e:e2e-run --grep @smoke
+./tools/nx run @agent-lcars/console-e2e:e2e-run --grep @smoke
 ```

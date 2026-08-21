@@ -272,7 +272,7 @@ test('ambient mode cannot select a non-hermetic live implementation', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(fs.readFileSync(argsFile, 'utf8').trim().split('\n'), [
       'exec',
-      'nx',
+      'repo-nx',
       'run',
       '@agent-lcars/console-e2e:e2e-implementation:emulator',
     ]);

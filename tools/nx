@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
 # Repository adapter: the portable Nx/cache behavior lives in repo-nx.
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=nx-native-file-cache.sh
+. "$ROOT/tools/nx-native-file-cache.sh"
+configure_agent_lcars_nx_native_file_cache "$ROOT"
+
 exec pnpm exec repo-nx "$@"
