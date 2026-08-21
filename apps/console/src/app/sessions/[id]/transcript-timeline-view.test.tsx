@@ -60,6 +60,13 @@ describe('TranscriptTimelineView', () => {
     ]);
     expect(screen.getByText('tool: Bash')).toBeTruthy();
     expect(screen.getByText('{"command":"npm test"}')).toBeTruthy();
+    expect(screen.getByText('tool: Bash').closest('details')).toHaveClass(
+      'lcars-disclosure',
+      'lcars-transcript-disclosure',
+    );
+    expect(screen.getByText('tool: Bash').closest('summary')).toHaveClass(
+      'lcars-disclosure__summary',
+    );
   });
 
   it('renders a tool_result event as a collapsed details block', () => {
@@ -93,6 +100,9 @@ describe('TranscriptTimelineView', () => {
 
     expect(screen.getByText('subagent activity (2 events)')).toBeTruthy();
     expect(screen.getByText('tool: Grep')).toBeTruthy();
+    expect(
+      screen.getByText('subagent activity (2 events)').closest('details'),
+    ).toHaveClass('lcars-disclosure', 'lcars-transcript-disclosure');
   });
 
   it('renders an elision divider with the elided count', () => {

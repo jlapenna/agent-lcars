@@ -55,6 +55,84 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   text-transform: uppercase;
 }
 
+/* ---- Shared disclosures ----
+   Browser-default summaries left equivalent operational disclosures looking
+   and behaving differently across the console: route data warnings, Inbox's
+   muted work, and the transcript's tool/subagent records each had their own
+   tiny, unframed click target. Give every disclosure the same explicit
+   affordance and open-state boundary; route-specific shells below only add
+   their accent, never a competing interaction model. */
+
+.lcars-disclosure > .lcars-disclosure__summary {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: 0.035em;
+}
+
+.lcars-disclosure > .lcars-disclosure__summary::before {
+  flex: 0 0 auto;
+  color: currentColor;
+  content: '▸';
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.lcars-disclosure[open] > .lcars-disclosure__summary::before {
+  content: '▾';
+}
+
+.lcars-disclosure > .lcars-disclosure__summary::-webkit-details-marker {
+  display: none;
+}
+
+.lcars-disclosure > .lcars-disclosure__summary:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.lcars-disclosure[open] > .lcars-disclosure__summary {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.lcars-disclosure__content {
+  padding: 0 10px 10px;
+}
+
+.lcars-data-warnings {
+  border-left: 4px solid var(--mantine-color-yellow-6);
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-yellow-6) 8%,
+    var(--mantine-color-dark-9)
+  );
+}
+
+.lcars-data-warnings > .lcars-disclosure__summary {
+  color: var(--mantine-color-yellow-4);
+}
+
+.queue-muted-items > .lcars-disclosure__summary {
+  margin: -8px -14px;
+  padding: 8px 14px;
+}
+
+.queue-muted-items[open] > .lcars-disclosure__summary {
+  margin-bottom: 8px;
+}
+
+.lcars-transcript-disclosure {
+  border-left: 3px solid var(--mantine-color-dark-4);
+  background: color-mix(in srgb, var(--mantine-color-dark-8) 72%, transparent);
+}
+
+.lcars-transcript-disclosure > .lcars-disclosure__summary {
+  color: var(--mantine-color-dark-1);
+}
+
 /* ---- Page header elbow ----
    The marquee LCARS structural device: one equal-weight band turning through
    a concentric quarter-circle. Building the elbow from the top and left
@@ -1532,6 +1610,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
      that opened them. Size the portal items themselves for touch instead
      of relying on page-scoped button rules that can never reach them. */
   .mantine-Menu-item {
+    min-height: 44px;
+  }
+
+  /* These native summaries are controls just as much as a Mantine button.
+     Keep the warning, muted-work, and transcript disclosures reachable with
+     the same 44px target used by the command rail. */
+  .lcars-disclosure > .lcars-disclosure__summary {
     min-height: 44px;
   }
 

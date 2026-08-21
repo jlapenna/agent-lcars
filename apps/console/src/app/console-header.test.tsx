@@ -4,7 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
-import { ConsoleHeader, ConsoleNavRail, type NavKey } from './console-header';
+import {
+  ConsoleHeader,
+  ConsoleNavRail,
+  DataWarnings,
+  type NavKey,
+} from './console-header';
 
 function renderHeader(current: NavKey, archiveQuery?: SessionArchiveQuery) {
   return render(
@@ -29,6 +34,23 @@ describe('ConsoleHeader subtitle', () => {
     expect(screen.getByText('last 14 days').getAttribute('data-truncate')).toBe(
       'end',
     );
+  });
+});
+
+describe('DataWarnings', () => {
+  it('uses the shared disclosure control for every route that renders it', () => {
+    const { container } = render(
+      <MantineProvider>
+        <DataWarnings warnings={['GitHub data is stale.']} />
+      </MantineProvider>,
+    );
+
+    const disclosure = screen.getByTestId('data-warnings');
+    expect(disclosure).toHaveClass('lcars-disclosure', 'lcars-data-warnings');
+    expect(disclosure.querySelector('summary')).toHaveClass(
+      'lcars-disclosure__summary',
+    );
+    expect(container.querySelector('.lcars-disclosure__content')).toBeTruthy();
   });
 });
 

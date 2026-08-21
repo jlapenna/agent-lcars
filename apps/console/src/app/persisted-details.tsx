@@ -27,6 +27,7 @@ export function PersistedDetails({
   defaultOpen = false,
   summary,
   children,
+  className,
   ...detailsProps
 }: {
   storageKey?: string;
@@ -57,6 +58,7 @@ export function PersistedDetails({
   return (
     <details
       {...detailsProps}
+      className={['lcars-disclosure', className].filter(Boolean).join(' ')}
       open={open}
       onToggle={(event) => {
         const next = event.currentTarget.open;
@@ -72,7 +74,7 @@ export function PersistedDetails({
         }
       }}
     >
-      <summary style={{ cursor: 'pointer' }}>{summary}</summary>
+      <summary className="lcars-disclosure__summary">{summary}</summary>
       {children}
     </details>
   );

@@ -41,8 +41,8 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
 
     case 'tool_use':
       return (
-        <details>
-          <summary style={{ cursor: 'pointer' }}>
+        <details className="lcars-disclosure lcars-transcript-disclosure">
+          <summary className="lcars-disclosure__summary">
             <Text size="xs" c="dimmed" component="span">
               tool: {event.name}
             </Text>
@@ -60,8 +60,8 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
 
     case 'tool_result':
       return (
-        <details>
-          <summary style={{ cursor: 'pointer' }}>
+        <details className="lcars-disclosure lcars-transcript-disclosure">
+          <summary className="lcars-disclosure__summary">
             <Text size="xs" c="dimmed" component="span">
               tool result
             </Text>
@@ -91,8 +91,11 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
 
     case 'sidechain-group':
       return (
-        <details data-testid="transcript-sidechain-group">
-          <summary style={{ cursor: 'pointer' }}>
+        <details
+          className="lcars-disclosure lcars-transcript-disclosure"
+          data-testid="transcript-sidechain-group"
+        >
+          <summary className="lcars-disclosure__summary">
             <Text size="xs" c="dimmed" component="span">
               subagent activity ({event.events.length} events)
             </Text>
