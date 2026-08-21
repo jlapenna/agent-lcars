@@ -175,6 +175,9 @@ jobs:
       - name: Test runner-image toolchain preflight (#468)
         run: bash apps/runner-autoscaler/runner-image/toolchain-health.test.sh
 
+      - name: Test E2E runner node-tar repair (#1435)
+        run: bash tools/e2e-runner/node-tar-health.test.sh
+
       - name: Test the action-archive-cache populate script
         run: bash apps/runner-autoscaler/runner-image/populate-action-archive-cache.test.sh
 

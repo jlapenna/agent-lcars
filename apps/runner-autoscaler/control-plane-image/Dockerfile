@@ -46,7 +46,7 @@ RUN set -eux; \
     # jobs, which install their CLI into an unprivileged user prefix.
     mkdir -p /tmp/control-plane-tar; \
     npm install --prefix /tmp/control-plane-tar --no-save --ignore-scripts \
-      --install-strategy=nested tar@7.5.19; \
+      --install-strategy=nested tar@7.5.22; \
     for tar_target in \
       /usr/lib/node_modules/npm/node_modules/tar \
       /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar \
@@ -54,7 +54,7 @@ RUN set -eux; \
       rm -rf "${tar_target}"; \
       mkdir -p "${tar_target}"; \
       cp -a /tmp/control-plane-tar/node_modules/tar/. "${tar_target}"; \
-      test "$(node -p "require(process.argv[1]).version" "${tar_target}/package.json")" = 7.5.19; \
+      test "$(node -p "require(process.argv[1]).version" "${tar_target}/package.json")" = 7.5.22; \
     done; \
     rm -rf /tmp/control-plane-tar; \
     # The Actions runner base also carries a Docker runtime. Control-plane
