@@ -3,6 +3,13 @@ import type { ReactNode } from 'react';
 import { ConsoleHeader, type ConsoleHeaderProps } from './console-header';
 import { ConsolePageShell } from './console-page-shell';
 
+export type ConsoleAppShellProps = ConsoleHeaderProps & {
+  className?: string;
+  children: ReactNode;
+  /** Route-specific controls that belong below the main page content. */
+  footer?: ReactNode;
+};
+
 /**
  * The complete structural frame for every authenticated console route.
  *
@@ -16,12 +23,7 @@ export function ConsoleAppShell({
   children,
   footer,
   ...header
-}: ConsoleHeaderProps & {
-  className?: string;
-  children: ReactNode;
-  /** Route-specific controls that belong below the main page content. */
-  footer?: ReactNode;
-}) {
+}: ConsoleAppShellProps) {
   return (
     <ConsolePageShell className={className}>
       <ConsoleHeader {...header} />

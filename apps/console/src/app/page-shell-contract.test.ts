@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -12,8 +12,6 @@ import { describe, expect, it } from 'vitest';
 // import.meta.url (Node's own implementation) rather than to a `URL`
 // instance built from it.
 const APP_DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const LOGIN_PAGE = 'login/page.tsx';
-
 function pageFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
@@ -27,32 +25,32 @@ function source(path: string): string {
 }
 
 describe('console page-shell contract', () => {
-  it('requires every authenticated page to use the shared server shell', () => {
+  it('requires every page to inherit the shared shell through the HOC', () => {
     const pages = pageFiles(APP_DIRECTORY);
 
     for (const page of pages) {
-      if (relative(APP_DIRECTORY, page) === LOGIN_PAGE) continue;
-
       const pageSource = source(page);
-      expect(pageSource).toContain('ConsoleAppShell');
-      expect(pageSource).not.toContain('ConsolePageShell');
+      expect(pageSource).toContain('withConsolePageShell');
+      expect(pageSource).not.toContain('ConsoleAppShell');
+      expect(pageSource).not.toMatch(/from ['"][^'"]*\/console-page-shell['"]/);
       expect(pageSource).not.toContain('ConsoleNavRail');
     }
   });
 
-  it('keeps the non-route states in the same shell and leaves login explicit', () => {
+  it('keeps every non-route state in the same higher-order shell', () => {
     for (const file of ['error.tsx', 'loading.tsx', 'not-found.tsx']) {
-      expect(source(join(APP_DIRECTORY, file))).toContain('ConsoleAppShell');
+      const fileSource = source(join(APP_DIRECTORY, file));
+      expect(fileSource).toContain('withConsolePageShell');
+      expect(fileSource).not.toContain('ConsoleAppShell');
     }
-
-    expect(source(join(APP_DIRECTORY, LOGIN_PAGE))).not.toContain(
-      'ConsoleAppShell',
-    );
   });
 
-  it('keeps the shell server-rendered', () => {
+  it('keeps the shell and higher-order wrapper server-renderable', () => {
     expect(source(join(APP_DIRECTORY, 'console-app-shell.tsx'))).not.toContain(
       "'use client'",
     );
+    expect(
+      source(join(APP_DIRECTORY, 'with-console-page-shell.tsx')),
+    ).not.toContain("'use client'");
   });
 });

@@ -21,12 +21,12 @@ import { derivePrimaryAction } from '../../lib/primary-action';
 import { buildQueueView } from '../../lib/queue-view';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import { type BoardCard, DecisionInbox } from '../action-items-board';
-import { ConsoleAppShell } from '../console-app-shell';
 import { DataWarnings } from '../console-header';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { QueueConsoleUtilities } from '../queue-console-utilities';
+import { withConsolePageShell } from '../with-console-page-shell';
 
 interface PageProps {
   searchParams: Promise<{ repo?: string; item?: string }>;
@@ -101,6 +101,70 @@ async function InboxBody({
   );
 }
 
+interface InboxViewProps {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter: ReturnType<typeof parseRepoFilterParam>;
+  repoFilterKey?: string;
+  selectedItemKey?: string;
+  subtitle: string;
+}
+
+function InboxViewContent({
+  repoFilter,
+  selectedItemKey,
+  subtitle,
+}: InboxViewProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+      <InboxBody
+        repoFilter={repoFilter}
+        selectedItemKey={selectedItemKey}
+        mobileScopeLabel={subtitle}
+      />
+    </Suspense>
+  );
+}
+
+const InboxView = withConsolePageShell(
+  InboxViewContent,
+  ({ watchedRepos, repoFilter, repoFilterKey, subtitle }) => ({
+    className: 'inbox-page-shell',
+    current: 'inbox',
+    title: 'Decision Inbox',
+    repoFilter: repoFilterKey,
+    subtitle: (
+      <>
+        {subtitle}
+        {repoFilter && (
+          <>
+            {' · '}
+            <Anchor href="/inbox" size="sm">
+              show all repos
+            </Anchor>
+          </>
+        )}
+      </>
+    ),
+    utilities: (
+      <>
+        <div className="inbox-utilities inbox-utilities--desktop">
+          <QueueConsoleUtilities
+            watchedRepos={watchedRepos}
+            repoFilter={repoFilterKey}
+          />
+        </div>
+        <div className="inbox-utilities inbox-utilities--mobile">
+          <QueueConsoleUtilities
+            watchedRepos={watchedRepos}
+            repoFilter={repoFilterKey}
+            includeNavigation
+          />
+        </div>
+      </>
+    ),
+  }),
+);
+
 async function InboxPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
@@ -117,50 +181,13 @@ async function InboxPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <ConsoleAppShell
-      className="inbox-page-shell"
-      current="inbox"
-      title="Decision Inbox"
-      repoFilter={repoFilterKey}
-      subtitle={
-        <>
-          {subtitle}
-          {repoFilter && (
-            <>
-              {' · '}
-              <Anchor href="/inbox" size="sm">
-                show all repos
-              </Anchor>
-            </>
-          )}
-        </>
-      }
-      utilities={
-        <>
-          <div className="inbox-utilities inbox-utilities--desktop">
-            <QueueConsoleUtilities
-              watchedRepos={watchedRepos}
-              repoFilter={repoFilterKey}
-            />
-          </div>
-          <div className="inbox-utilities inbox-utilities--mobile">
-            <QueueConsoleUtilities
-              watchedRepos={watchedRepos}
-              repoFilter={repoFilterKey}
-              includeNavigation
-            />
-          </div>
-        </>
-      }
-    >
-      <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <InboxBody
-          repoFilter={repoFilter}
-          selectedItemKey={params.item || undefined}
-          mobileScopeLabel={subtitle}
-        />
-      </Suspense>
-    </ConsoleAppShell>
+    <InboxView
+      watchedRepos={watchedRepos}
+      repoFilter={repoFilter}
+      repoFilterKey={repoFilterKey}
+      selectedItemKey={params.item || undefined}
+      subtitle={subtitle}
+    />
   );
 }
 

@@ -12,10 +12,10 @@ import {
   parseSessionArchiveQuery,
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
-import { ConsoleAppShell } from '../console-app-shell';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
+import { withConsolePageShell } from '../with-console-page-shell';
 import { CostsWorkspace } from './costs-workspace';
 import { LedgerTables } from './ledger-tables';
 
@@ -96,6 +96,52 @@ function archiveHref(query: SessionArchiveQuery, path: string): string {
  * params (`parseSessionArchiveQuery`), so `/costs?days=90` narrows this the
  * same way `/sessions?days=90` narrows that - one window, two views of it.
  */
+interface CostsViewProps {
+  query: SessionArchiveQuery;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  mobileNavigationHrefs: { sessions: string; costs: string };
+}
+
+function CostsViewContent({ query }: CostsViewProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+      <CostsBody query={query} />
+    </Suspense>
+  );
+}
+
+const CostsPageView = withConsolePageShell(
+  CostsViewContent,
+  ({ query, watchedRepos, mobileNavigationHrefs }) => ({
+    className: 'costs-page-shell',
+    current: 'costs',
+    archiveQuery: query,
+    title: 'Cost Ledger',
+    subtitle: (
+      <>
+        {describeArchiveWindow(query)} ·{' '}
+        <Suspense fallback="…">
+          <SessionCount query={query} />
+        </Suspense>
+      </>
+    ),
+    utilities: (
+      <>
+        <div className="costs-utilities costs-utilities--desktop">
+          <ConsoleCommandUtilities watchedRepos={watchedRepos} />
+        </div>
+        <div className="costs-utilities costs-utilities--mobile">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeNavigation
+            navigationHrefs={mobileNavigationHrefs}
+          />
+        </div>
+      </>
+    ),
+  }),
+);
+
 async function CostsPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
@@ -108,38 +154,11 @@ async function CostsPageShell({ searchParams }: PageProps) {
   };
 
   return (
-    <ConsoleAppShell
-      className="costs-page-shell"
-      current="costs"
-      archiveQuery={query}
-      title="Cost Ledger"
-      subtitle={
-        <>
-          {describeArchiveWindow(query)} ·{' '}
-          <Suspense fallback="…">
-            <SessionCount query={query} />
-          </Suspense>
-        </>
-      }
-      utilities={
-        <>
-          <div className="costs-utilities costs-utilities--desktop">
-            <ConsoleCommandUtilities watchedRepos={watchedRepos} />
-          </div>
-          <div className="costs-utilities costs-utilities--mobile">
-            <ConsoleCommandUtilities
-              watchedRepos={watchedRepos}
-              includeNavigation
-              navigationHrefs={mobileNavigationHrefs}
-            />
-          </div>
-        </>
-      }
-    >
-      <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <CostsBody query={query} />
-      </Suspense>
-    </ConsoleAppShell>
+    <CostsPageView
+      query={query}
+      watchedRepos={watchedRepos}
+      mobileNavigationHrefs={mobileNavigationHrefs}
+    />
   );
 }
 
