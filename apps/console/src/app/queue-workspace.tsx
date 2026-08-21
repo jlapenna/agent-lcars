@@ -103,6 +103,7 @@ export function QueueWorkspace({
   const [search, setSearch] = useState(
     () => searchParams.get(SEARCH_PARAM) ?? '',
   );
+  const [loadingItemKey, setLoadingItemKey] = useState<string>();
   const { isMuted, mute, unmute } = useMutedItems();
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -275,6 +276,10 @@ export function QueueWorkspace({
       ?.scrollIntoView({ block: 'nearest' });
   }, [selectedItemKey]);
 
+  useEffect(() => {
+    if (loadingItemKey === selectedItemKey) setLoadingItemKey(undefined);
+  }, [loadingItemKey, selectedItemKey]);
+
   return (
     <section
       className="queue-workspace"
@@ -441,6 +446,8 @@ export function QueueWorkspace({
                       selectedCard.item.number,
                     ) === key
                   }
+                  loading={loadingItemKey === key}
+                  onNavigate={() => setLoadingItemKey(key)}
                   muted={false}
                   onToggleMute={() => mute(key, muteSignatureFor(card.item))}
                 />

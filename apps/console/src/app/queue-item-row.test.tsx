@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
@@ -35,6 +35,8 @@ function renderRow(
   props: {
     selected?: boolean;
     href?: string;
+    loading?: boolean;
+    onNavigate?: () => void;
   } = {},
 ) {
   render(
@@ -43,6 +45,8 @@ function renderRow(
         card={makeCard(makeItem())}
         href={props.href ?? '/inbox?item=agent%2Flcars%23249'}
         selected={props.selected ?? false}
+        loading={props.loading}
+        onNavigate={props.onNavigate}
       />
     </MantineProvider>,
   );
@@ -53,5 +57,27 @@ describe('QueueItemRow', () => {
     renderRow();
     const link = screen.getByRole('link', { name: /Responsive Inbox/ });
     expect(link.querySelector('.queue-item-row__chevron')).not.toBeNull();
+  });
+
+  it('shows immediate progress while item details are loading', () => {
+    const onNavigate = vi.fn();
+    renderRow({ href: '#item', loading: true, onNavigate });
+
+    const link = screen.getByRole('link', { name: /Responsive Inbox/ });
+    expect(link).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByLabelText('Loading item details')).toBeTruthy();
+
+    fireEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledOnce();
+  });
+
+  it('does not show current-page progress for a modified click', () => {
+    const onNavigate = vi.fn();
+    renderRow({ href: '#item', onNavigate });
+
+    fireEvent.click(screen.getByRole('link', { name: /Responsive Inbox/ }), {
+      metaKey: true,
+    });
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });

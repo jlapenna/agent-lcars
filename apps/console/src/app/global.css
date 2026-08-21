@@ -1084,6 +1084,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   box-shadow: inset 3px 0 0 var(--queue-row-accent);
 }
 
+.queue-item-row[data-loading] {
+  background: color-mix(
+    in srgb,
+    var(--queue-row-accent) 16%,
+    var(--mantine-color-body)
+  );
+}
+
 .queue-item-row__link {
   display: block;
   min-width: 0;
@@ -1121,6 +1129,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   transition:
     opacity 140ms ease,
     transform 140ms ease;
+}
+
+.queue-item-row__loader {
+  color: var(--queue-row-accent);
 }
 
 .queue-item-row:hover .queue-item-row__chevron,
