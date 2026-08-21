@@ -33,16 +33,16 @@ and [LCARS additions](.agents/skills/lcars/lcars-protocol.md).
 
 ## Documentation map
 
-| Need                                              | Source of truth                                                                                   |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Onboard a repository to the console and telemetry | [Console and telemetry onboarding](docs/onboarding-console-and-telemetry.md)                      |
-| Add a runner registration                         | [Autoscaler onboarding](docs/onboarding-autoscaler.md)                                            |
-| Agent labels and routing                          | [GitHub label contract](docs/github-label-contract.md)                                            |
-| Credentials and GitHub App identity               | [Fleet credentials](docs/fleet-credentials.md) and [bot identities](docs/bot-identity-formats.md) |
-| CI dispatch and published actions                 | [Published actions](docs/published-actions.md)                                                    |
-| Local/CI E2E boundary                             | [E2E security boundary](docs/e2e-security-boundary.md)                                            |
-| E2E test policy                                   | [E2E reliability](docs/e2e-reliability.md)                                                        |
-| Runtime diagnosis                                 | [Lifecycle systems](docs/lifecycle-systems.md)                                                    |
+| Need                                    | Source of truth                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Onboard a repository to the agent fleet | [Repository onboarding](docs/onboarding-repo.md)                                                  |
+| Add a runner registration               | [Autoscaler onboarding](docs/onboarding-autoscaler.md)                                            |
+| Agent labels and routing                | [GitHub label contract](docs/github-label-contract.md)                                            |
+| Credentials and GitHub App identity     | [Fleet credentials](docs/fleet-credentials.md) and [bot identities](docs/bot-identity-formats.md) |
+| CI dispatch and published actions       | [Published actions](docs/published-actions.md)                                                    |
+| Local/CI E2E boundary                   | [E2E security boundary](docs/e2e-security-boundary.md)                                            |
+| E2E test policy                         | [E2E reliability](docs/e2e-reliability.md)                                                        |
+| Runtime diagnosis                       | [Lifecycle systems](docs/lifecycle-systems.md)                                                    |
 
 ## Development
 
