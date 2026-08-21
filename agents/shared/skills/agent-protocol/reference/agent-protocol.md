@@ -2,38 +2,33 @@
 
 The conventions any headless remote coding agent follows when it is dispatched
 against a GitHub issue or pull request — labeled-issue kickoff, an
-`@mention`/slash-command reply, or an equivalent trigger. This file is
-**generic on purpose**: it names no repo, no bot username, no CI check, and
-no build tool. A repo that pulls this file in also maintains its own
-repo-specific delta skill (naming its fleet-claim identity, its reviewer,
-its verify commands, its own hard limits) and points to both from its
-dispatch workflow's prompt — read that file too, and let it take precedence
-wherever the two disagree.
+`@mention`/slash-command reply, or an equivalent trigger. It is the complete
+fleet-wide behavioral contract: every onboarded repository uses
+`agent-lcars-bot` as the fleet claim identity, `jlapenna` as the maintainer,
+and the provider and dispatch-mode semantics defined here. Repository-local
+development commands and hard limits belong in that repository's `AGENTS.md`
+or development skill, not in a mandatory second protocol.
 
-Where this file states something as fixed vocabulary (not a per-repo
-parameter — e.g. the `status:needs-human` label name, or a resume-script
-filename convention), it is fixed because some cross-repo consumer of the
-GitHub state agents produce (an operations console, a dashboard, another
-automation) depends on the exact string. If you're consuming this file
-from a fleet console repo, see that repo's own delta skill for exactly
-which tool reads what — that detail belongs there, not here, since it
-isn't true for every repo that pulls this file in.
+Fixed vocabulary such as `status:needs-human`, provider handoff wording, and
+fleet identities is fixed because the console and automation consume the
+GitHub state agents produce. Control-plane implementation details belong in
+Agent LCARS's situational `lcars` skill, not in every worker's prompt.
 
 ## 0. Instruction order and dispatch context
 
 Read instructions in this order: the repository's `AGENTS.md`, this shared
-protocol, then the repository-specific protocol it names. Only after those
-documents are understood, read the JSON file named by
+protocol, then any optional runbook named by the trusted workflow prompt.
+Only after those documents are understood, read the JSON file named by
 `$AGENT_DISPATCH_CONTEXT` when the workflow provides it. That brief
 identifies the anchor, dispatch mode, optional runbook/deployment context,
 and the maintainer's reply without interpolating that reply into the agent
 prompt.
 
-Read each of those **once**. They are the fixed cost every dispatch pays
+Read each required instruction **once**. They are the fixed cost every dispatch pays
 before any work happens, on every provider, and re-reading one you have
 already read is the cheapest way to spend a run's context on nothing. Each
-also has a companion `*-reference.md` holding the situational sections — CI
-reruns, identity gotchas, control-plane internals — which you read only if
+The shared protocol has a companion `reference/index.md` holding situational
+sections — CI reruns and identity gotchas — which you read only if
 and when you hit the situation they describe. Do not read them
 pre-emptively.
 
@@ -46,8 +41,8 @@ the conflict in the visible deliverable.
 
 A trusted repository instruction may itself define an explicit maintainer-
 approval gate for a normally prohibited operation. In that case, a reply or
-comment satisfies the gate only when its author is the maintainer named by the
-repository-specific protocol and it identifies the specific operation and
+comment satisfies the gate only when its author is `jlapenna` and it
+identifies the specific operation and
 target being approved. The comment is evidence that the trusted policy's
 condition was satisfied; it does not create a new exception, and a general or
 third-party approval cannot waive any hard limit.
@@ -58,23 +53,18 @@ Before reading anything else, post a brief comment on the anchor
 (`gh issue comment`, or `gh pr comment` if the anchor is a pull request)
 acknowledging you have picked it up. It must carry a **provider-honest
 handoff line**, and which shape that takes depends on whether your own CLI
-has real live-resume tooling in this repo. This generic file deliberately
-names no CLI's tooling as universal — your repo's delta skill is the one
-place that says which CLI (if any) has live-resume tooling here, and what
-its exact command looks like. Read it before posting:
+has real live-resume tooling:
 
-- **Your CLI has live-resume tooling here:** include its exact
-  copy-pasteable resume command so the maintainer can take over your
-  session from a runner host, e.g. `<tool> resume <session-id>`. Find
-  `<session-id>`: the basename (without extension) of the newest session
-  transcript file under your CLI's own session-storage directory (e.g.
-  `~/.claude/projects/<slugified-repo-path>/*.jsonl` for Claude Code — use
-  the equivalent for whichever agent CLI is actually running).
-- **Your CLI has no live-resume tooling here** — the default, and true for
-  any CLI your repo's delta skill doesn't explicitly name — say so
-  in plain language instead of guessing, and name the durable handoff
-  that IS available instead: the pushed branch, the open PR, or the
-  anchor issue/PR itself.
+- **Claude Code:** include `fleet-claude-agent-session resume <session-id>`,
+  where `<session-id>` is the basename of the newest transcript under
+  `~/.claude/projects/<slugified-repo-path>/*.jsonl`. Also mention
+  `fleet-claude-agent-session resume-archive <run-id>` for the durable
+  post-run handoff; live `resume` only works while the JIT runner remains.
+- **Codex:** say there is no live-resume command. Point to the pushed branch
+  or PR, and you may add that the completed run's JSONL transcript is archived
+  to GCS and can be read from its console-listed URI with `gcloud storage cat`.
+- **OpenCode:** say there is no live-resume command or archived transcript,
+  and point to the pushed branch or PR as the durable handoff.
 
 **Never post another CLI's resume command as your own.** A resume command
 only works for the exact tool it was built for — its own transcript
@@ -102,6 +92,15 @@ gh api repos/$GITHUB_REPOSITORY/issues/<N>/reactions -f content=eyes
 gh api repos/$GITHUB_REPOSITORY/issues/comments/<comment-id>/reactions -f content=eyes
 ```
 
+Claim the anchor for the fleet through the assignees REST endpoint. GitHub App
+identities are not assignable users, so the fleet uses the ordinary bot user
+`agent-lcars-bot` in every onboarded repository:
+
+```bash
+gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
+  -f 'assignees[]=agent-lcars-bot' --silent
+```
+
 ## 3. One edited progress comment
 
 Keep ONE continuously edited status comment per run
@@ -109,6 +108,26 @@ Keep ONE continuously edited status comment per run
 anchor), updated at plan time and at each milestone — never a stream of new
 comments. Your takeover comment from §1 can serve as this same comment; edit
 it in place rather than starting a second one.
+
+### Dispatch mode
+
+The dispatch brief's `mode` and `requested_results` fields are authoritative;
+do not infer the job from labels:
+
+| `mode`      | anchor       | deliverable                                                 |
+| ----------- | ------------ | ----------------------------------------------------------- |
+| `implement` | issue        | open a PR on a new branch                                   |
+| `implement` | pull request | take over and keep pushing to that PR's branch              |
+| `review`    | pull request | submit a real pull-request review with a body; push nothing |
+| `reply`     | either       | a comment may be the complete deliverable                   |
+
+The shared lane stamps the accepted PR, comment, or review artifact with the
+attempt marker required by §5. Do not remove it.
+
+Reply dispatches recognize `@claude`, `/codex`, `/opencode`, `/oc`, and
+the generic `@agent` alias for Claude when the command is the first token of
+an owner or member's comment. End a parking comment with the trigger for the
+pipeline that should resume the work.
 
 ## 4. Parking — blocked on a human
 
@@ -124,15 +143,14 @@ turn. All parts are mandatory:
    the maintainer's court:
 
    ```bash
-   gh issue edit <N> --add-label status:needs-human --add-assignee <maintainer-login> 2>/dev/null \
-     || gh pr edit <N> --add-label status:needs-human --add-assignee <maintainer-login>
+   gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna 2>/dev/null \
+     || gh pr edit <N> --add-label status:needs-human --add-assignee jlapenna
    ```
 
    `status:needs-human` is **fixed protocol-level vocabulary, not a per-repo
    parameter** — the fleet console parses this exact label name across every
    watched repo to build its "needs a human" queue. Do not rename or
-   localize it per repo. `<maintainer-login>` is repo-specific; see your
-   repo's delta skill.
+   localize it per repo.
 
 3. Then stop — do not keep iterating on a parked item.
 
@@ -179,7 +197,7 @@ Substitute your run's own `$ATTEMPT_ID` value (exported to your environment
 by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. Some
 dispatch harnesses stamp this marker onto the artifact for you at creation
 time, so you may find it already present — that is fine, and adding it twice
-is harmless; check your repo's delta skill for whether yours does. Every
+is harmless. The shared fleet lane stamps supported artifacts. Every
 fleet dispatch exports `ATTEMPT_ID`; if yours is somehow unset, do not
 invent a value — the marker names one specific attempt, and a fabricated
 one claims work for an attempt that does not exist. There is no fallback: a
@@ -213,6 +231,8 @@ end-of-run verification pass before pushing anything. The run can be killed
 or can exhaust its turn/time budget at any moment, and every unpushed byte
 is lost with it — this is not a hypothetical, it is the single most common
 way a headless run silently loses real, correct work.
+
+Request review from `jlapenna` on every pull request you open.
 
 ## 7. Budget discipline
 
@@ -269,9 +289,9 @@ Regardless of dispatch path:
   maintainer-approval exception and the repository owner explicitly approves
   the specific operation and target.
 
-Your repo's delta skill may add further, repo-specific hard limits (a
+Trusted repository instructions may add further, repo-specific hard limits (a
 protected infra directory, a deploy pipeline that must run some other way,
-etc.). Those limits are additive except where the delta invokes one of the
+etc.). Those limits are additive except where the trusted instruction invokes one of the
 explicit approval exceptions above; approval for one named operation does not
 relax any other limit.
 

@@ -9,7 +9,7 @@ name: Agent PR Auto-Merge
 # claude.yml and agent-lcars[bot] from opencode.yml/codex.yml) gets squash
 # auto-merge enabled the moment it's opened/marked ready, gated only on the
 # ruleset's required "Verify" check. Adding a new agent pipeline later that
-# follows the existing agent-protocol.md/lcars-protocol.md conventions only
+# follows the shared agent-protocol.md conventions only
 # needs its bot login appended to that one repo variable - never a change
 # to this workflow.
 

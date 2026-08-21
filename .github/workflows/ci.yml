@@ -124,6 +124,9 @@ jobs:
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
 
+      - name: Test fleet skill source boundaries (#1269)
+        run: bash .github/actions/prepare-agent-dispatch/assert-consumer-boundaries.test.sh
+
       - name: Test Claude run-status gate (#1283)
         run: bash tools/verify-claude-run-status.test.sh
 

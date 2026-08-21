@@ -230,9 +230,10 @@ _containers_ but never secret _values_ (see `AGENTS.md`).
 
 ### 5. Protocol docs
 
-`.agents/skills/lcars/lcars-protocol.md` names `jlapenna` and `agent-lcars-bot`
-directly. That's deliberate — it's instructions written for agents working
-_this_ repo, not a reusable library.
+The shared `agent-protocol` names `jlapenna` and `agent-lcars-bot` directly
+because they are fleet-wide constants across every onboarded repository.
+Agent LCARS-specific deployment and infrastructure policy stays in
+`agent-lcars-dev`; the `lcars` skill describes control-plane internals only.
 
 ## If you fork this
 

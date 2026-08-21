@@ -64,9 +64,8 @@ the assignees REST endpoint directly:
 
 ```bash
 gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
-  -f 'assignees[]=<fleet-tracking-login>' --silent
+  -f 'assignees[]=agent-lcars-bot' --silent
 ```
 
-`<fleet-tracking-login>` is repo-specific (or, for a shared fleet, may be the
-same login across every repo the fleet works) — see your repo's delta skill
-for the exact login to use here.
+`agent-lcars-bot` is the fixed tracking identity across every onboarded fleet
+repository.

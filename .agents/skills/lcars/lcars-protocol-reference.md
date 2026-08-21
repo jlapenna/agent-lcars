@@ -30,7 +30,7 @@ enough.
 ## `agent:*` vs `review:*` — which label means which mode
 
 > What to actually do in each mode is in
-> [`lcars-protocol.md`](lcars-protocol.md)'s "Dispatch modes" table. This
+> the shared agent protocol's "Dispatch mode" table. This
 > section is only how a label becomes a mode.
 
 Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`
@@ -99,7 +99,7 @@ whole contract if you need more than this summary.
 ## Session-resume: why each pipeline's handoff line differs
 
 > Which line to actually post is in
-> [`lcars-protocol.md`](lcars-protocol.md)'s "Takeover comment" section.
+> the shared agent protocol's takeover section.
 > This is the background for why the three pipelines differ.
 
 `fleet-claude-agent-session` (packages/fleet-tools) is Claude-specific by

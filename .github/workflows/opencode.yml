@@ -15,8 +15,7 @@ name: OpenCode Issue Agent
 # the contract-tested run-name, the permissions grant, and the
 # repo-variable spellings passed down as inputs.
 #
-# See agents/shared/skills/agent-protocol/reference/agent-protocol.md and
-# .agents/skills/lcars/lcars-protocol.md for the agent conventions. The
+# The shared agent protocol is the complete behavioral contract. The
 # lane's deliverable-verification gate intentionally does not trust a bare
 # agent success conclusion: the agent must communicate a visible result.
 
@@ -134,11 +133,6 @@ jobs:
       brief-budget-minutes: '60'
       brief-artifact-checkpoint-minutes: '20'
       brief-finalize-checkpoint-minutes: '45'
-      # The one seam the canonical prompt leaves per repo (#1340 A-R2):
-      # this repo's own protocol file, read after the shared one. The rest
-      # of the prompt - including this attempt's claim marker - and the
-      # silent-stall wording are rendered by the lane.
-      protocol-note: 'then .agents/skills/lcars/lcars-protocol.md,'
     secrets:
       OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
       AGENT_LCARS_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}

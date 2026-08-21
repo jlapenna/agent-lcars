@@ -41,9 +41,9 @@
 # authored claude[bot] (its action mints that identity itself) while its
 # `gh` comments come from agent-lcars[bot], so no single expected login
 # covers one lane's own artifacts. On an agent:*-on-PR takeover of a
-# HUMAN-authored PR, stamping that PR's body does not count -
-# lcars-protocol.md's other sanctioned path for that case, a bot-authored
-# comment carrying the marker, still does.
+# HUMAN-authored PR, stamping that PR's body does not count; the shared
+# protocol's other sanctioned path, a bot-authored comment carrying the
+# marker, still does.
 #
 # Uses the REST list/view endpoints throughout (not `gh pr list`/`gh issue
 # view --json ... | GraphQL-backed flags) - see docs/bot-identity-formats.md:

@@ -5,9 +5,9 @@
 Project-specific workflows and guardrails (worktree/git safety, PRs,
 verification) are defined by the **agent-lcars-dev** skill — it is the
 single source of truth; do not duplicate its guardrail text elsewhere in
-this file. Headless-CI-dispatch conventions (takeover comment, parking,
-identity, dispatch/reconciliation) are defined by the **agent-protocol** and
-**lcars** skills instead — read those when dispatched as a headless agent.
+this file. Headless-CI-dispatch behavior is defined completely by
+**agent-protocol**. The **lcars** skill is situational control-plane
+documentation for developers changing dispatch or reconciliation machinery.
 
 Skills are auto-discovered per-runtime from `.agents/skills/` — don't skip
 checking for one just because a task looks generic. A `PostToolUse` hook
