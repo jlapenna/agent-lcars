@@ -77,12 +77,16 @@ export function queueSelectionHref(
 
 export function QueueWorkspace({
   cards,
+  selectedCard: resolvedSelectedCard,
   selectedItemKey,
   watchedRepos,
   mobileDataFreshness,
   mobileScopeLabel,
 }: {
   cards: BoardCard[];
+  /** The URL-selected item resolved from the server's full loaded item set.
+   * It may no longer belong to the visible decision queue (#1173). */
+  selectedCard?: BoardCard;
   selectedItemKey?: string;
   watchedRepos: WatchedRepo[];
   mobileDataFreshness?: ReactNode;
@@ -184,9 +188,15 @@ export function QueueWorkspace({
     isMuted(repoItemKey(item.repo, item.number), muteSignatureFor(item)),
   );
   const selectedCard = selectedItemKey
-    ? cards.find(
-        ({ item }) => repoItemKey(item.repo, item.number) === selectedItemKey,
-      )
+    ? resolvedSelectedCard &&
+      repoItemKey(
+        resolvedSelectedCard.item.repo,
+        resolvedSelectedCard.item.number,
+      ) === selectedItemKey
+      ? resolvedSelectedCard
+      : cards.find(
+          ({ item }) => repoItemKey(item.repo, item.number) === selectedItemKey,
+        )
     : visibleCards[0];
   const explicitDetail = selectedItemKey !== undefined;
   const backHref = queueSelectionHref(currentSearch);

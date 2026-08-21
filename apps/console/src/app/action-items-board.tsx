@@ -13,11 +13,13 @@ export type { BoardCard } from './board-card';
 /** The standalone master/detail surface for work awaiting a decision. */
 export function DecisionInbox({
   yourQueue,
+  selectedCard,
   selectedItemKey,
   mobileDataFreshness,
   mobileScopeLabel,
 }: {
   yourQueue: BoardCard[];
+  selectedCard?: BoardCard;
   selectedItemKey?: string;
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
@@ -27,6 +29,7 @@ export function DecisionInbox({
   return (
     <QueueWorkspace
       cards={yourQueue}
+      selectedCard={selectedCard}
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}
       mobileDataFreshness={mobileDataFreshness}

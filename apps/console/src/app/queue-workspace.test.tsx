@@ -72,11 +72,13 @@ function makeCard(overrides: Partial<ActionItem> = {}): BoardCard {
 function renderWorkspace(
   cards: BoardCard[],
   selectedItemKey?: string,
+  selectedCard?: BoardCard,
 ): ReturnType<typeof render> {
   return render(
     <MantineProvider>
       <QueueWorkspace
         cards={cards}
+        selectedCard={selectedCard}
         selectedItemKey={selectedItemKey}
         watchedRepos={[{ owner: 'agent', name: 'lcars' }]}
       />
@@ -188,6 +190,26 @@ describe('QueueWorkspace', () => {
     expect(
       screen.getByText('No “Review requested” items right now.'),
     ).toBeTruthy();
+  });
+
+  it('renders a loaded explicit selection that no longer belongs to the queue', () => {
+    renderWorkspace(
+      [makeCard()],
+      'agent/lcars#999',
+      makeCard({
+        number: 999,
+        title: 'Completed decision',
+        actionTypes: [],
+      }),
+    );
+
+    expect(screen.getByTestId('selected-detail')).toHaveTextContent(
+      'Detail #999',
+    );
+    expect(
+      screen.queryByRole('heading', { name: 'Item unavailable' }),
+    ).toBeNull();
+    expect(screen.queryByTestId('queue-row-999')).toBeNull();
   });
 
   it('filters the Inbox without adding another navigation layer', async () => {
