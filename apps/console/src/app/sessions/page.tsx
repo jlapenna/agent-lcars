@@ -18,10 +18,10 @@ import {
   type SessionArchiveQuery,
 } from '../../lib/session-archive';
 import { groupSessionsByIssue } from '../../lib/session-issue-groups';
-import { ConsoleAppShell } from '../console-app-shell';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { NavPageLoading, PageLoading } from '../page-loading';
+import { withConsolePageShell } from '../with-console-page-shell';
 import { IssueGroupedSessions } from './issue-grouped-sessions';
 import { SessionTable } from './session-table';
 import { SessionsWorkspace } from './sessions-workspace';
@@ -148,6 +148,69 @@ async function SessionsBody({
  * title, window description, and nav render as soon as `auth()` +
  * `searchParams` resolve, same as those other two pages (see #160).
  */
+interface SessionsViewProps {
+  query: SessionArchiveQuery;
+  view: SessionsView;
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  mobileNavigationHrefs: { sessions: string; costs: string };
+}
+
+function SessionsViewContent({ query, view }: SessionsViewProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+      <SessionsBody query={query} view={view} />
+    </Suspense>
+  );
+}
+
+const SessionsPageView = withConsolePageShell(
+  SessionsViewContent,
+  ({ query, view, watchedRepos, mobileNavigationHrefs }) => ({
+    className: 'sessions-page-shell',
+    current: 'sessions',
+    archiveQuery: query,
+    title: 'Session Archive',
+    subtitle: (
+      <>
+        {query.repo && `${repoDisplayName(query.repo)} — `}
+        {describeArchiveWindow(query)} ·{' '}
+        <Suspense fallback="…">
+          <SessionCount query={query} />
+        </Suspense>
+        {query.repo && (
+          <>
+            {' · '}
+            <Anchor
+              href={displayHref({ ...query, repo: undefined }, { view })}
+              size="sm"
+            >
+              show all repos
+            </Anchor>
+          </>
+        )}
+      </>
+    ),
+    utilities: (
+      <>
+        <div className="sessions-utilities sessions-utilities--desktop">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
+          />
+        </div>
+        <div className="sessions-utilities sessions-utilities--mobile">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
+            includeNavigation
+            navigationHrefs={mobileNavigationHrefs}
+          />
+        </div>
+      </>
+    ),
+  }),
+);
+
 async function SessionsPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
@@ -177,54 +240,12 @@ async function SessionsPageShell({ searchParams }: PageProps) {
   }
 
   return (
-    <ConsoleAppShell
-      className="sessions-page-shell"
-      current="sessions"
-      archiveQuery={query}
-      title="Session Archive"
-      subtitle={
-        <>
-          {query.repo && `${repoDisplayName(query.repo)} — `}
-          {describeArchiveWindow(query)} ·{' '}
-          <Suspense fallback="…">
-            <SessionCount query={query} />
-          </Suspense>
-          {query.repo && (
-            <>
-              {' · '}
-              <Anchor
-                href={displayHref({ ...query, repo: undefined }, { view })}
-                size="sm"
-              >
-                show all repos
-              </Anchor>
-            </>
-          )}
-        </>
-      }
-      utilities={
-        <>
-          <div className="sessions-utilities sessions-utilities--desktop">
-            <ConsoleCommandUtilities
-              watchedRepos={watchedRepos}
-              initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
-            />
-          </div>
-          <div className="sessions-utilities sessions-utilities--mobile">
-            <ConsoleCommandUtilities
-              watchedRepos={watchedRepos}
-              initialRepoKey={query.repo ? repoKey(query.repo) : undefined}
-              includeNavigation
-              navigationHrefs={mobileNavigationHrefs}
-            />
-          </div>
-        </>
-      }
-    >
-      <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <SessionsBody query={query} view={view} />
-      </Suspense>
-    </ConsoleAppShell>
+    <SessionsPageView
+      query={query}
+      view={view}
+      watchedRepos={watchedRepos}
+      mobileNavigationHrefs={mobileNavigationHrefs}
+    />
   );
 }
 

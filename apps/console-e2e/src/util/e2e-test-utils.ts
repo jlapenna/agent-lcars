@@ -21,7 +21,7 @@ export function useE2eAdminBeforeEach() {
   });
 }
 
-async function setE2eAdminUser(page: Page) {
+export async function setE2eAdminUser(page: Page) {
   await page.route('**/*', async (route) => {
     const headers = route.request().headers();
     await route.continue({

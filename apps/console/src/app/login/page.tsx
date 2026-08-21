@@ -4,9 +4,10 @@ import { Suspense } from 'react';
 
 import { auth, signIn, signOut } from '../../auth';
 import { consoleDescription } from '../../lib/deployment';
-import { PageLoading } from '../page-loading';
+import { NavPageLoading } from '../page-loading';
+import { withConsolePageShell } from '../with-console-page-shell';
 
-async function LoginPageContent({
+async function LoginContent({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string }>;
@@ -29,7 +30,7 @@ async function LoginPageContent({
   const signedInAs = session?.user?.email ?? session?.user?.name;
 
   return (
-    <Center style={{ minHeight: '100vh' }}>
+    <Center mih="60vh">
       <Stack align="center" gap="xs" style={{ maxWidth: 360 }}>
         <Title order={1}>Agent LCARS</Title>
         <Text c="dimmed" ta="center" mb="md">
@@ -76,6 +77,12 @@ async function LoginPageContent({
   );
 }
 
+const LoginPageContent = withConsolePageShell(LoginContent, {
+  current: 'deck',
+  title: 'Agent LCARS',
+  subtitle: 'Sign in to the operations console.',
+});
+
 // `cacheComponents` requires uncached data access to sit inside a Suspense
 // boundary, so the page body streams in behind 2-row placeholder rather
 // than blocking the whole route on the GitHub/Firestore reads.
@@ -85,7 +92,16 @@ export default function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   return (
-    <Suspense fallback={<PageLoading rows={2} />}>
+    <Suspense
+      fallback={
+        <NavPageLoading
+          current="deck"
+          title="Agent LCARS"
+          className="login-page-shell"
+          rows={2}
+        />
+      }
+    >
       <LoginPageContent searchParams={searchParams} />
     </Suspense>
   );

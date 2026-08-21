@@ -8,7 +8,6 @@ import { auth } from '../../../../../auth';
 import { consoleRepositoryUrl } from '../../../../../lib/deployment';
 import { getWatchedRepos } from '../../../../../lib/github-client';
 import { getTaskDetail } from '../../../../../lib/task-detail';
-import { ConsoleAppShell } from '../../../../console-app-shell';
 import { ConsoleFooter } from '../../../../console-footer';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
 import { formatRelativeTime } from '../../../../format';
@@ -18,11 +17,109 @@ import { QueueUtilityMenu } from '../../../../queue-utility-menu';
 import { QuickTaskButton } from '../../../../quick-task-button';
 import { RefreshButton } from '../../../../refresh-button';
 import { SignOutButton } from '../../../../sign-out-button';
+import { withConsolePageShell } from '../../../../with-console-page-shell';
 import { LogicalWorkCard } from '../../../logical-work-card';
 
 interface PageProps {
   params: Promise<{ owner: string; repo: string; issue: string }>;
 }
+
+interface TaskDetailViewProps {
+  detail: Awaited<ReturnType<typeof getTaskDetail>>;
+  generatedAt: string;
+  owner: string;
+  repo: string;
+  title: string;
+  subtitle: string;
+}
+
+function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
+  return (
+    <>
+      {detail.status === 'error' && (
+        <Text size="sm" c="orange" mb="md" data-testid="task-detail-error">
+          {detail.warning}
+        </Text>
+      )}
+
+      {detail.status === 'ok' && (
+        <LogicalWorkCard
+          work={detail.work}
+          runs={detail.runs}
+          anchorState={detail.anchorState}
+        />
+      )}
+    </>
+  );
+}
+
+const TaskDetailView = withConsolePageShell(
+  TaskDetailViewContent,
+  ({ detail, generatedAt, owner, repo, title, subtitle }) => ({
+    current: 'deck',
+    title,
+    subtitle,
+    utilities: (
+      <>
+        <div className="task-utilities task-utilities--desktop">
+          <Group gap="xs" wrap="nowrap">
+            <RefreshButton
+              generatedAt={generatedAt}
+              initialLabel={formatRelativeTime(generatedAt)}
+              bustsGithubCache
+            />
+            {detail.status === 'ok' && detail.item.kind === 'issue' && (
+              <ItemOverflowMenu item={detail.item} />
+            )}
+          </Group>
+        </div>
+        <div className="task-utilities task-utilities--mobile">
+          <Group gap="xs" wrap="nowrap">
+            <RefreshButton
+              generatedAt={generatedAt}
+              initialLabel={formatRelativeTime(generatedAt)}
+              bustsGithubCache
+            />
+            <QueueUtilityMenu
+              repositoryUrl={consoleRepositoryUrl()}
+              includeNavigation
+              navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
+              signOutControl={<SignOutButton />}
+            />
+            {detail.status === 'ok' && detail.item.kind === 'issue' && (
+              <ItemOverflowMenu item={detail.item} />
+            )}
+          </Group>
+        </div>
+      </>
+    ),
+    footer: (
+      <ConsoleFooter
+        actions={
+          <QuickTaskButton
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok'
+                ? `${detail.repo.owner}/${detail.repo.name}`
+                : undefined
+            }
+            sourceIdentities={
+              detail.status === 'ok'
+                ? [
+                    {
+                      label:
+                        detail.item.kind === 'pr' ? 'Pull request' : 'Task',
+                      value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
+                    },
+                  ]
+                : []
+            }
+          />
+        }
+      />
+    ),
+  }),
+);
 
 /**
  * The stable canonical task link (agent-lcars#306, and the same need
@@ -65,84 +162,14 @@ async function TaskDetailPageContent({ params }: PageProps) {
       : `${owner}/${repo}`;
 
   return (
-    <ConsoleAppShell
-      current="deck"
+    <TaskDetailView
+      detail={detail}
+      generatedAt={generatedAt}
+      owner={owner}
+      repo={repo}
       title={title}
       subtitle={subtitle}
-      utilities={
-        <>
-          <div className="task-utilities task-utilities--desktop">
-            <Group gap="xs" wrap="nowrap">
-              <RefreshButton
-                generatedAt={generatedAt}
-                initialLabel={formatRelativeTime(generatedAt)}
-                bustsGithubCache
-              />
-              {detail.status === 'ok' && detail.item.kind === 'issue' && (
-                <ItemOverflowMenu item={detail.item} />
-              )}
-            </Group>
-          </div>
-          <div className="task-utilities task-utilities--mobile">
-            <Group gap="xs" wrap="nowrap">
-              <RefreshButton
-                generatedAt={generatedAt}
-                initialLabel={formatRelativeTime(generatedAt)}
-                bustsGithubCache
-              />
-              <QueueUtilityMenu
-                repositoryUrl={consoleRepositoryUrl()}
-                includeNavigation
-                navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
-                signOutControl={<SignOutButton />}
-              />
-              {detail.status === 'ok' && detail.item.kind === 'issue' && (
-                <ItemOverflowMenu item={detail.item} />
-              )}
-            </Group>
-          </div>
-        </>
-      }
-      footer={
-        <ConsoleFooter
-          actions={
-            <QuickTaskButton
-              watchedRepos={getWatchedRepos()}
-              initialRepoKey={
-                detail.status === 'ok'
-                  ? `${detail.repo.owner}/${detail.repo.name}`
-                  : undefined
-              }
-              sourceIdentities={
-                detail.status === 'ok'
-                  ? [
-                      {
-                        label:
-                          detail.item.kind === 'pr' ? 'Pull request' : 'Task',
-                        value: `${detail.repo.owner}/${detail.repo.name}#${detail.item.number}`,
-                      },
-                    ]
-                  : []
-              }
-            />
-          }
-        />
-      }
-    >
-      {detail.status === 'error' && (
-        <Text size="sm" c="orange" mb="md" data-testid="task-detail-error">
-          {detail.warning}
-        </Text>
-      )}
-
-      {detail.status === 'ok' && (
-        <LogicalWorkCard
-          work={detail.work}
-          runs={detail.runs}
-          anchorState={detail.anchorState}
-        />
-      )}
-    </ConsoleAppShell>
+    />
   );
 }
 

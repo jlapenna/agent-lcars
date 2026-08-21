@@ -1,6 +1,6 @@
 import { Stack, Text } from '@mantine/core';
 
-import { ConsoleAppShell } from './console-app-shell';
+import { withConsolePageShell } from './with-console-page-shell';
 
 /**
  * Styled 404 for the whole app - session detail and task pages call
@@ -8,20 +8,20 @@ import { ConsoleAppShell } from './console-app-shell';
  * back into the console. The nav rail is the way back; "deck" is a
  * neutral current since the missing resource belongs to no section.
  */
-export default function NotFound() {
+function NotFoundContent() {
   return (
-    <ConsoleAppShell
-      current="deck"
-      title="Not found"
-      subtitle="The requested console resource is unavailable."
-    >
-      <Stack gap="xs" role="status">
-        <Text c="dimmed" size="sm" style={{ maxWidth: '36rem' }}>
-          This session, task, or page doesn&rsquo;t exist — it may have been
-          archived under a different id, or the link predates the current
-          archive window. Pick a section above to get back to live data.
-        </Text>
-      </Stack>
-    </ConsoleAppShell>
+    <Stack gap="xs" role="status">
+      <Text c="dimmed" size="sm" style={{ maxWidth: '36rem' }}>
+        This session, task, or page doesn&rsquo;t exist — it may have been
+        archived under a different id, or the link predates the current archive
+        window. Pick a section above to get back to live data.
+      </Text>
+    </Stack>
   );
 }
+
+export default withConsolePageShell(NotFoundContent, {
+  current: 'deck',
+  title: 'Not found',
+  subtitle: 'The requested console resource is unavailable.',
+});

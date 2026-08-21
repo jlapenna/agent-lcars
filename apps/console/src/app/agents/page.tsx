@@ -31,13 +31,13 @@ import {
 import { indexSessionsByNumericRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
-import { ConsoleAppShell } from '../console-app-shell';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
 import { repoScopedConsoleHrefs } from '../console-hrefs';
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { NavPageLoading, PageLoading } from '../page-loading';
+import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
 import { AgentsWorkspace } from './agents-workspace';
 import { ClaimedIdleSection } from './claimed-idle-section';
@@ -271,6 +271,66 @@ async function AgentsPageBody({
  * streamed placeholder `AgentsPageBody`'s own Suspense boundary shows while
  * its data resolves - see #160.
  */
+interface AgentsViewProps {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter: ReturnType<typeof parseRepoFilterParam>;
+  subtitle: string;
+}
+
+function AgentsViewContent({ repoFilter }: AgentsViewProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={5} header={false} />}>
+      <AgentsPageBody repoFilter={repoFilter} />
+    </Suspense>
+  );
+}
+
+const AgentsView = withConsolePageShell(
+  AgentsViewContent,
+  ({ watchedRepos, repoFilter, subtitle }) => {
+    const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
+    return {
+      className: 'agents-page-shell',
+      current: 'agents',
+      title: 'Agent Status',
+      repoFilter: repoFilterKey,
+      subtitle: (
+        <>
+          {subtitle}
+          {repoFilter && (
+            <>
+              {' · '}
+              <Anchor href="/agents" size="sm">
+                show all repos
+              </Anchor>
+            </>
+          )}
+        </>
+      ),
+      utilities: (
+        <>
+          <div className="agents-utilities agents-utilities--desktop">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              initialRepoKey={repoFilterKey}
+              bustsGithubCache
+            />
+          </div>
+          <div className="agents-utilities agents-utilities--mobile">
+            <ConsoleCommandUtilities
+              watchedRepos={watchedRepos}
+              initialRepoKey={repoFilterKey}
+              bustsGithubCache
+              includeNavigation
+              navigationHrefs={repoScopedConsoleHrefs(repoFilterKey)}
+            />
+          </div>
+        </>
+      ),
+    };
+  },
+);
+
 async function AgentsPageShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
@@ -286,51 +346,11 @@ async function AgentsPageShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <ConsoleAppShell
-      className="agents-page-shell"
-      current="agents"
-      title="Agent Status"
-      repoFilter={repoFilter ? repoKey(repoFilter) : undefined}
-      subtitle={
-        <>
-          {subtitle}
-          {repoFilter && (
-            <>
-              {' · '}
-              <Anchor href="/agents" size="sm">
-                show all repos
-              </Anchor>
-            </>
-          )}
-        </>
-      }
-      utilities={
-        <>
-          <div className="agents-utilities agents-utilities--desktop">
-            <ConsoleCommandUtilities
-              watchedRepos={watchedRepos}
-              initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
-              bustsGithubCache
-            />
-          </div>
-          <div className="agents-utilities agents-utilities--mobile">
-            <ConsoleCommandUtilities
-              watchedRepos={watchedRepos}
-              initialRepoKey={repoFilter ? repoKey(repoFilter) : undefined}
-              bustsGithubCache
-              includeNavigation
-              navigationHrefs={repoScopedConsoleHrefs(
-                repoFilter ? repoKey(repoFilter) : undefined,
-              )}
-            />
-          </div>
-        </>
-      }
-    >
-      <Suspense fallback={<PageLoading rows={5} header={false} />}>
-        <AgentsPageBody repoFilter={repoFilter} />
-      </Suspense>
-    </ConsoleAppShell>
+    <AgentsView
+      watchedRepos={watchedRepos}
+      repoFilter={repoFilter}
+      subtitle={subtitle}
+    />
   );
 }
 

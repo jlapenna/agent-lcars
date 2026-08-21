@@ -1,7 +1,7 @@
 import { Container, Skeleton, Stack } from '@mantine/core';
 
-import { ConsoleAppShell } from './console-app-shell';
 import type { NavKey } from './console-header';
+import { withConsolePageShell } from './with-console-page-shell';
 
 /**
  * Streaming fallback for the console's pages.
@@ -16,10 +16,9 @@ import type { NavKey } from './console-header';
  * rows are uniform, so bars at roughly the right size and count keep the
  * layout from jumping when the real content swaps in.
  *
- * `header` defaults to `true` only for the unauthenticated login exception.
- * Every authenticated route now uses `ConsoleAppShell`: nested data-only
- * boundaries pass `header={false}`, while outer boundaries use
- * `NavPageLoading` so the real `ConsoleHeader` structure is always present.
+ * Nested data-only boundaries pass `header={false}`. Every route, including
+ * login, uses `NavPageLoading` at its outer boundary so the real shared
+ * `ConsoleHeader` structure is always present.
  */
 export function PageLoading({
   rows = 5,
@@ -68,26 +67,28 @@ export function PageLoading({
  * to the subtitle text and command-row utilities - the header's own shape
  * and the page's own Container never change.
  */
-export function NavPageLoading({
-  current,
-  title,
-  className,
-  rows = 5,
-}: {
+interface NavPageLoadingProps {
   current: NavKey;
   title: string;
   className: string;
   rows?: number;
-}) {
-  return (
-    <ConsoleAppShell
-      className={className}
-      current={current}
-      title={title}
-      subtitle="…"
-      streamingFallback
-    >
-      <PageLoading rows={rows} header={false} />
-    </ConsoleAppShell>
-  );
+}
+
+function NavPageLoadingContent({ rows = 5 }: NavPageLoadingProps) {
+  return <PageLoading rows={rows} header={false} />;
+}
+
+const NavPageLoadingView = withConsolePageShell(
+  NavPageLoadingContent,
+  ({ current, title, className }) => ({
+    className,
+    current,
+    title,
+    subtitle: '…',
+    streamingFallback: true,
+  }),
+);
+
+export function NavPageLoading(props: NavPageLoadingProps) {
+  return <NavPageLoadingView {...props} />;
 }

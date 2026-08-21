@@ -26,7 +26,6 @@ import { indexSessionsByNumericRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
-import { ConsoleAppShell } from './console-app-shell';
 import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
 import { DataFreshness } from './data-freshness';
@@ -34,6 +33,7 @@ import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { QueueConsoleUtilities } from './queue-console-utilities';
+import { withConsolePageShell } from './with-console-page-shell';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -178,6 +178,61 @@ async function IndexBody({
  * off the streamed placeholder `IndexBody`'s own Suspense boundary shows
  * while its data resolves - see #160.
  */
+interface IndexViewProps {
+  watchedRepos: ReturnType<typeof getWatchedRepos>;
+  repoFilter: ReturnType<typeof parseRepoFilterParam>;
+  repoFilterKey?: string;
+  subtitle: string;
+}
+
+function IndexViewContent({ repoFilter }: IndexViewProps) {
+  return (
+    <Suspense fallback={<PageLoading rows={6} header={false} />}>
+      <IndexBody repoFilter={repoFilter} />
+    </Suspense>
+  );
+}
+
+const IndexView = withConsolePageShell(
+  IndexViewContent,
+  ({ watchedRepos, repoFilter, repoFilterKey, subtitle }) => ({
+    className: 'deck-page-shell',
+    current: 'deck',
+    title: 'Bridge',
+    repoFilter: repoFilterKey,
+    subtitle: (
+      <>
+        {subtitle}
+        {repoFilter && (
+          <>
+            {' · '}
+            <Anchor href="/" size="sm">
+              show all repos
+            </Anchor>
+          </>
+        )}
+      </>
+    ),
+    utilities: (
+      <>
+        <div className="deck-utilities deck-utilities--desktop">
+          <QueueConsoleUtilities
+            watchedRepos={watchedRepos}
+            repoFilter={repoFilterKey}
+          />
+        </div>
+        <div className="deck-utilities deck-utilities--mobile">
+          <QueueConsoleUtilities
+            watchedRepos={watchedRepos}
+            repoFilter={repoFilterKey}
+            includeNavigation
+          />
+        </div>
+      </>
+    ),
+  }),
+);
+
 async function IndexShell({ searchParams }: PageProps) {
   const session = await auth();
   assertAdmin(session, '/login');
@@ -196,46 +251,12 @@ async function IndexShell({ searchParams }: PageProps) {
         : `${watchedRepos.length} repos`;
 
   return (
-    <ConsoleAppShell
-      className="deck-page-shell"
-      current="deck"
-      title="Bridge"
-      repoFilter={repoFilterKey}
-      subtitle={
-        <>
-          {subtitle}
-          {repoFilter && (
-            <>
-              {' · '}
-              <Anchor href="/" size="sm">
-                show all repos
-              </Anchor>
-            </>
-          )}
-        </>
-      }
-      utilities={
-        <>
-          <div className="deck-utilities deck-utilities--desktop">
-            <QueueConsoleUtilities
-              watchedRepos={watchedRepos}
-              repoFilter={repoFilterKey}
-            />
-          </div>
-          <div className="deck-utilities deck-utilities--mobile">
-            <QueueConsoleUtilities
-              watchedRepos={watchedRepos}
-              repoFilter={repoFilterKey}
-              includeNavigation
-            />
-          </div>
-        </>
-      }
-    >
-      <Suspense fallback={<PageLoading rows={6} header={false} />}>
-        <IndexBody repoFilter={repoFilter} />
-      </Suspense>
-    </ConsoleAppShell>
+    <IndexView
+      watchedRepos={watchedRepos}
+      repoFilter={repoFilter}
+      repoFilterKey={repoFilterKey}
+      subtitle={subtitle}
+    />
   );
 }
 

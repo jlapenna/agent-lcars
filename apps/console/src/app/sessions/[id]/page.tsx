@@ -11,7 +11,6 @@ import { consoleRepositoryUrl } from '../../../lib/deployment';
 import { getWatchedRepos } from '../../../lib/github-client';
 import { getSessionDetail } from '../../../lib/session-detail';
 import type { SessionTranscriptResult } from '../../../lib/session-transcript';
-import { ConsoleAppShell } from '../../console-app-shell';
 import { ConsoleFooter } from '../../console-footer';
 import { repoScopedConsoleHrefs } from '../../console-hrefs';
 import { formatRelativeTime } from '../../format';
@@ -20,6 +19,7 @@ import { QueueUtilityMenu } from '../../queue-utility-menu';
 import { QuickTaskButton } from '../../quick-task-button';
 import { RefreshButton } from '../../refresh-button';
 import { SignOutButton } from '../../sign-out-button';
+import { withConsolePageShell } from '../../with-console-page-shell';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
 
@@ -89,6 +89,120 @@ export function ArchivedSessionTranscript({
   );
 }
 
+interface SessionDetailViewProps {
+  detail: Awaited<ReturnType<typeof getSessionDetail>>;
+  generatedAt: string;
+  title: string;
+  subtitle: string;
+}
+
+function SessionDetailViewContent({
+  detail,
+  generatedAt,
+}: SessionDetailViewProps) {
+  return (
+    <>
+      {detail.status === 'error' && (
+        <Text size="sm" c="orange" mb="md" data-testid="session-detail-error">
+          {detail.warning}
+        </Text>
+      )}
+
+      {detail.status === 'ok' && (
+        <>
+          <SessionHeader doc={detail.doc} now={generatedAt} />
+
+          {detail.doc.source === 'issue-agent' && (
+            <ArchivedSessionTranscript
+              doc={detail.doc}
+              transcript={detail.transcript}
+            />
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+const SessionDetailView = withConsolePageShell(
+  SessionDetailViewContent,
+  ({ detail, generatedAt, title, subtitle }) => ({
+    current: 'sessions',
+    title,
+    subtitle,
+    utilities: (
+      <>
+        <div className="session-detail-utilities session-detail-utilities--desktop">
+          <RefreshButton
+            generatedAt={generatedAt}
+            initialLabel={formatRelativeTime(generatedAt)}
+          />
+        </div>
+        <div className="session-detail-utilities session-detail-utilities--mobile">
+          <RefreshButton
+            generatedAt={generatedAt}
+            initialLabel={formatRelativeTime(generatedAt)}
+          />
+          <QueueUtilityMenu
+            repositoryUrl={consoleRepositoryUrl()}
+            includeNavigation
+            navigationHrefs={repoScopedConsoleHrefs(
+              detail.status === 'ok' && detail.doc.repo
+                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                : undefined,
+            )}
+            signOutControl={<SignOutButton />}
+          />
+        </div>
+      </>
+    ),
+    footer: (
+      <ConsoleFooter
+        actions={
+          <QuickTaskButton
+            watchedRepos={getWatchedRepos()}
+            initialRepoKey={
+              detail.status === 'ok' && detail.doc.repo
+                ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
+                : undefined
+            }
+            sourceIdentities={
+              detail.status === 'ok'
+                ? [
+                    {
+                      label: 'Session' as const,
+                      value: detail.doc.sessionId,
+                    },
+                    ...(detail.doc.source === 'issue-agent' &&
+                    detail.doc.repo &&
+                    detail.doc.runId
+                      ? [
+                          {
+                            label: 'Workflow run' as const,
+                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
+                          },
+                        ]
+                      : []),
+                    ...(detail.doc.source === 'issue-agent' &&
+                    detail.doc.repo &&
+                    detail.doc.issueNumber
+                      ? [
+                          {
+                            label: 'Task' as const,
+                            value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.issueNumber}`,
+                          },
+                        ]
+                      : []),
+                  ]
+                : []
+            }
+          />
+        }
+      />
+    ),
+  }),
+);
+
 /**
  * A single session's detail view: full header (identity, cost/token totals,
  * source-specific fields, deliverables, artifacts) plus - for an
@@ -121,100 +235,12 @@ async function SessionDetailPageContent({ params }: PageProps) {
       : 'The session archive could not be read.';
 
   return (
-    <ConsoleAppShell
-      current="sessions"
+    <SessionDetailView
+      detail={detail}
+      generatedAt={generatedAt}
       title={title}
       subtitle={subtitle}
-      utilities={
-        <>
-          <div className="session-detail-utilities session-detail-utilities--desktop">
-            <RefreshButton
-              generatedAt={generatedAt}
-              initialLabel={formatRelativeTime(generatedAt)}
-            />
-          </div>
-          <div className="session-detail-utilities session-detail-utilities--mobile">
-            <RefreshButton
-              generatedAt={generatedAt}
-              initialLabel={formatRelativeTime(generatedAt)}
-            />
-            <QueueUtilityMenu
-              repositoryUrl={consoleRepositoryUrl()}
-              includeNavigation
-              navigationHrefs={repoScopedConsoleHrefs(
-                detail.status === 'ok' && detail.doc.repo
-                  ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                  : undefined,
-              )}
-              signOutControl={<SignOutButton />}
-            />
-          </div>
-        </>
-      }
-      footer={
-        <ConsoleFooter
-          actions={
-            <QuickTaskButton
-              watchedRepos={getWatchedRepos()}
-              initialRepoKey={
-                detail.status === 'ok' && detail.doc.repo
-                  ? `${detail.doc.repo.owner}/${detail.doc.repo.name}`
-                  : undefined
-              }
-              sourceIdentities={
-                detail.status === 'ok'
-                  ? [
-                      {
-                        label: 'Session' as const,
-                        value: detail.doc.sessionId,
-                      },
-                      ...(detail.doc.source === 'issue-agent' &&
-                      detail.doc.repo &&
-                      detail.doc.runId
-                        ? [
-                            {
-                              label: 'Workflow run' as const,
-                              value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
-                            },
-                          ]
-                        : []),
-                      ...(detail.doc.source === 'issue-agent' &&
-                      detail.doc.repo &&
-                      detail.doc.issueNumber
-                        ? [
-                            {
-                              label: 'Task' as const,
-                              value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.issueNumber}`,
-                            },
-                          ]
-                        : []),
-                    ]
-                  : []
-              }
-            />
-          }
-        />
-      }
-    >
-      {detail.status === 'error' && (
-        <Text size="sm" c="orange" mb="md" data-testid="session-detail-error">
-          {detail.warning}
-        </Text>
-      )}
-
-      {detail.status === 'ok' && (
-        <>
-          <SessionHeader doc={detail.doc} now={generatedAt} />
-
-          {detail.doc.source === 'issue-agent' && (
-            <ArchivedSessionTranscript
-              doc={detail.doc}
-              transcript={detail.transcript}
-            />
-          )}
-        </>
-      )}
-    </ConsoleAppShell>
+    />
   );
 }
 
