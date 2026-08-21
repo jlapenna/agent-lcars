@@ -66,6 +66,12 @@ RUN groupadd -g 1002 runner \
 # the scaler's container spec needs no change to drive this image.
 COPY --from=agent --chown=runner:runner /home/runner /home/runner
 
+# The sandbox supplies system npm and the runner payload supplies two more npm
+# copies under its Actions Node runtimes. Repair every inherited node-tar copy
+# so the dedicated Playwright image does not retain CVE-2026-59873.
+COPY apps/runner-autoscaler/runner-image/repair-node-tar.sh /tmp/repair-node-tar.sh
+RUN bash /tmp/repair-node-tar.sh && rm /tmp/repair-node-tar.sh
+
 # Runtime checks for the Actions Node runtimes copied into this image.
 COPY apps/runner-autoscaler/runner-image/externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh

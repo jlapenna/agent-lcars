@@ -30,6 +30,12 @@ if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
   exit 1
 fi
 
+if ! grep -Fqx 'COPY repair-node-tar.sh /usr/local/lib/agent-lcars/repair-node-tar.sh' "$dockerfile" ||
+  ! grep -Fq 'bash /usr/local/lib/agent-lcars/repair-node-tar.sh' "$dockerfile"; then
+  echo "runner image does not repair every inherited npm node-tar copy" >&2
+  exit 1
+fi
+
 runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
 codex_install_line="$(grep -n '^RUN npm install -g @openai/codex$' "$dockerfile" | cut -d: -f1)"
 plugin_line="$(grep -n '^RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \\' "$dockerfile" | cut -d: -f1)"

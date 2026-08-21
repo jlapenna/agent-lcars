@@ -417,6 +417,14 @@ RUN chmod +x /usr/local/bin/lcars
 # runner is an integrated first-party delivery surface, not a pinned artifact.
 RUN npm install -g @openai/codex
 
+# The Actions runner base carries npm inside both bundled Actions Node
+# runtimes, while NodeSource installs a third system copy. Repair all three
+# node-tar copies after the image's global npm installs so CVE-2026-59873
+# cannot survive in a job-visible npm tree.
+COPY repair-node-tar.sh /usr/local/lib/agent-lcars/repair-node-tar.sh
+RUN bash /usr/local/lib/agent-lcars/repair-node-tar.sh && \
+    rm /usr/local/lib/agent-lcars/repair-node-tar.sh
+
 # OpenCode reads this runner user's global configuration before any optional
 # project-level config. Keep the fleet-wide provider, safe defaults, and
 # standing instructions here rather than copying them into every Actions
