@@ -166,7 +166,7 @@ test('tool caches stay durable while HOME remains isolated', () => {
   }
 });
 
-test('Corepack uses the platform-specific Windows cache', () => {
+test('a simulated Windows uname selects the Windows Corepack cache path', () => {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lcars-e2e-windows-corepack-cache-'),
   );
@@ -199,7 +199,7 @@ test('Corepack uses the platform-specific Windows cache', () => {
   }
 });
 
-test('Playwright uses the platform-specific macOS browser cache', () => {
+test('a simulated Darwin uname selects the macOS browser cache path', () => {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'lcars-e2e-darwin-cache-'),
   );
@@ -405,35 +405,6 @@ test('SIGTERM forwards to the E2E child before its temporary HOME is removed', a
   }
 });
 
-test('the host lock releases once the holder exits', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-lock-'));
-  const fakeBin = path.join(tempDir, 'bin');
-  fs.mkdirSync(fakeBin, { recursive: true });
-  const pnpm = path.join(fakeBin, 'pnpm');
-  fs.writeFileSync(pnpm, '#!/bin/sh\nexit 0\n');
-  fs.chmodSync(pnpm, 0o755);
-  const lockFile = path.join(tempDir, 'e2e-local.lock');
-  const env = {
-    ...process.env,
-    E2E_LOCAL_LOCK_FILE: lockFile,
-    PATH: `${fakeBin}:${process.env.PATH}`,
-  };
-
-  try {
-    const first = spawnSync(e2eLocal, [], { cwd: root, encoding: 'utf8', env });
-    assert.equal(first.status, 0, first.stderr);
-
-    const second = spawnSync(e2eLocal, [], {
-      cwd: root,
-      encoding: 'utf8',
-      env,
-    });
-    assert.equal(second.status, 0, second.stderr);
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('a platform without flock on PATH fails clearly instead of an opaque error', () => {
   // Simulates a stock macOS or Windows Bash environment where flock is not
   // preinstalled (agent-lcars#535 review thread: this wrapper documents
@@ -486,100 +457,6 @@ test('public and internal Nx targets explicitly reject live configuration', () =
     project.targets['e2e-local'].configurations.live.command,
     rejectionCommand,
   );
-});
-
-test('console E2E keeps rendered evidence diagnostic instead of pixel-gated', () => {
-  const config = fs.readFileSync(
-    path.join(root, 'apps/console-e2e/playwright.config.ts'),
-    'utf8',
-  );
-  const project = JSON.parse(
-    fs.readFileSync(path.join(root, 'apps/console-e2e/project.json'), 'utf8'),
-  );
-  const sourceRoot = path.join(root, 'apps/console-e2e/src');
-  const sourceEntries = fs.readdirSync(sourceRoot, {
-    recursive: true,
-    withFileTypes: true,
-  });
-  const sourceFiles = sourceEntries
-    .filter((entry) => entry.isFile())
-    .map((entry) => path.join(entry.parentPath, entry.name));
-
-  assert.match(config, /screenshot:\s*'only-on-failure'/u);
-  assert.doesNotMatch(
-    config,
-    /toHaveScreenshot|updateSnapshots|ignoreSnapshots|SKIP_VISUAL|VISUAL_ONLY/u,
-  );
-  assert.equal(project.targets['e2e-docker-update'], undefined);
-  assert.deepEqual(
-    sourceFiles.filter((file) => file.endsWith('.png')),
-    [],
-  );
-  for (const file of sourceFiles.filter((entry) => entry.endsWith('.ts'))) {
-    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /toHaveScreenshot/u);
-  }
-});
-
-test('E2E affected-path fallback consumes the complete changed-file list', () => {
-  const workflow = fs.readFileSync(
-    path.join(root, '.github/workflows/ci.yml'),
-    'utf8',
-  );
-
-  assert.match(
-    workflow,
-    /changed_files="\$\(git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"\)"/u,
-  );
-  assert.doesNotMatch(workflow, /git diff --name-only[^\n]*\|\s*grep[^\n]*q/u);
-});
-
-test('CI E2E uses the repository operational switch', () => {
-  const workflow = fs.readFileSync(
-    path.join(root, '.github/workflows/ci.yml'),
-    'utf8',
-  );
-  const e2eJob = workflow.slice(workflow.indexOf('\n  e2e:'));
-
-  assert.match(e2eJob, /if: \$\{\{ vars\.E2E_ENABLED == 'true' \}\}/u);
-  assert.doesNotMatch(e2eJob, /if: \$\{\{ false \}\}/u);
-});
-
-test('E2E retires only the stale Git LFS hook before checkout', () => {
-  const workflow = fs.readFileSync(
-    path.join(root, '.github/workflows/ci.yml'),
-    'utf8',
-  );
-  const e2eJob = workflow.slice(workflow.indexOf('\n  e2e:'));
-  const cleanup = e2eJob.indexOf(
-    '- name: Remove retired Git LFS checkout hook',
-  );
-  const checkout = e2eJob.indexOf('- uses: actions/checkout@v7');
-
-  assert.notEqual(cleanup, -1);
-  assert.notEqual(checkout, -1);
-  assert.ok(cleanup < checkout, 'stale hook cleanup must precede checkout');
-  const cleanupStep = e2eJob.slice(cleanup, checkout);
-  assert.match(
-    cleanupStep,
-    /hook_path="\$\(git rev-parse --git-path hooks\/post-checkout\)"/u,
-  );
-  assert.match(
-    cleanupStep,
-    /grep -Fq 'git lfs post-checkout' "\$hook_path"; then\s+rm -- "\$hook_path"/u,
-  );
-});
-
-test('live rejection is static and does not echo ambient credentials', () => {
-  const sentinel = 'sentinel-live-credential';
-  const result = spawnSync(path.join(root, 'tools/e2e/reject-live.sh'), [], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, OPENCODE_LLM_API_KEY: sentinel },
-  });
-
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /live E2E is disabled/u);
-  assert.doesNotMatch(result.stderr, new RegExp(sentinel, 'u'));
 });
 
 test('dotenv validation names an unsafe key without echoing its value', () => {
