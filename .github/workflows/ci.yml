@@ -226,6 +226,9 @@ jobs:
       - name: Test Nx remote-cache read failure is non-fatal (#942)
         run: bash tools/nx-remote-cache-read-failure.test.sh
 
+      - name: Test bounded Nx native binding cache (#1458)
+        run: bash tools/nx-native-file-cache.test.sh
+
       - name: Check formatting
         run: pnpm format:check
 
@@ -247,7 +250,7 @@ jobs:
           # CGO_ENABLED='0' even now that gcc is actually installed).
           # Force it rather than trust the cached auto-detection.
           CGO_ENABLED: '1'
-        run: pnpm exec nx run-many -t test typecheck build test-race --all --parallel=2
+        run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
 
       # `next build` does not execute dynamic server-route imports. Exercise
       # the actual standalone artifact so traced runtime assets (notably the

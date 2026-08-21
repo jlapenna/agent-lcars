@@ -128,7 +128,7 @@ ci_env_value() {
 # passed after `--`. A scoped `--grep` silently never reaching Playwright is
 # especially misleading during failure reproduction.
 if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
-  NX_PROJECT_JSON="$(cd "$ROOT" && pnpm exec nx show project "$PROJECT" --json 2>/dev/null || true)"
+  NX_PROJECT_JSON="$(cd "$ROOT" && ./tools/nx show project "$PROJECT" --json 2>/dev/null || true)"
   # jq's `//` alternative operator treats JSON `false` as falsy too (not just
   # null/missing), so `.forwardAllArgs // true` would silently turn a real
   # `false` back into `true`, defeating this exact check. Test presence with
@@ -335,10 +335,10 @@ fi
 decide_install_step() {
   if install_is_current; then
     INSTALL_NOTE="dependencies current (install.stamp hit); skipping pnpm install"
-    INNER_CMD="pnpm exec nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
+    INNER_CMD="./tools/nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
   else
     INSTALL_NOTE="installing dependencies (install.stamp miss)"
-    INNER_CMD="pnpm install --frozen-lockfile && echo -n ${DESIRED_STAMP} > /e2e-cache/install.stamp && pnpm exec nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
+    INNER_CMD="pnpm install --frozen-lockfile && echo -n ${DESIRED_STAMP} > /e2e-cache/install.stamp && ./tools/nx run ${PROJECT}:e2e-implementation${QUOTED_PASSTHROUGH}"
   fi
 }
 

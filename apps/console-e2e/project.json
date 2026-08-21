@@ -38,7 +38,7 @@
       ],
       "configurations": {
         "emulator": {
-          "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && pnpm exec dotenv -e \"${E2E_ENV_FILE:-.env.e2e}\" -e \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" --optional -- pnpm exec firebase emulators:exec --only auth,firestore,eventarc --project=demo-no-project \"pnpm exec nx run @agent-lcars/console-e2e:e2e-run\""
+          "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && pnpm exec dotenv -e \"${E2E_ENV_FILE:-.env.e2e}\" -e \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" --optional -- pnpm exec firebase emulators:exec --only auth,firestore,eventarc --project=demo-no-project \"./tools/nx run @agent-lcars/console-e2e:e2e-run\""
         },
         "live": {
           "command": "./tools/e2e/reject-live.sh"
@@ -58,7 +58,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && pnpm exec nx run @agent-lcars/console:bundle"
+        "command": "node tools/e2e/validate-env.mjs --require-hermetic --next-root apps/console \"${E2E_ENV_FILE:-.env.e2e}\" \"${E2E_ENV_LOCAL_FILE:-.env.e2e.local}\" && ./tools/nx run @agent-lcars/console:bundle"
       }
     },
     "e2e-local": {

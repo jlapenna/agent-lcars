@@ -207,6 +207,14 @@ SAFE_ENV=(
   "E2E_ENV_LOCAL_FILE=$TEMP_HOME/.env.e2e.local"
 )
 
+# The outer tools/nx process configured this non-secret, content-fingerprinted
+# native binding cache before Node started. Preserve only that exact cache
+# location across the hermetic env boundary so the inner Nx processes reuse
+# the binding without falling back to a worktree-hashed directory in /tmp.
+if [ -n "${NX_NATIVE_FILE_CACHE_DIRECTORY:-}" ]; then
+  SAFE_ENV+=("NX_NATIVE_FILE_CACHE_DIRECTORY=$NX_NATIVE_FILE_CACHE_DIRECTORY")
+fi
+
 case "${CI:-}" in
   1 | true) SAFE_ENV+=("CI=1") ;;
 esac
@@ -297,7 +305,7 @@ env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
 (
   exec 9>&-
   exec env -i "${SAFE_ENV[@]}" "${BUILD_ENV[@]}" \
-    pnpm exec nx run \
+    ./tools/nx run \
       "${PROJECT}:e2e-implementation:emulator"
 ) &
 CHILD_PID=$!

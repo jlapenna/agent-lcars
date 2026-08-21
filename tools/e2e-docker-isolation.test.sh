@@ -66,8 +66,8 @@ E2E_DOCKER_DRY_RUN=1 E2E_DOCKER_CACHE_DIR="$TEST_DIR/cache-hit" "$SCRIPT" "$PROJ
 # whole log, so that message can't make this assertion pass for the wrong
 # reason.
 grep -q 'install.stamp hit' "$TEST_DIR/hit.log"
-grep -qx -- 'pnpm exec nx run @agent-lcars/console-e2e:e2e-implementation' "$TEST_DIR/hit.log"
-grep -q "inner command: pnpm exec nx run ${PROJECT}:e2e-implementation\$" "$TEST_DIR/hit.log"
+grep -qx -- './tools/nx run @agent-lcars/console-e2e:e2e-implementation' "$TEST_DIR/hit.log"
+grep -q "inner command: ./tools/nx run ${PROJECT}:e2e-implementation\$" "$TEST_DIR/hit.log"
 
 # -- install.stamp invalidates when the stamp on disk doesn't match, even
 # with a populated node_modules cache (e.g. the lockfile changed since) -----
