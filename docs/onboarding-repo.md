@@ -1,191 +1,196 @@
-# Onboarding a repository to the agent fleet
+# Onboard a repository to the agent fleet
 
-The end-to-end runbook for admitting a new repo, in the order the pieces
-depend on each other. It sequences the aspect docs rather than repeating
-them; the 2026-08 onboarding of `supersprinklesracing/{www,girosf}` and
-`jlapenna/{nx-cache-server,sync-padd}` (#1325) executed exactly this path
-and is the reference example — PRs #1326 (center), homelab#734 (capacity),
-and www#2 / girosf#14 / nx-cache-server#18 / sync-padd#53 (per-repo
-bootstrap).
+Use this runbook to add a repository to Agent LCARS. It is the entry point
+for the whole process: console discovery, runner capacity, GitHub Apps,
+repository workflows, credentials, and an end-to-end dispatch.
 
-Two principles shape every step:
+It deliberately coordinates the focused runbooks rather than copying them.
+Those documents own their domains and should be updated there when the
+underlying system changes:
 
-- **Nothing is copied.** Lanes and automerge are `workflow_call` references
-  to this repo's published reusables `@main`; Agent LCARS session/claim tools
-  and public `repo-tools` repository-management commands stay independent — a
-  bootstrap PR that vendors a script body is wrong.
-- **Nothing first-party is pinned.** Every cross-repo reference is `@main`;
-  the runner image builds from fresh `main`.
+- [Runner-autoscaler onboarding](onboarding-autoscaler.md) — registration,
+  scale sets, and homelab deployment.
+- [Console and telemetry onboarding](onboarding-console-and-telemetry.md) —
+  protocol, telemetry, console configuration, and the telemetry IAM boundary.
+- [Fleet credentials](fleet-credentials.md) — credential ownership, minting,
+  and repository-scoped Codex authentication.
+- [Published actions](published-actions.md) — supported reusable workflows
+  and composite actions.
 
-## 0. Decide the shape
+## What “onboarded” means
 
-A starter repo gets ONE general-purpose runner pool
-(`homelab-autoscale-<repo>-default`, min 0 / max 2) and empty
-required-checks governance if its CI is nascent. Split ci/agent/e2e pools
-and real required checks arrive later, driven by measured demand — never
-copied ahead of it.
+A repository is onboarded only when all of the following are true:
 
-## 1. Center: make the console watch the repo (this repo)
+1. The fleet and autoscaler GitHub Apps can access the repository.
+2. A matching self-hosted runner scale set accepts jobs.
+3. The repository has thin workflow callers, its required configuration, and
+   its label contract.
+4. The console knows to watch the repository; Claude telemetry is wired when
+   that lane is enabled.
+5. A real issue dispatch reaches the intended runner and leaves useful,
+   inspectable evidence.
 
-One PR here (#1326's shape):
+Merging configuration or seeing a green workflow is not sufficient evidence
+on its own.
 
-- `config/github-labels.json`: a repo entry mirroring homelab's
-  declaration (the `type:*`/`status:*`/`agent:*`/`review:*` core plus
-  `migrations`/`remove` cleanup lists).
-- `apps/console/apphosting.yaml`: add the repo to both
-  `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (comma list) and
-  `AGENT_LCARS_WATCHED_REPOS` (JSON array; alias = repo name).
-- `.github/workflows/label-contract-audit.yml`: add the repo to the fleet
-  matrix (without this the manifest entry never syncs).
-- `docs/published-actions.md`: extend the consumer enumeration.
+## Before you start
 
-Merging deploys the console automatically (`deploy-console.yml` off green
-main CI).
+Choose the owner, repository, and first lane(s). Confirm the repo is not
+already covered by the relevant GitHub App installations, console config, or
+autoscaler registration. Reuse the shared runner image and start with one
+general-purpose pool unless measured workload needs a separate pool.
 
-## 2. Capacity: runner registration (jlapenna/homelab)
+This work normally spans three independent changes:
 
-One PR there (homelab#734's shape) — see
-[onboarding-autoscaler.md](onboarding-autoscaler.md) for the full model:
+| Surface           | Owner              | Outcome                                                                   |
+| ----------------- | ------------------ | ------------------------------------------------------------------------- |
+| Agent LCARS       | this repository    | Console discovery, labels, and published-action inventory                 |
+| Homelab           | `jlapenna/homelab` | Autoscaler registration, runner capacity, and any approved infrastructure |
+| Target repository | new repository     | Thin workflow callers, hooks, configuration, and validation               |
 
-- `github-runner-autoscaler/orchestrator.yml`: a `registrations:` entry on
-  the **autoscaler App** (client `Iv23lir3t9e2k4RAkWxw`, key already on
-  the controller) with one starter scale set per §0. Installation IDs:
-  `154210710` (jlapenna account), `154210731` (supersprinklesracing).
-- `terraform/github_rulesets.tf`: a `protect-main` module for the repo.
-  With `required_checks = []` the module emits no required-status-checks
-  rule at all (a check no workflow reports would brick every PR) while
-  keeping linear history, no force-push/deletion, and thread resolution.
-  `terraform apply` is a separate maintainer act.
+Use a dedicated worktree for every repository change. Do not make direct
+deployments, Terraform/IAM changes, Firestore writes, or secret-value changes
+without the specific maintainer approval those operations require. Never
+print, commit, or paste a credential value into an issue, PR, terminal log,
+or chat.
 
-Deployment is automatic: `merge-to-live` on the canonical controller
-redeploys the autoscaler within minutes of the merge. Verify the listener:
+## 1. Add the repository to Agent LCARS
 
-```bash
-ssh homelab@homelab 'docker logs runner-autoscaler --since 5m 2>&1 |
-  grep "scale_set=homelab-autoscale-<repo>-default"'
-```
+Open one PR in this repository to make the control plane recognize the new
+repository:
 
-A polling `Getting next message` line means registration worked. If it
-errors instead, the autoscaler App installation doesn't cover the repo yet
-(§3).
+- Add the repository’s label manifest to `config/github-labels.json`, using
+  the fleet’s standard `type:*`, `status:*`, `agent:*`, and `review:*` labels.
+- Add it to both console settings in `apps/console/apphosting.yaml`:
+  `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` and
+  `AGENT_LCARS_WATCHED_REPOS`. Use the repository name as its console alias
+  unless a distinct human-facing alias is needed.
+- Add it to the matrix in `.github/workflows/label-contract-audit.yml`; a
+  manifest entry without this matrix entry will not be reconciled.
+- Update the consumer list in `docs/published-actions.md`.
 
-## 3. App installations (GitHub UI, maintainer)
+The normal deployment path deploys the console after green CI on `main`.
+Do not run a direct deploy merely to accelerate this step.
 
-Both Apps use "Only select repositories", and GitHub's API for membership
-only accepts App _user_ tokens — so this is UI work:
+## 2. Give it runner capacity
 
-- **Fleet App** (`Iv23liO6X8pLJLcTFzyv` — lanes, claims, console):
-  [jlapenna installation](https://github.com/settings/installations/150568943) ·
-  [supersprinklesracing installation](https://github.com/organizations/supersprinklesracing/settings/installations/150568991)
-- **Autoscaler App** (`Iv23lir3t9e2k4RAkWxw` — runner registration):
-  installations `154210710` / `154210731` under the same two accounts.
+Follow [runner-autoscaler onboarding](onboarding-autoscaler.md) in the
+canonical homelab repository. Add a registration for the target repository
+and a starter scale set named and labeled for that repository. A practical
+starting point is an ephemeral, general-purpose pool with a minimum of zero
+and a small maximum; split pools only when workload duration or isolation
+demands it. Add the repository to homelab's `protect-main` ruleset module as
+well. A nascent repository may begin with no required checks, but it must
+still retain linear history, protection against force-push and deletion, and
+required review-thread resolution. Terraform plan/apply remains a separately
+approved maintainer operation.
 
-Verify coverage without guessing (the fleet App's key is in Secret
-Manager): mint an installation token and list
-`/installation/repositories` — the 2026-08 onboarding found three of four
-repos already covered and only `www` missing, so check before clicking.
+The registration uses the autoscaler GitHub App, not the fleet App. Its App
+key belongs in the homelab encrypted secret store; it never belongs in this
+repository or the target repository. After the homelab change deploys, verify
+the real listener is polling for the new scale set. A configuration merge or
+healthy container alone does not prove registration coverage.
 
-## 4. Repo bootstrap: thin callers + hooks (the new repo)
+## 3. Install both GitHub Apps
 
-One PR in the target repo (the post-de-vendoring shape of www#2 /
-girosf#14 / nx-cache-server#18 / sync-padd#53):
+A maintainer performs this in GitHub’s App-installation UI. Add the target
+repository to both installations:
 
-- `.github/workflows/{claude,codex,opencode}.yml`: thin callers of
-  `jlapenna/agent-lcars/.github/workflows/agent-lane-<lane>.yml@main`.
-  The caller owns only what `workflow_call` cannot carry: the
-  `workflow_dispatch` input contract, run-name, permissions, per-issue
-  concurrency, this repo's variable/secret spellings, and the
-  `agent-fallback-finalize.yml@main` callback. Copy an existing caller
-  (homelab's are the cleanest) and change only repo-specific values.
-- `.github/workflows/agent-automerge.yml`: thin caller of
-  `agent-automerge-reusable.yml@main`. Inert until `AGENT_BOT_LOGINS`
-  exists — it skips cleanly, not red.
-- `.github/workflows/repo-validation.yml`: a thin caller of
-  `repo-validation.yml@main` —
-  it owns only triggers, permissions, and concurrency. Keep it on
-  GitHub-hosted runners (the reusable's default): it must stay
-  green-capable before self-hosted capacity exists. Its composed check
-  name is `validate / repository validation`.
-- `.claude/settings.json` + `.codex/hooks.json`: the issue-workflow
-  guardrail hook invoking the PATH command, guarded so uninstalled
-  machines degrade quietly:
+- **Fleet App**: dispatch lanes, claims, comments, pull requests, labels, and
+  console reads.
+- **Autoscaler App**: runner registration and scale-set listener.
 
-  ```
-  guard=$(command -v fleet-codex-issue-guardrail || true); if [ -n "$guard" ]; then fleet-codex-issue-guardrail; fi; exit 0
-  ```
+Use least privilege: add the target repository while retaining the
+installation's other approved repositories. The selected-repository list is
+the installation's complete access set, so replacing it with just the new
+repository would silently revoke access from existing fleet members. Verify
+membership with an installation token and `/installation/repositories` rather
+than assuming that an account-wide installation includes it. The exact App
+identifiers and installation guidance live in
+[fleet credentials](fleet-credentials.md).
 
-- Git hooks (husky/pre-commit, whatever the repo uses):
-  `if command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree; fi`
-- The managed runner image supplies the shared OpenCode provider and standing
-  instructions at the runner user's global configuration path. Add a project
-  `opencode.json` only for a genuinely repository-specific setting; OpenCode
-  loads it after the managed global configuration.
-- `AGENTS.md`: distinguish Agent LCARS's agent-specific `fleet-*` commands
-  from public `jlapenna/repo-tools` `repo-*` repository commands, and link
-  rather than copy the public plugin's worktree-hygiene guidance.
+## 4. Bootstrap the target repository
 
-**No vendored scripts or synchronized copies.** A new repo copies nothing
-from this one — it reads the fleet's conventions here and invokes shared
-artifacts directly. If a repo has stale pre-#1328 script copies on its main,
-delete them in this PR.
+Open a target-repository PR that consumes the fleet’s published artifacts;
+do not vendor copies of their implementation.
 
-## 5. Provision vars and secrets
+- Add thin callers for the enabled Claude, Codex, and/or OpenCode lanes. They
+  call the reusable workflows from `jlapenna/agent-lcars@main` and retain only
+  repository-specific triggers, permissions, concurrency, inputs, and
+  configuration.
+- Add the coupled `agent-fallback-finalize.yml@main` job on GitHub-hosted
+  infrastructure to each enabled lane caller. It records the completion
+  observation when a self-hosted worker fails before its reporting steps;
+  omitting it leaves an otherwise completed attempt without a durable outcome.
+- Add the thin `agent-automerge` and `repo-validation` callers. Keep
+  repository validation runnable on GitHub-hosted runners so it can establish
+  a baseline before self-hosted capacity is healthy.
+- Add the issue-workflow guardrail hook to `.claude/settings.json` and
+  `.codex/hooks.json`, and the `repo-require-worktree` check to the
+  repository’s Git hook mechanism. The published workflow documentation owns
+  the exact supported caller shapes.
+- Add or refresh `AGENTS.md`. It should link to the shared fleet protocol and
+  distinguish fleet-specific commands from public `repo-tools` commands; it
+  must not copy either instruction set into the repository.
+- Do not add a project `opencode.json` unless a setting is genuinely local to
+  that repository. The shared runner image already supplies its fleet-wide
+  OpenCode configuration.
 
-Automatable from any session (values never echoed):
+For Claude telemetry, follow the separate [console and telemetry
+onboarding](onboarding-console-and-telemetry.md) runbook. Telemetry is
+currently Claude-only; do not wire its fail-soft sidecar into Codex or
+OpenCode workflows expecting transcript data.
 
-```bash
-r=<owner>/<repo>; short=${r#*/}
-gh variable set AGENT_LCARS_CLIENT_ID -R "$r" --body 'Iv23liO6X8pLJLcTFzyv'
-gh variable set AGENT_FLEET_LOGIN     -R "$r" --body 'agent-lcars-bot'
-gh variable set MAINTAINER_LOGIN      -R "$r" --body 'jlapenna'
-gh variable set AGENT_BOT_LOGINS      -R "$r" --body '["claude[bot]","agent-lcars[bot]"]'
-gh variable set AGENT_RUNNER_LABEL    -R "$r" --body "${short}-default"
-gcloud secrets versions access latest --secret=AGENT_LCARS_APP_PRIVATE_KEY \
-  --project=agent-lcars | gh secret set AGENT_LCARS_PRIVATE_KEY -R "$r"
-secrets-cat | grep '^OPENCODE_LLM_API_KEY=' | cut -d= -f2- |
-  gh secret set OPENCODE_LLM_API_KEY -R "$r"
-```
+## 5. Configure repository variables and secrets
 
-Then verify by listing, not by trusting the loop (GitHub 503s drop
-writes silently): `gh variable list -R "$r"` should show 5,
-`gh secret list -R "$r"` should show 2.
+Configure the shared workflow contract in the target repository. The
+currently required repository variables are:
 
-The claude lane needs nothing further: its subscription token is read
-from Secret Manager at run time and no repo carries a copy (#1350). The
-repo does need `permissions: id-token: write` on the calling job, and to
-appear in `local.github_repositories` (`infra/terraform/main.tf`) so the
-shared `github` pool admits its OIDC token.
+| Variable                | Purpose                                          |
+| ----------------------- | ------------------------------------------------ |
+| `AGENT_LCARS_CLIENT_ID` | Fleet App token minting                          |
+| `AGENT_FLEET_LOGIN`     | Fleet claim identity                             |
+| `MAINTAINER_LOGIN`      | Human escalation and review routing              |
+| `AGENT_BOT_LOGINS`      | REST-shaped bot identities allowed to auto-merge |
+| `AGENT_RUNNER_LABEL`    | The target repository’s autoscaler label         |
 
-The maintainer-mintable remainder — the per-repo Codex `auth.json`
-lineage (+ its WIF plumbing) and any new LiteLLM key — is
-[fleet-credentials.md](fleet-credentials.md). Until those exist the
-corresponding lanes fail at a specific, named step (Codex: "Restore
-subscription authentication") — that exact failure is the expected dark
-state, not a bug.
+The enabled lane determines the required secrets and cloud admission. Use
+[fleet credentials](fleet-credentials.md) as the source of truth for exact
+values, write paths, and ownership:
 
-## 6. Console + telemetry integration detail
+- Claude reads the fleet’s shared subscription token at run time, but the new
+  repository must be admitted to the shared workload-identity pool.
+- Codex requires an independent, repository-scoped `auth.json` lineage and
+  its own restricted cloud identity; never reuse another repository’s object.
+- OpenCode needs its repository Actions secret from the approved encrypted
+  source.
 
-[onboarding-console-and-telemetry.md](onboarding-console-and-telemetry.md)
-covers the agent-protocol expectations (takeover comments name
-`fleet-claude-agent-session`), telemetry sidecar wiring, and the IAM
-grant that needs explicit maintainer approval.
+List variable and secret _names_ after provisioning to confirm every write
+landed. Do not retrieve values as a verification shortcut.
 
-## 7. Prove it end to end
+## 6. Prove the complete path
 
-Don't declare the repo onboarded on green config — run one real dispatch:
+Use a real, suitably scoped issue rather than a synthetic success check.
 
-1. Label a real issue `agent:opencode` (its LiteLLM key is automatable
-   from the age store, so it works without a maintainer mint).
-2. Watch the run: the run-name must carry the orchestrator's
-   `[dispatch:g<gen>:<intent>]` marker (a bare run-name means the
-   dispatch bypassed the control plane), and the job must land on
-   `<repo>-default`.
-3. Repeat with `agent:claude`. Since #1350 that needs no per-repo
-   credential work — the lane reads the fleet's one canonical
-   subscription token at run time — so it only needs the repo admitted by
-   the shared `github` WIF pool (§5).
+1. Apply exactly one `agent:*` routing label for an enabled lane.
+2. Confirm the dispatched workflow’s run name includes the control-plane
+   dispatch marker and that its job runs on the target repository’s scale-set
+   label.
+3. Confirm the agent acknowledges and reports through the shared protocol:
+   claim, progress, handoff/parking when needed, and a durable deliverable.
+4. For Claude, confirm the console shows the live session and its finalized
+   transcript after the run. For other lanes, confirm the expected workflow
+   and GitHub evidence without treating absent Claude telemetry as a failure.
+5. If a lane is intentionally not credentialed yet, record its first named
+   failing step as the known dark state. Do not call it onboarded for that
+   lane until its credential and dispatch are proven.
 
-The 2026-08 onboarding's first real dispatch (girosf#15) validated
-admission, listener, token mint, and failure reporting in one run —
-before any lane credential existed. That's the bar: the machinery proves
-itself even while lanes are dark.
+## Handoff checklist
+
+Before closing the onboarding work, record links to the three PRs, their
+merged commits, the App-membership verification, listener evidence, variable
+and secret-name inventory, and the test dispatch. State which lanes are
+fully live, which are intentionally dark, and any maintainer-owned follow-up.
+
+This evidence makes the next repository onboarding faster without turning an
+old rollout’s incidental identifiers into a new repository’s instructions.
