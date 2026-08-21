@@ -3,10 +3,10 @@
 GitHub represents the same App installation in two formats. Agent LCARS uses
 the REST format as its canonical comparison value.
 
-| API surface | Format | Example |
-| --- | --- | --- |
-| REST, Actions event payloads, Octokit | `{app-slug}[bot]` | `agent-lcars[bot]` |
-| GraphQL and `gh pr`/`gh issue` JSON author fields | `app/{app-slug}` | `app/agent-lcars` |
+| API surface                                       | Format            | Example            |
+| ------------------------------------------------- | ----------------- | ------------------ |
+| REST, Actions event payloads, Octokit             | `{app-slug}[bot]` | `agent-lcars[bot]` |
+| GraphQL and `gh pr`/`gh issue` JSON author fields | `app/{app-slug}`  | `app/agent-lcars`  |
 
 ## Rule
 
@@ -24,12 +24,12 @@ Do not compare a raw `app/<slug>` value with a REST login.
 
 ## Maintained callsites
 
-| Callsite | Required format |
-| --- | --- |
-| Actions event payload checks | REST |
-| `agent-automerge-reusable.yml` PR-author lookup | REST |
-| Console GitHub client | REST |
-| `verify-deliverable` bot filtering | REST; filter on user type where a specific login is unnecessary |
+| Callsite                                        | Required format                                                 |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| Actions event payload checks                    | REST                                                            |
+| `agent-automerge-reusable.yml` PR-author lookup | REST                                                            |
+| Console GitHub client                           | REST                                                            |
+| `verify-deliverable` bot filtering              | REST; filter on user type where a specific login is unnecessary |
 
 Before adding a callsite, identify the API that produced the value and
 normalize it at that boundary.

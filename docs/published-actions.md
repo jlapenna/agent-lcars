@@ -7,40 +7,40 @@ their operating constraints.
 
 ## Support tiers
 
-| Tier | Consumer contract |
-| --- | --- |
+| Tier          | Consumer contract                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ |
 | **Published** | Cross-repository use is supported. Composite-action surfaces are guarded by `published-actions.contract.test.mjs`. |
-| **Internal** | Used only by Agent LCARS workflows. No compatibility promise. |
-| **Coupled** | Bound to the Agent LCARS dispatch or runner trust boundary. Do not consume. |
+| **Internal**  | Used only by Agent LCARS workflows. No compatibility promise.                                                      |
+| **Coupled**   | Bound to the Agent LCARS dispatch or runner trust boundary. Do not consume.                                        |
 
 ## Published composite actions
 
-| Action | Purpose |
-| --- | --- |
-| `mint-agent-token` | Mint a scoped Agent LCARS App installation token. |
-| `claim-issue` | Claim an issue and optionally post its pickup comment. |
-| `agent-setup` | Configure agent Git identity, timestamps, and optional Nx cache. |
-| `verify-agent-identity` | Verify the minted App identity and push credential. |
-| `prepare-agent-dispatch` | Write routed issue context for a headless agent. |
-| `setup-opencode` | Resolve, cache, and install a versioned OpenCode CLI. |
-| `verify-deliverable` | Require an exact attempt marker on a deliverable artifact. |
-| `report-failure` | Record failure in the run log for the hosted finalizer. |
-| `snapshot-enforcement-scripts` | Freeze post-agent gate scripts before the agent runs. |
-| `assert-repo-vars` | Report all missing required repository variables. |
-| `merge-live-base` | Merge the live base into a PR head before validation. |
-| `setup-nx-remote-cache` | Configure trusted Nx jobs for the shared L2 cache. |
-| `deploy-verify` | Poll a deployed URL and optionally annotate deployment status. |
-| `request-control-plane` | Send an OIDC-authenticated request to a control-plane endpoint. |
+| Action                         | Purpose                                                          |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `mint-agent-token`             | Mint a scoped Agent LCARS App installation token.                |
+| `claim-issue`                  | Claim an issue and optionally post its pickup comment.           |
+| `agent-setup`                  | Configure agent Git identity, timestamps, and optional Nx cache. |
+| `verify-agent-identity`        | Verify the minted App identity and push credential.              |
+| `prepare-agent-dispatch`       | Write routed issue context for a headless agent.                 |
+| `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI.            |
+| `verify-deliverable`           | Require an exact attempt marker on a deliverable artifact.       |
+| `report-failure`               | Record failure in the run log for the hosted finalizer.          |
+| `snapshot-enforcement-scripts` | Freeze post-agent gate scripts before the agent runs.            |
+| `assert-repo-vars`             | Report all missing required repository variables.                |
+| `merge-live-base`              | Merge the live base into a PR head before validation.            |
+| `setup-nx-remote-cache`        | Configure trusted Nx jobs for the shared L2 cache.               |
+| `deploy-verify`                | Poll a deployed URL and optionally annotate deployment status.   |
+| `request-control-plane`        | Send an OIDC-authenticated request to a control-plane endpoint.  |
 
 ## Published reusable workflows
 
-| Workflow | Purpose |
-| --- | --- |
-| `renovate-auto-approve.yml` | Approve a Renovate PR with a minted App token. |
-| `agent-automerge-reusable.yml` | Arm auto-merge and restore the post-merge chain. |
-| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts. |
-| `repo-validation.yml` | Run actionlint against the caller's workflow tree. |
-| `codeql-reusable.yml` | Run the caller-configured CodeQL analysis job. |
+| Workflow                                 | Purpose                                            |
+| ---------------------------------------- | -------------------------------------------------- |
+| `renovate-auto-approve.yml`              | Approve a Renovate PR with a minted App token.     |
+| `agent-automerge-reusable.yml`           | Arm auto-merge and restore the post-merge chain.   |
+| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts.              |
+| `repo-validation.yml`                    | Run actionlint against the caller's workflow tree. |
+| `codeql-reusable.yml`                    | Run the caller-configured CodeQL analysis job.     |
 
 The lane shims are the published interface. They delegate to the internal
 parameterized `agent-lane.yml`; callers must not call that internal workflow
@@ -55,10 +55,10 @@ Do not use it through `uses:` after the agent step.
 
 ## Not consumer surfaces
 
-| Tier | Names |
-| --- | --- |
-| Internal | `setup-node-pnpm`, `stamp-attempt-marker`, `agent-handoff`, `archive-opencode-trajectory` |
-| Coupled | `dispatch-bootstrap`, `telemetry-start`, `telemetry-finalize`, `agent-fallback-finalize.yml` |
+| Tier     | Names                                                                                        |
+| -------- | -------------------------------------------------------------------------------------------- |
+| Internal | `setup-node-pnpm`, `stamp-attempt-marker`, `agent-handoff`, `archive-opencode-trajectory`    |
+| Coupled  | `dispatch-bootstrap`, `telemetry-start`, `telemetry-finalize`, `agent-fallback-finalize.yml` |
 
 `agent-fallback-finalize.yml` is a dispatch-protocol component, not a
 general-purpose reusable workflow. See [Agent dispatch ownership](lifecycle-systems.md).
@@ -112,9 +112,9 @@ workflow-contract tests; review their `workflow_call` surfaces as public API.
 
 ## Related documents
 
-| Topic | Document |
-| --- | --- |
-| Dispatch and worker ownership | [Agent dispatch ownership](lifecycle-systems.md) |
-| Credential and variable boundary | [Deployment boundary](deployment-boundary.md) |
-| Fleet protocol | [Agent protocol](../.agents/skills/agent-protocol/reference/agent-protocol.md) |
-| Workstation agent tools | `packages/fleet-tools/` |
+| Topic                            | Document                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| Dispatch and worker ownership    | [Agent dispatch ownership](lifecycle-systems.md)                               |
+| Credential and variable boundary | [Deployment boundary](deployment-boundary.md)                                  |
+| Fleet protocol                   | [Agent protocol](../.agents/skills/agent-protocol/reference/agent-protocol.md) |
+| Workstation agent tools          | `packages/fleet-tools/`                                                        |
