@@ -204,19 +204,19 @@ export function QueueWorkspace({
 
   // Gmail-style list keys, global while the Inbox is mounted: j/k move the
   // selection (which IS navigation here - the detail pane follows ?item=),
-  // '/' jumps to search. Guarded off inside inputs/textareas and when any
+  // '/' jumps to search. Guarded off inside interactive controls and when any
   // modifier is held; arrows are deliberately left alone so they keep
   // scrolling the panes.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
+      const target = event.target;
       if (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable)
+        target instanceof Element &&
+        target.closest(
+          'a[href], button, input, select, textarea, summary, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="textbox"], [role="combobox"], [role="listbox"], [role="slider"], [role="spinbutton"], [role="switch"]',
+        )
       ) {
         return;
       }
