@@ -125,7 +125,9 @@ jobs:
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       nx-cache-url: ${{ vars.NX_CACHE_URL }}
-      pnpm-store-dir: /home/runner/_work/.pnpm-store
+      # Use the image's normal pnpm store: matching package content comes from
+      # its immutable lower-layer seed, while misses stay in this ephemeral
+      # runner container's private writable layer.
       # Must track the agent step's own timeout, and prepare.sh fails
       # closed if these are not ordered inside it. The artifact checkpoint
       # is deliberately early: the push credential dies before the step
