@@ -39,7 +39,14 @@ export function RepoScopeBadge({
       variant={active ? 'filled' : 'outline'}
       color="gray"
       size="xs"
-      style={{ flexShrink: 0, cursor: 'pointer' }}
+      style={{ flexShrink: 0, cursor: 'pointer', maxWidth: 112 }}
+      styles={{
+        label: {
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        },
+      }}
       data-testid="repo-badge"
       data-active={active ? '' : undefined}
       title={

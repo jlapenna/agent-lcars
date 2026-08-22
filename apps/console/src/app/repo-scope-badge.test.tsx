@@ -30,6 +30,21 @@ describe('RepoScopeBadge', () => {
     expect(badge).not.toHaveAttribute('data-active');
   });
 
+  it('keeps long repository labels compact without losing the full name', () => {
+    renderBadge();
+
+    const badge = screen.getByTestId('repo-badge');
+    expect(badge).toHaveStyle({ maxWidth: '112px' });
+    expect(badge).toHaveAttribute('title', 'Show only repo-b');
+
+    const label = badge.querySelector('.mantine-Badge-label');
+    expect(label).toHaveStyle({
+      minWidth: '0',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    });
+  });
+
   it('drops a selected item when scoping, so a foreign selection cannot ride along', () => {
     mockPathname = '/inbox';
     mockSearch = 'item=org-a%2Frepo-a%237&sort=newest';
