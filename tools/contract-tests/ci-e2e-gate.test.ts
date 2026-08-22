@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
 interface Workflow {
-  jobs?: Record<string, { if?: string }>;
+  jobs?: Record<
+    string,
+    { if?: string; name?: string; steps?: Array<{ name?: string }> }
+  >;
 }
 
 describe('CI E2E operational gate', () => {
@@ -14,5 +17,11 @@ describe('CI E2E operational gate', () => {
     ) as Workflow;
 
     expect(workflow.jobs?.e2e?.if).toBe("${{ vars.E2E_ENABLED == 'true' }}");
+    expect(workflow.jobs?.e2e?.name).toBe('E2E');
+    expect(workflow.jobs?.e2e?.steps).toContainEqual(
+      expect.objectContaining({
+        name: 'Run console e2e suite [full-suite]',
+      }),
+    );
   });
 });

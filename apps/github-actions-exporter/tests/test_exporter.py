@@ -148,17 +148,81 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
         self.assertIn(
-            'github_actions_jobs_total{conclusion="success",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
             metrics,
         )
         self.assertIn(
-            'github_actions_job_queue_duration_seconds_sum{job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 15.0',
+            'github_actions_job_queue_duration_seconds_sum{execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 15.0',
             metrics,
         )
         self.assertIn(
-            'github_actions_job_duration_seconds_sum{job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 30.0',
+            'github_actions_job_duration_seconds_sum{execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 30.0',
             metrics,
         )
+
+    def test_full_suite_marker_separates_execution_and_short_circuit(self):
+        run = workflow_run(path=".github/workflows/ci.yml")
+        self.database.upsert_run("jlapenna/agent-lcars", run)
+        self.database.upsert_jobs(
+            "jlapenna/agent-lcars",
+            run,
+            [
+                workflow_job(
+                    id=1,
+                    name="E2E",
+                    steps=[
+                        {
+                            "name": "Run console e2e suite [full-suite]",
+                            "conclusion": "success",
+                        }
+                    ],
+                ),
+                workflow_job(
+                    id=2,
+                    name="E2E",
+                    steps=[
+                        {
+                            "name": "Run console e2e suite [full-suite]",
+                            "conclusion": "skipped",
+                        }
+                    ],
+                ),
+            ],
+        )
+
+        metrics = self.metrics()
+
+        self.assertIn('execution="full_suite",job="E2E"', metrics)
+        self.assertIn('execution="short_circuit",job="E2E"', metrics)
+        self.assertNotIn('execution="unknown",job="E2E"', metrics)
+
+    def test_unfinished_marked_job_stays_unknown(self):
+        job = workflow_job(
+            status="in_progress",
+            conclusion=None,
+            completed_at=None,
+            steps=[
+                {
+                    "name": "Run console e2e suite [full-suite]",
+                    "conclusion": None,
+                }
+            ],
+        )
+
+        self.assertEqual(exporter.job_execution(job), "unknown")
+
+    def test_setup_failure_before_marked_step_is_not_a_short_circuit(self):
+        job = workflow_job(
+            conclusion="failure",
+            steps=[
+                {
+                    "name": "Run console e2e suite [full-suite]",
+                    "conclusion": "skipped",
+                }
+            ],
+        )
+
+        self.assertEqual(exporter.job_execution(job), "unknown")
 
     def test_negative_upstream_timestamps_are_excluded_from_histograms(self):
         run = workflow_run(
@@ -378,7 +442,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
 
         self.assertFalse(self.database.jobs_need_refresh("jlapenna/homelab", run))
         self.assertIn(
-            'github_actions_jobs_total{conclusion="success",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
             self.metrics(),
         )
 
@@ -438,7 +502,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.assertEqual(api.job_requests, 1)
         self.assertEqual(self.database.pending_job_refresh_run_ids(repository), set())
         self.assertIn(
-            'github_actions_jobs_total{conclusion="success",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
+            'github_actions_jobs_total{conclusion="success",execution="unknown",job="repository validation",repository="jlapenna/homelab",runner_group="Default",workflow="validate"} 1.0',
             self.metrics(),
         )
 
