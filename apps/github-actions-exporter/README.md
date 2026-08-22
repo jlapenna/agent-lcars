@@ -11,6 +11,15 @@ high-cardinality time-series store. Workflows use their stable YAML filename;
 job labels are capped at 100 distinct values per repository/workflow and any
 additional dynamic names are grouped under `__other__`.
 
+Jobs may opt into full-suite performance tracking by adding the literal
+`[full-suite]` marker to the step that runs the suite. Completed jobs export
+one of three bounded `execution` values: `full_suite` when that step ran,
+`short_circuit` when it was skipped, and `unknown` for jobs without the marker
+or legacy rows collected before this dimension existed. The dimension is
+available on completed-job counts and duration/queue histograms. Queue
+histograms intentionally include completed jobs only, so a job cannot move
+between `unknown` and its final execution series while it is running.
+
 ## Why Agent LCARS owns a dedicated exporter
 
 Existing projects cover adjacent use cases but not this deployment's contract.
@@ -58,6 +67,107 @@ The homelab deployment reuses the existing vault-managed read token already
 rendered for Glance. The exporter serves the last successfully collected data
 if GitHub is temporarily unavailable; `github_actions_exporter_*` metrics make
 API errors and stale repository refreshes observable.
+
+## Full-suite performance queries
+
+Agent LCARS marks the real console browser step, while retaining `E2E` as its
+required GitHub status context. The following selectors exclude unaffected-PR
+short circuits and unassigned runner-label migration. Use `[14d]` in place of
+`[7d]` for the longer dashboard window.
+
+Full-suite execution p50 and p95 use the same histogram with quantiles `0.50`
+and `0.95`:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    increase(github_actions_job_duration_seconds_bucket{
+      repository="jlapenna/agent-lcars",
+      workflow="ci",
+      job="E2E",
+      runner_group="Default",
+      execution="full_suite"
+    }[7d])
+  )
+)
+```
+
+Full-suite queue p95 is deliberately separate from execution time:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    increase(github_actions_job_queue_duration_seconds_bucket{
+      repository="jlapenna/agent-lcars",
+      workflow="ci",
+      job="E2E",
+      runner_group="Default",
+      execution="full_suite"
+    }[7d])
+  )
+)
+```
+
+Full-suite execution mean uses the histogram sum and count:
+
+```promql
+sum(increase(github_actions_job_duration_seconds_sum{
+  repository="jlapenna/agent-lcars",
+  workflow="ci",
+  job="E2E",
+  runner_group="Default",
+  execution="full_suite"
+}[7d]))
+/
+sum(increase(github_actions_job_duration_seconds_count{
+  repository="jlapenna/agent-lcars",
+  workflow="ci",
+  job="E2E",
+  runner_group="Default",
+  execution="full_suite"
+}[7d]))
+```
+
+Always pair percentiles with the sample count:
+
+```promql
+sum(increase(github_actions_job_duration_seconds_count{
+  repository="jlapenna/agent-lcars",
+  workflow="ci",
+  job="E2E",
+  runner_group="Default",
+  execution="full_suite"
+}[7d]))
+```
+
+Completed full-suite success rate:
+
+```promql
+sum(increase(github_actions_jobs_total{
+  repository="jlapenna/agent-lcars",
+  workflow="ci",
+  job="E2E",
+  runner_group="Default",
+  execution="full_suite",
+  conclusion="success"
+}[7d]))
+/
+sum(increase(github_actions_jobs_total{
+  repository="jlapenna/agent-lcars",
+  workflow="ci",
+  job="E2E",
+  runner_group="Default",
+  execution="full_suite"
+}[7d]))
+```
+
+Compare p50, mean, and p95 after at least 20 full-suite samples or 14 days,
+whichever is later. Treat execution and queue regressions independently;
+investigate sustained execution p95 above 11 minutes or queue p95 above two
+minutes. The five-run pre-change baseline is recorded in Agent LCARS issue
+`#1474`.
 
 ## GitHub API quota metrics
 

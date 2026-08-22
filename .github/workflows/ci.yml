@@ -464,7 +464,11 @@ jobs:
       # step this converged away. The sandbox's preinstalled browsers cross
       # the boundary via the PLAYWRIGHT_BROWSERS_PATH carve-out the script
       # forwards when the image sets it.
-      - name: Run console e2e suite
+      # The bounded marker is consumed by the GitHub Actions exporter after
+      # this job completes. Keep it on the real suite step so performance
+      # telemetry cannot claim a full execution when the browser suite was
+      # skipped or never started.
+      - name: Run console e2e suite [full-suite]
         if: steps.e2e-scope.outputs.run == 'true'
         run: ./tools/e2e-local.sh
 

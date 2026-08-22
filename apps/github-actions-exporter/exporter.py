@@ -46,6 +46,7 @@ MAX_JOB_LABELS_PER_WORKFLOW = 100
 OVERFLOW_JOB_LABEL = "__other__"
 MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW = 100
 OVERFLOW_CONCURRENCY_GROUP_LABEL = "__other__"
+FULL_SUITE_STEP_MARKER = "[full-suite]"
 PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
 ONE_SECOND = timedelta(seconds=1)
@@ -103,6 +104,31 @@ def workflow_label(run: dict[str, Any]) -> str:
     if workflow_id:
         return f"workflow-{workflow_id}"
     return metric_label(run.get("name"))
+
+
+def job_execution(job: dict[str, Any]) -> str:
+    """Classify an opt-in full-suite job using one bounded dimension."""
+    if metric_label(job.get("status")) != "completed":
+        return "unknown"
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return "unknown"
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if FULL_SUITE_STEP_MARKER not in metric_label(step.get("name"), ""):
+            continue
+        step_conclusion = metric_label(step.get("conclusion"))
+        if step_conclusion == "skipped":
+            return (
+                "short_circuit"
+                if metric_label(job.get("conclusion")) == "success"
+                else "unknown"
+            )
+        if step_conclusion in {"success", "failure", "cancelled"}:
+            return "full_suite"
+        return "unknown"
+    return "unknown"
 
 
 @dataclass(frozen=True)
@@ -510,6 +536,7 @@ class Database:
                     started_at REAL,
                     completed_at REAL,
                     runner_group TEXT NOT NULL,
+                    execution TEXT NOT NULL DEFAULT 'unknown',
                     concurrency_group TEXT NOT NULL DEFAULT 'none',
                     PRIMARY KEY (repository, id)
                 );
@@ -535,6 +562,10 @@ class Database:
             if "concurrency_group" not in columns:
                 self.connection.execute(
                     "ALTER TABLE jobs ADD COLUMN concurrency_group TEXT NOT NULL DEFAULT 'none'"
+                )
+            if "execution" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN execution TEXT NOT NULL DEFAULT 'unknown'"
                 )
             active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
             # A completed workflow cannot still have a queued/running job. GitHub's
@@ -861,8 +892,8 @@ class Database:
                     INSERT INTO jobs (
                         repository, id, run_id, workflow, name, status,
                         conclusion, created_at, started_at, completed_at,
-                        runner_group, concurrency_group
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        runner_group, execution, concurrency_group
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(repository, id) DO UPDATE SET
                         run_id = excluded.run_id,
                         workflow = excluded.workflow,
@@ -873,6 +904,7 @@ class Database:
                         started_at = excluded.started_at,
                         completed_at = excluded.completed_at,
                         runner_group = excluded.runner_group,
+                        execution = excluded.execution,
                         concurrency_group = excluded.concurrency_group
                     """,
                     (
@@ -887,6 +919,7 @@ class Database:
                         parse_timestamp(job.get("started_at")),
                         parse_timestamp(job.get("completed_at")),
                         metric_label(job.get("runner_group_name"), "unassigned"),
+                        job_execution(job),
                         concurrency_group,
                     ),
                 )
@@ -1049,17 +1082,24 @@ class DatabaseMetrics:
         jobs = CounterMetricFamily(
             "github_actions_jobs",
             "Completed GitHub Actions jobs.",
-            labels=("repository", "workflow", "job", "conclusion", "runner_group"),
+            labels=(
+                "repository",
+                "workflow",
+                "job",
+                "conclusion",
+                "runner_group",
+                "execution",
+            ),
         )
         for row in self.database.rows(
             """
             SELECT repository, workflow, name,
                    COALESCE(conclusion, 'unknown') AS conclusion,
-                   runner_group, COUNT(*) AS total
+                   runner_group, execution, COUNT(*) AS total
             FROM jobs
             WHERE status = 'completed'
             GROUP BY repository, workflow, name,
-                     COALESCE(conclusion, 'unknown'), runner_group
+                     COALESCE(conclusion, 'unknown'), runner_group, execution
             """
         ):
             jobs.add_metric(
@@ -1069,6 +1109,7 @@ class DatabaseMetrics:
                     row["name"],
                     row["conclusion"],
                     row["runner_group"],
+                    row["execution"],
                 ],
                 float(row["total"]),
             )
@@ -1175,22 +1216,35 @@ class DatabaseMetrics:
             "github_actions_job_duration_seconds",
             "GitHub Actions job execution duration.",
             "jobs",
-            ("repository", "workflow", "name", "runner_group"),
+            ("repository", "workflow", "name", "runner_group", "execution"),
             "completed_at - started_at",
             "status = 'completed' AND started_at IS NOT NULL "
             "AND completed_at >= started_at",
             DURATION_BUCKETS,
-            metric_labels=("repository", "workflow", "job", "runner_group"),
+            metric_labels=(
+                "repository",
+                "workflow",
+                "job",
+                "runner_group",
+                "execution",
+            ),
         )
         yield from self._histogram(
             "github_actions_job_queue_duration_seconds",
             "GitHub Actions job queue duration from creation to start.",
             "jobs",
-            ("repository", "workflow", "name", "runner_group"),
+            ("repository", "workflow", "name", "runner_group", "execution"),
             "started_at - created_at",
-            "created_at IS NOT NULL AND started_at >= created_at",
+            "status = 'completed' AND created_at IS NOT NULL "
+            "AND started_at >= created_at",
             QUEUE_BUCKETS,
-            metric_labels=("repository", "workflow", "job", "runner_group"),
+            metric_labels=(
+                "repository",
+                "workflow",
+                "job",
+                "runner_group",
+                "execution",
+            ),
         )
 
     def _histogram(
