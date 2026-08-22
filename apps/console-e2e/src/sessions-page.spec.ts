@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-import { E2E_ISSUE_AGENT_SESSION_ID, usePopulatedFixtures } from './seed';
+import {
+  E2E_CLI_SESSION_IDS,
+  E2E_ISSUE_AGENT_SESSION_ID,
+  usePopulatedFixtures,
+} from './seed';
 import {
   expectDesktopBridgeHeader,
   expectDesktopLcarsElbow,
@@ -65,6 +69,20 @@ test.describe('/sessions workspace @smoke', () => {
         title.evaluate((element) => element.scrollWidth <= element.clientWidth),
       )
       .toBe(true);
+  });
+
+  test('gives artifact preview controls unique accessible names', async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/${E2E_CLI_SESSION_IDS.live}`);
+
+    const sessionHeader = page.getByTestId('session-header');
+    await expect(
+      sessionHeader.getByRole('button', { name: 'Preview report.md' }),
+    ).toBeVisible();
+    await expect(
+      sessionHeader.getByRole('button', { name: 'Preview chart.png' }),
+    ).toBeVisible();
   });
 
   test('switches between flat and by-issue archive views', async ({ page }) => {

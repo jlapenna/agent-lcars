@@ -58,7 +58,7 @@ describe('ArtifactPreviewToggle', () => {
     renderToggle('report.md');
     expect(
       screen
-        .getByTestId('artifact-toggle-report.md')
+        .getByRole('button', { name: 'Preview report.md' })
         .getAttribute('aria-expanded'),
     ).toBe('false');
     expect(screen.queryByTestId('artifact-preview-report.md')).toBeNull();
@@ -74,7 +74,7 @@ describe('ArtifactPreviewToggle', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     renderToggle('report.md');
-    fireEvent.click(screen.getByTestId('artifact-toggle-report.md'));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview report.md' }));
 
     expect(
       screen
