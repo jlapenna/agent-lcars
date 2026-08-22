@@ -139,6 +139,32 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
 
+# Curated, architecture-specific content-addressable pnpm stores for the JIT
+# runner. These workspaces are intentionally local to agent-lcars's
+# runner-image build context: neither is a consumer lockfile or a
+# cross-repository build/import. `pnpm fetch` downloads package content only;
+# `--ignore-scripts` keeps lifecycle output out of the seeds. The final stage
+# copies only /pnpm-store, so manifests, lockfiles, build cache, and any
+# credentials cannot reach a job image.
+#
+# Corepack resolves each exact version from its local seed manifest. pnpm 11
+# must match Agent LCARS's root packageManager declaration; pnpm 10.34.5 is a
+# deliberate compatible-store seed for the representative Sprinkles workload.
+# The store layout is pnpm-major-version-specific, so one cannot satisfy the
+# other. Keep each copy below as a distinct final-image layer to make its size
+# and churn visible.
+FROM node:24-slim AS pnpm10-store-seed
+WORKDIR /seed
+RUN corepack enable
+COPY pnpm-seed/pnpm10/package.json pnpm-seed/pnpm10/pnpm-lock.yaml ./
+RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
+
+FROM node:24-slim AS pnpm-store-seed
+WORKDIR /seed
+RUN corepack enable
+COPY pnpm-seed/package.json pnpm-seed/pnpm-lock.yaml ./
+RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
+
 # CI's Verify job runs Go race tests and validates Actions syntax with
 # actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
 # unpack Go for every job, then `go install` compiled actionlint from scratch.
@@ -454,6 +480,17 @@ RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \
 # copied manifest resolves the exact repo-pinned version, and deliberately
 # leaves the cache under /home/runner for offline job startup.
 RUN pnpm --version
+
+# Keep each curated seed in a dedicated final-image layer. The runner owns its
+# normal pnpm store, so overlayfs shares these immutable lower-layer files on
+# a host while a job can add a cache miss only to that runner container's
+# private writable layer. No host mount or shared mutable cache is involved.
+# The regression test exercises pnpm 10 and pnpm 11 lower-layer content hits
+# followed by writable misses, including the no-whole-store-copy property.
+COPY --from=pnpm10-store-seed --chown=runner:runner \
+    /pnpm-store/ /home/runner/.local/share/pnpm/store/
+COPY --from=pnpm-store-seed --chown=runner:runner \
+    /pnpm-store/ /home/runner/.local/share/pnpm/store/
 
 WORKDIR /home/runner
 

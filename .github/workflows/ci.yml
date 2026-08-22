@@ -273,6 +273,20 @@ jobs:
       - name: Smoke test telemetry-watcher bundle
         run: ./tools/telemetry-watcher-standalone-smoke.sh
 
+  runner-image-pnpm-store-seed:
+    name: Runner image pnpm-store seed
+    # The production JIT image intentionally has only a Docker client and no
+    # daemon socket. Run this focused container-layer assertion on the hosted
+    # runner instead; it needs no secrets and is safe for fork pull requests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove immutable pnpm-store seed behavior
+        run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed.test.sh
+
   e2e:
     name: E2E
     # Repository-level operational kill switch. Missing or non-true values

@@ -1,0 +1,8 @@
+{
+  "name": "pnpm-store-seed-regression-seed-pnpm10",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "dependencies": {
+    "typescript": "6.0.3"
+  }
+}

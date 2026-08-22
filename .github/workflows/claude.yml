@@ -104,9 +104,9 @@ jobs:
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       nx-cache-url: ${{ vars.NX_CACHE_URL }}
-      # Keep pnpm's store inside this ephemeral runner workspace. The whole
-      # container, including this cache, is discarded after the job.
-      pnpm-store-dir: /home/runner/_work/.pnpm-store
+      # Use the image's normal pnpm store: matching package content comes from
+      # its immutable lower-layer seed, while misses stay in this ephemeral
+      # runner container's private writable layer.
       telemetry-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
       telemetry-service-account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
       brief-budget-minutes: '60'
