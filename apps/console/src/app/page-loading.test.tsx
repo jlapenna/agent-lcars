@@ -49,6 +49,8 @@ describe('NavPageLoading', () => {
     expect(
       screen.getByRole('link', { name: 'Inbox' }).getAttribute('aria-current'),
     ).toBe('page');
-    expect(screen.getByLabelText('Loading')).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'Loading' })).not.toHaveAttribute(
+      'aria-busy',
+    );
   });
 });
