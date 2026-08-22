@@ -185,9 +185,9 @@ provisioned (#1354), so only the mint is left.
 
    ```text
    assertion.repository=='<owner>/<repo>' &&
-     (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/codex.yml')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))
+     (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/codex.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml@'))
    ```
 
    That pool and provider are no longer hand-managed: `jlapenna/homelab`'s
