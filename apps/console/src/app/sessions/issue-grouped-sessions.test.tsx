@@ -92,7 +92,14 @@ describe('IssueGroupedSessions', () => {
       },
     ]);
 
-    expect(screen.getByText('No issue')).toBeTruthy();
+    const heading = screen.getByRole('heading', {
+      level: 3,
+      name: 'No issue',
+    });
+    const toggle = screen.getByRole('button', {
+      name: 'Expand No issue sessions',
+    });
+    expect(toggle.contains(heading)).toBe(false);
     expect(screen.queryByRole('link', { name: '#42' })).toBeNull();
   });
 
@@ -156,16 +163,22 @@ describe('IssueGroupedSessions', () => {
       },
     ]);
 
-    const toggle = screen.getByTestId('no-issue-group-toggle');
+    const toggle = screen.getByRole('button', {
+      name: 'Expand No issue sessions',
+    });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.getAttribute('aria-label')).toBe(
+      'Collapse No issue sessions',
+    );
     expect(
       screen.getAllByRole('link', { name: 'Ad-hoc CLI session' }),
     ).toHaveLength(2);
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-label')).toBe('Expand No issue sessions');
     expect(
       screen.queryByRole('link', { name: 'Ad-hoc CLI session' }),
     ).toBeNull();
