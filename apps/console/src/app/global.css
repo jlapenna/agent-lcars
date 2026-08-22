@@ -2486,6 +2486,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .operations-secondary-action {
     min-height: 44px;
   }
+
+  .artifact-preview-toggle {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 /* Inbox search (queue-workspace.tsx): compact enough to share the header

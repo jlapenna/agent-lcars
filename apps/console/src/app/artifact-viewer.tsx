@@ -141,6 +141,7 @@ export function ArtifactPreviewToggle({
         aria-label={`Preview ${filename}`}
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
+        className="artifact-preview-toggle"
         data-testid={`artifact-toggle-${filename}`}
       >
         <Group gap={2} wrap="nowrap">
