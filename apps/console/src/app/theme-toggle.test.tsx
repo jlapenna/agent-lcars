@@ -43,9 +43,8 @@ describe('ThemeToggle', () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText('Switch to dark mode')).toBeTruthy();
     expect(
-      screen.getByRole('button', { name: /toggle color scheme/i }),
+      screen.getByRole('button', { name: 'Switch to dark mode' }),
     ).toBeTruthy();
   });
 
@@ -58,7 +57,7 @@ describe('ThemeToggle', () => {
     );
 
     fireEvent.click(
-      screen.getByRole('button', { name: /toggle color scheme/i }),
+      screen.getByRole('button', { name: 'Switch to dark mode' }),
     );
 
     expect(setColorScheme).toHaveBeenCalledWith('dark');
@@ -74,7 +73,7 @@ describe('ThemeToggle', () => {
     );
 
     fireEvent.click(
-      screen.getByRole('button', { name: /toggle color scheme/i }),
+      screen.getByRole('button', { name: 'Switch to light mode' }),
     );
 
     expect(setColorScheme).toHaveBeenCalledWith('light');
