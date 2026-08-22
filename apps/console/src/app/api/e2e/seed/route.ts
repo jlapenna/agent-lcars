@@ -80,6 +80,7 @@ function fixtureSessions(): CliSessionDoc[] {
       worktree: 'agent-lcars-e2e-fixture',
       model: 'claude-sonnet-5',
       title: 'E2E fixture: live CLI session',
+      artifacts: ['report.md', 'chart.png'],
       deliverables: { prNumbers: [], commitShas: [] },
     },
     {
