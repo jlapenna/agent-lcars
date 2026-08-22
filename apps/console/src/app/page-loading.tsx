@@ -29,7 +29,7 @@ export function PageLoading({
 }) {
   return (
     <Container size="lg" py="md">
-      <Stack gap="md" aria-busy="true" aria-label="Loading">
+      <Stack gap="md" role="status" aria-label="Loading">
         {header && (
           // Header block: title + subtitle.
           <Stack gap="xs">
