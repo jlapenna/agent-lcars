@@ -180,14 +180,17 @@ provisioned (#1354), so only the mint is left.
 
    `sprinkles` is the exception again: it authenticates against pool
    `claude-agent-pool` / provider `claude-agent-github` in project
-   `supersprinklesracing`, which is conditioned on `job_workflow_ref` and
-   must name each lane file it admits:
+   `supersprinklesracing`. The provider maps `job_workflow_ref` to a
+   `workflow_class` (`ci`, `deploy`, or `agent`) and must name each admitted
+   workflow with its immutable `@` ref suffix:
 
    ```text
    assertion.repository=='<owner>/<repo>' &&
-     (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/codex.yml')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))
+     (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/ci.yml@')
+      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/e2e.yml@')
+      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml@'))
    ```
 
    That pool and provider are no longer hand-managed: `jlapenna/homelab`'s

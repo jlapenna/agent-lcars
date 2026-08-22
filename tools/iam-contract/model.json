@@ -190,39 +190,15 @@
               "attributeMapping": {
                 "attribute.job_workflow_ref": "assertion.job_workflow_ref",
                 "attribute.repository": "assertion.repository",
+                "attribute.workflow_class": "assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/ci.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/e2e.yml@') ? 'ci' : assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-rules-and-indexes.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-qbp-appsscript.yml@') ? 'deploy' : 'agent'",
                 "google.subject": "assertion.sub"
               },
-              "attributeCondition": "assertion.repository=='supersprinklesracing/sprinkles' && (assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy.yml') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-rules-and-indexes.yml') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-qbp-appsscript.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml'))"
+              "attributeCondition": "assertion.repository=='supersprinklesracing/sprinkles' && (assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/ci.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/e2e.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-rules-and-indexes.yml@') || assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/deploy-qbp-appsscript.yml@') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml@') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml@') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml@') || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml@'))"
             }
           }
         }
       },
-      "userManagedKeyAllowlist": [
-        {
-          "serviceAccount": "sprinklesbot@supersprinklesracing.iam.gserviceaccount.com",
-          "reason": "Pre-existing sprinkles key, recorded as of #1376; retirement tracked by sprinkles' runtime-key work."
-        },
-        {
-          "serviceAccount": "firebase-adminsdk-9yym9@supersprinklesracing.iam.gserviceaccount.com",
-          "reason": "Pre-existing Firebase Admin SDK key, recorded as of #1376."
-        },
-        {
-          "serviceAccount": "tasks-sa@supersprinklesracing.iam.gserviceaccount.com",
-          "reason": "Pre-existing sprinkles key, recorded as of #1376."
-        },
-        {
-          "serviceAccount": "jclaw-bot@supersprinklesracing.iam.gserviceaccount.com",
-          "reason": "Pre-existing sprinkles key, recorded as of #1376."
-        },
-        {
-          "serviceAccount": "firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com",
-          "reason": "Pre-existing App Hosting compute key, recorded as of #1376."
-        },
-        {
-          "serviceAccount": "github-deploy@supersprinklesracing.iam.gserviceaccount.com",
-          "reason": "Pre-existing sprinkles deploy key, recorded as of #1376."
-        }
-      ]
+      "userManagedKeyAllowlist": []
     }
   },
   "secretIamPolicies": [
