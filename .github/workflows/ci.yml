@@ -287,6 +287,26 @@ jobs:
       - name: Prove immutable pnpm-store seed behavior
         run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed.test.sh
 
+  runner-image-pnpm-store-size:
+    name: Runner image pnpm-store size
+    # Build each store-only target for every runner architecture. This uses
+    # QEMU only for `pnpm fetch`; the published runner image remains built by
+    # the normal multi-architecture publication path.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Enforce pnpm-store compressed-size budget
+        run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed-size.test.sh
+
   e2e:
     name: E2E
     # Repository-level operational kill switch. Missing or non-true values

@@ -165,6 +165,16 @@ RUN corepack enable
 COPY pnpm-seed/package.json pnpm-seed/pnpm-lock.yaml ./
 RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
 
+# Measurement-only targets: `FROM scratch` ensures their OCI output contains
+# only the compressed store payload, not the Node base or fetch-stage virtual
+# node_modules. pnpm-store-seed-size.test.sh builds these for every published
+# architecture and enforces the pilot's combined 1.5 GiB compressed budget.
+FROM scratch AS pnpm10-store-content
+COPY --from=pnpm10-store-seed /pnpm-store/ /pnpm-store/
+
+FROM scratch AS pnpm-store-content
+COPY --from=pnpm-store-seed /pnpm-store/ /pnpm-store/
+
 # CI's Verify job runs Go race tests and validates Actions syntax with
 # actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
 # unpack Go for every job, then `go install` compiled actionlint from scratch.
