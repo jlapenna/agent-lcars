@@ -27,7 +27,7 @@ describe('ConsoleFooter', () => {
   it('keeps the theme toggle alongside it', () => {
     renderFooter();
     expect(
-      screen.getByRole('button', { name: 'Toggle color scheme' }),
+      screen.getByRole('button', { name: /Switch to (?:dark|light) mode/ }),
     ).toBeTruthy();
   });
 });

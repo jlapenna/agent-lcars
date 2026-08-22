@@ -85,6 +85,26 @@ test.describe('/sessions workspace @smoke', () => {
     ).toBeVisible();
   });
 
+  test('exposes the theme action and persists the selected scheme', async ({
+    page,
+  }) => {
+    await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
+
+    await page.getByRole('button', { name: 'Switch to light mode' }).click();
+    await expect(
+      page.getByRole('button', { name: 'Switch to dark mode' }),
+    ).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-mantine-color-scheme',
+      'light',
+    );
+
+    await page.reload();
+    await expect(
+      page.getByRole('button', { name: 'Switch to dark mode' }),
+    ).toBeVisible();
+  });
+
   test('switches between flat and by-issue archive views', async ({ page }) => {
     await page.goto('/sessions');
 

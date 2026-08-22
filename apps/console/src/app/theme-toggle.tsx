@@ -22,12 +22,7 @@ export function ThemeToggle() {
   };
 
   return (
-    <UnstyledButton
-      onClick={toggleColorScheme}
-      aria-label="Toggle color scheme"
-      fz="xs"
-      c="dimmed"
-    >
+    <UnstyledButton onClick={toggleColorScheme} fz="xs" c="dimmed">
       {computedColorScheme === 'dark'
         ? 'Switch to light mode'
         : 'Switch to dark mode'}
