@@ -44,6 +44,30 @@ test.describe('/sessions workspace @smoke', () => {
     ).toBe(true);
   });
 
+  test('keeps the no-issue heading outside its disclosure button', async ({
+    page,
+  }) => {
+    await page.goto('/sessions');
+
+    const group = page.getByTestId('issue-group-no-issue');
+    const heading = group.getByRole('heading', { level: 3, name: 'No issue' });
+    const toggle = group.getByRole('button', {
+      name: 'Expand No issue sessions',
+    });
+
+    await expect(heading).toBeVisible();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(group.locator('button h3')).toHaveCount(0);
+
+    await toggle.click();
+    await expect(
+      group.getByRole('button', { name: 'Collapse No issue sessions' }),
+    ).toHaveAttribute('aria-expanded', 'true');
+    await expect(
+      group.getByRole('link', { name: 'E2E fixture: live CLI session' }),
+    ).toBeVisible();
+  });
+
   test('expands the title on a sufficiently wide desktop before falling back to a safe ellipsis', async ({
     page,
   }) => {

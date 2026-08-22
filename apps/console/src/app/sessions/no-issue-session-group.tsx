@@ -33,19 +33,26 @@ export function NoIssueSessionGroup({
         <UnstyledButton
           onClick={() => setCollapsed((prev) => !prev)}
           aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} No issue sessions`}
           data-testid="no-issue-group-toggle"
           className="sessions-no-issue-toggle"
-          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: 44,
+            minHeight: 44,
+          }}
         >
           {collapsed ? (
             <IconChevronRight size={16} aria-hidden="true" />
           ) : (
             <IconChevronDown size={16} aria-hidden="true" />
           )}
-          <Title order={3} size="h5" c="dimmed">
-            No issue
-          </Title>
         </UnstyledButton>
+        <Title order={3} size="h5" c="dimmed">
+          No issue
+        </Title>
         {sessionCount}
       </Group>
       {!collapsed && children}
