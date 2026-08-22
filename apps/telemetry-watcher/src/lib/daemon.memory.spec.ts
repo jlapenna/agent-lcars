@@ -22,10 +22,12 @@ function retainedMemoryMb(measurement: MemoryMeasurement): number {
 function measureTickMemory(
   corpusDir: string,
   extraArgs: string[] = [],
+  nodeArgs: string[] = [],
 ): MemoryMeasurement {
   const output = execFileSync(
     process.execPath,
     [
+      ...nodeArgs,
       '--expose-gc',
       require.resolve('tsx/cli'),
       path.join(__dirname, 'measure-tick-rss.ts'),
@@ -51,6 +53,11 @@ describe('WatcherDaemon tick() retained memory', () => {
   // Real pike deployment averaged ~2.45MB/file (417MB / 170 files).
   const LINES_PER_FILE = 6_000;
   const LINE_TEXT_LENGTH = 400;
+  // Pike has Codex rollouts around this size. The old readFile+split path
+  // temporarily held the file string, a line array, and parsed payloads at
+  // once, exceeding its 384 MiB production V8 heap.
+  const LARGE_FILE_LINES = 450;
+  const LARGE_FILE_LINE_TEXT_LENGTH = 300_000;
 
   let corpusDir: string;
   let totalBytes = 0;
@@ -105,6 +112,39 @@ describe('WatcherDaemon tick() retained memory', () => {
       fs.closeSync(fd);
       totalBytes += fs.statSync(filePath).size;
     }
+
+    const filePath = path.join(projectDir, 'large-session.jsonl');
+    const fd = fs.openSync(filePath, 'w');
+    fs.writeSync(
+      fd,
+      JSON.stringify({
+        isSidechain: false,
+        type: 'user',
+        timestamp: '2026-07-12T09:00:00.000Z',
+        sessionId: 'large-session',
+        cwd: '/home/dev/project',
+        message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      }) + '\n',
+    );
+    const largeLine =
+      JSON.stringify({
+        isSidechain: false,
+        type: 'assistant',
+        timestamp: '2026-07-12T09:00:01.000Z',
+        sessionId: 'large-session',
+        message: {
+          model: 'claude-sonnet-5',
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'x'.repeat(LARGE_FILE_LINE_TEXT_LENGTH) },
+          ],
+        },
+      }) + '\n';
+    for (let i = 0; i < LARGE_FILE_LINES; i++) {
+      fs.writeSync(fd, largeLine);
+    }
+    fs.closeSync(fd);
+    totalBytes += fs.statSync(filePath).size;
   }, 120_000);
 
   afterAll(() => {
@@ -115,7 +155,11 @@ describe('WatcherDaemon tick() retained memory', () => {
     const totalMb = totalBytes / 1e6;
     expect(totalMb).toBeGreaterThan(200); // sanity-check the fixture is actually large
 
-    const measurement = measureTickMemory(corpusDir);
+    const measurement = measureTickMemory(
+      corpusDir,
+      [],
+      ['--max-old-space-size=384'],
+    );
 
     // The naive (pre-fix) implementation retains roughly the full corpus
     // plus reduced state simultaneously. Ten real-workload runs measured

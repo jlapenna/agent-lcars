@@ -38,7 +38,7 @@ export const codexAdapter: TranscriptAdapter = {
   detect(firstLines: string[]): boolean {
     return firstLines.some(looksLikeCodexLine);
   },
-  reduce(lines: string[]): SessionSummary[] {
+  reduce(lines: Iterable<string>): SessionSummary[] {
     let sessionId: string | undefined;
     let cwd: string | undefined;
     let model: string | undefined;
