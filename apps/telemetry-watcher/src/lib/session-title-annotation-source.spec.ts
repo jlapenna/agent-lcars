@@ -28,9 +28,6 @@ describe('session annotation overlays', () => {
       ],
     ]);
     const dependencies = {
-      readDirectory: () => {
-        throw new Error('directory enumeration is not allowed');
-      },
       readFile: (filePath: string) => files.get(filePath),
       joinPath: (...parts: string[]) => parts.join('/'),
     };

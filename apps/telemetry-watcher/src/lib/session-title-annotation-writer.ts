@@ -1,8 +1,4 @@
-import {
-  CLI_SESSION_RETENTION_DAYS,
-  isSafeIdentifier,
-  truncateTitle,
-} from '@agent-lcars/telemetry';
+import { isSafeIdentifier, truncateTitle } from '@agent-lcars/telemetry';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -17,37 +13,27 @@ import {
 
 /** The `declared` channel's directory, relative to the writer's home
  * directory. Kept as its own export -- it's still the channel most callers
- * (and the reader side) reference directly -- but it's now derived from
- * `session-title-paths.ts`'s shared constants rather than hardcoded here,
- * from `session-title-paths.ts` rather than hardcoded here. */
+ * (and the reader side) reference directly -- but it's derived from
+ * `session-title-paths.ts`'s shared constants rather than hardcoded here. */
 export const SESSION_TITLE_ANNOTATION_DIRECTORY = sessionTitleChannelDirectory(
   SESSION_STATE_DIRECTORY,
   DECLARED_TITLE_SUBDIRECTORY,
 );
 
 /** Any directory an annotation can be written into -- the directory itself
- * determines whether it is a title or, for `STATUS_SUBDIRECTORY`, a status
- * than a title at all -- so this writer never accepts an arbitrary
+ * determines whether it is a title or, for `STATUS_SUBDIRECTORY`, a status,
+ * so this writer never accepts an arbitrary
  * caller-supplied path. */
 export type SessionTitleChannel =
   typeof DECLARED_TITLE_SUBDIRECTORY | typeof STATUS_SUBDIRECTORY;
 
 type PinnedLstatSync = (filePath: string) => fs.Stats;
-/** Pinned to the plain-`string[]`, no-`withFileTypes` overload of
- * `fs.readdirSync` -- the pruning sweeps below only ever need a name to
- * re-`lstatSync` themselves (mirroring `clearSessionTitleAnnotation`'s own
- * "trust `lstatSync`, not directory-entry type hints" posture), so pinning
- * avoids the multi-overload union TypeScript would otherwise infer from
- * `typeof fs.readdirSync`. */
-type PinnedReaddirSync = (directoryPath: string) => string[];
-
 export interface SessionTitleAnnotationWriterFileSystem {
   mkdirSync: typeof fs.mkdirSync;
   writeFileSync: typeof fs.writeFileSync;
   renameSync: typeof fs.renameSync;
   unlinkSync: typeof fs.unlinkSync;
   lstatSync: PinnedLstatSync;
-  readdirSync: PinnedReaddirSync;
   openSync: typeof fs.openSync;
   fsyncSync: typeof fs.fsyncSync;
   closeSync: typeof fs.closeSync;
@@ -74,7 +60,6 @@ const defaultFileSystem: SessionTitleAnnotationWriterFileSystem = {
   renameSync: fs.renameSync,
   unlinkSync: fs.unlinkSync,
   lstatSync: (filePath) => fs.lstatSync(filePath),
-  readdirSync: (directoryPath) => fs.readdirSync(directoryPath),
   openSync: fs.openSync,
   fsyncSync: fs.fsyncSync,
   closeSync: fs.closeSync,
@@ -330,136 +315,4 @@ export function clearSessionStatusAnnotation(
     STATUS_SUBDIRECTORY,
     dependencies,
   );
-}
-
-/**
- * A well-formed final annotation filename's session id, or `undefined` for
- * anything else -- an in-flight `.<id>.<random>.tmp` temp file (leading
- * dot; also excluded because a leading `.` can never satisfy
- * `isSafeIdentifier`), a stray non-`.json` entry, or a filename whose id
- * portion fails that same safety check. Both pruning sweeps below use this
- * as their sole filter for "is this something we're allowed to touch at
- * all", before either one asks a more specific question (in the keep set?
- * older than the horizon?) of what's left.
- *
- * Deliberately duplicated rather than imported from
- * `session-title-annotation-source.ts`'s own private `filenameSessionId`:
- * that module is this issue's read-only reader half (see AGENTS.md) and
- * doesn't export it, and the two checks are simple enough that a shared
- * import would trade a few lines of duplication for a cross-module
- * coupling neither side asked for.
- */
-function finalAnnotationSessionId(filename: string): string | undefined {
-  if (!filename.endsWith('.json')) return undefined;
-  const sessionId = filename.slice(0, -'.json'.length);
-  return isSafeIdentifier(sessionId) ? sessionId : undefined;
-}
-
-/**
- * Deletes every final in the `declared` channel whose file is older than
- * `CLI_SESSION_RETENTION_DAYS` (imported from `@agent-lcars/telemetry`'s
- * `session-doc.ts`, not reinvented here -- that module's own comment
- * explains why it's the right horizon to borrow: it's the point past which
- * a `source: 'cli'` session doc itself becomes eligible for Firestore TTL
- * deletion, so a declared title describing a session the console can no
- * longer even display is already dead weight).
- *
- * Deliberately conservative because a declared title is a deliberate human
- * or agent statement and deleting one is
- * unrecoverable (see `writeSessionTitleAnnotation`'s own doc comment on
- * this writer's threat model):
- *
- * - Age only, never count -- there is no cap parameter here at all, on
- *   purpose. However many files are in this directory, one still inside
- *   the retention horizon is never touched. If a host genuinely has, say,
- *   256 live titled sessions still inside the window, discarding any of
- *   them to satisfy a count would be discarding intent to solve a problem
- *   that doesn't exist yet; the honest fix at that point is to revisit the
- *   horizon, not to silently start deleting the oldest surviving titles.
- * - Age is the file's own mtime, not `updatedAt` parsed back out of its
- *   JSON body -- avoids a second parse of untrusted content just to decide
- *   whether to delete it, and mtime already tracks exactly "when was this
- *   last actually written": every publish in this writer goes through the
- *   same write-then-rename, and rename updates mtime.
- * - `now` comes through the same injectable clock seam as the rest of this
- *   module (`dependencies.now`), for deterministic tests -- and a
- *   throwing or invalid ("now" that can't produce a finite cutoff) clock
- *   aborts the whole sweep rather than falling through to a `NaN` cutoff,
- *   which would otherwise make every `mtimeMs >= cutoffMs` comparison
- *   false and delete literally everything in the directory. A broken
- *   clock must fail into "prune nothing", never "prune everything".
- *
- * Kept as a standalone operation rather than a periodic task: explicit
- * annotations are low-volume and title discovery itself reads only watched
- * upstream JSONL.
- */
-export function pruneStaleDeclaredSessionTitleAnnotations(
-  dependencies: SessionTitleAnnotationWriterDependencies = {},
-): void {
-  pruneStaleAnnotations(DECLARED_TITLE_SUBDIRECTORY, dependencies);
-}
-
-/**
- * Deletes every final in the status channel whose file is older than
- * `CLI_SESSION_RETENTION_DAYS` -- the status-channel analogue of
- * `pruneStaleDeclaredSessionTitleAnnotations` above, sharing every property
- * that function's own doc comment argues for (age-only, mtime-based,
- * fail-into-nothing on a broken clock). A declared status is the same kind
- * of deliberate agent statement a declared title is, and the same "It must
- * not be able to overflow the reader cap" requirement applies -- an
- * unbounded status channel would eventually exceed
- * `MAX_SESSION_TITLE_ANNOTATION_FILES` and start failing the whole
- * directory closed (see `readSessionStatusOverlay`).
- *
- * Like declared-title pruning, this remains an explicit maintenance
- * operation rather than a recurring host-side task.
- */
-export function pruneStaleSessionStatusAnnotations(
-  dependencies: SessionTitleAnnotationWriterDependencies = {},
-): void {
-  pruneStaleAnnotations(STATUS_SUBDIRECTORY, dependencies);
-}
-
-function pruneStaleAnnotations(
-  channel: SessionTitleChannel,
-  dependencies: SessionTitleAnnotationWriterDependencies,
-): void {
-  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
-  const directory = channelDirectory(channel, dependencies);
-
-  let entries: string[];
-  try {
-    entries = fileSystem.readdirSync(directory);
-  } catch {
-    // Missing/unreadable directory -- nothing to prune.
-    return;
-  }
-
-  const clock = dependencies.now ?? (() => new Date());
-  let cutoffMs: number;
-  try {
-    cutoffMs =
-      clock().getTime() - CLI_SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  } catch {
-    return; // Clock unavailable -- see doc comment above.
-  }
-  if (!Number.isFinite(cutoffMs)) {
-    return; // Invalid Date (e.g. NaN) -- see doc comment above.
-  }
-
-  for (const name of entries) {
-    const sessionId = finalAnnotationSessionId(name);
-    if (!sessionId) continue;
-
-    const target = path.join(directory, name);
-    try {
-      const stats = fileSystem.lstatSync(target);
-      if (!stats.isFile()) continue;
-      if (stats.mtimeMs >= cutoffMs) continue; // still inside the horizon
-      fileSystem.unlinkSync(target);
-    } catch {
-      // Fail soft per entry -- one unreadable/undeletable file must never
-      // abort the sweep or the rest of the import.
-    }
-  }
 }
