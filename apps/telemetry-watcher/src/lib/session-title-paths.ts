@@ -25,26 +25,9 @@ export const SESSION_STATE_DIRECTORY = path.join(
 export const DECLARED_TITLE_SUBDIRECTORY = 'session-metadata';
 
 /**
- * Titles imported from a runtime's own store — today Codex's `threads` table,
- * which the watcher container cannot read itself (that database is WAL-mode,
- * and a WAL reader must be able to write the `-shm` sidecar, so a read-only
- * bind mount of it fails outright). The import therefore runs on the host and
- * publishes here. Feeds the `generated` tier.
- *
- * Kept in its own directory rather than sharing the declared one so an
- * imported title and an agent-authored title for the same session are
- * distinct files. Sharing a path would make the two channels race to
- * overwrite each other, and the loser would be whichever wrote first —
- * silently, with no way to tell afterwards which tier the surviving file
- * came from.
- */
-export const GENERATED_TITLE_SUBDIRECTORY = 'native-titles';
-
-/**
  * What the agent says it is doing RIGHT NOW — `lcars session status
  * "<text>"` (issue #1257). Its own channel, separate from both title
- * channels above, for the same reason `GENERATED_TITLE_SUBDIRECTORY` is
- * separate from `DECLARED_TITLE_SUBDIRECTORY`: `lcars session status` would
+ * title channel: `lcars session status` would
  * otherwise need a read-modify-write against the same file `lcars session
  * title` writes, racing a concurrent title update. The directory
  * determines meaning so two writers never clobber each other — the repo
@@ -59,10 +42,7 @@ export const STATUS_SUBDIRECTORY = 'session-status';
 /** Absolute path of one channel's directory beneath a resolved state root. */
 export function sessionTitleChannelDirectory(
   stateDirectory: string,
-  subdirectory:
-    | typeof DECLARED_TITLE_SUBDIRECTORY
-    | typeof GENERATED_TITLE_SUBDIRECTORY
-    | typeof STATUS_SUBDIRECTORY,
+  subdirectory: typeof DECLARED_TITLE_SUBDIRECTORY | typeof STATUS_SUBDIRECTORY,
 ): string {
   return path.join(stateDirectory, subdirectory);
 }

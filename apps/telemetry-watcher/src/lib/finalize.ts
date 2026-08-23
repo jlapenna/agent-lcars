@@ -313,9 +313,6 @@ async function finalizeSummary(
   const finalSummaryWithTitle = deps.titleOverlay
     ? applySessionTitleOverlay(finalSummary, {
         declared: deps.titleOverlay.declared.annotations.get(summary.sessionId),
-        generated: deps.titleOverlay.generated.annotations.get(
-          summary.sessionId,
-        ),
       })
     : finalSummary;
 

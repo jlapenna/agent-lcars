@@ -2,14 +2,9 @@
 # Builds the session-title CLI bundle and installs it to a stable,
 # checkout-independent location, plus a `lcars` launcher on PATH.
 #
-# Why this exists (issue #1212): the declared-title channel
-# (`lcars session title "..."`, see the app README) and the host-side Codex
-# native-title importer (agent-lcars-session-title-import.timer, see
-# systemd/ in this directory) both need this CLI runnable by a stable name,
-# but nothing installed it -- an agent could only run `lcars session title`
-# if this exact build-and-copy sequence had already happened by hand. A
-# perfectly wired watcher with nothing on PATH still ships zero declared
-# titles.
+# Why this exists (issue #1212): the declared-title command
+# (`lcars session title "..."`, see the app README) needs a stable runnable
+# name. A watcher with no launcher on PATH still ships zero declared titles.
 #
 # This also has to NOT point anything at the checkout's own `dist/`: the
 # primary checkout (`~/p/agent-lcars` on a watcher host) is guardrail-
@@ -20,7 +15,7 @@
 # the compose stack pulls, not about this separate, non-containerized host
 # tool -- but the spirit still applies: this script copies the built
 # bundle OUT of the checkout into $LIB_DIR below, once, so neither the
-# import timer nor an interactive `lcars` invocation depends on the
+# interactive `lcars` invocation depends on the
 # checkout's working tree afterward.
 #
 # Usage: from a checkout of this repo on the watcher host (the primary

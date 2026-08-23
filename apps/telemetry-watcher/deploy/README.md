@@ -42,11 +42,7 @@ semantics (allowlists, entrypoint, uid) it depends on.
   teaches you to ignore the gate, and it fails automation that trusts the
   exit code.
 - `install-session-title-cli.sh` — builds and installs the `lcars` CLI
-  agents run to declare a session title, and that the timer below imports
-  through; see [Session titles](#session-titles-issue-1212) below.
-- `systemd/` — the `agent-lcars-session-title-import` user timer that
-  imports Codex native session titles on the host; see
-  [Session titles](#session-titles-issue-1212) below.
+  agents run to declare a session title; see [Session titles](#session-titles-issue-1212) below.
 
 ## Secrets
 
@@ -151,27 +147,16 @@ own state DB is deliberately not mounted:
   candidate, so a malformed id can never silently retarget another
   runtime's session. This directory is written by the CLI running as the
   plain watcher-host user; `deploy.sh` only has to make sure it exists
-  before Docker would otherwise create it root-owned.
-- **`generated`** (imported half) — `native-titles/<sessionId>.json`. Codex
-  doesn't carry a title in its rollout `.jsonl` transcripts at all — only in
-  `~/.codex/state_*.sqlite`'s `threads` table, which the watcher container
-  can never read directly (it's a WAL-mode DB; a read-only bind mount of it
-  fails outright). The `agent-lcars-session-title-import` systemd **user**
-  timer under [`systemd/`](systemd/) runs `lcars session import-native` on
-  the host instead, every 2 minutes, and writes one JSON file per Codex
-  session here. (Claude's half of the `generated` tier needs no importer —
-  its `aiTitle` is read straight out of the transcript by the watcher, same
-  as every other transcript field.)
+  before Docker would otherwise create it root-owned. Codex prompt-derived
+  titles are read directly from its watched rollout JSONL; no state database
+  or host-side importer is involved.
 
-Both files use the same envelope: `{version: 1, sessionId, updatedAt,
-title}`. The directory a title lives in _is_ its tier — there is no third,
-separately-recorded tier concept.
+The declared-title file uses `{version: 1, sessionId, updatedAt, title}`.
 
 ### Installing the CLI
 
-Both the `lcars session title "..."` command an agent runs and the import
-timer above depend on a `lcars` launcher existing on the watcher host —
-nothing installs it automatically. From the primary `~/p/agent-lcars`
+The `lcars session title "..."` command an agent runs depends on a `lcars`
+launcher existing on the watcher host — nothing installs it automatically. From the primary `~/p/agent-lcars`
 checkout (the one that persists on the host long-term; this builds an Nx
 target, so it needs a real checkout, and never the checkout's own `dist/`
 should be referenced directly — see the script's header for why):
@@ -187,30 +172,8 @@ at `~/.local/bin/lcars` (override with
 `AGENT_LCARS_SESSION_TITLE_CLI_BIN_DIR`) that resolves `node` itself —
 covering this fleet's fnm-managed installs, where the CLI shim isn't
 reliably on PATH for every caller. Add `~/.local/bin` to the account's PATH
-for interactive `lcars session title` use; the import timer below invokes
-it by full path and doesn't need PATH. Re-run this script after any change
-to the session-title CLI lands on that checkout's `main`.
-
-### Installing the import timer
-
-On the watcher host, as the **`WATCHER_USER`** account itself (`jlapenna` by
-default — _not_ the separate `homelab` account `deploy.sh` runs as; this
-timer needs read access to that account's own `~/.codex/state_*.sqlite` and
-write access to the state root `deploy.sh` pre-creates for it), after
-installing the CLI above:
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp apps/telemetry-watcher/deploy/systemd/agent-lcars-session-title-import.{service,timer} \
-  ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now agent-lcars-session-title-import.timer
-```
-
-The service fails soft (see its own comments) on a missing/locked Codex DB
-or a not-yet-installed CLI — real failures show up in
-`journalctl --user -u agent-lcars-session-title-import.service`, not in
-`systemctl --user status` on the unit's own success/failure state.
+for interactive `lcars session title` use. Re-run this script after any
+change to the session-title CLI lands on that checkout's `main`.
 
 ## Monitoring
 
