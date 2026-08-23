@@ -18,6 +18,39 @@ export interface ProcCwdEntry {
 }
 
 /**
+ * Every daemon tick shares one `scanProcCwds()` array across its sessions.
+ * Cache the host boot time against that array so start-time correlation reads
+ * `/proc/stat` once per scan rather than once for every matching process.
+ * Weak keys let an old tick's snapshot disappear without lifecycle cleanup.
+ */
+const bootTimeByProcessScan = new WeakMap<
+  readonly ProcCwdEntry[],
+  number | undefined
+>();
+
+function bootTimeSeconds(
+  procRoot: string,
+  processes: readonly ProcCwdEntry[],
+): number | undefined {
+  if (bootTimeByProcessScan.has(processes)) {
+    return bootTimeByProcessScan.get(processes);
+  }
+  let value: number | undefined;
+  try {
+    const bootTimeLine = fs
+      .readFileSync(path.join(procRoot, 'stat'), 'utf8')
+      .split('\n')
+      .find((line) => line.startsWith('btime '));
+    const parsed = Number(bootTimeLine?.split(/\s+/)[1]);
+    value = Number.isFinite(parsed) ? parsed : undefined;
+  } catch {
+    // The process scan itself remains useful even if `/proc/stat` is absent.
+  }
+  bootTimeByProcessScan.set(processes, value);
+  return value;
+}
+
+/**
  * Scans `/proc` exactly once, returning every process's `{pid, cwd}`. A
  * daemon tick tracks many sessions at once, and each one used to trigger its
  * own full `readdirSync('/proc')` + per-pid `readlinkSync` — O(sessions ×
@@ -98,10 +131,6 @@ export function isProcessAliveForCwd(
         // session id in argv. Correlate their Linux process start time with
         // the transcript start time instead (the gap is normally seconds).
         if (sessionStartedAt) {
-          const bootTimeLine = fs
-            .readFileSync(path.join(procRoot, 'stat'), 'utf8')
-            .split('\n')
-            .find((line) => line.startsWith('btime '));
           const processStat = fs.readFileSync(
             path.join(procRoot, pid, 'stat'),
             'utf8',
@@ -110,12 +139,12 @@ export function isProcessAliveForCwd(
             .slice(processStat.lastIndexOf(')') + 2)
             .trim()
             .split(/\s+/);
-          const bootTimeSeconds = Number(bootTimeLine?.split(/\s+/)[1]);
+          const bootTime = bootTimeSeconds(procRoot, processes);
+          if (bootTime === undefined) continue;
           const startTicks = Number(fieldsAfterComm[19]);
           const sessionStartMs = Date.parse(sessionStartedAt);
           const processStartMs =
-            (bootTimeSeconds + startTicks / LINUX_CLOCK_TICKS_PER_SECOND) *
-            1000;
+            (bootTime + startTicks / LINUX_CLOCK_TICKS_PER_SECOND) * 1000;
           if (
             Number.isFinite(processStartMs) &&
             Number.isFinite(sessionStartMs) &&
