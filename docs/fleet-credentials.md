@@ -189,7 +189,11 @@ provisioned (#1354), so only the mint is left.
      (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/ci.yml@')
       || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/e2e.yml@')
       || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy.yml@')
+      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy-rules-and-indexes.yml@')
+      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy-qbp-appsscript.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml@')
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml@')
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml@'))
    ```
 
