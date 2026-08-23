@@ -54,7 +54,7 @@ export const claudeCodeAdapter: TranscriptAdapter = {
   detect(firstLines: string[]): boolean {
     return firstLines.some(looksLikeClaudeCodeLine);
   },
-  reduce(lines: string[]): SessionSummary[] {
+  reduce(lines: Iterable<string>): SessionSummary[] {
     // reduceTranscriptLines (not reduceTranscript) - lines are already
     // split, so going through the string-based API would force a wasteful
     // join-then-resplit round trip on every file, every tick. See

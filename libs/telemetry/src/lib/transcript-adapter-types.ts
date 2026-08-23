@@ -4,5 +4,10 @@ import { SessionAgent, SessionSummary } from './types';
 export interface TranscriptAdapter {
   agent: SessionAgent;
   detect(firstLines: string[], filePath: string): boolean;
-  reduce(lines: string[]): SessionSummary[];
+  /**
+   * Lines are intentionally iterable rather than an array. The host watcher
+   * can then stream a large JSONL transcript through a reducer without first
+   * materializing an array of every line alongside the file contents.
+   */
+  reduce(lines: Iterable<string>): SessionSummary[];
 }

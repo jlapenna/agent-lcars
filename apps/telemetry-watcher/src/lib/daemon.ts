@@ -26,6 +26,7 @@ import {
   isProcessAliveForCwd as defaultIsProcessAliveForCwd,
   scanProcCwds,
 } from './process-check';
+import { readTranscriptLines as defaultReadTranscriptLines } from './read-transcript-lines';
 import {
   readSessionStatusOverlay as defaultReadSessionStatusOverlay,
   readSessionTitleOverlay as defaultReadSessionTitleOverlay,
@@ -107,6 +108,12 @@ export interface WatcherDaemonOptions {
   /** Host-watcher Prometheus observer. Runner mode deliberately omits it. */
   metrics?: WatcherMetricsSink;
   now?: () => string;
+  /**
+   * Test seam for the production streaming reader. `readFile` is retained
+   * for existing unit fixtures, whose in-memory strings naturally become an
+   * iterable of lines below.
+   */
+  readTranscriptLines?: (filePath: string) => Iterable<string>;
   readFile?: (filePath: string) => string;
   statFile?: (filePath: string) => FileStat;
   discover?: (rootPath: string, allowlist: string[]) => string[];
@@ -236,8 +243,12 @@ export class WatcherDaemon {
       Math.floor(Date.parse(now) / (5 * 60 * 1000)) * 5 * 60 * 1000,
     ).toISOString();
     const discover = this.options.discover ?? discoverTranscriptFiles;
-    const readFile =
-      this.options.readFile ?? ((p: string) => fs.readFileSync(p, 'utf8'));
+    const readFile = this.options.readFile;
+    const readTranscriptLines =
+      this.options.readTranscriptLines ??
+      (readFile
+        ? (p: string) => readFile(p).split('\n')
+        : defaultReadTranscriptLines);
     const statFile =
       this.options.statFile ??
       ((p: string) => {
@@ -328,9 +339,9 @@ export class WatcherDaemon {
         continue;
       }
 
-      let content: string;
+      let lines: Iterable<string>;
       try {
-        content = readFile(file);
+        lines = readTranscriptLines(file);
       } catch (error) {
         logger.warn(
           `agent-lcars-telemetry-watcher: failed to read transcript ${file}, skipping`,
@@ -338,10 +349,12 @@ export class WatcherDaemon {
         );
         continue;
       }
-      this.fileStats.set(file, stat);
-
       try {
-        const fileSummaries = adapter.reduce(content.split('\n'));
+        const fileSummaries = adapter.reduce(lines);
+        // The production reader is lazy. Only mark the file read after the
+        // reducer has consumed it successfully; otherwise a late I/O error
+        // would suppress the retry on every subsequent tick.
+        this.fileStats.set(file, stat);
         // Host is attached here (not inside the adapter, which has no
         // options param) so it's stamped uniformly regardless of which
         // adapter produced the summary - mirrors the old reduceTranscripts

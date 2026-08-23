@@ -388,7 +388,7 @@ export function reduceTranscripts(
  * point rather than just being an implementation detail.
  */
 export function reduceTranscriptLines(
-  lines: string[],
+  lines: Iterable<string>,
   options: ReduceTranscriptOptions = {},
 ): SessionSummary[] {
   return reduceLines(lines, options);

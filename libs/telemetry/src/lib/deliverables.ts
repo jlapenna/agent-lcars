@@ -1,7 +1,7 @@
 import { collectStrings } from './unknown-value';
 
 const PR_URL_PATTERN = /\/pull\/(\d+)/g;
-const COMMIT_BRACKET_PATTERN = /\[[^\]\n]*?\s([0-9a-f]{7,40})\]/gi;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 const DELIVERABLE_COMMAND_PATTERN = /\bgh\s+pr\s+create\b|\bgit\s+commit\b/i;
 
 export interface DeliverablesFound {
@@ -40,8 +40,20 @@ export function findDeliverables(line: unknown): DeliverablesFound {
   }
 
   const commitShas = new Set<string>();
-  for (const match of text.matchAll(COMMIT_BRACKET_PATTERN)) {
-    commitShas.add(match[1]);
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const openingBracket = text.indexOf('[', searchFrom);
+    if (openingBracket === -1) break;
+    const closingBracket = text.indexOf(']', openingBracket + 1);
+    if (closingBracket === -1) break;
+
+    const bracketContents = text.slice(openingBracket + 1, closingBracket);
+    const parts = bracketContents.trim().split(/\s+/);
+    const candidate = parts.length > 1 ? parts.at(-1) : undefined;
+    if (candidate && COMMIT_SHA_PATTERN.test(candidate)) {
+      commitShas.add(candidate);
+    }
+    searchFrom = closingBracket + 1;
   }
 
   return {

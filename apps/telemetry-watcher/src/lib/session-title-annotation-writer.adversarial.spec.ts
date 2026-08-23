@@ -683,11 +683,6 @@ describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
     expect(fs.readdirSync(directory(homeDirectory))).toEqual([]);
   });
 
-  // Explicit generous timeout (vitest's default is 5000ms): 300 real
-  // individually fsync'd writes through the real writer is genuine bulk
-  // real-filesystem work, not a fixture shortcut to optimize away. ~24ms
-  // locally; timed out on a GitHub-hosted runner's slower disk (issue
-  // #1224 CI follow-up) -- 90s gives that runner real headroom.
   it('never deletes a declared title purely for count, however many are inside the horizon', () => {
     const homeDirectory = home();
     // Comfortably past every count-based cap elsewhere in this issue
@@ -695,12 +690,17 @@ describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
     // _CAP` 192) -- this function has no count parameter at all, and this
     // is the test that would catch one being added back by accident.
     const total = 300;
+    const titleDirectory = directory(homeDirectory);
+    fs.mkdirSync(titleDirectory, { recursive: true, mode: 0o700 });
     for (let index = 0; index < total; index += 1) {
-      writeSessionTitleAnnotation(
-        `declared-${index}`,
-        `title ${index}`,
-        DECLARED_TITLE_SUBDIRECTORY,
-        deps(homeDirectory),
+      // Pruning deliberately depends only on a safe final filename and its
+      // mtime; it does not parse title payloads. Write that minimal fixture
+      // directly so this count-boundary test does not pay 300 directory
+      // fsyncs from the writer's separate durability contract.
+      fs.writeFileSync(
+        path.join(titleDirectory, `declared-${index}.json`),
+        '{}',
+        { mode: 0o600 },
       );
     }
 
@@ -710,7 +710,7 @@ describe('pruneStaleDeclaredSessionTitleAnnotations', () => {
     });
 
     expect(fs.readdirSync(directory(homeDirectory))).toHaveLength(total);
-  }, 90_000);
+  });
 
   it('fails soft when one entry cannot be deleted, and still prunes the rest', () => {
     const homeDirectory = home();

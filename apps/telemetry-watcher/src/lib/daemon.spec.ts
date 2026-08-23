@@ -340,6 +340,37 @@ describe('WatcherDaemon', () => {
     expect(upserts[0].sessionId).toBe('session-good');
   });
 
+  it('retries a lazy transcript read that throws during reduction', async () => {
+    const { store } = createFakeStore();
+    const readTranscriptLines = vi.fn(function* () {
+      yield '';
+      throw new Error('EACCES: permission denied');
+    });
+
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => ['/root/proj/session-lazy-read-error.jsonl'],
+      readTranscriptLines,
+      statFile: () => fakeStat('unchanged'),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+    });
+
+    await expect(daemon.tick()).resolves.toBeUndefined();
+    await expect(daemon.tick()).resolves.toBeUndefined();
+
+    // A lazy reader can fail only when the reducer consumes it. The file
+    // must remain eligible for retry rather than being marked as read.
+    expect(readTranscriptLines).toHaveBeenCalledTimes(2);
+  });
+
   it('fails soft when one transcript file cannot be stat-ed', async () => {
     const { store, upserts } = createFakeStore();
     const files: Record<string, string> = {
