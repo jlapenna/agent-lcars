@@ -41,7 +41,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    runs-on: ['lcars-default']
     outputs:
       verify_passed: ${{ steps.check.outputs.verify_passed }}
     steps:
@@ -76,7 +76,7 @@ jobs:
     # The optional prebuilt path runs the console's production Nx graph
     # locally. Keep that long-running diagnostic work off lcars-default's
     # latency-sensitive glue pool.
-    runs-on: ['${{ vars.CI_RUNNER_LABEL }}']
+    runs-on: ['lcars-ci']
     timeout-minutes: 40
     environment: production
 

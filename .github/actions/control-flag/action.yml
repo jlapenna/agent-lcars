@@ -1,0 +1,20 @@
+name: Control flag annotation
+description: Make an engaged fleet control flag visible in logs and the job summary.
+inputs:
+  name:
+    required: true
+  lane:
+    required: true
+  restore-command:
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "::notice title=${{ inputs.name }} engaged::${{ inputs.lane }} was skipped; restore with: ${{ inputs.restore-command }}"
+        {
+          echo '## Control flag engaged'
+          echo "\`${{ inputs.name }}\` skipped ${{ inputs.lane }}."
+          echo "Restore: \`${{ inputs.restore-command }}\`"
+        } >> "$GITHUB_STEP_SUMMARY"

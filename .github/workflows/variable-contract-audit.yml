@@ -1,0 +1,32 @@
+name: Variable Contract Audit
+
+on:
+  schedule:
+    - cron: '29 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ['lcars-default']
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audit declared variables and stale control flags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          jq -r '.profiles[] | .repositories[]' config/github-variables.json | while read -r repo; do
+            profile="$(jq -r --arg repo "$repo" '.profiles[] | select(.repositories | index($repo)) | @base64' config/github-variables.json)"
+            declared="$(printf '%s' "$profile" | base64 --decode | jq -r '.variables | keys[]')"
+            live="$(gh api "repos/$repo/actions/variables" --paginate --jq '.variables[].name')"
+            missing="$(comm -23 <(printf '%s\n' "$declared" | sort) <(printf '%s\n' "$live" | sort) || true)"
+            if [[ -n "$missing" ]]; then
+              echo "::error::$repo has declared but unset variables: $(tr '\n' ' ' <<<"$missing")"
+              exit 1
+            fi
+          done

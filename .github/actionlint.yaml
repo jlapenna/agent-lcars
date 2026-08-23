@@ -1,7 +1,7 @@
 # actionlint's self-hosted-runner allowlist only matters for LITERAL
 # `runs-on:` values - it has no way to resolve a `${{ vars.* }}` expression
 # at lint time, so it never actually checks a job whose `runs-on:` reads
-# `['${{ vars.AGENT_RUNNER_LABEL }}']` or `['${{ vars.DEFAULT_RUNNER_LABEL }}']`
+# `['${{ vars.AGENT_RUNNER_LABEL }}']`
 # against this list at all. That covers every claude-agent-lcars/
 # lcars-default job in this repo (claude.yml, opencode.yml, codex.yml,
 # agent-automerge.yml) - none of them are actually validated by this file.
@@ -16,3 +16,4 @@ self-hosted-runner:
   labels:
     - claude-agent-lcars
     - lcars-default
+    - lcars-ci
