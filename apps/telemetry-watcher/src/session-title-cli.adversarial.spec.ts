@@ -233,15 +233,6 @@ describe('session-title CLI end-to-end process behavior', () => {
     expect(run.status).toBe(0);
     expect(run.stderr.toLowerCase()).toContain('session title');
     expect(run.stderr.toLowerCase()).toContain('session status');
-    expect(run.stderr.toLowerCase()).toContain('import-native');
-  });
-
-  it('session import-native exits 0 without a session id and with no Codex state DB present', () => {
-    const home = tempHome();
-    const run = runCli(['session', 'import-native'], baseEnv(home));
-
-    expect(run.status).toBe(0);
-    expect(run.stderr).toBe('');
   });
 });
 

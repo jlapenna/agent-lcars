@@ -10,7 +10,6 @@ import * as path from 'path';
 
 import {
   DECLARED_TITLE_SUBDIRECTORY,
-  GENERATED_TITLE_SUBDIRECTORY,
   sessionTitleChannelDirectory,
   STATUS_SUBDIRECTORY,
 } from './session-title-paths';
@@ -237,26 +236,14 @@ export function readSessionTitleAnnotations(
   return readSessionTitleDirectory(directory, fileSystem).annotations;
 }
 
-/** Both channels' directory reads for one state root, see
+/** Declared-title directory read for one state root, see
  * {@link readSessionTitleOverlay}. */
 export interface SessionTitleOverlayRead {
   readonly declared: SessionTitleDirectoryRead;
-  readonly generated: SessionTitleDirectoryRead;
 }
 
 /**
- * Reads both session-title channel directories beneath `stateDirectory` —
- * `session-metadata/` (declared) and `native-titles/` (generated), see
- * `session-title-paths.ts`. Availability is tracked PER DIRECTORY, entirely
- * independently: the two channels have unrelated existence stories. A host
- * with no Codex importer ever having run has no `native-titles/` directory
- * at all — that is the ordinary, permanent state of such a host, not a
- * failure, and it must not be conflated with `session-metadata/` also being
- * unavailable (the declared-title writer may be running there just fine).
- * Conversely a host that writes both may have either directory momentarily
- * unreadable independently of the other (e.g. mid-write on one, untouched
- * on the other). Each directory's `available` therefore only ever reflects
- * that one directory's own read.
+ * Reads the declared title directory beneath `stateDirectory`.
  */
 export function readSessionTitleOverlay(
   stateDirectory: string,
@@ -266,13 +253,6 @@ export function readSessionTitleOverlay(
   return {
     declared: readSessionTitleDirectory(
       sessionTitleChannelDirectory(stateDirectory, DECLARED_TITLE_SUBDIRECTORY),
-      fileSystem,
-    ),
-    generated: readSessionTitleDirectory(
-      sessionTitleChannelDirectory(
-        stateDirectory,
-        GENERATED_TITLE_SUBDIRECTORY,
-      ),
       fileSystem,
     ),
   };

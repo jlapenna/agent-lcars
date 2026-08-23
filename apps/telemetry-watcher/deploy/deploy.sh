@@ -135,16 +135,13 @@ ensure_watcher_dir "$WATCHER_HOME/p" 0755
 ensure_watcher_dir "$WATCHER_HOME/share" 0755
 ensure_watcher_dir "$WATCHER_HOME/.gemini/antigravity-cli" 0700
 # Session-title overlay state (issue #1212): `session-metadata/` holds
-# declared titles written by the agent-side `lcars session title` CLI, and
-# `native-titles/` holds the host-side importer's Codex title snapshots (see
-# the systemd/ unit in this directory). Neither writer runs before this
-# script on a fresh host, so without this the first `docker compose up`
+# declared titles written by the agent-side `lcars session title` CLI. The
+# writer does not run before this script on a fresh host, so without this the first `docker compose up`
 # below would create the top-level `agent-lcars` directory root-owned via
 # the bind mount -- same failure mode the comment on ensure_watcher_dir
 # above describes for the other watched roots, just for a directory nothing
 # else has touched yet.
 ensure_watcher_dir "$WATCHER_HOME/.local/state/agent-lcars/session-metadata" 0700
-ensure_watcher_dir "$WATCHER_HOME/.local/state/agent-lcars/native-titles" 0700
 
 # --- writer-key.json: must exist; the CONTAINER reads it as jlapenna -------
 if [ ! -f "$WRITER_KEY" ]; then

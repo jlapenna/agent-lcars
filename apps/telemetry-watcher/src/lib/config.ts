@@ -42,19 +42,15 @@ export interface WatcherConfig extends SharedWatcherConfig {
    * `pollAntigravitySummaries`/`daemon.ts`), not a config-time one — this
    * stays set either way. */
   antigravitySummaryDb?: AntigravitySummaryDbConfig;
-  /** Optional session-title overlay root (issue #1212) — the local
-   * directory beneath which the declared-title writer and the Codex
-   * native-title importer each publish their own subdirectory (see
+  /** Optional declared session-title overlay root (issue #1212) — the local
+   * directory the declared-title writer publishes beneath (see
    * `session-title-paths.ts`, `session-title-annotation-source.ts`).
    * Default-enabled (see `defaultSessionStateDir` below), so this is only
    * ever `undefined` when `AGENT_TELEMETRY_SESSION_STATE_DIR` is explicitly
-   * set to the empty string (opt-out, e.g. a host that shouldn't apply
-   * either overlay channel at all). Same convention as
+   * set to the empty string (opt-out). Same convention as
    * `antigravitySummaryDb` above — see that field's comment for why unset
-   * and empty differ. Neither channel subdirectory actually existing yet
-   * (e.g. a host with no Codex importer, so no `native-titles/`) is a
-   * *runtime* fail-soft concern (see `readSessionTitleOverlay`/`daemon.ts`),
-   * not a config-time one — this stays set either way. */
+   * and empty differ. A missing declared-title directory is a runtime
+   * fail-soft concern (see `readSessionTitleOverlay`/`daemon.ts`). */
   sessionStateDir?: string;
 }
 

@@ -47,7 +47,6 @@ export function selectSessionTitle(
 
 export interface SessionTitleOverlay {
   declared?: SessionTitleAnnotationV1;
-  generated?: SessionTitleAnnotationV1;
 }
 
 /**
@@ -72,13 +71,8 @@ export interface SessionTitleOverlay {
  * Candidate derivation, the entire correctness argument:
  *  - `declared`  comes only from the overlay — the transcript itself never
  *    produces a declared title, so there is nothing on `summary` to prefer.
- *  - `generated` prefers the summary's OWN generated title (Claude's
- *    `aiTitle`, reduced moments ago from the actual transcript) over the
- *    overlay's imported one (a Codex thread name imported from SQLite,
- *    potentially stale by comparison) — "transcript beats imported file" is
- *    not a tie-break, it's preferring the fresher of two same-tier signals.
- *    Only when the summary carries no generated title of its own does the
- *    imported one get a chance.
+ *  - `generated` comes only from the summary's own generated title (such as
+ *    Claude's `aiTitle`), reduced moments ago from the actual transcript.
  *  - `inferred` comes only from the summary — the overlay has no inferred
  *    tier (nothing external infers from a first prompt), so this is just
  *    "was the transcript's own title actually inferred, or something else."
@@ -89,8 +83,7 @@ export function applySessionTitleOverlay(
 ): SessionSummary {
   const declared = overlay.declared?.title;
   const generated =
-    (summary.titleSource === 'generated' ? summary.title : undefined) ??
-    overlay.generated?.title;
+    summary.titleSource === 'generated' ? summary.title : undefined;
   const inferred =
     summary.titleSource === 'inferred' ? summary.title : undefined;
 

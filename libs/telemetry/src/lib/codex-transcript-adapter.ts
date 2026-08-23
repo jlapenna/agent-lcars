@@ -2,6 +2,7 @@ import { findDeliverables } from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
 import { SessionSummary, TokenUsage } from './types';
 import {
+  asArray,
   asNumber,
   asRecord,
   asString,
@@ -30,6 +31,36 @@ function looksLikeCodexLine(line: string): boolean {
   } catch {
     return false;
   }
+}
+
+function userMessageText(payload: Record<string, unknown>): string | undefined {
+  const legacyMessage = asString(payload['message']);
+  if (legacyMessage) return legacyMessage;
+
+  const content = asArray(payload['content']);
+  if (!content) return undefined;
+  for (const item of content) {
+    const block = asRecord(item);
+    if (
+      block &&
+      (asString(block['type']) === 'input_text' ||
+        asString(block['type']) === 'text')
+    ) {
+      const text = asString(block['text']);
+      if (text) return text;
+    }
+  }
+  return undefined;
+}
+
+/** Codex prepends repository instructions as a user-role input. They are
+ * context, not the user's task, so using them as a session title produces a
+ * misleading label and hides the first real request. */
+function isInjectedRepositoryInstructions(message: string): boolean {
+  return (
+    message.startsWith('# AGENTS.md instructions') &&
+    message.includes('<INSTRUCTIONS>')
+  );
 }
 
 /** Reduces Codex CLI rollout JSONL without retaining message bodies. */
@@ -89,8 +120,10 @@ export const codexAdapter: TranscriptAdapter = {
       } else if (lineType === 'event_msg') {
         if (payloadType === 'task_started') turns += 1;
         if (payloadType === 'user_message' && !title) {
-          const message = asString(payload['message']);
-          if (message) title = truncateTitle(message);
+          const message = userMessageText(payload);
+          if (message && !isInjectedRepositoryInstructions(message)) {
+            title = truncateTitle(message);
+          }
         }
         if (payloadType === 'token_count') {
           const info = asRecord(payload['info']);
@@ -118,6 +151,16 @@ export const codexAdapter: TranscriptAdapter = {
         if (name) {
           toolCallCounts[name] = (toolCallCounts[name] ?? 0) + 1;
           if (timestamp) lastToolCall = { name, timestamp };
+        }
+      } else if (
+        lineType === 'response_item' &&
+        payloadType === 'message' &&
+        asString(payload['role']) === 'user' &&
+        !title
+      ) {
+        const message = userMessageText(payload);
+        if (message && !isInjectedRepositoryInstructions(message)) {
+          title = truncateTitle(message);
         }
       }
 
