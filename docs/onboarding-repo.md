@@ -80,10 +80,12 @@ and a starter scale set named and labeled for that repository. A practical
 starting point is an ephemeral, general-purpose pool with a minimum of zero
 and a small maximum; split pools only when workload duration or isolation
 demands it. Add the repository to homelab's `protect-main` ruleset module as
-well. A nascent repository may begin with no required checks, but it must
-still retain linear history, protection against force-push and deletion, and
-required review-thread resolution. Terraform plan/apply remains a separately
-approved maintainer operation.
+well. Every repository starts with required `gitleaks` and
+`validate / repository validation` checks: secret scanning is the fleet's
+minimum security baseline, and a reusable validation workflow has no consumer
+until its result blocks merges. It must also retain linear history, protection
+against force-push and deletion, and required review-thread resolution.
+Terraform plan/apply remains a separately approved maintainer operation.
 
 The registration uses the autoscaler GitHub App, not the fleet App. Its App
 key belongs in the homelab encrypted secret store; it never belongs in this
