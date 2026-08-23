@@ -65,7 +65,7 @@ jobs:
       # Sharing that pool would queue this glue work behind an in-flight
       # agent run, the same antipattern sprinkles' own claude-automerge.yml
       # was moved off of.
-      runs-on: ['lcars-default']
+      runs-on: '["lcars-default"]'
       # The required CI checks in the Protect main ruleset.
       required-checks: '["Verify","Runner image pnpm-store seed"]'
       ci-workflow: ci.yml

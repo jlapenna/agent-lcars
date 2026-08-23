@@ -16,3 +16,4 @@ self-hosted-runner:
   labels:
     - claude-agent-lcars
     - lcars-default
+    - lcars-ci
