@@ -142,6 +142,7 @@ ensure_watcher_dir "$WATCHER_HOME/.gemini/antigravity-cli" 0700
 # above describes for the other watched roots, just for a directory nothing
 # else has touched yet.
 ensure_watcher_dir "$WATCHER_HOME/.local/state/agent-lcars/session-metadata" 0700
+ensure_watcher_dir "$WATCHER_HOME/.local/state/agent-lcars/session-status" 0700
 
 # --- writer-key.json: must exist; the CONTAINER reads it as jlapenna -------
 if [ ! -f "$WRITER_KEY" ]; then

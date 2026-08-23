@@ -1,0 +1,7 @@
+[Unit]
+Description=Prune expired Agent LCARS session annotations
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/lcars session prune
+TimeoutStartSec=30

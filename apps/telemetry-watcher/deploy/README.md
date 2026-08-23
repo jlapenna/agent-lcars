@@ -175,6 +175,21 @@ reliably on PATH for every caller. Add `~/.local/bin` to the account's PATH
 for interactive `lcars session title` use. Re-run this script after any
 change to the session-title CLI lands on that checkout's `main`.
 
+### Pruning explicit annotations
+
+Install the daily host-user cleanup timer after installing the CLI:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp apps/telemetry-watcher/deploy/systemd/agent-lcars-session-annotation-prune.{service,timer} \
+  ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now agent-lcars-session-annotation-prune.timer
+```
+
+It only removes expired `session-metadata/` and `session-status/` files. It
+does not read Codex state or create title cache files.
+
 ## Monitoring
 
 The watcher publishes Prometheus text on host port `9464`; its Compose
