@@ -235,6 +235,41 @@ export class WatcherDaemon {
 
   constructor(private readonly options: WatcherDaemonOptions) {}
 
+  /**
+   * A stale session's transcript is no longer discoverable. Once its stale
+   * write succeeds, keeping its cached transcript, dedupe write, annotations,
+   * and session record buys nothing: it would otherwise stay in every future
+   * tick's process/artifact loop for the lifetime of the daemon. Eviction is
+   * deliberately coupled to that successful terminal write, not a periodic
+   * maintenance job. A later rediscovery starts from the transcript again.
+   */
+  private evictStaleSession(sessionId: string): void {
+    this.sessions.delete(sessionId);
+    this.lastWrittenWrites.delete(sessionId);
+
+    for (const [file, sessionIds] of this.sessionIdsByFile) {
+      if (!sessionIds.includes(sessionId)) continue;
+      const remainingSessionIds = sessionIds.filter((id) => id !== sessionId);
+      if (remainingSessionIds.length === 0) {
+        this.sessionIdsByFile.delete(file);
+        this.fileStats.delete(file);
+      } else {
+        this.sessionIdsByFile.set(file, remainingSessionIds);
+      }
+    }
+
+    if (this.lastGoodDeclaredTitles.has(sessionId)) {
+      const titles = new Map(this.lastGoodDeclaredTitles);
+      titles.delete(sessionId);
+      this.lastGoodDeclaredTitles = titles;
+    }
+    if (this.lastGoodStatusAnnotations.has(sessionId)) {
+      const statuses = new Map(this.lastGoodStatusAnnotations);
+      statuses.delete(sessionId);
+      this.lastGoodStatusAnnotations = statuses;
+    }
+  }
+
   async tick(): Promise<void> {
     const now = (this.options.now ?? (() => new Date().toISOString()))();
     // Persist proof that the watcher is healthy without writing every 10s.
@@ -529,6 +564,9 @@ export class WatcherDaemon {
         await this.options.store.upsertSession(write);
         this.lastWrittenWrites.set(sessionId, serializedWrite);
         this.options.metrics?.recordSuccessfulSessionUpsert(now, liveness);
+        if (liveness === 'stale') {
+          this.evictStaleSession(sessionId);
+        }
       } catch (error) {
         logger.warn(
           `agent-lcars-telemetry-watcher: failed to upsert session ${sessionId}, will retry next tick`,

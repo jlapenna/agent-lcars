@@ -268,7 +268,7 @@ describe('WatcherDaemon', () => {
     expect(readFile).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces a session as `stale` once it goes undiscovered past the staleness window', async () => {
+  it('writes stale once, then evicts a disappeared transcript from future tick work', async () => {
     const { store, upserts } = createFakeStore();
     let files: Record<string, string> = {
       '/root/proj/session-d.jsonl': TRANSCRIPT(
@@ -277,6 +277,8 @@ describe('WatcherDaemon', () => {
       ),
     };
     let now = '2026-07-12T10:00:01.000Z';
+    const isProcessAliveForCwd = vi.fn(() => true);
+    const discoverArtifacts = vi.fn(() => []);
 
     const daemon = new WatcherDaemon({
       watchRoots: [
@@ -286,12 +288,14 @@ describe('WatcherDaemon', () => {
       store,
       heartbeatIntervalMs: HEARTBEAT_MS,
       stalenessWindowMs: STALENESS_MS,
+      shareDir: '/share',
       now: () => now,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p],
       statFile: (p: string) => fakeStat(files[p]),
-      isProcessAliveForCwd: () => true,
+      isProcessAliveForCwd,
       resolveGitBranch: async () => undefined,
+      discoverArtifacts,
     });
 
     await daemon.tick();
@@ -303,6 +307,26 @@ describe('WatcherDaemon', () => {
     now = '2026-07-12T10:01:00.000Z';
     await daemon.tick();
     expect(upserts[1].liveness).toBe('stale');
+
+    await daemon.tick();
+    expect(upserts).toHaveLength(2);
+    // The now-terminal record is gone from the daemon's in-memory tick path:
+    // no additional /proc correlation or share-directory scan occurs.
+    expect(isProcessAliveForCwd).toHaveBeenCalledTimes(2);
+    expect(discoverArtifacts).toHaveBeenCalledTimes(2);
+
+    // If a transcript later returns (for example after a transient mount
+    // outage), its cache was evicted with the stale record, so it is reduced
+    // and shipped again rather than being suppressed as an unchanged file.
+    files = {
+      '/root/proj/session-d.jsonl': TRANSCRIPT(
+        'session-d',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+    await daemon.tick();
+    expect(upserts).toHaveLength(3);
+    expect(upserts[2].liveness).toBe('live');
   });
 
   it('fails soft when one transcript file cannot be read', async () => {
