@@ -1184,30 +1184,23 @@ describe('WatcherDaemon', () => {
     }
 
     /** Builds a fixed `readSessionTitleOverlay` result for a test seam.
-     * `declared`/`generated` each accept either a map of annotations (a
-     * successful — possibly empty — directory read) or the literal string
+     * `declared` accepts either a map of annotations (a successful — possibly
+     * empty — directory read) or the literal string
      * `'unavailable'` (a failed read: missing, unreadable, or over the
      * per-directory file-count bound — see
      * `session-title-annotation-source.ts`'s `SessionTitleDirectoryRead`). */
     function overlayRead(
       declared: ReadonlyMap<string, SessionTitleAnnotationV1> | 'unavailable',
-      generated:
-        | ReadonlyMap<string, SessionTitleAnnotationV1>
-        | 'unavailable' = new Map(),
     ): SessionTitleOverlayRead {
       return {
         declared:
           declared === 'unavailable'
             ? { available: false, annotations: new Map() }
             : { available: true, annotations: declared },
-        generated:
-          generated === 'unavailable'
-            ? { available: false, annotations: new Map() }
-            : { available: true, annotations: generated },
       };
     }
 
-    it('layers declared over generated over inferred through a full tick', async () => {
+    it('layers declared over inferred through a full tick', async () => {
       const { store, upserts } = createFakeStore();
       const files = {
         '/root/proj/session-title.jsonl': TRANSCRIPT(
@@ -1239,12 +1232,6 @@ describe('WatcherDaemon', () => {
                 titleAnnotation('session-title', 'Declared title'),
               ],
             ]),
-            new Map([
-              [
-                'session-title',
-                titleAnnotation('session-title', 'Generated title'),
-              ],
-            ]),
           ),
       });
 
@@ -1252,52 +1239,11 @@ describe('WatcherDaemon', () => {
 
       // TRANSCRIPT's own reduced title is 'hello' (inferred, from the first
       // user message, no aiTitle set) — declared beats both the overlay's
-      // generated candidate and that inferred fallback.
+      // inferred fallback.
       expect(upserts[0]).toMatchObject({ title: 'Declared title' });
     });
 
-    it('falls back to the overlay generated title when no declared annotation exists', async () => {
-      const { store, upserts } = createFakeStore();
-      const files = {
-        '/root/proj/session-gen.jsonl': TRANSCRIPT(
-          'session-gen',
-          '2026-07-12T10:00:00.000Z',
-        ),
-      };
-
-      const daemon = new WatcherDaemon({
-        watchRoots: [
-          { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
-        ],
-        host: 'test-host',
-        store,
-        heartbeatIntervalMs: HEARTBEAT_MS,
-        stalenessWindowMs: STALENESS_MS,
-        now: () => '2026-07-12T10:00:01.000Z',
-        discover: () => Object.keys(files),
-        readFile: (p: string) => files[p as keyof typeof files],
-        statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
-        isProcessAliveForCwd: () => true,
-        resolveGitBranch: async () => undefined,
-        sessionStateDir: STATE_DIR,
-        readSessionTitleOverlay: () =>
-          overlayRead(
-            new Map(),
-            new Map([
-              [
-                'session-gen',
-                titleAnnotation('session-gen', 'Generated title'),
-              ],
-            ]),
-          ),
-      });
-
-      await daemon.tick();
-
-      expect(upserts[0]).toMatchObject({ title: 'Generated title' });
-    });
-
-    it('falls back to the transcript inferred title when neither overlay channel has an annotation for the session', async () => {
+    it('falls back to the transcript inferred title when no declared annotation exists', async () => {
       const { store, upserts } = createFakeStore();
       const files = {
         '/root/proj/session-inf.jsonl': TRANSCRIPT(
@@ -1321,7 +1267,7 @@ describe('WatcherDaemon', () => {
         isProcessAliveForCwd: () => true,
         resolveGitBranch: async () => undefined,
         sessionStateDir: STATE_DIR,
-        readSessionTitleOverlay: () => overlayRead(new Map(), new Map()),
+        readSessionTitleOverlay: () => overlayRead(new Map()),
       });
 
       await daemon.tick();
@@ -1361,7 +1307,6 @@ describe('WatcherDaemon', () => {
                 titleAnnotation('session-unknown', 'Ghost title'),
               ],
             ]),
-            new Map(),
           ),
       });
 
@@ -1692,19 +1637,12 @@ describe('WatcherDaemon', () => {
 
     function overlayRead(
       declared: ReadonlyMap<string, SessionTitleAnnotationV1> | 'unavailable',
-      generated:
-        | ReadonlyMap<string, SessionTitleAnnotationV1>
-        | 'unavailable' = new Map(),
     ): SessionTitleOverlayRead {
       return {
         declared:
           declared === 'unavailable'
             ? { available: false, annotations: new Map() }
             : { available: true, annotations: declared },
-        generated:
-          generated === 'unavailable'
-            ? { available: false, annotations: new Map() }
-            : { available: true, annotations: generated },
       };
     }
 
