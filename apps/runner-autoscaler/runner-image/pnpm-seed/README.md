@@ -25,6 +25,15 @@ layer; neither comes from Sprinkles source or its build context. Refresh no
 more than monthly, or when measured hit coverage falls below 70%; keep
 lockfile updates independent from consumer dependency updates.
 
+Package-resolution overlap with a consumer lockfile is a diagnostic, not the
+refresh success metric: a deliberately curated seed excludes consumer-only
+families, so that count can be below 70% without justifying an import of a
+consumer lockfile. Evaluate a refresh against the representative unchanged
+install instead: it must reduce external registry bytes by at least 70% and
+install time by at least 30%, while preserving the size budget below. Record
+the package-resolution overlap alongside those measurements to explain drift,
+but never turn it into a generated consumer-derived seed.
+
 Before publishing a refreshed runner image, record the combined compressed
 seed-layer size for both `linux/amd64` and `linux/arm64`. The pilot budget is
 at most 1.5 GiB of additional compressed image data per architecture. The
