@@ -66,8 +66,7 @@ jobs:
       # agent run, the same antipattern sprinkles' own claude-automerge.yml
       # was moved off of.
       runs-on: ${{ format('["{0}"]', vars.DEFAULT_RUNNER_LABEL) }}
-      # One CI workflow (ci.yml, "Verify" + "E2E" jobs, only "Verify"
-      # required by the Protect main ruleset).
-      required-checks: '["Verify"]'
+      # The required CI checks in the Protect main ruleset.
+      required-checks: '["Verify","Runner image pnpm-store seed"]'
       ci-workflow: ci.yml
       deploy-workflow: deploy-console.yml

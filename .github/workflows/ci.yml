@@ -282,8 +282,41 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether pnpm-store seed is affected
+        id: seed-scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          run=true
+
+          if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == push ]]; then
+            if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] || \
+                 ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              echo "::warning::No usable pnpm-store seed comparison base; running the check."
+            elif ! changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              echo "::warning::Changed-file detection failed; running the pnpm-store seed check."
+            # The assertion also inspects the fleet agent callers for
+            # workspace-level pnpm-store overrides, and this workflow owns
+            # the selector itself. Changes to either therefore must run it.
+            elif ! grep -Eq '^(apps/runner-autoscaler/runner-image/|package\.json$|\.github/workflows/(ci|claude|codex|opencode)\.yml$)' <<<"$changed_files"; then
+              run=false
+            fi
+          fi
+
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [[ "$run" == false ]]; then
+            echo "::notice::pnpm-store seed inputs are unaffected; skipping the immutable-seed assertion."
+          fi
 
       - name: Prove immutable pnpm-store seed behavior
+        if: steps.seed-scope.outputs.run == 'true'
         run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed.test.sh
 
   e2e:
