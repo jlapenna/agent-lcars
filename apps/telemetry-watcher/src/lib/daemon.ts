@@ -237,9 +237,11 @@ export class WatcherDaemon {
 
   /**
    * A stale session's transcript is no longer discoverable. Once its stale
-   * write succeeds, keeping its cached transcript, dedupe write, annotations,
-   * and session record buys nothing: it would otherwise stay in every future
-   * tick's process/artifact loop for the lifetime of the daemon. Eviction is
+   * write succeeds, keeping its cached transcript, dedupe write, and session
+   * record buys nothing: it would otherwise stay in every future tick's
+   * process/artifact loop for the lifetime of the daemon. Last-good
+   * annotations are intentionally separate: they must survive an unavailable
+   * annotation read when this transcript later reappears. Eviction is
    * deliberately coupled to that successful terminal write, not a periodic
    * maintenance job. A later rediscovery starts from the transcript again.
    */
@@ -256,17 +258,6 @@ export class WatcherDaemon {
       } else {
         this.sessionIdsByFile.set(file, remainingSessionIds);
       }
-    }
-
-    if (this.lastGoodDeclaredTitles.has(sessionId)) {
-      const titles = new Map(this.lastGoodDeclaredTitles);
-      titles.delete(sessionId);
-      this.lastGoodDeclaredTitles = titles;
-    }
-    if (this.lastGoodStatusAnnotations.has(sessionId)) {
-      const statuses = new Map(this.lastGoodStatusAnnotations);
-      statuses.delete(sessionId);
-      this.lastGoodStatusAnnotations = statuses;
     }
   }
 
