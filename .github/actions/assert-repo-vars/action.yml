@@ -7,6 +7,13 @@ description: >-
   values already interpolated.
 
 inputs:
+  profile:
+    description: >-
+      Optional profile in config/github-variables.json. When supplied, the
+      action also requires every profile variable marked required. Leave it
+      empty for generic published-action callers that have no fleet profile.
+    required: false
+    default: ''
   vars:
     description: >-
       Newline-separated NAME=VALUE lines - each VALUE the caller-side
@@ -26,5 +33,6 @@ runs:
     - name: Assert required repo variables are set
       shell: bash
       env:
+        PROFILE: ${{ inputs.profile }}
         VARS: ${{ inputs.vars }}
       run: bash "$GITHUB_ACTION_PATH/assert.sh"

@@ -108,6 +108,7 @@ runs:
     - name: Assert required repo variables are set
       uses: ./.github/actions/assert-repo-vars
       with:
+        profile: agent-lcars
         vars: |
           AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
 
