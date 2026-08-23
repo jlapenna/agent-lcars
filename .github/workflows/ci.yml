@@ -3,7 +3,6 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,8 +18,8 @@ jobs:
   verify:
     name: Verify
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    # Self-hosted for everything trusted (push to main, merge_group,
-    # workflow_dispatch, and a same-repo PR branch -- opening one already
+    # Self-hosted for everything trusted (push to main, workflow_dispatch,
+    # and a same-repo PR branch -- opening one already
     # requires write access to this repo); ubuntu-latest only for a
     # pull_request whose head is a fork (#408's rationale). This job's `nx
     # run-many` includes @agent-lcars/runner-autoscaler:test-race (`go test
