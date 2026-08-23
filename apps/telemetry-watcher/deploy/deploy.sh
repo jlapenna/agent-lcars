@@ -106,7 +106,31 @@ for checkout_root in "${requested_checkout_roots[@]}"; do
   normalized_checkout_roots+=("$normalized_checkout_root")
 done
 WATCHER_CHECKOUT_ROOTS="$(IFS=,; printf '%s' "${normalized_checkout_roots[*]}")"
-export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME WATCHER_HOST WATCHER_CHECKOUT_ROOTS
+
+# Construct the JSON with Bash, rather than depending on Node being on the
+# deployment account's PATH. Deployment hosts need only Docker Compose and
+# standard POSIX userland; the watcher image owns the application runtime.
+json_escape() {
+  local value="$1"
+  value="${value//\\\\/\\\\\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+claude_project_allowlist=()
+codex_cwd_allowlist=()
+for checkout_root in "${normalized_checkout_roots[@]}"; do
+  claude_project_allowlist+=("\"$(json_escape "${checkout_root//\//-}")*\"")
+  codex_cwd_allowlist+=("\"$(json_escape "$checkout_root")*\"")
+done
+claude_project_allowlist_json="$(IFS=,; printf '%s' "${claude_project_allowlist[*]}")"
+codex_cwd_allowlist_json="$(IFS=,; printf '%s' "${codex_cwd_allowlist[*]}")"
+watcher_home_json="$(json_escape "$WATCHER_HOME")"
+WATCHER_WATCH_ROOTS="[{\"path\":\"$watcher_home_json/.claude/projects\",\"adapter\":\"claude-code\",\"projectDirAllowlist\":[$claude_project_allowlist_json]},{\"path\":\"$watcher_home_json/.codex/sessions\",\"adapter\":\"codex\",\"recursive\":true,\"cwdAllowlist\":[$codex_cwd_allowlist_json]}]"
+export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME WATCHER_HOST WATCHER_CHECKOUT_ROOTS WATCHER_WATCH_ROOTS
 
 mkdir -p "$DEPLOY_DIR"
 

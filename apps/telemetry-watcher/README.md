@@ -55,8 +55,8 @@ changes in between), the daemon:
 
 1. Discovers Claude transcripts under `~/.claude/projects/**/*.jsonl` whose
    project-dir basename matches the configured allowlist
-   (`AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`, `*`-wildcard glob patterns;
-   defaults to `AGENT_TELEMETRY_CHECKOUT_ROOTS` encoded as project slugs).
+   (`AGENT_TELEMETRY_WATCH_ROOTS`, `*`-wildcard glob patterns; the deployed
+   host derives them from `AGENT_TELEMETRY_CHECKOUT_ROOTS`).
    Interactive transcripts can contain
    other projects' data, so this scoping is a privacy boundary, not just a
    filter (PRD #2112 amendment 2026-07-10, decision 3). It also recursively
@@ -120,12 +120,10 @@ All via environment variables (see `src/lib/config.ts`):
 
 | Variable                                 | Default                         | Purpose                                                                                                                                                                              |
 | ---------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required in host mode           | Comma-separated checkout roots this host watcher may ship. All three source allowlists derive from this one privacy boundary; no personal-home fallback is built in.                 |
-| `AGENT_TELEMETRY_CHECKOUT_ROOT`          | —                               | Legacy single-root compatibility alias for `AGENT_TELEMETRY_CHECKOUT_ROOTS`.                                                                                                         |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`            | Root to watch (overridable for Docker bind mounts / test fixtures).                                                                                                                  |
-| `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`  | checkout root as a project slug | Comma-separated `*`-wildcard globs matched against project-dir names. Derived: `/` → `-`, plus a trailing `*` to admit worktrees.                                                    |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`             | Recursive root for Codex rollout JSONL.                                                                                                                                              |
-| `AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST`    | checkout root + `*`             | Cwd glob privacy boundary for Codex summaries.                                                                                                                                       |
+| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required without explicit roots | Comma-separated checkout roots used by the host fallback and deploy script to construct privacy allowlists.                                                                          |
+| `AGENT_TELEMETRY_WATCH_ROOTS`            | deployed host contract          | JSON array of explicit per-agent roots and privacy allowlists.                                                                                                                       |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`            | Runner-mode fallback only.                                                                                                                                                           |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`             | Runner-mode fallback only.                                                                                                                                                           |
 | `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`   | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes follow the configured checkout roots.                                      |
 | `AGENT_TELEMETRY_SESSION_STATE_DIR`      | `~/.local/state/agent-lcars`    | Declared-title overlay root — `session-metadata/`. Empty string disables the overlay, same convention as `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` above. See "Session titles" above. |
 | `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                 | Host label recorded on each session doc.                                                                                                                                             |

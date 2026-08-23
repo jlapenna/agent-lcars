@@ -64,9 +64,6 @@ export interface EnvVars {
   // Agent telemetry host watcher (issue #2540). See
   // infra/terraform/main.tf for the dedicated Firestore database + writer
   // SA this daemon authenticates as.
-  /** Legacy single-root compatibility alias for
-   * `AGENT_TELEMETRY_CHECKOUT_ROOTS`. */
-  AGENT_TELEMETRY_CHECKOUT_ROOT?: string;
   /** Required comma-separated checkout roots this host watcher may ship.
    * Every source's default privacy allowlist derives from this one value;
    * host mode deliberately has no built-in path fallback. */
@@ -76,14 +73,9 @@ export interface EnvVars {
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
   /** Root of Codex's date-partitioned rollout JSONL tree. */
   AGENT_TELEMETRY_CODEX_SESSIONS_DIR?: string;
-  /** Comma-separated cwd globs limiting which Codex sessions may ship. */
-  AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST?: string;
-  /** Comma-separated `*`-wildcard glob patterns; defaults to the configured checkout's slug only.
-   * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
-  AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST?: string;
   /** JSON array of `{ path, adapter, projectDirAllowlist?, recursive?, cwdAllowlist? }` watch-root objects
    * (#3123 phase 1's multi-root/multi-agent watcher config) - when set, fully
-   * replaces the single default root the two vars above configure. See
+   * replaces the fallback host roots. See
    * `apps/telemetry-watcher/src/lib/config.ts`'s `loadConfig` for the
    * exact format and validation. */
   AGENT_TELEMETRY_WATCH_ROOTS?: string;

@@ -19,9 +19,7 @@ mkdir -p "$smoke_dir/projects" "$smoke_dir/codex" "$smoke_dir/checkout"
 # establishes that the isolated artifact loaded and began watching.
 (
   cd "$smoke_dir"
-  AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR="$smoke_dir/projects" \
-    AGENT_TELEMETRY_CODEX_SESSIONS_DIR="$smoke_dir/codex" \
-    AGENT_TELEMETRY_CHECKOUT_ROOTS="$smoke_dir/checkout" \
+  AGENT_TELEMETRY_WATCH_ROOTS="[{\"path\":\"$smoke_dir/projects\",\"adapter\":\"claude-code\",\"projectDirAllowlist\":[\"*\"]},{\"path\":\"$smoke_dir/codex\",\"adapter\":\"codex\",\"recursive\":true,\"cwdAllowlist\":[\"$smoke_dir/checkout*\"]}]" \
     AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB='' \
     timeout 30s node sidecar.cjs
 ) >"$smoke_dir/out.log" 2>&1 || true

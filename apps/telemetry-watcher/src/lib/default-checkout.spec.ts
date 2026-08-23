@@ -4,11 +4,9 @@ import { isAllowedProjectDir } from './allowlist';
 import { checkoutRoots, checkoutSlugGlobs } from './default-checkout';
 
 const ROOTS_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOTS';
-const LEGACY_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOT';
 
 afterEach(() => {
   delete process.env[ROOTS_VAR];
-  delete process.env[LEGACY_VAR];
 });
 
 describe('checkout roots', () => {
@@ -23,12 +21,6 @@ describe('checkout roots', () => {
       '-srv-checkouts-thing*',
       '-srv-checkouts-another*',
     ]);
-  });
-
-  it('keeps the legacy single-root variable compatible', () => {
-    process.env[LEGACY_VAR] = '/srv/checkouts/legacy';
-
-    expect(checkoutRoots()).toEqual(['/srv/checkouts/legacy']);
   });
 
   it('deduplicates roots after normalization', () => {
