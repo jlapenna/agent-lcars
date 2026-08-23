@@ -18,6 +18,13 @@ run() {
   set -e
 }
 
+run_profile() {
+  set +e
+  output="$(GITHUB_ACTION_PATH="$action_dir" PROFILE="$1" VARS="$2" bash "$script" 2>&1)"
+  status=$?
+  set -e
+}
+
 fail() {
   echo "FAIL: $1" >&2
   echo "--- output ---" >&2
@@ -35,6 +42,25 @@ test "$status" = 1 || fail "an empty value must fail"
 case "$output" in
   *"Missing required repo variable(s): AGENT_FLEET_LOGIN"*) ;;
   *) fail "the missing name must be reported" ;;
+esac
+
+# A declared profile adds only manifest-required variables; optional lane
+# flags deliberately keep their missing-is-enabled/disarmed semantics.
+run_profile agent-lcars $'AGENT_FLEET_LOGIN=agent-lcars-bot'
+test "$status" = 0 || fail "profile required variable present must pass"
+
+run_profile agent-lcars $'AGENT_FLEET_LOGIN='
+test "$status" = 1 || fail "profile required variable missing must fail"
+case "$output" in
+  *"Missing required repo variable(s): AGENT_FLEET_LOGIN"*) ;;
+  *) fail "profile failure must name manifest-required variable" ;;
+esac
+
+run_profile unknown $'AGENT_FLEET_LOGIN=agent-lcars-bot'
+test "$status" = 1 || fail "unknown profile must fail"
+case "$output" in
+  *"Unknown variable contract profile: unknown"*) ;;
+  *) fail "unknown profile must be explicit" ;;
 esac
 
 # Every empty value is named in the single error line.
