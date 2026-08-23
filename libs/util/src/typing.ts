@@ -1,8 +1,3 @@
-/** Undefined Type Guard */
-export function isDefined<T>(value: T): value is NonNullable<T> {
-  return value !== null && value !== undefined;
-}
-
 export function isBrowser(): boolean {
   if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') {
     return false;
