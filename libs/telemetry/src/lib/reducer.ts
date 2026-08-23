@@ -309,7 +309,7 @@ function resolveTitle(
  * a join-then-resplit round trip through a string-based API. That round trip
  * was cheap enough to miss in small unit tests but measurably slow (~5x) on
  * a per-file basis against a large (2MB+) real transcript — see
- * daemon.memory.spec.ts, which times a full multi-hundred-MB corpus tick.
+ * the watcher-side streaming reader, which bounds file-read memory.
  */
 function reduceLines(
   lines: Iterable<string>,

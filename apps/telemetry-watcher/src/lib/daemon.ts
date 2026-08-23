@@ -315,10 +315,8 @@ export class WatcherDaemon {
       changedFiles.set(file, { stat, root });
     }
 
-    // Read and reduce one changed file at a time (never batching multiple
-    // files' contents into memory simultaneously - see #2606's OOM
-    // regression, guarded by daemon.memory.spec.ts) via its root's own
-    // adapter, resolved by name from the shared registry. A file maps 1:1
+    // Read and reduce one changed file at a time, via its root's own adapter
+    // resolved by name from the shared registry. A file maps 1:1
     // to a sessionId by construction (`<sessionId>.jsonl`), so per-file
     // adapter.reduce() calls are equivalent to the old batched
     // reduceTranscripts() call for every case this daemon actually sees -
