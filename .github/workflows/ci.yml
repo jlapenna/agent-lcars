@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  verify:
-    name: Verify
+  verify-full:
+    name: Full verification
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # Self-hosted for everything trusted (push to main, workflow_dispatch,
     # and a same-repo PR branch -- opening one already
@@ -266,6 +266,32 @@ jobs:
       # by the canonical homelab controller.
       - name: Smoke test telemetry-watcher bundle
         run: ./tools/telemetry-watcher-standalone-smoke.sh
+
+  # `Verify` is the branch-ruleset check. It must always report: GitHub
+  # treats a skipped required job as passing, so the draft decision belongs in
+  # this always-run gate rather than on the required job itself. Draft PRs
+  # deliberately receive a visible successful short-circuit; ready-for-review
+  # events start `verify-full` and this gate then requires its real result.
+  verify:
+    name: Verify
+    needs: verify-full
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record deliberate draft short-circuit
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft
+        run: echo 'Verify deliberately short-circuited for this draft pull request.'
+
+      - name: Require full verification when applicable
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        env:
+          VERIFY_FULL_RESULT: ${{ needs.verify-full.result }}
+        run: |
+          if [ "$VERIFY_FULL_RESULT" != 'success' ]; then
+            echo "::error::Full verification concluded '$VERIFY_FULL_RESULT'."
+            exit 1
+          fi
 
   runner-image-pnpm-store-seed:
     name: Runner image pnpm-store seed
