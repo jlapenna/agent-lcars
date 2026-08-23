@@ -55,11 +55,12 @@ permissions:
   pull-requests: write
 
 # Multiple pull-request/review events for the same PR need only the most
-# recent auto-merge evaluation. Keep schedule and workflow-run recovery work
-# independent by falling back to the ref.
+# recent auto-merge evaluation. A workflow-run recovery must never cancel the
+# persistent pull-request monitor that restores post-merge CI after a
+# GITHUB_TOKEN merge, so recovery and scheduled work use independent groups.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_run' && format('recovery-{0}', github.event.workflow_run.id) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_review' }}
 
 jobs:
   automerge:
