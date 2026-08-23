@@ -10,7 +10,6 @@ import * as path from 'path';
 
 import {
   DECLARED_TITLE_SUBDIRECTORY,
-  GENERATED_TITLE_SUBDIRECTORY,
   SESSION_STATE_DIRECTORY,
   sessionTitleChannelDirectory,
   STATUS_SUBDIRECTORY,
@@ -20,22 +19,18 @@ import {
  * directory. Kept as its own export -- it's still the channel most callers
  * (and the reader side) reference directly -- but it's now derived from
  * `session-title-paths.ts`'s shared constants rather than hardcoded here,
- * since `native-titles/` (the `generated` channel) is the same root with a
- * different leaf; see `SessionTitleChannel` below. */
+ * from `session-title-paths.ts` rather than hardcoded here. */
 export const SESSION_TITLE_ANNOTATION_DIRECTORY = sessionTitleChannelDirectory(
   SESSION_STATE_DIRECTORY,
   DECLARED_TITLE_SUBDIRECTORY,
 );
 
-/** Any of the three directories an annotation can be written into -- the
- * directory itself is what determines a title's tier (`declared` vs.
- * `generated`) or, for `STATUS_SUBDIRECTORY`, that it's a status rather
+/** Any directory an annotation can be written into -- the directory itself
+ * determines whether it is a title or, for `STATUS_SUBDIRECTORY`, a status
  * than a title at all -- so this writer never accepts an arbitrary
  * caller-supplied path. */
 export type SessionTitleChannel =
-  | typeof DECLARED_TITLE_SUBDIRECTORY
-  | typeof GENERATED_TITLE_SUBDIRECTORY
-  | typeof STATUS_SUBDIRECTORY;
+  typeof DECLARED_TITLE_SUBDIRECTORY | typeof STATUS_SUBDIRECTORY;
 
 type PinnedLstatSync = (filePath: string) => fs.Stats;
 /** Pinned to the plain-`string[]`, no-`withFileTypes` overload of
@@ -262,8 +257,7 @@ export function writeSessionTitleAnnotation(
  * `channel` parameter: status has only one directory
  * (`STATUS_SUBDIRECTORY`), and hardcoding it here means a future call site
  * cannot point a status write at the wrong directory by accident (same
- * reasoning `pruneGeneratedSessionTitleAnnotations` below gives for
- * hardcoding its own scope). Shares every write-mechanics guarantee
+ * reasoning for hardcoding its own scope). Shares every write-mechanics guarantee
  * `writeSessionTitleAnnotation` has (atomic rename, directory fsync, 0600
  * mode) via the same `writeAnnotationFile` core.
  */
@@ -362,73 +356,6 @@ function finalAnnotationSessionId(filename: string): string | undefined {
 }
 
 /**
- * Deletes every final in the `generated` channel whose session id is not in
- * `keepSessionIds` -- the importer's own bounded, recency-windowed
- * selection for the run that just completed (see
- * `codex-native-title-source.ts`'s `CODEX_NATIVE_TITLE_IMPORT_CAP`). This
- * is what keeps that directory bounded across repeated runs: the query
- * alone only bounds a single run's writes, but never removes what a
- * *previous* run wrote and this run's window/cap no longer selects, so
- * without this the directory would still accumulate past the reader's cap
- * within a month as the selected set rotates (issue #1224).
- *
- * Safe to call after every import: the generated channel only ever holds
- * machine-imported data that regenerates from the Codex store on the very
- * next run, so removing an entry here costs nothing. Contrast
- * `pruneStaleDeclaredSessionTitleAnnotations` below, which is deliberately
- * far more conservative because a declared title does not regenerate from
- * anything.
- *
- * Scope is hardcoded to `GENERATED_TITLE_SUBDIRECTORY`, not parameterized
- * over `SessionTitleChannel` -- there is no legitimate reason to run a
- * keep-set sweep over `declared`, and hardcoding the channel means a
- * future call site cannot point this at the wrong directory by accident.
- *
- * Ignores (never deletes) anything that isn't a well-formed
- * `<safeId>.json` regular file -- an in-flight temp file, a directory, a
- * symlink, or unrelated debris someone dropped in the directory. Fails
- * soft per entry: one undeletable file (permissions, a raced-away ENOENT,
- * whatever) is simply left in place; it must never abort the sweep or take
- * down the rest of the import.
- */
-export function pruneGeneratedSessionTitleAnnotations(
-  keepSessionIds: ReadonlySet<string>,
-  dependencies: SessionTitleAnnotationWriterDependencies = {},
-): void {
-  const fileSystem = { ...defaultFileSystem, ...dependencies.fileSystem };
-  const directory = channelDirectory(
-    GENERATED_TITLE_SUBDIRECTORY,
-    dependencies,
-  );
-
-  let entries: string[];
-  try {
-    entries = fileSystem.readdirSync(directory);
-  } catch {
-    // Missing/unreadable directory -- nothing to prune. A later successful
-    // write recreates it anyway.
-    return;
-  }
-
-  for (const name of entries) {
-    const sessionId = finalAnnotationSessionId(name);
-    if (!sessionId || keepSessionIds.has(sessionId)) continue;
-
-    const target = path.join(directory, name);
-    try {
-      const stats = fileSystem.lstatSync(target);
-      // Never remove a symlink or directory occupying this name -- same
-      // "only ever touch what this writer itself produces" posture as
-      // `clearSessionTitleAnnotation` above.
-      if (!stats.isFile()) continue;
-      fileSystem.unlinkSync(target);
-    } catch {
-      // Fail soft per entry -- see doc comment above.
-    }
-  }
-}
-
-/**
  * Deletes every final in the `declared` channel whose file is older than
  * `CLI_SESSION_RETENTION_DAYS` (imported from `@agent-lcars/telemetry`'s
  * `session-doc.ts`, not reinvented here -- that module's own comment
@@ -437,9 +364,8 @@ export function pruneGeneratedSessionTitleAnnotations(
  * deletion, so a declared title describing a session the console can no
  * longer even display is already dead weight).
  *
- * Deliberately far more conservative than
- * `pruneGeneratedSessionTitleAnnotations` above, because a declared title
- * is a deliberate human or agent statement and deleting one is
+ * Deliberately conservative because a declared title is a deliberate human
+ * or agent statement and deleting one is
  * unrecoverable (see `writeSessionTitleAnnotation`'s own doc comment on
  * this writer's threat model):
  *
@@ -463,17 +389,9 @@ export function pruneGeneratedSessionTitleAnnotations(
  *   false and delete literally everything in the directory. A broken
  *   clock must fail into "prune nothing", never "prune everything".
  *
- * Runs from the same host-side maintenance pass as the Codex import
- * (`session-title-annotation-command.ts`'s `import-native` subcommand),
- * not on a schedule of its own: the systemd timer that re-arms that import
- * every 2 minutes
- * (`deploy/systemd/agent-lcars-session-title-import.timer`) is the only
- * recurring host-side hook this deployment has at all. A reader who finds
- * declared-channel cleanup inside a Codex-titled import path may
- * reasonably wonder why; this is the whole reason -- there is nowhere else
- * to hang a second periodic job, and running it unconditionally (Codex DB
- * present or not) is what actually gives every host this maintenance,
- * since not every host runs Codex at all.
+ * Kept as a standalone operation rather than a periodic task: explicit
+ * annotations are low-volume and title discovery itself reads only watched
+ * upstream JSONL.
  */
 export function pruneStaleDeclaredSessionTitleAnnotations(
   dependencies: SessionTitleAnnotationWriterDependencies = {},
@@ -493,10 +411,8 @@ export function pruneStaleDeclaredSessionTitleAnnotations(
  * `MAX_SESSION_TITLE_ANNOTATION_FILES` and start failing the whole
  * directory closed (see `readSessionStatusOverlay`).
  *
- * Runs from the same host-side maintenance pass as the declared-title
- * prune (`session-title-annotation-command.ts`'s `import-native`
- * subcommand) for the identical reason: it's the only recurring host-side
- * hook this deployment has.
+ * Like declared-title pruning, this remains an explicit maintenance
+ * operation rather than a recurring host-side task.
  */
 export function pruneStaleSessionStatusAnnotations(
   dependencies: SessionTitleAnnotationWriterDependencies = {},

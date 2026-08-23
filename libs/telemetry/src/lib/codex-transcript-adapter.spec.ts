@@ -84,4 +84,42 @@ describe('codexAdapter', () => {
       cacheReadTokens: 40,
     });
   });
+
+  it('infers a title from current response_item user inputs, skipping injected repository instructions', () => {
+    const lines = [
+      JSON.stringify({
+        type: 'session_meta',
+        payload: { id: 'codex-current-shape', originator: 'codex_cli' },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: '# AGENTS.md instructions for /repo\n<INSTRUCTIONS>\nignored\n</INSTRUCTIONS>',
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'Stream large transcripts' }],
+        },
+      }),
+    ];
+
+    expect(codexAdapter.reduce(lines)).toEqual([
+      expect.objectContaining({
+        sessionId: 'codex-current-shape',
+        title: 'Stream large transcripts',
+        titleSource: 'inferred',
+      }),
+    ]);
+  });
 });

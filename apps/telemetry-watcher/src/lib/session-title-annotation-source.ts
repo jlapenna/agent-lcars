@@ -10,7 +10,6 @@ import * as path from 'path';
 
 import {
   DECLARED_TITLE_SUBDIRECTORY,
-  GENERATED_TITLE_SUBDIRECTORY,
   sessionTitleChannelDirectory,
   STATUS_SUBDIRECTORY,
 } from './session-title-paths';
@@ -237,43 +236,76 @@ export function readSessionTitleAnnotations(
   return readSessionTitleDirectory(directory, fileSystem).annotations;
 }
 
-/** Both channels' directory reads for one state root, see
+/** Declared-title directory read for one state root, see
  * {@link readSessionTitleOverlay}. */
 export interface SessionTitleOverlayRead {
   readonly declared: SessionTitleDirectoryRead;
-  readonly generated: SessionTitleDirectoryRead;
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ENOENT'
+  );
 }
 
 /**
- * Reads both session-title channel directories beneath `stateDirectory` —
- * `session-metadata/` (declared) and `native-titles/` (generated), see
- * `session-title-paths.ts`. Availability is tracked PER DIRECTORY, entirely
- * independently: the two channels have unrelated existence stories. A host
- * with no Codex importer ever having run has no `native-titles/` directory
- * at all — that is the ordinary, permanent state of such a host, not a
- * failure, and it must not be conflated with `session-metadata/` also being
- * unavailable (the declared-title writer may be running there just fine).
- * Conversely a host that writes both may have either directory momentarily
- * unreadable independently of the other (e.g. mid-write on one, untouched
- * on the other). Each directory's `available` therefore only ever reflects
- * that one directory's own read.
+ * Reads annotations only for sessions the watcher has already discovered
+ * from its upstream transcript sources. This avoids directory enumeration:
+ * stale annotation files can never make a live session's overlay unavailable
+ * or turn every tick into work proportional to historical sessions.
+ */
+function readAnnotationsForSessions<T extends { sessionId: string }>(
+  directory: string,
+  sessionIds: Iterable<string>,
+  fileSystem: SessionTitleAnnotationFileSystem,
+  parse: (value: unknown, filenameSessionId: string) => T | undefined,
+): {
+  readonly available: boolean;
+  readonly annotations: ReadonlyMap<string, T>;
+} {
+  const annotations = new Map<string, T>();
+  let available = true;
+  for (const sessionId of sessionIds) {
+    if (!isSafeIdentifier(sessionId)) continue;
+    let content: string | undefined;
+    try {
+      content = fileSystem.readFile(
+        fileSystem.joinPath(directory, `${sessionId}.json`),
+        MAX_SESSION_TITLE_ANNOTATION_BYTES,
+      );
+    } catch (error) {
+      if (!isMissingFile(error)) available = false;
+      continue;
+    }
+    if (content === undefined) continue;
+    try {
+      const annotation = parse(JSON.parse(content), sessionId);
+      if (annotation) annotations.set(annotation.sessionId, annotation);
+    } catch {
+      // A malformed annotation is scoped to its session, not the overlay.
+    }
+  }
+  return { available, annotations };
+}
+
+/**
+ * Reads declared titles only for already-discovered sessions.
  */
 export function readSessionTitleOverlay(
   stateDirectory: string,
+  sessionIds: Iterable<string> = [],
   dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
 ): SessionTitleOverlayRead {
   const fileSystem = { ...defaultFileSystem, ...dependencies };
   return {
-    declared: readSessionTitleDirectory(
+    declared: readAnnotationsForSessions(
       sessionTitleChannelDirectory(stateDirectory, DECLARED_TITLE_SUBDIRECTORY),
+      sessionIds,
       fileSystem,
-    ),
-    generated: readSessionTitleDirectory(
-      sessionTitleChannelDirectory(
-        stateDirectory,
-        GENERATED_TITLE_SUBDIRECTORY,
-      ),
-      fileSystem,
+      parseSessionTitleAnnotationV1,
     ),
   };
 }
@@ -317,11 +349,13 @@ export function readSessionStatusAnnotations(
  */
 export function readSessionStatusOverlay(
   stateDirectory: string,
+  sessionIds: Iterable<string> = [],
   dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
 ): SessionStatusDirectoryRead {
   const fileSystem = { ...defaultFileSystem, ...dependencies };
-  return readAnnotationDirectory(
+  return readAnnotationsForSessions(
     sessionTitleChannelDirectory(stateDirectory, STATUS_SUBDIRECTORY),
+    sessionIds,
     fileSystem,
     parseSessionStatusAnnotationV1,
   );

@@ -123,36 +123,6 @@ describe('applySessionTitleOverlay', () => {
     expect(result.titleSource).toBe('declared');
   });
 
-  it("lets an imported generated title beat the summary's own inferred title", () => {
-    // The only way two different tiers can both be live candidates through
-    // applySessionTitleOverlay from a single summary: the summary itself
-    // supplies `inferred` (its titleSource), while the overlay separately
-    // supplies `generated` (an imported file, unrelated to the summary's own
-    // title). `generated` must win even though `inferred` came from the
-    // summary and `generated` came from the overlay — precedence is by
-    // tier, not by which side of the join a candidate arrived from.
-    const original = summary('s', 'Prompt fragment', 'inferred');
-    const result = applySessionTitleOverlay(original, {
-      generated: annotation('s', 'Imported file title'),
-    });
-    expect(result.title).toBe('Imported file title');
-    expect(result.titleSource).toBe('generated');
-  });
-
-  it("prefers the summary's own transcript-derived generated title over an imported file's generated title", () => {
-    // "Transcript beats imported file": both are tier `generated`, but the
-    // summary's own title was just reduced from the live transcript, while
-    // the overlay's `generated` comes from a host-side import (e.g. Codex's
-    // threads table) that can lag behind. Same tier, freshness breaks the
-    // tie in favor of the summary the reducer just produced.
-    const original = summary('s', 'Transcript title', 'generated');
-    const result = applySessionTitleOverlay(original, {
-      generated: annotation('s', 'Imported file title'),
-    });
-    expect(result.title).toBe('Transcript title');
-    expect(result.titleSource).toBe('generated');
-  });
-
   // This is the #1161-blocker-is-a-phantom proof: #1161 worried about
   // needing to delete a Firestore `title` field when a `declared` annotation
   // disappears. That state cannot occur here. The overlay is always applied

@@ -68,11 +68,13 @@ export interface FinalizeSidecarOptions {
    * the real `readSessionStatusOverlay` (real `fs`) by default. */
   readSessionStatusOverlay?: (
     stateDirectory: string,
+    sessionIds: Iterable<string>,
   ) => SessionStatusDirectoryRead;
   /** Test-only injection point, mirrored from `readSessionStatusOverlay`
    * above — production callers never set this. */
   readSessionTitleOverlay?: (
     stateDirectory: string,
+    sessionIds: Iterable<string>,
   ) => ReturnType<typeof defaultReadSessionTitleOverlay>;
 }
 
@@ -91,10 +93,8 @@ export interface FinalizeSidecarOptions {
  * process this session's transcript belonged to is unconditionally gone;
  * there is no `/proc` check left to make.
  *
- * Reads BOTH overlay channels exactly once, from the same
- * `config.sessionStateDir` root the live sidecar's `WatcherDaemon.tick()`
- * reads on every tick (issue #1289) — see `finalizeSummary` below for how
- * each summary is joined against them.
+ * Reads BOTH overlay channels only for the session IDs reduced from the
+ * current transcript, matching the live sidecar's bounded lookup.
  *
  * #1289 wired only the status channel here, on the reasoning that a merge
  * write leaves an omitted `title` as the last live tick left it. That
@@ -146,15 +146,6 @@ export async function finalizeSidecar(
   // never needs its own try/catch.
   const readTitleOverlay =
     options.readSessionTitleOverlay ?? defaultReadSessionTitleOverlay;
-  const statusAnnotations = config.sessionStateDir
-    ? readStatusOverlay(config.sessionStateDir).annotations
-    : undefined;
-  // Same root, same once-per-pass discipline, same fail-soft contract as
-  // the status read above. Both channel maps come back from one call.
-  const titleOverlay = config.sessionStateDir
-    ? readTitleOverlay(config.sessionStateDir)
-    : undefined;
-
   // The single runner-mode watch-root contract (@agent-lcars/telemetry,
   // #645) — the same function `startSidecar` (runner.ts) calls. Before
   // #645 this was a second, hand-copied array with a comment admitting it
@@ -205,6 +196,14 @@ export async function finalizeSidecar(
       );
       continue;
     }
+
+    const sessionIds = summaries.map((summary) => summary.sessionId);
+    const statusAnnotations = config.sessionStateDir
+      ? readStatusOverlay(config.sessionStateDir, sessionIds).annotations
+      : undefined;
+    const titleOverlay = config.sessionStateDir
+      ? readTitleOverlay(config.sessionStateDir, sessionIds)
+      : undefined;
 
     for (const summary of summaries) {
       shippedCount++;
@@ -313,9 +312,6 @@ async function finalizeSummary(
   const finalSummaryWithTitle = deps.titleOverlay
     ? applySessionTitleOverlay(finalSummary, {
         declared: deps.titleOverlay.declared.annotations.get(summary.sessionId),
-        generated: deps.titleOverlay.generated.annotations.get(
-          summary.sessionId,
-        ),
       })
     : finalSummary;
 
