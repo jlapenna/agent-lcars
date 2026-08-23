@@ -8,10 +8,10 @@ import { runOrchestratorStoreContract } from './store-contract';
 runOrchestratorStoreContract('MemoryStore', () => new MemoryStore());
 
 describe('taskSchema', () => {
-  it('reads a legacy task document that predates pendingRequest (and consecutiveLost) fine', () => {
+  it('reads a legacy task document that predates consecutiveLost fine', () => {
     // No `apply()`/store round trip needed here -- this is the schema
-    // itself proving it accepts documents written before this field (or
-    // `consecutiveLost`) existed, exactly as `FirestoreStore.readTask`
+    // itself proving it accepts documents written before `consecutiveLost`
+    // existed, exactly as `FirestoreStore.readTask`
     // would parse one off a real, older document.
     const legacyDoc: unknown = {
       task: { repo: 'octo/example', issue: 7 },
@@ -20,7 +20,6 @@ describe('taskSchema', () => {
       updatedAt: '2026-08-15T12:00:00.000Z',
     };
     const parsed = taskSchema.parse(legacyDoc);
-    expect(parsed.pendingRequest).toBeUndefined();
     expect(parsed.consecutiveLost).toBeUndefined();
   });
 });

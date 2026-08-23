@@ -5,7 +5,7 @@ import {
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
-import { type Decision, isQueued, type Queued } from './decide';
+import type { Decision } from './decide';
 import {
   isLive,
   type LeasedOutboxEntry,
@@ -102,7 +102,7 @@ export class FirestoreStore implements OrchestratorStore {
   }
 
   async apply(input: {
-    decision: Decision | Queued;
+    decision: Decision;
     expectedRevision: number | undefined;
   }): Promise<void> {
     const { decision, expectedRevision } = input;
@@ -126,12 +126,7 @@ export class FirestoreStore implements OrchestratorStore {
       };
       tx.set(taskRef, nextTaskDoc);
 
-      if (isQueued(decision)) return; // task-only write: no run, no outbox
-
       tx.set(this.#runRef(decision.run.runId), decision.run);
-      if (decision.followUpRun !== undefined) {
-        tx.set(this.#runRef(decision.followUpRun.runId), decision.followUpRun);
-      }
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }

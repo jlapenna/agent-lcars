@@ -1,4 +1,4 @@
-import type { Decision, Queued } from './decide';
+import type { Decision } from './decide';
 import type { LeasedOutboxEntry, Run, Task, TaskId } from './model';
 import { taskKey } from './model';
 
@@ -25,10 +25,8 @@ export interface OrchestratorStore {
   /** The task's live run, if its `activeRunId` points at one. */
   readActiveRun(id: TaskId): Promise<Run | undefined>;
   listRuns(id: TaskId): Promise<Run[]>;
-  /** `decision` is `Queued` for `requestRun`'s `queueIfBusy` outcome -- a
-   *  task-only write, no run and no outbox entry to commit. */
   apply(input: {
-    decision: Decision | Queued;
+    decision: Decision;
     /** Revision the decision was computed against; undefined = task is new. */
     expectedRevision: number | undefined;
   }): Promise<void>;

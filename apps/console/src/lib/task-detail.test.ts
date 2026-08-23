@@ -96,11 +96,9 @@ function issueResponse(overrides: Record<string, unknown> = {}) {
  * *marker's* own intentId character class (`libs/dispatch-contracts/src/
  * marker.ts`'s `DISPATCH_MARKER_RE`), which a real runId's `/`/`#`
  * characters cannot satisfy - orchestrator-dispatch.ts currently passes the
- * real runId verbatim as `broker_intent_id`, so this join is not yet
- * reachable in production (flagged in this migration's own report). This
- * fixture exercises `applyOrchestratorTruth`'s join logic in isolation with
- * an id the marker regex CAN parse, standing in for the day that mismatch is
- * fixed upstream. */
+ * real runId verbatim as `broker_intent_id`. The marker parser was widened
+ * in #1187, so this fixture exercises the production-reachable join with an
+ * id the marker regex can parse. */
 function orchestratorRun(
   overrides: Partial<{
     runId: string;

@@ -18,13 +18,6 @@ import {
  * `ISSUE_AGENT_SESSION_RETENTION_DAYS` below). */
 export const CLI_SESSION_RETENTION_DAYS = 30;
 
-/** @deprecated Alias for {@link CLI_SESSION_RETENTION_DAYS} (same value),
- * kept only so existing importers that predate the per-source retention
- * split (#3107 follow-up 2) — e.g. agent-lcars's e2e seed fixtures, which
- * only ever build `source: 'cli'` docs — don't need to change. New code
- * should import `CLI_SESSION_RETENTION_DAYS` directly. */
-export const SESSION_RETENTION_DAYS = CLI_SESSION_RETENTION_DAYS;
-
 /** Horizon past `lastActivityAt` at which a `source: 'issue-agent'` session
  * doc becomes eligible for Firestore TTL deletion. issue-agent docs are the
  * only index into the durable GCS transcript archive (`transcriptGcsUri`,

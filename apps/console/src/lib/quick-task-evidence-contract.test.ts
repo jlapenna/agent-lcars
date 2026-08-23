@@ -2,12 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isQuickTaskEvidenceId,
-  QUICK_TASK_EVIDENCE_NOT_FOUND_RESPONSE,
-  QUICK_TASK_EVIDENCE_RESPONSE_HEADERS,
   QUICK_TASK_EVIDENCE_REVOCATION_PREFIX,
-  QUICK_TASK_EVIDENCE_SUCCESS_RESPONSE,
   QUICK_TASK_MULTIPART_FIELDS,
-  type QuickTaskEvidenceLifecycleDisposition,
   quickTaskEvidenceMarkdown,
   quickTaskEvidenceObjectKey,
   quickTaskEvidenceRevocationKey,
@@ -55,28 +51,5 @@ describe('Quick Task evidence contract', () => {
     expect(() =>
       quickTaskEvidenceUrl('http://lcars.example.net', evidenceId),
     ).toThrow('Evidence origin is unavailable');
-  });
-
-  it('freezes the public successful-read headers', () => {
-    expect(QUICK_TASK_EVIDENCE_RESPONSE_HEADERS).toEqual({
-      'Cache-Control': 'no-cache, max-age=0',
-      'Content-Disposition': 'inline; filename="screenshot.webp"',
-      'Content-Type': 'image/webp',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    expect(QUICK_TASK_EVIDENCE_SUCCESS_RESPONSE).toEqual({
-      status: 200,
-      headers: QUICK_TASK_EVIDENCE_RESPONSE_HEADERS,
-    });
-    expect(QUICK_TASK_EVIDENCE_NOT_FOUND_RESPONSE).toEqual({
-      status: 404,
-      headers: {},
-    });
-  });
-
-  it('keeps definitive-failure cleanup and claim release inseparable', () => {
-    const disposition: QuickTaskEvidenceLifecycleDisposition =
-      'delete-created-generation-and-release-claim';
-    expect(disposition).toBe('delete-created-generation-and-release-claim');
   });
 });

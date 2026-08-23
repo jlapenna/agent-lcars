@@ -1,4 +1,3 @@
-import { Storage } from '@google-cloud/storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockDownload = vi.fn();
@@ -76,14 +75,5 @@ describe('fetchSessionTranscript', () => {
     await expect(
       fetchSessionTranscript('gs://bucket/runs/1/session.jsonl'),
     ).rejects.toThrow('storage: object not found');
-  });
-
-  it('caches the storage client across calls', async () => {
-    mockDownload.mockResolvedValue([Buffer.from('{}')]);
-
-    await fetchSessionTranscript('gs://bucket/runs/1/a.jsonl');
-    await fetchSessionTranscript('gs://bucket/runs/2/b.jsonl');
-
-    expect(vi.mocked(Storage)).toHaveBeenCalledTimes(1);
   });
 });

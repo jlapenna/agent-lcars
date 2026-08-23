@@ -8,11 +8,9 @@ fits into the rest of the fleet.
 
 A task is a GitHub issue or PR someone wants worked. A run is one execution
 of it. The one invariant the orchestrator owns is that a task never has two
-live runs at once — by default, a request while a run is live is refused
-(or, for a retried delivery of the same request, returns the existing run).
-A caller may opt in to queueing instead (`requestRun`'s `queueIfBusy`; see
-Queueing, below) — nothing in this repo sets that flag yet, so observed
-behavior is unchanged. It takes no view of what a run produced: results are
+live runs at once — a request while a run is live is refused (or, for a
+retried delivery of the same request, returns the existing run). It takes no
+view of what a run produced: results are
 recorded verbatim and judging them belongs to the task, not the
 orchestrator. A task may be worked any number of times, sequentially. See
 `src/model.ts`'s own header comment for the full statement of scope.
@@ -21,8 +19,7 @@ orchestrator. A task may be worked any number of times, sequentially. See
 
 - **`Task`** — the mutex itself. `activeRunId` is set iff a run is live;
   `runCount` mints the next run's ID; `consecutiveLost` drives the
-  auto-retry budget (see Leases, below); `pendingRequest` holds at most one
-  queued request (see Queueing, below).
+  auto-retry budget (see Leases, below).
 - **`Run`** — one execution's full lifecycle: `pending` (decided, dispatch
   not yet confirmed) → `running` (dispatch confirmed or first report
   received) → a terminal state (`finished`, `canceled`, or `lost`). Every
@@ -63,24 +60,6 @@ documented gap: a crash between the expire commit (already durable) and the
 retry request is not itself durable — see `Orchestrator.sweepExpired`'s own
 doc comment for the accepted tradeoff.
 
-## Queueing (opt-in)
-
-By default, `requestRun` refuses a request against a busy task. Passing
-`queueIfBusy: true` instead sets the task's `pendingRequest` -- last-write-
-wins, so a later queued request replaces an earlier one rather than
-accumulating a queue of queues; a request whose `requestId` matches the
-_live_ run's is still deduplicated to that run first, exactly as when the
-flag is absent. Whichever settle path next releases the lock
-(`reportResult`, `cancelRun`, `expireLease`) consumes the pending request in
-the _same_ decision: the task update, the follow-up run, and its dispatch
-outbox entry all commit atomically with the settlement. A queued request
-takes precedence over `sweepExpired`'s own auto-retry -- the follow-up run
-it starts takes the lock immediately, so the auto-retry's own request finds
-the task already busy and is refused, no special-casing required. No caller
-in this repo sets `queueIfBusy` yet; `requestRun` and `Orchestrator.request`
-each expose it through overloads so every existing caller's return type
-(`Decision | Refusal`) is unaffected by the feature's existence.
-
 ## The store contract
 
 `src/store.ts`'s `OrchestratorStore` interface is the durability boundary:
@@ -110,9 +89,8 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
 - **Adjudicate results.** `RunResult` (`ok`, `summary`, `ref`) is recorded
   verbatim from whatever the caller reports; the orchestrator never
   interprets it.
-- **Queue by default.** A request against a busy task is refused unless the
-  caller opts in with `queueIfBusy: true` (see Queueing, above); no caller
-  in this repo does yet, so observed behavior is unchanged.
+- **Queue requests.** A request against a busy task is refused; callers
+  explicitly retry once the live run settles.
 - **Guarantee exactly-once dispatch or delivery.** The invariant is mutual
   exclusion — at most one live run per task and at most one drain owning an
   outbox delivery lease — not exactly-once execution. A lost run's work may
