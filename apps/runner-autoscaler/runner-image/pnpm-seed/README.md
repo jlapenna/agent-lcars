@@ -34,6 +34,16 @@ install time by at least 30%, while preserving the size budget below. Record
 the package-resolution overlap alongside those measurements to explain drift,
 but never turn it into a generated consumer-derived seed.
 
+For a refresh evaluation, compare the candidate image with a no-seed image
+built from the same runner-image source revision and for the same architecture.
+Run the same unchanged representative install in fresh containers with empty
+private writable layers; neither side may reuse a prior container, pnpm store,
+or package-manager cache. Measure registry bytes and `pnpm install
+--frozen-lockfile` wall time for each side, use the median of at least three
+runs, and retain the raw measurements with the image tag. This makes the
+70%/30% thresholds a candidate-versus-unseeded cold-install decision, rather
+than a comparison with a warm run or an older seed.
+
 Before publishing a refreshed runner image, record the combined compressed
 seed-layer size for both `linux/amd64` and `linux/arm64`. The pilot budget is
 at most 1.5 GiB of additional compressed image data per architecture. The
