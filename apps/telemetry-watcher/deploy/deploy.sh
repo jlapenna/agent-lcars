@@ -106,7 +106,25 @@ for checkout_root in "${requested_checkout_roots[@]}"; do
   normalized_checkout_roots+=("$normalized_checkout_root")
 done
 WATCHER_CHECKOUT_ROOTS="$(IFS=,; printf '%s' "${normalized_checkout_roots[*]}")"
-export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME WATCHER_HOST WATCHER_CHECKOUT_ROOTS
+WATCHER_WATCH_ROOTS="$(node - "$WATCHER_HOME" "$WATCHER_CHECKOUT_ROOTS" <<'NODE'
+const [watcherHome, rootsCsv] = process.argv.slice(2);
+const roots = rootsCsv.split(',');
+console.log(JSON.stringify([
+  {
+    path: `${watcherHome}/.claude/projects`,
+    adapter: 'claude-code',
+    projectDirAllowlist: roots.map((root) => `${root.replaceAll('/', '-')}*`),
+  },
+  {
+    path: `${watcherHome}/.codex/sessions`,
+    adapter: 'codex',
+    recursive: true,
+    cwdAllowlist: roots.map((root) => `${root}*`),
+  },
+]));
+NODE
+)"
+export DEPLOY_DIR WATCHER_UID WATCHER_GID WATCHER_HOME WATCHER_HOST WATCHER_CHECKOUT_ROOTS WATCHER_WATCH_ROOTS
 
 mkdir -p "$DEPLOY_DIR"
 

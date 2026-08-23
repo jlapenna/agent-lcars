@@ -2023,27 +2023,6 @@ describe('WatcherDaemon', () => {
       expect(upserts.at(-1)).not.toHaveProperty('status');
     });
 
-    /**
-     * Confirmed empirically (temporarily reverting `daemon.ts`'s cache key
-     * from `JSON.stringify(write)` to `JSON.stringify(write.doc)` and
-     * re-running this suite, then restoring it): for `status`/
-     * `statusUpdatedAt` SPECIFICALLY, the first `it` below still passes
-     * under a doc-only key too. That is expected, not a gap in this test —
-     * `buildSessionWrite` derives `clearFields` as a pure function of
-     * `summary.status`'s presence, the exact same condition `buildSessionDoc`
-     * uses to decide whether `doc` carries a `status` key at all, so for
-     * this one field pair `clearFields` happens to be fully recoverable from
-     * `doc` alone and a doc-only key cannot diverge from a whole-write key.
-     * The second `it` below is what actually demonstrates the risk this
-     * design closes: it constructs two write-shaped values with an
-     * IDENTICAL `doc` but DIFFERENT `clearFields` (modelling a future
-     * clearable field whose clear-intent need not correlate with any other
-     * doc field) and shows the existing `JSON.stringify(write)` comparison
-     * already distinguishes them — with no change to `daemon.ts`. Keeping
-     * both tests: the first proves today's real, observable behaviour
-     * end-to-end; the second proves the design choice (key on the whole
-     * write) is what protects a case today's fields don't yet exercise.
-     */
     describe('the write cache keys on the whole SessionWrite', () => {
       it('a cleared status produces exactly ONE write carrying the delete, and subsequent ticks produce none', async () => {
         const { store, writes } = createFakeStore();
@@ -2105,50 +2084,6 @@ describe('WatcherDaemon', () => {
         await daemon.tick();
         await daemon.tick();
         expect(writes).toHaveLength(2);
-      });
-
-      /**
-       * The write cache is `JSON.stringify(write)` compared against the
-       * previous tick's serialized write, where `write: { doc, clearFields
-       * }`. This test proves that mechanism is already total over
-       * `clearFields`'s *contents*, not merely over today's two field names
-       * — so a future `ClearableSessionField` addition changes what
-       * `clearFields` contains, which changes the serialized write, which
-       * the EXISTING string comparison in `WatcherDaemon.tick()` already
-       * treats as a cache miss. No line in `daemon.ts` needs to change for
-       * that to keep holding; the property is inherited entirely from
-       * comparing the WHOLE write rather than the doc alone. See
-       * `SessionWrite`'s doc comment (`@agent-lcars/telemetry`'s
-       * `types.ts`) for why a doc-only key can't offer the same guarantee.
-       */
-      it('adding a hypothetical future clearable field requires no change to the caching logic', () => {
-        const doc = { sessionId: 'session-future', liveness: 'live' };
-        // `ClearableSessionField` is a closed union today (`'status' |
-        // 'statusUpdatedAt'`) — this cast models what the type becomes the
-        // day a THIRD field is added, without touching that union or any
-        // daemon code to prove the point.
-        type FutureClearableField =
-          'status' | 'statusUpdatedAt' | 'noteHypotheticallyAddedLater';
-        const before: { doc: unknown; clearFields: FutureClearableField[] } = {
-          doc,
-          clearFields: ['status', 'statusUpdatedAt'],
-        };
-        const after: { doc: unknown; clearFields: FutureClearableField[] } = {
-          doc,
-          clearFields: [
-            'status',
-            'statusUpdatedAt',
-            'noteHypotheticallyAddedLater',
-          ],
-        };
-
-        // Same doc, different clearFields — exactly the shape a future
-        // clearable field would produce on an otherwise-unchanged tick.
-        expect(JSON.stringify(before)).not.toBe(JSON.stringify(after));
-        // The daemon's actual cache comparison is nothing more than this
-        // string inequality (`this.lastWrittenWrites.get(sessionId) ===
-        // serializedWrite`) — so this inequality alone is what makes the
-        // next tick's upsert fire instead of being silently deduped.
       });
     });
   });

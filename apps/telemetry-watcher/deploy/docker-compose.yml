@@ -78,8 +78,7 @@ services:
       # module rather than doing anything visible.
       - 'AGENT_TELEMETRY_WRITER_KEY_JSON="$(cat /secrets/writer-key.json)" exec node sidecar.cjs'
     environment:
-      - AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR=${WATCHER_HOME:?deploy.sh must export WATCHER_HOME}/.claude/projects
-      - AGENT_TELEMETRY_CODEX_SESSIONS_DIR=${WATCHER_HOME}/.codex/sessions
+      - 'AGENT_TELEMETRY_WATCH_ROOTS=${WATCHER_WATCH_ROOTS:?deploy.sh must export WATCHER_WATCH_ROOTS}'
       - AGENT_TELEMETRY_HOST=${WATCHER_HOST:?deploy.sh must export WATCHER_HOST}
       # One source-of-truth list derives Claude project slugs, Codex cwd globs,
       # and Antigravity workspace prefixes inside the watcher. There is no

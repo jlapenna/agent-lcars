@@ -8,11 +8,8 @@ import { loadConfig } from './config';
 
 const ENV_KEYS = [
   'AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR',
-  'AGENT_TELEMETRY_CHECKOUT_ROOT',
   'AGENT_TELEMETRY_CHECKOUT_ROOTS',
   'AGENT_TELEMETRY_CODEX_SESSIONS_DIR',
-  'AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST',
-  'AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST',
   'AGENT_TELEMETRY_WATCH_ROOTS',
   'AGENT_TELEMETRY_HOST',
   'AGENT_TELEMETRY_PROJECT_ID',
@@ -116,44 +113,6 @@ describe('loadConfig', () => {
     expect(config.stalenessWindowMs).toBe(20000);
   });
 
-  describe('back-compat single-root env vars (default watch root only)', () => {
-    it("honors AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR as the default root's path", () => {
-      process.env['AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR'] = '/custom/projects';
-
-      const config = loadConfig();
-
-      expect(config.watchRoots[0]).toEqual({
-        path: '/custom/projects',
-        adapter: 'claude-code',
-        projectDirAllowlist: defaultProjectDirAllowlist(),
-      });
-    });
-
-    it("parses a comma-separated AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST as the default root's allowlist", () => {
-      process.env['AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST'] =
-        '-home-alice-*, -home-bob-*';
-
-      const config = loadConfig();
-
-      expect(config.watchRoots[0].projectDirAllowlist).toEqual([
-        '-home-alice-*',
-        '-home-bob-*',
-      ]);
-    });
-  });
-
-  it('supports Codex root and cwd-scope overrides', () => {
-    process.env['AGENT_TELEMETRY_CODEX_SESSIONS_DIR'] = '/custom/codex';
-    process.env['AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST'] = '/repo/a*, /repo/b';
-
-    expect(loadConfig().watchRoots[1]).toEqual({
-      path: '/custom/codex',
-      adapter: 'codex',
-      recursive: true,
-      cwdAllowlist: ['/repo/a*', '/repo/b'],
-    });
-  });
-
   describe('AGENT_TELEMETRY_WATCH_ROOTS (multi-root JSON override)', () => {
     it('parses a multi-root JSON array, replacing the default entirely', () => {
       process.env['AGENT_TELEMETRY_WATCH_ROOTS'] = JSON.stringify([
@@ -174,20 +133,6 @@ describe('loadConfig', () => {
           projectDirAllowlist: ['-home-dev-*'],
         },
         { path: '/home/dev/.codex/sessions', adapter: 'codex' },
-      ]);
-    });
-
-    it('ignores the legacy single-root env vars once AGENT_TELEMETRY_WATCH_ROOTS is set', () => {
-      process.env['AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR'] = '/should/be/ignored';
-      process.env['AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST'] = 'ignored-*';
-      process.env['AGENT_TELEMETRY_WATCH_ROOTS'] = JSON.stringify([
-        { path: '/only/this/one', adapter: 'gemini' },
-      ]);
-
-      const config = loadConfig();
-
-      expect(config.watchRoots).toEqual([
-        { path: '/only/this/one', adapter: 'gemini' },
       ]);
     });
 

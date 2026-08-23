@@ -99,39 +99,21 @@ export function defaultSessionStateDir(): string {
   return path.join(os.homedir(), SESSION_STATE_DIRECTORY);
 }
 
-function parseAllowlistCsv(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((pattern) => pattern.trim())
-    .filter((pattern) => pattern.length > 0);
-}
-
-/** Builds the single default watch root — today's only behavior, preserved
- * byte-for-byte: `~/.claude/projects`, the `claude-code` adapter, and the
- * existing `defaultProjectDirAllowlist()` — honoring the two legacy
- * single-root env vars (`AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`,
- * `AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`) as back-compat aliases that keep
- * working as long as `AGENT_TELEMETRY_WATCH_ROOTS` isn't set. */
+/** Host-mode fallback when no explicit multi-root config is supplied. */
 function defaultWatchRoot(): WatchRootConfig {
-  const allowlistRaw = optional('AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST');
   return {
-    path: defaultClaudeProjectsDir(),
+    path: path.join(os.homedir(), '.claude', 'projects'),
     adapter: 'claude-code',
-    projectDirAllowlist: allowlistRaw
-      ? parseAllowlistCsv(allowlistRaw)
-      : defaultProjectDirAllowlist(),
+    projectDirAllowlist: defaultProjectDirAllowlist(),
   };
 }
 
 function defaultCodexWatchRoot(): WatchRootConfig {
-  const cwdAllowlistRaw = optional('AGENT_TELEMETRY_CODEX_CWD_ALLOWLIST');
   return {
-    path: defaultCodexSessionsDir(),
+    path: path.join(os.homedir(), '.codex', 'sessions'),
     adapter: 'codex',
     recursive: true,
-    cwdAllowlist: cwdAllowlistRaw
-      ? parseAllowlistCsv(cwdAllowlistRaw)
-      : checkoutRoots().map((root) => `${root}*`),
+    cwdAllowlist: checkoutRoots().map((root) => `${root}*`),
   };
 }
 
@@ -208,11 +190,8 @@ function validateWatchRoot(entry: unknown, index: number): WatchRootConfig {
  * `{ "path": string, "adapter": SessionAgent, "projectDirAllowlist"?: string[] }`
  * objects, e.g.
  * `[{"path":"/home/dev/.claude/projects","adapter":"claude-code","projectDirAllowlist":["-home-dev-*"]},{"path":"/home/dev/.codex/sessions","adapter":"codex"}]`.
- * When set, this fully replaces the default single-root config — the legacy
- * `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`/`AGENT_TELEMETRY_PROJECT_DIR_ALLOWLIST`
- * vars are ignored in that case (they only alias the *default* root, which
- * this supersedes). Throws with a specific reason on malformed input rather
- * than falling back silently.
+ * When set, this fully replaces the fallback watch roots. Throws with a
+ * specific reason on malformed input rather than falling back silently.
  */
 function parseWatchRootsJson(raw: string): WatchRootConfig[] {
   let parsed: unknown;

@@ -2,7 +2,6 @@ import { optional } from '@agent-lcars/env';
 import * as path from 'path';
 
 const ROOTS_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOTS';
-const LEGACY_ROOT_VAR = 'AGENT_TELEMETRY_CHECKOUT_ROOT';
 
 function normalizeRoot(raw: string, variable: string): string {
   const normalized = raw.trim().replace(/\/+$/, '');
@@ -22,14 +21,9 @@ function normalizeRoot(raw: string, variable: string): string {
  * rename. Runner mode never calls this function because its single-purpose
  * container deliberately has no checkout allowlist.
  *
- * `AGENT_TELEMETRY_CHECKOUT_ROOT` remains a single-root compatibility alias;
- * new deployments should use the comma-separated plural variable.
  */
 export function checkoutRoots(): string[] {
-  const plural = optional(ROOTS_VAR);
-  const legacy = optional(LEGACY_ROOT_VAR);
-  const variable = plural !== undefined ? ROOTS_VAR : LEGACY_ROOT_VAR;
-  const raw = plural ?? legacy;
+  const raw = optional(ROOTS_VAR);
   if (raw === undefined || raw.trim() === '') {
     throw new Error(
       `${ROOTS_VAR} must explicitly name at least one checkout root`,
@@ -38,10 +32,10 @@ export function checkoutRoots(): string[] {
 
   const entries = raw.split(',');
   if (entries.some((entry) => entry.trim() === '')) {
-    throw new Error(`${variable} contains an empty checkout path`);
+    throw new Error(`${ROOTS_VAR} contains an empty checkout path`);
   }
 
-  return [...new Set(entries.map((entry) => normalizeRoot(entry, variable)))];
+  return [...new Set(entries.map((entry) => normalizeRoot(entry, ROOTS_VAR)))];
 }
 
 /** Claude Code project-directory encodings for every configured root. */
