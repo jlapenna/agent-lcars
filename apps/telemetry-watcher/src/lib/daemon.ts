@@ -137,7 +137,10 @@ export interface WatcherDaemonOptions {
   /** Test-only injection point, mirrored from the seams above — production
    * callers (main.ts) never set this; the daemon uses the real
    * `readSessionTitleOverlay` (real `fs`) by default. */
-  readSessionTitleOverlay?: (stateDirectory: string) => SessionTitleOverlayRead;
+  readSessionTitleOverlay?: (
+    stateDirectory: string,
+    sessionIds: Iterable<string>,
+  ) => SessionTitleOverlayRead;
   /** Test-only injection point, mirrored from the seams above — production
    * callers (main.ts) never set this; the daemon uses the real
    * `readSessionStatusOverlay` (real `fs`) by default. Read from the same
@@ -147,6 +150,7 @@ export interface WatcherDaemonOptions {
    * option. */
   readSessionStatusOverlay?: (
     stateDirectory: string,
+    sessionIds: Iterable<string>,
   ) => SessionStatusDirectoryRead;
 }
 
@@ -396,22 +400,14 @@ export class WatcherDaemon {
       });
     }
 
-    // Session-title overlay (issue #1212): read exactly ONCE per tick here,
-    // not once per session inside the loop below. Both channel directories
-    // (`~/.local/state/agent-lcars/session-metadata`) is
-    // shared across every tracked session, so re-reading them per session
-    // would turn a bounded pair of directory reads into O(sessions) for no
-    // benefit, and could let a transient failure on one session's iteration
-    // disagree with another session's already-applied result within the
-    // same tick. `readSessionTitleOverlay` already fails soft internally
-    // (missing/unreadable/overflowed directory reports `available: false`
-    // rather than throwing — see session-title-annotation-source.ts), so no
-    // try/catch is needed here; skipped entirely when `sessionStateDir` is
-    // unset (runner mode never sets it).
+    // Read annotations only for sessions discovered from upstream transcripts.
+    // Historical files are never enumerated, so they cannot degrade a live
+    // tick or overflow a directory-wide reader cap.
     if (this.options.sessionStateDir) {
       const readOverlay =
         this.options.readSessionTitleOverlay ?? defaultReadSessionTitleOverlay;
-      const overlayRead = readOverlay(this.options.sessionStateDir);
+      const sessionIds = this.sessions.keys();
+      const overlayRead = readOverlay(this.options.sessionStateDir, sessionIds);
       // `available` is tracked and applied per channel — see
       // `lastGoodDeclaredTitles`'s doc comment above for why a failed read
       // preserves the previous last-good instead of blanking it, and why a
@@ -426,7 +422,10 @@ export class WatcherDaemon {
       const readStatusOverlay =
         this.options.readSessionStatusOverlay ??
         defaultReadSessionStatusOverlay;
-      const statusRead = readStatusOverlay(this.options.sessionStateDir);
+      const statusRead = readStatusOverlay(
+        this.options.sessionStateDir,
+        this.sessions.keys(),
+      );
       if (statusRead.available) {
         this.lastGoodStatusAnnotations = statusRead.annotations;
       }

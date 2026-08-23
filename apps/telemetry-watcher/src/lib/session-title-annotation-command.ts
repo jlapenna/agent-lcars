@@ -2,8 +2,6 @@ import { resolveSessionId } from './session-id';
 import {
   clearSessionStatusAnnotation,
   clearSessionTitleAnnotation,
-  pruneStaleDeclaredSessionTitleAnnotations,
-  pruneStaleSessionStatusAnnotations,
   SessionTitleAnnotationWriterDependencies,
   SessionTitleAnnotationWriterResult,
   writeSessionStatusAnnotation,
@@ -28,7 +26,7 @@ export interface SessionTitleAnnotationCommandResult {
 }
 
 export const SESSION_TITLE_CLI_USAGE =
-  'usage: session title "<text>" | session title --clear | session status "<text>" | session status --clear | session prune';
+  'usage: session title "<text>" | session title --clear | session status "<text>" | session status --clear';
 
 function invalidCommand(): SessionTitleAnnotationCommandResult {
   return {
@@ -134,22 +132,11 @@ function runStatusSubcommand(
   );
 }
 
-/** Removes expired explicit annotations. This has no Codex dependency and
- * deliberately needs no current session id, so a low-frequency host timer
- * can keep the two bounded reader directories available. */
-function runPruneSubcommand(
-  dependencies: SessionTitleAnnotationCommandDependencies,
-): SessionTitleAnnotationCommandResult {
-  pruneStaleDeclaredSessionTitleAnnotations(dependencies);
-  pruneStaleSessionStatusAnnotations(dependencies);
-  return { ok: true };
-}
-
 /**
  * Executes the `session` command's title and status subcommands: `session title
  * "<text>"`, `session title --clear`, `session status "<text>"` / `session
- * status --clear`, and `session prune`. Directory selection is never a
- * command input -- each subcommand's channel is fixed by which one it is.
+ * status --clear`. Directory selection is never a command input -- each
+ * subcommand's channel is fixed by which one it is.
  */
 export function executeSessionTitleAnnotationCommand(
   argv: readonly string[],
@@ -169,10 +156,6 @@ export function executeSessionTitleAnnotationCommand(
 
   if (argv[1] === 'status') {
     return runStatusSubcommand(argv.slice(2), dependencies);
-  }
-
-  if (argv[1] === 'prune' && argv.length === 2) {
-    return runPruneSubcommand(dependencies);
   }
 
   return invalidCommand();

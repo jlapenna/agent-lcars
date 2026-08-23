@@ -242,18 +242,70 @@ export interface SessionTitleOverlayRead {
   readonly declared: SessionTitleDirectoryRead;
 }
 
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ENOENT'
+  );
+}
+
 /**
- * Reads the declared title directory beneath `stateDirectory`.
+ * Reads annotations only for sessions the watcher has already discovered
+ * from its upstream transcript sources. This avoids directory enumeration:
+ * stale annotation files can never make a live session's overlay unavailable
+ * or turn every tick into work proportional to historical sessions.
+ */
+function readAnnotationsForSessions<T extends { sessionId: string }>(
+  directory: string,
+  sessionIds: Iterable<string>,
+  fileSystem: SessionTitleAnnotationFileSystem,
+  parse: (value: unknown, filenameSessionId: string) => T | undefined,
+): {
+  readonly available: boolean;
+  readonly annotations: ReadonlyMap<string, T>;
+} {
+  const annotations = new Map<string, T>();
+  let available = true;
+  for (const sessionId of sessionIds) {
+    if (!isSafeIdentifier(sessionId)) continue;
+    let content: string | undefined;
+    try {
+      content = fileSystem.readFile(
+        fileSystem.joinPath(directory, `${sessionId}.json`),
+        MAX_SESSION_TITLE_ANNOTATION_BYTES,
+      );
+    } catch (error) {
+      if (!isMissingFile(error)) available = false;
+      continue;
+    }
+    if (content === undefined) continue;
+    try {
+      const annotation = parse(JSON.parse(content), sessionId);
+      if (annotation) annotations.set(annotation.sessionId, annotation);
+    } catch {
+      // A malformed annotation is scoped to its session, not the overlay.
+    }
+  }
+  return { available, annotations };
+}
+
+/**
+ * Reads declared titles only for already-discovered sessions.
  */
 export function readSessionTitleOverlay(
   stateDirectory: string,
+  sessionIds: Iterable<string> = [],
   dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
 ): SessionTitleOverlayRead {
   const fileSystem = { ...defaultFileSystem, ...dependencies };
   return {
-    declared: readSessionTitleDirectory(
+    declared: readAnnotationsForSessions(
       sessionTitleChannelDirectory(stateDirectory, DECLARED_TITLE_SUBDIRECTORY),
+      sessionIds,
       fileSystem,
+      parseSessionTitleAnnotationV1,
     ),
   };
 }
@@ -297,11 +349,13 @@ export function readSessionStatusAnnotations(
  */
 export function readSessionStatusOverlay(
   stateDirectory: string,
+  sessionIds: Iterable<string> = [],
   dependencies: Partial<SessionTitleAnnotationFileSystem> = {},
 ): SessionStatusDirectoryRead {
   const fileSystem = { ...defaultFileSystem, ...dependencies };
-  return readAnnotationDirectory(
+  return readAnnotationsForSessions(
     sessionTitleChannelDirectory(stateDirectory, STATUS_SUBDIRECTORY),
+    sessionIds,
     fileSystem,
     parseSessionStatusAnnotationV1,
   );

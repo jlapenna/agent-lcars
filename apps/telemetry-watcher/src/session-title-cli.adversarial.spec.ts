@@ -233,15 +233,6 @@ describe('session-title CLI end-to-end process behavior', () => {
     expect(run.status).toBe(0);
     expect(run.stderr.toLowerCase()).toContain('session title');
     expect(run.stderr.toLowerCase()).toContain('session status');
-    expect(run.stderr.toLowerCase()).toContain('session prune');
-  });
-
-  it('session prune exits 0 without a session id', () => {
-    const home = tempHome();
-    const run = runCli(['session', 'prune'], baseEnv(home));
-
-    expect(run.status).toBe(0);
-    expect(run.stderr).toBe('');
   });
 });
 
