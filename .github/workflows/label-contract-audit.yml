@@ -11,7 +11,7 @@ permissions:
 jobs:
   audit:
     name: Audit ${{ matrix.full_name }}
-    runs-on: ['${{ vars.DEFAULT_RUNNER_LABEL }}']
+    runs-on: ['lcars-default']
     strategy:
       fail-fast: false
       matrix:

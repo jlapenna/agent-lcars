@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "profiles": {
+    "agent-lcars": {
+      "repositories": ["jlapenna/agent-lcars"],
+      "variables": {
+        "E2E_ENABLED": { "class": "lane", "default": "true" },
+        "AGENT_RUNNER_LABEL": { "class": "shared-input", "required": true }
+      }
+    },
+    "sprinkles": {
+      "repositories": ["supersprinklesracing/sprinkles"],
+      "variables": {
+        "E2E_ENABLED": { "class": "lane", "default": "true" },
+        "E2E_VISUAL_ENABLED": { "class": "lane", "default": "true" },
+        "POST_SUBMIT_ARMED": { "class": "armed", "default": "false" },
+        "DEPLOY_ARMED": { "class": "armed", "default": "false" },
+        "VISUAL_REFRESH_DISPATCH_ARMED": {
+          "class": "armed",
+          "default": "false"
+        },
+        "AGENT_RUNNER_LABEL": { "class": "shared-input", "required": true }
+      }
+    }
+  }
+}
