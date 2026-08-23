@@ -199,7 +199,14 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # --- sync the compose file and bring the stack up ---------------------------
-cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
+# The documented invocation runs this script from DEPLOY_DIR after
+# sync-deploy.sh has already copied Compose there. GNU cp rejects that
+# source-equals-destination case, so only refresh when the source differs.
+source_compose="$(realpath -m -- "$SCRIPT_DIR/docker-compose.yml")"
+deployed_compose="$(realpath -m -- "$DEPLOY_DIR/docker-compose.yml")"
+if [[ "$source_compose" != "$deployed_compose" ]]; then
+  cp "$SCRIPT_DIR/docker-compose.yml" "$DEPLOY_DIR/docker-compose.yml"
+fi
 cd "$DEPLOY_DIR"
 
 docker compose "${compose_env_args[@]}" pull

@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # script usually runs as the checkout owner (jlapenna), so resolve homelab's
 # home explicitly instead of assuming $HOME is the deploy account.
 homelab_passwd="$(getent passwd homelab || true)"
-if [ -n "$AGENT_TELEMETRY_DEPLOY_DIR" ]; then
+if [ -n "${AGENT_TELEMETRY_DEPLOY_DIR:-}" ]; then
   DEPLOY_DIR="$AGENT_TELEMETRY_DEPLOY_DIR"
 elif [ -z "$homelab_passwd" ]; then
   echo "Cannot resolve homelab account -- set AGENT_TELEMETRY_DEPLOY_DIR explicitly." >&2
