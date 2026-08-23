@@ -60,7 +60,7 @@ describe('console deployment workflow', () => {
       'utf8',
     );
 
-    expect(workflow).toContain("runs-on: ['${{ vars.CI_RUNNER_LABEL }}']");
+    expect(workflow).toContain("runs-on: ['lcars-ci']");
     expect(workflow).toContain('default: managed');
     expect(workflow).toContain('./.github/actions/setup-nx-remote-cache');
     expect(workflow).toContain('node tools/deploy-console-prebuilt.mjs');
