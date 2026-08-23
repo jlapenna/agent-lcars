@@ -167,8 +167,8 @@ RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
 
 # Measurement-only targets: `FROM scratch` ensures their OCI output contains
 # only the compressed store payload, not the Node base or fetch-stage virtual
-# node_modules. pnpm-store-seed-size.test.sh builds these for every published
-# architecture and enforces the pilot's combined 1.5 GiB compressed budget.
+# node_modules. Homelab's canonical image publisher measures these targets on
+# its remote BuildKit builder and blocks promotion above the 1.5 GiB budget.
 FROM scratch AS pnpm10-store-content
 COPY --from=pnpm10-store-seed /pnpm-store/ /pnpm-store/
 
