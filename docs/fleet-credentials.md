@@ -189,7 +189,11 @@ provisioned (#1354), so only the mint is left.
      (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/ci.yml@')
       || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/e2e.yml@')
       || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy.yml@')
+      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy-rules-and-indexes.yml@')
+      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy-qbp-appsscript.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml@')
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml@')
+      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml@')
       || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml@'))
    ```
 
@@ -201,6 +205,14 @@ provisioned (#1354), so only the mint is left.
    result that root's scheduled drift check would report. The shared
    `github` pool needs none of this: it matches on
    `assertion.repository` alone.
+
+   The provider also maps `attribute.workflow_class` (ci / deploy / agent)
+   from `job_workflow_ref` and, since keyless Sprinkles CI (#828), admits
+   `ci.yml` and `e2e.yml` alongside the deploy and agent-lane workflows;
+   every admitted workflow ref carries an `@`-pinned `startsWith`. The
+   machine-checkable copy lives in `tools/iam-contract/model.json`
+   (`gcpProjects.supersprinklesracing.pools.claude-agent-pool`), kept in
+   step with this file.
 
 4. Set the repo side: callers need only `gcp-project-id` plus their existing
    WIF provider and service-account values. The object path derives from
