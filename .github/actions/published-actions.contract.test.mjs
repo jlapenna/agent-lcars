@@ -138,7 +138,10 @@ const PUBLISHED = {
     outputs: ['original_head', 'live_base', 'tested_head'],
   },
   'assert-repo-vars': {
-    inputs: { vars: { required: true } },
+    inputs: {
+      profile: { required: false, default: '' },
+      vars: { required: true },
+    },
     outputs: [],
   },
   'snapshot-enforcement-scripts': {
