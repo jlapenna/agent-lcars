@@ -303,7 +303,10 @@ jobs:
               echo "::warning::No usable pnpm-store seed comparison base; running the check."
             elif ! changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
               echo "::warning::Changed-file detection failed; running the pnpm-store seed check."
-            elif ! grep -Eq '^(apps/runner-autoscaler/runner-image/|package\.json$)' <<<"$changed_files"; then
+            # The assertion also inspects the fleet agent callers for
+            # workspace-level pnpm-store overrides, and this workflow owns
+            # the selector itself. Changes to either therefore must run it.
+            elif ! grep -Eq '^(apps/runner-autoscaler/runner-image/|package\.json$|\.github/workflows/(ci|claude|codex|opencode)\.yml$)' <<<"$changed_files"; then
               run=false
             fi
           fi
