@@ -5,7 +5,6 @@ import {
   expireLease,
   isRefusal,
   MAX_AUTO_RETRIES,
-  type Queued,
   type Refusal,
   renewLease,
   reportResult,
@@ -19,7 +18,7 @@ import {
   type VersionedTask,
 } from './store';
 
-type Decide<T extends Decision | Queued> = (
+type Decide<T extends Decision> = (
   task: VersionedTask | undefined,
   activeRun: Run | undefined,
 ) => Promise<T | Refusal> | T | Refusal;
@@ -66,8 +65,6 @@ export interface RequestInput {
   requestId: string;
   pipeline: string;
   params?: Record<string, string>;
-  /** See `requestRun`'s own `queueIfBusy` doc comment in `decide.ts`. */
-  queueIfBusy?: boolean;
 }
 
 export class Orchestrator {
@@ -76,37 +73,17 @@ export class Orchestrator {
     private readonly clock: Clock,
   ) {}
 
-  /**
-   * Three overloads, mirroring `requestRun`'s own: omitting `queueIfBusy`
-   * (or passing `false`) keeps the return type exactly `Decision | Refusal`,
-   * so every existing caller -- none of which pass the flag in this repo
-   * yet -- needs no changes at all; passing the literal `true` adds
-   * `Queued`; the general (non-literal `boolean`) fallback exists only so a
-   * caller forwarding a runtime flag value (or overriding this method, as
-   * the test double in `orchestrator.spec.ts` does) can still call/implement
-   * it without losing type safety.
-   */
-  request(
-    input: RequestInput & { queueIfBusy?: false },
-  ): Promise<Decision | Refusal>;
-  request(
-    input: RequestInput & { queueIfBusy: true },
-  ): Promise<Decision | Refusal | Queued>;
-  request(input: RequestInput): Promise<Decision | Refusal | Queued>;
-  async request(input: RequestInput): Promise<Decision | Refusal | Queued> {
-    return this.transact<Decision | Queued>(
-      input.taskId,
-      async (task, activeRun) =>
-        requestRun({
-          now: this.clock.now(),
-          task: task?.task,
-          taskId: input.taskId,
-          activeRun,
-          requestId: input.requestId,
-          pipeline: input.pipeline,
-          ...(input.params === undefined ? {} : { params: input.params }),
-          queueIfBusy: input.queueIfBusy,
-        }),
+  async request(input: RequestInput): Promise<Decision | Refusal> {
+    return this.transact(input.taskId, async (task, activeRun) =>
+      requestRun({
+        now: this.clock.now(),
+        task: task?.task,
+        taskId: input.taskId,
+        activeRun,
+        requestId: input.requestId,
+        pipeline: input.pipeline,
+        ...(input.params === undefined ? {} : { params: input.params }),
+      }),
     );
   }
 
@@ -185,10 +162,7 @@ export class Orchestrator {
    * Settle every run in `entries`, whose executor the caller has already
    * observed to be terminal, then auto-retry each on exactly the same terms
    * `sweepExpired` uses -- same `MAX_AUTO_RETRIES` budget, same
-   * deterministic `retry:<lostRunId>` requestId, same parking behaviour, and
-   * the same deference to a task's `pendingRequest` (consumed inside the
-   * settle decision itself, which leaves the task busy and gets this call's
-   * own retry request refused).
+   * deterministic `retry:<lostRunId>` requestId and same parking behaviour.
    *
    * This method does NO network I/O and knows nothing about GitHub: it takes
    * already-resolved facts. Resolving them -- reading a workflow run's status
@@ -258,7 +232,7 @@ export class Orchestrator {
     return outcome.run;
   }
 
-  async #once<T extends Decision | Queued>(
+  async #once<T extends Decision>(
     taskId: TaskId,
     decide: Decide<T>,
   ): Promise<T | Refusal> {
@@ -273,7 +247,7 @@ export class Orchestrator {
     return outcome;
   }
 
-  private async transact<T extends Decision | Queued = Decision>(
+  private async transact<T extends Decision = Decision>(
     taskId: TaskId,
     decide: Decide<T>,
   ): Promise<T | Refusal> {

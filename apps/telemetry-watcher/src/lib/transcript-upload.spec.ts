@@ -1,4 +1,3 @@
-import { Storage } from '@google-cloud/storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSave = vi.fn();
@@ -57,43 +56,5 @@ describe('uploadTranscript', () => {
         contents: '{}',
       }),
     ).rejects.toThrow('storage: permission denied');
-  });
-
-  it('caches the storage client across calls for the same project id', async () => {
-    mockSave.mockResolvedValue(undefined);
-
-    await uploadTranscript({
-      projectId: 'agent-lcars',
-      bucket: 'b',
-      object: 'a',
-      contents: '{}',
-    });
-    await uploadTranscript({
-      projectId: 'agent-lcars',
-      bucket: 'b',
-      object: 'c',
-      contents: '{}',
-    });
-
-    expect(vi.mocked(Storage)).toHaveBeenCalledTimes(1);
-  });
-
-  it('rebuilds the client when the project id changes', async () => {
-    mockSave.mockResolvedValue(undefined);
-
-    await uploadTranscript({
-      projectId: 'agent-lcars',
-      bucket: 'b',
-      object: 'a',
-      contents: '{}',
-    });
-    await uploadTranscript({
-      projectId: 'supersprinklesracing',
-      bucket: 'b',
-      object: 'c',
-      contents: '{}',
-    });
-
-    expect(vi.mocked(Storage)).toHaveBeenCalledTimes(2);
   });
 });

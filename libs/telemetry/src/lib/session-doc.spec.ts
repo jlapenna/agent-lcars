@@ -5,7 +5,6 @@ import {
   buildSessionWrite,
   CLI_SESSION_RETENTION_DAYS,
   ISSUE_AGENT_SESSION_RETENTION_DAYS,
-  SESSION_RETENTION_DAYS,
 } from './session-doc';
 import { SessionSummary } from './types';
 
@@ -216,10 +215,6 @@ describe('buildSessionDoc', () => {
       expected.getUTCDate() + ISSUE_AGENT_SESSION_RETENTION_DAYS,
     );
     expect(doc.expireAt).toBe(expected.toISOString());
-  });
-
-  it('SESSION_RETENTION_DAYS remains an alias for CLI_SESSION_RETENTION_DAYS (existing export contract)', () => {
-    expect(SESSION_RETENTION_DAYS).toBe(CLI_SESSION_RETENTION_DAYS);
   });
 
   it('omits expireAt instead of throwing when lastActivityAt has no parseable timestamp (cli)', () => {

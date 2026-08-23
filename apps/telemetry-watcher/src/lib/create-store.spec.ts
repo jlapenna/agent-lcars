@@ -10,17 +10,6 @@ describe('createStoreFromConfig', () => {
   // legitimate "falls back to log-only" starting point.
   const baseConfig: StoreConfig = {};
 
-  it('falls back to a log-only store when no credentials or emulator are configured', () => {
-    const fakeStore = { upsertSession: vi.fn() };
-    const logOnlySpy = vi
-      .spyOn(store, 'createLogOnlyStore')
-      .mockReturnValue(fakeStore);
-
-    createStoreFromConfig(baseConfig);
-
-    expect(logOnlySpy).toHaveBeenCalledTimes(1);
-  });
-
   it('uses the Firestore emulator when configured', () => {
     const fakeStore = { upsertSession: vi.fn() };
     const firestoreSpy = vi

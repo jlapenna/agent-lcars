@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  cancelRun,
-  confirmDispatch,
-  isQueued,
-  isRefusal,
-  requestRun,
-} from './decide';
+import { cancelRun, confirmDispatch, isRefusal, requestRun } from './decide';
 import type { LeasedOutboxEntry, TaskId } from './model';
 import { type Clock, Orchestrator } from './orchestrator';
 import {
@@ -154,51 +148,6 @@ export function runOrchestratorStoreContract(
 
         const afterFinish = await store.readTask(TASK);
         expect(afterFinish?.task.consecutiveLost).toBeUndefined();
-      });
-    });
-
-    describe('queueing (opt-in)', () => {
-      it('round-trips a queued pendingRequest through the store, and clears it once the settle path consumes it', async () => {
-        const { store, orchestrator } = await fixture();
-        const first = await started(orchestrator, 'req-1');
-        const queued = await orchestrator.request({
-          taskId: TASK,
-          requestId: 'req-2',
-          pipeline: 'codex',
-          params: { mode: 'reply' },
-          queueIfBusy: true,
-        });
-        if (isRefusal(queued)) throw new Error('unexpected refusal');
-        if (!isQueued(queued)) throw new Error('expected a queued outcome');
-
-        const afterQueue = await store.readTask(TASK);
-        expect(afterQueue?.task.pendingRequest).toEqual({
-          requestId: 'req-2',
-          pipeline: 'codex',
-          params: { mode: 'reply' },
-        });
-        // Queueing itself never starts a run: still just the one live run.
-        expect(await store.listRuns(TASK)).toHaveLength(1);
-
-        const settled = await orchestrator.report(first.run.runId, {
-          ok: true,
-        });
-        if (isRefusal(settled)) throw new Error('unexpected refusal');
-        const followUpRunId = settled.followUpRun?.runId;
-        if (followUpRunId === undefined) {
-          throw new Error('expected a follow-up run');
-        }
-
-        const afterSettle = await store.readTask(TASK);
-        expect(afterSettle?.task.pendingRequest).toBeUndefined();
-        expect(afterSettle?.task.activeRunId).toBe(followUpRunId);
-        expect(await store.readRun(followUpRunId)).toMatchObject({
-          requestId: 'req-2',
-          pipeline: 'codex',
-          params: { mode: 'reply' },
-          state: 'pending',
-        });
-        expect((await store.readActiveRun(TASK))?.runId).toBe(followUpRunId);
       });
     });
 

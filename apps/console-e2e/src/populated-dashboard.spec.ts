@@ -643,6 +643,12 @@ test.describe('responsive decision inbox', () => {
     test(`keeps the action-first Bridge usable at ${viewport.width}px @mobile-deep`, async ({
       page,
     }) => {
+      const browserErrors: string[] = [];
+      page.on('console', (message) => {
+        if (message.type() === 'error') browserErrors.push(message.text());
+      });
+      page.on('pageerror', (error) => browserErrors.push(error.message));
+
       await page.setViewportSize(viewport);
       await page.goto('/');
 
@@ -696,6 +702,7 @@ test.describe('responsive decision inbox', () => {
       await expect(
         page.getByRole('menu').getByRole('menuitem', { name: 'Inbox' }),
       ).toBeVisible();
+      expect(browserErrors).toEqual([]);
     });
   }
 
@@ -858,51 +865,6 @@ test.describe('responsive agent operations', () => {
 });
 
 test.describe('populated phone flows', () => {
-  test('keeps the phone list and detail flow usable', async ({ page }) => {
-    const browserErrors: string[] = [];
-    page.on('console', (message) => {
-      if (message.type() === 'error') browserErrors.push(message.text());
-    });
-    page.on('pageerror', (error) => browserErrors.push(error.message));
-
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/');
-    const header = page.locator(
-      '.console-header[data-current="deck"]:not([data-streaming-fallback])',
-    );
-    await expectMobileBridgeHeader(header);
-    await expect(header.getByRole('heading', { name: 'Bridge' })).toBeVisible();
-    await expect(page.getByTestId('deck-inbox-summary')).toBeVisible();
-    await expect(page.getByTestId('current-work')).toBeVisible();
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-    const decisionAction = await page
-      .getByTestId('deck-inbox-summary')
-      .getByRole('link')
-      .boundingBox();
-    const taskAction = await page
-      .getByRole('link', { name: 'Open task' })
-      .first()
-      .boundingBox();
-    expect(decisionAction?.height).toBeGreaterThanOrEqual(44);
-    expect(taskAction?.height).toBeGreaterThanOrEqual(44);
-    expect(browserErrors).toEqual([]);
-    await page.goto('/inbox');
-    await expect(
-      page.getByRole('region', { name: 'Decision Inbox' }),
-    ).toBeVisible();
-
-    await expect(page.locator('.queue-workspace__list')).toBeVisible();
-    await page
-      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
-      .getByRole('link')
-      .click();
-    await expect(page.locator('.queue-workspace__detail')).toBeVisible();
-  });
-
   test('keeps the Inbox list and detail usable at narrow-phone width', async ({
     page,
   }) => {

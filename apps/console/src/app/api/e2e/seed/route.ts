@@ -1,7 +1,7 @@
 import {
+  CLI_SESSION_RETENTION_DAYS,
   type CliSessionDoc,
   type IssueAgentSessionDoc,
-  SESSION_RETENTION_DAYS,
   type SessionWrite,
 } from '@agent-lcars/telemetry';
 import {
@@ -49,7 +49,7 @@ const minutesAgo = (minutes: number) =>
 
 const expireAtFor = (lastActivityAt: string) => {
   const expireAt = new Date(lastActivityAt);
-  expireAt.setUTCDate(expireAt.getUTCDate() + SESSION_RETENTION_DAYS);
+  expireAt.setUTCDate(expireAt.getUTCDate() + CLI_SESSION_RETENTION_DAYS);
   return expireAt.toISOString();
 };
 

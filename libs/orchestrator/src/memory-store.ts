@@ -1,4 +1,4 @@
-import { type Decision, isQueued, type Queued } from './decide';
+import type { Decision } from './decide';
 import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
 import { isLive, taskKey } from './model';
 import {
@@ -36,7 +36,7 @@ export class MemoryStore implements OrchestratorStore {
   }
 
   async apply(input: {
-    decision: Decision | Queued;
+    decision: Decision;
     expectedRevision: number | undefined;
   }): Promise<void> {
     const { decision, expectedRevision } = input;
@@ -49,14 +49,7 @@ export class MemoryStore implements OrchestratorStore {
       task: structuredClone(decision.task),
       revision: (expectedRevision ?? 0) + 1,
     });
-    if (isQueued(decision)) return; // task-only write: no run, no outbox
     this.#runs.set(decision.run.runId, structuredClone(decision.run));
-    if (decision.followUpRun !== undefined) {
-      this.#runs.set(
-        decision.followUpRun.runId,
-        structuredClone(decision.followUpRun),
-      );
-    }
     for (const entry of decision.outbox) {
       this.#outbox.set(entry.entryId, structuredClone(entry));
     }
