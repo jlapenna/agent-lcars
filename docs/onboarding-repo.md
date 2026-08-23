@@ -127,6 +127,13 @@ do not vendor copies of their implementation.
 - Add the thin `agent-automerge` and `repo-validation` callers. Keep
   repository validation runnable on GitHub-hosted runners so it can establish
   a baseline before self-hosted capacity is healthy.
+- Add `.github/workflows/gitleaks.yml` before making the `gitleaks` context
+  required. Start from homelab's pinned, full-history scanner shape: read-only
+  `contents` and `pull-requests` permissions, `fetch-depth: 0`, a named
+  `gitleaks` job, and a bounded timeout. Its workflow must run on pull
+  requests and pushes to `main`; retain every `main` scan while cancelling
+  superseded pull-request scans. Use the repository's approved runner and
+  scanner integration, then prove the check appears on this bootstrap PR.
 - Add the issue-workflow guardrail hook to `.claude/settings.json` and
   `.codex/hooks.json`, and the `repo-require-worktree` check to the
   repository’s Git hook mechanism. The published workflow documentation owns
