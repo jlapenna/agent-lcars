@@ -78,7 +78,8 @@ The first-class task and source of truth.
   `requestId` is the idempotency key: replays return the existing item.
 - `spec` — what is wanted:
   `{ title, description, pipeline?, target?: { repo, ref? }, mode }`.
-  `target` is optional — that is the GitHub-optional part.
+  `target` is schema-optional — that is the GitHub-optional part — but v1
+  rejects its absence at the API (see Backend 1).
 - `state` — `ready | running | parked | done | canceled`. Work lifecycle,
   distinct from the orchestrator's run lifecycle. `parked` is the native
   home of what `status:needs-human` means today.
@@ -96,15 +97,23 @@ style in `libs/orchestrator/src/model.ts`.
 ### Orchestrator (existing, minimally generalized)
 
 Keeps exactly its current job: admission mutex, leases, bounded auto-retry,
-transactional outbox. One change: `TaskId` becomes a discriminated union —
-`{ kind: 'github', repo, issue }` | `{ kind: 'work', workId }` — with
-`taskKey()` emitting the existing `repo#issue` string for GitHub anchors and
-`work:<ulid>` for native ones.
+transactional outbox. One change: `TaskId` becomes a union of two anchor
+shapes — the existing `{ repo, issue }` object, kept byte-for-byte as it is
+persisted today, and a new `{ workId }` object — with `taskKey()` emitting
+the existing `repo#issue` string for GitHub anchors and `work:<ulid>` for
+native ones. The variants are discriminated by which key is present, not by
+a new `kind` field: `FirestoreStore` zod-parses every persisted Task, Run,
+and OutboxEntry on read (`firestore-store.ts`), and each of those embeds a
+`task: { repo, issue }` written under the current strict schema, so any
+variant that _requires_ a field legacy documents lack would reject the
+whole existing dataset at read time. A pinned test parses fixtures of the
+current persisted shapes through the new schema.
 
-- **Zero Firestore migration.** Existing task documents keep their exact
-  keys and shapes; Firestore doc IDs are `encodeURIComponent(taskKey())`,
-  and `work:` cannot collide with `owner/repo#123` because `:` is not in
-  the repo-name charset (`model.ts`'s `taskIdSchema` regex).
+- **Zero Firestore migration.** Existing documents keep their exact keys
+  and shapes, and the schema above accepts them unchanged; Firestore doc IDs
+  are `encodeURIComponent(taskKey())`, and `work:` cannot collide with
+  `owner/repo#123` because `:` is not in the repo-name charset
+  (`model.ts`'s `taskIdSchema` regex).
 - Run state changes flow back to the WorkItem via the same outbox pattern
   the drain already uses.
 
@@ -125,9 +134,28 @@ existing control-plane routes.
 | `POST /items/:id/links`      | Attach a typed reference.                                                                                                                          |
 | `POST /items/:id/results`    | Report a typed result. Executor-facing; restricted to the run's own verified identity.                                                             |
 
-Create is thin: validate → write WorkItem → `requestRun` with the `work:`
-anchor → `202`. Status is poll-only in v1 (the CLI offers `--watch` by
-polling); no streaming.
+Create is one Firestore transaction, then `202`: validate → reserve the
+idempotency key → write the WorkItem in state `ready` → enqueue a `work`
+outbox entry (`admit`) carrying the admission intent. The transaction is
+the whole decision; `requestRun` is its side effect, called by the outbox
+drain (same lease/fencing machinery as `dispatch-run`) with the `work:`
+anchor and the item's `requestId`, which the orchestrator already dedupes.
+A crash anywhere after commit is repaired by the next drain; a crash before
+commit leaves nothing behind. This is the orchestrator's own rule — the
+decision and its side effect are never one step — applied one layer up.
+
+- **Idempotency is transactional.** The reservation is a document keyed by
+  `(principal, requestId)` written in the same transaction as the WorkItem,
+  so concurrent replays of one request contend on one document and
+  converge on one ULID instead of minting several. A replay returns the
+  reserved item; it can never observe a WorkItem without an admission
+  entry, because both are written together or neither is.
+- The 30-minute reconcile sweep additionally repairs any `ready` item whose
+  `admit` entry is missing or stuck, the same way it already retries stuck
+  `dispatch-run` deliveries.
+
+Status is poll-only in v1 (the CLI offers `--watch` by polling); no
+streaming.
 
 Busy-task behavior surfaces the orchestrator's existing decisions verbatim:
 `task-busy` → `409`, `duplicate-request` → the existing item.
@@ -136,17 +164,27 @@ Busy-task behavior surfaces the orchestrator's existing decisions verbatim:
 
 The API is a plain OAuth2 resource server (RFC 6750 bearer tokens):
 validate the JWT against the issuer's OIDC discovery document + JWKS, check
-audience, done. Implemented with `jose` (standard library, no framework
-lock-in) — no hand-rolled crypto, no bespoke verifier plugins.
+audience, then apply the entry's claim predicates. Implemented with `jose`
+(standard library, already what `github-actions-oidc.ts` uses) — no
+hand-rolled crypto, no bespoke verifier plugins.
 
 - **Trusted issuers are configuration**, not code:
-  `[{ issuerUrl, audience, principalMapping }]`. v1 ships two entries:
+  `[{ issuerUrl, audience, claimPredicates, principalMapping }]`. v1 ships
+  two entries:
   - Google (`accounts.google.com`) — workstations via ADC, homelab
     services via service accounts. Chosen because it is free today, not
     because it is contractual.
   - GitHub Actions (`token.actions.githubusercontent.com`) — calls _from
-    runs_, reusing the existing `COMPLETION_OIDC_AUDIENCE` trust
-    machinery's approach.
+    runs_. Signature, issuer, and audience are **not** sufficient for this
+    issuer: any GitHub repository can mint a token requesting our audience.
+    The entry therefore carries the fail-closed claim predicates the
+    completion path already enforces
+    (`apps/console/src/lib/github-actions-oidc.ts`'s
+    `assertCompletionOidcClaims`): `repository` in the control-plane
+    allow-list, `ref` is `refs/heads/main`, `event_name` is
+    `workflow_dispatch`, and `workflow_ref`/`job_workflow_ref` pinned to
+    the worker workflows and the fleet finalizer on `main`, per route.
+    Every predicate fails closed; none is expressed by audience alone.
 - **Migrating off Google is a config change**: add any standard IdP
   (self-hosted Keycloak/Dex or managed) as an entry, move callers, delete
   the Google entry. No API or data change.
@@ -155,6 +193,17 @@ lock-in) — no hand-rolled crypto, no bespoke verifier plugins.
   `agent:run/<runId>`, produced by the issuer's mapping table. Raw issuer
   subjects go in the audit event as detail only, so stored history never
   encodes an identity provider.
+- **`agent:run/<runId>` requires a run binding, not just a trusted token.**
+  The predicates above prove "a trusted worker workflow on an allowed
+  repository", not "the worker for _this_ run" — today's completion route
+  stops there and trusts the body's run reference. For the run-lifecycle
+  routes the mapping additionally binds the token's
+  `(repository_id, run_id)` claims to the orchestrator run named in the
+  request: the first authenticated call binds them transactionally, and
+  only if that run is live, was dispatched by `GitHubActionsExecutor` to
+  that repository, and is not already bound; every later call must present
+  the same pair. A token that fails the binding gets `403`, never a
+  fallback principal.
 - Authorization is an explicit allowlist keyed on the LCARS-native
   principal (same spirit as `AGENT_BOT_LOGINS`), so it survives issuer
   swaps untouched.
@@ -207,6 +256,15 @@ the run's Actions OIDC token) instead of an issue body, and lease renewal +
 results flow back through the API. GitHub Actions remains the queue and
 credential broker in v1 — deliberately, since the driver is agent-initiated
 _ingress_, not runner independence.
+
+**Targetless items are rejected in v1.** `spec.target` stays optional in
+the schema for the later `QueueExecutor`, but this backend cannot launch
+without a repository: the workflow URL and the installation token both come
+from `target.repo`. While `GitHubActionsExecutor` is the only backend,
+`POST /items` returns `400` for an item with no `target.repo`, or one whose
+repository is outside the control-plane allow-list of repositories with the
+worker workflows installed. The API never accepts work no backend can
+launch.
 
 ### Backend 2 (later): `QueueExecutor`
 
@@ -316,6 +374,8 @@ the full design for #1 and pins the seams for the rest.
 - Migrating existing GitHub-anchored tasks or Quick Tasks to WorkItems.
 - Streaming/long-poll status.
 - Non-PR result kinds beyond schema definitions.
+- Targetless (no `target.repo`) work items — rejected at the API until
+  `QueueExecutor` lands.
 - Notifications for parked work.
 - Any change to the dispatched-agent protocol for label-driven work.
 - MCP transport (wraps the REST API later if wanted).
