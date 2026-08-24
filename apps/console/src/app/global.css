@@ -1022,6 +1022,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-height: 0;
   padding-block: 4px 8px;
   overflow-y: auto;
+  /* The Inbox is a fixed workspace with its own list and detail scrollers.
+     Do not hand a bottom-edge gesture to the document: on touch browsers
+     that produces a visible page bounce/flicker behind the workspace. */
+  overscroll-behavior-y: contain;
 }
 
 .queue-workspace__empty,
@@ -1200,6 +1204,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   background: color-mix(
     in srgb,
     var(--mantine-color-dark-9) 90%,

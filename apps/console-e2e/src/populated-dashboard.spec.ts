@@ -876,6 +876,22 @@ test.describe('populated phone flows', () => {
     await expect(
       workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`),
     ).toBeVisible();
+    const rows = workspace.locator('.queue-workspace__rows');
+    await rows.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(rows).toHaveCSS('overscroll-behavior-y', 'contain');
+    expect(
+      await page.evaluate(() => ({
+        documentScrollTop: document.scrollingElement?.scrollTop,
+        listAtBottom: (() => {
+          const list = document.querySelector('.queue-workspace__rows');
+          return list
+            ? list.scrollTop + list.clientHeight >= list.scrollHeight
+            : false;
+        })(),
+      })),
+    ).toEqual({ documentScrollTop: 0, listAtBottom: true });
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
