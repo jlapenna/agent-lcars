@@ -12,6 +12,7 @@ jobs:
   audit:
     name: Audit ${{ matrix.full_name }}
     runs-on: ['lcars-default']
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
