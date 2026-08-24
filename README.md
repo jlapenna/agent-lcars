@@ -3,7 +3,7 @@
 Agent LCARS operates and observes headless Claude Code, Codex, and OpenCode
 work on the shared self-hosted GitHub Actions runner fleet.
 
-![Agent LCARS console](docs/images/console-dashboard.png)
+![Agent LCARS decision inbox showing a selected item and its takeover context](docs/images/console-inbox.png)
 
 ## Dispatch
 
@@ -31,6 +31,19 @@ reference for developers changing dispatch and reconciliation machinery.
 | `apps/runner-autoscaler`       | Runner placement and lifecycle                  |
 | `apps/github-actions-exporter` | GitHub Actions metrics                          |
 | `infra/terraform`              | GCP services, IAM, storage, secrets, and budget |
+
+## Console views
+
+The console keeps the active fleet, its decision queue, and its session
+history in separate focused workspaces.
+
+### Active agents
+
+![Agent status showing active runs, claimed work, and recent outcomes](docs/images/console-agents.png)
+
+### Session archive
+
+![Session archive grouped by issue](docs/images/console-sessions.png)
 
 ## Documentation map
 
