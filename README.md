@@ -1,13 +1,16 @@
 # Agent LCARS
 
-Agent LCARS operates and observes headless Claude Code, Codex, and OpenCode
-work on the shared self-hosted GitHub Actions runner fleet.
+Agent LCARS is the control plane for headless Claude Code, Codex, and OpenCode
+work on the shared self-hosted GitHub Actions runner fleet. It turns GitHub
+issues into accountable agent work, shows maintainers where attention is
+needed, and retains the session evidence behind each outcome.
 
 ![Agent LCARS decision inbox showing a selected item and its takeover context](docs/images/console-inbox.png)
 
 ## Dispatch
 
-Add exactly one routing label to an issue in an onboarded repository:
+To dispatch work, add exactly one routing label to an issue in an onboarded
+repository:
 
 | Label            | Agent       |
 | ---------------- | ----------- |
@@ -18,9 +21,14 @@ Add exactly one routing label to an issue in an onboarded repository:
 The [shared agent protocol](.agents/skills/agent-protocol/reference/agent-protocol.md)
 is the complete behavioral contract for every dispatched run. The
 [LCARS skill](.agents/skills/lcars/SKILL.md) is a situational control-plane
-reference for developers changing dispatch and reconciliation machinery.
+reference for developers changing dispatch and reconciliation machinery. The
+console then tracks the run from intake through review, merge, and any
+maintainer follow-up.
 
 ## Operating surfaces
+
+Use the console for decisions and inspection; use the supporting services when
+working on a specific part of the fleet.
 
 | Surface                        | Use                                             |
 | ------------------------------ | ----------------------------------------------- |
@@ -35,7 +43,9 @@ reference for developers changing dispatch and reconciliation machinery.
 ## Console views
 
 The console keeps the active fleet, its decision queue, and its session
-history in separate focused workspaces.
+history in focused workspaces. The Decision Inbox is the starting point for
+work that needs a human response; Agents is the live operational view; and the
+Session Archive is the durable record for investigation and audit.
 
 ### Active agents
 
@@ -67,6 +77,7 @@ pnpm install
 pnpm verify
 ```
 
-The root README intentionally does not duplicate deployment steps, runner
-topology, credential setup, or migration history. Those details belong to the
-focused documents above and must be verified against their owning source.
+Start with the focused document that matches your task. This README intentionally
+does not duplicate deployment steps, runner topology, credential setup, or
+migration history; those operational contracts live with their owning systems
+and should be verified there.
