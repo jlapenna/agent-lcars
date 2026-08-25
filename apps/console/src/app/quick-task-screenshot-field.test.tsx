@@ -25,13 +25,16 @@ function image(name = 'screenshot.png', type = 'image/png') {
 describe('QuickTaskScreenshotField', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('shows the accepted formats and hides the file input from keyboard focus', () => {
+  it('renders a paperclip action and hides the file input from keyboard focus', () => {
     renderPicker();
-    expect(screen.getByLabelText('Screenshot (optional)')).toHaveAttribute(
+    expect(
+      screen.getByRole('button', { name: 'Attach screenshot' }),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('Screenshot file')).toHaveAttribute(
       'accept',
       'image/png,image/jpeg,image/webp',
     );
-    expect(screen.getByLabelText('Screenshot (optional)')).toHaveAttribute(
+    expect(screen.getByLabelText('Screenshot file')).toHaveAttribute(
       'tabindex',
       '-1',
     );
@@ -43,7 +46,7 @@ describe('QuickTaskScreenshotField', () => {
     vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
     renderPicker();
 
-    fireEvent.change(screen.getByLabelText('Screenshot (optional)'), {
+    fireEvent.change(screen.getByLabelText('Screenshot file'), {
       target: { files: [image()] },
     });
 
@@ -51,7 +54,7 @@ describe('QuickTaskScreenshotField', () => {
       screen.getByAltText('Screenshot preview: screenshot.png'),
     ).toHaveAttribute('src', 'blob:preview');
     const inputClick = vi.spyOn(
-      screen.getByLabelText('Screenshot (optional)'),
+      screen.getByLabelText('Screenshot file'),
       'click',
     );
     fireEvent.click(screen.getByRole('button', { name: 'Remove screenshot' }));
@@ -67,7 +70,7 @@ describe('QuickTaskScreenshotField', () => {
       </MantineProvider>,
     );
     const target = screen.getByRole('button', {
-      name: 'Paste or drop a screenshot',
+      name: 'Attach screenshot',
     });
     fireEvent.paste(target, {
       clipboardData: { files: [image('paste.webp', 'image/webp')] },
@@ -93,7 +96,7 @@ describe('QuickTaskScreenshotField', () => {
         <QuickTaskScreenshotField onChange={onChange} />
       </MantineProvider>,
     );
-    const input = screen.getByLabelText('Screenshot (optional)');
+    const input = screen.getByLabelText('Screenshot file');
     fireEvent.change(input, {
       target: { files: [image('unsafe.svg', 'image/svg+xml')] },
     });
