@@ -255,6 +255,33 @@ A `lost` run does not touch the item directly: the sweep either mints a
 fresh run (the item stays `running`) or, once the retry budget is spent,
 settles with a failure that the drain projects as `parked`.
 
+**Operator actions and recovery.** What `cancel` and `redispatch` do
+depends on the item's state, and lease loss reaches the item only through
+the sweep:
+
+```mermaid
+flowchart TD
+  subgraph Cancel["POST /items/:id/cancel"]
+    C0{"item state?"}
+    C0 -->|ready| C1["one txn: item = canceled, admit entry = done"]
+    C0 -->|running| C2["orchestrator.cancelRun: cancel-run + report-outcome entries"]
+    C2 --> C3["drain: executor.cancel via binding, then item = canceled"]
+    C0 -->|parked| C4["item = canceled"]
+    C0 -->|done or canceled| C5["409 already settled"]
+  end
+  subgraph Redispatch["POST /items/:id/redispatch"]
+    R0{"item parked?"}
+    R0 -->|yes| R1["one txn: item = ready, clear admittedRunId, new admit entry"]
+    R0 -->|no| R2["409"]
+  end
+  subgraph Sweep["Reconcile sweep, every 30 min"]
+    L0["lease expired: run = lost"] --> L1{"consecutiveLost ≤ 2?"}
+    L1 -->|yes| L2["mint fresh run + dispatch-run entry, item stays running"]
+    L1 -->|no| L3["settle as failure: report-outcome entry"]
+    L3 --> L4["drain: item = parked"]
+  end
+```
+
 ### Sessions: how WorkItem, Run, and agent session relate
 
 Telemetry already stores an agent session as its own document at
@@ -351,6 +378,33 @@ _permanent_ outcome (`duplicate-request`, `task-busy`, an item no longer
 `ready`, an unknown run) and records the outcome as an event; only
 transient failures release an entry to `pending`. An entry that can never
 succeed must never be retried forever.
+
+The entry lifecycle and the drain's per-kind behavior:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> pending : decided in a txn
+  pending --> leased : drain claims (5 min lease, claimId)
+  leased --> done : delivered, or permanent outcome recorded
+  leased --> pending : transient failure, or lease expired
+  done --> [*]
+```
+
+```mermaid
+flowchart TD
+  D0["claim next entry"] --> K{"kind"}
+  K -->|admit| A1{"txn: item ready and unadmitted?"}
+  A1 -->|yes| A2["requestRun, set admittedRunId"] --> DONE["settle done"]
+  A1 -->|no| DONE
+  K -->|dispatch-run| B1["executor.dispatch"] --> B2{"result"}
+  B2 -->|ok or permanent| DONE
+  B2 -->|transient| PEND["release pending"]
+  K -->|cancel-run| C1["executor.cancel via binding, else marker listing by target repo"] --> DONE
+  K -->|report-outcome| E{"anchor kind"}
+  E -->|github| E1["issue comment + label, as today"] --> DONE
+  E -->|work| E2["item = done, parked or canceled, plus event"] --> DONE
+```
 
 **No queueing.** `queueIfBusy` and `pendingRequest` were removed in
 #1503; nothing in this design queues a request on a busy task.
@@ -600,6 +654,23 @@ body.issue`, which can never hold for a native anchor, and discards the
 - The expected third issuer class is **LCARS-minted per-run tokens**
   (needed by the non-GitHub backend; see
   [Execution](#execution-abstraction)). Not built in v1.
+
+The binding decision on every `runs/:runId` call:
+
+```mermaid
+flowchart TD
+  T0["bearer token on /runs/:runId"] --> T1{"signature, issuer, audience, claim predicates?"}
+  T1 -->|fail| X403["403"]
+  T1 -->|pass| T2{"run already bound?"}
+  T2 -->|yes| T3{"token triple equals stored repository_id, run_id, run_attempt?"}
+  T3 -->|no| X403
+  T3 -->|yes| OK["principal agent:run/runId, scope work.agent"]
+  T2 -->|no| T4["fetch the Actions run named by the token's repository + run_id"]
+  T4 --> T5{"display_title marker intentId equals runId, and run live?"}
+  T5 -->|no| X403
+  T5 -->|yes| T6["txn: store triple on the Run, record acknowledged"] --> OK
+  S["run settles"] -.-> INV["binding invalidated"]
+```
 
 ### CLI
 
