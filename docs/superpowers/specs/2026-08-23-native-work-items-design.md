@@ -80,7 +80,104 @@ Invariants:
 
 ## Data model
 
-Two layers, each keeping one job.
+Two layers, each keeping one job: `libs/work` records what is wanted and
+what happened; the orchestrator records admission and execution. Telemetry
+sits beside both.
+
+### Overview
+
+```mermaid
+erDiagram
+  GRANT ||--o{ WORK_ITEM : "principal may create"
+  WORK_ITEM ||--|| RESERVATION : "created in one txn with"
+  WORK_ITEM ||--o{ WORK_EVENT : "audit (subcollection)"
+  WORK_ITEM ||--|| TASK : "anchored as work:ulid"
+  TASK ||--o{ RUN : "at most one live"
+  TASK ||--o{ OUTBOX_ENTRY : "admit"
+  RUN ||--o{ OUTBOX_ENTRY : "dispatch-run / cancel-run / report-outcome"
+  RUN }o--o{ SESSION_DOC : "N:M over time"
+  WORK_ITEM }o--o{ SESSION_DOC : "links[kind=session]"
+
+  GRANT {
+    string principal "LCARS-native, e.g. user:jlapenna"
+    string[] pipelines "which pipelines may be requested"
+    int maxLiveRuns "per-principal admission cap"
+    bool admin "adds work.admin"
+  }
+  WORK_ITEM {
+    string id "ULID"
+    object origin "principal, channel, requestId"
+    object spec "title, description, pipeline, target.repo"
+    enum state "ready | running | parked | done | canceled"
+    string admittedRunId "set by the admit drain"
+    object[] links "github-issue | github-pr | session | artifact | url"
+    object[] results "pr | report | artifact | message"
+    object schedule "reserved for cron"
+  }
+  RESERVATION {
+    string principal "part of key"
+    string requestId "part of key"
+    string workId "the item the request resolved to"
+    timestamp expiresAt "Firestore TTL"
+  }
+  WORK_EVENT {
+    string at "ISO instant"
+    string kind "created | admitted | acknowledged | parked | ..."
+    string by "principal or drain"
+  }
+  TASK {
+    string key "repo#issue or work:ulid"
+    string activeRunId "the mutex"
+    int runCount
+    int consecutiveLost
+  }
+  RUN {
+    string runId "work:ulid/rN"
+    object task "anchor union"
+    enum state "pending | running | finished | canceled | lost"
+    string pipeline
+    string leaseExpiresAt
+    object binding "repository_id, run_id, run_attempt"
+    string sessionId "primary session"
+    string resumedFromSessionId
+    object result "ok, summary, ref"
+  }
+  OUTBOX_ENTRY {
+    string entryId
+    enum kind "admit | dispatch-run | cancel-run | report-outcome"
+    enum state "pending | leased | done"
+    string runId "absent on admit"
+  }
+  SESSION_DOC {
+    string sessionId
+    string runId "pointer, not ownership"
+    string transcriptGcsUri
+    string expireAt "pinned while the item is open (sub-project 6)"
+  }
+```
+
+| Collection                             | Owner               | Written by                                                                                                       |
+| -------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `workItems/{ulid}`                     | `libs/work`         | `createWorkItem()` (create); the outbox drain (every `state` transition); `runs` routes (run-scoped fields only) |
+| `workItems/{ulid}/events/{id}`         | `libs/work`         | Same writers, append-only                                                                                        |
+| `workRequests/{principal}/{requestId}` | `libs/work`         | `createWorkItem()`, same transaction as the item                                                                 |
+| grants                                 | configuration       | Maintainer; becomes a `grants` resource when an admin agent needs it                                             |
+| `tasks/{key}`                          | `libs/orchestrator` | Orchestrator transactions only                                                                                   |
+| `runs/{runId}`                         | `libs/orchestrator` | Orchestrator transactions; the gate adds `binding` on first verified call                                        |
+| `outbox/{entryId}`                     | `libs/orchestrator` | Orchestrator decisions (enqueue); the drain (lease, settle)                                                      |
+| `sessions/{sessionId}`                 | `libs/telemetry`    | The telemetry sidecar; untouched by this design                                                                  |
+
+Three rules hold the model together:
+
+1. **Anchor, not ownership.** The orchestrator knows a task only by its
+   anchor; `libs/work` depends on it, never the reverse.
+2. **Decisions vs. projections.** Orchestrator transactions decide; outbox
+   entries carry the side effects; `WorkItem.state` is a projection the
+   drain writes. No API route mutates state directly.
+3. **Identity is the write guard.** A run writes only run-scoped fields
+   under `work.agent` bound to its own `runId`; operators write items
+   under `work.operator`; scopes are additive and issuers confine what they
+   may confer.
 
 ### `WorkItem` (new, `libs/work`, Firestore collection `workItems`)
 
@@ -120,6 +217,43 @@ ref, note?, addedBy, at }`. A GitHub issue is just one of these.
 
 All schemas are strict zod objects with bounded strings, matching house
 style in `libs/orchestrator/src/model.ts`.
+
+### Lifecycles
+
+Two state machines, deliberately distinct. The run's is the orchestrator's
+existing one; the item's is driven only by the drain projecting run
+settlements and operator actions.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "WorkItem" as W {
+    [*] --> ready : POST /items (one txn)
+    ready --> running : drain admit → requestRun → dispatch
+    ready --> canceled : cancel (settles the admit entry)
+    running --> done : run finished ok
+    running --> parked : run finished ok=false, or retries exhausted
+    running --> canceled : cancel → cancel-run
+    parked --> ready : redispatch
+    done --> [*]
+    canceled --> [*]
+  }
+  state "Run (orchestrator, existing)" as R {
+    [*] --> pending : requestRun
+    pending --> running : dispatch confirmed / first report
+    running --> finished : complete
+    running --> canceled : operator
+    running --> lost : lease expired
+    pending --> lost : lease expired
+    lost --> [*] : sweep retries (≤2) or parks the item
+    finished --> [*]
+    canceled --> [*]
+  }
+```
+
+A `lost` run does not touch the item directly: the sweep either mints a
+fresh run (the item stays `running`) or, once the retry budget is spent,
+settles with a failure that the drain projects as `parked`.
 
 ### Sessions: how WorkItem, Run, and agent session relate
 
@@ -316,6 +450,45 @@ The admission caps are the only synchronous refusal (`429`).
 
 Status is poll-only in v1 (the CLI offers `--watch` by polling); no
 streaming.
+
+### One request, end to end
+
+Where each write happens, and which of them is a decision versus a
+projection:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant O as Operator (work.operator)
+  participant API as Console API
+  participant W as libs/work
+  participant X as Orchestrator
+  participant D as Outbox drain
+  participant GH as GitHub Actions
+  participant A as Agent run (work.agent)
+
+  O->>API: POST /items {requestId, spec}
+  API->>W: createWorkItem — one txn: caps, reservation, item=ready, admit entry
+  API-->>O: 202 {id}
+  D->>W: drain admit — txn: item still ready and unadmitted?
+  W->>X: requestRun(work:ulid)
+  X-->>D: run r1 pending, dispatch-run entry
+  D->>GH: workflow_dispatch(work_id, dispatch marker)
+  A->>API: GET /runs/r1 (Actions OIDC token)
+  API->>GH: fetch run by the token's own run_id; marker names r1?
+  API->>X: bind (repository_id, run_id, run_attempt); record acknowledged
+  API-->>A: spec + item snapshot
+  A->>API: PUT progress / POST links / POST results / POST renew
+  A->>API: POST /runs/r1/complete {ok, summary}
+  API->>X: report(r1) → finished, lock released, report-outcome entry
+  API-->>A: orchestrator outcome (409 if r1 is no longer live)
+  D->>W: drain report-outcome (native anchor) → item done or parked
+  O->>API: GET /items/:id (poll) → done, results[pr]
+```
+
+Steps 2, 5, 14 are decisions (transactions). Steps 4, 7, 16 are the drain
+carrying their side effects. Step 16 is the only writer of
+`WorkItem.state` after creation; steps 12–13 write run-scoped fields only.
 
 ### Authorization and admission
 
