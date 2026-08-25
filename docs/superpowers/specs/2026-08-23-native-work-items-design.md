@@ -27,20 +27,25 @@ assumption.
 
 Recorded from the brainstorming session that produced this spec:
 
-| Question                       | Decision                                                                                                                                   |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| First end-to-end consumer      | Agent-initiated work via API                                                                                                               |
-| Deliverable model              | Generic typed results; only the PR result path wired in v1                                                                                 |
-| GitHub's role for native tasks | None required. Native-first: console + API are the interaction surface; GitHub issues/PRs are optional typed _links_ (references/evidence) |
-| API transport                  | Versioned REST on the console + `lcars work` CLI subcommands; MCP can wrap later                                                           |
-| Auth                           | Standard OAuth 2.0 resource server; trusted OIDC issuers as configuration; no Google dependency in the contract                            |
-| Structure                      | New `libs/work` layer above the orchestrator (approach B); the orchestrator keeps its admission-mutex job unchanged                        |
-| Naming                         | `WorkItem` / `libs/work` / `lcars work` — deliberately not "task", which the orchestrator already uses for its anchor                      |
-| Pipeline selection             | `spec.pipeline` is required; no default. Triggering a pipeline is a per-principal grant, so not every agent can invoke every pipeline      |
-| Admission                      | Per-principal live-run cap plus a global cap, both configuration; exceeding either is `429`                                                |
-| Modes                          | None on a WorkItem. A review is a specialized task (description + `github-pr` link), not a dispatch mode                                   |
-| v1 human issuer                | Google ID tokens to start (ratified 2026-08-24); LCARS-minted tokens arrive with sub-project 4                                             |
-| Run binding                    | First trusted call binds the token's `(repository_id, run_id)` to the run; the existing completion route adopts the same rule in v1        |
+| Question                       | Decision                                                                                                                                                              |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First end-to-end consumer      | Agent-initiated work via API                                                                                                                                          |
+| Deliverable model              | Generic typed results; only the PR result path wired in v1                                                                                                            |
+| GitHub's role for native tasks | None required. Native-first: console + API are the interaction surface; GitHub issues/PRs are optional typed _links_ (references/evidence)                            |
+| API transport                  | Versioned REST on the console + `lcars work` CLI subcommands; MCP can wrap later                                                                                      |
+| Auth                           | Standard OAuth 2.0 resource server; trusted OIDC issuers as configuration; no Google dependency in the contract                                                       |
+| Structure                      | New `libs/work` layer above the orchestrator (approach B); the orchestrator keeps its admission-mutex job unchanged                                                   |
+| Naming                         | `WorkItem` / `libs/work` / `lcars work` — deliberately not "task", which the orchestrator already uses for its anchor                                                 |
+| Pipeline selection             | `spec.pipeline` is required; no default. Triggering a pipeline is a per-principal grant, so not every agent can invoke every pipeline                                 |
+| Admission                      | Per-principal live-run cap plus a global cap, both configuration; exceeding either is `429`                                                                           |
+| Modes                          | None on a WorkItem. A review is a specialized task (description + `github-pr` link), not a dispatch mode                                                              |
+| v1 human issuer                | Google ID tokens to start (ratified 2026-08-24); LCARS-minted tokens arrive with sub-project 4                                                                        |
+| Run binding                    | First trusted call binds the token's `(repository_id, run_id)` to the run; the existing completion route adopts the same rule in v1                                   |
+| API shape                      | Two sub-APIs under one prefix: Requester API (`/items`, human/agent issuers, grants) and Worker API (`/runs/:runId`, run identity only); no principal can use both    |
+| Ownership                      | `cancel`/`redispatch` are the requester's or an admin's; reads are open to any granted principal; the Worker API belongs to the bound run alone                       |
+| Creation                       | One Firestore transaction (idempotency reservation + WorkItem + `admit` outbox entry); `requestRun` is the drained side effect                                        |
+| Status and targets             | Poll-only status in v1; items without `target.repo` are rejected while GitHub Actions is the only backend                                                             |
+| Protocol end state             | Native mode is transitional. Agents become GitHub-issue agnostic and use only the Worker API; issue-side affordances become control-plane projections (sub-project 5) |
 
 ## Architecture
 
