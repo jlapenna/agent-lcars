@@ -350,7 +350,7 @@ per-run token.
 
 ## Deliverables, results, and evidence
 
-Typed results on the WorkItem, reported through `POST /items/:id/results`
+Typed results on the WorkItem, reported through `POST /runs/:runId/results`
 by the run itself:
 
 - `pr` — `{ repo, number, url, headSha }`. **The only kind wired
@@ -387,6 +387,17 @@ but page no one; notification wiring (Telegram) is sub-project 2.
 v1 adds a **native mode** section to the shared protocol that maps each
 issue-side action to its API form. Label-driven behavior is untouched;
 this is additive.
+
+**Native mode is transitional, not the destination.** The end state
+(decided 2026-08-24) is that dispatched agents are GitHub-issue agnostic:
+they receive a WorkItem, interact only through the Worker API, and never
+touch an issue themselves. Once sub-project 5 makes label-driven work a
+WorkItem too, every issue-side affordance in the table below — the eyes
+reaction, the progress comment, the parking label, the outcome comment —
+becomes a **control-plane projection**: the outbox drain writes it to the
+linked issue in response to WorkItem events, exactly as it posts outcome
+comments today. At that point the "issue mode" column is deleted from the
+protocol and the agent-facing contract is the Worker API alone.
 
 | Protocol section                                                          | Issue mode (today)                   | Native mode (v1)                                                                                                                                   |
 | ------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -470,7 +481,9 @@ the full design for #1 and pins the seams for the rest.
 4. **`QueueExecutor`:** direct runner mode in the autoscaler + LCARS-minted
    run tokens.
 5. **Ingress unification:** webhook label-dispatch and Quick Tasks become
-   WorkItems.
+   WorkItems, issue-side affordances become control-plane projections of
+   WorkItem events, and `agent-protocol` collapses to the Worker API —
+   agents become GitHub-issue agnostic.
 
 ## Non-goals (v1)
 
