@@ -367,7 +367,7 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // this identity test on the uniquely named user-facing control without
     // crossing the hermetic suite's no-cloud-storage boundary.
     await expect(
-      intake.getByRole('button', { name: 'Paste or drop a screenshot' }),
+      intake.getByRole('button', { name: 'Attach screenshot' }),
     ).toBeVisible();
 
     const previewTitle = intake.getByTestId('quick-task-preview-title');

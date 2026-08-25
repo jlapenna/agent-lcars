@@ -84,6 +84,21 @@ describe('QuickTaskButton', () => {
     expect(button.disabled).toBe(false);
   });
 
+  it('places the screenshot paperclip next to the dispatch button', async () => {
+    renderButton();
+    await openDialog();
+
+    const attachment = screen.getByRole('button', {
+      name: 'Attach screenshot',
+    });
+    const submitButton = screen.getByRole('button', {
+      name: 'File & dispatch',
+    });
+    expect(attachment.parentElement?.parentElement).toBe(
+      submitButton.parentElement,
+    );
+  });
+
   it('places filing controls before the optional issue preview', async () => {
     renderButton();
     await openDialog();

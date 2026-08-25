@@ -1,6 +1,15 @@
 'use client';
 
-import { Box, Button, Group, Image, Paper, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Group,
+  Image,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { IconPaperclip } from '@tabler/icons-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
@@ -67,49 +76,34 @@ export function QuickTaskScreenshotField({
 
   return (
     <Stack gap="xs">
-      <Box>
-        <Text component="label" htmlFor={inputId} fw={500} size="sm">
-          Screenshot (optional)
-        </Text>
-        <Text size="xs" c="dimmed">
-          PNG, JPEG, or WebP; up to 10 MiB.
-        </Text>
-      </Box>
       <input
         ref={inputRef}
         id={inputId}
         type="file"
+        aria-label="Screenshot file"
         accept={QUICK_TASK_EVIDENCE_INPUT_MIME_TYPES.join(',')}
         tabIndex={-1}
         onChange={chooseFromInput}
         disabled={disabled}
         style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
       />
-      <Paper
-        withBorder
-        p="sm"
-        role="button"
-        tabIndex={disabled ? -1 : 0}
-        aria-label="Paste or drop a screenshot"
-        aria-disabled={disabled}
-        onClick={() => {
-          if (!disabled) inputRef.current?.click();
-        }}
-        onKeyDown={(event) => {
-          if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
+      <Tooltip label="Attach screenshot (PNG, JPEG, or WebP; up to 10 MiB)">
+        <ActionIcon
+          variant={value ? 'filled' : 'default'}
+          size={36}
+          aria-label={value ? 'Replace screenshot' : 'Attach screenshot'}
+          disabled={disabled}
+          onClick={() => inputRef.current?.click()}
+          onPaste={(event) => adopt(event.clipboardData.files[0])}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
             event.preventDefault();
-            inputRef.current?.click();
-          }
-        }}
-        onPaste={(event) => adopt(event.clipboardData.files[0])}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault();
-          adopt(event.dataTransfer.files[0]);
-        }}
-      >
-        <Text size="sm">Choose, paste, or drop a screenshot</Text>
-      </Paper>
+            adopt(event.dataTransfer.files[0]);
+          }}
+        >
+          <IconPaperclip aria-hidden="true" size={18} stroke={1.8} />
+        </ActionIcon>
+      </Tooltip>
       {error && (
         <Text size="xs" c="red" role="alert">
           {error}

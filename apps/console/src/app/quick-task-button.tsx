@@ -443,21 +443,23 @@ export function QuickTaskButton({
               {lowInformationGuidance} You can still file this task as-is.
             </Text>
           )}
-          <QuickTaskScreenshotField
-            value={screenshot ?? undefined}
-            onChange={(file) => setScreenshot(file ?? null)}
-          />
-
-          <Button
-            disabled={
-              !description.trim() ||
-              !selectedRepo ||
-              pipelineOptions.length === 0
-            }
-            onClick={handleCreate}
-          >
-            File & dispatch
-          </Button>
+          <Group align="flex-end" wrap="nowrap">
+            <QuickTaskScreenshotField
+              value={screenshot ?? undefined}
+              onChange={(file) => setScreenshot(file ?? null)}
+            />
+            <Button
+              style={{ flex: 1 }}
+              disabled={
+                !description.trim() ||
+                !selectedRepo ||
+                pipelineOptions.length === 0
+              }
+              onClick={handleCreate}
+            >
+              File & dispatch
+            </Button>
+          </Group>
 
           {description.trim() && (
             <Paper withBorder p="sm" data-testid="quick-task-preview">
