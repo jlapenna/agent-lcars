@@ -56,9 +56,15 @@ env:
     availability:
       - RUNTIME
 
-  # Not sensitive - just the allowlisted GitHub login. Doubles as the
-  # maintainer identity the queue is curated for (see lib/deployment.ts):
-  # single-admin console, so they are the same person by construction.
+  # Not sensitive - the allowlisted GitHub logins that may operate the
+  # console. Authorization is deliberately separate from queue ownership.
+  - variable: AGENT_LCARS_ADMIN_GITHUB_LOGINS
+    value: 'jlapenna,lizsprinkles'
+    availability:
+      - RUNTIME
+
+  # The maintainer identity whose queue the console curates (see
+  # lib/deployment.ts). Adding another console operator must not change it.
   - variable: AGENT_LCARS_ADMIN_GITHUB_LOGIN
     value: 'jlapenna'
     availability:

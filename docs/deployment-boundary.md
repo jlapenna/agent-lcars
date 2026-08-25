@@ -28,6 +28,7 @@ else asks it:
 
 | Value                    | Env var                                | This deployment                  |
 | ------------------------ | -------------------------------------- | -------------------------------- |
+| console admin logins     | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`      | `jlapenna,lizsprinkles`          |
 | maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`       | `jlapenna`                       |
 | agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `agent-lcars-bot`                |
 | artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net` |

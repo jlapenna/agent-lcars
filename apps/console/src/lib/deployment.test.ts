@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  adminGithubLogins,
   agentFleetLogin,
   agentSessionResumeScript,
   artifactShareBaseUrl,
@@ -8,6 +9,7 @@ import {
   consoleRepositoryUrl,
   controlPlaneRepositories,
   controlPlaneRepository,
+  isAdminGithubLogin,
   isControlPlaneRepository,
   maintainerLogin,
   shareArtifactUrl,
@@ -15,6 +17,7 @@ import {
 
 const VARS = [
   'AGENT_LCARS_ADMIN_GITHUB_LOGIN',
+  'AGENT_LCARS_ADMIN_GITHUB_LOGINS',
   'AGENT_LCARS_FLEET_GITHUB_LOGIN',
   'AGENT_LCARS_ARTIFACT_SHARE_BASE_URL',
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORY',
@@ -32,6 +35,33 @@ describe('deployment config', () => {
   it('reads the maintainer login from the environment', () => {
     process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone-else';
     expect(maintainerLogin()).toBe('someone-else');
+  });
+
+  describe('console admin authorization', () => {
+    it('defaults to the configured maintainer login', () => {
+      process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone-else';
+      expect(adminGithubLogins()).toEqual(['someone-else']);
+      expect(isAdminGithubLogin('someone-else')).toBe(true);
+      expect(isAdminGithubLogin('unlisted-user')).toBe(false);
+    });
+
+    it('admits each configured login without changing the maintainer', () => {
+      process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'queue-owner';
+      process.env['AGENT_LCARS_ADMIN_GITHUB_LOGINS'] =
+        'queue-owner, LizSprinkles, queue-owner';
+
+      expect(adminGithubLogins()).toEqual(['queue-owner', 'lizsprinkles']);
+      expect(isAdminGithubLogin('lizsprinkles')).toBe(true);
+      expect(isAdminGithubLogin('LizSprinkles')).toBe(true);
+      expect(maintainerLogin()).toBe('queue-owner');
+    });
+
+    it('rejects missing and unlisted profile logins', () => {
+      process.env['AGENT_LCARS_ADMIN_GITHUB_LOGINS'] = 'jlapenna,lizsprinkles';
+      expect(isAdminGithubLogin(undefined)).toBe(false);
+      expect(isAdminGithubLogin(null)).toBe(false);
+      expect(isAdminGithubLogin('someone-else')).toBe(false);
+    });
   });
 
   it('reads the fleet login from the environment', () => {

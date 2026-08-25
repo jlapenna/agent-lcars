@@ -17,6 +17,7 @@ export interface EnvVars {
 
   AGENT_CONSOLE_GITHUB_API_BASE_URL?: string;
   AGENT_LCARS_ADMIN_GITHUB_LOGIN?: string;
+  AGENT_LCARS_ADMIN_GITHUB_LOGINS?: string;
   // #1284: GitHub App credentials for minting short-lived, per-repo
   // installation tokens (see apps/console/src/lib/github-app-tokens.ts).
   // Both are required, everywhere the console calls GitHub - the singleton
