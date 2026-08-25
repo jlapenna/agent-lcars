@@ -38,7 +38,7 @@ Recorded from the brainstorming session that produced this spec:
 | Naming                         | `WorkItem` / `libs/work` / `lcars work` — deliberately not "task", which the orchestrator already uses for its anchor                      |
 | Pipeline selection             | `spec.pipeline` is required; no default. Triggering a pipeline is a per-principal grant, so not every agent can invoke every pipeline      |
 | Admission                      | Per-principal live-run cap plus a global cap, both configuration; exceeding either is `429`                                                |
-| Modes in v1                    | `implement` only; `review` is reserved until a PR-shaped target exists                                                                     |
+| Modes                          | None on a WorkItem. A review is a specialized task (description + `github-pr` link), not a dispatch mode                                   |
 | v1 human issuer                | Google ID tokens to start (ratified 2026-08-24); LCARS-minted tokens arrive with sub-project 4                                             |
 | Run binding                    | First trusted call binds the token's `(repository_id, run_id)` to the run; the existing completion route adopts the same rule in v1        |
 
@@ -83,12 +83,14 @@ The first-class task and source of truth.
   `{ principal, channel: 'api' | 'webhook' | 'cron' | 'console', requestId }`.
   `requestId` is the idempotency key: replays return the existing item.
 - `spec` — what is wanted:
-  `{ title, description, pipeline, target?: { repo, ref? }, mode }`.
-  `pipeline` is required — there is no default, because invoking a
-  pipeline is a granted capability (see
-  [Authorization and admission](#authorization-and-admission)). `mode` is
-  `implement` in v1; `review` is reserved and rejected until a PR-shaped
-  target (`target.pr`) is added with it.
+  `{ title, description, pipeline, target?: { repo, ref? } }`. `pipeline`
+  is required — there is no default, because invoking a pipeline is a
+  granted capability (see
+  [Authorization and admission](#authorization-and-admission)). There is
+  no `mode`: a review is a specialized task whose description says so and
+  whose PR is a `github-pr` link, not a separate dispatch mode. The
+  orchestrator's `params.mode` continues to exist for label-driven work
+  only.
   `target` is schema-optional — that is the GitHub-optional part — but v1
   rejects its absence at the API (see Backend 1).
 - `state` — `ready | running | parked | done | canceled`. Work lifecycle,
@@ -130,28 +132,49 @@ current persisted shapes through the new schema.
 
 ## API and auth
 
-### Routes
+### Two surfaces
 
-Versioned REST under `apps/console/src/app/api/work/v1/`, next to the
-existing control-plane routes.
+The API has two callers with nothing in common — a **requester** (human,
+agent, or service) issuing and following work, and a **run** reporting on
+itself — so it is two sub-APIs under one version prefix
+(`apps/console/src/app/api/work/v1/`), each with its own accepted issuers
+and authorization rules. One shared gate would mean one route honoring two
+trust models; keeping them apart is what lets the worker surface swap
+issuers (GitHub Actions OIDC today, LCARS-minted per-run tokens with
+sub-project 4) without touching the requester surface.
 
-| Route                                  | Purpose                                                                                                                                            |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /items`                          | Create a WorkItem. Caller supplies `requestId`; replays dedupe (same contract as the orchestrator's `duplicate-request`). Returns `202` + item ID. |
-| `GET /items/:id`                       | Full state: spec, work state, runs, links, results, events.                                                                                        |
-| `GET /items`                           | List/filter by state, principal, target repo.                                                                                                      |
-| `POST /items/:id/cancel`               | Operator/requester stop.                                                                                                                           |
-| `POST /items/:id/redispatch`           | Parked → ready; mints a fresh run. API-native analog of today's reply triggers.                                                                    |
-| `POST /items/:id/links`                | Attach a typed reference.                                                                                                                          |
-| `POST /items/:id/results`              | Report a typed result. Run-facing; restricted to the run's own verified identity.                                                                  |
-| `POST /items/:id/runs/:runId/renew`    | Renew the run's orchestrator lease. Run-facing.                                                                                                    |
-| `PUT /items/:id/runs/:runId/progress`  | Replace the run's single bounded progress note (the native form of the protocol's one edited progress comment). Run-facing.                        |
-| `POST /items/:id/runs/:runId/complete` | Terminal report `{ ok, summary }` — the native form of today's hosted completion call; `ok: false` parks the item. Run-facing.                     |
+**Requester API — `/items`.** Accepted issuer in v1: Google. Authorization
+per [Authorization and admission](#authorization-and-admission).
 
-The five run-facing routes (`GET /items/:id` plus `links`, `results`,
-`renew`, `progress`, `complete`) are the **complete** channel a run has to
-the control plane. That list is the contract the later non-GitHub backend
-depends on; extending it is fine, bypassing it is not.
+| Route                        | Purpose                                                                                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /items`                | Create a WorkItem. Caller supplies `requestId`; replays dedupe (same contract as the orchestrator's `duplicate-request`). Returns `202` + item ID. |
+| `GET /items/:id`             | Full state: spec, work state, runs, links, results, events.                                                                                        |
+| `GET /items`                 | List/filter by state, principal, target repo.                                                                                                      |
+| `POST /items/:id/cancel`     | Requester/admin stop.                                                                                                                              |
+| `POST /items/:id/redispatch` | Parked → ready; mints a fresh run. API-native analog of today's reply triggers.                                                                    |
+| `POST /items/:id/links`      | Attach a typed reference (a human or requester adding evidence).                                                                                   |
+
+**Worker API — `/runs/:runId`.** Accepted issuer in v1: GitHub Actions
+OIDC, with the claim predicates and run binding described under
+[Auth](#auth-standard-oauth-20-resource-server); the only principal it
+ever yields is `agent:run/<runId>`. Keyed by run, not item, because a run
+may only ever speak for itself.
+
+| Route                        | Purpose                                                                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `GET /runs/:runId`           | The run's spec and item snapshot. The first authenticated call performs the run binding and records an `acknowledged` event. |
+| `POST /runs/:runId/renew`    | Renew the orchestrator lease.                                                                                                |
+| `PUT /runs/:runId/progress`  | Replace the run's single bounded progress note (the native form of the protocol's one edited progress comment).              |
+| `POST /runs/:runId/links`    | Attach a typed reference on the run's behalf (session, PR).                                                                  |
+| `POST /runs/:runId/results`  | Report a typed result.                                                                                                       |
+| `POST /runs/:runId/complete` | Terminal report `{ ok, summary }` — the native form of today's hosted completion call; `ok: false` parks the item.           |
+
+The Worker API is the **complete** channel a run has to the control plane.
+That list is the contract the later non-GitHub backend depends on;
+extending it is fine, bypassing it is not. Requester tokens are rejected
+on the Worker API and run tokens on the Requester API — there is no
+principal that can use both.
 
 Create is one Firestore transaction, then `202`: validate → reserve the
 idempotency key → write the WorkItem in state `ready` → enqueue a `work`
@@ -197,9 +220,8 @@ human-per-task gate that labels provide today.
   the caller's behalf.
 - **Ownership.** `cancel` and `redispatch` are allowed to the item's
   `origin.principal` and to `admin` principals only. Reads are open to any
-  granted principal (single-tenant fleet). `links`, `results`, `renew`,
-  `progress`, and `complete` are allowed only to the `agent:run/<runId>`
-  principal bound to that run.
+  granted principal (single-tenant fleet). The Worker API is allowed only to the `agent:run/<runId>` principal
+  bound to that run.
 - **Console actions map to the same rules.** A console user acts as
   `user:<github-login>` (from the existing Auth.js session), and the
   console's existing `isAdmin` flag is the `admin` grant.
@@ -350,8 +372,7 @@ longer depends on them.
 
 **Verification.** `verify-deliverable` gains an API mode for native tasks:
 the gate is "the WorkItem has ≥1 result from this run, or an explicit
-failure report" — one HTTP call, no GitHub scraping. Mode-specific rules
-(implement ⇒ result kind `pr`) stay, expressed against result types.
+failure report" — one HTTP call, no GitHub scraping. In v1 every native task must deliver a `pr` result or an explicit failure; result-kind rules per task shape arrive with non-PR results.
 
 **Failure and parking.** A run reporting `ok: false`, or exhausting the
 existing auto-retry budget, moves the WorkItem to `parked` with the failure
@@ -367,15 +388,15 @@ v1 adds a **native mode** section to the shared protocol that maps each
 issue-side action to its API form. Label-driven behavior is untouched;
 this is additive.
 
-| Protocol section                                                          | Issue mode (today)                   | Native mode (v1)                                                                                                                                 |
-| ------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1. Takeover comment                                                       | Comment naming the resume command    | `POST /items/:id/links` kind `session` with the session ID and resume command as `note`; the console renders the takeover affordance from it     |
-| 2. Eyes-reaction acknowledgement                                          | 👀 on the issue                      | Implicit: the first authenticated `GET /items/:id` performs the run binding and records an `acknowledged` event                                  |
-| 3. One edited progress comment                                            | Single comment, edited in place      | `PUT /items/:id/runs/:runId/progress` — one bounded note, replaced in place                                                                      |
-| 4. Parking                                                                | `status:needs-human` label + comment | `POST .../complete` with `ok: false` and the summary; the item moves to `parked`                                                                 |
-| 5. Deliverable rule                                                       | PR carrying the attempt-claim marker | Same PR and marker (the marker's intent ID is already the orchestrator run ID, now `work:<ulid>/r<n>`), plus `POST /items/:id/results` kind `pr` |
-| 6–11. Push early, budget, CI reruns, headless-sync, identity, hard limits | unchanged                            | unchanged                                                                                                                                        |
-| 12. Session status channel                                                | `lcars session title`                | unchanged — telemetry never depended on GitHub                                                                                                   |
+| Protocol section                                                          | Issue mode (today)                   | Native mode (v1)                                                                                                                                   |
+| ------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Takeover comment                                                       | Comment naming the resume command    | `POST /runs/:runId/links` kind `session` with the session ID and resume command as `note`; the console renders the takeover affordance from it     |
+| 2. Eyes-reaction acknowledgement                                          | 👀 on the issue                      | Implicit: the first authenticated `GET /items/:id` performs the run binding and records an `acknowledged` event                                    |
+| 3. One edited progress comment                                            | Single comment, edited in place      | `PUT /runs/:runId/progress` — one bounded note, replaced in place                                                                                  |
+| 4. Parking                                                                | `status:needs-human` label + comment | `POST .../complete` with `ok: false` and the summary; the item moves to `parked`                                                                   |
+| 5. Deliverable rule                                                       | PR carrying the attempt-claim marker | Same PR and marker (the marker's intent ID is already the orchestrator run ID, now `work:<ulid>/r<n>`), plus `POST /runs/:runId/results` kind `pr` |
+| 6–11. Push early, budget, CI reruns, headless-sync, identity, hard limits | unchanged                            | unchanged                                                                                                                                          |
+| 12. Session status channel                                                | `lcars session title`                | unchanged — telemetry never depended on GitHub                                                                                                     |
 
 Two implementation notes fall out of the table:
 
@@ -461,7 +482,8 @@ the full design for #1 and pins the seams for the rest.
 - Notifications for parked work.
 - Any change to the dispatched-agent protocol for label-driven work.
 - MCP transport (wraps the REST API later if wanted).
-- `mode: review` for native tasks.
+- A review dispatch mode for native tasks; a review is expressed as a task
+  with a `github-pr` link when someone needs one.
 - LCARS-minted tokens (sub-project 4) and any issuer beyond Google + GitHub
   Actions.
 - A default pipeline or an implicit "any pipeline" grant.
