@@ -35,6 +35,12 @@ Recorded from the brainstorming session that produced this spec:
 | API transport                  | Versioned REST on the console + `lcars work` CLI subcommands; MCP can wrap later                                                           |
 | Auth                           | Standard OAuth 2.0 resource server; trusted OIDC issuers as configuration; no Google dependency in the contract                            |
 | Structure                      | New `libs/work` layer above the orchestrator (approach B); the orchestrator keeps its admission-mutex job unchanged                        |
+| Naming                         | `WorkItem` / `libs/work` / `lcars work` — deliberately not "task", which the orchestrator already uses for its anchor                      |
+| Pipeline selection             | `spec.pipeline` is required; no default. Triggering a pipeline is a per-principal grant, so not every agent can invoke every pipeline      |
+| Admission                      | Per-principal live-run cap plus a global cap, both configuration; exceeding either is `429`                                                |
+| Modes in v1                    | `implement` only; `review` is reserved until a PR-shaped target exists                                                                     |
+| v1 human issuer                | Google ID tokens to start (ratified 2026-08-24); LCARS-minted tokens arrive with sub-project 4                                             |
+| Run binding                    | First trusted call binds the token's `(repository_id, run_id)` to the run; the existing completion route adopts the same rule in v1        |
 
 ## Architecture
 
@@ -77,7 +83,12 @@ The first-class task and source of truth.
   `{ principal, channel: 'api' | 'webhook' | 'cron' | 'console', requestId }`.
   `requestId` is the idempotency key: replays return the existing item.
 - `spec` — what is wanted:
-  `{ title, description, pipeline?, target?: { repo, ref? }, mode }`.
+  `{ title, description, pipeline, target?: { repo, ref? }, mode }`.
+  `pipeline` is required — there is no default, because invoking a
+  pipeline is a granted capability (see
+  [Authorization and admission](#authorization-and-admission)). `mode` is
+  `implement` in v1; `review` is reserved and rejected until a PR-shaped
+  target (`target.pr`) is added with it.
   `target` is schema-optional — that is the GitHub-optional part — but v1
   rejects its absence at the API (see Backend 1).
 - `state` — `ready | running | parked | done | canceled`. Work lifecycle,
@@ -124,15 +135,23 @@ current persisted shapes through the new schema.
 Versioned REST under `apps/console/src/app/api/work/v1/`, next to the
 existing control-plane routes.
 
-| Route                        | Purpose                                                                                                                                            |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /items`                | Create a WorkItem. Caller supplies `requestId`; replays dedupe (same contract as the orchestrator's `duplicate-request`). Returns `202` + item ID. |
-| `GET /items/:id`             | Full state: spec, work state, runs, links, results, events.                                                                                        |
-| `GET /items`                 | List/filter by state, principal, target repo.                                                                                                      |
-| `POST /items/:id/cancel`     | Operator/requester stop.                                                                                                                           |
-| `POST /items/:id/redispatch` | Parked → ready; mints a fresh run. API-native analog of today's reply triggers.                                                                    |
-| `POST /items/:id/links`      | Attach a typed reference.                                                                                                                          |
-| `POST /items/:id/results`    | Report a typed result. Executor-facing; restricted to the run's own verified identity.                                                             |
+| Route                                  | Purpose                                                                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /items`                          | Create a WorkItem. Caller supplies `requestId`; replays dedupe (same contract as the orchestrator's `duplicate-request`). Returns `202` + item ID. |
+| `GET /items/:id`                       | Full state: spec, work state, runs, links, results, events.                                                                                        |
+| `GET /items`                           | List/filter by state, principal, target repo.                                                                                                      |
+| `POST /items/:id/cancel`               | Operator/requester stop.                                                                                                                           |
+| `POST /items/:id/redispatch`           | Parked → ready; mints a fresh run. API-native analog of today's reply triggers.                                                                    |
+| `POST /items/:id/links`                | Attach a typed reference.                                                                                                                          |
+| `POST /items/:id/results`              | Report a typed result. Run-facing; restricted to the run's own verified identity.                                                                  |
+| `POST /items/:id/runs/:runId/renew`    | Renew the run's orchestrator lease. Run-facing.                                                                                                    |
+| `PUT /items/:id/runs/:runId/progress`  | Replace the run's single bounded progress note (the native form of the protocol's one edited progress comment). Run-facing.                        |
+| `POST /items/:id/runs/:runId/complete` | Terminal report `{ ok, summary }` — the native form of today's hosted completion call; `ok: false` parks the item. Run-facing.                     |
+
+The five run-facing routes (`GET /items/:id` plus `links`, `results`,
+`renew`, `progress`, `complete`) are the **complete** channel a run has to
+the control plane. That list is the contract the later non-GitHub backend
+depends on; extending it is fine, bypassing it is not.
 
 Create is one Firestore transaction, then `202`: validate → reserve the
 idempotency key → write the WorkItem in state `ready` → enqueue a `work`
@@ -159,6 +178,31 @@ streaming.
 
 Busy-task behavior surfaces the orchestrator's existing decisions verbatim:
 `task-busy` → `409`, `duplicate-request` → the existing item.
+
+### Authorization and admission
+
+Authentication says who is calling; this section says what they may do.
+Both are deliberately explicit because agent-initiated ingress removes the
+human-per-task gate that labels provide today.
+
+- **Grants are per principal, per pipeline.** Configuration is a list of
+  `{ principal, pipelines: [...], maxLiveRuns, admin? }`. A principal with
+  no grant is rejected at the gate; a granted principal requesting a
+  pipeline outside its list gets `403`. This is the mechanism behind the
+  "not every agent may trigger Claude" decision.
+- **Admission caps.** `maxLiveRuns` bounds how many of a principal's
+  WorkItems may be `ready` or `running` at once; a global cap, sized to
+  the autoscaler's capacity configuration, bounds the whole fleet.
+  Exceeding either returns `429` with `Retry-After`; nothing is queued on
+  the caller's behalf.
+- **Ownership.** `cancel` and `redispatch` are allowed to the item's
+  `origin.principal` and to `admin` principals only. Reads are open to any
+  granted principal (single-tenant fleet). `links`, `results`, `renew`,
+  `progress`, and `complete` are allowed only to the `agent:run/<runId>`
+  principal bound to that run.
+- **Console actions map to the same rules.** A console user acts as
+  `user:<github-login>` (from the existing Auth.js session), and the
+  console's existing `isAdmin` flag is the `admin` grant.
 
 ### Auth: standard OAuth 2.0 resource server
 
@@ -187,7 +231,10 @@ hand-rolled crypto, no bespoke verifier plugins.
     Every predicate fails closed; none is expressed by audience alone.
 - **Migrating off Google is a config change**: add any standard IdP
   (self-hosted Keycloak/Dex or managed) as an entry, move callers, delete
-  the Google entry. No API or data change.
+  the Google entry. No API or data change. Google for v1 was ratified on
+  2026-08-24; the likely successor is LCARS-minted tokens (sub-project 4)
+  issued from the console's existing Auth.js GitHub login, published under
+  the console's own JWKS so LCARS becomes one more issuer entry.
 - **Principals are LCARS-native, never issuer subjects.**
   `origin.principal` stores identifiers like `user:jlapenna`, `svc:cron`,
   `agent:run/<runId>`, produced by the issuer's mapping table. Raw issuer
@@ -204,6 +251,8 @@ hand-rolled crypto, no bespoke verifier plugins.
   that repository, and is not already bound; every later call must present
   the same pair. A token that fails the binding gets `403`, never a
   fallback principal.
+  The existing hosted completion route adopts the same binding in v1 so
+  the two run-facing paths cannot drift apart.
 - Authorization is an explicit allowlist keyed on the LCARS-native
   principal (same spirit as `AGENT_BOT_LOGINS`), so it survives issuer
   swaps untouched.
@@ -311,6 +360,31 @@ plus the outcome comment. `POST /items/:id/redispatch` is the reply-trigger
 analog. Deliberate v1 gap: parked native tasks are visible in console/CLI
 but page no one; notification wiring (Telegram) is sub-project 2.
 
+## Dispatched-agent protocol in native mode
+
+`agent-protocol` is written against an issue. A native task has none, so
+v1 adds a **native mode** section to the shared protocol that maps each
+issue-side action to its API form. Label-driven behavior is untouched;
+this is additive.
+
+| Protocol section                                                          | Issue mode (today)                   | Native mode (v1)                                                                                                                                 |
+| ------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. Takeover comment                                                       | Comment naming the resume command    | `POST /items/:id/links` kind `session` with the session ID and resume command as `note`; the console renders the takeover affordance from it     |
+| 2. Eyes-reaction acknowledgement                                          | 👀 on the issue                      | Implicit: the first authenticated `GET /items/:id` performs the run binding and records an `acknowledged` event                                  |
+| 3. One edited progress comment                                            | Single comment, edited in place      | `PUT /items/:id/runs/:runId/progress` — one bounded note, replaced in place                                                                      |
+| 4. Parking                                                                | `status:needs-human` label + comment | `POST .../complete` with `ok: false` and the summary; the item moves to `parked`                                                                 |
+| 5. Deliverable rule                                                       | PR carrying the attempt-claim marker | Same PR and marker (the marker's intent ID is already the orchestrator run ID, now `work:<ulid>/r<n>`), plus `POST /items/:id/results` kind `pr` |
+| 6–11. Push early, budget, CI reruns, headless-sync, identity, hard limits | unchanged                            | unchanged                                                                                                                                        |
+| 12. Session status channel                                                | `lcars session title`                | unchanged — telemetry never depended on GitHub                                                                                                   |
+
+Two implementation notes fall out of the table:
+
+- The attempt-marker grammar (`libs/dispatch-contracts/src/marker.ts`)
+  must accept the `work:` run-ID form; a pinned test covers both forms.
+- PRs from native tasks are authored by the same bot logins as today, so
+  `agent-automerge.yml` treats them identically. A native task's PR body
+  references the item (`Work: work:<ulid>`) rather than `Fixes #N`.
+
 ## Console surface
 
 Two pages, deliberately minimal in v1, behind the console's existing auth
@@ -336,6 +410,14 @@ it:
 - New surface follows house style: strict zod schemas, bounded strings,
   fail-closed validation. WorkItem state transitions are a validated state
   machine with the bounded `events[]` audit pattern.
+
+## Retention
+
+WorkItems are retained indefinitely in v1; they are the audit trail.
+Idempotency reservation documents carry an `expiresAt` (30 days) so a
+Firestore TTL policy can reap them — enabling that policy is an
+infrastructure change under the usual maintainer-approval rule and is not
+part of the v1 code change.
 
 ## Testing
 
@@ -379,3 +461,7 @@ the full design for #1 and pins the seams for the rest.
 - Notifications for parked work.
 - Any change to the dispatched-agent protocol for label-driven work.
 - MCP transport (wraps the REST API later if wanted).
+- `mode: review` for native tasks.
+- LCARS-minted tokens (sub-project 4) and any issuer beyond Google + GitHub
+  Actions.
+- A default pipeline or an implicit "any pipeline" grant.
