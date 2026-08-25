@@ -475,8 +475,8 @@ sequenceDiagram
   X-->>D: run r1 pending, dispatch-run entry
   D->>GH: workflow_dispatch(work_id, dispatch marker)
   A->>API: GET /runs/r1 (Actions OIDC token)
-  API->>GH: fetch run by the token's own run_id; marker names r1?
-  API->>X: bind (repository_id, run_id, run_attempt); record acknowledged
+  API->>GH: fetch run by the token's own run_id, marker must name r1
+  API->>X: bind (repository_id, run_id, run_attempt), record acknowledged
   API-->>A: spec + item snapshot
   A->>API: PUT progress / POST links / POST results / POST renew
   A->>API: POST /runs/r1/complete {ok, summary}
