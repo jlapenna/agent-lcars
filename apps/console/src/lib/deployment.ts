@@ -26,14 +26,42 @@ import { optional } from '@agent-lcars/util-server';
  */
 
 /** The human this console serves. Review requests are matched against this
- * login.
- *
- * Shares `AGENT_LCARS_ADMIN_GITHUB_LOGIN` with `auth.ts`'s sign-in gate
- * rather than introducing a second var: the person allowed to log in and
- * the person the queue is curated for are the same person by construction —
- * this is a single-admin console. */
+ * login. Console authorization is configured separately by
+ * {@link adminGithubLogins}, so adding another operator does not change whose
+ * review queue the console curates. */
 export function maintainerLogin(): string {
   return optional('AGENT_LCARS_ADMIN_GITHUB_LOGIN') ?? 'jlapenna';
+}
+
+/** GitHub logins authorized to operate this console. The plural setting is
+ * intentionally separate from {@link maintainerLogin}: multiple people may
+ * operate the console while its queue remains owned by one maintainer.
+ *
+ * Falling back to the maintainer login preserves the original single-admin
+ * behavior for local development and deployments that have not set the new
+ * list. GitHub logins are case-insensitive, so the parsed values are
+ * canonicalized before comparison. */
+export function adminGithubLogins(): string[] {
+  const raw = optional('AGENT_LCARS_ADMIN_GITHUB_LOGINS') ?? maintainerLogin();
+  const logins = raw
+    .split(',')
+    .map((login) => login.trim().toLowerCase())
+    .filter((login) => login.length > 0);
+
+  if (logins.length === 0) {
+    throw new Error(
+      'AGENT_LCARS_ADMIN_GITHUB_LOGINS must list at least one GitHub login when set',
+    );
+  }
+
+  return [...new Set(logins)];
+}
+
+export function isAdminGithubLogin(login: unknown): boolean {
+  return (
+    typeof login === 'string' &&
+    adminGithubLogins().includes(login.toLowerCase())
+  );
 }
 
 /** The machine user the agent fleet claims work as. claude.yml/codex.yml/

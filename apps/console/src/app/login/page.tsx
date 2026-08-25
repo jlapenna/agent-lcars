@@ -38,7 +38,7 @@ async function LoginContent({
         {accessDenied && !session && (
           <Text ta="center" size="sm" data-testid="login-unauthorized">
             That GitHub account isn&rsquo;t authorized for this console. Sign in
-            with the maintainer account.
+            with an authorized account.
           </Text>
         )}
         {session ? (

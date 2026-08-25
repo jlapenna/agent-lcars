@@ -1,22 +1,18 @@
 import 'server-only';
 
-import {
-  isE2eTesting,
-  isOnGoogleCloud,
-  required,
-} from '@agent-lcars/util-server';
+import { isE2eTesting, isOnGoogleCloud } from '@agent-lcars/util-server';
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';
 import NextAuth from 'next-auth';
 import GitHub from 'next-auth/providers/github';
 
-const getAdminGithubLogin = () => required('AGENT_LCARS_ADMIN_GITHUB_LOGIN');
+import { isAdminGithubLogin } from './lib/deployment';
 
 /**
  * Mock session for the E2E test-session adapter (E2E_TESTING=true +
  * an `x-e2e-auth-user` request header -- see testSession() below).
- * agent-lcars is a single-admin app, so the injected identity is an
- * admin — this replaces the old SKIP_AUTH_FOR_LAN_PREVIEW bypass.
+ * The injected identity is an admin — this replaces the old
+ * SKIP_AUTH_FOR_LAN_PREVIEW bypass.
  */
 async function getMockSession(userId: string): Promise<Session> {
   return {
@@ -34,12 +30,12 @@ const nextAuth = NextAuth({
   providers: [GitHub],
   callbacks: {
     signIn({ profile }) {
-      return profile?.login === getAdminGithubLogin();
+      return isAdminGithubLogin(profile?.login);
     },
     jwt({ token, profile }) {
       if (profile) {
         token.githubLogin = profile.login;
-        token.isAdmin = profile.login === getAdminGithubLogin();
+        token.isAdmin = isAdminGithubLogin(profile.login);
       }
       return token;
     },

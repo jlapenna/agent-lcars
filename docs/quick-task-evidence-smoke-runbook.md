@@ -6,10 +6,10 @@ and then closing a disposable Quick Task in a watched repository. The test
 creates a real GitHub issue and a real evidence object; it is not a dry-run of
 the submission route.
 
-The console is currently single-admin. The production session must be the
-allowlisted GitHub login (AGENT_LCARS_ADMIN_GITHUB_LOGIN, currently jlapenna).
-Do not use the E2E session header, a test fixture, a copied session cookie, or
-a deployment/debug bypass. E2E is intentionally disabled for this validation.
+The production session must use one of the allowlisted GitHub logins
+(`AGENT_LCARS_ADMIN_GITHUB_LOGINS`). Do not use the E2E session header, a test
+fixture, a copied session cookie, or a deployment/debug bypass. E2E is
+intentionally disabled for this validation.
 
 ## Safety rules
 
