@@ -41,6 +41,7 @@ Recorded from the brainstorming session that produced this spec:
 | Modes                          | None on a WorkItem. A review is a specialized task (description + `github-pr` link), not a dispatch mode                                                                           |
 | v1 human issuer                | Google ID tokens to start (ratified 2026-08-24); LCARS-minted tokens arrive with sub-project 4                                                                                     |
 | Run binding                    | First trusted call binds the token's `(repository_id, run_id)` to the run; the existing completion route adopts the same rule in v1                                                |
+| Sessions                       | WorkItem 1→N Run; Run↔Session N:M over time (primary session recorded per run). Resume + lifecycle-pinned persistence are sub-project 6                                            |
 | API shape                      | Resource-oriented (`items`, `runs`; `grants`/`caps` later) with additive OAuth2 scopes `work.agent` / `work.operator` / `work.admin`; issuers confine which scopes they may confer |
 | Ownership                      | `cancel`/`redispatch` are the requester's or an admin's; reads are open to any granted principal; the `runs` routes belongs to the bound run alone                                 |
 | Creation                       | One Firestore transaction (idempotency reservation + WorkItem + `admit` outbox entry); `requestRun` is the drained side effect                                                     |
@@ -111,6 +112,44 @@ ref, note?, addedBy, at }`. A GitHub issue is just one of these.
 
 All schemas are strict zod objects with bounded strings, matching house
 style in `libs/orchestrator/src/model.ts`.
+
+### Sessions: how WorkItem, Run, and agent session relate
+
+Telemetry already stores an agent session as its own document at
+`sessions/{sessionId}` (`libs/telemetry/src/lib/session-doc.ts`) carrying
+a _pointer_ to the run (`runId`, `repo`, `transcriptGcsUri`) and an
+`expireAt` derived from last activity. The relationships follow from that:
+
+- **WorkItem 1 → N Run**, sequential: the orchestrator's mutex allows at
+  most one live run; `redispatch` mints the next.
+- **Run 1 → N Session, and a Session may span Runs.** A run has one
+  _primary_ session (the CLI the workflow starts), possibly subagent
+  sessions, and for OpenCode none at all. A session outlives its run — an
+  interactive takeover continues the same session ID after the runner is
+  gone — and a later run may _resume_ an earlier run's session (decided
+  2026-08-24). Run↔Session is therefore N:M over time. What is 1:1 is a
+  run's primary session at start: each `Run` records `sessionId` and, when
+  it resumed, `resumedFromSessionId`.
+- The WorkItem sees sessions only through `links[]` of kind `session`.
+  A session is evidence of how work was done, not the work.
+
+**v1 seams.** The run reports its primary session through
+`POST /runs/:runId/links` kind `session` (already in the native-mode
+table); `libs/work` records it on the `Run`. Nothing else ships in v1.
+
+**Later: session resume and persistence (sub-project 6).** These are one
+feature, not two — resume is only reliable if the session survives:
+
+- `POST /items/:id/redispatch` accepts `{ resumeSessionId? }`. The
+  executor passes it to the worker; the runner bootstrap restores the
+  archived transcript and starts the agent in resume mode
+  (`claude --resume`). Provider-honest, as in the takeover section: only
+  agents with an archive and a resume path support it, and the API rejects
+  the request for the others rather than silently starting fresh.
+- **Persistence is pinned to the item's lifecycle.** A session linked to a
+  WorkItem that is not `done` or `canceled` is not reaped: no `expireAt`
+  expiry, and its transcript archive is retained. The pin is released when
+  the item settles, after which the normal retention window applies.
 
 ### Orchestrator (existing, minimally generalized)
 
@@ -493,7 +532,7 @@ Mirror the orchestrator's proven pattern:
 
 ## Sequencing
 
-Five sub-projects, each its own spec → plan → PR cycle. This document is
+Six sub-projects, each its own spec → plan → PR cycle. This document is
 the full design for #1 and pins the seams for the rest.
 
 1. **v1 (this spec):** `libs/work`, anchor generalization, REST API +
@@ -508,6 +547,8 @@ the full design for #1 and pins the seams for the rest.
    WorkItems, issue-side affordances become control-plane projections of
    WorkItem events, and `agent-protocol` collapses to the `runs` resource —
    agents become GitHub-issue agnostic.
+6. **Session resume and persistence:** `redispatch` may resume a prior
+   run's session; sessions linked to open items are pinned from expiry.
 
 ## Non-goals (v1)
 
