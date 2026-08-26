@@ -65,7 +65,7 @@ export const PIPELINE_CONTRACTS: Readonly<
     label: 'agent:claude',
     reviewLabel: 'review:claude',
     replyTrigger: '@claude',
-    replyTriggerAliases: Object.freeze([]),
+    replyTriggerAliases: Object.freeze(['@agent']),
     redispatchCommand: '@claude',
     botLogin: 'claude[bot]',
   }),

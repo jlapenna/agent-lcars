@@ -144,10 +144,12 @@ do not infer the job from labels:
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required by §5. Do not remove it.
 
-Reply dispatches recognize `@claude`, `/codex`, `/opencode`, `/oc`, and
-the generic `@agent` alias for Claude when the command is the first token of
-an owner or member's comment. End a parking comment with the trigger for the
-pipeline that should resume the work.
+Reply dispatches recognize `@claude`, the generic `@agent` alias for Claude,
+`/codex`, `/opencode`, and `/oc` in an owner or member's comment. GitHub-style
+`@claude`/`@agent` mentions may appear in ordinary prose; slash commands must
+begin an unquoted line. Mentions and commands inside blockquotes or code are
+inert. End a parking comment with the trigger for the pipeline that should
+resume the work.
 
 ## 4. Parking — blocked on a human
 

@@ -445,7 +445,7 @@ describe('postComment (mention routing)', () => {
     );
   });
 
-  it('appends an exact @claude command when prose merely mentions it', async () => {
+  it('preserves a GitHub-style @claude mention in ordinary prose', async () => {
     const { createComment } = mockOctokit();
 
     await postComment(DEFAULT_REPO, 2709, 'Ping @claude please', [
@@ -453,7 +453,7 @@ describe('postComment (mention routing)', () => {
     ]);
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Ping @claude please\n\n@claude' }),
+      expect.objectContaining({ body: 'Ping @claude please' }),
     );
   });
 
@@ -987,20 +987,20 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     ).toBe(true);
   });
 
-  it('skips the orchestrator request when the note already carries the resolved pipeline mention (would double-dispatch)', async () => {
+  it('skips the orchestrator request when a later line carries a reply-trigger alias (would double-dispatch)', async () => {
     const { calls } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
 
-    // No prior run - falls back to claude, whose reply trigger is '@claude'.
+    // No prior run falls back to Claude; @agent is its shared alias.
     const result = await retriggerIssue(
       DEFAULT_REPO,
       2709,
       DISPATCH_ID,
-      '@claude please retry this',
+      'This is working now.\n\n@agent',
     );
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: '@claude please retry this' }),
+      expect.objectContaining({ body: 'This is working now.\n\n@agent' }),
     );
     expect(result).toEqual({ pipelineFallback: true });
     // The webhook-driven mention path is the sole trigger here - a direct
