@@ -1,6 +1,6 @@
 import type { Decision } from './decide';
 import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
-import { isLive, taskKey } from './model';
+import { isLive, isWorkAnchor, taskKey } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -115,6 +115,14 @@ export class MemoryStore implements OrchestratorStore {
       updatedAt: input.now,
     });
     return true;
+  }
+
+  async listNativeTasks(): Promise<VersionedTask[]> {
+    return structuredClone(
+      [...this.#tasks.values()].filter((entry) =>
+        isWorkAnchor(entry.task.task),
+      ),
+    );
   }
 
   async listExpiredRuns(now: string): Promise<Run[]> {

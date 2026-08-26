@@ -77,6 +77,16 @@ export const itemsContract = {
         path: '/items/{id}',
         operationId: 'createItem',
         summary: 'Create a work item (idempotent by client ULID)',
+        // One status for one operation. A replay of the same id and spec
+        // also answers 201, carrying the item that already exists rather
+        // than starting a second run -- oRPC's OpenAPI codec resolves the
+        // success status from this meta alone, so a handler cannot vary it
+        // per call, and idempotency (one run per id) is the guarantee
+        // worth stating, not a 200/201 distinction the client cannot act
+        // on differently anyway.
+        successStatus: 201,
+        successDescription:
+          'Created. A replay of the same id and spec returns the existing item.',
       }),
     )
     .errors({

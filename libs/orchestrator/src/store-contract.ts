@@ -406,6 +406,26 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('native-task listing', () => {
+      it('lists native anchors only, never GitHub-anchored tasks', async () => {
+        const { store, orchestrator } = await fixture();
+        const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+
+        await orchestrator.request({
+          taskId: { workId },
+          requestId: workId,
+          pipeline: 'claude',
+          work: { origin: { principal: 'user:jlapenna' } },
+        });
+        await started(orchestrator, 'req-github');
+
+        const native = await store.listNativeTasks();
+
+        expect(native.map((entry) => entry.task.task)).toEqual([{ workId }]);
+        expect(native[0]?.revision).toBe(1);
+      });
+    });
+
     describe('a stale run can never overwrite its successor', () => {
       it('refuses a renew from a run that already lost the lock, after a fresh run took it', async () => {
         const { clock, store, orchestrator } = await fixture();

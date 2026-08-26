@@ -40,11 +40,26 @@ export const publicRoutes = [
   '/api/control-plane/webhook/process',
 ];
 
-export default createAuthProxy({
-  publicRoutes,
+// Exported for the same reason publicRoutes is: proxy.test.ts iterates the
+// real list and derives what must appear in it from the route files on disk.
+export const publicPrefixes = [
   // Both routes are guarded by isE2eTesting() themselves (403 outside e2e);
   // they must be reachable without a session because the Playwright test
   // process calls them directly via fetch(), not through the browser page
   // that carries the X-e2e-auth-user header.
-  publicPrefixes: ['/api/e2e/', '/api/quick-task-evidence/v1/'],
+  '/api/e2e/',
+  '/api/quick-task-evidence/v1/',
+  // Bearer-authenticated work API. Its 401 is the router-level `operator`
+  // middleware in work-router.ts, not this cookie check: a service account
+  // presenting a Google-signed ID token carries no session cookie, so
+  // leaving it behind the gate would reject every machine caller with a
+  // bare {"error":"Unauthorized"} before oRPC ever routed the request. The
+  // route still reads an Auth.js session when no bearer is present, so a
+  // console operator is authenticated exactly as before.
+  '/api/work/v1',
+];
+
+export default createAuthProxy({
+  publicRoutes,
+  publicPrefixes,
 });

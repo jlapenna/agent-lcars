@@ -123,6 +123,14 @@ export interface ListSessionDocsOptions {
    * issueNumber+lastActivityAt (and source+issueNumber+lastActivityAt)
    * composite indexes alongside the `source` ones. */
   issueNumber?: number;
+  /** Narrows to the sessions of one orchestrator run
+   * (`IssueAgentSessionDoc.intentId` -- the join key from a native work
+   * item's run to its telemetry). Equality-only, so it composes with
+   * `source` without a composite index; add `activeSince` and it becomes a
+   * compound query needing an intentId+lastActivityAt index, which is why
+   * the work API's session join deliberately passes no cutoff -- a run's
+   * session set is bounded by the run itself. */
+  intentId?: string;
   /** Caps the number of docs returned (post-sort, newest activity first).
    * Clamped to [1, {@link MAX_LIST_LIMIT}]; defaults to
    * {@link DEFAULT_LIST_LIMIT} when omitted. */
@@ -143,8 +151,8 @@ export async function listSessionDocs(
   const collection = firestore.collection(SESSIONS_COLLECTION);
   // ISO 8601 UTC timestamps compare correctly as strings, so the
   // activeSince range filter works without a Timestamp field. source/
-  // issueNumber are plain equality filters; composing any of them with the
-  // range filter needs the composite indexes documented above.
+  // issueNumber/intentId are plain equality filters; composing any of them
+  // with the range filter needs the composite indexes documented above.
   let query: Query = collection;
   if (options.activeSince) {
     query = query.where('lastActivityAt', '>=', options.activeSince);
@@ -154,6 +162,9 @@ export async function listSessionDocs(
   }
   if (options.issueNumber !== undefined) {
     query = query.where('issueNumber', '==', options.issueNumber);
+  }
+  if (options.intentId !== undefined) {
+    query = query.where('intentId', '==', options.intentId);
   }
   const snapshot = await query.get();
   const docs = snapshot.docs.map((doc) => {

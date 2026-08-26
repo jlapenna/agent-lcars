@@ -55,6 +55,15 @@ export interface OrchestratorStore {
   /** Live runs whose lease expired at or before `now`; the sweeper's feed. */
   listExpiredRuns(now: string): Promise<Run[]>;
 
+  /**
+   * Every native (work-anchored) task; GitHub-anchored tasks are excluded.
+   * Unordered -- the caller sorts what it renders. This is a read: the
+   * console's items API needs "what native work exists", a question the
+   * per-task accessors above cannot answer, and nothing in the decision
+   * layer uses it.
+   */
+  listNativeTasks(): Promise<VersionedTask[]>;
+
   /** Every live (`pending`/`running`) run, lease or no lease. The feed for
    *  settling runs whose *executor* is already terminal -- a fact only
    *  something outside the orchestrator can observe, so the caller resolves

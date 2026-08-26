@@ -214,6 +214,19 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async listNativeTasks(): Promise<VersionedTask[]> {
+    // The `orderBy` IS the filter. Firestore excludes any document that
+    // lacks the ordered field entirely, and a GitHub-anchored task
+    // document stores `task.task.repo`/`task.task.issue` with no
+    // `workId` -- so ordering by `task.task.workId` returns exactly the
+    // native anchors. Served by the automatic single-field index: no
+    // composite index, and (crucially) no new persisted discriminator
+    // field, which would have meant rewriting every existing task
+    // document before this query could be trusted.
+    const snapshot = await this.#tasks.orderBy('task.task.workId').get();
+    return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
+  }
+
   async listExpiredRuns(now: string): Promise<Run[]> {
     const cutoff = Date.parse(now);
     // A single query for `state in [...] AND leaseExpiresAt <= now` would

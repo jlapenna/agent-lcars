@@ -209,8 +209,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "OK",
+          "201": {
+            "description": "Created. A replay of the same id and spec returns the existing item.",
             "content": {
               "application/json": {
                 "schema": {

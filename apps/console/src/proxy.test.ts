@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 
-import proxy, { publicRoutes } from './proxy';
+import proxy, { publicPrefixes, publicRoutes } from './proxy';
 
 // Kept independent of proxy.ts's publicRoutes export on purpose (Codex
 // review on #894): asserting against a copy of THIS list, rather than
@@ -21,6 +21,15 @@ const EXPECTED_PUBLIC_ROUTES = [
   '/api/control-plane/request',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
+];
+
+// Same reasoning as EXPECTED_PUBLIC_ROUTES above, for the prefix list: a
+// copy here is what makes an entry silently disappearing from the real
+// publicPrefixes fail loudly instead of just widening the session gate.
+const EXPECTED_PUBLIC_PREFIXES = [
+  '/api/e2e/',
+  '/api/quick-task-evidence/v1/',
+  '/api/work/v1',
 ];
 
 // Every control-plane route authenticates itself (OIDC claims or raw-body
@@ -41,6 +50,70 @@ function controlPlaneRoutesOnDisk(): string[] {
     })
     .sort();
 }
+
+// The work API authenticates itself too (a Google-signed bearer, or an
+// Auth.js session read by the route itself), and its 401 is the router's
+// own middleware -- not the proxy's cookie check, which would answer a
+// bearer-only caller with a bare {"error":"Unauthorized"} before oRPC ever
+// saw the request. Derived from disk for the same reason the control-plane
+// scan is: a route file added under app/api/work without a matching
+// publicPrefixes entry is exactly #1232's failure mode.
+function workRoutePrefixesOnDisk(): string[] {
+  const base = join(__dirname, 'app', 'api', 'work');
+  return readdirSync(base, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name === 'route.ts')
+    .map((entry) => {
+      const dir = join(entry.parentPath ?? entry.path, '.');
+      const relative = dir.slice(base.length).replace(/\\/g, '/');
+      // Only the static head of a route can appear in publicPrefixes:
+      // stop at the first Next dynamic/catch-all segment (`[id]`,
+      // `[[...rest]]`), which matches arbitrary path text at runtime.
+      const staticSegments: string[] = [];
+      for (const segment of relative.split('/').filter(Boolean)) {
+        if (segment.startsWith('[')) break;
+        staticSegments.push(segment);
+      }
+      return ['/api/work', ...staticSegments].join('/');
+    })
+    .sort();
+}
+
+describe('console proxy public work API prefixes', () => {
+  it('keeps the real prefix allowlist in exact sync with what must be public', () => {
+    expect([...publicPrefixes].sort()).toEqual(
+      [...EXPECTED_PUBLIC_PREFIXES].sort(),
+    );
+  });
+
+  it('covers every work API route on disk with a publicPrefixes entry', () => {
+    const routes = workRoutePrefixesOnDisk();
+    // If this list is ever empty the test is vacuously green — fail loud.
+    expect(routes.length).toBeGreaterThan(0);
+    for (const path of routes) {
+      expect(
+        publicPrefixes.some((prefix) => `${path}/`.startsWith(prefix)),
+        `${path} must be covered by a publicPrefixes entry`,
+      ).toBe(true);
+
+      const request = new NextRequest(
+        `https://lcars.jlapenna.net${path}/items`,
+        { method: 'GET' },
+      );
+      expect(
+        proxy(request).status,
+        `${path} must bypass the session check`,
+      ).toBe(200);
+    }
+  });
+
+  it('leaves a sibling work path outside the versioned prefix behind the session gate', () => {
+    const adjacent = new NextRequest(
+      'https://lcars.jlapenna.net/api/work/admin',
+    );
+
+    expect(proxy(adjacent).status).toBe(401);
+  });
+});
 
 describe('console proxy public control-plane routes', () => {
   it('keeps the real allowlist in exact sync with the routes that must be public', () => {
