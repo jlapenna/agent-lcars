@@ -26,7 +26,7 @@ import { describe, expect, it } from 'vitest';
  * what the repo actually enforces.
  */
 
-const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+const workspaceRoot = path.resolve(import.meta.dirname, '../../..');
 
 // One file per config-resolution neighbourhood: the root, the console app
 // (its own nested config), and a lib (another nested config).

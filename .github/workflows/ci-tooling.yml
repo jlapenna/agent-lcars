@@ -1,0 +1,89 @@
+name: CI tooling self-tests
+
+# Advisory only -- this workflow is deliberately NOT added to the branch
+# ruleset's required checks. Maintainer decision (2026-08-26): the required
+# per-PR pipeline must not block changes on checks that test the test/CI/
+# build machinery itself; `.github/workflows/ci.yml` must not test itself.
+# These steps assert on this repo's own tooling (Nx cache behavior, the E2E
+# harness scripts, repository symlink integrity, the console bundle's Nx
+# cache-restore path, and the CI-self contract tests) rather than on a
+# production contract. See docs/testing-policy.md (#1486): framework/
+# infrastructure behavior. They still run on every PR that could plausibly
+# affect that tooling, and on demand, but a red run here does not block a
+# merge the way `Verify` does.
+
+on:
+  pull_request:
+    # This filter observes everything these checks read. It deliberately
+    # excludes pnpm-lock.yaml: a routine dependency bump should not trigger
+    # the tooling self-tests, so after bumping the pinned Nx version, trigger
+    # this workflow manually via workflow_dispatch instead.
+    paths:
+      - 'tools/**'
+      - 'patches/**'
+      - 'nx.json'
+      - 'apps/console/project.json'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/ci-tooling.yml'
+      - 'tools/contract-tests/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  tooling:
+    name: Tooling self-tests
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'lcars-ci' }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-nx-remote-cache
+        with:
+          url: ${{ vars.NX_CACHE_URL }}
+          write-token: ${{ secrets.NX_CACHE_TOKEN }}
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      - name: Test repository symlink integrity
+        run: bash tools/check-repo-symlinks.test.sh
+
+      - name: Test E2E runner node-tar repair (#1435)
+        run: bash tools/e2e-runner/node-tar-health.test.sh
+
+      - name: Test hermetic E2E environment
+        run: node --test tools/e2e-hermetic-env.test.mjs
+
+      - name: Test e2e-docker isolation (#908)
+        run: bash tools/e2e-docker-isolation.test.sh
+
+      - name: Test Nx remote-cache read failure is non-fatal (#942)
+        run: bash tools/nx-remote-cache-read-failure.test.sh
+
+      - name: Test bounded Nx native binding cache (#1458)
+        run: bash tools/nx-native-file-cache.test.sh
+
+      # `next build` does not execute dynamic server-route imports. Exercise
+      # the actual standalone artifact so traced runtime assets (notably the
+      # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass
+      # CI and then fail only after an App Hosting rollout. The trace resolves
+      # the exact installed Cloud Tasks package (#1023), so this deployable
+      # smoke can safely reuse the deterministic Nx build artifact. Exercise
+      # that artifact contract with remote reads disabled: clean the first
+      # build's outputs, restore them from this job's L1, and boot what Nx
+      # restored. This proves output completeness for the optional local
+      # prebuilt diagnostic path; it does not change the managed App Hosting
+      # production default (#1128).
+      - name: Smoke test cached deployable console bundle
+        run: ./tools/console-cache-restore-smoke.sh
+
+      - name: Check CI-self contracts
+        run: pnpm check:contracts:ci-self

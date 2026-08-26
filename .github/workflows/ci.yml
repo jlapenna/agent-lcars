@@ -139,9 +139,6 @@ jobs:
       - name: Test the agent-tools package install
         run: bash packages/fleet-tools/tests/package-install.test.sh
 
-      - name: Test repository symlink integrity
-        run: bash tools/check-repo-symlinks.test.sh
-
       - name: Test the control-plane request action (#1340)
         run: bash .github/actions/request-control-plane/request.test.sh
 
@@ -172,9 +169,6 @@ jobs:
       - name: Test runner-image toolchain preflight (#468)
         run: bash apps/runner-autoscaler/runner-image/toolchain-health.test.sh
 
-      - name: Test E2E runner node-tar repair (#1435)
-        run: bash tools/e2e-runner/node-tar-health.test.sh
-
       - name: Test control-plane native cross-compilation (#1436)
         run: bash apps/runner-autoscaler/control-plane-image.test.sh
 
@@ -193,14 +187,8 @@ jobs:
       - name: Test published-action contracts
         run: node .github/actions/published-actions.contract.test.mjs
 
-      - name: Test hermetic E2E environment
-        run: node --test tools/e2e-hermetic-env.test.mjs
-
       - name: Test codex issue guardrail hook
         run: node --test packages/fleet-tools/tests/codex-issue-guardrail.test.cjs
-
-      - name: Test e2e-docker isolation (#908)
-        run: bash tools/e2e-docker-isolation.test.sh
 
       - uses: ./.github/actions/setup-node-pnpm
 
@@ -216,12 +204,6 @@ jobs:
 
       - name: Check contracts
         run: pnpm check:contracts
-
-      - name: Test Nx remote-cache read failure is non-fatal (#942)
-        run: bash tools/nx-remote-cache-read-failure.test.sh
-
-      - name: Test bounded Nx native binding cache (#1458)
-        run: bash tools/nx-native-file-cache.test.sh
 
       - name: Check formatting
         run: pnpm format:check
@@ -282,20 +264,6 @@ jobs:
 
       - name: OpenAPI document is current
         run: ./tools/nx run @agent-lcars/work:openapi-check
-
-      # `next build` does not execute dynamic server-route imports. Exercise
-      # the actual standalone artifact so traced runtime assets (notably the
-      # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass
-      # CI and then fail only after an App Hosting rollout. The trace resolves
-      # the exact installed Cloud Tasks package (#1023), so this deployable
-      # smoke can safely reuse the deterministic Nx build artifact. Exercise
-      # that artifact contract with remote reads disabled: clean the first
-      # build's outputs, restore them from this job's L1, and boot what Nx
-      # restored. This proves output completeness for the optional local
-      # prebuilt diagnostic path; it does not change the managed App Hosting
-      # production default (#1128).
-      - name: Smoke test cached deployable console bundle
-        run: ./tools/console-cache-restore-smoke.sh
 
       # This bundle is outside the default build graph, but is what both the
       # telemetry-watcher image and the runner sidecar execute. Keep its
