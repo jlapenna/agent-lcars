@@ -254,16 +254,20 @@ or can exhaust its turn/time budget at any moment, and every unpushed byte
 is lost with it — this is not a hypothetical, it is the single most common
 way a headless run silently loses real, correct work.
 
-For every ready, non-parked pull request you open or update, **do not request
-human review**. Fleet repositories require zero approving reviews for agent
+For every ready, non-parked pull request you open, **do not request human
+review**. Fleet repositories require zero approving reviews for agent-authored
 PRs; a review request is friction, not a handoff. Immediately arm squash
 auto-merge yourself after the PR exists:
 
 ```bash
 gh pr merge <N> --repo <owner/repo> --auto --squash
-gh pr view <N> --repo <owner/repo> --json autoMergeRequest \
-  --jq 'if .autoMergeRequest == null then error("auto-merge is not armed") else . end'
+gh pr view <N> --repo <owner/repo> --json state,autoMergeRequest \
+  --jq 'if .state == "MERGED" or .autoMergeRequest != null then . else error("auto-merge is not armed") end'
 ```
+
+When implement mode takes over an existing PR, apply this handoff only if its
+author is a registered fleet bot. Leave a human-authored PR's merge state
+unchanged unless the maintainer explicitly asked this run to merge it.
 
 The repository's Agent PR Auto-Merge workflow is a reconciliation backstop,
 not a substitute for this worker-owned handoff. If arming or the readback

@@ -362,11 +362,15 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(protocol).not.toContain(
       'Request review from `jlapenna` on every pull request you open.',
     );
-    expect(protocol).toMatch(/\*\*do not request\s+human review\*\*/u);
+    expect(protocol).toMatch(/\*\*do not request\s+human\s+review\*\*/u);
     expect(protocol).toContain(
       'gh pr merge <N> --repo <owner/repo> --auto --squash',
     );
-    expect(protocol).toContain('--json autoMergeRequest');
+    expect(protocol).toContain('--json state,autoMergeRequest');
+    expect(protocol).toContain('.state == "MERGED"');
+    expect(protocol).toMatch(
+      /Leave a human-authored PR's merge\s+state\s+unchanged/u,
+    );
   });
 });
 
