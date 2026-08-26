@@ -1,5 +1,6 @@
 import {
   decidedRun,
+  isGithubAnchor,
   isRefusal,
   type Orchestrator,
   type OrchestratorStore,
@@ -7,6 +8,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
 
+import { anchorTarget } from '@/lib/anchor-target';
 import {
   defaultDispatchRequestId,
   type parseHostedCompletionRequestBody,
@@ -248,15 +250,23 @@ export async function handleCompletion(
     }
     const runId = body.intentId;
     const run = await deps.store.readRun(runId);
-    if (run === undefined || run.task.issue !== body.issue) {
-      // Either a legacy dispatch-broker run still in flight during cutover,
-      // or a completion for a run this system never created. Neither is an
-      // error -- ack it and move on rather than 5xx-ing the caller.
+    if (run === undefined) {
+      // A completion for a run this system never created. Not an error --
+      // ack it and move on rather than 5xx-ing the caller.
       return { status: 200, body: { ignored: 'unknown-run' } };
     }
+    if (isGithubAnchor(run.task)) {
+      const { issue } = run.task;
+      if (issue !== body.issue) {
+        // A legacy dispatch-broker run still in flight during cutover.
+        // Not an error -- ack it and move on rather than 5xx-ing the caller.
+        return { status: 200, body: { ignored: 'unknown-run' } };
+      }
+    }
 
+    const task = (await deps.store.readTask(run.task))?.task;
     const result = toRunResult(
-      run.task.repo,
+      anchorTarget(run, task).repo,
       body.outcome,
       body.outcomeReference,
     );

@@ -393,6 +393,35 @@ describe('drainOutbox: dispatch-run', () => {
     expect(again.dispatched).toEqual([]);
     expect(again.failed).toEqual([]);
   });
+
+  it('dispatches a native run with a work input and no issue', async () => {
+    const { store, orchestrator } = fixture();
+    const decision = await orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+      requestId: 'w1',
+      pipeline: 'claude',
+      work: { spec: { title: 'x', target: { repo: 'octo/example' } } },
+    });
+    if (isRefusal(decision)) {
+      throw new Error(`unexpected refusal: ${decision.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(
+      'https://api.github.com/repos/octo/example/actions/workflows/claude.yml/dispatches',
+    );
+    const body = callBody(calls[0]!);
+    const inputs = body.inputs as Record<string, unknown>;
+    expect(inputs.issue).toBeUndefined();
+    expect(JSON.parse(inputs.work as string)).toEqual({
+      id: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+      spec: { title: 'x', target: { repo: 'octo/example' } },
+    });
+    expect(inputs.broker_intent_id).toBe('work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1');
+  });
 });
 
 describe('drainOutbox: report-outcome', () => {
@@ -443,6 +472,36 @@ describe('drainOutbox: report-outcome', () => {
     });
     expect(second.reported).toEqual([]);
     expect(calls).toHaveLength(1); // no additional fetch call
+  });
+
+  it('settles report-outcome for a native run without calling GitHub', async () => {
+    const { store, orchestrator } = fixture();
+    const decision = await orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3H' },
+      requestId: 'w1',
+      pipeline: 'claude',
+      work: { spec: { target: { repo: 'octo/example' } } },
+    });
+    if (isRefusal(decision)) {
+      throw new Error(`unexpected refusal: ${decision.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const reportOutcome = await orchestrator.report(
+      'work:01J5Z3K9QX8F0N2B4V6C8D1E3H/r1',
+      { ok: false },
+    );
+    if (isRefusal(reportOutcome)) {
+      throw new Error(`unexpected refusal: ${reportOutcome.reason}`);
+    }
+
+    const before = calls.length;
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    expect(
+      calls.slice(before).filter((c) => c.url.includes('/issues/')),
+    ).toEqual([]);
   });
 
   it('posts the lost-run comment naming the auto-retried run, and dispatches that retry', async () => {

@@ -1,11 +1,13 @@
 import { parseDispatchMarker } from '@agent-lcars/dispatch-contracts';
-import type {
-  Orchestrator,
-  OrchestratorStore,
-  Run,
-  TerminalRunEntry,
+import {
+  type Orchestrator,
+  type OrchestratorStore,
+  type Run,
+  taskKey,
+  type TerminalRunEntry,
 } from '@agent-lcars/orchestrator';
 
+import { anchorTarget } from './anchor-target';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
 /**
@@ -99,8 +101,9 @@ export interface SettleTerminalRunsResult {
   settled: { runId: string; conclusion: string }[];
   /** Auto-retries started for those runs -- same shape as the sweep's. */
   retried: { lostRunId: string; newRunId: string }[];
-  /** Repos whose workflow-run listing failed. Recorded, never thrown: their
-   *  runs keep the lease backstop. */
+  /** Repos whose workflow-run listing failed, or runs whose anchor could
+   *  not be resolved to a repo at all. Recorded, never thrown: their runs
+   *  keep the lease backstop. */
   failed: { repo: string; pipeline: string; error: string }[];
 }
 
@@ -115,8 +118,25 @@ export async function settleTerminalRuns(
   const live = await deps.store.listLiveRuns();
   if (live.length === 0) return { settled: [], retried: [], failed };
 
+  const targeted: { run: Run; repo: string }[] = [];
+  for (const run of live) {
+    try {
+      const repo = anchorTarget(
+        run,
+        (await deps.store.readTask(run.task))?.task,
+      ).repo;
+      targeted.push({ run, repo });
+    } catch (error) {
+      failed.push({
+        repo: taskKey(run.task),
+        pipeline: run.pipeline,
+        error: errorMessage(error),
+      });
+    }
+  }
+
   const entries: TerminalRunEntry[] = [];
-  for (const [key, runs] of groupByWorkflow(live)) {
+  for (const [key, runs] of groupByWorkflow(targeted)) {
     const { repo, pipeline } = splitWorkflowKey(key);
     let conclusions: Map<string, string>;
     try {
@@ -198,11 +218,14 @@ function workflowRuns(body: unknown): WorkflowRunSummary[] {
 
 /** `repo pipeline` -> the live runs dispatched into that workflow. A space
  *  is a safe separator: neither a `owner/name` repo nor a pipeline id can
- *  contain one. */
-function groupByWorkflow(runs: readonly Run[]): Map<string, Run[]> {
+ *  contain one. Callers resolve each run's repo (via `anchorTarget`) before
+ *  calling this -- `groupByWorkflow` itself never reads an anchor. */
+function groupByWorkflow(
+  runs: readonly { run: Run; repo: string }[],
+): Map<string, Run[]> {
   const grouped = new Map<string, Run[]>();
-  for (const run of runs) {
-    const key = `${run.task.repo} ${run.pipeline}`;
+  for (const { run, repo } of runs) {
+    const key = `${repo} ${run.pipeline}`;
     const existing = grouped.get(key);
     if (existing === undefined) grouped.set(key, [run]);
     else existing.push(run);

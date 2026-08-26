@@ -5,9 +5,9 @@ import {
   type OrchestratorStore,
   OUTBOX_LEASE_MS,
   type Run,
-  type TaskId,
 } from '@agent-lcars/orchestrator';
 
+import { type AnchorTarget, anchorTarget } from './anchor-target';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
 /**
@@ -131,21 +131,45 @@ async function handleDispatchRun(
     return;
   }
 
-  const inputs = {
-    issue: String(run.task.issue),
-    mode: run.params?.mode ?? 'implement',
-    reply: run.params?.reply ?? '',
-    runbook: run.params?.runbook ?? '',
-    context: run.params?.context ?? '',
-    broker_intent_id: run.runId,
-    broker_generation: parseGeneration(run.runId),
-    broker_dispatch_token: crypto.randomUUID(),
-  };
-  const url = `${githubApiBaseUrl(deps)}/repos/${run.task.repo}/actions/workflows/${run.pipeline}.yml/dispatches`;
+  const task = (await store.readTask(run.task))?.task;
+  let target: AnchorTarget;
+  try {
+    target = anchorTarget(run, task);
+  } catch (error) {
+    // A native run whose payload cannot name a repository can never be
+    // dispatched: permanent, so settle the entry rather than retry it.
+    await settleClaim(deps, entry, 'done');
+    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    return;
+  }
+
+  const inputs =
+    target.issue !== undefined
+      ? {
+          issue: String(target.issue),
+          mode: run.params?.mode ?? 'implement',
+          reply: run.params?.reply ?? '',
+          runbook: run.params?.runbook ?? '',
+          context: run.params?.context ?? '',
+          broker_intent_id: run.runId,
+          broker_generation: parseGeneration(run.runId),
+          broker_dispatch_token: crypto.randomUUID(),
+        }
+      : {
+          // Plan 3 teaches the worker workflows this input; until then a
+          // native dispatch is refused by GitHub (`issue` is required) and
+          // the entry retries like any other transient failure.
+          work: JSON.stringify({ id: run.task, spec: task?.work?.['spec'] }),
+          mode: 'implement',
+          broker_intent_id: run.runId,
+          broker_generation: parseGeneration(run.runId),
+          broker_dispatch_token: crypto.randomUUID(),
+        };
+  const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/actions/workflows/${run.pipeline}.yml/dispatches`;
 
   let response: Response;
   try {
-    const token = await tokens.tokenFor(run.task.repo);
+    const token = await tokens.tokenFor(target.repo);
     response = await fetchImpl(url, {
       method: 'POST',
       headers: githubHeaders(token),
@@ -195,15 +219,31 @@ async function handleReportOutcome(
     return;
   }
 
+  const task = (await store.readTask(run.task))?.task;
+  let target: AnchorTarget;
+  try {
+    target = anchorTarget(run, task);
+  } catch (error) {
+    await settleClaim(deps, entry, 'done');
+    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    return;
+  }
+  if (target.issue === undefined) {
+    // A native anchor has no GitHub issue to comment on -- the item's
+    // outcome is derivable from the run/task documents themselves.
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+
   const outcome =
     run.state === 'lost'
       ? await describeLostOutcome(store, run)
       : { body: outcomeCommentBody(run), needsHumanLabel: false };
-  const url = `${githubApiBaseUrl(deps)}/repos/${run.task.repo}/issues/${run.task.issue}/comments`;
+  const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
   let response: Response;
   try {
-    const token = await tokens.tokenFor(run.task.repo);
+    const token = await tokens.tokenFor(target.repo);
     response = await fetchImpl(url, {
       method: 'POST',
       headers: githubHeaders(token),
@@ -228,7 +268,7 @@ async function handleReportOutcome(
     await addNeedsHumanLabelBestEffort(
       fetchImpl,
       tokens,
-      run.task,
+      target,
       githubApiBaseUrl(deps),
     );
   }
@@ -316,13 +356,17 @@ function lostCause(run: Run): string {
 async function addNeedsHumanLabelBestEffort(
   fetchImpl: typeof fetch,
   tokens: DispatchTokenProvider,
-  task: TaskId,
+  target: AnchorTarget,
   apiBaseUrl: string,
 ): Promise<void> {
+  if (target.issue === undefined) {
+    // A native anchor has no GitHub issue to label.
+    return;
+  }
   try {
-    const token = await tokens.tokenFor(task.repo);
+    const token = await tokens.tokenFor(target.repo);
     await fetchImpl(
-      `${apiBaseUrl}/repos/${task.repo}/issues/${task.issue}/labels`,
+      `${apiBaseUrl}/repos/${target.repo}/issues/${target.issue}/labels`,
       {
         method: 'POST',
         headers: githubHeaders(token),
