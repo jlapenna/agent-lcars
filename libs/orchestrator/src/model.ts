@@ -14,15 +14,50 @@ import { z } from 'zod';
 
 const isoUtc = z.iso.datetime({ offset: false });
 
-/** A task is identified by where the work lives. Nothing else. */
-export const taskIdSchema = z.strictObject({
+/**
+ * A task is identified by where the work lives. Two anchors exist:
+ *
+ * - a GitHub issue or pull request, `{ repo, issue }` -- the shape every
+ *   persisted document already carries, kept byte-for-byte;
+ * - a native work item, `{ workId }`, a ULID minted by the caller.
+ *
+ * The variants are discriminated by which key is present, never by a new
+ * required field: `FirestoreStore` zod-parses every persisted Task, Run,
+ * and OutboxEntry on read, so a variant requiring a field legacy documents
+ * lack would reject the whole existing dataset.
+ */
+export const githubAnchorSchema = z.strictObject({
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/u),
   issue: z.number().int().positive(),
 });
+export type GithubAnchor = z.infer<typeof githubAnchorSchema>;
+
+/** Crockford base32, 26 characters: a ULID. Excludes I, L, O, U. */
+export const WORK_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
+
+export const workAnchorSchema = z.strictObject({
+  workId: z.string().regex(WORK_ID_RE),
+});
+export type WorkAnchor = z.infer<typeof workAnchorSchema>;
+
+export const taskIdSchema = z.union([githubAnchorSchema, workAnchorSchema]);
 export type TaskId = z.infer<typeof taskIdSchema>;
 
+export function isGithubAnchor(id: TaskId): id is GithubAnchor {
+  return 'repo' in id;
+}
+
+export function isWorkAnchor(id: TaskId): id is WorkAnchor {
+  return 'workId' in id;
+}
+
+/**
+ * `repo#issue` for GitHub anchors (unchanged) and `work:<ulid>` for native
+ * ones. `:` is outside the repo-name charset, so the two can never collide
+ * as Firestore document ids.
+ */
 export function taskKey(id: TaskId): string {
-  return `${id.repo}#${id.issue}`;
+  return isWorkAnchor(id) ? `work:${id.workId}` : `${id.repo}#${id.issue}`;
 }
 
 /**
