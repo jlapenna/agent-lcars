@@ -6,6 +6,7 @@ import {
   type Task,
   type TaskId,
   taskKey,
+  type WorkPayload,
 } from './model';
 
 /**
@@ -31,7 +32,9 @@ export interface Refusal {
     | 'duplicate-request' // same requestId as an existing run: return it
     | 'unknown-run'
     | 'run-not-live' // report/cancel/renew against a settled run
-    | 'stale-lease'; // renew/report from a run that already lost the lock
+    | 'stale-lease' // renew/report from a run that already lost the lock
+    | 'task-closed' // closeTask set closedAt; no further runs
+    | 'unknown-task'; // close on a task that was never created
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
 }
@@ -67,6 +70,7 @@ export interface RequestRunInput {
   requestId: string;
   pipeline: string;
   params?: Record<string, string>;
+  work?: WorkPayload;
 }
 
 /**
@@ -84,6 +88,9 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     }
     return refused('task-busy', activeRun);
   }
+  if (input.task?.closedAt !== undefined) {
+    return refused('task-closed');
+  }
   const baseTask: Task = {
     task: taskId,
     runCount: input.task?.runCount ?? 0,
@@ -94,6 +101,12 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     ...(input.task?.consecutiveLost === undefined
       ? {}
       : { consecutiveLost: input.task.consecutiveLost }),
+    // Written once: only the request that creates the task may set `work`.
+    ...(input.task?.work !== undefined
+      ? { work: input.task.work }
+      : input.work !== undefined
+        ? { work: input.work }
+        : {}),
     updatedAt: now,
   };
   return mintRun({

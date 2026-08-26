@@ -11,7 +11,7 @@ import {
   requestRun,
   settleTerminal,
 } from './decide';
-import type { Run, RunResult, TaskId } from './model';
+import type { Run, RunResult, TaskId, WorkPayload } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -65,6 +65,7 @@ export interface RequestInput {
   requestId: string;
   pipeline: string;
   params?: Record<string, string>;
+  work?: WorkPayload;
 }
 
 export class Orchestrator {
@@ -83,6 +84,7 @@ export class Orchestrator {
         requestId: input.requestId,
         pipeline: input.pipeline,
         ...(input.params === undefined ? {} : { params: input.params }),
+        ...(input.work === undefined ? {} : { work: input.work }),
       }),
     );
   }

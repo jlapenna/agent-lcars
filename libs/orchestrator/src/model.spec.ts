@@ -103,3 +103,27 @@ describe('persisted-shape fixtures', () => {
     ).not.toThrow();
   });
 });
+
+describe('taskSchema work payload', () => {
+  const T = '2026-08-15T12:00:00.000Z';
+  const base = { task: { workId: ULID }, runCount: 0, updatedAt: T };
+
+  it('stores an opaque bounded work payload and closedAt', () => {
+    const parsed = taskSchema.parse({
+      ...base,
+      work: { origin: { principal: 'user:jlapenna' }, spec: { title: 'x' } },
+      closedAt: T,
+    });
+    expect(parsed.work).toEqual({
+      origin: { principal: 'user:jlapenna' },
+      spec: { title: 'x' },
+    });
+    expect(parsed.closedAt).toBe(T);
+  });
+
+  it('rejects a work payload over 32 KiB serialized', () => {
+    expect(() =>
+      taskSchema.parse({ ...base, work: { blob: 'x'.repeat(33_000) } }),
+    ).toThrow();
+  });
+});

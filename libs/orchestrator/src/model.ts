@@ -130,6 +130,21 @@ export const runSchema = z.strictObject({
 });
 export type Run = z.infer<typeof runSchema>;
 
+/**
+ * A native work item's payload -- who asked and what for. The orchestrator
+ * stores it and never interprets it, exactly as it treats `Run.params`;
+ * `libs/work` owns the shape. Bounded so a runaway caller cannot bloat the
+ * task document towards Firestore's 1 MiB limit.
+ */
+export const WORK_PAYLOAD_MAX_BYTES = 32_768;
+
+export const workPayloadSchema = z
+  .record(z.string().max(64), z.unknown())
+  .refine((value) => JSON.stringify(value).length <= WORK_PAYLOAD_MAX_BYTES, {
+    message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
+  });
+export type WorkPayload = z.infer<typeof workPayloadSchema>;
+
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
   /** The mutex. Set iff a run is live. */
@@ -142,6 +157,13 @@ export const taskSchema = z.strictObject({
    *  `FirestoreStore`'s zod validation). Drives the bounded auto-retry
    *  budget in `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
   consecutiveLost: z.number().int().nonnegative().optional(),
+  /** Native anchors only: the work item's payload, written once when the
+   *  task is created by its first request and never modified by the
+   *  orchestrator. Absent on GitHub-anchored tasks. */
+  work: workPayloadSchema.optional(),
+  /** Native anchors only: set by `closeTask` when an operator closes an
+   *  item that has no live run. A closed task refuses further requests. */
+  closedAt: isoUtc.optional(),
   updatedAt: isoUtc,
 });
 export type Task = z.infer<typeof taskSchema>;

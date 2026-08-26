@@ -7,6 +7,7 @@ import { Orchestrator, type RequestInput } from './orchestrator';
 import { OUTBOX_LEASE_MS } from './store';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
+const WORK: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
 const T0 = '2026-08-15T12:00:00.000Z';
 
 class Clock {
@@ -525,6 +526,74 @@ describe('the outbox', () => {
       });
     }
     expect(await claimOutbox(store, clock.now())).toEqual([]);
+  });
+});
+
+describe('native anchors', () => {
+  it('creates the task with its work payload on first request', async () => {
+    const { orchestrator, store } = fixture();
+    const work = {
+      origin: { principal: 'user:jlapenna' },
+      spec: { title: 'x' },
+    };
+    const outcome = await orchestrator.request({
+      taskId: WORK,
+      requestId: WORK.workId,
+      pipeline: 'claude',
+      work,
+    });
+    expect(isRefusal(outcome)).toBe(false);
+    const stored = await store.readTask(WORK);
+    expect(stored?.task.work).toEqual(work);
+    expect(stored?.task.activeRunId).toBe(`work:${WORK.workId}/r1`);
+  });
+
+  it('does not overwrite work on a later request for the same task', async () => {
+    const { orchestrator, store } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: { spec: { title: 'first' } },
+    });
+    const replay = await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+    });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r2',
+      pipeline: 'claude',
+      work: { spec: { title: 'second' } },
+    });
+    const stored = await store.readTask(WORK);
+    expect(stored?.task.work).toEqual({ spec: { title: 'first' } });
+    expect(stored?.task.activeRunId).toBe(`work:${WORK.workId}/r2`);
+  });
+
+  it('refuses a request on a closed task', async () => {
+    const { orchestrator } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: {},
+    });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    const closed = await orchestrator.close(WORK);
+    expect(isRefusal(closed)).toBe(false);
+    const again = await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r2',
+      pipeline: 'claude',
+    });
+    expect(again).toMatchObject({ refused: true, reason: 'task-closed' });
   });
 });
 
