@@ -11,25 +11,29 @@ export function matchReplyTrigger(
   triggers: readonly string[],
 ): string | undefined {
   let fence: { marker: '`' | '~'; length: number } | undefined;
+  let inlineCodeDelimiter = 0;
 
   for (const rawLine of body.split(/\r?\n/u)) {
-    const delimiter = fenceDelimiter(rawLine);
-    if (delimiter) {
-      if (!fence) {
-        fence = delimiter;
-      } else if (
-        delimiter.marker === fence.marker &&
-        delimiter.length >= fence.length
-      ) {
+    if (fence) {
+      if (isClosingFence(rawLine, fence)) {
         fence = undefined;
       }
       continue;
     }
 
     const trimmed = rawLine.trimStart();
-    if (fence || trimmed.startsWith('>')) continue;
+    if (inlineCodeDelimiter === 0) {
+      const openingFence = fenceOpening(rawLine);
+      if (openingFence) {
+        fence = openingFence;
+        continue;
+      }
+    }
+    if (trimmed.startsWith('>')) continue;
 
-    const prose = maskInlineCode(rawLine);
+    const masked = maskInlineCode(rawLine, inlineCodeDelimiter);
+    const prose = masked.prose;
+    inlineCodeDelimiter = masked.delimiterLength;
     let firstMatch: { trigger: string; index: number } | undefined;
 
     for (const trigger of triggers) {
@@ -49,22 +53,43 @@ export function matchReplyTrigger(
   return undefined;
 }
 
-function fenceDelimiter(
+function fenceOpening(
   line: string,
 ): { marker: '`' | '~'; length: number } | undefined {
-  const trimmed = line.trimStart();
+  const indentation = line.match(/^ */u)?.[0].length ?? 0;
+  if (indentation > 3) return undefined;
+
+  const trimmed = line.slice(indentation);
   const marker = trimmed[0];
   if (marker !== '`' && marker !== '~') return undefined;
 
   let length = 0;
   while (trimmed[length] === marker) length += 1;
-  return length >= 3 ? { marker, length } : undefined;
+  if (length < 3) return undefined;
+  if (marker === '`' && trimmed.slice(length).includes('`')) return undefined;
+  return { marker, length };
+}
+
+function isClosingFence(
+  line: string,
+  fence: { marker: '`' | '~'; length: number },
+): boolean {
+  const indentation = line.match(/^ */u)?.[0].length ?? 0;
+  if (indentation > 3) return false;
+
+  const trimmed = line.slice(indentation);
+  let length = 0;
+  while (trimmed[length] === fence.marker) length += 1;
+  return length >= fence.length && /^[ \t]*$/u.test(trimmed.slice(length));
 }
 
 /** Replaces inline-code spans with spaces so match indexes stay comparable. */
-function maskInlineCode(line: string): string {
+function maskInlineCode(
+  line: string,
+  initialDelimiterLength: number,
+): { prose: string; delimiterLength: number } {
   let result = '';
-  let delimiterLength = 0;
+  let delimiterLength = initialDelimiterLength;
 
   for (let index = 0; index < line.length;) {
     if (line[index] !== '`') {
@@ -81,7 +106,7 @@ function maskInlineCode(line: string): string {
     index += runLength;
   }
 
-  return result;
+  return { prose: result, delimiterLength };
 }
 
 function commandIndex(line: string, trigger: string): number | undefined {

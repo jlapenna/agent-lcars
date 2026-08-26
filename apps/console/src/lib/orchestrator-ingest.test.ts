@@ -314,6 +314,28 @@ describe('interpretDelivery', () => {
       expected: { kind: 'ignore', reason: 'no-reply-command' },
     },
     {
+      name: 'mention inside a multiline inline-code span -> ignore',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: ['``example', '@agent', 'still code``'].join('\n'),
+          author_association: 'OWNER',
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'no-reply-command' },
+    },
+    {
+      name: 'fence with an info-string-like line does not close -> ignore',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: ['```', '```text', '@agent', '```'].join('\n'),
+          author_association: 'OWNER',
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'no-reply-command' },
+    },
+    {
       name: 'longer usernames and URL paths do not count as mentions',
       event: 'issue_comment',
       payload: issueCommentPayload({
