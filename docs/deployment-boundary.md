@@ -66,7 +66,25 @@ from the live checkout. Host mode now requires explicit roots and the deploy
 script derives the account home from its UID; runner mode deliberately avoids
 evaluating this host-only privacy scope.
 
-### 3. Workflows — repo variables
+### 3. `apps/console/src/lib/work-grants.ts`
+
+Who may operate the native work items API, and how many runs it will let be
+live at once. `authenticateWorkRequest` (`work-auth.ts`) maps a verified
+Google service-account ID token or an Auth.js session to a principal by
+looking it up here — an unlisted subject gets no access at all, regardless
+of how it authenticated.
+
+| Value                    | Env var                          | This deployment                                                                         |
+| ------------------------ | -------------------------------- | --------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`        | `[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]}]` |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                     |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                      |
+
+Unlike `deployment.ts`, these have no fallback identity baked into source —
+an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
+operate the API), not a default principal.
+
+### 4. Workflows — repo variables
 
 Not extractable by relocation (`.github/workflows/` is a fixed path), so
 these live as **repo variables** instead. Identity and deployment variables
@@ -226,13 +244,13 @@ it was retired along with the canary/smoke-test scaffolding in #885 and has
 had no automated replacement since, so this invariant is presently
 maintained by workflow review rather than a test.
 
-### 4. Terraform
+### 5. Terraform
 
 `infra/terraform/` is entirely instance config by definition: project id,
 service accounts, WIF pool, secret containers, budget. It owns secret
 _containers_ but never secret _values_ (see `AGENTS.md`).
 
-### 5. Protocol docs
+### 6. Protocol docs
 
 The shared `agent-protocol` names `jlapenna` and `agent-lcars-bot` directly
 because they are fleet-wide constants across every onboarded repository.

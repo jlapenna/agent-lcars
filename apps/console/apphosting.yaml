@@ -70,6 +70,27 @@ env:
     availability:
       - RUNTIME
 
+  # Not sensitive - grants for the native work items API (see
+  # apps/console/src/lib/work-grants.ts). Maps a Google service-account
+  # email or a `github:<login>` session subject to a principal and the
+  # pipelines it may operate.
+  - variable: AGENT_LCARS_WORK_GRANTS
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]}]'
+    availability:
+      - RUNTIME
+
+  # Not sensitive - the global cap on simultaneously live work runs.
+  - variable: AGENT_LCARS_WORK_MAX_LIVE_RUNS
+    value: '2'
+    availability:
+      - RUNTIME
+
+  # Not sensitive - the audience the work API requires on Google ID tokens.
+  - variable: AGENT_LCARS_WORK_AUDIENCE
+    value: 'agent-lcars-work'
+    availability:
+      - RUNTIME
+
   # The rest of this deployment's identity, mirroring lib/deployment.ts's
   # fallbacks explicitly rather than relying on them - so what this instance
   # is configured with is visible here, not only in app source.

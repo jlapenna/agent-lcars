@@ -35,6 +35,13 @@ export interface EnvVars {
   AGENT_LCARS_WEBHOOK_QUEUE_LOCATION?: string;
   AGENT_LCARS_WEBHOOK_SECRET?: string; // Secret
   AGENT_LCARS_WATCHED_REPOS?: string;
+  /** Audience the `lcars` CLI requests on Google ID tokens; the work API
+   *  rejects any other audience. */
+  AGENT_LCARS_WORK_AUDIENCE?: string;
+  /** JSON grant list: [{ principal, subjects[], pipelines[] }]. */
+  AGENT_LCARS_WORK_GRANTS?: string;
+  /** Global live-run cap for native work items (default 4). */
+  AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;
   DISPATCH_FIRESTORE_DATABASE_ID?: string;
   QUICK_TASK_EVIDENCE_BUCKET?: string;
 

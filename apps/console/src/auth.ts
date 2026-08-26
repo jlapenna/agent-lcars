@@ -42,6 +42,8 @@ const nextAuth = NextAuth({
     session({ session, token }) {
       session.user.id = token.sub ?? '';
       session.user.isAdmin = token.isAdmin === true;
+      session.user.login =
+        typeof token.githubLogin === 'string' ? token.githubLogin : undefined;
       return session;
     },
   },
