@@ -26,7 +26,7 @@ export interface SessionTitleAnnotationCommandResult {
 }
 
 export const SESSION_TITLE_CLI_USAGE =
-  'usage: session title "<text>" | session title --clear | session status "<text>" | session status --clear';
+  'usage: session title "<text>" | session title --clear | session status "<text>" | session status --clear | work …';
 
 function invalidCommand(): SessionTitleAnnotationCommandResult {
   return {
