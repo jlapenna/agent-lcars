@@ -49,7 +49,11 @@ export function parseHostedJsonBody<T>(
 
 const hostedCompletionRequestSchema = z
   .object({
-    issue: z.number().int().safe().positive(),
+    // Optional: a native/work-anchored run has no GitHub issue at all and
+    // completes by `intentId` alone -- see `handleCompletion`'s own
+    // `isGithubAnchor` guard (`orchestrator-routes.ts`), which only checks
+    // `issue` when the run it names is GitHub-anchored.
+    issue: z.number().int().safe().positive().optional(),
     workflow: z.string().min(1),
     generation: z.number().int().safe().optional(),
     intentId: z.string().min(1).optional(),

@@ -318,7 +318,7 @@ jobs:
             "$oidc_response_file")"
 
           completion_status='000'
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4; do
             if completion_status="$(curl --silent --show-error \
               --output "$completion_response_file" --write-out '%{http_code}' \
               --config - <<EOF
@@ -341,7 +341,19 @@ jobs:
                 exit 1
                 ;;
             esac
-            if [ "$attempt" -lt 3 ]; then sleep "$attempt"; fi
+            if [ "$attempt" -lt 4 ]; then
+              if [[ "$completion_status" == 503 ]]; then
+                # #1521: binding is fail-closed (see run-binding.ts) -- a
+                # 503 means GitHub itself was unreachable when the console
+                # tried to prove this token, not that the completion was
+                # rejected. Worth a longer wait than the other retryable
+                # codes get.
+                echo "::notice::Hosted completion unavailable (503); retrying in $((attempt * 15))s"
+                sleep $((attempt * 15))
+              else
+                sleep "$attempt"
+              fi
+            fi
           done
           unset id_token
           if [[ "$completion_status" != 2?? ]]; then

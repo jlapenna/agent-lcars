@@ -69,10 +69,18 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
   });
   const orchestrator = new Orchestrator(store, utcClock);
+  // Completion binding (`handleCompletion`'s default `bind`, see
+  // `run-binding.ts`) needs the same per-repo token provider/fixture
+  // boundary `drain`/`settleTerminal` resolve fresh on every call below --
+  // resolved once here, at the same memoized lifetime as `store`/
+  // `orchestrator` themselves.
+  const github = orchestratorGithubRuntimeDeps(process.env);
 
   cached = {
     store,
     orchestrator,
+    tokens: github.tokens,
+    githubApiBaseUrl: github.githubApiBaseUrl,
     drain: () => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return drainOutbox({

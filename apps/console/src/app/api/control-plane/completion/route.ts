@@ -11,8 +11,9 @@ import { handleCompletion } from '@/lib/orchestrator-routes';
 import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 export async function POST(request: Request): Promise<NextResponse> {
+  let identity;
   try {
-    await verifyCompletionOidcToken(
+    identity = await verifyCompletionOidcToken(
       parseHostedBearerToken(request.headers.get('authorization')),
       controlPlaneRepositories(),
     );
@@ -35,7 +36,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const result = await handleCompletion(createOrchestratorRuntime(), body);
+    const result = await handleCompletion(
+      createOrchestratorRuntime(),
+      body,
+      identity,
+    );
     console.info('agent-lcars: orchestrator completion processed', result);
     return NextResponse.json(result.body, {
       status: result.status,

@@ -14,9 +14,14 @@ import {
   type parseHostedCompletionRequestBody,
   type parseHostedDispatchRequestBody,
 } from '@/lib/control-plane-request';
-import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
+import type { CompletionOidcIdentity } from '@/lib/github-actions-oidc';
+import type {
+  DispatchTokenProvider,
+  DrainOutboxResult,
+} from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 import type { SettleTerminalRunsResult } from '@/lib/orchestrator-terminal-runs';
+import { bindCompletionToRun, BindingUnavailable } from '@/lib/run-binding';
 
 /**
  * Pure-ish HTTP handlers for the three control-plane routes, kept out of
@@ -37,6 +42,18 @@ export interface OrchestratorRouteDeps {
    *  for the same reason `drain` is: it does GitHub I/O, and these handlers
    *  stay drivable in tests without it. */
   settleTerminal: () => Promise<SettleTerminalRunsResult>;
+  /** Token provider `bindCompletionToRun` uses to fetch the Actions run
+   *  named by a completion token's OIDC claims (see `run-binding.ts`). */
+  tokens: DispatchTokenProvider;
+  /** Injectable for tests; forwarded to `bindCompletionToRun`. */
+  fetchImpl?: typeof fetch;
+  /** Injectable GitHub REST root; forwarded to `bindCompletionToRun`. */
+  githubApiBaseUrl?: string;
+  /** Proves a completion token belongs to the run it claims to complete.
+   *  Defaults to the real `bindCompletionToRun` when absent; tests inject
+   *  a stub so they can drive the binding decision directly rather than
+   *  through a real (faked) GitHub fetch. */
+  bind?: typeof bindCompletionToRun;
 }
 
 export type HostedCompletionRequestBody = ReturnType<
@@ -240,9 +257,21 @@ function toRunResult(
   };
 }
 
+/**
+ * Handles a finalizer completion callback. The caller's OIDC token proves
+ * only "a trusted finalizer on an allow-listed repository" -- it says
+ * nothing about *which* run. `bindCompletionToRun` (`run-binding.ts`) closes
+ * that gap: it fetches the Actions run the token names and checks its
+ * dispatch marker against the run being completed. This is fail-closed --
+ * `BindingUnavailable` (GitHub unreachable/non-2xx) answers `503` rather
+ * than settling on an unproven token, and an unbound token answers `403`
+ * rather than `200`, in both cases leaving the run untouched for a retry
+ * or the lease backstop to resolve.
+ */
 export async function handleCompletion(
   deps: OrchestratorRouteDeps,
   body: HostedCompletionRequestBody,
+  identity: CompletionOidcIdentity,
 ): Promise<RouteResult> {
   try {
     if (body.intentId === undefined) {
@@ -255,18 +284,36 @@ export async function handleCompletion(
       // ack it and move on rather than 5xx-ing the caller.
       return { status: 200, body: { ignored: 'unknown-run' } };
     }
-    if (isGithubAnchor(run.task)) {
-      const { issue } = run.task;
-      if (issue !== body.issue) {
-        // A legacy dispatch-broker run still in flight during cutover.
-        // Not an error -- ack it and move on rather than 5xx-ing the caller.
-        return { status: 200, body: { ignored: 'unknown-run' } };
-      }
+    // GitHub anchors keep the issue tie as a cheap local pre-check; native
+    // anchors have no issue and rely on the marker binding alone.
+    if (isGithubAnchor(run.task) && run.task.issue !== body.issue) {
+      // A legacy dispatch-broker run still in flight during cutover.
+      // Not an error -- ack it and move on rather than 5xx-ing the caller.
+      return { status: 200, body: { ignored: 'unknown-run' } };
     }
 
     const task = (await deps.store.readTask(run.task))?.task;
+    const target = anchorTarget(run, task);
+
+    const bind = deps.bind ?? bindCompletionToRun;
+    let binding;
+    try {
+      binding = await bind(deps, identity, runId, target.repo);
+    } catch (error) {
+      if (error instanceof BindingUnavailable) {
+        return { status: 503, body: { error: 'binding-unavailable' } };
+      }
+      throw error;
+    }
+    if (!binding.bound) {
+      return {
+        status: 403,
+        body: { error: 'unbound-token', reason: binding.reason },
+      };
+    }
+
     const result = toRunResult(
-      anchorTarget(run, task).repo,
+      target.repo,
       body.outcome,
       body.outcomeReference,
     );
