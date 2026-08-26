@@ -117,12 +117,18 @@ export class MemoryStore implements OrchestratorStore {
     return true;
   }
 
-  async listNativeTasks(): Promise<VersionedTask[]> {
-    return structuredClone(
-      [...this.#tasks.values()].filter((entry) =>
-        isWorkAnchor(entry.task.task),
-      ),
-    );
+  async listNativeTasks(limit?: number): Promise<VersionedTask[]> {
+    // Newest first, matching `FirestoreStore`: `workId` is a ULID, so
+    // descending lexicographic order on it is descending creation order.
+    const native = [...this.#tasks.values()]
+      .filter((entry) => isWorkAnchor(entry.task.task))
+      .map((entry) => {
+        const id = entry.task.task;
+        return { entry, workId: isWorkAnchor(id) ? id.workId : '' };
+      })
+      .sort((a, b) => b.workId.localeCompare(a.workId))
+      .map(({ entry }) => entry);
+    return structuredClone(native.slice(0, limit ?? 200));
   }
 
   async listExpiredRuns(now: string): Promise<Run[]> {

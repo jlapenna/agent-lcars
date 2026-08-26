@@ -424,6 +424,37 @@ export function runOrchestratorStoreContract(
         expect(native.map((entry) => entry.task.task)).toEqual([{ workId }]);
         expect(native[0]?.revision).toBe(1);
       });
+
+      it('orders newest-first and honors a limit', async () => {
+        const { store, orchestrator } = await fixture();
+        // Ascending ULIDs, requested in ascending order -- "newest" here
+        // means "sorts last", exactly what real ULIDs guarantee for tasks
+        // created in order.
+        const workA = '01J5Z3K9QX8F0N2B4V6C8D1E3A';
+        const workB = '01J5Z3K9QX8F0N2B4V6C8D1E3B';
+        const workC = '01J5Z3K9QX8F0N2B4V6C8D1E3C';
+        for (const workId of [workA, workB, workC]) {
+          await orchestrator.request({
+            taskId: { workId },
+            requestId: workId,
+            pipeline: 'claude',
+            work: { origin: { principal: 'user:jlapenna' } },
+          });
+        }
+
+        const all = await store.listNativeTasks();
+        expect(all.map((entry) => entry.task.task)).toEqual([
+          { workId: workC },
+          { workId: workB },
+          { workId: workA },
+        ]);
+
+        const limited = await store.listNativeTasks(2);
+        expect(limited.map((entry) => entry.task.task)).toEqual([
+          { workId: workC },
+          { workId: workB },
+        ]);
+      });
     });
 
     describe('a stale run can never overwrite its successor', () => {

@@ -18,6 +18,7 @@ import {
   type ItemSessionView,
   type ItemView,
   toItemView,
+  toItemViewSafe,
 } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
@@ -178,7 +179,7 @@ export const workRouter = os.router({
   }),
 
   list: operator.list.handler(async ({ input, context }) => {
-    const tasks = await context.runtime.store.listNativeTasks();
+    const tasks = await context.runtime.store.listNativeTasks(input.limit);
     const native = tasks.flatMap(({ task }) =>
       isWorkAnchor(task.task) ? [{ workId: task.task.workId, task }] : [],
     );
@@ -187,15 +188,30 @@ export const workRouter = os.router({
     // each item's runs -- but the session join reads a *different*
     // database, so it runs only over the items that survive the filters
     // and the limit rather than over every native task ever created.
-    const unjoined = await Promise.all(
-      native.map(async ({ workId, task }) =>
-        toItemView({
-          workId,
-          task,
-          runs: await context.runtime.store.listRuns({ workId }),
+    //
+    // `toItemViewSafe` rather than `toItemView`: `Task.work` is stored as
+    // an optional loose record, so one native task with an absent or
+    // partial payload is a legal persisted state, not a bug. A strict
+    // parse there would 500 the whole listing over a single bad item;
+    // skipping it (and logging once) degrades the page instead.
+    const unjoined = (
+      await Promise.all(
+        native.map(async ({ workId, task }) => {
+          const view = toItemViewSafe({
+            workId,
+            task,
+            runs: await context.runtime.store.listRuns({ workId }),
+          });
+          if (view === undefined) {
+            console.warn(
+              'agent-lcars: skipping native task with an invalid work payload',
+              { workId },
+            );
+          }
+          return view;
         }),
-      ),
-    );
+      )
+    ).filter((item): item is ItemView => item !== undefined);
     const page = unjoined
       .filter((item) => input.state === undefined || item.state === input.state)
       .filter(

@@ -4,17 +4,20 @@ import { executeWorkCommand, type WorkCommandDeps } from './work-command';
 
 function deps(
   routes: Record<string, (init: RequestInit & { url: string }) => unknown>,
-): WorkCommandDeps & { calls: string[]; out: string[] } {
+): WorkCommandDeps & { calls: string[]; out: string[]; err: string[] } {
   const calls: string[] = [];
   const out: string[] = [];
+  const err: string[] = [];
   return {
     calls,
     out,
+    err,
     origin: 'https://lcars.test',
     token: async () => 'tok',
     now: () => new Date('2026-08-26T10:00:00.000Z'),
     sleep: async () => undefined,
     stdout: (l) => out.push(l),
+    stderr: (l) => err.push(l),
     fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
       const url =
         typeof input === 'string'
@@ -90,8 +93,55 @@ describe('lcars work', () => {
     expect(d.out.at(-1)).toMatch(/done/);
   });
   it('prints usage for an unknown subcommand', async () => {
-    const r = await executeWorkCommand(['bogus'], deps({}));
+    const d = deps({});
+    const r = await executeWorkCommand(['bogus'], d);
     expect(r.ok).toBe(false);
     expect(r.usage).toMatch(/usage: work/);
+    // Usage is a CLI error and belongs on stderr, not stdout.
+    expect(d.err.join('\n')).toMatch(/usage: work/);
+    expect(d.out).toEqual([]);
+  });
+  it('treats a flag with no value (the next token is another flag) as absent', async () => {
+    const d = deps({ 'PUT /api/work/v1/items/{id}': () => item('running') });
+    const r = await executeWorkCommand(
+      [
+        'create',
+        '--repo',
+        'o/r',
+        '--pipeline',
+        'claude',
+        '--title',
+        '--description',
+        'd',
+      ],
+      d,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.usage).toMatch(/usage: work/);
+    expect(d.calls).toEqual([]);
+  });
+  it('routes a request failure to stderr as an error: line', async () => {
+    const d = deps({
+      'PUT /api/work/v1/items/{id}': () => {
+        throw new Error('boom');
+      },
+    });
+    const r = await executeWorkCommand(
+      [
+        'create',
+        '--repo',
+        'o/r',
+        '--pipeline',
+        'claude',
+        '--title',
+        't',
+        '--description',
+        'd',
+      ],
+      d,
+    );
+    expect(r.ok).toBe(false);
+    expect(d.err.join('\n')).toMatch(/^error: /);
+    expect(d.out).toEqual([]);
   });
 });

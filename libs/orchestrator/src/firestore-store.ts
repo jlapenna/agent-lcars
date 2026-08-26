@@ -214,7 +214,7 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
-  async listNativeTasks(): Promise<VersionedTask[]> {
+  async listNativeTasks(limit?: number): Promise<VersionedTask[]> {
     // The `orderBy` IS the filter. Firestore excludes any document that
     // lacks the ordered field entirely, and a GitHub-anchored task
     // document stores `task.task.repo`/`task.task.issue` with no
@@ -223,7 +223,16 @@ export class FirestoreStore implements OrchestratorStore {
     // composite index, and (crucially) no new persisted discriminator
     // field, which would have meant rewriting every existing task
     // document before this query could be trusted.
-    const snapshot = await this.#tasks.orderBy('task.task.workId').get();
+    //
+    // `desc`: `workId` is a ULID, so lexicographic order on it is creation
+    // order -- descending puts the newest task first, still served by that
+    // same automatic single-field index (Firestore indexes both
+    // directions), and `limit` bounds the read itself rather than reading
+    // every native task ever created just to slice it down after.
+    const snapshot = await this.#tasks
+      .orderBy('task.task.workId', 'desc')
+      .limit(limit ?? 200)
+      .get();
     return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }
 

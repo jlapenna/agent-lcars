@@ -271,6 +271,25 @@ describe('items routes', () => {
     expect(r.json.items.map((i: { id: string }) => i.id)).toEqual([ID]);
   });
 
+  it('degrades a native task with an invalid work payload instead of 500ing the whole list', async () => {
+    const ctx = context();
+    await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    // A legal persisted state per `Task.work`'s optional-loose-record type:
+    // a native task whose stored `work` has no `spec`. `toItemView`'s
+    // strict parse would throw on this and 500 the whole listing; the list
+    // handler must skip just this item instead.
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: OTHER_ID },
+      requestId: OTHER_ID,
+      pipeline: 'claude',
+      work: { origin: { principal: 'user:x', channel: 'api' } },
+    });
+
+    const r = await call(ctx, 'GET', '/items');
+    expect(r.status).toBe(200);
+    expect(r.json.items.map((i: { id: string }) => i.id)).toEqual([ID]);
+  });
+
   it('narrows the listing by state, principal, and repo', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });

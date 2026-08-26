@@ -10,7 +10,7 @@ import { showErrorToast } from '../show-error-toast';
 
 /**
  * Deliberately looser than the exact `ProcedureServerFunction` type
- * `functions.ts` exports: this only needs the `[error, data]` tuple shape
+ * `actions.ts` exports: this only needs the `[error, data]` tuple shape
  * (see `@orpc/next`'s `ServerFunctionResult`), not its precise error union,
  * so the real `cancelItem`/`redispatchItem` server functions (passed down
  * from a server component - a serializable reference, not the

@@ -7,11 +7,13 @@ import { defaultWorkCommandDeps, executeWorkCommand } from './lib/work-command';
 void (async () => {
   const argv = process.argv.slice(2);
   if (argv[0] === 'work') {
+    // `executeWorkCommand` already writes its own usage/error lines to
+    // stderr through `WorkCommandDeps.stderr` -- printing `result.usage`
+    // again here would just duplicate that line.
     const result = await executeWorkCommand(
       argv.slice(1),
       defaultWorkCommandDeps(process.env),
     );
-    if (result.usage) process.stderr.write(`${result.usage}\n`);
     process.exitCode = result.ok ? 0 : 1;
     return;
   }

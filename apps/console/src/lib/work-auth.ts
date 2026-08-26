@@ -28,12 +28,16 @@ const googleJwks = createRemoteJWKSet(
 );
 
 /** A Google-signed ID token for our audience. Service-account identity
- *  tokens (impersonated or direct) carry `email` + `email_verified`. */
+ *  tokens (impersonated or direct) carry `email` + `email_verified`. The
+ *  `jwks` parameter defaults to the module-scoped, lazily-fetched Google
+ *  key set; tests pass a local key set instead so verification never makes
+ *  a real network call. */
 export function googleIdTokenVerifier(
   audience: string,
+  jwks: Parameters<typeof jwtVerify>[1] = googleJwks,
 ): WorkAuthDeps['verifyGoogleIdToken'] {
   return async (token) => {
-    const { payload } = await jwtVerify(token, googleJwks, {
+    const { payload } = await jwtVerify(token, jwks, {
       issuer: GOOGLE_ISSUER,
       audience,
     });

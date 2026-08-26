@@ -15,6 +15,7 @@ export interface WorkCommandDeps {
   now: () => Date;
   sleep: (ms: number) => Promise<void>;
   stdout: (line: string) => void;
+  stderr: (line: string) => void;
 }
 
 export const WORK_CLI_USAGE =
@@ -32,6 +33,7 @@ export function defaultWorkCommandDeps(
     now: () => new Date(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     stdout: (line) => process.stdout.write(`${line}\n`),
+    stderr: (line) => process.stderr.write(`${line}\n`),
     token: async () => {
       if (env['LCARS_TOKEN']) return env['LCARS_TOKEN'];
       const sa = env['LCARS_SERVICE_ACCOUNT'];
@@ -64,7 +66,12 @@ function client(deps: WorkCommandDeps): RouterContractClient<ItemsContract> {
 
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
-  return i === -1 ? undefined : argv[i + 1];
+  if (i === -1) return undefined;
+  const value = argv[i + 1];
+  // A missing value, or one that looks like the next flag, is not a value
+  // this flag owns -- treat it as absent rather than swallowing the next
+  // flag's own name as this one's argument.
+  return value === undefined || value.startsWith('--') ? undefined : value;
 }
 
 const SETTLED = new Set(['done', 'parked', 'canceled']);
@@ -86,6 +93,14 @@ function readDescription(rest: string[]): string | undefined {
   return file === undefined ? undefined : readFileSync(file, 'utf8');
 }
 
+/** Every "bad invocation" exit shares this shape: print usage to stderr --
+ *  where CLI errors belong, not stdout -- and report it back in the result
+ *  too, for a caller that wants to act on it without re-parsing output. */
+function usageFailure(deps: WorkCommandDeps): { ok: false; usage: string } {
+  deps.stderr(WORK_CLI_USAGE);
+  return { ok: false, usage: WORK_CLI_USAGE };
+}
+
 export async function executeWorkCommand(
   argv: string[],
   deps: WorkCommandDeps,
@@ -100,7 +115,7 @@ export async function executeWorkCommand(
         const title = flag(rest, '--title');
         const description = readDescription(rest);
         if (!repo || !pipeline || !title || !description) {
-          return { ok: false, usage: WORK_CLI_USAGE };
+          return usageFailure(deps);
         }
         const id = ulid(deps.now().getTime());
         const created = await c.create({
@@ -117,7 +132,7 @@ export async function executeWorkCommand(
       }
       case 'status': {
         const id = rest[0];
-        if (!id) return { ok: false, usage: WORK_CLI_USAGE };
+        if (!id) return usageFailure(deps);
         let current = await c.get({ id });
         deps.stdout(line(current));
         if (rest.includes('--watch')) {
@@ -145,7 +160,7 @@ export async function executeWorkCommand(
       case 'cancel':
       case 'redispatch': {
         const id = rest[0];
-        if (!id) return { ok: false, usage: WORK_CLI_USAGE };
+        if (!id) return usageFailure(deps);
         const updated =
           sub === 'cancel'
             ? await c.cancel({ id })
@@ -154,10 +169,10 @@ export async function executeWorkCommand(
         return { ok: true };
       }
       default:
-        return { ok: false, usage: WORK_CLI_USAGE };
+        return usageFailure(deps);
     }
   } catch (error) {
-    deps.stdout(
+    deps.stderr(
       `error: ${error instanceof Error ? error.message : String(error)}`,
     );
     return { ok: false };
