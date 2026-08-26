@@ -23,6 +23,7 @@ import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
 import { cancelItem, getItem, redispatchItem } from '../actions';
+import { safeHttpUrl } from '../safe-url';
 import { WorkActions } from '../work-actions';
 
 interface PageProps {
@@ -35,6 +36,28 @@ const STATE_COLORS: Record<ItemView['state'], string> = {
   done: 'green',
   canceled: 'gray',
 };
+
+/** `run.result.ref` is agent-reported and opaque (see `model.ts`'s
+ *  `runResultSchema`); render it as a link only once `safeHttpUrl` confirms
+ *  it is an absolute http(s) URL, otherwise as inert text. */
+function RunRef({ value }: { value: string | undefined }) {
+  const href = safeHttpUrl(value);
+  if (href) {
+    return (
+      <Anchor href={href} target="_blank" rel="noreferrer" size="xs">
+        ref
+      </Anchor>
+    );
+  }
+  if (value) {
+    return (
+      <Text size="xs" c="dimmed">
+        {value}
+      </Text>
+    );
+  }
+  return null;
+}
 
 function RunsTable({ runs }: { runs: ItemView['runs'] }) {
   if (runs.length === 0) {
@@ -73,16 +96,7 @@ function RunsTable({ runs }: { runs: ItemView['runs'] }) {
             </TableTd>
             <TableTd>{run.result?.summary}</TableTd>
             <TableTd>
-              {run.result?.ref && (
-                <Anchor
-                  href={run.result.ref}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="xs"
-                >
-                  ref
-                </Anchor>
-              )}
+              <RunRef value={run.result?.ref} />
             </TableTd>
           </TableTr>
         ))}
@@ -104,7 +118,7 @@ function SessionsList({ sessions }: { sessions: ItemView['sessions'] }) {
       {sessions.map((session) => (
         <Anchor
           key={session.sessionId}
-          href={`/sessions/${session.sessionId}`}
+          href={`/sessions/${encodeURIComponent(session.sessionId)}`}
           size="sm"
         >
           {session.title ?? session.sessionId}
