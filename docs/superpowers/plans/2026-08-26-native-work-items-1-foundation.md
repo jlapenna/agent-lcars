@@ -339,12 +339,15 @@ describe('native anchors', () => {
       pipeline: 'claude',
       work: { spec: { title: 'first' } },
     });
-    const first = await orchestrator.request({
+    const replay = await orchestrator.request({
       taskId: WORK,
       requestId: 'r1',
       pipeline: 'claude',
     });
-    if (isRefusal(first)) throw new Error(first.reason);
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+    });
     await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
     await orchestrator.request({
       taskId: WORK,
