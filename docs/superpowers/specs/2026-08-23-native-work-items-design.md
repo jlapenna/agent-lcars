@@ -1,7 +1,7 @@
 # Native work items: a GitHub-independent task system
 
 - **Status:** Approved design, pre-implementation
-- **Date:** 2026-08-23
+- **Date:** 2026-08-23 (rewritten 2026-08-25 on the one-store model)
 - **Scope:** Design for the whole program; implementation scope for
   sub-project 1 only (see [Sequencing](#sequencing)).
 
@@ -11,8 +11,8 @@ GitHub is currently the fleet's only ingress, its only task store, and its
 only execution queue. A task _is_ a GitHub issue (`libs/orchestrator`'s
 `TaskId = {repo, issue}`), dispatch _is_ a label webhook, execution _is_ a
 `workflow_dispatch` onto GitHub Actions, and the human-interaction surface
-(parking, outcome comments, redispatch triggers) lives entirely on issue
-threads. That blocks two wanted capabilities:
+(parking, outcome comments, redispatch triggers) lives on issue threads.
+That blocks two wanted capabilities:
 
 1. **Agent-initiated work** — an agent (interactive session, fleet member,
    or service) asking LCARS to do work directly, with no human touching
@@ -23,921 +23,450 @@ It also makes runner execution inseparable from GitHub Actions queues, which
 the fleet wants as an eventual, swappable backend rather than a load-bearing
 assumption.
 
-## Decisions already made
+## Why this shape
 
-Recorded from the brainstorming session that produced this spec:
+The first draft of this spec kept a new `WorkItem` store beside the
+orchestrator's `Task` and synchronized the two. Review found that every
+piece of machinery it grew — an `admit` outbox kind, an idempotency
+reservation collection, a repair sweep, a "projection" rule for item
+state, a `cancel-run` kind, a second run-facing API — was a patch for that
+one split, and that its justification ("the orchestrator stays unchanged")
+did not hold. This rewrite has **one store**: the orchestrator's `Task` is
+the work item, item state is **derived** from its runs, and runs keep using
+the control-plane surface they already have.
 
-| Question                       | Decision                                                                                                                                                                                                                                                                                   |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| First end-to-end consumer      | Agent-initiated work via API                                                                                                                                                                                                                                                               |
-| Deliverable model              | Generic typed results; only the PR result path wired in v1                                                                                                                                                                                                                                 |
-| GitHub's role for native tasks | None required. Native-first: console + API are the interaction surface; GitHub issues/PRs are optional typed _links_ (references/evidence)                                                                                                                                                 |
-| API transport                  | Versioned REST on the console + `lcars work` CLI subcommands; MCP can wrap later                                                                                                                                                                                                           |
-| Auth                           | Standard OAuth 2.0 resource server; trusted OIDC issuers as configuration; no Google dependency in the contract                                                                                                                                                                            |
-| Structure                      | New `libs/work` layer above the orchestrator (approach B). The orchestrator keeps its admission-mutex _job_; making it anchor-aware is real, bounded work — sub-project 1a                                                                                                                 |
-| Naming                         | `WorkItem` / `libs/work` / `lcars work` — deliberately not "task", which the orchestrator already uses for its anchor                                                                                                                                                                      |
-| Pipeline selection             | `spec.pipeline` is required; no default. Triggering a pipeline is a per-principal grant, so not every agent can invoke every pipeline                                                                                                                                                      |
-| Admission                      | Per-principal live-run cap plus a global cap, both configuration; exceeding either is `429`                                                                                                                                                                                                |
-| Modes                          | None on a WorkItem. A review is a specialized task (description + `github-pr` link), not a dispatch mode                                                                                                                                                                                   |
-| v1 human issuer                | Google to start (ratified 2026-08-24) via per-user **service-account impersonation** — a Google user credential cannot mint an audience-scoped ID token; LCARS-minted tokens arrive with sub-project 4                                                                                     |
-| Run binding                    | Deterministic: the gate fetches the Actions run named by the token's own `(repository, run_id)` and requires its dispatch marker to carry this runId; pair stored, `run_attempt` checked, invalidated on settle. Native runs complete via `POST /runs/:runId/complete`, finalizer included |
-| Sessions                       | WorkItem 1→N Run; Run↔Session N:M over time (primary session recorded per run). Resume + lifecycle-pinned persistence are sub-project 6                                                                                                                                                    |
-| API shape                      | Resource-oriented (`items`, `runs`; `grants`/`caps` later) with additive OAuth2 scopes `work.agent` / `work.operator` / `work.admin`; issuers confine which scopes they may confer                                                                                                         |
-| Ownership                      | `cancel`/`redispatch` are the requester's or an admin's; reads are open to any granted principal; the `runs` routes belongs to the bound run alone                                                                                                                                         |
-| Creation                       | One Firestore transaction (idempotency reservation + WorkItem + `admit` outbox entry); `requestRun` is the drained side effect, and the admit drain is item-state-checked so a re-drain can never mint a second run                                                                        |
-| Status and targets             | Poll-only status in v1; items without `target.repo` are rejected while GitHub Actions is the only backend                                                                                                                                                                                  |
-| \1                             | v1 scope                                                                                                                                                                                                                                                                                   | Split (decided 2026-08-25): **1a** orchestrator generalization with zero behavior change for GitHub anchors; **1b** `libs/work`, API, auth gate, CLI, native lane path, console pages | \n  | WorkItem events | A subcollection, not a bounded array — a WorkItem lives forever and is redispatched without limit, so `Run.events`'s hard `max(64)` would eventually make it unreadable | \n  |
+## Decisions
+
+| Question                       | Decision                                                                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First end-to-end consumer      | Agent-initiated work via API                                                                                                                                     |
+| Structure                      | One store. The orchestrator's `Task` carries an opaque `work` payload for native anchors; `libs/work` is schemas, a derived view, and route handlers             |
+| Item state                     | Derived from the task's runs, never stored (one small `closedAt` flag aside)                                                                                     |
+| Deliverable                    | `Run.result` (`ok`, `summary`, `ref`) — already the orchestrator's shape; `ref` is the PR URL. Typed multi-results are a deferred extension                      |
+| GitHub's role for native tasks | None required. Native-first: console + API are the interaction surface                                                                                           |
+| API                            | Resource-oriented REST (`items`) + `lcars work` CLI; runs use the existing hosted control-plane routes, generalized to the anchor union                          |
+| Create                         | `PUT /items/{ulid}` with a client-generated ULID — one existing orchestrator transaction (`requestRun`)                                                          |
+| Auth                           | OAuth2 resource server with two additive scopes: `work.operator` (grant list) and `work.agent` (GitHub Actions OIDC). Standard library, issuers as configuration |
+| v1 human issuer                | Google via per-user service-account impersonation (a Google _user_ credential cannot mint an audience-scoped ID token); LCARS-minted tokens with sub-project 4   |
+| Pipeline selection             | `spec.pipeline` required; the grant list says which pipelines each principal may request — not every agent may trigger Claude                                    |
+| Admission                      | One global live-run cap, sized to runner capacity; `429`                                                                                                         |
+| Spec delivery                  | As `workflow_dispatch` inputs in v1; the direct-runner backend fetches via API later                                                                             |
+| Execution                      | `Executor` seam at the outbox; GitHub Actions is backend 1, a direct-runner queue is backend 2                                                                   |
+| Sessions                       | Derived: the telemetry session doc already points at `runId`. Resume + lifecycle-pinned persistence are sub-project 6                                            |
+| Protocol end state             | Agents become GitHub-issue agnostic and use only the run-facing routes; issue-side affordances become control-plane projections (sub-project 5)                  |
 
 ## Architecture
 
-```
-ingress adapters                 libs/work                 execution backends
-----------------                 ---------                 ------------------
-REST API (v1)      ─┐                                   ┌─ GitHubActionsExecutor (v1)
-webhook (later)    ─┼─▶ createWorkItem() ─▶ WorkItem ─▶ Executor
-cron (later)       ─┤          │              │         └─ QueueExecutor (later)
-console (later)    ─┘          ▼              ▼
-                        libs/orchestrator (same job, anchor-aware:
-                        per-task mutex, leases, bounded
-                        retry, transactional outbox)
+```mermaid
+flowchart LR
+  subgraph Ingress
+    API["PUT /items (v1)"]
+    WH["label webhook (existing)"]
+    CRON["cron (later)"]
+  end
+  subgraph Orchestrator["libs/orchestrator (one store)"]
+    T["Task: anchor + work payload"]
+    R["Run: lease, result"]
+    OB["outbox: dispatch-run, report-outcome"]
+    T --- R --- OB
+  end
+  subgraph Exec["Executor"]
+    GHA["GitHubActionsExecutor (v1)"]
+    Q["QueueExecutor (later)"]
+  end
+  API --> T
+  WH --> T
+  CRON -.-> T
+  OB --> GHA
+  OB -.-> Q
+  GHA --> RUN["worker run"]
+  RUN -->|"complete / renew (OIDC)"| R
+  V["libs/work: derived item view"] --> T
+  CON["console /work"] --> V
+  CLI["lcars work"] --> API
 ```
 
 Invariants:
 
-- Ingress adapters converge on one internal `createWorkItem()`. The `runs`
-  routes write only run-scoped fields (progress, links, results); every
-  WorkItem _state_ transition is the outbox drain's projection of an
-  orchestrator decision, never a route effect.
-- `libs/work` is the only caller of the orchestrator's `requestRun` for
-  native tasks, so admission rules stay in one place.
-- `libs/work` depends on `libs/orchestrator`, never the reverse. The
-  orchestrator continues to treat work as opaque.
-- A run talks to the control plane **only** through the run-lifecycle API
-  (fetch spec, renew lease, attach links, report results, report
-  completion), starting in v1. If the v1 workflow needs something, it gets
-  an API route, not a workflow input. This discipline is what makes the
-  later non-GitHub execution backend a drop-in.
+- The orchestrator remains a per-task mutex with an audit trail. It stores
+  the `work` payload the way it stores `params`: opaque, never interpreted.
+- `libs/work` depends on `libs/orchestrator`, never the reverse, and holds
+  no state of its own.
+- A run reports through the hosted control-plane routes it already uses.
+  If the direct-runner backend later needs more (spec fetch), that becomes
+  a route; nothing in v1 is added to the worker surface that GitHub Actions
+  alone would need.
 
 ## Data model
 
-Two layers, each keeping one job: `libs/work` records what is wanted and
-what happened; the orchestrator records admission and execution. Telemetry
-sits beside both.
-
-### Overview
-
 ```mermaid
 erDiagram
-  GRANT ||--o{ WORK_ITEM : "principal may create"
-  WORK_ITEM ||--|| RESERVATION : "created in one txn with"
-  WORK_ITEM ||--o{ WORK_EVENT : "audit (subcollection)"
-  WORK_ITEM ||--|| TASK : "anchored as work:ulid"
+  GRANT ||--o{ TASK : "principal may create"
   TASK ||--o{ RUN : "at most one live"
-  TASK ||--o{ OUTBOX_ENTRY : "admit"
-  RUN ||--o{ OUTBOX_ENTRY : "dispatch-run / cancel-run / report-outcome"
-  RUN }o--o{ SESSION_DOC : "N:M over time"
-  WORK_ITEM }o--o{ SESSION_DOC : "links[kind=session]"
+  RUN ||--o{ OUTBOX_ENTRY : "dispatch-run, report-outcome"
+  RUN ||--o{ SESSION_DOC : "session doc points at runId"
 
   GRANT {
-    string principal "LCARS-native, e.g. user:jlapenna"
+    string principal "user:jlapenna, svc:lcars-admin"
     string[] pipelines "which pipelines may be requested"
-    int maxLiveRuns "per-principal admission cap"
-    bool admin "adds work.admin"
-  }
-  WORK_ITEM {
-    string id "ULID"
-    object origin "principal, channel, requestId"
-    object spec "title, description, pipeline, target.repo"
-    enum state "ready | running | parked | done | canceled"
-    string admittedRunId "set by the admit drain"
-    object[] links "github-issue | github-pr | session | artifact | url"
-    object[] results "pr | report | artifact | message"
-    object schedule "reserved for cron"
-  }
-  RESERVATION {
-    string principal "part of key"
-    string requestId "part of key"
-    string workId "the item the request resolved to"
-    timestamp expiresAt "Firestore TTL"
-  }
-  WORK_EVENT {
-    string at "ISO instant"
-    string kind "created | admitted | acknowledged | parked | ..."
-    string by "principal or drain"
   }
   TASK {
     string key "repo#issue or work:ulid"
+    object task "anchor: {repo, issue} or {workId}"
     string activeRunId "the mutex"
     int runCount
     int consecutiveLost
+    object work "native only: origin, spec, closedAt - opaque"
   }
   RUN {
     string runId "work:ulid/rN"
-    object task "anchor union"
     enum state "pending | running | finished | canceled | lost"
     string pipeline
+    string requestId "idempotency"
     string leaseExpiresAt
-    object binding "repository_id, run_id, run_attempt"
-    string sessionId "primary session"
-    string resumedFromSessionId
-    object result "ok, summary, ref"
+    object result "ok, summary, ref - the deliverable"
+    object[] events "bounded audit trail"
   }
   OUTBOX_ENTRY {
     string entryId
-    enum kind "admit | dispatch-run | cancel-run | report-outcome"
+    enum kind "dispatch-run | report-outcome"
     enum state "pending | leased | done"
-    string runId "absent on admit"
   }
   SESSION_DOC {
     string sessionId
     string runId "pointer, not ownership"
     string transcriptGcsUri
-    string expireAt "pinned while the item is open (sub-project 6)"
   }
 ```
 
-| Collection                             | Owner               | Written by                                                                                                       |
-| -------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `workItems/{ulid}`                     | `libs/work`         | `createWorkItem()` (create); the outbox drain (every `state` transition); `runs` routes (run-scoped fields only) |
-| `workItems/{ulid}/events/{id}`         | `libs/work`         | Same writers, append-only                                                                                        |
-| `workRequests/{principal}/{requestId}` | `libs/work`         | `createWorkItem()`, same transaction as the item                                                                 |
-| grants                                 | configuration       | Maintainer; becomes a `grants` resource when an admin agent needs it                                             |
-| `tasks/{key}`                          | `libs/orchestrator` | Orchestrator transactions only                                                                                   |
-| `runs/{runId}`                         | `libs/orchestrator` | Orchestrator transactions; the gate adds `binding` on first verified call                                        |
-| `outbox/{entryId}`                     | `libs/orchestrator` | Orchestrator decisions (enqueue); the drain (lease, settle)                                                      |
-| `sessions/{sessionId}`                 | `libs/telemetry`    | The telemetry sidecar; untouched by this design                                                                  |
+### `Task` (existing, anchor-aware)
 
-Three rules hold the model together:
+`TaskId` becomes a union of two shapes: the existing `{ repo, issue }`,
+kept byte-for-byte as persisted today, and `{ workId }`. The variants are
+discriminated by which key is present — never by a new required field,
+because `FirestoreStore` zod-parses every persisted document on read and a
+required field would reject the whole existing dataset. `taskKey()` emits
+`repo#issue` (unchanged) or `work:<ulid>`; `:` is outside the repo-name
+charset, so keys cannot collide. Zero migration.
 
-1. **Anchor, not ownership.** The orchestrator knows a task only by its
-   anchor; `libs/work` depends on it, never the reverse.
-2. **Decisions vs. projections.** Orchestrator transactions decide; outbox
-   entries carry the side effects; `WorkItem.state` is a projection the
-   drain writes. No API route mutates state directly.
-3. **Identity is the write guard.** A run writes only run-scoped fields
-   under `work.agent` bound to its own `runId`; operators write items
-   under `work.operator`; scopes are additive and issuers confine what they
-   may confer.
+A native task additionally carries `work`, opaque to the orchestrator:
 
-### `WorkItem` (new, `libs/work`, Firestore collection `workItems`)
+- `origin` — `{ principal, channel: 'api' | 'cron' | 'console' }`. The
+  principal is LCARS-native (`user:jlapenna`, `svc:lcars-admin`), never a
+  raw issuer subject.
+- `spec` — `{ title, description, pipeline, target: { repo } }`. All
+  bounded strings, strict zod. `pipeline` is required; `target.repo` is
+  required while GitHub Actions is the only backend (an item no backend can
+  launch is rejected). No `mode` — a review is a task whose description
+  says so.
+- `closedAt?` — set when an operator cancels an item that has no live run.
+  The one piece of stored item state.
 
-The first-class task and source of truth.
+### `Run` (existing, unchanged shape)
 
-- `id` — native ULID. Sortable, no GitHub semantics.
-- `origin` — who asked and how:
-  `{ principal, channel: 'api' | 'webhook' | 'cron' | 'console', requestId }`.
-  `requestId` is the idempotency key: replays return the existing item.
-- `spec` — what is wanted:
-  `{ title, description, pipeline, target?: { repo } }`. `pipeline`
-  is required — there is no default, because invoking a pipeline is a
-  granted capability (see
-  [Authorization and admission](#authorization-and-admission)). There is
-  no `mode`: a review is a specialized task whose description says so and
-  whose PR is a `github-pr` link, not a separate dispatch mode. The
-  orchestrator's `params.mode` continues to exist for label-driven work
-  only.
-  `target` is schema-optional — that is the GitHub-optional part — but v1
-  rejects its absence at the API (see Backend 1). There is no `target.ref`
-  in v1: the dispatch drain hard-codes `ref: main` and the OIDC predicate
-  requires it, so accepting a ref would mean silently ignoring it.
-- `state` — `ready | running | parked | done | canceled`. Work lifecycle,
-  distinct from the orchestrator's run lifecycle. `parked` is the native
-  home of what `status:needs-human` means today.
-- `links[]` — typed references (the "evidence" concept), bounded at 64:
-  `{ kind: 'github-issue' | 'github-pr' | 'session' | 'artifact' | 'url',
-ref, note?, addedBy, at }`. A GitHub issue is just one of these.
-- `results[]` — typed outcomes, bounded at 32; see
-  [Deliverables](#deliverables-results-and-evidence).
-- `schedule?` — reserved for the cron sub-project. Unset and unread in v1.
-- `events` — the audit trail, as a **subcollection** (`workItems/{id}/events`),
-  not an array. `Run.events` is a `max(64)` array parsed on every read, which
-  is fine for a run (a handful of events) and wrong for an item that lives
-  forever and is redispatched without limit: the 65th event would make the
-  document unreadable, and every list view with it.
+One execution. `result = { ok, summary, ref }` is already the deliverable
+record; for native work `ref` is the PR URL. `requestId` is the
+idempotency key the orchestrator already honors.
 
-All schemas are strict zod objects with bounded strings, matching house
-style in `libs/orchestrator/src/model.ts`.
+### Derived item state
 
-### Lifecycles
+Nothing stores an item state. `libs/work` derives it from the task and its
+latest run:
 
-Two state machines, deliberately distinct. The run's is the orchestrator's
-existing one; the item's is driven only by the drain projecting run
-settlements and operator actions.
+| Condition                                                | State      |
+| -------------------------------------------------------- | ---------- |
+| `closedAt` set                                           | `canceled` |
+| a run is live (`pending` / `running`)                    | `running`  |
+| latest run `finished` with `ok: true`                    | `done`     |
+| latest run `finished` with `ok: false`, or retries spent | `parked`   |
+| latest run `canceled`                                    | `canceled` |
 
 ```mermaid
 stateDiagram-v2
   direction LR
-  state "WorkItem" as W {
-    [*] --> ready : POST /items (one txn)
-    ready --> running : drain admit → requestRun → dispatch
-    ready --> canceled : cancel (settles the admit entry)
-    running --> done : run finished ok
-    running --> parked : run finished ok=false, or retries exhausted
-    running --> canceled : cancel → cancel-run
-    parked --> ready : redispatch
-    done --> [*]
-    canceled --> [*]
-  }
-  state "Run (orchestrator, existing)" as R {
-    [*] --> pending : requestRun
-    pending --> running : dispatch confirmed / first report
-    running --> finished : complete
-    running --> canceled : operator
-    running --> lost : lease expired
-    pending --> lost : lease expired
-    lost --> [*] : sweep retries (≤2) or parks the item
-    finished --> [*]
-    canceled --> [*]
-  }
-```
-
-A `lost` run does not touch the item directly: the sweep either mints a
-fresh run (the item stays `running`) or, once the retry budget is spent,
-settles with a failure that the drain projects as `parked`.
-
-**Operator actions and recovery.** What `cancel` and `redispatch` do
-depends on the item's state, and lease loss reaches the item only through
-the sweep:
-
-```mermaid
-flowchart TD
-  subgraph Cancel["POST /items/:id/cancel"]
-    C0{"item state?"}
-    C0 -->|ready| C1["one txn: item = canceled, admit entry = done"]
-    C0 -->|running| C2["orchestrator.cancelRun: cancel-run + report-outcome entries"]
-    C2 --> C3["drain: executor.cancel via binding, then item = canceled"]
-    C0 -->|parked| C4["item = canceled"]
-    C0 -->|done or canceled| C5["409 already settled"]
-  end
-  subgraph Redispatch["POST /items/:id/redispatch"]
-    R0{"item parked?"}
-    R0 -->|yes| R1["one txn: item = ready, clear admittedRunId, new admit entry"]
-    R0 -->|no| R2["409"]
-  end
-  subgraph Sweep["Reconcile sweep, every 30 min"]
-    L0["lease expired: run = lost"] --> L1{"consecutiveLost ≤ 2?"}
-    L1 -->|yes| L2["mint fresh run + dispatch-run entry, item stays running"]
-    L1 -->|no| L3["settle as failure: report-outcome entry"]
-    L3 --> L4["drain: item = parked"]
-  end
-```
-
-### Sessions: how WorkItem, Run, and agent session relate
-
-Telemetry already stores an agent session as its own document at
-`sessions/{sessionId}` (`libs/telemetry/src/lib/session-doc.ts`) carrying
-a _pointer_ to the run (`runId`, `repo`, `transcriptGcsUri`) and an
-`expireAt` derived from last activity. The relationships follow from that:
-
-- **WorkItem 1 → N Run**, sequential: the orchestrator's mutex allows at
-  most one live run; `redispatch` mints the next.
-- **Run 1 → N Session, and a Session may span Runs.** A run has one
-  _primary_ session (the CLI the workflow starts), possibly subagent
-  sessions, and for OpenCode none at all. A session outlives its run — an
-  interactive takeover continues the same session ID after the runner is
-  gone — and a later run may _resume_ an earlier run's session (decided
-  2026-08-24). Run↔Session is therefore N:M over time. What is 1:1 is a
-  run's primary session at start: each `Run` records `sessionId` and, when
-  it resumed, `resumedFromSessionId`.
-- The WorkItem sees sessions only through `links[]` of kind `session`.
-  A session is evidence of how work was done, not the work.
-
-**v1 seams.** The run reports its primary session through
-`POST /runs/:runId/links` kind `session` (already in the native-mode
-table); `libs/work` records it on the `Run`. Nothing else ships in v1.
-
-**Later: session resume and persistence (sub-project 6).** These are one
-feature, not two — resume is only reliable if the session survives:
-
-- `POST /items/:id/redispatch` accepts `{ resumeSessionId? }`. The
-  executor passes it to the worker; the runner bootstrap restores the
-  archived transcript and starts the agent in resume mode
-  (`claude --resume`). Provider-honest, as in the takeover section: only
-  agents with an archive and a resume path support it, and the API rejects
-  the request for the others rather than silently starting fresh.
-- **Persistence is pinned to the item's lifecycle.** A session linked to a
-  WorkItem that is not `done` or `canceled` is not reaped: no `expireAt`
-  expiry, and its transcript archive is retained. The pin is released when
-  the item settles, after which the normal retention window applies.
-
-### Orchestrator changes (sub-project 1a)
-
-The orchestrator keeps its job — admission mutex, leases, bounded
-auto-retry, transactional outbox — but "unchanged" was wrong: the review
-of this spec found every place the code assumes a task is a GitHub issue.
-1a makes the orchestrator anchor-aware and lands with **zero behavior
-change for GitHub anchors**, proven by the existing tests plus persisted-
-shape fixtures, before anything uses the new anchor.
-
-**Anchor.** `TaskId` becomes a union of two shapes — the existing
-`{ repo, issue }` object, kept byte-for-byte as persisted today, and a new
-`{ workId }` — discriminated by which key is present, never by a new
-required field: `FirestoreStore` zod-parses every persisted Task, Run, and
-OutboxEntry on read, and each embeds `task: { repo, issue }`, so a variant
-requiring a field legacy documents lack would reject the whole dataset.
-`taskKey()` emits `repo#issue` (unchanged) or `work:<ulid>`; doc IDs are
-`encodeURIComponent(taskKey())`, and `:` is outside the repo-name charset,
-so the keys cannot collide. Zero Firestore migration.
-
-**Every `task.repo` / `task.issue` dereference.** These exist today and
-each one breaks on a `{ workId }` anchor:
-
-- `FirestoreStore.listRuns` queries `task.repo`/`task.issue` — the SDK
-  throws on `undefined` values. It gains an anchor-aware query; the store
-  contract spec covers both anchors.
-- `orchestrator-dispatch.ts` (workflow URL, installation token, `issue`
-  input, needs-human label), `orchestrator-routes.ts` (the completion
-  route's `run.task.issue === body.issue` tie), and
-  `orchestrator-terminal-runs.ts` (keys live runs by `task.repo`) all
-  read the anchor directly. They move to one helper,
-  `anchorTarget(run)`, which yields the repository for a GitHub anchor and
-  the WorkItem's `spec.target.repo` for a native one. As a TS union these
-  become compile errors, which is the point.
-
-**Outbox.** The schema is a strict two-kind enum (`dispatch-run`,
-`report-outcome`) with a required `runId`, parsed for every entry inside
-the claim transaction — one foreign document would make every drain
-throw. 1a discriminates the schema on `kind` and adds two kinds:
-
-- `admit` (task-scoped, no `runId` — `requestRun` is what mints the run),
-  drained by a new branch; see the create path for its state check.
-- `cancel-run`, drained by a new branch that calls `Executor.cancel` with
-  the run's stored Actions binding (or, unbound, the dispatch-marker
-  listing keyed by `anchorTarget`). Today `cancelRun` emits only
-  `report-outcome`, so a cancelled native run's job would keep running.
-
-`report-outcome` dispatches on anchor kind: a GitHub anchor posts the
-issue comment and label exactly as today; a native anchor performs the
-WorkItem transition (`done`, `parked`, `canceled`) and touches GitHub not
-at all. Without this branch the entry would fail forever at the head of
-every drain — `claimPendingOutbox` re-claims expired leases first — and
-block every legacy delivery behind it.
-
-**Drain discipline.** A drain branch settles an entry `done` for every
-_permanent_ outcome (`duplicate-request`, `task-busy`, an item no longer
-`ready`, an unknown run) and records the outcome as an event; only
-transient failures release an entry to `pending`. An entry that can never
-succeed must never be retried forever.
-
-The entry lifecycle and the drain's per-kind behavior:
-
-```mermaid
-stateDiagram-v2
-  direction LR
-  [*] --> pending : decided in a txn
-  pending --> leased : drain claims (5 min lease, claimId)
-  leased --> done : delivered, or permanent outcome recorded
-  leased --> pending : transient failure, or lease expired
+  [*] --> running : PUT /items → requestRun mints r1
+  running --> done : r_n finished ok
+  running --> parked : r_n finished not ok, or lost ×3
+  running --> canceled : cancel → cancelRun
+  parked --> running : redispatch → requestRun mints r_n+1
+  parked --> canceled : cancel → closedAt
   done --> [*]
+  canceled --> [*]
 ```
 
-```mermaid
-flowchart TD
-  D0["claim next entry"] --> K{"kind"}
-  K -->|admit| A1{"txn: item ready and unadmitted?"}
-  A1 -->|yes| A2["requestRun, set admittedRunId"] --> DONE["settle done"]
-  A1 -->|no| DONE
-  K -->|dispatch-run| B1["executor.dispatch"] --> B2{"result"}
-  B2 -->|ok or permanent| DONE
-  B2 -->|transient| PEND["release pending"]
-  K -->|cancel-run| C1["executor.cancel via binding, else marker listing by target repo"] --> DONE
-  K -->|report-outcome| E{"anchor kind"}
-  E -->|github| E1["issue comment + label, as today"] --> DONE
-  E -->|work| E2["item = done, parked or canceled, plus event"] --> DONE
-```
+A `lost` run never surfaces on its own: the sweep either mints a fresh run
+(state stays `running`) or, after the retry budget, leaves the last run
+settled as a failure (state reads `parked`).
 
-**No queueing.** `queueIfBusy` and `pendingRequest` were removed in
-#1503; nothing in this design queues a request on a busy task.
+### Sessions
 
-## API and auth
+Telemetry already stores each agent session at `sessions/{sessionId}` with
+a `runId` pointer. Item → runs → sessions is a query, not a link. The
+relationships: Task 1→N Run (sequential, mutex-enforced); Run↔Session N:M
+over time — a run has one primary session, an interactive takeover
+continues a session past its run, and (sub-project 6) a later run may
+resume an earlier one. Session **resume** and lifecycle-pinned
+**persistence** are one feature and arrive together: `redispatch` gains
+`resumeSessionId`, and a session pointing at any run of an open item is
+exempt from `expireAt` reaping until the item settles.
 
-### Resources and scopes
+### Collections and writers
 
-Resource-oriented REST under `apps/console/src/app/api/work/v1/`: the URL
-names a resource, never the caller's role. Two resources exist in v1 —
-`items` and `runs` — with fleet-management resources (`grants`, `caps`)
-arriving when those leave configuration. Authorization is by **OAuth2
-scope**, the standard mechanism for trust levels, so the split between
-"a run reporting on itself" and "someone issuing work" is a property of
-the token, not of the path.
+| Collection             | Written by                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `tasks/{key}`          | Orchestrator transactions. `work.closedAt` is the one field `libs/work` writes, via the cancel route |
+| `runs/{runId}`         | Orchestrator transactions (request, dispatch, renew, report, sweep)                                  |
+| `outbox/{entryId}`     | Orchestrator decisions; the drain leases and settles                                                 |
+| `sessions/{sessionId}` | Telemetry sidecar; untouched                                                                         |
+| grants                 | Configuration                                                                                        |
 
-Scopes are additive — a principal may hold several:
+## API
 
-| Scope           | Confers                                                                                          | Typically held by                                                  |
-| --------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `work.agent`    | The `runs/:runId` routes for **one** run; this scope is always bound to a run ID                 | A dispatched run (`agent:run/<runId>`)                             |
-| `work.operator` | Issue and follow work; cancel/redispatch own items; attach links                                 | Granted humans, requester agents, services                         |
-| `work.admin`    | Everything `work.operator` can, on any item; `grants`/`caps` management once those are resources | Admin principals (the console's `isAdmin`); admin implies operator |
+Resource-oriented REST under `apps/console/src/app/api/work/v1/`. The
+Edge proxy (`apps/console/src/proxy.ts`) returns `401` for any `/api`
+path not in its allow-list before any handler runs; `/api/work/v1/` is
+added to `publicPrefixes` and `proxy.test.ts`'s route scan is extended to
+the tree (#885 and #1232 each shipped without this).
 
-What is fixed is not how many scopes a principal holds but **what each
-issuer may confer**: a GitHub Actions OIDC token yields `work.agent` bound
-to the run it authenticates as and nothing else; grant configuration
-yields `work.operator` and `work.admin`. A run that must request
-follow-up work is a legitimate future case — an LCARS-minted token
-(sub-project 4) carrying both `work.agent` and `work.operator` — allowed
-by this design, just not by v1's issuers.
+### `items` — issuing and following work (`work.operator`)
 
-**`items` — issuing and following work.**
+| Route                        | Purpose                                                                                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT /items/:id`             | Create. `:id` is a client-generated ULID; the body is `spec`. Calls `requestRun({ workId }, pipeline, work, requestId: id)`. `201` on create, `200` with the existing item on replay. |
+| `GET /items/:id`             | Derived state, spec, origin, runs (with results), and the sessions telemetry holds for those runs.                                                                                    |
+| `GET /items`                 | List/filter by state, principal, target repo.                                                                                                                                         |
+| `POST /items/:id/cancel`     | Live run → `cancelRun`. No live run → set `closedAt`. Already closed → `409`.                                                                                                         |
+| `POST /items/:id/redispatch` | `parked` only → `requestRun` with the same `work` and a fresh `requestId`; `409` otherwise. The reply-trigger analog.                                                                 |
 
-| Route                        | Scope                                      | Purpose                                                                                                                                            |
-| ---------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /items`                | `work.operator`                            | Create a WorkItem. Caller supplies `requestId`; replays dedupe (same contract as the orchestrator's `duplicate-request`). Returns `202` + item ID. |
-| `GET /items/:id`             | `work.operator`                            | Full state: spec, work state, runs, links, results, events.                                                                                        |
-| `GET /items`                 | `work.operator`                            | List/filter by state, principal, target repo.                                                                                                      |
-| `POST /items/:id/cancel`     | `work.operator` (own) / `work.admin` (any) | Stop.                                                                                                                                              |
-| `POST /items/:id/redispatch` | `work.operator` (own) / `work.admin` (any) | Parked → ready; mints a fresh run. API-native analog of today's reply triggers.                                                                    |
-| `POST /items/:id/links`      | `work.operator`                            | Attach a typed reference (a human or requester adding evidence).                                                                                   |
+Idempotent create is the standard client-ID PUT: two replays of one ULID
+hit one document, and the orchestrator's `duplicate-request` covers the
+window while r1 is live. Admission is checked before `requestRun`: a
+principal without a grant for `spec.pipeline` gets `403`; a fleet at the
+global live-run cap gets `429` with `Retry-After`. Status is poll-only in
+v1 (`lcars work status --watch` polls).
 
-**`runs/:runId` — a run reporting on itself.** Every route requires
-`work.agent` bound to that exact run ID; keyed by run, not item, because a
-run may only ever speak for itself.
+### Runs — the existing hosted routes, generalized (`work.agent`)
 
-| Route                        | Purpose                                                                                                                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /runs/:runId`           | The run's spec and item snapshot. The first authenticated call performs the run binding and records an `acknowledged` event.                                                                                                       |
-| `POST /runs/:runId/renew`    | Renew the orchestrator lease.                                                                                                                                                                                                      |
-| `PUT /runs/:runId/progress`  | Replace the run's single bounded progress note (the native form of the protocol's one edited progress comment).                                                                                                                    |
-| `POST /runs/:runId/links`    | Attach a typed reference on the run's behalf (session, PR).                                                                                                                                                                        |
-| `POST /runs/:runId/results`  | Report a typed result.                                                                                                                                                                                                             |
-| `POST /runs/:runId/complete` | Terminal report `{ ok, summary }`, forwarded to `orchestrator.report`. The route returns the orchestrator's outcome (`run-not-live` → `409`); the item's transition is the drain's projection of the settle, never a route effect. |
+Workers already report through OIDC-authenticated control-plane routes.
+They are generalized to the anchor union rather than duplicated:
 
-Run IDs contain `/` (`work:<ulid>/r1`); the `:runId` path segment is
-`encodeURIComponent`-encoded, the same encoding the Firestore doc IDs use.
+| Route (existing)      | Change for native anchors                                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| completion (`report`) | Body names the run by `runId` instead of `issue`; the run's `task` may be either anchor shape. `{ ok, summary, ref }` is the deliverable. |
+| lease renew           | Same generalization.                                                                                                                      |
 
-The `runs` routes are the **complete** channel a run has to the control
-plane. That list is the contract the later non-GitHub backend depends on;
-extending it is fine, bypassing it is not. Each route declares its
-required scope; the gate checks the scope and, for `work.agent`, the run
-binding — a token whose scope does not cover the route gets `403`.
-
-Create is one Firestore transaction, then `202`: validate → check the
-admission caps → reserve the idempotency key → write the WorkItem in state
-`ready` → enqueue an `admit` outbox entry. The transaction is the whole
-decision; `requestRun` is its side effect, called by the drain's `admit`
-branch. A crash after commit is repaired by the next drain; a crash before
-commit leaves nothing behind. This is the orchestrator's own rule — the
-decision and its side effect are never one step — applied one layer up.
-
-- **Idempotency is transactional.** The reservation is a document keyed by
-  `(principal, requestId)` written in the same transaction as the WorkItem,
-  so concurrent replays contend on one document and converge on one ULID.
-  A replay returns the reserved item.
-- **The admit drain is state-checked.** The orchestrator's own
-  `duplicate-request` dedupe holds only while the minted run is _live_, so
-  an at-least-once `admit` re-drained after r1 has already settled would
-  mint r2 for a done or parked item. The branch therefore runs a
-  transaction of its own: the item must still be `ready` with no
-  `admittedRunId`; it calls `requestRun`, records `admittedRunId`, and
-  settles the entry `done`. Any other item state settles the entry `done`
-  as a no-op.
-- **Cancel while `ready`.** No run exists to cancel. The route marks the
-  item `canceled` and settles its `admit` entry `done` in one transaction,
-  so a later drain cannot mint a run for a canceled item.
-- **Repair sweep — new, not existing.** Today's reconcile handler settles
-  terminal runs, sweeps leases, and drains; it repairs nothing about work
-  items. 1b adds `libs/work`'s `sweep()` to it: a `ready` item older than
-  the admit lease with no `admittedRunId` gets a fresh `admit` entry.
-
-`requestRun` outcomes surface as item events, not HTTP statuses: by the
-time the orchestrator decides, `POST /items` has already returned `202`.
-The admission caps are the only synchronous refusal (`429`).
-
-Status is poll-only in v1 (the CLI offers `--watch` by polling); no
-streaming.
+The spec reaches the agent as `workflow_dispatch` inputs (`work_id`,
+`work_spec`), so no fetch route exists in v1. Session status and progress
+use the channel that already exists (`lcars session title` / status
+annotations); the item's page shows them through the session pointer.
 
 ### One request, end to end
-
-Where each write happens, and which of them is a decision versus a
-projection:
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant O as Operator (work.operator)
   participant API as Console API
-  participant W as libs/work
   participant X as Orchestrator
   participant D as Outbox drain
   participant GH as GitHub Actions
-  participant A as Agent run (work.agent)
+  participant A as Worker run (work.agent)
 
-  O->>API: POST /items {requestId, spec}
-  API->>W: createWorkItem — one txn: caps, reservation, item=ready, admit entry
-  API-->>O: 202 {id}
-  D->>W: drain admit — txn: item still ready and unadmitted?
-  W->>X: requestRun(work:ulid)
-  X-->>D: run r1 pending, dispatch-run entry
-  D->>GH: workflow_dispatch(work_id, dispatch marker)
-  A->>API: GET /runs/r1 (Actions OIDC token)
-  API->>GH: fetch run by the token's own run_id, marker must name r1
-  API->>X: bind (repository_id, run_id, run_attempt), record acknowledged
-  API-->>A: spec + item snapshot
-  A->>API: PUT progress / POST links / POST results / POST renew
-  A->>API: POST /runs/r1/complete {ok, summary}
-  API->>X: report(r1) → finished, lock released, report-outcome entry
-  API-->>A: orchestrator outcome (409 if r1 is no longer live)
-  D->>W: drain report-outcome (native anchor) → item done or parked
-  O->>API: GET /items/:id (poll) → done, results[pr]
+  O->>API: PUT /items/01J... {spec}
+  API->>API: grant for spec.pipeline? global cap?
+  API->>X: requestRun({workId}, pipeline, work, requestId)
+  X-->>API: task + run r1 pending + dispatch-run entry (one txn)
+  API-->>O: 201 {id, state: running}
+  D->>GH: workflow_dispatch(work_id, work_spec, marker)
+  A->>A: work from inputs, open PR with claim marker
+  A->>API: renew (OIDC) as needed
+  A->>API: completion {runId, ok, summary, ref: PR URL} (OIDC)
+  API->>X: report(r1) → finished, lock released
+  O->>API: GET /items/01J... → done, runs[r1].result.ref
 ```
 
-Steps 2, 5, 14 are decisions (transactions). Steps 4, 7, 16 are the drain
-carrying their side effects. Step 16 is the only writer of
-`WorkItem.state` after creation; steps 12–13 write run-scoped fields only.
+Step 4 is the only decision, and it is the transaction the orchestrator
+already performs for label dispatch. Nothing is projected afterwards.
 
-### Authorization and admission
+## Auth
 
-Authentication says who is calling; this section says what they may do.
-Both are deliberately explicit because agent-initiated ingress removes the
-human-per-task gate that labels provide today.
+The API is a plain OAuth2 resource server (RFC 6750 bearer tokens): verify
+the JWT against the issuer's OIDC discovery + JWKS with `jose` (already
+used by `github-actions-oidc.ts`, one cached JWKS per issuer), check
+audience, apply the entry's claim predicates, map to a principal and
+scopes. Scopes are additive; issuers confine which scopes they may confer.
 
-- **Grants are per principal, per pipeline.** Configuration is a list of
-  `{ principal, pipelines: [...], maxLiveRuns, admin? }`; a grant confers
-  `work.operator`, and `admin: true` adds `work.admin`. A principal with
-  no grant is rejected at the gate; a granted principal requesting a
-  pipeline outside its list gets `403`. This is the mechanism behind the
-  "not every agent may trigger Claude" decision.
-- **Admission caps.** `maxLiveRuns` bounds how many of a principal's
-  WorkItems may be `ready` or `running` at once; a global cap, sized to
-  the autoscaler's capacity configuration, bounds the whole fleet.
-  Exceeding either returns `429` with `Retry-After`; nothing is queued on
-  the caller's behalf.
-- **Ownership.** `cancel` and `redispatch` are allowed to the item's
-  `origin.principal` and to `admin` principals only. Reads are open to any
-  granted principal (single-tenant fleet). The `runs/:runId` routes require `work.agent` bound to that run.
-- **Console actions map to the same rules, from one source.** A console
-  user acts as `user:<github-login>` (from the existing Auth.js session).
-  Grant configuration is the single authority for `admin`; the console's
-  existing `isAdmin` flag is derived from it rather than kept as a second
-  admin list that can drift.
-- **An agent can be the admin.** Nothing distinguishes a human from an
-  agent at this layer: an agent acting as the fleet's administrator is a
-  principal (e.g. `svc:lcars-admin`, a service-account identity under the
-  Google issuer in v1) with `admin: true` in grants, holding
-  `work.operator` and `work.admin` together. Its first unmet need —
-  managing grants and caps through the API rather than configuration —
-  is what promotes `grants`/`caps` from configuration to resources.
+| Scope           | Confers                            | Issuer (v1)                                | Principal                |
+| --------------- | ---------------------------------- | ------------------------------------------ | ------------------------ |
+| `work.operator` | The `items` routes, per grant list | Google — service-account identity          | mapped from the SA email |
+| `work.agent`    | The run routes for its own run     | GitHub Actions OIDC, with claim predicates | `agent:run/<runId>`      |
 
-### Auth: standard OAuth 2.0 resource server
-
-The API is a plain OAuth2 resource server (RFC 6750 bearer tokens):
-validate the JWT against the issuer's OIDC discovery document + JWKS, check
-audience, then apply the entry's claim predicates. Implemented with `jose`
-(already what `github-actions-oidc.ts` uses), with one cached remote JWKS
-per issuer — not a fresh fetch per request.
-
-- **The gate sits behind the console's Edge proxy.** `apps/console/src/proxy.ts`
-  returns `401` for any `/api` path without an Auth.js session cookie
-  unless the path is in `publicRoutes`/`publicPrefixes`. `/api/work/v1/`
-  is added to `publicPrefixes`, and `proxy.test.ts`'s route scan — which
-  today covers only `app/api/control-plane` — is extended to the new tree.
-  #885 and #1232 each shipped a control-plane route without this entry.
-- **Trusted issuers are configuration**, not code:
-  `[{ issuerUrl, audience, claimPredicates, principalMapping }]`. v1 ships
-  two entries:
-  - Google (`https://accounts.google.com`) — humans and services via
-    **service-account identity**. A Google _user_ credential cannot mint
-    an ID token for an LCARS-chosen audience (`gcloud auth
-print-identity-token --audiences` refuses non-service accounts, and
-    the ADC refresh grant silently returns a Google client-ID audience),
-    and accepting Google's public client audiences would make every ID
-    token jlapenna ever mints for any other service a valid LCARS bearer.
-    So each human impersonates a per-user service account
-    (`--impersonate-service-account … --audiences <lcars> --include-email`,
-    an IAM Token Creator binding per user under the usual Terraform
-    approval), services use their own service accounts, and the principal
-    is mapped from the service-account email. Chosen because it is free
-    today, not because it is contractual.
-  - GitHub Actions (`https://token.actions.githubusercontent.com`) — calls
-    _from runs_. Signature, issuer, and audience are **not** sufficient:
-    any repository can mint a token requesting our audience. The entry
-    carries fail-closed claim predicates: `repository` in the control-plane
-    allow-list, `ref` is `refs/heads/main`, `event_name` is
-    `workflow_dispatch`, `workflow_ref` claim-relative to the allowed
-    worker workflow files, and `job_workflow_ref` pinned **per calling
-    job**: a token minted inside the agent job carries
-    `…/agent-lane.yml@refs/heads/main` — the reusable workflow that defines
-    the job, verified live in #1347 — while the fallback finalizer's token
-    carries the finalizer's own ref. Copying the completion route's
-    finalizer-only pin, as an earlier draft of this spec did, would `403`
-    every call a worker makes. The three existing `assert*OidcClaims`
-    verifiers converge on this one predicate module with per-job pin sets.
-- **Migrating off Google is a config change**: add any standard IdP as an
-  entry, move callers, delete the Google entry. No API or data change. The
-  likely successor is LCARS-minted tokens (sub-project 4) issued from the
-  console's existing Auth.js GitHub login under the console's own JWKS.
-- **Principals are LCARS-native, never issuer subjects.**
-  `origin.principal` stores identifiers like `user:jlapenna`, `svc:cron`,
-  `agent:run/<runId>`, produced by the issuer's mapping table. Raw issuer
-  subjects go in the audit event as detail only.
-- **`agent:run/<runId>` requires a deterministic run binding.** The
-  predicates prove "a trusted worker on an allowed repository", not "the
-  worker for _this_ run", and a first-caller-wins rule cannot tell them
-  apart when two allowed runs share a repository. The codebase already has
-  the deterministic join: every dispatched run's `display_title` carries
-  the dispatch marker whose `intentId` is the orchestrator run ID
-  (`orchestrator-terminal-runs.ts` uses it). On a run's first call the
-  gate fetches the Actions run named by the token's own
-  `(repository, run_id)`, requires its marker to name this `runId` and
-  the run to be live, stores `(repository_id, run_id, run_attempt)` on the
-  `Run`, and thereafter requires the same triple — a GitHub re-run keeps
-  `run_id` and bumps `run_attempt`, so it is refused. The binding is
-  invalidated when the run settles. A token that fails any of this gets
-  `403`, never a fallback principal.
-- **Completion moves to the `runs` route for native runs.** Today's
-  completion route ties a run to its body by `run.task.issue ===
-body.issue`, which can never hold for a native anchor, and discards the
-  verified identity. For native runs the fallback finalizer posts to
-  `POST /runs/:runId/complete` under the same binding; the legacy route is
-  unchanged for GitHub anchors in 1a and converges on the binding in 1b.
-- Authorization is the grant list keyed on the LCARS-native principal, so
-  it survives issuer swaps untouched.
-- The expected third issuer class is **LCARS-minted per-run tokens**
-  (needed by the non-GitHub backend; see
-  [Execution](#execution-abstraction)). Not built in v1.
-
-The binding decision on every `runs/:runId` call:
-
-```mermaid
-flowchart TD
-  T0["bearer token on /runs/:runId"] --> T1{"signature, issuer, audience, claim predicates?"}
-  T1 -->|fail| X403["403"]
-  T1 -->|pass| T2{"run already bound?"}
-  T2 -->|yes| T3{"token triple equals stored repository_id, run_id, run_attempt?"}
-  T3 -->|no| X403
-  T3 -->|yes| OK["principal agent:run/runId, scope work.agent"]
-  T2 -->|no| T4["fetch the Actions run named by the token's repository + run_id"]
-  T4 --> T5{"display_title marker intentId equals runId, and run live?"}
-  T5 -->|no| X403
-  T5 -->|yes| T6["txn: store triple on the Run, record acknowledged"] --> OK
-  S["run settles"] -.-> INV["binding invalidated"]
-```
-
-### CLI
-
-`lcars work create|status|list|cancel|redispatch|link`, mapping 1:1 onto
-the routes. The CLI acquires and attaches the caller's token invisibly
-(today: an impersonated service-account identity token; tomorrow: whatever
-the replacement IdP mints). The `lcars` binary is currently the
-session-title bundle in `packages/fleet-tools`, whose parser accepts only
-`session`; the `work` subcommand tree extends that bundle rather than
-shipping a second binary.
-
-## Ingress adapters
-
-All roads create WorkItems through `createWorkItem()`; state transitions
-come only from the drain.
-
-- **API ingress (v1, new)** — the `POST /items` path. The agent-initiated
-  channel and the reason this program exists.
-- **Webhook ingress (existing, untouched in v1)** — `interpretDelivery`
-  keeps driving GitHub-anchored orchestrator tasks exactly as today.
-  Deliberately not migrated: label-dispatch works, and its interaction
-  surface is GitHub-native by nature. A later sub-project wraps each label
-  dispatch in a WorkItem (`channel: 'webhook'`, issue auto-linked) so the
-  console shows one unified work list — the model already has the fields.
-- **Hosted request ingress (existing, untouched)** — the OIDC-authenticated
-  `/api/control-plane/request` route (#1215) keeps serving GitHub-anchored
-  requests from workflows under its own audience; it is not a `work.*`
-  scope and does not create WorkItems until sub-project 5.
-- **Cron ingress (future)** — a scheduler reads `schedule` on template
-  WorkItems and mints occurrences through the same internal create path as
-  the API. Reserved fields only in v1.
-- **Console ingress (future)** — Quick Tasks eventually become
-  `channel: 'console'` WorkItems instead of issue-creators. Deferred with
-  the same reasoning as webhook.
+- **Grant list.** Configuration: `{ principal → pipelines[] }`. A
+  principal absent from it has no scope; one requesting a pipeline outside
+  its list gets `403`. This is the whole authorization model — there is no
+  admin scope in v1 because no admin-only route exists; the maintainer acts
+  through the console's existing auth wall. An agent acting as the fleet's
+  administrator is just a service-account principal with a broad grant.
+- **Google, via impersonation.** A Google _user_ credential cannot mint an
+  ID token for an LCARS-chosen audience (`gcloud auth print-identity-token
+--audiences` refuses non-service accounts), and accepting Google's public
+  client audiences would make every ID token the user mints for any other
+  service a valid LCARS bearer. So each human impersonates a per-user
+  service account (`--impersonate-service-account … --audiences <lcars>
+--include-email`; one IAM Token Creator binding per user under the usual
+  Terraform approval), and the `lcars` CLI hides it. Chosen because it is
+  free today, not because it is contractual: moving to another IdP, or to
+  LCARS-minted tokens (sub-project 4), is a configuration entry.
+- **GitHub Actions, with predicates.** Signature, issuer, and audience are
+  not sufficient — any repository can mint a token requesting our audience.
+  The existing predicates apply: `repository` in the control-plane
+  allow-list, `ref` is `refs/heads/main`, `event_name` is
+  `workflow_dispatch`, `workflow_ref` claim-relative to the worker
+  workflow files, and `job_workflow_ref` pinned **per calling job** — a
+  token minted inside the agent job carries
+  `…/agent-lane.yml@refs/heads/main` (the reusable workflow that defines
+  the job, verified live in #1347), the fallback finalizer's carries its
+  own. The completion route today pins only the finalizer; the per-job pin
+  set is the one real fix in this area.
+- **Binding a token to its run.** The predicates prove "a trusted worker on
+  an allowed repository", not "the worker for _this_ run". The run routes
+  therefore verify that the Actions run named by the token's own
+  `(repository, run_id)` has a `display_title` dispatch marker whose
+  `intentId` is the `runId` in the body — the deterministic join
+  `orchestrator-terminal-runs.ts` already uses. One GitHub API call, no
+  stored binding state. This replaces the completion route's current
+  `run.task.issue === body.issue` tie, which cannot hold for a native
+  anchor, and applies to both anchor kinds.
 
 ## Execution abstraction
 
-The seam goes where the orchestrator already has one: the outbox. A
-`dispatch-run` entry is handed to an **`Executor`** —
-`dispatch(run, workItem)` plus best-effort `cancel(run)` — selected per
-task. Everything upstream (mutex, lease, retry) is already
-execution-agnostic.
+The seam is the outbox: a `dispatch-run` entry is handed to an
+**`Executor`** — `dispatch(run, task)` — selected per anchor. Cancel is
+what it is today: `cancelRun` settles the run and the job's later calls are
+refused; nothing reaches into Actions.
 
 ### Backend 1 (v1): `GitHubActionsExecutor`
 
 Today's `workflow_dispatch` drain
-(`apps/console/src/lib/orchestrator-dispatch.ts`), promoted to the first
-implementation of the interface. GitHub Actions remains the queue and
-credential broker in v1 — deliberately, since the driver is agent-initiated
-_ingress_, not runner independence.
+(`apps/console/src/lib/orchestrator-dispatch.ts`) as the first
+implementation. GitHub Actions remains the queue and credential broker in
+v1 — deliberately, since the driver is agent-initiated _ingress_, not
+runner independence. The repository comes from `anchorTarget(task)`: the
+anchor's `repo` for GitHub, `work.spec.target.repo` for native. The same
+helper replaces the other `task.repo` / `task.issue` reads
+(`orchestrator-routes.ts`, `orchestrator-terminal-runs.ts`), and
+`FirestoreStore.listRuns` gains an anchor-aware query — the store contract
+spec covers both anchors and runs against the Firestore emulator in CI
+(today its Firestore half is skipped there).
 
-**A native lane path, not "one input".** The worker workflows are
-issue-anchored at every layer: `issue` is a `required: true` input, both
-jobs are gated on `inputs.issue != ''`, `run-name` embeds it, the lane
-reads it in roughly ten steps (`gh issue view`, `verify-deliverable`'s
-`NUM`, …), and the fallback finalizer pipes it through `tonumber` under
-`set -euo pipefail`. Dispatching with `issue: 'undefined'` would pass the
-gates and fail at the finalizer; omitting it is a `422`. The native path
-therefore touches each layer:
+The worker workflows are issue-anchored at every layer — `issue` is a
+required input, both jobs are gated on it, `run-name` embeds it, the lane
+reads it in roughly ten steps, and the fallback finalizer pipes it through
+`tonumber`. The native path:
 
-- `issue` becomes optional; a `work_id` input is the alternative anchor,
-  and the job gates accept either. `run-name` and the dispatch marker use
-  `work:<ulid>/r<n>` (the marker grammar in
-  `libs/dispatch-contracts/src/marker.ts` gains that form, pinned).
-- Every issue-reading lane step gets a native branch: the spec comes from
-  `GET /runs/:runId` (never from an `items` route — a run's token cannot
-  reach one), progress from `PUT …/progress`, deliverable verification
-  from the API mode, and the fallback finalizer from
-  `POST /runs/:runId/complete`.
-- The executor writes the dispatch marker into the run name exactly as
-  today; that marker is what the run binding verifies.
-- `cancel(run)` cancels the Actions run through the stored binding, driven
-  by the `cancel-run` outbox kind; before binding, it falls back to the
-  marker listing keyed by `spec.target.repo`.
-
-**Targetless items are rejected in v1.** `spec.target` stays optional in
-the schema for the later `QueueExecutor`, but this backend cannot launch
-without a repository: the workflow URL and the installation token both come
-from `target.repo`. While `GitHubActionsExecutor` is the only backend,
-`POST /items` returns `400` for an item with no `target.repo`, or one whose
-repository is outside the control-plane allow-list of repositories with the
-worker workflows installed. The API never accepts work no backend can
-launch.
+- `issue` becomes optional; `work_id` and `work_spec` are the alternative
+  inputs, and the job gates accept either anchor.
+- `run-name` and the dispatch marker use `work:<ulid>/r<n>`; the marker
+  grammar (`libs/dispatch-contracts/src/marker.ts`) gains that form, pinned.
+- Each issue-reading lane step gets a native branch: the prompt is built
+  from `work_spec`, `verify-deliverable` checks for the PR with this run's
+  claim marker (as today), and the finalizer posts completion by `runId`.
+- `report-outcome` for a native anchor posts nothing to GitHub; the item's
+  state is already derivable. (`ref` is dispatched as `main`; there is no
+  `target.ref` in v1.)
 
 ### Backend 2 (later): `QueueExecutor`
 
 The actual de-GitHub-ing, as its own sub-project. LCARS keeps a claimable
-run queue (Firestore, same lease/fencing pattern as the outbox). The
-runner-autoscaler — which already builds and launches the runner
-containers — grows a second trigger: poll queue depth, launch the same
-runner image in "direct" mode, where a bootstrap claims a run, pulls the
-spec via API, runs the agent CLI, and reports via API. No Actions queue, no
-workflow YAML, no JIT registration. Runner identity becomes an LCARS-minted
-per-run token.
-
-## Deliverables, results, and evidence
-
-Typed results on the WorkItem, reported through `POST /runs/:runId/results`
-by the run itself:
-
-- `pr` — `{ repo, number, url, headSha }`. **The only kind wired
-  end-to-end in v1.**
-- `report` — bounded markdown body, for answer-shaped work.
-- `artifact` — `{ storageRef, contentType, digest }`, backed by GCS with a
-  bounded upload contract in the spirit of
-  [quick-task-evidence](../../quick-task-evidence.md). Schema-ready only.
-- `message` — a pointer to something delivered elsewhere (Telegram, Slack).
-  Schema-ready only.
-
-**Attribution.** The #815 lesson — a run's own deliverable cannot be
-identified by bot login — is solved today by claim-marker scraping. For
-native tasks, attribution comes from the auth layer instead: a result is
-written by a verified `agent:run/<runId>` principal, so "which run produced
-this" is token-bound fact. GitHub-side claim markers are still written on
-PRs (other tooling reads them), but the control plane's own record no
-longer depends on them.
-
-**Verification.** `verify-deliverable` gains an API mode for native tasks:
-the gate is "the WorkItem has ≥1 result from this run, or an explicit
-failure report" — one HTTP call, no GitHub scraping. In v1 every native task must deliver a `pr` result or an explicit failure; result-kind rules per task shape arrive with non-PR results.
-
-**Failure and parking.** `complete` is terminal for the run: the
-orchestrator settles it and releases the lock, so after `complete` the run
-makes no further calls (the workflow tail must not post). A settle with
-`ok: false`, or exhausting the auto-retry budget, is projected by the
-drain onto the WorkItem as `parked` with the failure summary stored on the
-item; a stale run's `complete` (one the sweep already marked lost and
-retried) is refused `409` and parks nothing — the native equivalent of `status:needs-human`
-plus the outcome comment. `POST /items/:id/redispatch` is the reply-trigger
-analog. Deliberate v1 gap: parked native tasks are visible in console/CLI
-but page no one; notification wiring (Telegram) is sub-project 2.
+run queue (Firestore, the outbox's lease/fencing pattern); the
+runner-autoscaler polls it and launches the same runner image in "direct"
+mode, where a bootstrap claims a run, fetches the spec through a new route,
+runs the agent CLI, and reports through the same run routes. Runner
+identity becomes an LCARS-minted per-run token.
 
 ## Dispatched-agent protocol in native mode
 
-`agent-protocol` is written against an issue. A native task has none, so
-v1 adds a **native mode** section to the shared protocol that maps each
-issue-side action to its API form. Label-driven behavior is untouched;
-this is additive.
+`agent-protocol` is written against an issue. v1 adds a short **native
+mode** section mapping each issue-side action; label-driven behavior is
+untouched.
 
-**Native mode is transitional, not the destination.** The end state
-(decided 2026-08-24) is that dispatched agents are GitHub-issue agnostic:
-they receive a WorkItem, interact only through the `runs` routes, and never
-touch an issue themselves. Once sub-project 5 makes label-driven work a
-WorkItem too, every issue-side affordance in the table below — the eyes
-reaction, the progress comment, the parking label, the outcome comment —
-becomes a **control-plane projection**: the outbox drain writes it to the
-linked issue in response to WorkItem events, exactly as it posts outcome
-comments today. At that point the "issue mode" column is deleted from the
-protocol and the agent-facing contract is the `runs` resource alone.
+| Protocol section                 | Issue mode (today)                   | Native mode (v1)                                                                                        |
+| -------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| 1. Takeover comment              | Comment naming the resume command    | Nothing to post: the session doc names the session; the console renders the takeover affordance from it |
+| 2. Eyes-reaction acknowledgement | 👀 on the issue                      | Implicit: dispatch confirmation moves r_n to `running`                                                  |
+| 3. One edited progress comment   | Single comment, edited in place      | `lcars session title` / status — the existing channel                                                   |
+| 4. Parking                       | `status:needs-human` label + comment | Completion with `ok: false` and the summary; the item reads `parked`                                    |
+| 5. Deliverable rule              | PR carrying the attempt-claim marker | Same PR and marker; `ref` in the completion body                                                        |
+| 6–12. Everything else            | unchanged                            | unchanged                                                                                               |
 
-| Protocol section                                                          | Issue mode (today)                   | Native mode (v1)                                                                                                                                   |
-| ------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Takeover comment                                                       | Comment naming the resume command    | `POST /runs/:runId/links` kind `session` with the session ID and resume command as `note`; the console renders the takeover affordance from it     |
-| 2. Eyes-reaction acknowledgement                                          | 👀 on the issue                      | Implicit: the first authenticated `GET /runs/:runId` performs the run binding and records an `acknowledged` event                                  |
-| 3. One edited progress comment                                            | Single comment, edited in place      | `PUT /runs/:runId/progress` — one bounded note, replaced in place                                                                                  |
-| 4. Parking                                                                | `status:needs-human` label + comment | `POST /runs/:runId/complete` with `ok: false` and the summary; the item moves to `parked`                                                          |
-| 5. Deliverable rule                                                       | PR carrying the attempt-claim marker | Same PR and marker (the marker's intent ID is already the orchestrator run ID, now `work:<ulid>/r<n>`), plus `POST /runs/:runId/results` kind `pr` |
-| 6–11. Push early, budget, CI reruns, headless-sync, identity, hard limits | unchanged                            | unchanged                                                                                                                                          |
-| 12. Session status channel                                                | `lcars session title`                | unchanged — telemetry never depended on GitHub                                                                                                     |
+PRs from native tasks are authored by the same bot logins, so
+`agent-automerge.yml` treats them identically; the PR body references
+`Work: work:<ulid>` rather than `Fixes #N`.
 
-Two implementation notes fall out of the table:
+**End state.** Native mode is transitional. Once sub-project 5 makes
+label-driven work carry a `work` payload too, every issue-side affordance
+becomes a control-plane projection written by the drain, and the
+agent-facing contract is the run routes alone.
 
-- The attempt-marker grammar (`libs/dispatch-contracts/src/marker.ts`)
-  must accept the `work:` run-ID form; a pinned test covers both forms.
-- PRs from native tasks are authored by the same bot logins as today, so
-  `agent-automerge.yml` treats them identically. A native task's PR body
-  references the item (`Work: work:<ulid>`) rather than `Fixes #N`.
+## Console
 
-## Console surface
-
-Two pages, deliberately minimal in v1, behind the console's existing auth
-wall:
-
-- `/work` — the work list: state, title, channel, principal, age; parked
-  items surfaced first. This page is why later ingress unification is worth
-  doing: it eventually becomes the one place to see everything.
-- `/work/[id]` — spec, event timeline, runs (linking into existing session
-  detail pages via a `session` link, which telemetry already provides),
-  links, results, and three actions: cancel, redispatch, attach link.
+Two pages behind the existing auth wall: `/work` — the derived list, parked
+first; `/work/[id]` — spec, runs with results, sessions, and the two
+actions (cancel, redispatch).
 
 ## Error handling
 
-Mostly inherited from the orchestrator, which is the point of building on
-it:
-
-- Create is idempotent by `requestId`; admission caps are the only
-  synchronous refusal.
-- Executor dispatch failures retry through the existing outbox lease
-  machinery; permanent outcomes settle the entry `done` with an event, so
-  no entry can become a poison pill at the head of the drain.
-- Silent runner death → lease expiry → bounded auto-retry → parked.
-- New surface follows house style: strict zod schemas, bounded strings,
-  fail-closed validation. WorkItem state transitions are a validated state
-  machine, applied only by the drain.
-
-## Retention
-
-WorkItems are retained indefinitely in v1; they are the audit trail.
-Idempotency reservation documents carry an `expiresAt` (30 days) as a
-Firestore `Timestamp` — a deliberate departure from the house ISO-string
-convention, because a TTL policy ignores string fields (#2708 hit exactly
-this). Enabling the policy is an infrastructure change under the usual
-maintainer-approval rule and is not part of the code change.
+Inherited: idempotent create; `duplicate-request` for in-flight replays;
+outbox lease retry for dispatch failures; lease expiry → bounded auto-retry
+→ `parked` by derivation. New surface follows house style: strict zod,
+bounded strings, fail-closed validation. `403`/`429` are the only
+synchronous refusals besides validation.
 
 ## Testing
 
-Mirror the orchestrator's pattern, with its one gap closed:
-
-- The store contract spec runs against both memory and Firestore stores.
-  Its Firestore half is `skipIf` no emulator is configured — and CI does
-  not configure one — so today it proves the memory store only. 1a runs it
-  against the Firestore emulator in CI; anchor-aware queries are exactly
-  what the memory store cannot vouch for.
-- Persisted-shape fixtures of current Task/Run/Outbox documents parsed
-  through the new schemas.
-- State-machine unit tests for WorkItem transitions, driven through the
-  drain.
-- API route tests with stubbed verified tokens; table-driven specs for
-  claim predicates (per-job `job_workflow_ref` pins included) and
-  principal mapping; the proxy allow-list scan extended to `api/work/v1`.
-- Workflow contract tests for the optional `issue` / `work_id` gates.
-- Pinned wire-format tests for `work:` anchor keys, the marker grammar,
-  and result schemas.
-- No real git in unit tests.
-- Console E2E additions stay off while the suite is paused (#1049). The
-  real-path proof is a smoke run: one native task dispatched end-to-end
-  producing a PR on a test repo.
+- Store contract spec against memory and Firestore stores, the Firestore
+  half now running against the emulator in CI; persisted-shape fixtures for
+  the anchor union.
+- Derived-state table-driven spec; route tests with stubbed tokens; claim
+  predicate specs including per-job `job_workflow_ref` pins; proxy
+  allow-list scan extended to `api/work/v1`.
+- Workflow contract test for the optional `issue` / `work_id` gates; pinned
+  marker grammar and `work:` key formats.
+- No real git in unit tests. Console E2E stays off while paused (#1049);
+  the real-path proof is one native task dispatched end-to-end producing a
+  PR on a test repo.
 
 ## Sequencing
 
-Six sub-projects, each its own plan → PR cycle. This document is the full
-design for #1 (both parts) and pins the seams for the rest.
-
-1. **v1 (this spec), in two parts:**
-   - **1a — orchestrator generalization.** Anchor union, anchor-aware
-     store, `anchorTarget`, `admit`/`cancel-run` outbox kinds with drain
-     branches, anchor-dispatched `report-outcome`, emulator-backed store
-     contract in CI. Lands with zero behavior change for GitHub anchors.
-   - **1b — the native path.** `libs/work`, `items`/`runs` API, OAuth2
-     gate with grants and caps, `lcars work` CLI, native lane path and
-     finalizer, run binding, PR results, parking/redispatch, sweep,
-     minimal console pages, native-mode protocol section.
+1. **v1 (this spec):** anchor union + `work` payload + `anchorTarget` +
+   anchor-aware store; `items` routes, grant list, cap, OAuth2 gate with
+   per-job pins and marker binding; generalized completion/renew; native
+   lane path; `lcars work`; two console pages; native-mode protocol
+   section.
 2. **Notifications:** parked-work paging (Telegram) + console polish.
-3. **Cron ingress:** scheduler minting occurrences from `schedule`.
-4. **`QueueExecutor`:** direct runner mode in the autoscaler + LCARS-minted
-   run tokens.
-5. **Ingress unification:** webhook label-dispatch and Quick Tasks become
-   WorkItems, issue-side affordances become control-plane projections of
-   WorkItem events, and `agent-protocol` collapses to the `runs` resource —
-   agents become GitHub-issue agnostic.
-6. **Session resume and persistence:** `redispatch` may resume a prior
-   run's session; sessions linked to open items are pinned from expiry.
+3. **Cron ingress:** a scheduler minting items from a schedule.
+4. **`QueueExecutor`:** direct runner mode + LCARS-minted run tokens +
+   spec-fetch route.
+5. **Ingress unification:** label-driven work and Quick Tasks carry `work`;
+   issue affordances become projections; the protocol collapses to the run
+   routes.
+6. **Session resume and persistence.**
+
+## Deferred extensions
+
+Added when something needs them; nothing above precludes them:
+
+- Typed multi-results (`report`, `artifact`, `message`) beyond
+  `Run.result`.
+- Operator-attached links/evidence on an item.
+- Per-principal caps, an admin scope, and `grants` as a resource (the
+  trigger: an admin agent that must manage grants through the API).
+- Streaming status; MCP transport; `target.ref`.
 
 ## Non-goals (v1)
 
-- Migrating existing GitHub-anchored tasks or Quick Tasks to WorkItems.
-- Streaming/long-poll status.
-- Non-PR result kinds beyond schema definitions.
-- Targetless (no `target.repo`) work items — rejected at the API until
-  `QueueExecutor` lands.
-- `target.ref`: v1 dispatches `main` only, as the drain and OIDC predicate
-  already require.
+- Migrating GitHub-anchored tasks or Quick Tasks.
+- Targetless items; a review dispatch mode; a default pipeline.
 - Notifications for parked work.
 - Any change to the dispatched-agent protocol for label-driven work.
-- MCP transport (wraps the REST API later if wanted).
-- A review dispatch mode for native tasks; a review is expressed as a task
-  with a `github-pr` link when someone needs one.
-- LCARS-minted tokens (sub-project 4) and any issuer beyond Google + GitHub
-  Actions.
-- A default pipeline or an implicit "any pipeline" grant.
+- Any issuer beyond Google (service-account identity) and GitHub Actions.
