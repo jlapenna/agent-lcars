@@ -32,9 +32,10 @@ name: Agent PR Auto-Merge (Reusable)
 # is already 0 - a human-review click before merge is pure friction for
 # agent-authored PRs, not a security boundary. Any PR whose author is one of
 # the caller's known coding-agent bot identities gets squash auto-merge
-# enabled the moment it's opened/marked ready, gated only on the ruleset's
-# required checks. GITHUB_TOKEN-authored auto-merges then do not emit
-# downstream push workflows, and GITHUB_TOKEN-dispatched workflows do not
+# enabled the moment a ready PR is opened/marked ready, gated only on the
+# ruleset's required checks. A scheduled/manual reconciliation sweep repairs a
+# missed event after an Actions outage. GITHUB_TOKEN-authored auto-merges then
+# do not emit downstream push workflows, and GITHUB_TOKEN-dispatched workflows do not
 # emit workflow_run events, so the restore-main-checks job rebuilds the
 # missing main-branch CI/deploy chain explicitly, and close-orphaned-anchors
 # sweeps up the linked issues GitHub's own "Closes #N" handling never closes
@@ -173,6 +174,7 @@ jobs:
     if: >
       (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') &&
       contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login) &&
+      github.event.pull_request.draft == false &&
       (github.event_name != 'pull_request_review' ||
        github.event.review.state == 'approved')
     runs-on: ${{ fromJSON(inputs.runs-on) }}
@@ -226,16 +228,100 @@ jobs:
               --method POST --input - >/dev/null \
             || echo "::warning::Could not assign $FLEET_LOGIN to #$PR"
 
-      - name: Mark ready and enable squash auto-merge
+      - name: Enable squash auto-merge
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
-            gh pr ready "$PR" --repo "$REPO"
-          fi
           gh pr merge "$PR" --repo "$REPO" --auto --squash
+
+          gh pr view "$PR" --repo "$REPO" --json state,autoMergeRequest \
+            --jq 'if .state == "MERGED" or .autoMergeRequest != null then . else error("auto-merge is not armed") end'
+
+  # Event delivery is not durable across an Actions outage. Workers own the
+  # primary arm, and this sweep is the independent repair path for an agent
+  # that timed out before handoff or a pull_request event that never ran. It
+  # intentionally leaves drafts alone: draft is the fleet's parked/WIP state.
+  reconcile-automerge:
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.monitor-pr == '')
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: agent-automerge-reconcile-open-prs
+      cancel-in-progress: false
+    steps:
+      - name: Assert required inputs are set
+        env:
+          AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
+        run: |
+          if [ -z "$AGENT_BOT_LOGINS" ]; then
+            echo "::error::Missing required workflow input: bot-logins"
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and all(.[]; type == "string")' \
+            <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+            echo "::error::bot-logins must be a JSON array of strings"
+            exit 1
+          fi
+
+      - name: Arm ready open agent PRs missed by event delivery
+        env:
+          AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          OPEN_PRS_FILE="$RUNNER_TEMP/agent-automerge-open-prs.tsv"
+          gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | [.number, .user.login, .draft] | @tsv' \
+            >"$OPEN_PRS_FILE"
+          mapfile -t OPEN_PRS <"$OPEN_PRS_FILE"
+
+          CHECKED=0
+          ARMED=0
+          FAILED=0
+          for ROW in "${OPEN_PRS[@]}"; do
+            IFS=$'\t' read -r PR AUTHOR DRAFT <<<"$ROW"
+            if [ "$DRAFT" = true ] || \
+               ! jq -e --arg login "$AUTHOR" 'index($login) != null' \
+                 <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+              continue
+            fi
+
+            CHECKED=$((CHECKED + 1))
+            VIEW=$(gh pr view "$PR" --repo "$REPO" --json state,autoMergeRequest)
+            if jq -e '.state == "MERGED" or .autoMergeRequest != null' \
+              <<<"$VIEW" >/dev/null; then
+              echo "PR #$PR is already merged or auto-merge-armed."
+              continue
+            fi
+
+            if ! gh pr merge "$PR" --repo "$REPO" --auto --squash; then
+              echo "::error::Could not arm auto-merge for agent PR #$PR."
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+
+            VIEW=$(gh pr view "$PR" --repo "$REPO" --json state,autoMergeRequest)
+            if jq -e '.state == "MERGED" or .autoMergeRequest != null' \
+              <<<"$VIEW" >/dev/null; then
+              echo "Armed squash auto-merge for agent PR #$PR."
+              ARMED=$((ARMED + 1))
+            else
+              echo "::error::PR #$PR remained open without auto-merge after the arm command."
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          echo "Reconciliation checked=$CHECKED armed=$ARMED failed=$FAILED"
+          [ "$FAILED" -eq 0 ]
 
   restore-main-checks:
     # Three ways in: a workflow_run completion (the fast path - only fires

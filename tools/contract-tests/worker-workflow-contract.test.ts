@@ -33,6 +33,7 @@ interface WorkflowJob {
     name?: string;
     if?: string;
     uses?: string;
+    run?: string;
     with?: Record<string, string | number | boolean>;
   }>;
   uses?: string;
@@ -320,6 +321,52 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(source).toMatch(
       /AGENT_BOT_LOGINS:\s+\$\{\{ inputs\.bot-logins \}\}/u,
     );
+  });
+
+  it('agent-automerge retries missed events and reconciles ready bot PRs without promoting drafts', () => {
+    const caller = loadWorkflow('agent-automerge.yml');
+    expect(caller.source).toMatch(
+      /types:\s*\[opened, reopened, synchronize, ready_for_review\]/u,
+    );
+
+    const { source, doc } = loadWorkflow('agent-automerge-reusable.yml');
+    expect(doc.jobs?.automerge?.if).toContain(
+      'github.event.pull_request.draft == false',
+    );
+    expect(source).not.toContain('gh pr ready "$PR"');
+
+    const reconcile = doc.jobs?.['reconcile-automerge'];
+    expect(reconcile?.if).toContain("github.event_name == 'schedule'");
+    expect(reconcile?.if).toContain("github.event_name == 'workflow_dispatch'");
+    const reconcileScript = reconcile?.steps?.find(
+      (step) =>
+        step.name === 'Arm ready open agent PRs missed by event delivery',
+    )?.run;
+    expect(reconcileScript).toContain('AGENT_BOT_LOGINS');
+    expect(reconcileScript).toContain('if [ "$DRAFT" = true ]');
+    expect(reconcileScript).toContain('>"$OPEN_PRS_FILE"');
+    expect(reconcileScript).toContain(
+      'gh pr merge "$PR" --repo "$REPO" --auto --squash',
+    );
+    expect(reconcileScript).toContain('--json state,autoMergeRequest');
+  });
+
+  it('headless handoff forbids review requests and requires verified auto-merge', () => {
+    const protocol = readFileSync(
+      path.join(
+        repoRoot,
+        '.agents/skills/agent-protocol/reference/agent-protocol.md',
+      ),
+      'utf8',
+    );
+    expect(protocol).not.toContain(
+      'Request review from `jlapenna` on every pull request you open.',
+    );
+    expect(protocol).toMatch(/\*\*do not request\s+human review\*\*/u);
+    expect(protocol).toContain(
+      'gh pr merge <N> --repo <owner/repo> --auto --squash',
+    );
+    expect(protocol).toContain('--json autoMergeRequest');
   });
 });
 

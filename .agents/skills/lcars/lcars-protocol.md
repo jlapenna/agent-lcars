@@ -26,6 +26,9 @@ The exact webhook, mode, lease, outbox, and provider telemetry behavior is in
 `.github/workflows/agent-automerge.yml` is a thin caller of the published fleet
 workflow. Bot identities come from the repository's `AGENT_BOT_LOGINS` variable;
 add a new pipeline's login there rather than forking the workflow logic.
+Workers arm squash auto-merge directly as part of the headless handoff. The
+workflow handles event-driven arming and periodically reconciles ready open bot
+PRs so a missed or unavailable Actions event cannot strand one.
 
 ## Repository development boundaries
 
