@@ -4,11 +4,16 @@
    [SKILL.md](../SKILL.md#hard-guardrails)'s checkout-safety guardrail) —
    never on `main`, never in the primary checkout.
 2. Run [verify.md](verify.md) before opening or updating the PR.
-3. Open the PR with `jlapenna` as reviewer:
+3. For an interactive, human-driven change, open the PR with `jlapenna` as
+   reviewer:
 
    ```bash
    gh pr create --reviewer jlapenna
    ```
+
+   Headless dispatched workers instead follow the shared
+   [agent protocol](../../agent-protocol/SKILL.md): they do not request human
+   review and arm squash auto-merge after opening a ready PR.
 
    `jlapenna` is this repo's maintainer for every purpose a PR review, a
    parking assignee (see the [lcars](../../lcars/SKILL.md) skill for the

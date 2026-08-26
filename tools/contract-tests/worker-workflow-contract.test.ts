@@ -333,6 +333,9 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(doc.jobs?.automerge?.if).toContain(
       'github.event.pull_request.draft == false',
     );
+    expect(doc.jobs?.automerge?.if).toContain(
+      "!contains(github.event.pull_request.labels.*.name, 'status:needs-human')",
+    );
     expect(doc.jobs?.['restore-main-checks']?.if).toContain(
       'github.event.pull_request.draft == false',
     );
@@ -347,11 +350,25 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     )?.run;
     expect(reconcileScript).toContain('AGENT_BOT_LOGINS');
     expect(reconcileScript).toContain('if [ "$DRAFT" = true ]');
+    expect(reconcileScript).toContain('[ "$PARKED" = true ]');
     expect(reconcileScript).toContain('>"$OPEN_PRS_FILE"');
     expect(reconcileScript).toContain(
       'gh pr merge "$PR" --repo "$REPO" --auto --squash',
     );
     expect(reconcileScript).toContain('--json state,autoMergeRequest');
+
+    const clearRequests = doc.jobs?.automerge?.steps?.find(
+      (step) => step.name === 'Clear outstanding review requests',
+    )?.run;
+    for (const script of [clearRequests, reconcileScript]) {
+      expect(script).toContain('pulls/$PR/requested_reviewers');
+      expect(script).toContain('--method DELETE --input -');
+      expect(script).toContain('(.users | length) == 0');
+      expect(script).toContain('(.teams | length) == 0');
+    }
+    expect(
+      reconcileScript?.indexOf('pulls/$PR/requested_reviewers'),
+    ).toBeLessThan(reconcileScript?.indexOf('gh pr merge "$PR"') ?? -1);
   });
 
   it('headless handoff forbids review requests and requires verified auto-merge', () => {
@@ -374,6 +391,12 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(protocol).toMatch(
       /Leave a human-authored PR's merge\s+state\s+unchanged/u,
     );
+    const localPrGuide = readFileSync(
+      path.join(repoRoot, '.agents/skills/agent-lcars-dev/references/pr.md'),
+      'utf8',
+    );
+    expect(localPrGuide).toContain('interactive, human-driven change');
+    expect(localPrGuide).toContain('they do not request human');
   });
 });
 
