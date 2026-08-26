@@ -74,6 +74,10 @@ export interface WatcherDaemonOptions {
    * instance upserts. `buildSessionDoc` only ever reads these for
    * `issue-agent` docs, so a host-watcher instance simply never sets them. */
   runId?: string;
+  /** Runner-mode only, see `runId`. Orchestrator run ID (`broker_intent_id`)
+   * — the join key a work item needs to find its sessions. Distinct from
+   * `runId`, the GitHub Actions run id. */
+  intentId?: string;
   /** Runner-mode only, see `runId`. */
   issueNumber?: number;
   /** Runner-mode only: forces every doc this daemon upserts to the given
@@ -536,6 +540,7 @@ export class WatcherDaemon {
 
       const write = buildSessionWrite(summaryWithStatus, liveness, {
         runId: this.options.runId,
+        intentId: this.options.intentId,
         issueNumber: this.options.issueNumber,
         repo: this.options.repo,
         ...(this.options.forceSource && {

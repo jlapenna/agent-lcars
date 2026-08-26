@@ -22,9 +22,11 @@
 #   /usr/local/lib/agent-lcars/sidecar-lifecycle.sh finalize
 #
 # Required env: WRITER_CREDENTIALS_FILE, RUN_ID. Optional: NUM
-# (issue/PR number). Every failure path logs and exits 0 -- telemetry
-# must never fail the job it instruments; callers should still wrap the
-# step itself in `continue-on-error: true` as defense in depth.
+# (issue/PR number), INTENT_ID (orchestrator run id, `broker_intent_id` --
+# the join key a work item needs to find its sessions). Every failure path
+# logs and exits 0 -- telemetry must never fail the job it instruments;
+# callers should still wrap the step itself in `continue-on-error: true` as
+# defense in depth.
 set -u
 
 MODE="${1:?usage: $0 start|finalize}"
@@ -92,6 +94,9 @@ fi
 ARGS=(runner "$CLI_SUBCOMMAND" --run-id "$RUN_ID" --projects-dir "$HOME/.claude/projects")
 if [ -n "${NUM:-}" ]; then
   ARGS+=(--issue-number "$NUM")
+fi
+if [ -n "${INTENT_ID:-}" ]; then
+  ARGS+=(--intent-id "$INTENT_ID")
 fi
 
 if [ "$MODE" = start ]; then

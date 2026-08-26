@@ -799,6 +799,7 @@ jobs:
           workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider || env.FLEET_TELEMETRY_WIF_PROVIDER }}
           service-account: ${{ inputs.telemetry-service-account || env.FLEET_TELEMETRY_SERVICE_ACCOUNT }}
           issue: ${{ inputs.issue }}
+          intent-id: ${{ inputs.broker-intent-id }}
 
       - name: Start telemetry sidecar (published)
         id: telemetry-start-published
@@ -808,6 +809,7 @@ jobs:
           workload-identity-provider: ${{ inputs.telemetry-workload-identity-provider || env.FLEET_TELEMETRY_WIF_PROVIDER }}
           service-account: ${{ inputs.telemetry-service-account || env.FLEET_TELEMETRY_SERVICE_ACCOUNT }}
           issue: ${{ inputs.issue }}
+          intent-id: ${{ inputs.broker-intent-id }}
 
       # Claude's subscription token, read from Secret Manager per run
       # (#1350). Before this, every consumer repo carried its own copy as
@@ -1464,6 +1466,11 @@ jobs:
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
+          # The orchestrator's own run ID (`broker_intent_id`) -- the join
+          # key a work item needs to find its sessions. Forwarded to
+          # telemetry-finalize.sh, which forwards it unchanged to
+          # sidecar-lifecycle.sh.
+          INTENT_ID: ${{ inputs.broker-intent-id }}
           ISSUE: ${{ inputs.issue }}
           MODE: ${{ inputs.mode }}
           # This run's verified attempt identity (#815): published via

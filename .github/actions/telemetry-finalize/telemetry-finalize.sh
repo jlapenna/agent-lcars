@@ -4,8 +4,8 @@
 # must not race a doc write against this step's own authoritative one) and
 # ship a final `ended` doc with the transcript archived to GCS, since the
 # container disappears the moment the job ends. WRITER_CREDENTIALS_FILE,
-# RUN_ID, and NUM are consumed by sidecar-lifecycle.sh itself, not this
-# script directly.
+# RUN_ID, NUM, and INTENT_ID are consumed by sidecar-lifecycle.sh itself,
+# not this script directly.
 set -euo pipefail
 
 SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh

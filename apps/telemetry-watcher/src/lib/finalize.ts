@@ -326,6 +326,7 @@ async function finalizeSummary(
 
   const write = buildSessionWrite(summaryWithStatus, 'ended', {
     runId: config.runId,
+    intentId: config.intentId,
     issueNumber: config.issueNumber,
     repo: config.repo,
     // Same override the sidecar applies (see runner.ts) — this is the

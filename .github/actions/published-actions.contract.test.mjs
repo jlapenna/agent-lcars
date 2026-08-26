@@ -353,6 +353,10 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'WRITER_CREDENTIALS_FILE',
       'NO_DELIVERABLE_REASON',
       'FAILURE_LOG_SCAN_SCRIPT',
+      // The orchestrator run id (`broker_intent_id`) -- forwarded
+      // unchanged to telemetry-finalize.sh, then sidecar-lifecycle.sh
+      // (task 7, native work items foundation).
+      'INTENT_ID',
       // AGENT_STEP_OUTCOME, READINESS_FAILURE, and MAINTAINER were
       // retired 2026-08-17: the first two only fed the step's own
       // now-deleted $GITHUB_OUTPUT writes (nothing ever mapped

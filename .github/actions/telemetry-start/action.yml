@@ -13,6 +13,13 @@ inputs:
   issue:
     description: Issue or pull request number this run is working, forwarded to the sidecar.
     required: true
+  intent-id:
+    description: >-
+      Orchestrator run ID (broker_intent_id) -- the join key a work item
+      needs to find its sessions. Forwarded to the sidecar as INTENT_ID.
+      Optional; label-driven runs have one too (<repo>#<issue>/r<n>).
+    required: false
+    default: ''
 
 outputs:
   credentials-file-path:
@@ -68,6 +75,7 @@ runs:
         WRITER_CREDENTIALS_FILE: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
         RUN_ID: ${{ github.run_id }}
         NUM: ${{ inputs.issue }}
+        INTENT_ID: ${{ inputs.intent-id }}
       run: |
         SCRIPT=/usr/local/lib/agent-lcars/sidecar-lifecycle.sh
         if [ -x "$SCRIPT" ]; then

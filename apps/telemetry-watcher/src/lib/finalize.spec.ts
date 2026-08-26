@@ -121,7 +121,11 @@ describe('finalizeSidecar', () => {
     };
 
     await finalizeSidecar({
-      config: baseConfig({ runId: '999888777', issueNumber: 3107 }),
+      config: baseConfig({
+        runId: '999888777',
+        intentId: 'octo/example#3107/r1',
+        issueNumber: 3107,
+      }),
       store,
       discover: () => Object.keys(files),
       readFile: (p: string) => files[p as keyof typeof files],
@@ -135,6 +139,7 @@ describe('finalizeSidecar', () => {
       source: 'issue-agent',
       liveness: 'ended',
       runId: '999888777',
+      intentId: 'octo/example#3107/r1',
       issueNumber: 3107,
     });
   });

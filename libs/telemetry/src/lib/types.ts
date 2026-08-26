@@ -221,6 +221,9 @@ export interface CliSessionDoc extends BaseSessionDoc {
 export interface IssueAgentSessionDoc extends BaseSessionDoc {
   source: 'issue-agent';
   runId?: string;
+  /** The orchestrator run ID (`broker_intent_id`) — the join key from a
+   * work item to its sessions. `runId` is the GitHub Actions run id. */
+  intentId?: string;
   issueNumber?: number;
   /** `gs://` URI of this run's archived session data (Slice 2's runner-mode
    * shipper — see claude.yml's "Finalize telemetry sidecar" step,
@@ -282,6 +285,8 @@ export interface BuildSessionDocOptions {
   forceSource?: SessionSummary['source'];
   /** `issue-agent` sessions only. */
   runId?: string;
+  /** `issue-agent` sessions only. */
+  intentId?: string;
   /** `issue-agent` sessions only. */
   issueNumber?: number;
   /** `issue-agent` sessions only — `cli` sessions get `repo` from
