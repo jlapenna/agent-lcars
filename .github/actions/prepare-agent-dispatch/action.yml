@@ -10,8 +10,19 @@ inputs:
     description: Name of the agent receiving the dispatch.
     required: true
   issue:
-    description: Issue or pull request number that anchors the work.
-    required: true
+    description: >-
+      Issue or pull request number that anchors the work. Empty for a
+      native work-item dispatch (see `work`), which has no issue.
+    required: false
+    default: ''
+  work:
+    description: >-
+      JSON dispatch payload for a native work item (no issue anchor):
+      `{"id":"<ulid>","spec":{"title","description","pipeline","target":{"repo"}}}`.
+      When set, the brief's `anchor` is built from this input directly, with
+      no GitHub read. Empty for an issue-anchored dispatch.
+    required: false
+    default: ''
   mode:
     description: Dispatch mode selected by the router.
     required: true
@@ -27,6 +38,12 @@ inputs:
     description: Optional router or deployment context for the dispatch.
     required: false
     default: ''
+  console-url:
+    description: >-
+      Base URL of the Agent LCARS console, used to build a native work
+      item's `anchor.html_url` (`<console-url>/work/<id>`).
+    required: false
+    default: 'https://lcars.jlapenna.net'
   prior-terminal-state:
     description: JSON summary emitted by broker preflight for the prior attempt.
     required: false
@@ -68,10 +85,12 @@ runs:
         GH_TOKEN: ${{ inputs.token || github.token }}
         AGENT: ${{ inputs.agent }}
         ISSUE: ${{ inputs.issue }}
+        WORK: ${{ inputs.work }}
         MODE: ${{ inputs.mode }}
         REPLY: ${{ inputs.reply }}
         RUNBOOK: ${{ inputs.runbook }}
         CONTEXT: ${{ inputs.context }}
+        CONSOLE_URL: ${{ inputs.console-url }}
         PRIOR_TERMINAL_STATE: ${{ inputs.prior-terminal-state }}
         BUDGET_MINUTES: ${{ inputs.budget-minutes }}
         ARTIFACT_CHECKPOINT_MINUTES: ${{ inputs.artifact-checkpoint-minutes }}

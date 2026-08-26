@@ -59,8 +59,35 @@ skills_digest="$(bash "$GITHUB_ACTION_PATH/install-skills.sh" \
 
 mkdir -p "$dispatch_dir"
 
-anchor_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
-comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+if [ -n "${WORK:-}" ]; then
+  # Native work item: the anchor is the dispatch input itself. No GitHub
+  # reads -- there is no issue, thread, or label to consult. WORK is a
+  # dispatch-time input under caller control, not untrusted GitHub prose,
+  # but a malformed payload here is a caller bug, not a retryable
+  # condition, so it fails the dispatch outright rather than limping on
+  # with a partially-built anchor.
+  if ! jq -e '.id and .spec.title and .spec.target.repo' <<<"$WORK" >/dev/null 2>&1; then
+    echo "::error::WORK is malformed: expected {id, spec:{title, target:{repo}}}" >&2
+    exit 1
+  fi
+  work_json="$(jq -c . <<<"$WORK")"
+  anchor_json="$(jq -cn --argjson w "$work_json" --arg console "${CONSOLE_URL:-https://lcars.jlapenna.net}" '{
+    type: "work",
+    id: $w.id,
+    title: $w.spec.title,
+    body: $w.spec.description,
+    target_repo: $w.spec.target.repo,
+    html_url: ($console + "/work/" + $w.id),
+    labels: [], assignees: [], state: "open", state_reason: null
+  }')"
+  comments_json='[]'
+  # A native run has no maintainer thread to reply on; force this
+  # regardless of what the caller happened to pass as REPLY.
+  REPLY=''
+else
+  anchor_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
+  comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+fi
 
 if ! jq -e 'type == "object" or . == null' <<<"${PRIOR_TERMINAL_STATE:-null}" >/dev/null; then
   echo "::error::PRIOR_TERMINAL_STATE must be a JSON object or null" >&2
@@ -137,8 +164,14 @@ jq -n \
    ) as $result |
    {schema: 3, agent: $agent, repository: $repository,
     anchor: {
-      number: ($issue | tonumber),
-      type: (if $anchor.pull_request then "pull-request" else "issue" end),
+      # $issue is "" for a native work-item dispatch (no issue number).
+      number: (if $issue == "" then null else ($issue | tonumber) end),
+      type: ($anchor.type // (if $anchor.pull_request then "pull-request" else "issue" end)),
+      # id/target_repo only ever come from the native-work branch above;
+      # gated on type so an issue anchor numeric `id` field (an unrelated
+      # GitHub database id) never leaks through here.
+      id: (if $anchor.type == "work" then $anchor.id else null end),
+      target_repo: (if $anchor.type == "work" then $anchor.target_repo else null end),
       state: $anchor.state,
       state_reason: ($anchor.state_reason // null),
       title: $anchor.title,
@@ -160,7 +193,11 @@ jq -n \
       else $result | .body = ($result.body | clamp($max_result_body; "Read the full comment at \($result.html_url).")) end
     ),
     requested_results: (
-      if $mode == "review" then ["review", "park", "no-op"]
+      # A native work item has no issue to comment on or park via a label,
+      # and no-op has no evidence surface without an anchor thread -- the
+      # only accepted deliverable is a PR (agent-protocol.md 5a).
+      if $anchor.type == "work" then ["pull-request"]
+      elif $mode == "review" then ["review", "park", "no-op"]
       elif $mode == "reply" then ["comment", "pull-request", "park", "no-op"]
       else ["pull-request", "park", "no-op"] end
     ),

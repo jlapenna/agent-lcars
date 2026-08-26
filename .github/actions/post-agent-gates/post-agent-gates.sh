@@ -48,8 +48,7 @@
 # maintainer decision 2026-08-17).
 #
 # Driven entirely by environment variables:
-#   Always required: GH_TOKEN, AGENT, REPO, SERVER_URL, RUN_ID, ISSUE,
-#     JOB_STATUS.
+#   Always required: GH_TOKEN, AGENT, REPO, SERVER_URL, RUN_ID, JOB_STATUS.
 #   Required only when JOB_STATUS is "success" (verify-deliverable's own
 #     inputs at that point, #815): MODE and ATTEMPT_ID, both mandatory.
 #     verify-deliverable.sh is exact-marker-only now -- the legacy
@@ -58,7 +57,11 @@
 #     deleted once every fleet consumer passed ATTEMPT_ID (agent-lcars's
 #     own three lanes, homelab#697, sprinkles' exact-marker flip), so this
 #     script no longer reads or forwards either variable.
-#   Optional: WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
+#   Optional: ISSUE (empty for a native work-anchored run -- forwarded
+#     unchanged to telemetry-finalize.sh, which is already anchor-agnostic;
+#     the verify-deliverable phase below is anchor-agnostic too: it is
+#     PR-marker-only when ISSUE is empty, see verify-deliverable.sh);
+#     WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
 #     path; empty is valid, matching telemetry-start being best-effort);
 #     NO_DELIVERABLE_REASON (each lane's own no-deliverable wording,
 #     pre-rendered by the caller with its own AGENT_LABEL/REDISPATCH_COMMAND
@@ -79,8 +82,8 @@ set -uo pipefail
 : "${REPO:?REPO is required}"
 : "${SERVER_URL:?SERVER_URL is required}"
 : "${RUN_ID:?RUN_ID is required}"
-: "${ISSUE:?ISSUE is required}"
 : "${JOB_STATUS:?JOB_STATUS is required}"
+ISSUE="${ISSUE:-}"
 WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"

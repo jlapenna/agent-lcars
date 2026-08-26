@@ -638,4 +638,80 @@ JSON
   grep -q 'ATTEMPT_ID is required' <<<"$output" || fail "expected the missing-ATTEMPT_ID diagnostic for the empty string too"
 )
 
+# ============================================================================
+# Native work-item runs: NUM is empty (no issue/PR anchor). Only the
+# PR-marker lookup runs; no /issues/ endpoint is ever called.
+# ============================================================================
+
+# --- W1: a native work item's PR-marker deliverable passes with NUM empty.
+# comments.fail/reviews.fail would fail the run loudly if either lookup were
+# reached, proving they are skipped, not merely empty. ---
+(
+  base_env
+  export NUM=''
+  case_dir="$test_root/native-work-item-pr-marker-found"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":99,"title":"Add healthz","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2023-12-01T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
+JSON
+  : > "$case_dir/comments.fail"
+  : > "$case_dir/reviews.fail"
+  run_case native-work-item-pr-marker-found
+  test "$status" = 0 || fail "a native work item's PR-marker deliverable should pass with NUM empty"
+  case "$output" in
+    *"Deliverable evidence: PR carrying this run's attempt-claim marker"*) ;;
+    *) fail "expected the PR evidence message for a native work item" ;;
+  esac
+)
+
+# --- W2: a native work item with no matching PR fails as a genuine
+# no-deliverable, without ever attempting the /issues/ comment lookup - if
+# the NUM gate were missing, comments.fail below would turn this into a
+# "FAILED lookup" error instead of a clean no-deliverable. ---
+(
+  base_env
+  export NUM=''
+  case_dir="$test_root/native-work-item-no-pr"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  : > "$case_dir/reviews.fail"
+  run_case native-work-item-no-pr
+  test "$status" = 1 || fail "a native work item with no PR-marker deliverable must fail"
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+  case "$output" in
+    *"FAILED lookup"*) fail "no /issues/ endpoint should be called when NUM is empty" ;;
+  esac
+  case "$output" in
+    *"produced no deliverable on this work item:"*) ;;
+    *) fail "expected the final error to name 'this work item' when NUM is empty" ;;
+  esac
+  case "$output" in
+    *"this work item: No PR carries"*) ;;
+    *) fail "expected the checked-only-PR wording when NUM is empty" ;;
+  esac
+)
+
+# --- W3: same as W2, but in review mode - the review lookup must also be
+# skipped when NUM is empty, even though MODE=review would otherwise enable
+# it. reviews.fail would surface as a FAILED lookup if the gate were missing.
+(
+  base_env
+  export MODE=review
+  export NUM=''
+  case_dir="$test_root/native-work-item-review-mode-no-pr"
+  mkdir -p "$case_dir"
+  : > "$case_dir/comments.fail"
+  : > "$case_dir/reviews.fail"
+  run_case native-work-item-review-mode-no-pr
+  test "$status" = 1 || fail "a native work item in review mode with no PR-marker deliverable must fail"
+  grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
+  case "$output" in
+    *"FAILED lookup"*) fail "no /issues/ or /pulls/.../reviews endpoint should be called when NUM is empty" ;;
+  esac
+  case "$output" in
+    *"this work item: No PR carries"*) ;;
+    *) fail "expected the checked-only-PR wording even in review mode when NUM is empty" ;;
+  esac
+)
+
 echo "verify-deliverable.test.sh: all cases passed"

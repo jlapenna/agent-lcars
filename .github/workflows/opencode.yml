@@ -19,14 +19,17 @@ name: OpenCode Issue Agent
 # lane's deliverable-verification gate intentionally does not trust a bare
 # agent success conclusion: the agent must communicate a visible result.
 
-run-name: '#${{ inputs.issue }}: OpenCode issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
+# Native runs render a fixed label; the work id is already in the dispatch
+# marker tail, which is what the console binds on.
+run-name: "${{ inputs.issue != '' && format('#{0}', inputs.issue) || 'native work' }}: OpenCode issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]"
 
 on:
   workflow_dispatch:
     inputs:
       issue:
         description: 'Issue number to run against (manual testing)'
-        required: true
+        required: false
+        default: ''
       mode:
         description: 'Dispatch mode for hosted-controller issue work'
         required: false
@@ -41,6 +44,10 @@ on:
         default: ''
       context:
         description: 'Optional deployment or router context'
+        required: false
+        default: ''
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
         required: false
         default: ''
       broker_intent_id:
@@ -80,7 +87,7 @@ jobs:
   opencode:
     # The hosted controller authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
-    if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    if: github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '')
     uses: ./.github/workflows/agent-lane-opencode.yml
     with:
       issue: ${{ inputs.issue }}
@@ -88,6 +95,7 @@ jobs:
       reply: ${{ inputs.reply }}
       runbook: ${{ inputs.runbook }}
       context: ${{ inputs.context }}
+      work: ${{ inputs.work }}
       broker-generation: ${{ inputs.broker_generation }}
       broker-intent-id: ${{ inputs.broker_intent_id }}
       # claude-agent-lcars is registered in jlapenna/homelab's
@@ -143,7 +151,7 @@ jobs:
 
   fallback-finalize:
     needs: opencode
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '')
     permissions:
       actions: read
       contents: read
@@ -153,6 +161,7 @@ jobs:
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}
+      work: ${{ inputs.work }}
       generation: ${{ inputs.broker_generation }}
       intent-id: ${{ inputs.broker_intent_id }}
       dispatch-token: ${{ inputs.broker_dispatch_token }}

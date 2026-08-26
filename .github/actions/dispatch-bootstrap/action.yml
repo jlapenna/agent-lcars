@@ -176,6 +176,7 @@ runs:
     # Additive and idempotent: this never removes a human assignee.
     - name: Claim the issue as the agent fleet
       id: claim
+      if: inputs.issue != ''
       uses: ./.github/actions/claim-issue
       with:
         token: ${{ steps.agent-lcars-token.outputs.token }}

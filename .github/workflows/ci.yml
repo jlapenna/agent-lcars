@@ -124,6 +124,9 @@ jobs:
       - name: Test Claude run-status gate (#1283)
         run: bash tools/verify-claude-run-status.test.sh
 
+      - name: Test worker workflow anchor gates
+        run: bash tools/workflow-anchor-gates.test.sh
+
       - name: Test layer-1 skill install (#1269)
         run: bash .github/actions/prepare-agent-dispatch/install-skills.test.sh
 

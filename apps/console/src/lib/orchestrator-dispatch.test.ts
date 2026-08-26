@@ -400,7 +400,15 @@ describe('drainOutbox: dispatch-run', () => {
       taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
       requestId: 'w1',
       pipeline: 'claude',
-      work: { spec: { title: 'x', target: { repo: 'octo/example' } } },
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'console' },
+        spec: {
+          title: 'x',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
     });
     if (isRefusal(decision)) {
       throw new Error(`unexpected refusal: ${decision.reason}`);
@@ -417,10 +425,68 @@ describe('drainOutbox: dispatch-run', () => {
     const inputs = body.inputs as Record<string, unknown>;
     expect(inputs.issue).toBeUndefined();
     expect(JSON.parse(inputs.work as string)).toEqual({
-      id: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
-      spec: { title: 'x', target: { repo: 'octo/example' } },
+      id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      spec: {
+        title: 'x',
+        description: 'd',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
     });
+    expect(Object.keys(inputs).sort()).toEqual([
+      'broker_dispatch_token',
+      'broker_generation',
+      'broker_intent_id',
+      'mode',
+      'work',
+    ]);
     expect(inputs.broker_intent_id).toBe('work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1');
+  });
+
+  it('fails a native run permanently when the work spec is invalid (missing description)', async () => {
+    const { store, orchestrator } = fixture();
+    const decision = await orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H' },
+      requestId: 'w2',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'console' },
+        // No `description` -- workSpecSchema.parse must throw on this.
+        spec: {
+          title: 'x',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(decision)) {
+      throw new Error(`unexpected refusal: ${decision.reason}`);
+    }
+    const neverCalled = vi.fn<typeof fetch>();
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: neverCalled,
+    });
+
+    expect(result.dispatched).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.error.length).toBeGreaterThan(0);
+    expect(neverCalled).not.toHaveBeenCalled();
+
+    // Settled `done`, not left pending for retry: a second drain sees
+    // nothing left to do, and still never calls fetch.
+    const again = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: neverCalled,
+    });
+    expect(again.dispatched).toEqual([]);
+    expect(again.failed).toEqual([]);
+    expect(neverCalled).not.toHaveBeenCalled();
   });
 });
 

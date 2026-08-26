@@ -11,8 +11,9 @@ inputs:
     description: Telemetry-writer service account selected by the shared lane.
     required: true
   issue:
-    description: Issue or pull request number this run is working, forwarded to the sidecar.
-    required: true
+    description: Issue or pull request number this run is working, forwarded to the sidecar as NUM. Optional; empty for a native work-anchored run (the sidecar skips --issue-number when NUM is empty).
+    required: false
+    default: ''
   intent-id:
     description: >-
       Orchestrator run ID (broker_intent_id) -- the join key a work item

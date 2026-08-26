@@ -99,7 +99,13 @@ on:
         type: string
       issue:
         description: 'Issue number the dispatch is anchored on'
-        required: true
+        required: false
+        default: ''
+        type: string
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        required: false
+        default: ''
         type: string
       mode:
         description: 'Dispatch mode for hosted-controller issue work'
@@ -579,8 +585,8 @@ jobs:
       # The pickup comment is opencode's recorded divergence: its lane has
       # always posted one; the other lanes never have.
       - name: Claim the issue as the agent fleet
+        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' }}
         id: claim
-        if: ${{ !inputs.dispatch-bootstrap }}
         uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
@@ -647,6 +653,7 @@ jobs:
         with:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
+          work: ${{ inputs.work }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -1043,6 +1050,7 @@ jobs:
           token: ${{ steps.dispatch-bootstrap.outputs.token }}
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
+          work: ${{ inputs.work }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}

@@ -203,14 +203,17 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
       const { doc } = loadWorkflow(contract.workflowFile);
 
       // The exact template GitHub renders into display_title. The leading
-      // `#<issue>: ` is the console's issue join key
-      // (run-name-console-join.test.ts proves the parse direction); the
-      // trailing marker is rendered by the same formatDispatchMarker the
-      // orchestrator uses to rebind a run after a lost dispatch response —
-      // marker.ts accepts the literal `${{ ... }}` expression strings for
-      // exactly this assertion.
+      // ternary renders `#<issue>: ` for an issue-anchored dispatch or a
+      // plain `native work: ` fallback for a native `work` dispatch
+      // (Plan 3 native-lane task 2 - GitHub expressions can't `fromJSON`
+      // an empty string safely, so the fallback is a literal, not the
+      // work item's parsed id); run-name-console-join.test.ts proves both
+      // render/parse directions. The trailing marker is rendered by the
+      // same formatDispatchMarker the orchestrator uses to rebind a run
+      // after a lost dispatch response — marker.ts accepts the literal
+      // `${{ ... }}` expression strings for exactly this assertion.
       const expectedRunName =
-        '#${{ inputs.issue }}: ' +
+        "${{ inputs.issue != '' && format('#{0}', inputs.issue) || 'native work' }}: " +
         contract.runNameLabel +
         ' ' +
         formatDispatchMarker({
@@ -435,6 +438,7 @@ interface InputSpec {
 /** Inputs shared by all three lanes. */
 const COMMON_LANE_INPUTS: Record<string, InputSpec> = {
   issue: { required: true, type: 'string' },
+  work: { required: false, type: 'string', default: '' },
   mode: { required: true, type: 'string' },
   reply: { required: false, type: 'string', default: '' },
   runbook: { required: false, type: 'string', default: '' },

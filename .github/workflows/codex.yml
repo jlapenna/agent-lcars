@@ -20,15 +20,18 @@ name: Codex Issue Agent
 
 # This workflow is workflow_dispatch-only (the hosted controller owns event
 # admission). Keep the console's leading issue-number join key and add the
-# immutable broker marker used for interrupted-bind reconciliation.
-run-name: '#${{ inputs.issue }}: Codex issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
+# immutable broker marker used for interrupted-bind reconciliation. Native
+# runs render a fixed label; the work id is already in the dispatch marker
+# tail, which is what the console binds on.
+run-name: "${{ inputs.issue != '' && format('#{0}', inputs.issue) || 'native work' }}: Codex issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]"
 
 on:
   workflow_dispatch:
     inputs:
       issue:
         description: 'Issue number to run against (manual testing)'
-        required: true
+        required: false
+        default: ''
       mode:
         description: 'Dispatch mode for hosted-controller issue work'
         required: false
@@ -43,6 +46,10 @@ on:
         default: ''
       context:
         description: 'Optional deployment or router context'
+        required: false
+        default: ''
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
         required: false
         default: ''
       broker_intent_id:
@@ -69,7 +76,7 @@ jobs:
   codex:
     # The hosted controller authorizes the request and enforces exactly one
     # agent label before dispatching this worker.
-    if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    if: github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '')
     # Serialize every subscription-authenticated run: two agents must never
     # rotate the same auth.json refresh token concurrently. This belongs on
     # the job, not the workflow — issue_comment creates a workflow run
@@ -86,6 +93,7 @@ jobs:
       reply: ${{ inputs.reply }}
       runbook: ${{ inputs.runbook }}
       context: ${{ inputs.context }}
+      work: ${{ inputs.work }}
       broker-generation: ${{ inputs.broker_generation }}
       broker-intent-id: ${{ inputs.broker_intent_id }}
       runs-on-label: ${{ vars.AGENT_RUNNER_LABEL }}
@@ -120,7 +128,7 @@ jobs:
 
   fallback-finalize:
     needs: codex
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '')
     permissions:
       actions: read
       contents: read
@@ -130,6 +138,7 @@ jobs:
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}
+      work: ${{ inputs.work }}
       generation: ${{ inputs.broker_generation }}
       intent-id: ${{ inputs.broker_intent_id }}
       dispatch-token: ${{ inputs.broker_dispatch_token }}
