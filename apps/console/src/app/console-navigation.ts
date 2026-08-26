@@ -1,5 +1,5 @@
 export type NavKey =
-  'deck' | 'inbox' | 'agents' | 'shuttlebay' | 'sessions' | 'costs';
+  'deck' | 'inbox' | 'agents' | 'shuttlebay' | 'work' | 'sessions' | 'costs';
 export type NavAccent = 'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold';
 
 /** One registry drives the desktop rail and the mobile overflow menu. */
@@ -18,6 +18,7 @@ export const CONSOLE_DESTINATIONS: ReadonlyArray<{
     label: 'Shuttlebay',
     accent: 'blue',
   },
+  { key: 'work', href: '/work', label: 'Work', accent: 'blue' },
   { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },
   { key: 'costs', href: '/costs', label: 'Costs', accent: 'gold' },
 ];

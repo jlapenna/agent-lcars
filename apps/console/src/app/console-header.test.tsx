@@ -100,6 +100,7 @@ describe('ConsoleHeader nav rail', () => {
       ['Inbox', '/inbox'],
       ['Agents', '/agents'],
       ['Shuttlebay', '/shuttlebay'],
+      ['Work', '/work'],
       ['Sessions', '/sessions'],
       ['Costs', '/costs'],
     ]) {
@@ -180,7 +181,7 @@ describe('ConsoleNavRail (standalone)', () => {
     );
     const nav = screen.getByRole('navigation', { name: 'Console sections' });
     const links = within(nav).getAllByRole('link');
-    expect(links).toHaveLength(6);
+    expect(links).toHaveLength(7);
     expect(within(nav).getByRole('link', { name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',
