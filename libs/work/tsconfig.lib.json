@@ -12,6 +12,9 @@
   "references": [
     {
       "path": "../dispatch-contracts/tsconfig.lib.json"
+    },
+    {
+      "path": "../orchestrator/tsconfig.lib.json"
     }
   ]
 }
