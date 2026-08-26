@@ -164,6 +164,31 @@ on:
 permissions: {}
 
 jobs:
+  cancel-parked-automerge:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'status:needs-human' &&
+      contains(fromJSON(inputs.bot-logins), github.event.pull_request.user.login)
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Disable auto-merge for the parked agent PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VIEW=$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest)
+          if jq -e '.autoMergeRequest != null' <<<"$VIEW" >/dev/null; then
+            gh pr merge "$PR" --repo "$REPO" --disable-auto
+          fi
+          gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
+            --jq 'if .autoMergeRequest == null then . else error("auto-merge remains armed on parked PR") end'
+
   automerge:
     # The event guard is redundant for scheduled runs (a scheduled run has
     # no `pull_request` payload, so the login check already fails) but
@@ -306,9 +331,26 @@ jobs:
           FAILED=0
           for ROW in "${OPEN_PRS[@]}"; do
             IFS=$'\t' read -r PR AUTHOR DRAFT PARKED <<<"$ROW"
-            if [ "$DRAFT" = true ] || [ "$PARKED" = true ] || \
+            if [ "$DRAFT" = true ] || \
                ! jq -e --arg login "$AUTHOR" 'index($login) != null' \
                  <<<"$AGENT_BOT_LOGINS" >/dev/null; then
+              continue
+            fi
+
+            if [ "$PARKED" = true ]; then
+              VIEW=$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest)
+              if jq -e '.autoMergeRequest != null' <<<"$VIEW" >/dev/null; then
+                if ! gh pr merge "$PR" --repo "$REPO" --disable-auto; then
+                  echo "::error::Could not disable auto-merge for parked agent PR #$PR."
+                  FAILED=$((FAILED + 1))
+                  continue
+                fi
+              fi
+              if ! gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
+                --jq 'if .autoMergeRequest == null then . else error("auto-merge remains armed on parked PR") end' >/dev/null; then
+                echo "::error::Auto-merge remains armed on parked agent PR #$PR."
+                FAILED=$((FAILED + 1))
+              fi
               continue
             fi
 

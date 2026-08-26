@@ -326,7 +326,7 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
   it('agent-automerge retries missed events and reconciles ready bot PRs without promoting drafts', () => {
     const caller = loadWorkflow('agent-automerge.yml');
     expect(caller.source).toMatch(
-      /types:\s*\[opened, reopened, synchronize, ready_for_review\]/u,
+      /types:\s*\[opened, reopened, synchronize, ready_for_review, labeled\]/u,
     );
 
     const { source, doc } = loadWorkflow('agent-automerge-reusable.yml');
@@ -341,6 +341,17 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     );
     expect(source).not.toContain('gh pr ready "$PR"');
 
+    const cancelParked = doc.jobs?.['cancel-parked-automerge'];
+    expect(cancelParked?.if).toContain("github.event.action == 'labeled'");
+    expect(cancelParked?.if).toContain(
+      "github.event.label.name == 'status:needs-human'",
+    );
+    const cancelScript = cancelParked?.steps?.find(
+      (step) => step.name === 'Disable auto-merge for the parked agent PR',
+    )?.run;
+    expect(cancelScript).toContain('--disable-auto');
+    expect(cancelScript).toContain('.autoMergeRequest == null');
+
     const reconcile = doc.jobs?.['reconcile-automerge'];
     expect(reconcile?.if).toContain("github.event_name == 'schedule'");
     expect(reconcile?.if).toContain("github.event_name == 'workflow_dispatch'");
@@ -351,6 +362,8 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(reconcileScript).toContain('AGENT_BOT_LOGINS');
     expect(reconcileScript).toContain('if [ "$DRAFT" = true ]');
     expect(reconcileScript).toContain('[ "$PARKED" = true ]');
+    expect(reconcileScript).toContain('--disable-auto');
+    expect(reconcileScript).toContain('.autoMergeRequest == null');
     expect(reconcileScript).toContain('>"$OPEN_PRS_FILE"');
     expect(reconcileScript).toContain(
       'gh pr merge "$PR" --repo "$REPO" --auto --squash',
@@ -368,7 +381,11 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     }
     expect(
       reconcileScript?.indexOf('pulls/$PR/requested_reviewers'),
-    ).toBeLessThan(reconcileScript?.indexOf('gh pr merge "$PR"') ?? -1);
+    ).toBeLessThan(
+      reconcileScript?.indexOf(
+        'gh pr merge "$PR" --repo "$REPO" --auto --squash',
+      ) ?? -1,
+    );
   });
 
   it('headless handoff forbids review requests and requires verified auto-merge', () => {

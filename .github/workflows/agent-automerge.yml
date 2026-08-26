@@ -18,7 +18,7 @@ on:
     # `synchronize` and `reopened` are recovery triggers: if the opening event
     # was missed while Actions was unavailable, the next normal PR mutation
     # retries the idempotent arm instead of leaving the PR stranded until cron.
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
   pull_request_review:
     types: [submitted]
   # GITHUB_TOKEN-authored auto-merges do not emit downstream push workflows:
