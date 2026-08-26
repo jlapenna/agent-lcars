@@ -14,15 +14,19 @@ name: Claude Issue Agent
 # inputs. The shared agent protocol is the complete behavioral contract.
 
 # Keep the console's leading issue-number join key and add the immutable
-# broker marker used to reconcile a dispatch after an interrupted bind.
-run-name: '#${{ inputs.issue }}: Claude issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]'
+# broker marker used to reconcile a dispatch after an interrupted bind. A
+# native run has no issue; GitHub expressions cannot `fromJSON` an empty
+# string safely, so the fallback is a plain label rather than parsing
+# `work` here -- the item id already lives in the marker's intentId.
+run-name: "${{ inputs.issue != '' && format('#{0}', inputs.issue) || 'native work' }}: Claude issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]"
 
 on:
   workflow_dispatch:
     inputs:
       issue:
         description: 'Issue number to run against (manual testing)'
-        required: true
+        required: false
+        default: ''
       mode:
         description: 'Dispatch mode for hosted-controller issue work'
         required: false
@@ -37,6 +41,10 @@ on:
         default: ''
       context:
         description: 'Optional deployment or router context'
+        required: false
+        default: ''
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
         required: false
         default: ''
       broker_intent_id:
@@ -77,8 +85,8 @@ jobs:
   claude:
     # The hosted controller authorizes the request before dispatching this
     # worker via workflow_dispatch. This job only checks that the dispatch
-    # actually carries an issue number.
-    if: github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    # actually carries an anchor -- an issue number or a native work item.
+    if: github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '')
     uses: ./.github/workflows/agent-lane-claude.yml
     with:
       issue: ${{ inputs.issue }}
@@ -86,6 +94,7 @@ jobs:
       reply: ${{ inputs.reply }}
       runbook: ${{ inputs.runbook }}
       context: ${{ inputs.context }}
+      work: ${{ inputs.work }}
       broker-generation: ${{ inputs.broker_generation }}
       broker-intent-id: ${{ inputs.broker_intent_id }}
       # claude-agent-lcars is registered in jlapenna/homelab's
@@ -119,7 +128,7 @@ jobs:
 
   fallback-finalize:
     needs: claude
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue != ''
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '')
     permissions:
       actions: read
       contents: read
@@ -129,6 +138,7 @@ jobs:
     uses: ./.github/workflows/agent-fallback-finalize.yml
     with:
       issue: ${{ inputs.issue }}
+      work: ${{ inputs.work }}
       generation: ${{ inputs.broker_generation }}
       intent-id: ${{ inputs.broker_intent_id }}
       dispatch-token: ${{ inputs.broker_dispatch_token }}

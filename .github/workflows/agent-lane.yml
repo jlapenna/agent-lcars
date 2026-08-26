@@ -99,7 +99,13 @@ on:
         type: string
       issue:
         description: 'Issue number the dispatch is anchored on'
-        required: true
+        required: false
+        default: ''
+        type: string
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        required: false
+        default: ''
         type: string
       mode:
         description: 'Dispatch mode for hosted-controller issue work'

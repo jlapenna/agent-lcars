@@ -38,7 +38,13 @@ on:
   workflow_call:
     inputs:
       issue:
-        required: true
+        required: false
+        default: ''
+        type: string
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        required: false
+        default: ''
         type: string
       generation:
         required: true
@@ -72,11 +78,12 @@ jobs:
   finalize:
     # A reusable workflow inherits the caller's event name: workers are
     # dispatched by workflow_dispatch, so checking for workflow_call here
-    # skips the authoritative completion callback in production. Required
-    # call input `issue` is populated only for the reusable-worker path and
-    # remains empty for this workflow's own manual workflow_dispatch entry
-    # point.
-    if: inputs.issue != ''
+    # skips the authoritative completion callback in production. Call
+    # inputs `issue`/`work` are populated only for the reusable-worker
+    # path and remain empty for this workflow's own manual
+    # workflow_dispatch entry point. A native run carries `work` with no
+    # `issue`; either anchor admits the job.
+    if: inputs.issue != '' || inputs.work != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -93,18 +100,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ inputs.issue }}
+          WORK: ${{ inputs.work }}
           GENERATION: ${{ inputs.generation }}
           INTENT_ID: ${{ inputs.intent-id }}
           WORKER_WORKFLOW: ${{ inputs.worker-workflow }}
           WORKER_RESULT: ${{ inputs.worker-result }}
         run: |
           set -euo pipefail
-          case "$ISSUE:$GENERATION" in
-            *[!0-9:]*|:*|*:|*:*:*)
-              echo "::error::Invalid completion issue or generation"
-              exit 1
-              ;;
-          esac
+          # A native run carries WORK with no ISSUE -- the same
+          # generation/intentId identity that gates an issue-anchored
+          # completion is still validated for it separately (the
+          # dispatch token check downstream), so only the issue-shaped
+          # half of this check applies when there is an issue to check.
+          if [ -z "$ISSUE" ] && [ -n "$WORK" ]; then
+            :
+          else
+            case "$ISSUE:$GENERATION" in
+              *[!0-9:]*|:*|*:|*:*:*)
+                echo "::error::Invalid completion issue or generation"
+                exit 1
+                ;;
+            esac
+          fi
           # Each lane's agent step name(s), as a JSON array of candidates.
           # The worker job is identified by these STEP names, never by its
           # job id or display name: since #1340 A-R1 the worker job lives
@@ -198,7 +215,10 @@ jobs:
             echo "::warning::Could not verify exact pull-request outcome"
           fi
 
-          if [ -z "$outcome_kind" ]; then
+          # A native run has no ISSUE, so there is no comment/review
+          # thread to read -- the PR-marker lookup above is the whole
+          # evidence surface for it.
+          if [ -z "$outcome_kind" ] && [ -n "$ISSUE" ]; then
             if comments_json="$(gh api --paginate --slurp \
               "repos/$REPO/issues/$ISSUE/comments?per_page=100")"; then
               comment_hits="$(jq -r --arg marker "$claim_marker" \
@@ -218,7 +238,7 @@ jobs:
             fi
           fi
 
-          if [ -z "$outcome_kind" ]; then
+          if [ -z "$outcome_kind" ] && [ -n "$ISSUE" ]; then
             if issue_json="$(gh api "repos/$REPO/issues/$ISSUE")" && \
               jq -e '.pull_request != null' >/dev/null <<<"$issue_json"; then
               if reviews_json="$(gh api --paginate --slurp \
@@ -272,8 +292,8 @@ jobs:
           trap 'rm -f "$payload_file" "$oidc_response_file" "$completion_response_file"' EXIT
 
           jq -cn '
-            {
-              issue: (env.ISSUE | tonumber),
+            (if env.ISSUE != "" then {issue: (env.ISSUE | tonumber)} else {} end)
+            + {
               generation: (env.GENERATION | tonumber),
               intentId: env.INTENT_ID,
               token: env.DISPATCH_TOKEN,

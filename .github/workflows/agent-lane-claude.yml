@@ -25,6 +25,11 @@ on:
         description: 'Issue number the dispatch is anchored on'
         required: true
         type: string
+      work:
+        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        required: false
+        default: ''
+        type: string
       mode:
         description: 'Dispatch mode for hosted-controller issue work'
         required: true
@@ -211,6 +216,7 @@ jobs:
     with:
       pipeline: claude
       issue: ${{ inputs.issue }}
+      work: ${{ inputs.work }}
       mode: ${{ inputs.mode }}
       reply: ${{ inputs.reply }}
       runbook: ${{ inputs.runbook }}

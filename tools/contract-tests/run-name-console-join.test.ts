@@ -41,14 +41,43 @@ const EXPRESSION_VALUES: Record<string, string> = {
   'inputs.broker_intent_id': 'intent-test-abc123',
 };
 
-const EXPRESSION_RE = /\$\{\{\s*([^}]+?)\s*\}\}/g;
+// `[\s\S]` (not `[^}]`) so a single literal `}` inside the expression -
+// `format('#{0}', ...)`'s placeholder - doesn't truncate the match before
+// the real closing `}}`; the non-greedy `+?` still stops at the first
+// `}}` pair, which `{0}` alone never is.
+const EXPRESSION_RE = /\$\{\{\s*([\s\S]+?)\s*\}\}/g;
+
+// The one conditional shape claude.yml/codex.yml/opencode.yml's run-name
+// uses to render either anchor (Plan 3 native-lane task 2): `#<issue>` when
+// dispatched with an issue, a plain fallback label for a native `work`
+// dispatch (GitHub expressions can't `fromJSON` an empty string safely, so
+// the fallback is a literal, not the work item's parsed id).
+const TERNARY_RE =
+  /^([\w.]+)\s*!=\s*''\s*&&\s*format\('([^']*)',\s*([\w.]+)\)\s*\|\|\s*'([^']*)'$/;
 
 /** Evaluates the small subset of GitHub Actions expression syntax these
- * `run-name` templates use: a bare dotted context path, or an `a || b`
- * fallback chain of them. Throws on anything else so a run-name edit that
- * introduces an expression this harness doesn't understand fails loudly
- * instead of silently rendering "undefined". */
+ * `run-name` templates use: a bare dotted context path, an `a || b`
+ * fallback chain of them, or the one `path != '' && format('...', path) ||
+ * 'literal'` ternary above. Throws on anything else so a run-name edit
+ * that introduces an expression this harness doesn't understand fails
+ * loudly instead of silently rendering "undefined". */
 function evaluateExpression(expr: string): string {
+  const ternary = TERNARY_RE.exec(expr);
+  if (ternary) {
+    const [, condPath, format, formatPath, fallback] = ternary;
+    for (const path of [condPath, formatPath]) {
+      if (!(path in EXPRESSION_VALUES)) {
+        throw new Error(
+          `Unmapped run-name expression operand "${path}" (full expression: "${expr}"). ` +
+            'Add a plausible value to EXPRESSION_VALUES in this test.',
+        );
+      }
+    }
+    return EXPRESSION_VALUES[condPath] !== ''
+      ? format.replace('{0}', EXPRESSION_VALUES[formatPath])
+      : fallback;
+  }
+
   const operands = expr.split('||').map((operand) => operand.trim());
   for (const operand of operands) {
     if (!(operand in EXPRESSION_VALUES)) {
@@ -144,6 +173,38 @@ describe('run-name <-> console join contract', () => {
           `[dispatch:g${EXPRESSION_VALUES['inputs.broker_generation']}:` +
           `${EXPRESSION_VALUES['inputs.broker_intent_id']}]`,
       );
+    },
+  );
+
+  // Plan 3 native-lane task 2: a native `work` dispatch carries no issue.
+  // The join-key prefix falls back to a plain label instead of `#<issue>`
+  // - the console must not mistake that label for an issue number - while
+  // the dispatch marker tail (what a native run actually binds its
+  // completion to) is unchanged.
+  it.each(DISPATCH_PIPELINES)(
+    '%s renders a native-work fallback label with no issue join key',
+    (pipeline) => {
+      const contract = PIPELINE_CONTRACTS[pipeline];
+      const originalValue = EXPRESSION_VALUES['inputs.issue'];
+      EXPRESSION_VALUES['inputs.issue'] = '';
+      try {
+        const rendered = renderRunName(
+          loadRunName(`.github/workflows/${contract.workflowFile}`),
+        );
+
+        expect(rendered).toBe(
+          `native work: ${contract.runNameLabel} ` +
+            `[dispatch:g${EXPRESSION_VALUES['inputs.broker_generation']}:` +
+            `${EXPRESSION_VALUES['inputs.broker_intent_id']}]`,
+        );
+        expect(issueNumberFromDisplayTitle(rendered)).toBeUndefined();
+        expect(attemptMarkerFromDisplayTitle(rendered)).toEqual({
+          generation: Number(EXPRESSION_VALUES['inputs.broker_generation']),
+          intentId: EXPRESSION_VALUES['inputs.broker_intent_id'],
+        });
+      } finally {
+        EXPRESSION_VALUES['inputs.issue'] = originalValue;
+      }
     },
   );
 
