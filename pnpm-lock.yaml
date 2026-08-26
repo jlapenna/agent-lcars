@@ -307,6 +307,8 @@ importers:
         specifier: workspace:*
         version: link:../util
 
+  libs/work: {}
+
   packages/fleet-tools: {}
 
 packages:
