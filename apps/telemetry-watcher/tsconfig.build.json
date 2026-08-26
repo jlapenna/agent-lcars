@@ -10,6 +10,7 @@
   "references": [
     { "path": "../../libs/telemetry/tsconfig.lib.json" },
     { "path": "../../libs/env-vars/tsconfig.lib.json" },
-    { "path": "../../libs/logging/tsconfig.lib.json" }
+    { "path": "../../libs/logging/tsconfig.lib.json" },
+    { "path": "../../libs/work/tsconfig.lib.json" }
   ]
 }

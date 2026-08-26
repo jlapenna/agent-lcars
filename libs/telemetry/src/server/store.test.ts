@@ -153,6 +153,18 @@ describe('listSessionDocs', () => {
     expect(mockWhere).toHaveBeenCalledWith('issueNumber', '==', 2541);
   });
 
+  it('applies intentId as an equality filter', async () => {
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [
+        { id: issueAgentSession.sessionId, ...issueAgentSession },
+      ],
+    }) as unknown as Firestore;
+
+    await listSessionDocs(firestore, { intentId: 'work:01ABC/r1' });
+
+    expect(mockWhere).toHaveBeenCalledWith('intentId', '==', 'work:01ABC/r1');
+  });
+
   it('composes activeSince, source, and issueNumber filters together', async () => {
     const firestore = new FakeFirestore({
       [SESSIONS_COLLECTION]: [

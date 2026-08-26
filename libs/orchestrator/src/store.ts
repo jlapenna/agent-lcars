@@ -55,6 +55,21 @@ export interface OrchestratorStore {
   /** Live runs whose lease expired at or before `now`; the sweeper's feed. */
   listExpiredRuns(now: string): Promise<Run[]>;
 
+  /**
+   * Every native (work-anchored) task; GitHub-anchored tasks are excluded.
+   * Newest first (workId is a ULID, so lexicographic order on it is
+   * creation order) -- the caller may still re-sort what it renders, but
+   * a caller that doesn't gets the most useful order for free. This is a
+   * read: the console's items API needs "what native work exists", a
+   * question the per-task accessors above cannot answer, and nothing in
+   * the decision layer uses it.
+   *
+   * `limit` bounds the read at the store, not just what the caller renders
+   * -- default 200, so an unbounded caller still can't force a full table
+   * scan.
+   */
+  listNativeTasks(limit?: number): Promise<VersionedTask[]>;
+
   /** Every live (`pending`/`running`) run, lease or no lease. The feed for
    *  settling runs whose *executor* is already terminal -- a fact only
    *  something outside the orchestrator can observe, so the caller resolves

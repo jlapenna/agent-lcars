@@ -1,0 +1,17 @@
+{
+  "name": "@agent-lcars/work",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/work/src",
+  "projectType": "library",
+  "tags": ["platform:shared", "scope:shared"],
+  "targets": {
+    "openapi-check": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "cwd": "{workspaceRoot}",
+        "command": "pnpm exec tsx tools/work-openapi.mts --check"
+      }
+    }
+  }
+}

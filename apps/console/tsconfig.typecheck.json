@@ -24,7 +24,9 @@
       ],
       "@agent-lcars/orchestrator": ["libs/orchestrator/src/index.ts"],
       "@agent-lcars/telemetry": ["libs/telemetry/src/index.ts"],
-      "@agent-lcars/telemetry/server": ["libs/telemetry/src/server/index.ts"]
+      "@agent-lcars/telemetry/server": ["libs/telemetry/src/server/index.ts"],
+      "@agent-lcars/work": ["libs/work/src/index.ts"],
+      "@agent-lcars/work/derive": ["libs/work/src/derive.ts"]
     }
   },
   "references": []

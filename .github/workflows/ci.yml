@@ -280,6 +280,9 @@ jobs:
       - name: Store contract against the Firestore emulator
         run: ./tools/nx run @agent-lcars/orchestrator:test-firestore
 
+      - name: OpenAPI document is current
+        run: ./tools/nx run @agent-lcars/work:openapi-check
+
       # `next build` does not execute dynamic server-route imports. Exercise
       # the actual standalone artifact so traced runtime assets (notably the
       # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass

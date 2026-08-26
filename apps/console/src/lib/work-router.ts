@@ -1,0 +1,339 @@
+import 'server-only';
+
+import {
+  decidedRun,
+  isLive,
+  isRefusal,
+  isWorkAnchor,
+  type Task,
+} from '@agent-lcars/orchestrator';
+import {
+  itemsContract,
+  workPayloadSchema,
+  type WorkSpec,
+  workSpecSchema,
+} from '@agent-lcars/work';
+import {
+  deriveItemState,
+  type ItemSessionView,
+  type ItemView,
+  toItemView,
+  toItemViewSafe,
+} from '@agent-lcars/work/derive';
+import { OpenAPIHandler } from '@orpc/openapi/fetch';
+import { implement, ORPCError } from '@orpc/server';
+
+import { isControlPlaneRepository } from './deployment';
+import type { OrchestratorRouteDeps } from './orchestrator-routes';
+import type { WorkPrincipal } from './work-auth';
+
+/** How long a caller turned away by the live-run cap should wait. Sent both
+ *  as the error payload the contract declares and as a `Retry-After`
+ *  response header (see `createWorkHandler`). */
+const RETRY_AFTER_SECONDS = 60;
+
+export interface WorkContext {
+  /** Resolved by the route from the request's bearer token or session;
+   *  `undefined` means "no recognized principal", which every procedure
+   *  turns into a 401 through the `operator` gate below. */
+  principal?: WorkPrincipal;
+  runtime: OrchestratorRouteDeps;
+  sessionsFor: (runIds: string[]) => Promise<ItemSessionView[]>;
+  maxLiveRuns: number;
+}
+
+const os = implement(itemsContract).$context<WorkContext>();
+
+/**
+ * Router-level gate: every procedure below is built from `operator`, so
+ * authorization is structural rather than something each handler has to
+ * remember. Applied through the implementer's `.use`, which records the
+ * middleware with no input schemas seen yet -- so it runs BEFORE input
+ * validation, and a caller with no principal gets 401 rather than a 400
+ * describing a body it was never entitled to have validated.
+ *
+ * `UNAUTHORIZED` is deliberately not in any procedure's `.errors` map: it
+ * is not a per-procedure outcome a client can branch on, it is the gate.
+ * oRPC still maps the bare `ORPCError` code to 401 through
+ * `COMMON_ERROR_STATUS_MAP`.
+ */
+const operator = os.use(async ({ context, next }) => {
+  const { principal } = context;
+  if (principal === undefined || !principal.scopes.has('work.operator')) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator scope required',
+    });
+  }
+  return next({ context: { principal } });
+});
+
+async function view(
+  context: WorkContext,
+  workId: string,
+  task: Task,
+): Promise<ItemView> {
+  const runs = await context.runtime.store.listRuns({ workId });
+  const sessions = await context.sessionsFor(runs.map((run) => run.runId));
+  return toItemView({ workId, task, runs, sessions });
+}
+
+/** The cap is a fleet-wide budget on *native* work, not on the orchestrator:
+ *  GitHub-anchored runs are driven by issues someone already opened and are
+ *  not this API's to throttle. */
+async function liveNativeRunCount(context: WorkContext): Promise<number> {
+  const live = await context.runtime.store.listLiveRuns();
+  return live.filter((run) => isWorkAnchor(run.task)).length;
+}
+
+/**
+ * The two capability checks every run-minting procedure must clear:
+ * invoking a pipeline is granted per principal, and the target repository
+ * must be one this control plane admits.
+ *
+ * Both `create` and `redispatch` run it, and both evaluate it against the
+ * grants and the repository list **as they stand now**. That is the point
+ * for `redispatch`: an item parked back when its repo was in
+ * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` must not become a way to
+ * dispatch a workflow into that repo after it was removed from the list.
+ *
+ * Returns the refusal message rather than throwing, so each handler raises
+ * its own contract-declared `errors.FORBIDDEN` -- a bare `ORPCError` would
+ * still map to 403 at runtime but would leave 403 undocumented for the
+ * path in the generated OpenAPI document.
+ */
+function forbiddenReason(
+  principal: WorkPrincipal,
+  spec: WorkSpec,
+): string | undefined {
+  if (!principal.pipelines.includes(spec.pipeline)) {
+    return `${principal.principal} may not request pipeline ${spec.pipeline}`;
+  }
+  if (!isControlPlaneRepository(spec.target.repo)) {
+    return `${spec.target.repo} is not a control-plane repository`;
+  }
+  return undefined;
+}
+
+/** Both sides go through the same schema first, so the comparison is over
+ *  normalized values (identical key order, coercions applied) rather than
+ *  over whatever shape the caller happened to send. */
+function sameSpec(a: WorkSpec, b: WorkSpec): boolean {
+  return (
+    JSON.stringify(workSpecSchema.parse(a)) ===
+    JSON.stringify(workSpecSchema.parse(b))
+  );
+}
+
+export const workRouter = os.router({
+  create: operator.create.handler(async ({ input, context, errors }) => {
+    const { principal } = context;
+    const forbidden = forbiddenReason(principal, input.spec);
+    if (forbidden !== undefined) throw errors.FORBIDDEN({ message: forbidden });
+
+    // Idempotency by client ULID: the same id and spec replays to the item
+    // that already exists (still 201 -- see the contract's successStatus),
+    // a different spec is a client bug and is refused rather than silently
+    // ignored.
+    const existing = await context.runtime.store.readTask({
+      workId: input.id,
+    });
+    if (existing !== undefined) {
+      const stored = workPayloadSchema.parse(existing.task.work);
+      if (!sameSpec(stored.spec, input.spec)) {
+        throw errors.CONFLICT({
+          message: `item ${input.id} already exists with a different spec`,
+        });
+      }
+      return view(context, input.id, existing.task);
+    }
+
+    if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
+      throw errors.TOO_MANY_REQUESTS({
+        data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
+      });
+    }
+
+    const outcome = await context.runtime.orchestrator.request({
+      taskId: { workId: input.id },
+      requestId: input.id,
+      pipeline: input.spec.pipeline,
+      work: {
+        origin: {
+          principal: principal.principal,
+          channel: principal.via === 'session' ? 'console' : 'api',
+        },
+        spec: input.spec,
+      },
+    });
+    if (isRefusal(outcome)) {
+      throw errors.CONFLICT({ message: outcome.reason });
+    }
+    await context.runtime.drain();
+    return view(context, input.id, outcome.task);
+  }),
+
+  get: operator.get.handler(async ({ input, context, errors }) => {
+    const task = await context.runtime.store.readTask({ workId: input.id });
+    if (task === undefined) throw errors.NOT_FOUND();
+    return view(context, input.id, task.task);
+  }),
+
+  list: operator.list.handler(async ({ input, context }) => {
+    const tasks = await context.runtime.store.listNativeTasks(input.limit);
+    const native = tasks.flatMap(({ task }) =>
+      isWorkAnchor(task.task) ? [{ workId: task.task.workId, task }] : [],
+    );
+
+    // Two passes on purpose. Filtering needs derived state, which needs
+    // each item's runs -- but the session join reads a *different*
+    // database, so it runs only over the items that survive the filters
+    // and the limit rather than over every native task ever created.
+    //
+    // `toItemViewSafe` rather than `toItemView`: `Task.work` is stored as
+    // an optional loose record, so one native task with an absent or
+    // partial payload is a legal persisted state, not a bug. A strict
+    // parse there would 500 the whole listing over a single bad item;
+    // skipping it (and logging once) degrades the page instead.
+    const unjoined = (
+      await Promise.all(
+        native.map(async ({ workId, task }) => {
+          const view = toItemViewSafe({
+            workId,
+            task,
+            runs: await context.runtime.store.listRuns({ workId }),
+          });
+          if (view === undefined) {
+            console.warn(
+              'agent-lcars: skipping native task with an invalid work payload',
+              { workId },
+            );
+          }
+          return view;
+        }),
+      )
+    ).filter((item): item is ItemView => item !== undefined);
+    const page = unjoined
+      .filter((item) => input.state === undefined || item.state === input.state)
+      .filter(
+        (item) =>
+          input.principal === undefined ||
+          item.origin.principal === input.principal,
+      )
+      .filter(
+        (item) =>
+          input.repo === undefined || item.spec.target.repo === input.repo,
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, input.limit);
+
+    return {
+      items: await Promise.all(
+        page.map(async (item) => ({
+          ...item,
+          sessions: await context.sessionsFor(
+            item.runs.map((run) => run.runId),
+          ),
+        })),
+      ),
+    };
+  }),
+
+  cancel: operator.cancel.handler(async ({ input, context, errors }) => {
+    const task = await context.runtime.store.readTask({ workId: input.id });
+    if (task === undefined) throw errors.NOT_FOUND();
+    const runs = await context.runtime.store.listRuns({ workId: input.id });
+    const state = deriveItemState(task.task, runs);
+    if (state === 'done' || state === 'canceled') {
+      throw errors.CONFLICT({
+        message: `item ${input.id} is already ${state}`,
+      });
+    }
+
+    // A live run holds the task's lock, so cancelling it is what settles
+    // the item. With no live run there is nothing to stop -- the item is
+    // parked -- and closing the task is what makes "canceled" stick.
+    const live = runs.find((run) => isLive(run.state));
+    const outcome =
+      live === undefined
+        ? await context.runtime.orchestrator.close({ workId: input.id })
+        : await context.runtime.orchestrator.cancel(
+            live.runId,
+            `canceled by ${context.principal.principal}`,
+          );
+    if (isRefusal(outcome)) {
+      throw errors.CONFLICT({ message: outcome.reason });
+    }
+    await context.runtime.drain();
+    return view(context, input.id, outcome.task);
+  }),
+
+  redispatch: operator.redispatch.handler(
+    async ({ input, context, errors }) => {
+      const task = await context.runtime.store.readTask({ workId: input.id });
+      if (task === undefined) throw errors.NOT_FOUND();
+      const runs = await context.runtime.store.listRuns({ workId: input.id });
+      if (deriveItemState(task.task, runs) !== 'parked') {
+        throw errors.CONFLICT({
+          message: 'only a parked item can be redispatched',
+        });
+      }
+
+      // The item's declared pipeline and target, not the last run's: the
+      // spec is what the operator asked for, and a run only ever copies it.
+      // Re-checked in full because redispatch mints a fresh run, so it
+      // needs everything `create` needed -- and neither the principal nor
+      // the control-plane repository list need be what they were when the
+      // item was created.
+      const { spec } = workPayloadSchema.parse(task.task.work);
+      const forbidden = forbiddenReason(context.principal, spec);
+      if (forbidden !== undefined) {
+        throw errors.FORBIDDEN({ message: forbidden });
+      }
+
+      if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
+        throw errors.TOO_MANY_REQUESTS({
+          data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
+        });
+      }
+
+      const outcome = await context.runtime.orchestrator.request({
+        taskId: { workId: input.id },
+        requestId: `${input.id}:${task.task.runCount + 1}`,
+        pipeline: spec.pipeline,
+      });
+      if (isRefusal(outcome)) {
+        throw errors.CONFLICT({ message: outcome.reason });
+      }
+      // Invariant, not decoration: a granted request always mints a run.
+      decidedRun(outcome);
+      await context.runtime.drain();
+      return view(context, input.id, outcome.task);
+    },
+  ),
+});
+
+/**
+ * The OpenAPI (RESTful) adapter for {@link workRouter}. Error codes map to
+ * HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP`
+ * (`UNAUTHORIZED` 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
+ * `TOO_MANY_REQUESTS` 429), which is exactly what this API wants -- so no
+ * `errorStatusMap` override.
+ */
+export function createWorkHandler(): OpenAPIHandler<WorkContext> {
+  return new OpenAPIHandler(workRouter, {
+    routingInterceptors: [
+      // `Retry-After` is the standard way to say what the 429 body's
+      // `retryAfterSeconds` says, and generic HTTP clients honour it.
+      // A routing interceptor is the only hook that sees the *encoded*
+      // error response: `interceptors` run inside the try block, before
+      // the codec turns a thrown ORPCError into a status and body.
+      async (options) => {
+        const result = await options.next();
+        if (result.matched && result.response.status === 429) {
+          result.response.headers['retry-after'] = String(RETRY_AFTER_SECONDS);
+        }
+        return result;
+      },
+    ],
+  });
+}
