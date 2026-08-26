@@ -1,6 +1,8 @@
 import {
   cancelRun,
+  closeTask,
   confirmDispatch,
+  decidedRun,
   type Decision,
   expireLease,
   isRefusal,
@@ -11,7 +13,7 @@ import {
   requestRun,
   settleTerminal,
 } from './decide';
-import type { Run, RunResult, TaskId } from './model';
+import type { Run, RunResult, TaskId, WorkPayload } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -65,6 +67,7 @@ export interface RequestInput {
   requestId: string;
   pipeline: string;
   params?: Record<string, string>;
+  work?: WorkPayload;
 }
 
 export class Orchestrator {
@@ -83,6 +86,7 @@ export class Orchestrator {
         requestId: input.requestId,
         pipeline: input.pipeline,
         ...(input.params === undefined ? {} : { params: input.params }),
+        ...(input.work === undefined ? {} : { work: input.work }),
       }),
     );
   }
@@ -113,6 +117,12 @@ export class Orchestrator {
         run,
         ...(note === undefined ? {} : { note }),
       }),
+    );
+  }
+
+  async close(taskId: TaskId): Promise<Decision | Refusal> {
+    return this.transact(taskId, async (task, activeRun) =>
+      closeTask({ now: this.clock.now(), task: task?.task, activeRun }),
     );
   }
 
@@ -214,22 +224,26 @@ export class Orchestrator {
   ): Promise<Run | undefined> {
     const outcome = await this.transactOnRun(runId, decide);
     if (isRefusal(outcome)) return undefined;
+    // expireLease/settleTerminal -- the only decisions #settleAndRetry ever
+    // settles -- always carry a run.
+    const settledRun = decidedRun(outcome);
 
     if ((outcome.task.consecutiveLost ?? 0) > MAX_AUTO_RETRIES) {
-      return outcome.run;
+      return settledRun;
     }
     const retry = await this.request({
-      taskId: outcome.run.task,
-      requestId: `retry:${outcome.run.runId}`,
-      pipeline: outcome.run.pipeline,
-      ...(outcome.run.params === undefined
-        ? {}
-        : { params: outcome.run.params }),
+      taskId: settledRun.task,
+      requestId: `retry:${settledRun.runId}`,
+      pipeline: settledRun.pipeline,
+      ...(settledRun.params === undefined ? {} : { params: settledRun.params }),
     });
     if (!isRefusal(retry)) {
-      retried.push({ lostRunId: outcome.run.runId, newRunId: retry.run.runId });
+      retried.push({
+        lostRunId: settledRun.runId,
+        newRunId: decidedRun(retry).runId,
+      });
     }
-    return outcome.run;
+    return settledRun;
   }
 
   async #once<T extends Decision>(

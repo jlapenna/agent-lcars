@@ -1,10 +1,14 @@
 import {
+  decidedRun,
+  isRefusal,
   MemoryStore,
   Orchestrator,
+  type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
+import type { CompletionOidcIdentity } from './github-actions-oidc';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
@@ -12,9 +16,11 @@ import {
   handleDispatchRequest,
   handleReconcile,
   handleWebhookDelivery,
+  type HostedCompletionRequestBody,
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
 import { settleTerminalRuns } from './orchestrator-terminal-runs';
+import { BindingUnavailable, type RunBinding } from './run-binding';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
 // falls back to this deployment's default -- see deployment.ts/.test.ts.
@@ -25,6 +31,18 @@ const TOKEN = 'gh-test-token-0123456789';
 // Trivial fixed-token stub (`AmbientTokenProvider` itself was retired in
 // #1284 - see github-app-tokens.ts).
 const tokens: DispatchTokenProvider = { tokenFor: async () => TOKEN };
+// A completion caller's verified OIDC identity. Most `handleCompletion`
+// tests below stub `deps.bind` (see `completionFixture`), so its exact
+// field values are never inspected by the code under test -- only its
+// shape matters. The one test that exercises the real default binder (no
+// `bind` override) also relies on `repository` matching `REPO` so
+// `bindCompletionToRun` gets past its own repo pre-check to the fetch.
+const IDENTITY: CompletionOidcIdentity = {
+  repository: REPO,
+  repositoryId: 1,
+  runId: 987_654_321,
+  workflow: 'claude.yml',
+};
 
 class Clock {
   constructor(private value: string) {}
@@ -48,12 +66,16 @@ interface FetchCall {
  *  what `drainOutbox` (orchestrator-dispatch.ts) expects from each endpoint.
  *  The workflow-runs listing (`/actions/workflows/.../runs?...`, read by
  *  `settleTerminalRuns`) serves `workflowRuns`, empty unless a test arms it,
- *  so the reconcile route's terminal probe runs for real here. */
+ *  so the reconcile route's terminal probe runs for real here. A single
+ *  Actions run lookup (`/actions/runs/<id>`, read by `bindCompletionToRun`
+ *  through `defaultBind` -- see `run-binding.ts`) serves `actionsRun`,
+ *  `{}` (no marker) unless a test arms it. */
 function fakeFetch(
   overrides: {
     dispatchStatus?: number;
     commentStatus?: number;
     workflowRuns?: () => unknown[];
+    actionsRun?: () => unknown;
   } = {},
 ): { fetchImpl: typeof fetch; calls: FetchCall[] } {
   const { dispatchStatus = 204, commentStatus = 201 } = overrides;
@@ -66,6 +88,12 @@ function fakeFetch(
         JSON.stringify({ workflow_runs: overrides.workflowRuns?.() ?? [] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
+    }
+    if (/\/actions\/runs\/\d+$/u.test(url)) {
+      return new Response(JSON.stringify(overrides.actionsRun?.() ?? {}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
     const status = url.includes('/actions/workflows/')
       ? dispatchStatus
@@ -83,11 +111,73 @@ function fixture(overrides?: Parameters<typeof fakeFetch>[0]) {
   const deps: OrchestratorRouteDeps = {
     store,
     orchestrator,
+    tokens,
+    fetchImpl,
     drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
     settleTerminal: () =>
       settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
   };
   return { clock, store, orchestrator, deps, calls };
+}
+
+/** `fixture()` plus completion-specific helpers: a stubbed `bind` (most
+ *  `handleCompletion` tests below drive the binding decision explicitly
+ *  rather than exercising the real GitHub-fetch `bindCompletionToRun` --
+ *  that function has its own coverage in `run-binding.test.ts`; one test
+ *  deliberately uses bare `fixture()` instead, to prove the *default*
+ *  binder is wired), and two ways to seed a run to complete -- a
+ *  dispatched GitHub-anchored run (`seedRun`) and an undispatched
+ *  native/work-anchored one (`seedNativeRun`, live the moment it's
+ *  requested since a live run can report from `pending` just as well as
+ *  `running`). */
+function completionFixture(
+  overrides: { bind?: OrchestratorRouteDeps['bind'] } = {},
+) {
+  const base = fixture();
+  const deps: OrchestratorRouteDeps = {
+    ...base.deps,
+    bind:
+      overrides.bind ?? (async (): Promise<RunBinding> => ({ bound: true })),
+  };
+  return {
+    ...base,
+    deps,
+    async seedRun(): Promise<Run> {
+      const runId = await dispatchedRun(deps);
+      const run = await base.store.readRun(runId);
+      if (run === undefined) throw new Error('seedRun: run not found');
+      return run;
+    },
+    async seedNativeRun(): Promise<Run> {
+      const taskId: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const outcome = await base.orchestrator.request({
+        taskId,
+        requestId: 'native-request-1',
+        pipeline: 'claude',
+        work: { spec: { target: { repo: REPO } } },
+      });
+      if (isRefusal(outcome)) {
+        throw new Error('seedNativeRun: request unexpectedly refused');
+      }
+      return decidedRun(outcome);
+    },
+  };
+}
+
+/** The completion callback body for a run created by `seedRun()` -- a
+ *  GitHub-anchored run at the fixed `ISSUE`. */
+function completionBody(
+  run: Run,
+  overrides: Partial<HostedCompletionRequestBody> = {},
+): HostedCompletionRequestBody {
+  return {
+    workflow: 'claude.yml',
+    issue: ISSUE.issue,
+    intentId: run.runId,
+    outcome: 'pull-request',
+    outcomeReference: { kind: 'pull-request', number: 99 },
+    ...overrides,
+  };
 }
 
 function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
@@ -311,25 +401,19 @@ describe('handleDispatchRequest', () => {
 
 describe('handleCompletion', () => {
   it('finishes the run, records the ref URL, and posts an outcome comment', async () => {
-    const { deps, calls, store } = fixture();
-    const runId = await dispatchedRun(deps);
+    const { deps, calls, seedRun } = completionFixture();
+    const run = await seedRun();
     calls.length = 0;
 
-    const result = await handleCompletion(deps, {
-      issue: ISSUE.issue,
-      workflow: 'claude.yml',
-      intentId: runId,
-      outcome: 'pull-request',
-      outcomeReference: { kind: 'pull-request', number: 99 },
-    });
+    const result = await handleCompletion(deps, completionBody(run), IDENTITY);
 
     expect(result).toEqual({
       status: 200,
-      body: { runId, state: 'finished' },
+      body: { runId: run.runId, state: 'finished' },
     });
-    const run = await store.readRun(runId);
-    expect(run?.state).toBe('finished');
-    expect(run?.result).toEqual({
+    const settled = await deps.store.readRun(run.runId);
+    expect(settled?.state).toBe('finished');
+    expect(settled?.result).toEqual({
       ok: true,
       summary: 'pull-request',
       ref: `https://github.com/${REPO}/pull/99`,
@@ -340,50 +424,138 @@ describe('handleCompletion', () => {
       `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
     );
     const body = JSON.parse(String(calls[0]?.init.body)) as { body: string };
-    expect(body.body).toContain(runId);
+    expect(body.body).toContain(run.runId);
   });
 
   it('ignores a completion for an unknown intentId', async () => {
-    const { deps } = fixture();
-    const result = await handleCompletion(deps, {
-      issue: ISSUE.issue,
-      workflow: 'claude.yml',
-      intentId: `${REPO}#42/r99`,
-      outcome: 'pull-request',
-    });
+    const { deps } = completionFixture();
+    const result = await handleCompletion(
+      deps,
+      {
+        issue: ISSUE.issue,
+        workflow: 'claude.yml',
+        intentId: `${REPO}#42/r99`,
+        outcome: 'pull-request',
+      },
+      IDENTITY,
+    );
     expect(result).toEqual({ status: 200, body: { ignored: 'unknown-run' } });
   });
 
   it('ignores a completion with no intentId', async () => {
-    const { deps } = fixture();
-    const result = await handleCompletion(deps, {
-      issue: ISSUE.issue,
-      workflow: 'claude.yml',
-    });
+    const { deps } = completionFixture();
+    const result = await handleCompletion(
+      deps,
+      { issue: ISSUE.issue, workflow: 'claude.yml' },
+      IDENTITY,
+    );
     expect(result).toEqual({ status: 200, body: { ignored: 'unknown-run' } });
   });
 
   it('leaves the recorded result unchanged on a duplicate completion', async () => {
-    const { deps, store } = fixture();
-    const runId = await dispatchedRun(deps);
-    await handleCompletion(deps, {
-      issue: ISSUE.issue,
-      workflow: 'claude.yml',
-      intentId: runId,
-      outcome: 'pull-request',
-      outcomeReference: { kind: 'pull-request', number: 99 },
-    });
-    const finishedRun = await store.readRun(runId);
+    const { deps, seedRun } = completionFixture();
+    const run = await seedRun();
+    await handleCompletion(deps, completionBody(run), IDENTITY);
+    const finishedRun = await deps.store.readRun(run.runId);
 
-    const second = await handleCompletion(deps, {
-      issue: ISSUE.issue,
-      workflow: 'claude.yml',
-      intentId: runId,
-      outcome: 'comment',
-    });
+    const second = await handleCompletion(
+      deps,
+      completionBody(run, { outcome: 'comment', outcomeReference: undefined }),
+      IDENTITY,
+    );
 
     expect(second).toEqual({ status: 200, body: { refused: 'run-not-live' } });
-    expect(await store.readRun(runId)).toEqual(finishedRun);
+    expect(await deps.store.readRun(run.runId)).toEqual(finishedRun);
+  });
+
+  it('returns 503 and settles nothing when the binding lookup is unavailable', async () => {
+    const { deps, seedRun } = completionFixture({
+      bind: async () => {
+        throw new BindingUnavailable('502');
+      },
+    });
+    const run = await seedRun();
+
+    const result = await handleCompletion(deps, completionBody(run), IDENTITY);
+
+    expect(result.status).toBe(503);
+    expect((await deps.store.readRun(run.runId))?.state).toBe('running');
+  });
+
+  it('returns 403 and settles nothing when the token is not bound to the run', async () => {
+    const { deps, seedRun } = completionFixture({
+      bind: async (): Promise<RunBinding> => ({
+        bound: false,
+        reason: 'marker-mismatch',
+      }),
+    });
+    const run = await seedRun();
+
+    const result = await handleCompletion(deps, completionBody(run), IDENTITY);
+
+    expect(result.status).toBe(403);
+    expect((await deps.store.readRun(run.runId))?.state).toBe('running');
+  });
+
+  it('with no bind override, falls back to the real binder and returns 403 on a mismatched marker', async () => {
+    // No `completionFixture()` here on purpose: `deps.bind` is left unset
+    // so `handleCompletion` exercises its own `defaultBind` -> the real
+    // `bindCompletionToRun` -- proving the production default is actually
+    // wired, not merely present in the type (it could be deleted or
+    // replaced with an always-true stub and every other test here would
+    // stay green, since they all inject `bind` explicitly).
+    const { deps, calls, store } = fixture({
+      actionsRun: () => ({
+        // A real Actions run, but naming a DIFFERENT run (r99) than the
+        // one being completed (r1) -- proves the lookup is keyed on the
+        // token's own `identity.runId`/`repo`, not on the caller-supplied
+        // `intentId` in the body.
+        display_title: `#${ISSUE.issue}: [dispatch:g1:${REPO}#${ISSUE.issue}/r99]`,
+      }),
+    });
+    const runId = await dispatchedRun(deps);
+    calls.length = 0;
+
+    const result = await handleCompletion(
+      deps,
+      {
+        workflow: 'claude.yml',
+        issue: ISSUE.issue,
+        intentId: runId,
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 99 },
+      },
+      IDENTITY,
+    );
+
+    expect(result.status).toBe(403);
+    expect((await store.readRun(runId))?.state).toBe('running');
+    expect(
+      calls.some((c) => c.url.endsWith(`/actions/runs/${IDENTITY.runId}`)),
+    ).toBe(true);
+  });
+
+  it('settles a native run addressed by runId with no issue in the body', async () => {
+    const { deps, seedNativeRun } = completionFixture({
+      bind: async (): Promise<RunBinding> => ({ bound: true }),
+    });
+    const run = await seedNativeRun();
+
+    const result = await handleCompletion(
+      deps,
+      {
+        workflow: 'claude.yml',
+        intentId: run.runId,
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 12 },
+      },
+      IDENTITY,
+    );
+
+    expect(result.status).toBe(200);
+    const settled = await deps.store.readRun(run.runId);
+    expect(settled?.state).toBe('finished');
+    expect(settled?.result?.ref).toBe(`https://github.com/${REPO}/pull/12`);
   });
 });
 
@@ -491,17 +663,23 @@ describe('error handling', () => {
     const deps: OrchestratorRouteDeps = {
       store,
       orchestrator,
+      tokens,
+      fetchImpl,
       drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
       settleTerminal: () =>
         settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
     };
 
-    const result = await handleCompletion(deps, {
-      issue: ISSUE.issue,
-      workflow: 'claude.yml',
-      intentId: `${REPO}#42/r1`,
-      outcome: 'pull-request',
-    });
+    const result = await handleCompletion(
+      deps,
+      {
+        issue: ISSUE.issue,
+        workflow: 'claude.yml',
+        intentId: `${REPO}#42/r1`,
+        outcome: 'pull-request',
+      },
+      IDENTITY,
+    );
 
     expect(result).toEqual({ status: 500, body: { error: 'internal' } });
   });

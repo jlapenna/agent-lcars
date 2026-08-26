@@ -1,19 +1,32 @@
 import {
+  decidedRun,
+  isGithubAnchor,
   isRefusal,
+  isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
   type RunResult,
 } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
 
+import { anchorTarget } from '@/lib/anchor-target';
 import {
   defaultDispatchRequestId,
   type parseHostedCompletionRequestBody,
   type parseHostedDispatchRequestBody,
 } from '@/lib/control-plane-request';
-import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
+import type { CompletionOidcIdentity } from '@/lib/github-actions-oidc';
+import type {
+  DispatchTokenProvider,
+  DrainOutboxResult,
+} from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 import type { SettleTerminalRunsResult } from '@/lib/orchestrator-terminal-runs';
+import {
+  bindCompletionToRun,
+  BindingUnavailable,
+  type RunBinding,
+} from '@/lib/run-binding';
 
 /**
  * Pure-ish HTTP handlers for the three control-plane routes, kept out of
@@ -34,6 +47,31 @@ export interface OrchestratorRouteDeps {
    *  for the same reason `drain` is: it does GitHub I/O, and these handlers
    *  stay drivable in tests without it. */
   settleTerminal: () => Promise<SettleTerminalRunsResult>;
+  /** Token provider `defaultBind` (below) uses to fetch the Actions run
+   *  named by a completion token's OIDC claims (see `run-binding.ts`).
+   *  Optional: a caller that only wants `store`/`orchestrator` -- e.g.
+   *  `authoritative-task-state.ts`'s pure Firestore read -- must not be
+   *  forced to hold GitHub App credentials just to construct this object.
+   *  The production runtime supplies its own `bind` closure instead of
+   *  this field (see `orchestrator-runtime.ts`), so `tokens` there stays
+   *  unset and `defaultBind` is never actually reached outside tests. */
+  tokens?: DispatchTokenProvider;
+  /** Injectable for tests; forwarded to `bindCompletionToRun` by
+   *  `defaultBind`. */
+  fetchImpl?: typeof fetch;
+  /** Injectable GitHub REST root; forwarded to `bindCompletionToRun` by
+   *  `defaultBind`. */
+  githubApiBaseUrl?: string;
+  /** Proves a completion token belongs to the run it claims to complete.
+   *  Defaults to `defaultBind` (below) when absent; tests inject a stub so
+   *  they can drive the binding decision directly rather than through a
+   *  real (faked) GitHub fetch. */
+  bind?: (
+    deps: OrchestratorRouteDeps,
+    identity: CompletionOidcIdentity,
+    runId: string,
+    repo: string,
+  ) => Promise<RunBinding>;
 }
 
 export type HostedCompletionRequestBody = ReturnType<
@@ -89,11 +127,13 @@ export async function handleWebhookDelivery(
     }
 
     const drained = await deps.drain();
+    // `request()` never refuses this outcome without carrying a run.
+    const { runId } = decidedRun(outcome);
     return {
       status: 200,
       body: {
-        runId: outcome.run.runId,
-        dispatched: drained.dispatched.includes(outcome.run.runId),
+        runId,
+        dispatched: drained.dispatched.includes(runId),
       },
     };
   } catch (error) {
@@ -185,11 +225,13 @@ export async function handleDispatchRequest(
     }
 
     const drained = await deps.drain();
+    // `request()` never refuses this outcome without carrying a run.
+    const { runId } = decidedRun(outcome);
     return {
       status: 200,
       body: {
-        runId: outcome.run.runId,
-        dispatched: drained.dispatched.includes(outcome.run.runId),
+        runId,
+        dispatched: drained.dispatched.includes(runId),
       },
     };
   } catch (error) {
@@ -233,9 +275,52 @@ function toRunResult(
   };
 }
 
+/**
+ * `deps.bind`'s default when the caller doesn't inject one. Reads
+ * `deps.tokens`/`fetchImpl`/`githubApiBaseUrl` directly and fails closed
+ * (the same `BindingUnavailable` a GitHub outage produces) when `tokens` is
+ * absent, rather than silently skipping the binding check. In production
+ * this path is never reached -- `createOrchestratorRuntime()` supplies its
+ * own `bind` closure, resolved fresh per call the way `drain` is (see
+ * `orchestrator-runtime.ts`) -- so this exists for tests that want the real
+ * `bindCompletionToRun` behavior without stubbing `bind` themselves.
+ */
+async function defaultBind(
+  deps: OrchestratorRouteDeps,
+  identity: CompletionOidcIdentity,
+  runId: string,
+  repo: string,
+): Promise<RunBinding> {
+  if (deps.tokens === undefined) {
+    throw new BindingUnavailable('no token provider configured');
+  }
+  return bindCompletionToRun(
+    {
+      tokens: deps.tokens,
+      fetchImpl: deps.fetchImpl,
+      githubApiBaseUrl: deps.githubApiBaseUrl,
+    },
+    identity,
+    runId,
+    repo,
+  );
+}
+
+/**
+ * Handles a finalizer completion callback. The caller's OIDC token proves
+ * only "a trusted finalizer on an allow-listed repository" -- it says
+ * nothing about *which* run. `bindCompletionToRun` (`run-binding.ts`) closes
+ * that gap: it fetches the Actions run the token names and checks its
+ * dispatch marker against the run being completed. This is fail-closed --
+ * `BindingUnavailable` (GitHub unreachable/non-2xx) answers `503` rather
+ * than settling on an unproven token, and an unbound token answers `403`
+ * rather than `200`, in both cases leaving the run untouched for a retry
+ * or the lease backstop to resolve.
+ */
 export async function handleCompletion(
   deps: OrchestratorRouteDeps,
   body: HostedCompletionRequestBody,
+  identity: CompletionOidcIdentity,
 ): Promise<RouteResult> {
   try {
     if (body.intentId === undefined) {
@@ -243,15 +328,43 @@ export async function handleCompletion(
     }
     const runId = body.intentId;
     const run = await deps.store.readRun(runId);
-    if (run === undefined || run.task.issue !== body.issue) {
-      // Either a legacy dispatch-broker run still in flight during cutover,
-      // or a completion for a run this system never created. Neither is an
-      // error -- ack it and move on rather than 5xx-ing the caller.
+    if (run === undefined) {
+      // A completion for a run this system never created. Not an error --
+      // ack it and move on rather than 5xx-ing the caller.
+      return { status: 200, body: { ignored: 'unknown-run' } };
+    }
+    // GitHub anchors keep the issue tie as a cheap local pre-check; native
+    // anchors have no issue and rely on the marker binding alone.
+    if (isGithubAnchor(run.task) && run.task.issue !== body.issue) {
+      // A legacy dispatch-broker run still in flight during cutover.
+      // Not an error -- ack it and move on rather than 5xx-ing the caller.
       return { status: 200, body: { ignored: 'unknown-run' } };
     }
 
+    const task = isWorkAnchor(run.task)
+      ? (await deps.store.readTask(run.task))?.task
+      : undefined;
+    const target = anchorTarget(run, task);
+
+    const bind = deps.bind ?? defaultBind;
+    let binding;
+    try {
+      binding = await bind(deps, identity, runId, target.repo);
+    } catch (error) {
+      if (error instanceof BindingUnavailable) {
+        return { status: 503, body: { error: 'binding-unavailable' } };
+      }
+      throw error;
+    }
+    if (!binding.bound) {
+      return {
+        status: 403,
+        body: { error: 'unbound-token', reason: binding.reason },
+      };
+    }
+
     const result = toRunResult(
-      run.task.repo,
+      target.repo,
       body.outcome,
       body.outcomeReference,
     );

@@ -15,6 +15,18 @@ recorded verbatim and judging them belongs to the task, not the
 orchestrator. A task may be worked any number of times, sequentially. See
 `src/model.ts`'s own header comment for the full statement of scope.
 
+## Anchors
+
+A task is identified by an anchor: a GitHub issue or pull request
+(`{ repo, issue }`, key `owner/name#123`) or a native work item
+(`{ workId }`, key `work:<ulid>`). The two are discriminated by which key
+is present; nothing persisted changed shape when the second anchor was
+added. A native task carries an opaque, bounded `work` payload written by
+the request that creates it and never read by the orchestrator, plus an
+orchestrator-owned `closedAt` set by `closeTask` — a closed task refuses
+further requests (`task-closed`). See
+`docs/superpowers/specs/2026-08-23-native-work-items-design.md`.
+
 ## The three collections
 
 - **`Task`** — the mutex itself. `activeRunId` is set iff a run is live;

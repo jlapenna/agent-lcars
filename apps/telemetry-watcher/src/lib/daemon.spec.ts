@@ -631,6 +631,73 @@ describe('WatcherDaemon', () => {
     });
   });
 
+  it('tags an issue-agent session doc with the static intentId option (the orchestrator run id)', async () => {
+    const { store, upserts } = createFakeStore();
+    const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
+      [
+        JSON.stringify({
+          isSidechain: false,
+          type: 'user',
+          uuid: `${sessionId}-u1`,
+          timestamp,
+          sessionId,
+          cwd: '/home/runner/work/members/members',
+          gitBranch: 'main',
+          entrypoint: 'claude-code-github-action',
+          message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
+        }),
+        JSON.stringify({
+          isSidechain: false,
+          type: 'assistant',
+          uuid: `${sessionId}-a1`,
+          timestamp,
+          sessionId,
+          message: {
+            model: 'claude-sonnet-5',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'ok' }],
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+        }),
+      ].join('\n');
+    const files = {
+      '/root/proj/session-runner.jsonl': ISSUE_AGENT_TRANSCRIPT(
+        'session-runner',
+        '2026-07-12T10:00:00.000Z',
+      ),
+    };
+
+    const daemon = new WatcherDaemon({
+      watchRoots: [
+        { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
+      ],
+      host: 'test-host',
+      store,
+      heartbeatIntervalMs: HEARTBEAT_MS,
+      stalenessWindowMs: STALENESS_MS,
+      now: () => '2026-07-12T10:00:01.000Z',
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      statFile: (p: string) => fakeStat(files[p as keyof typeof files]),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      intentId: 'octo/example#7/r1',
+    });
+
+    await daemon.tick();
+
+    expect(upserts[0]).toMatchObject({
+      source: 'issue-agent',
+      intentId: 'octo/example#7/r1',
+    });
+  });
+
   it('re-reads and re-reduces a transcript once it changes on a later tick', async () => {
     const { store, upserts } = createFakeStore();
     let files = {

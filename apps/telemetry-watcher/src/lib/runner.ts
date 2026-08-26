@@ -101,6 +101,7 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
     // read, so there was nothing to turn on yet.
     sessionStateDir: config.sessionStateDir,
     runId: config.runId,
+    intentId: config.intentId,
     issueNumber: config.issueNumber,
     repo: config.repo,
     discover: options.discover,

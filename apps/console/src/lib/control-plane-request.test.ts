@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   defaultDispatchRequestId,
   HostedRouteRequestError,
+  parseHostedCompletionRequestBody,
   parseHostedDispatchRequestBody,
 } from './control-plane-request';
 
@@ -66,6 +67,17 @@ describe('parseHostedDispatchRequestBody (#1215)', () => {
     expect(() => parseHostedDispatchRequestBody(body)).toThrow(
       HostedRouteRequestError,
     );
+  });
+});
+
+describe('parseHostedCompletionRequestBody', () => {
+  it('accepts a completion body without issue when intentId is present', () => {
+    expect(() =>
+      parseHostedCompletionRequestBody({
+        workflow: 'claude.yml',
+        intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      }),
+    ).not.toThrow();
   });
 });
 

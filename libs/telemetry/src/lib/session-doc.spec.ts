@@ -104,6 +104,24 @@ describe('buildSessionDoc', () => {
     expect(doc).not.toHaveProperty('transcriptGcsUri');
   });
 
+  it('records the orchestrator run id as intentId on issue-agent docs', () => {
+    const doc = buildSessionDoc(
+      baseSummary({ source: 'issue-agent' }),
+      'live',
+      {
+        runId: '987654321',
+        issueNumber: 7,
+        repo: { owner: 'octo', name: 'example' },
+        intentId: 'octo/example#7/r1',
+      },
+    );
+    expect(doc).toMatchObject({
+      source: 'issue-agent',
+      runId: '987654321',
+      intentId: 'octo/example#7/r1',
+    });
+  });
+
   it('carries transcriptGcsUri onto an issue-agent doc when present', () => {
     const doc = buildSessionDoc(
       baseSummary({ source: 'issue-agent' }),

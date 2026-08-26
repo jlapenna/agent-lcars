@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { Decision } from './decide';
 import {
   isLive,
+  isWorkAnchor,
   type LeasedOutboxEntry,
   type OutboxEntry,
   outboxEntrySchema,
@@ -91,13 +92,14 @@ export class FirestoreStore implements OrchestratorStore {
   }
 
   async listRuns(id: TaskId): Promise<Run[]> {
-    // Two fields, both filtered with `==`: an equality-only compound query,
-    // which Firestore serves from the automatic single-field indexes
-    // without a composite index.
-    const snapshot = await this.#runs
-      .where('task.repo', '==', id.repo)
-      .where('task.issue', '==', id.issue)
-      .get();
+    // Equality-only filters on single fields: served from Firestore's
+    // automatic indexes without a composite index, for either anchor.
+    const query = isWorkAnchor(id)
+      ? this.#runs.where('task.workId', '==', id.workId)
+      : this.#runs
+          .where('task.repo', '==', id.repo)
+          .where('task.issue', '==', id.issue);
+    const snapshot = await query.get();
     return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
   }
 
@@ -126,7 +128,9 @@ export class FirestoreStore implements OrchestratorStore {
       };
       tx.set(taskRef, nextTaskDoc);
 
-      tx.set(this.#runRef(decision.run.runId), decision.run);
+      if (decision.run !== undefined) {
+        tx.set(this.#runRef(decision.run.runId), decision.run);
+      }
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }

@@ -67,7 +67,11 @@
 #     (path to an optional lane-provided script that inspects this run's
 #     structured runtime result for supplementary failure signals --
 #     claude.yml only, see claude-log-scan.sh; codex.yml/opencode.yml leave
-#     this unset and get none of claude's extra signals, exactly as before).
+#     this unset and get none of claude's extra signals, exactly as before);
+#     INTENT_ID (the orchestrator run id, `broker_intent_id` -- the join key
+#     a work item needs to find its sessions; forwarded unchanged to
+#     telemetry-finalize.sh, which forwards it unchanged to
+#     sidecar-lifecycle.sh; empty is valid).
 set -uo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
@@ -80,6 +84,7 @@ set -uo pipefail
 WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
+INTENT_ID="${INTENT_ID:-}"
 
 trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -91,6 +96,7 @@ trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # directory" from bash itself.
 if [ -f "$trusted_dir/telemetry-finalize/telemetry-finalize.sh" ]; then
   WRITER_CREDENTIALS_FILE="$WRITER_CREDENTIALS_FILE" RUN_ID="$RUN_ID" NUM="$ISSUE" \
+    INTENT_ID="$INTENT_ID" \
     bash "$trusted_dir/telemetry-finalize/telemetry-finalize.sh" || true
 else
   echo "::notice::telemetry-finalize not snapshotted; skipping (standalone consumer without the coupled runner image)."

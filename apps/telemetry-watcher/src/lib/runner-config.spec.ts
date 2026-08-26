@@ -102,6 +102,23 @@ describe('loadRunnerConfig', () => {
     expect(config.runId).toBeUndefined();
   });
 
+  it('parses --intent-id', () => {
+    const config = loadRunnerConfig([
+      '--run-id',
+      '1',
+      '--intent-id',
+      'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+    ]);
+
+    expect(config.intentId).toBe('work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1');
+  });
+
+  it('omits intentId entirely when --intent-id is not passed', () => {
+    const config = loadRunnerConfig(['--run-id', '1']);
+
+    expect(config.intentId).toBeUndefined();
+  });
+
   it('parses --repo owner/name', () => {
     const config = loadRunnerConfig([
       '--repo',

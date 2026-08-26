@@ -35,6 +35,10 @@ export interface RunnerConfig extends Pick<
   codexSessionsDir: string;
   /** GitHub Actions run id — tags every doc this run ships as `runId`. */
   runId?: string;
+  /** Orchestrator run ID (`broker_intent_id`) — tags every doc this run
+   * ships as `intentId`, the join key a work item needs to find its
+   * sessions. Distinct from `runId`, the GitHub Actions run id. */
+  intentId?: string;
   /** Anchor issue/PR number — tags every doc this run ships as
    * `issueNumber`. */
   issueNumber?: number;
@@ -63,6 +67,7 @@ export interface RunnerConfig extends Pick<
 
 interface RunnerFlags {
   runId?: string;
+  intentId?: string;
   issueNumber?: string;
   projectsDir?: string;
   codexSessionsDir?: string;
@@ -70,10 +75,10 @@ interface RunnerFlags {
 }
 
 /**
- * Minimal `--flag value` parser for the sidecar CLI's own 4 flags
- * (`--run-id`, `--issue-number`, `--projects-dir`, `--codex-sessions-dir`,
- * `--repo` — see claude.yml's/codex.yml's "Start telemetry sidecar" step).
- * Deliberately hand-rolled
+ * Minimal `--flag value` parser for the sidecar CLI's own 6 flags
+ * (`--run-id`, `--intent-id`, `--issue-number`, `--projects-dir`,
+ * `--codex-sessions-dir`, `--repo` — see claude.yml's/codex.yml's "Start
+ * telemetry sidecar" step). Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in
  * project.json) for a command with a handful of flags. Unknown flags are
@@ -91,6 +96,9 @@ function parseRunnerFlags(argv: string[]): RunnerFlags {
     }
     if (arg === '--run-id') {
       flags.runId = next;
+      i++;
+    } else if (arg === '--intent-id') {
+      flags.intentId = next;
       i++;
     } else if (arg === '--issue-number') {
       flags.issueNumber = next;
@@ -166,6 +174,7 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
       transcriptsBucket: base.transcriptsBucket,
     }),
     ...(flags.runId !== undefined && { runId: flags.runId }),
+    ...(flags.intentId !== undefined && { intentId: flags.intentId }),
     ...(issueNumber !== undefined &&
       !Number.isNaN(issueNumber) && { issueNumber }),
     ...(repo && { repo }),

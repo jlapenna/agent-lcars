@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { isRefusal } from './decide';
+import { decidedRun, isRefusal } from './decide';
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
 import { Orchestrator, type RequestInput } from './orchestrator';
 import { OUTBOX_LEASE_MS } from './store';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
+const WORK: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
 const T0 = '2026-08-15T12:00:00.000Z';
 
 class Clock {
@@ -69,6 +70,8 @@ class RacingOrchestrator extends Orchestrator {
   }
 }
 
+/** `request()` always mints a run, so callers can rely on `.run` directly
+ *  instead of narrowing it at every call site. */
 async function started(
   orchestrator: Orchestrator,
   requestId = 'req-1',
@@ -82,7 +85,7 @@ async function started(
   });
   if (isRefusal(outcome))
     throw new Error(`unexpected refusal: ${outcome.reason}`);
-  return outcome;
+  return { ...outcome, run: decidedRun(outcome) };
 }
 
 describe('the per-task mutex', () => {
@@ -166,10 +169,11 @@ describe('the run lifecycle', () => {
       ref: 'https://github.com/octo/example/pull/9',
     });
     if (isRefusal(outcome)) throw new Error('unexpected refusal');
-    expect(
-      outcome.run.events.map((event) => `${event.to}:${event.by}`),
-    ).toEqual(['pending:request', 'running:dispatch', 'finished:report']);
-    expect(outcome.run.result).toEqual({
+    const settledRun = decidedRun(outcome);
+    expect(settledRun.events.map((event) => `${event.to}:${event.by}`)).toEqual(
+      ['pending:request', 'running:dispatch', 'finished:report'],
+    );
+    expect(settledRun.result).toEqual({
       ok: true,
       ref: 'https://github.com/octo/example/pull/9',
     });
@@ -181,7 +185,9 @@ describe('the run lifecycle', () => {
     await orchestrator.confirmDispatch(run.runId);
     const again = await orchestrator.confirmDispatch(run.runId);
     if (isRefusal(again)) throw new Error('unexpected refusal');
-    expect(again.run.events.filter((e) => e.to === 'running')).toHaveLength(1);
+    expect(
+      decidedRun(again).events.filter((e) => e.to === 'running'),
+    ).toHaveLength(1);
   });
 
   it('records the result verbatim and releases the lock on report', async () => {
@@ -525,6 +531,125 @@ describe('the outbox', () => {
       });
     }
     expect(await claimOutbox(store, clock.now())).toEqual([]);
+  });
+});
+
+describe('native anchors', () => {
+  it('creates the task with its work payload on first request', async () => {
+    const { orchestrator, store } = fixture();
+    const work = {
+      origin: { principal: 'user:jlapenna' },
+      spec: { title: 'x' },
+    };
+    const outcome = await orchestrator.request({
+      taskId: WORK,
+      requestId: WORK.workId,
+      pipeline: 'claude',
+      work,
+    });
+    expect(isRefusal(outcome)).toBe(false);
+    const stored = await store.readTask(WORK);
+    expect(stored?.task.work).toEqual(work);
+    expect(stored?.task.activeRunId).toBe(`work:${WORK.workId}/r1`);
+  });
+
+  it('does not overwrite work on a later request for the same task', async () => {
+    const { orchestrator, store } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: { spec: { title: 'first' } },
+    });
+    const replay = await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+    });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r2',
+      pipeline: 'claude',
+      work: { spec: { title: 'second' } },
+    });
+    const stored = await store.readTask(WORK);
+    expect(stored?.task.work).toEqual({ spec: { title: 'first' } });
+    expect(stored?.task.activeRunId).toBe(`work:${WORK.workId}/r2`);
+  });
+
+  it('refuses a request on a closed task', async () => {
+    const { orchestrator } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: {},
+    });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    const closed = await orchestrator.close(WORK);
+    expect(isRefusal(closed)).toBe(false);
+    const again = await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r2',
+      pipeline: 'claude',
+    });
+    expect(again).toMatchObject({ refused: true, reason: 'task-closed' });
+  });
+});
+
+describe('close', () => {
+  it('refuses while a run is live', async () => {
+    const { orchestrator } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: {},
+    });
+    expect(await orchestrator.close(WORK)).toMatchObject({
+      refused: true,
+      reason: 'task-busy',
+    });
+  });
+
+  it('sets closedAt once no run is live and is idempotent', async () => {
+    const { orchestrator, store } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: {},
+    });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    const first = await orchestrator.close(WORK);
+    expect(isRefusal(first)).toBe(false);
+    expect((await store.readTask(WORK))?.task.closedAt).toBe(T0);
+    expect(await orchestrator.close(WORK)).toMatchObject({
+      refused: true,
+      reason: 'task-closed',
+    });
+  });
+
+  it('refuses a task that was never created', async () => {
+    const { orchestrator } = fixture();
+    expect(await orchestrator.close(WORK)).toMatchObject({
+      refused: true,
+      reason: 'unknown-task',
+    });
+  });
+
+  it('refuses a GitHub-anchored task: closedAt is native anchors only', async () => {
+    const { orchestrator } = fixture();
+    await started(orchestrator);
+    expect(await orchestrator.close(TASK)).toMatchObject({
+      refused: true,
+      reason: 'not-native',
+    });
   });
 });
 

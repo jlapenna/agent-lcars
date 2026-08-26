@@ -125,7 +125,11 @@ describe('startSidecar', () => {
     };
 
     const daemon = startSidecar({
-      config: baseConfig({ runId: '999888777', issueNumber: 3107 }),
+      config: baseConfig({
+        runId: '999888777',
+        intentId: 'octo/example#3107/r1',
+        issueNumber: 3107,
+      }),
       store,
       autoStart: false,
       now: () => '2026-07-19T10:00:01.000Z',
@@ -143,6 +147,7 @@ describe('startSidecar', () => {
     expect(upserts[0]).toMatchObject({
       source: 'issue-agent',
       runId: '999888777',
+      intentId: 'octo/example#3107/r1',
       issueNumber: 3107,
     });
   });

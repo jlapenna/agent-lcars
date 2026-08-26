@@ -14,15 +14,50 @@ import { z } from 'zod';
 
 const isoUtc = z.iso.datetime({ offset: false });
 
-/** A task is identified by where the work lives. Nothing else. */
-export const taskIdSchema = z.strictObject({
+/**
+ * A task is identified by where the work lives. Two anchors exist:
+ *
+ * - a GitHub issue or pull request, `{ repo, issue }` -- the shape every
+ *   persisted document already carries, kept byte-for-byte;
+ * - a native work item, `{ workId }`, a ULID minted by the caller.
+ *
+ * The variants are discriminated by which key is present, never by a new
+ * required field: `FirestoreStore` zod-parses every persisted Task, Run,
+ * and OutboxEntry on read, so a variant requiring a field legacy documents
+ * lack would reject the whole existing dataset.
+ */
+export const githubAnchorSchema = z.strictObject({
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/u),
   issue: z.number().int().positive(),
 });
+export type GithubAnchor = z.infer<typeof githubAnchorSchema>;
+
+/** Crockford base32, 26 characters: a ULID. Excludes I, L, O, U. */
+export const WORK_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
+
+export const workAnchorSchema = z.strictObject({
+  workId: z.string().regex(WORK_ID_RE),
+});
+export type WorkAnchor = z.infer<typeof workAnchorSchema>;
+
+export const taskIdSchema = z.union([githubAnchorSchema, workAnchorSchema]);
 export type TaskId = z.infer<typeof taskIdSchema>;
 
+export function isGithubAnchor(id: TaskId): id is GithubAnchor {
+  return 'repo' in id;
+}
+
+export function isWorkAnchor(id: TaskId): id is WorkAnchor {
+  return 'workId' in id;
+}
+
+/**
+ * `repo#issue` for GitHub anchors (unchanged) and `work:<ulid>` for native
+ * ones. `:` is outside the repo-name charset, so the two can never collide
+ * as Firestore document ids.
+ */
 export function taskKey(id: TaskId): string {
-  return `${id.repo}#${id.issue}`;
+  return isWorkAnchor(id) ? `work:${id.workId}` : `${id.repo}#${id.issue}`;
 }
 
 /**
@@ -95,6 +130,26 @@ export const runSchema = z.strictObject({
 });
 export type Run = z.infer<typeof runSchema>;
 
+/**
+ * A native work item's payload -- who asked and what for. The orchestrator
+ * stores it and never interprets it, exactly as it treats `Run.params`;
+ * `libs/work` owns the shape. Bounded so a runaway caller cannot bloat the
+ * task document towards Firestore's 1 MiB limit.
+ */
+export const WORK_PAYLOAD_MAX_BYTES = 32_768;
+
+export const workPayloadSchema = z
+  .record(z.string().max(64), z.unknown())
+  .refine(
+    (value) =>
+      new TextEncoder().encode(JSON.stringify(value)).length <=
+      WORK_PAYLOAD_MAX_BYTES,
+    {
+      message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
+    },
+  );
+export type WorkPayload = z.infer<typeof workPayloadSchema>;
+
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
   /** The mutex. Set iff a run is live. */
@@ -107,6 +162,13 @@ export const taskSchema = z.strictObject({
    *  `FirestoreStore`'s zod validation). Drives the bounded auto-retry
    *  budget in `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
   consecutiveLost: z.number().int().nonnegative().optional(),
+  /** Native anchors only: the work item's payload, written once when the
+   *  task is created by its first request and never modified by the
+   *  orchestrator. Absent on GitHub-anchored tasks. */
+  work: workPayloadSchema.optional(),
+  /** Native anchors only: set by `closeTask` when an operator closes an
+   *  item that has no live run. A closed task refuses further requests. */
+  closedAt: isoUtc.optional(),
   updatedAt: isoUtc,
 });
 export type Task = z.infer<typeof taskSchema>;

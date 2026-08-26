@@ -91,6 +91,7 @@ export function buildSessionDoc(
       ...base,
       source: 'issue-agent',
       ...(options.runId && { runId: options.runId }),
+      ...(options.intentId && { intentId: options.intentId }),
       ...(options.issueNumber !== undefined && {
         issueNumber: options.issueNumber,
       }),

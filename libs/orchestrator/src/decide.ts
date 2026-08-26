@@ -1,11 +1,13 @@
 import {
   isLive,
+  isWorkAnchor,
   type OutboxEntry,
   type Run,
   type RunResult,
   type Task,
   type TaskId,
   taskKey,
+  type WorkPayload,
 } from './model';
 
 /**
@@ -20,7 +22,8 @@ import {
 
 export interface Decision {
   readonly task: Task;
-  readonly run: Run;
+  /** Absent only for decisions that touch the task alone (`closeTask`). */
+  readonly run?: Run;
   readonly outbox: readonly OutboxEntry[];
 }
 
@@ -31,7 +34,10 @@ export interface Refusal {
     | 'duplicate-request' // same requestId as an existing run: return it
     | 'unknown-run'
     | 'run-not-live' // report/cancel/renew against a settled run
-    | 'stale-lease'; // renew/report from a run that already lost the lock
+    | 'stale-lease' // renew/report from a run that already lost the lock
+    | 'task-closed' // closeTask set closedAt; no further runs
+    | 'unknown-task' // close on a task that was never created
+    | 'not-native'; // closeTask on a GitHub anchor: closedAt is native-only
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
 }
@@ -44,6 +50,14 @@ export function refused(reason: Refusal['reason'], existingRun?: Run): Refusal {
 
 export function isRefusal(value: Decision | Refusal): value is Refusal {
   return 'refused' in value;
+}
+
+/** For decisions that always carry a run; throws if the invariant breaks. */
+export function decidedRun(decision: Decision): Run {
+  if (decision.run === undefined) {
+    throw new Error('decision unexpectedly carries no run');
+  }
+  return decision.run;
 }
 
 const LEASE_MS = 2 * 60 * 60 * 1_000;
@@ -67,6 +81,7 @@ export interface RequestRunInput {
   requestId: string;
   pipeline: string;
   params?: Record<string, string>;
+  work?: WorkPayload;
 }
 
 /**
@@ -84,6 +99,9 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     }
     return refused('task-busy', activeRun);
   }
+  if (input.task?.closedAt !== undefined) {
+    return refused('task-closed');
+  }
   const baseTask: Task = {
     task: taskId,
     runCount: input.task?.runCount ?? 0,
@@ -94,6 +112,12 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     ...(input.task?.consecutiveLost === undefined
       ? {}
       : { consecutiveLost: input.task.consecutiveLost }),
+    // Written once: only the request that creates the task may set `work`.
+    ...(input.task?.work !== undefined
+      ? { work: input.task.work }
+      : input.work !== undefined
+        ? { work: input.work }
+        : {}),
     updatedAt: now,
   };
   return mintRun({
@@ -341,6 +365,27 @@ export function settleTerminal(input: {
     settled,
     now,
   );
+}
+
+/**
+ * Close a native task that has no live run: sets `closedAt`, after which
+ * `requestRun` refuses it. The one piece of item state the orchestrator
+ * stores on behalf of the work layer, kept here so it lives in the same
+ * transaction discipline as everything else that touches a task.
+ */
+export function closeTask(input: {
+  now: string;
+  task: Task | undefined;
+  activeRun: Run | undefined;
+}): Decision | Refusal {
+  const { now, task, activeRun } = input;
+  if (task === undefined) return refused('unknown-task');
+  if (!isWorkAnchor(task.task)) return refused('not-native');
+  if (task.closedAt !== undefined) return refused('task-closed');
+  if (activeRun !== undefined && isLive(activeRun.state)) {
+    return refused('task-busy', activeRun);
+  }
+  return { task: { ...task, closedAt: now, updatedAt: now }, outbox: [] };
 }
 
 /** Shared tail of every settle path. */

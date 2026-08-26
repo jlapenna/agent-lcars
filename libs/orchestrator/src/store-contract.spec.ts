@@ -46,6 +46,21 @@ describe('outboxEntrySchema', () => {
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 
+// The `test-firestore` Nx target sets REQUIRE_FIRESTORE_EMULATOR=1
+// alongside FIRESTORE_EMULATOR_HOST: that target exists specifically to
+// run this contract against a real emulator, so a misconfigured
+// environment there (emulator host unset, or a startup race that drops it)
+// must fail loudly rather than have `describe.skipIf` below quietly pass
+// the whole suite vacuously.
+if (
+  process.env['REQUIRE_FIRESTORE_EMULATOR'] === '1' &&
+  emulatorHost === undefined
+) {
+  throw new Error(
+    'REQUIRE_FIRESTORE_EMULATOR=1 but FIRESTORE_EMULATOR_HOST is unset',
+  );
+}
+
 // Only runs against a real Firestore emulator, opted into via
 // FIRESTORE_EMULATOR_HOST; otherwise this whole block is skipped so the
 // suite still passes hermetically (e.g. in CI without an emulator wired up).
