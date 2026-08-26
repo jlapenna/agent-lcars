@@ -59,7 +59,10 @@ set -uo pipefail
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${AGENT:?AGENT is required}"
 : "${REPO:?REPO is required}"
-: "${NUM:?NUM is required}"
+# Empty for a native work-item run: there is no issue or pull request
+# number to anchor a comment/review lookup against. The PR-marker lookup
+# below is the only one that ever runs in that case (agent-protocol.md 5a).
+NUM="${NUM:-}"
 # MODE stays load-bearing even in exact-only validation: only MODE=review
 # additionally checks pull request reviews for the marker - the reviews
 # endpoint 404s when #NUM is not a pull request, and review mode is the one
@@ -93,8 +96,9 @@ else
 fi
 
 # Comments: not gated on MODE - a marker stamped on a comment is exact
-# evidence regardless of dispatch mode.
-if [ -z "$found" ]; then
+# evidence regardless of dispatch mode. Gated on NUM: a native work-item
+# run has no issue to fetch comments from at all.
+if [ -n "$NUM" ] && [ -z "$found" ]; then
   if claim_comment_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
     --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
     if [ -n "$claim_comment_hits" ]; then
@@ -112,8 +116,9 @@ fi
 
 # Reviews: gated on MODE=review - `pulls/$NUM/reviews` 404s when #NUM is
 # not a pull request, and review mode is the one case this script already
-# knows #NUM is one.
-if [ -z "$found" ] && [ "$MODE" = "review" ]; then
+# knows #NUM is one. Also gated on NUM: a native work-item run has no
+# pull request number to fetch reviews from.
+if [ -n "$NUM" ] && [ -z "$found" ] && [ "$MODE" = "review" ]; then
   if claim_review_hits=$(gh api "repos/$REPO/pulls/$NUM/reviews?per_page=100" --paginate \
     --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id" 2>&1); then
     if [ -n "$claim_review_hits" ]; then
@@ -141,9 +146,16 @@ if [ "${#errors[@]}" -gt 0 ]; then
 fi
 
 echo "NO_DELIVERABLE=1" >> "${GITHUB_ENV:-/dev/null}"
-checked="No PR or comment"
-if [ "$MODE" = "review" ]; then
-  checked="No PR, comment, or pull request review"
+checked="No PR"
+if [ -n "$NUM" ]; then
+  checked="No PR or comment"
+  if [ "$MODE" = "review" ]; then
+    checked="No PR, comment, or pull request review"
+  fi
 fi
-echo "::error::$AGENT run completed 'successfully' but produced no deliverable on #$NUM: $checked carries this run's exact attempt-claim marker ($ATTEMPT_ID). All of its local work may be lost."
+# "#$NUM" when this run has an issue/PR anchor, "this work item" for a
+# native work-item run that has none.
+anchor_label="${NUM:+#$NUM}"
+anchor_label="${anchor_label:-this work item}"
+echo "::error::$AGENT run completed 'successfully' but produced no deliverable on $anchor_label: $checked carries this run's exact attempt-claim marker ($ATTEMPT_ID). All of its local work may be lost."
 exit 1

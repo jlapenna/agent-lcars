@@ -181,3 +181,92 @@ if [ "$oversized_bytes" -gt 20000 ]; then
   echo "dispatch brief exceeded its size budget: $oversized_bytes bytes" >&2
   exit 1
 fi
+
+# A native work-item dispatch (WORK set, ISSUE empty): the anchor is built
+# from WORK alone, with no GitHub read of any kind. The fake `gh` below logs
+# every invocation and fails loudly, so any accidental `gh api` call in this
+# path is caught rather than silently succeeding against a stray fixture.
+native_root="$test_root/native"
+mkdir -p "$native_root/runner-temp" "$native_root/consumer"
+
+gh_call_log="$native_root/gh-calls.log"
+: > "$gh_call_log"
+native_bin="$native_root/bin"
+mkdir -p "$native_bin"
+cat > "$native_bin/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_CALL_LOG"
+echo "unexpected gh call for a native work-item dispatch: $*" >&2
+exit 64
+FAKE_GH
+chmod +x "$native_bin/gh"
+
+WORK='{"id":"01J5Z3K9QX8F0N2B4V6C8D1E3G","spec":{"title":"Add healthz","description":"Expose GET /healthz.","pipeline":"claude","target":{"repo":"octo/example"}}}'
+ISSUE=""
+MODE="implement"
+REPLY=""
+CONTEXT=""
+CONSOLE_URL="https://lcars.test"
+GH_CALL_LOG="$gh_call_log"
+RUNNER_TEMP="$native_root/runner-temp"
+GITHUB_ENV="$native_root/github-env"
+GITHUB_OUTPUT="$native_root/github-output"
+export WORK ISSUE MODE REPLY CONTEXT CONSOLE_URL GH_CALL_LOG RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT
+
+(
+  cd "$native_root/consumer"
+  GITHUB_WORKSPACE="$native_root/consumer" PATH="$native_bin:$PATH" bash "$action_dir/prepare.sh"
+)
+
+if [ -s "$gh_call_log" ]; then
+  echo "native work-item dispatch made a gh call: $(cat "$gh_call_log")" >&2
+  exit 1
+fi
+
+native_context_path="$RUNNER_TEMP/agent-dispatch/context.json"
+jq -e '
+  .anchor.type == "work" and
+  .anchor.id == "01J5Z3K9QX8F0N2B4V6C8D1E3G" and
+  .anchor.title == "Add healthz" and
+  .anchor.body == "Expose GET /healthz." and
+  .anchor.target_repo == "octo/example" and
+  .anchor.html_url == "https://lcars.test/work/01J5Z3K9QX8F0N2B4V6C8D1E3G" and
+  .anchor.number == null and
+  .anchor.labels == [] and
+  .anchor.assignees == [] and
+  .anchor.state == "open" and
+  .anchor.state_reason == null and
+  .mode == "implement" and
+  .reply == "" and
+  .latest_agent_result == null and
+  .requested_results == ["pull-request"] and
+  .truncated == []' "$native_context_path" >/dev/null
+
+# A malformed WORK payload is a caller bug, not a retryable condition: fail
+# fast with a named error rather than writing a half-built anchor.
+malformed_root="$test_root/malformed"
+mkdir -p "$malformed_root/runner-temp" "$malformed_root/consumer"
+malformed_output="$test_root/malformed-output"
+set +e
+(
+  cd "$malformed_root/consumer"
+  WORK='{"id":"01J5Z3K9QX8F0N2B4V6C8D1E3G","spec":{"description":"missing title and target"}}' \
+    ISSUE="" MODE="implement" REPLY="" CONTEXT="" CONSOLE_URL="https://lcars.test" \
+    GH_CALL_LOG="$gh_call_log" RUNNER_TEMP="$malformed_root/runner-temp" \
+    GITHUB_ENV="$malformed_root/github-env" GITHUB_OUTPUT="$malformed_root/github-output" \
+    GITHUB_WORKSPACE="$malformed_root/consumer" PATH="$native_bin:$PATH" \
+    bash "$action_dir/prepare.sh" > "$malformed_output" 2>&1
+)
+malformed_status=$?
+set -e
+test "$malformed_status" -ne 0 || {
+  echo "a malformed WORK payload must fail the dispatch, not succeed" >&2
+  exit 1
+}
+grep -q '::error::WORK is malformed' "$malformed_output" || {
+  echo "expected a named ::error:: for a malformed WORK payload" >&2
+  cat "$malformed_output" >&2
+  exit 1
+}
+
+echo "prepare.test.sh: native work anchor cases passed"

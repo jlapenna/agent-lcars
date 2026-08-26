@@ -13,8 +13,12 @@ inputs:
     description: Agent name used in messages (e.g. Claude, Codex, OpenCode).
     required: true
   issue:
-    description: Issue or pull request number that anchors the work.
-    required: true
+    description: >-
+      Issue or pull request number that anchors the work. Empty for a
+      native work-item run (no issue anchor); the gate then checks only
+      the PR-marker lookup.
+    required: false
+    default: ''
   mode:
     description: >-
       Dispatch mode. Only 'review' additionally checks pull request reviews

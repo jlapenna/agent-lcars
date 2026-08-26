@@ -82,11 +82,19 @@ const PUBLISHED = {
     inputs: {
       token: { required: false, default: '' },
       agent: { required: true },
-      issue: { required: true },
+      // issue/work: additive to Plan 3's native lane (agent-lcars#1527) --
+      // issue is now optional (empty for a native work-item dispatch) and
+      // `work` carries that dispatch's JSON payload instead. An existing
+      // consumer that still always passes `issue` is unaffected.
+      issue: { required: false, default: '' },
+      work: { required: false, default: '' },
       mode: { required: true },
       reply: { required: false, default: '' },
       runbook: { required: false, default: '' },
       context: { required: false, default: '' },
+      // console_url: additive (agent-lcars#1527) -- builds a native work
+      // item's anchor.html_url; unused, so harmless, for an issue dispatch.
+      console_url: { required: false, default: 'https://lcars.jlapenna.net' },
       'prior-terminal-state': { required: false, default: 'null' },
       'budget-minutes': { required: false, default: '60' },
       'artifact-checkpoint-minutes': { required: false, default: '25' },
@@ -110,7 +118,11 @@ const PUBLISHED = {
     inputs: {
       token: { required: true },
       agent: { required: true },
-      issue: { required: true },
+      // issue: made optional for Plan 3's native lane (agent-lcars#1527) --
+      // empty for a native work-item run, which has no issue/PR anchor and
+      // is gated on the PR-marker lookup alone. An existing consumer that
+      // still always passes `issue` is unaffected.
+      issue: { required: false, default: '' },
       mode: { required: true },
       'attempt-id': { required: true },
     },
