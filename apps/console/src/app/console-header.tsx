@@ -54,7 +54,7 @@ function navHref(
 
 /**
  * Shared top-of-page chrome for the console destinations (Bridge, Inbox,
- * Agents, Shuttlebay, Work, Sessions, Costs): title/subtitle row and the LCARS destination rail
+ * Agents, Shuttlebay, Sessions, Costs): title/subtitle row and the LCARS destination rail
  * (the one page every page can jump from/to). Drill-down pages use the same
  * header with their logical parent marked active, so they retain both a
  * visible title and a route back to every console destination.
