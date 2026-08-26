@@ -1,0 +1,1460 @@
+{
+  "info": {
+    "title": "Agent LCARS work items",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "/api/work/v1"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "UndefinedError": {
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": false
+          },
+          "inferable": {
+            "type": "boolean"
+          },
+          "code": {
+            "type": "string"
+          },
+          "status": {
+            "type": "number"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": ["defined", "inferable", "code", "status", "message"]
+      },
+      "Forbidden": {
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "inferable": {
+            "type": "boolean"
+          },
+          "code": {
+            "const": "FORBIDDEN"
+          },
+          "status": {
+            "const": 403
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": ["defined", "inferable", "code", "status", "message"]
+      },
+      "TooManyRequests": {
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "inferable": {
+            "type": "boolean"
+          },
+          "code": {
+            "const": "TOO_MANY_REQUESTS"
+          },
+          "status": {
+            "const": 429
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "retryAfterSeconds": {
+                "type": "number"
+              }
+            },
+            "required": ["retryAfterSeconds"],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "defined",
+          "inferable",
+          "code",
+          "status",
+          "message",
+          "data"
+        ]
+      },
+      "Conflict": {
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "inferable": {
+            "type": "boolean"
+          },
+          "code": {
+            "const": "CONFLICT"
+          },
+          "status": {
+            "const": 409
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": ["defined", "inferable", "code", "status", "message"]
+      },
+      "NotFound": {
+        "type": "object",
+        "properties": {
+          "defined": {
+            "const": true
+          },
+          "inferable": {
+            "type": "boolean"
+          },
+          "code": {
+            "const": "NOT_FOUND"
+          },
+          "status": {
+            "const": 404
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": ["defined", "inferable", "code", "status", "message"]
+      }
+    }
+  },
+  "openapi": "3.1.2",
+  "paths": {
+    "/items/{id}": {
+      "put": {
+        "operationId": "createItem",
+        "summary": "Create a work item (idempotent by client ULID)",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16384
+                      },
+                      "pipeline": {
+                        "type": "string",
+                        "enum": ["claude", "codex", "opencode"]
+                      },
+                      "target": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string",
+                            "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                          }
+                        },
+                        "required": ["repo"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["title", "description", "pipeline", "target"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["spec"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["running", "done", "parked", "canceled"]
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16384
+                        },
+                        "pipeline": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            }
+                          },
+                          "required": ["repo"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "description",
+                        "pipeline",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "principal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": ["api", "cron", "console"]
+                        }
+                      },
+                      "required": ["principal", "channel"],
+                      "additionalProperties": false
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "closedAt": {
+                      "type": "string"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "running",
+                              "finished",
+                              "canceled",
+                              "lost"
+                            ]
+                          },
+                          "pipeline": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "summary": {
+                                "type": "string",
+                                "maxLength": 4096
+                              },
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["ok"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "state",
+                          "pipeline",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "transcriptGcsUri": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "runId",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "state",
+                    "spec",
+                    "origin",
+                    "createdAt",
+                    "updatedAt",
+                    "runs",
+                    "sessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal may not request this pipeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Item exists with a different spec",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Fleet is at its live-run cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TooManyRequests"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "getItem",
+        "summary": "Read a work item",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["running", "done", "parked", "canceled"]
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16384
+                        },
+                        "pipeline": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            }
+                          },
+                          "required": ["repo"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "description",
+                        "pipeline",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "principal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": ["api", "cron", "console"]
+                        }
+                      },
+                      "required": ["principal", "channel"],
+                      "additionalProperties": false
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "closedAt": {
+                      "type": "string"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "running",
+                              "finished",
+                              "canceled",
+                              "lost"
+                            ]
+                          },
+                          "pipeline": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "summary": {
+                                "type": "string",
+                                "maxLength": 4096
+                              },
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["ok"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "state",
+                          "pipeline",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "transcriptGcsUri": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "runId",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "state",
+                    "spec",
+                    "origin",
+                    "createdAt",
+                    "updatedAt",
+                    "runs",
+                    "sessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/items": {
+      "get": {
+        "operationId": "listItems",
+        "summary": "List work items",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "type": "string",
+              "enum": ["running", "done", "parked", "canceled"]
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "in": "query",
+            "name": "principal",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "in": "query",
+            "name": "repo",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": ["running", "done", "parked", "canceled"]
+                          },
+                          "spec": {
+                            "type": "object",
+                            "properties": {
+                              "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "description": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 16384
+                              },
+                              "pipeline": {
+                                "type": "string",
+                                "enum": ["claude", "codex", "opencode"]
+                              },
+                              "target": {
+                                "type": "object",
+                                "properties": {
+                                  "repo": {
+                                    "type": "string",
+                                    "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                  }
+                                },
+                                "required": ["repo"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "title",
+                              "description",
+                              "pipeline",
+                              "target"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "origin": {
+                            "type": "object",
+                            "properties": {
+                              "principal": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128
+                              },
+                              "channel": {
+                                "type": "string",
+                                "enum": ["api", "cron", "console"]
+                              }
+                            },
+                            "required": ["principal", "channel"],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "closedAt": {
+                            "type": "string"
+                          },
+                          "runs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "runId": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pending",
+                                    "running",
+                                    "finished",
+                                    "canceled",
+                                    "lost"
+                                  ]
+                                },
+                                "pipeline": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string"
+                                },
+                                "updatedAt": {
+                                  "type": "string"
+                                },
+                                "result": {
+                                  "type": "object",
+                                  "properties": {
+                                    "ok": {
+                                      "type": "boolean"
+                                    },
+                                    "summary": {
+                                      "type": "string",
+                                      "maxLength": 4096
+                                    },
+                                    "ref": {
+                                      "type": "string",
+                                      "maxLength": 1024
+                                    }
+                                  },
+                                  "required": ["ok"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "runId",
+                                "state",
+                                "pipeline",
+                                "createdAt",
+                                "updatedAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "sessions": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "sessionId": {
+                                  "type": "string"
+                                },
+                                "runId": {
+                                  "type": "string"
+                                },
+                                "startedAt": {
+                                  "type": "string"
+                                },
+                                "lastActivityAt": {
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string"
+                                },
+                                "transcriptGcsUri": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "sessionId",
+                                "runId",
+                                "startedAt",
+                                "lastActivityAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "state",
+                          "spec",
+                          "origin",
+                          "createdAt",
+                          "updatedAt",
+                          "runs",
+                          "sessions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["items"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/items/{id}/cancel": {
+      "post": {
+        "operationId": "cancelItem",
+        "summary": "Cancel a work item",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["running", "done", "parked", "canceled"]
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16384
+                        },
+                        "pipeline": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            }
+                          },
+                          "required": ["repo"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "description",
+                        "pipeline",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "principal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": ["api", "cron", "console"]
+                        }
+                      },
+                      "required": ["principal", "channel"],
+                      "additionalProperties": false
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "closedAt": {
+                      "type": "string"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "running",
+                              "finished",
+                              "canceled",
+                              "lost"
+                            ]
+                          },
+                          "pipeline": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "summary": {
+                                "type": "string",
+                                "maxLength": 4096
+                              },
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["ok"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "state",
+                          "pipeline",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "transcriptGcsUri": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "runId",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "state",
+                    "spec",
+                    "origin",
+                    "createdAt",
+                    "updatedAt",
+                    "runs",
+                    "sessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Item already settled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/items/{id}/redispatch": {
+      "post": {
+        "operationId": "redispatchItem",
+        "summary": "Mint a fresh run for a parked item",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["running", "done", "parked", "canceled"]
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16384
+                        },
+                        "pipeline": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            }
+                          },
+                          "required": ["repo"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "description",
+                        "pipeline",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "principal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": ["api", "cron", "console"]
+                        }
+                      },
+                      "required": ["principal", "channel"],
+                      "additionalProperties": false
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "closedAt": {
+                      "type": "string"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "running",
+                              "finished",
+                              "canceled",
+                              "lost"
+                            ]
+                          },
+                          "pipeline": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "summary": {
+                                "type": "string",
+                                "maxLength": 4096
+                              },
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 1024
+                              }
+                            },
+                            "required": ["ok"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "state",
+                          "pipeline",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "transcriptGcsUri": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "runId",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "state",
+                    "spec",
+                    "origin",
+                    "createdAt",
+                    "updatedAt",
+                    "runs",
+                    "sessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Only a parked item can be redispatched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Fleet is at its live-run cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TooManyRequests"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  }
+}

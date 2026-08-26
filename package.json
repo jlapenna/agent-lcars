@@ -17,7 +17,8 @@
     "trajectory:validate": "node tools/trajectory-evaluation/cli.mjs validate --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
     "tsc": "./tools/nx run-many -t typecheck",
     "lint:circular": "madge --circular --extensions ts,tsx --ts-config tsconfig.base.json --exclude '.*(dist|test|spec).*' libs/ apps/",
-    "verify": "pnpm format:check && pnpm lint && pnpm lint:circular && ./tools/nx run-many -t test typecheck build --all"
+    "verify": "pnpm format:check && pnpm lint && pnpm lint:circular && ./tools/nx run-many -t test typecheck build --all",
+    "work:openapi": "tsx tools/work-openapi.mts"
   },
   "private": true,
   "packageManager": "pnpm@11.22.0",
