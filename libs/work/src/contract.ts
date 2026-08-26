@@ -155,6 +155,21 @@ export const itemsContract = {
     )
     .errors({
       NOT_FOUND: { message: 'No such item' },
+      // Redispatch mints a fresh run, so it re-checks the same two
+      // capabilities `create` did -- the pipeline grant and control-plane
+      // membership of the target repo -- against the grants and repository
+      // list as they stand NOW, not as they stood when the item was
+      // created. Declared here so the published document lists 403 for
+      // this path.
+      // Redispatch mints a fresh run, so it re-checks the same two
+      // capabilities `create` did -- the pipeline grant and control-plane
+      // membership of the target repo -- against the grants and repository
+      // list as they stand NOW, not as they stood when the item was
+      // created. Declared here so the published document lists 403 for
+      // this path.
+      FORBIDDEN: {
+        message: 'Principal may not request this pipeline or repository',
+      },
       CONFLICT: { message: 'Only a parked item can be redispatched' },
       TOO_MANY_REQUESTS: {
         message: 'Fleet is at its live-run cap',

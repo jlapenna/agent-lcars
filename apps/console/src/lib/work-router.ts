@@ -84,15 +84,33 @@ async function liveNativeRunCount(context: WorkContext): Promise<number> {
   return live.filter((run) => isWorkAnchor(run.task)).length;
 }
 
-function assertPipelineGranted(
+/**
+ * The two capability checks every run-minting procedure must clear:
+ * invoking a pipeline is granted per principal, and the target repository
+ * must be one this control plane admits.
+ *
+ * Both `create` and `redispatch` run it, and both evaluate it against the
+ * grants and the repository list **as they stand now**. That is the point
+ * for `redispatch`: an item parked back when its repo was in
+ * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` must not become a way to
+ * dispatch a workflow into that repo after it was removed from the list.
+ *
+ * Returns the refusal message rather than throwing, so each handler raises
+ * its own contract-declared `errors.FORBIDDEN` -- a bare `ORPCError` would
+ * still map to 403 at runtime but would leave 403 undocumented for the
+ * path in the generated OpenAPI document.
+ */
+function forbiddenReason(
   principal: WorkPrincipal,
-  pipeline: string,
-): void {
-  if (!principal.pipelines.includes(pipeline)) {
-    throw new ORPCError('FORBIDDEN', {
-      message: `${principal.principal} may not request pipeline ${pipeline}`,
-    });
+  spec: WorkSpec,
+): string | undefined {
+  if (!principal.pipelines.includes(spec.pipeline)) {
+    return `${principal.principal} may not request pipeline ${spec.pipeline}`;
   }
+  if (!isControlPlaneRepository(spec.target.repo)) {
+    return `${spec.target.repo} is not a control-plane repository`;
+  }
+  return undefined;
 }
 
 /** Both sides go through the same schema first, so the comparison is over
@@ -108,12 +126,8 @@ function sameSpec(a: WorkSpec, b: WorkSpec): boolean {
 export const workRouter = os.router({
   create: operator.create.handler(async ({ input, context, errors }) => {
     const { principal } = context;
-    assertPipelineGranted(principal, input.spec.pipeline);
-    if (!isControlPlaneRepository(input.spec.target.repo)) {
-      throw errors.FORBIDDEN({
-        message: `${input.spec.target.repo} is not a control-plane repository`,
-      });
-    }
+    const forbidden = forbiddenReason(principal, input.spec);
+    if (forbidden !== undefined) throw errors.FORBIDDEN({ message: forbidden });
 
     // Idempotency by client ULID: the same id and spec replays to the item
     // that already exists (still 201 -- see the contract's successStatus),
@@ -248,14 +262,17 @@ export const workRouter = os.router({
         });
       }
 
-      // The item's declared pipeline, not the last run's: the spec is what
-      // the operator asked for, and a run's pipeline is only ever a copy of
-      // it. Re-checked against the grant because invoking a pipeline is a
-      // capability -- redispatch mints a fresh run, so it needs the same
-      // permission `create` did, and the principal here need not be the one
-      // that created the item.
+      // The item's declared pipeline and target, not the last run's: the
+      // spec is what the operator asked for, and a run only ever copies it.
+      // Re-checked in full because redispatch mints a fresh run, so it
+      // needs everything `create` needed -- and neither the principal nor
+      // the control-plane repository list need be what they were when the
+      // item was created.
       const { spec } = workPayloadSchema.parse(task.task.work);
-      assertPipelineGranted(context.principal, spec.pipeline);
+      const forbidden = forbiddenReason(context.principal, spec);
+      if (forbidden !== undefined) {
+        throw errors.FORBIDDEN({ message: forbidden });
+      }
 
       if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
         throw errors.TOO_MANY_REQUESTS({

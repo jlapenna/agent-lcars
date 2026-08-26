@@ -29,7 +29,7 @@ const EXPECTED_PUBLIC_ROUTES = [
 const EXPECTED_PUBLIC_PREFIXES = [
   '/api/e2e/',
   '/api/quick-task-evidence/v1/',
-  '/api/work/v1',
+  '/api/work/v1/',
 ];
 
 // Every control-plane route authenticates itself (OIDC claims or raw-body
@@ -73,7 +73,12 @@ function workRoutePrefixesOnDisk(): string[] {
         if (segment.startsWith('[')) break;
         staticSegments.push(segment);
       }
-      return ['/api/work', ...staticSegments].join('/');
+      // Trailing slash so the coverage check below is segment-terminated:
+      // '/api/work/v1beta/' must NOT be considered covered by a
+      // '/api/work/v1/' entry. Without it, `startsWith` would call a
+      // v1beta sibling covered and this whole test would pass wrongly for
+      // a route nobody had allow-listed.
+      return `${['/api/work', ...staticSegments].join('/')}/`;
     })
     .sort();
 }
@@ -91,12 +96,12 @@ describe('console proxy public work API prefixes', () => {
     expect(routes.length).toBeGreaterThan(0);
     for (const path of routes) {
       expect(
-        publicPrefixes.some((prefix) => `${path}/`.startsWith(prefix)),
+        publicPrefixes.some((prefix) => path.startsWith(prefix)),
         `${path} must be covered by a publicPrefixes entry`,
       ).toBe(true);
 
       const request = new NextRequest(
-        `https://lcars.jlapenna.net${path}/items`,
+        `https://lcars.jlapenna.net${path}items`,
         { method: 'GET' },
       );
       expect(
@@ -104,6 +109,19 @@ describe('console proxy public work API prefixes', () => {
         `${path} must bypass the session check`,
       ).toBe(200);
     }
+  });
+
+  it('does not treat a sibling version segment as covered by the v1 prefix', () => {
+    // The exact drift the trailing slash exists to prevent: a future
+    // app/api/work/v1beta route must fail the coverage check above and be
+    // gated by the proxy, not inherit v1's allow-list entry.
+    expect(
+      publicPrefixes.some((prefix) => '/api/work/v1beta/'.startsWith(prefix)),
+    ).toBe(false);
+    expect(
+      proxy(new NextRequest('https://lcars.jlapenna.net/api/work/v1beta/items'))
+        .status,
+    ).toBe(401);
   });
 
   it('leaves a sibling work path outside the versioned prefix behind the session gate', () => {

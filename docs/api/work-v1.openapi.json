@@ -1397,6 +1397,23 @@
               }
             }
           },
+          "403": {
+            "description": "Principal may not request this pipeline or repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "404": {
             "description": "No such item",
             "content": {

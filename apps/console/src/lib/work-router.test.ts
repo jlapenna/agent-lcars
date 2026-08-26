@@ -180,6 +180,52 @@ describe('items routes', () => {
     expect(r.json.state).toBe('running');
   });
 
+  it('refuses to redispatch an item whose repo left the control plane, with 403', async () => {
+    const ctx = context();
+    // Seeded straight through the orchestrator, because `create` would
+    // refuse this repo today -- and that is precisely the situation under
+    // test: the item was created while its repo WAS a control-plane
+    // repository, and AGENT_LCARS_CONTROL_PLANE_REPOSITORIES has since
+    // changed. Redispatch must re-check against the list as it stands now,
+    // not inherit the permission the item was created with.
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: ID },
+      requestId: ID,
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'console' },
+        spec: { ...spec, target: { repo: 'octo/example' } },
+      },
+    });
+    await ctx.runtime.orchestrator.report(`work:${ID}/r1`, { ok: false });
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('parked');
+
+    const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
+    expect(r.status).toBe(403);
+    // Still parked: the refusal must not have minted a run.
+    expect((await call(ctx, 'GET', `/items/${ID}`)).json.runs).toHaveLength(1);
+  });
+
+  it('refuses to redispatch a pipeline outside the grant, with 403', async () => {
+    const ctx = context({
+      principal: { ...operator, pipelines: ['codex'] },
+    });
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: ID },
+      requestId: ID,
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'console' },
+        spec,
+      },
+    });
+    await ctx.runtime.orchestrator.report(`work:${ID}/r1`, { ok: false });
+
+    expect((await call(ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+      403,
+    );
+  });
+
   it('joins the sessions the context resolves for the item runs', async () => {
     const ctx = context({
       sessionsFor: async (runIds) =>

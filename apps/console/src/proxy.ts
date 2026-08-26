@@ -56,7 +56,15 @@ export const publicPrefixes = [
   // bare {"error":"Unauthorized"} before oRPC ever routed the request. The
   // route still reads an Auth.js session when no bearer is present, so a
   // console operator is authenticated exactly as before.
-  '/api/work/v1',
+  //
+  // The trailing slash is load-bearing. Matching here is a plain
+  // `startsWith`, so a slashless '/api/work/v1' would also open a future
+  // sibling segment like '/api/work/v1beta/...' -- silently, and without
+  // that route ever being considered. (oRPC's own prefix matcher is
+  // segment-aware, so the handler was never at risk; this list is the
+  // permissive one.) Every neighbouring entry ends in '/' for the same
+  // reason.
+  '/api/work/v1/',
 ];
 
 export default createAuthProxy({

@@ -10,8 +10,10 @@ import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
 import { sessionsForRuns } from '@/lib/work-sessions';
 
-/** Must match the `publicPrefixes` entry in proxy.ts and the `servers` URL
- *  in the generated OpenAPI document. */
+/** The `servers` URL in the generated OpenAPI document, and the prefix
+ *  proxy.ts allow-lists (as `/api/work/v1/` -- see the comment there for
+ *  why that list needs the trailing slash and oRPC's matcher does not:
+ *  `matchesHttpPathPrefix` is segment-aware, a bare `startsWith` is not). */
 const PREFIX = '/api/work/v1';
 
 const handler = createWorkHandler();

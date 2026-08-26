@@ -46,4 +46,38 @@ describe('generateWorkOpenApi', () => {
     ]);
     expect(doc.components.securitySchemes).toHaveProperty('bearerAuth');
   });
+
+  it('documents every status each route can actually answer with', async () => {
+    // The failure this guards is a handler throwing a status the contract
+    // never declared: it maps correctly at runtime (oRPC's
+    // COMMON_ERROR_STATUS_MAP) while the published document quietly omits
+    // it, so a client generated from this file has no branch for it.
+    // `redispatch` shipped exactly that way -- it re-checks the pipeline
+    // grant and the target repo's control-plane membership, both 403,
+    // with no FORBIDDEN in its errors map.
+    const doc = (await generateWorkOpenApi()) as {
+      paths: Record<
+        string,
+        Record<string, { responses: Record<string, unknown> }>
+      >;
+    };
+    const statuses = Object.fromEntries(
+      Object.entries(doc.paths).flatMap(([path, methods]) =>
+        Object.entries(methods).map(([method, operation]) => [
+          `${method.toUpperCase()} ${path}`,
+          Object.keys(operation.responses).sort(),
+        ]),
+      ),
+    );
+
+    expect(statuses).toEqual({
+      // 201 always, replay included -- see the create meta's
+      // successDescription.
+      'PUT /items/{id}': ['201', '403', '409', '429'],
+      'GET /items/{id}': ['200', '404'],
+      'GET /items': ['200'],
+      'POST /items/{id}/cancel': ['200', '404', '409'],
+      'POST /items/{id}/redispatch': ['200', '403', '404', '409', '429'],
+    });
+  });
 });
