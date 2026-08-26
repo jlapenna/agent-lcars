@@ -32,10 +32,10 @@ else
 fi
 
 if [ -z "$repository" ] && [ -n "${AGENT_DISPATCH_CONTEXT:-}" ] && [ -f "$AGENT_DISPATCH_CONTEXT" ]; then
-  repository="$(jq -er '.repository | select(type == "string" and length > 0)' "$AGENT_DISPATCH_CONTEXT")"
+  repository="$(jq -r '.repository? | strings | select(length > 0)' "$AGENT_DISPATCH_CONTEXT")"
 fi
 if [ -z "$issue_number" ] && [ -n "${AGENT_DISPATCH_CONTEXT:-}" ] && [ -f "$AGENT_DISPATCH_CONTEXT" ]; then
-  issue_number="$(jq -er '.anchor.number | tostring | select(test("^[1-9][0-9]*$"))' "$AGENT_DISPATCH_CONTEXT")"
+  issue_number="$(jq -r '.anchor.number? | tostring | select(test("^[1-9][0-9]*$"))' "$AGENT_DISPATCH_CONTEXT")"
 fi
 
 repository="${repository:-${GITHUB_REPOSITORY:-}}"
