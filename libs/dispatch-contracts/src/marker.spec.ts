@@ -120,3 +120,18 @@ describe('formatClaimMarker', () => {
     );
   });
 });
+
+describe('native run ids', () => {
+  const intentId = 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1';
+
+  it('round-trips a work: run id through the dispatch marker', () => {
+    const marker = formatDispatchMarker({ generation: 1, intentId });
+    expect(marker).toBe(`[dispatch:g1:${intentId}]`);
+    expect(
+      parseDispatchMarker(`native [dispatch:g1:${intentId}] title`),
+    ).toEqual({
+      generation: 1,
+      intentId,
+    });
+  });
+});
