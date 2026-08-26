@@ -333,6 +333,9 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(doc.jobs?.automerge?.if).toContain(
       'github.event.pull_request.draft == false',
     );
+    expect(doc.jobs?.['restore-main-checks']?.if).toContain(
+      'github.event.pull_request.draft == false',
+    );
     expect(source).not.toContain('gh pr ready "$PR"');
 
     const reconcile = doc.jobs?.['reconcile-automerge'];
