@@ -244,6 +244,28 @@ comment. A takeover/progress comment, a bare “already fixed” assertion, or a
 no-op marker without this run's exact attempt claim is not a completed
 deliverable.
 
+## 5a. Native work items (no issue anchor)
+
+When the dispatch brief's `anchor.type` is `work`, there is no GitHub
+issue or pull request anchoring the run. The brief carries the task:
+`anchor.title`, `anchor.body` (the requester's description),
+`anchor.target_repo`, and `anchor.html_url` (the console page for the
+item). Everything above still applies except the issue-side actions,
+which have no target:
+
+| Section                           | Issue mode                                                 | Native mode                                                                                                                                                                                                                                                                    |
+| --------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| §1 Takeover comment               | comment on the anchor                                      | **Skip.** The console derives the takeover affordance from your session doc.                                                                                                                                                                                                   |
+| §2 Eyes reaction + assignee claim | `gh api …/reactions`, `…/assignees`                        | **Skip.** The run is acknowledged when dispatch is confirmed.                                                                                                                                                                                                                  |
+| §3 One edited progress comment    | `gh issue comment --edit-last`                             | `lcars session title "<what you are doing>"` and `lcars session status "<state>"` — the same channel §12 already requires.                                                                                                                                                     |
+| §4 Parking                        | `status:needs-human` label + comment + assignee            | End your response with `PARK <blocker>`; the finalizer reports `ok: false` with your summary and the item reads **parked** in the console. Post nothing to GitHub.                                                                                                             |
+| §5 Deliverable rule               | PR (or comment / review) carrying the attempt-claim marker | The PR carrying your exact `<!-- attempt-claim:<ATTEMPT_ID> -->` marker is the only accepted deliverable. Reference the item in the PR body as `Work: work:<id>` (never `Fixes #N`). A no-op is not available: if the request is already satisfied, `PARK` with that evidence. |
+| §6–§12                            | unchanged                                                  | unchanged                                                                                                                                                                                                                                                                      |
+
+Do not "helpfully" open an issue to have something to comment on — the
+item's page is the record, and the control plane settles it from the
+finalizer's completion call.
+
 ## 6. Push early — never hold finished work locally
 
 Commit and push as soon as the smallest coherent slice of work exists (it

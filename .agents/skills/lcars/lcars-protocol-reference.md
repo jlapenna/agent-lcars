@@ -26,6 +26,12 @@ enough.
   (`<repo>#<issue>/r<generation>`) — passed to your workflow as the
   `broker_intent_id`/`broker_generation` `workflow_dispatch` inputs by the
   orchestrator's outbox drain, not re-derived or re-verified by you.
+- **Native work items (Plan 2/3):** an item with no GitHub issue or PR
+  anchor enters through `PUT /api/work/v1/items/{id}`, is minted as a
+  `work:<ulid>/r<n>` run, and is dispatched with a `work` workflow input
+  (no `issue`). It is completed the same way as any other run — the
+  finalizer binds to it by the dispatch marker
+  (`[dispatch:g<generation>:<intentId>]`), not by issue number.
 
 ## `agent:*` vs `review:*` — which label means which mode
 
