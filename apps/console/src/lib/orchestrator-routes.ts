@@ -2,6 +2,7 @@ import {
   decidedRun,
   isGithubAnchor,
   isRefusal,
+  isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
   type RunResult,
@@ -340,7 +341,9 @@ export async function handleCompletion(
       return { status: 200, body: { ignored: 'unknown-run' } };
     }
 
-    const task = (await deps.store.readTask(run.task))?.task;
+    const task = isWorkAnchor(run.task)
+      ? (await deps.store.readTask(run.task))?.task
+      : undefined;
     const target = anchorTarget(run, task);
 
     const bind = deps.bind ?? defaultBind;

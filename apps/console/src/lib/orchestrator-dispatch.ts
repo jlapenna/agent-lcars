@@ -1,10 +1,12 @@
 import {
+  isWorkAnchor,
   type LeasedOutboxEntry,
   MAX_AUTO_RETRIES,
   type Orchestrator,
   type OrchestratorStore,
   OUTBOX_LEASE_MS,
   type Run,
+  type Task,
 } from '@agent-lcars/orchestrator';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
@@ -137,7 +139,9 @@ async function handleDispatchRun(
     return;
   }
 
-  const task = (await store.readTask(run.task))?.task;
+  const task = isWorkAnchor(run.task)
+    ? (await store.readTask(run.task))?.task
+    : undefined;
   let target: AnchorTarget;
   try {
     target = anchorTarget(run, task);
@@ -225,7 +229,16 @@ async function handleReportOutcome(
     return;
   }
 
-  const task = (await store.readTask(run.task))?.task;
+  // `anchorTarget` only needs the task for a native anchor's `spec.target
+  // .repo`; `describeLostOutcome` below separately needs the full task doc
+  // (any anchor type) for its activeRunId/consecutiveLost read, but only
+  // when this run is `lost` -- read once up front so neither path re-reads
+  // it (a native anchor never reaches `describeLostOutcome`: it bails at
+  // the `target.issue === undefined` check just below).
+  const task =
+    isWorkAnchor(run.task) || run.state === 'lost'
+      ? (await store.readTask(run.task))?.task
+      : undefined;
   let target: AnchorTarget;
   try {
     target = anchorTarget(run, task);
@@ -243,7 +256,7 @@ async function handleReportOutcome(
 
   const outcome =
     run.state === 'lost'
-      ? await describeLostOutcome(store, run)
+      ? await describeLostOutcome(store, run, task)
       : { body: outcomeCommentBody(run), needsHumanLabel: false };
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
@@ -286,8 +299,9 @@ async function handleReportOutcome(
 /**
  * Describes a `lost` run's outcome comment, which depends on what happened
  * after the loss -- something `outcomeCommentBody` alone can't know, since
- * it only looks at the run itself. Reads the task's current active run (if
- * any) from the store:
+ * it only looks at the run itself. Uses the task's current active run (if
+ * any), read by the caller alongside its own `anchorTarget` lookup so this
+ * never re-reads the same document:
  *
  * - it's the deterministic auto-retry (`requestId === 'retry:<lostRunId>'`)
  *   -> name it and report the attempt count;
@@ -306,15 +320,15 @@ async function handleReportOutcome(
 async function describeLostOutcome(
   store: OrchestratorStore,
   run: Run,
+  task: Task | undefined,
 ): Promise<{ body: string; needsHumanLabel: boolean }> {
   const lostPrefix = `⚠️ Run ${run.runId} ${lostCause(run)}. `;
-  const task = await store.readTask(run.task);
-  const activeRunId = task?.task.activeRunId;
+  const activeRunId = task?.activeRunId;
   const activeRun =
     activeRunId === undefined ? undefined : await store.readRun(activeRunId);
 
   if (activeRun?.requestId === `retry:${run.runId}`) {
-    const attempt = (task?.task.consecutiveLost ?? 0) + 1;
+    const attempt = (task?.consecutiveLost ?? 0) + 1;
     return {
       body:
         lostPrefix +

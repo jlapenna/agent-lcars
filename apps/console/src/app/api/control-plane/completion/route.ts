@@ -41,7 +41,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       body,
       identity,
     );
-    console.info('agent-lcars: orchestrator completion processed', result);
+    if (result.status === 403 || result.status === 503) {
+      console.warn('agent-lcars: hosted completion refused', result);
+    } else {
+      console.info('agent-lcars: orchestrator completion processed', result);
+    }
     return NextResponse.json(result.body, {
       status: result.status,
       headers: { 'Cache-Control': 'no-store' },

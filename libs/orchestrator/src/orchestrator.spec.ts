@@ -642,6 +642,15 @@ describe('close', () => {
       reason: 'unknown-task',
     });
   });
+
+  it('refuses a GitHub-anchored task: closedAt is native anchors only', async () => {
+    const { orchestrator } = fixture();
+    await started(orchestrator);
+    expect(await orchestrator.close(TASK)).toMatchObject({
+      refused: true,
+      reason: 'not-native',
+    });
+  });
 });
 
 describe('concurrency', () => {

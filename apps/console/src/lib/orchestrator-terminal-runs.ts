@@ -1,5 +1,6 @@
 import { parseDispatchMarker } from '@agent-lcars/dispatch-contracts';
 import {
+  isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
   type Run,
@@ -123,7 +124,9 @@ export async function settleTerminalRuns(
     try {
       const repo = anchorTarget(
         run,
-        (await deps.store.readTask(run.task))?.task,
+        isWorkAnchor(run.task)
+          ? (await deps.store.readTask(run.task))?.task
+          : undefined,
       ).repo;
       targeted.push({ run, repo });
     } catch (error) {

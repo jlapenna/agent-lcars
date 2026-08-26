@@ -9,6 +9,7 @@ import {
   taskKey,
   taskSchema,
   WORK_ID_RE,
+  WORK_PAYLOAD_MAX_BYTES,
 } from './model';
 
 const ULID = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
@@ -125,5 +126,31 @@ describe('taskSchema work payload', () => {
     expect(() =>
       taskSchema.parse({ ...base, work: { blob: 'x'.repeat(33_000) } }),
     ).toThrow();
+  });
+
+  it('accepts a work payload whose serialized UTF-8 length is exactly 32,768 bytes', () => {
+    // `{"blob":"` + n x's + `"}` = n + 11 bytes; n = 32_757 lands exactly on
+    // the 32,768-byte limit.
+    const work = { blob: 'x'.repeat(32_757) };
+    expect(new TextEncoder().encode(JSON.stringify(work)).length).toBe(
+      WORK_PAYLOAD_MAX_BYTES,
+    );
+    expect(() => taskSchema.parse({ ...base, work })).not.toThrow();
+  });
+
+  it('rejects a work payload whose serialized UTF-8 length is 32,769 bytes', () => {
+    const work = { blob: 'x'.repeat(32_758) };
+    expect(new TextEncoder().encode(JSON.stringify(work)).length).toBe(
+      WORK_PAYLOAD_MAX_BYTES + 1,
+    );
+    expect(() => taskSchema.parse({ ...base, work })).toThrow();
+  });
+
+  it('counts UTF-8 bytes, not UTF-16 code units, for multi-byte characters', () => {
+    // 11,000 code units but 33,000 UTF-8 bytes (each '漢' is 3 bytes) --
+    // must be rejected even though `.length` (code units) is under the cap.
+    const work = { blob: '漢'.repeat(11_000) };
+    expect(work.blob.length).toBe(11_000);
+    expect(() => taskSchema.parse({ ...base, work })).toThrow();
   });
 });

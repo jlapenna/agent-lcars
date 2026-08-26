@@ -1,5 +1,6 @@
 import {
   isLive,
+  isWorkAnchor,
   type OutboxEntry,
   type Run,
   type RunResult,
@@ -35,7 +36,8 @@ export interface Refusal {
     | 'run-not-live' // report/cancel/renew against a settled run
     | 'stale-lease' // renew/report from a run that already lost the lock
     | 'task-closed' // closeTask set closedAt; no further runs
-    | 'unknown-task'; // close on a task that was never created
+    | 'unknown-task' // close on a task that was never created
+    | 'not-native'; // closeTask on a GitHub anchor: closedAt is native-only
   /** For `duplicate-request`, the run the request already maps to. */
   readonly existingRun?: Run;
 }
@@ -378,6 +380,7 @@ export function closeTask(input: {
 }): Decision | Refusal {
   const { now, task, activeRun } = input;
   if (task === undefined) return refused('unknown-task');
+  if (!isWorkAnchor(task.task)) return refused('not-native');
   if (task.closedAt !== undefined) return refused('task-closed');
   if (activeRun !== undefined && isLive(activeRun.state)) {
     return refused('task-busy', activeRun);

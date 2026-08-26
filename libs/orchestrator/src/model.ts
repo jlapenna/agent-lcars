@@ -140,9 +140,14 @@ export const WORK_PAYLOAD_MAX_BYTES = 32_768;
 
 export const workPayloadSchema = z
   .record(z.string().max(64), z.unknown())
-  .refine((value) => JSON.stringify(value).length <= WORK_PAYLOAD_MAX_BYTES, {
-    message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
-  });
+  .refine(
+    (value) =>
+      new TextEncoder().encode(JSON.stringify(value)).length <=
+      WORK_PAYLOAD_MAX_BYTES,
+    {
+      message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
+    },
+  );
 export type WorkPayload = z.infer<typeof workPayloadSchema>;
 
 export const taskSchema = z.strictObject({

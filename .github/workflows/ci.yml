@@ -246,16 +246,39 @@ jobs:
           CGO_ENABLED: '1'
         run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
 
-      # The Firestore emulator needs a JDK; the trusted JIT runner image
-      # bakes 21 (a no-op here), and this is the fallback for ubuntu-latest
-      # (the fork-PR carve-out above), where Java 17 remains the default.
+      # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
+      # emulator; ubuntu-latest (the fork-PR carve-out above) still
+      # defaults to Java 17. setup-java consults its own tool cache, not
+      # PATH, so it re-downloads Temurin every run regardless -- detect
+      # first and only fall back to install when the baked runtime isn't
+      # already 21.
+      - name: Detect Java 21 runtime
+        id: emulator-java-runtime
+        shell: bash
+        run: |
+          java_major=''
+          if command -v java >/dev/null 2>&1; then
+            java_major="$(
+              java -version 2>&1 |
+                sed -nE 's/.*version "([0-9]+).*/\1/p' |
+                head -n 1
+            )" || java_major=''
+          fi
+          if [[ "$java_major" =~ ^[0-9]+$ ]] && (( java_major >= 21 )); then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Java for the Firestore emulator
         uses: actions/setup-java@v5
+        if: steps.emulator-java-runtime.outputs.ready != 'true'
         with:
           distribution: temurin
           java-version: '21'
 
-      - run: ./tools/nx run @agent-lcars/orchestrator:test-firestore
+      - name: Store contract against the Firestore emulator
+        run: ./tools/nx run @agent-lcars/orchestrator:test-firestore
 
       # `next build` does not execute dynamic server-route imports. Exercise
       # the actual standalone artifact so traced runtime assets (notably the

@@ -119,4 +119,31 @@ describe('bindCompletionToRun', () => {
       ),
     ).rejects.toBeInstanceOf(BindingUnavailable);
   });
+
+  it('fails closed when the fetch itself rejects', async () => {
+    const fetchImpl = (async () => {
+      throw new Error('network unreachable');
+    }) as unknown as typeof fetch;
+    await expect(
+      bindCompletionToRun(
+        { tokens, fetchImpl },
+        identity,
+        'octo/example#7/r1',
+        'octo/example',
+      ),
+    ).rejects.toBeInstanceOf(BindingUnavailable);
+  });
+
+  it('fails closed on a 2xx response with a non-JSON body', async () => {
+    const fetchImpl = (async () =>
+      new Response('not json', { status: 200 })) as unknown as typeof fetch;
+    await expect(
+      bindCompletionToRun(
+        { tokens, fetchImpl },
+        identity,
+        'octo/example#7/r1',
+        'octo/example',
+      ),
+    ).rejects.toBeInstanceOf(BindingUnavailable);
+  });
 });

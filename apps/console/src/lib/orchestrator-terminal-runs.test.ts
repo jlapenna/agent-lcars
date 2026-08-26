@@ -13,6 +13,7 @@ import {
 } from './orchestrator-terminal-runs';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
+const WORK: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
 const T0 = '2026-08-15T12:00:00.000Z';
 const tokens: DispatchTokenProvider = { tokenFor: async () => 'gh-test-token' };
 
@@ -70,6 +71,21 @@ async function liveRun(orchestrator: Orchestrator): Promise<string> {
     taskId: TASK,
     requestId: 'req-1',
     pipeline: 'claude',
+  });
+  if ('refused' in outcome) throw new Error('unexpected refusal');
+  await orchestrator.confirmDispatch(outcome.run.runId);
+  return outcome.run.runId;
+}
+
+/** A live, dispatch-confirmed run for a native (`work:`) anchor -- unlike
+ *  `liveRun`, its task has no `spec.target.repo`, so `anchorTarget` cannot
+ *  resolve a repo to list workflow runs against. */
+async function liveWorkRun(orchestrator: Orchestrator): Promise<string> {
+  const outcome = await orchestrator.request({
+    taskId: WORK,
+    requestId: 'req-1',
+    pipeline: 'claude',
+    work: {},
   });
   if ('refused' in outcome) throw new Error('unexpected refusal');
   await orchestrator.confirmDispatch(outcome.run.runId);
@@ -223,6 +239,25 @@ describe('settleTerminalRuns', () => {
         error: 'workflow runs listing returned 403',
       },
     ]);
+    expect((await store.readRun(runId))?.state).toBe('running');
+  });
+
+  it('skips a live native run whose task has no spec.target.repo, without listing GitHub for it', async () => {
+    const { store, orchestrator, deps, urls } = fixture();
+    const runId = await liveWorkRun(orchestrator);
+
+    const result = await settleTerminalRuns(deps);
+
+    expect(result.settled).toEqual([]);
+    expect(result.failed).toEqual([
+      {
+        repo: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+        pipeline: 'claude',
+        error:
+          'native task work:01J5Z3K9QX8F0N2B4V6C8D1E3G has no spec.target.repo',
+      },
+    ]);
+    expect(urls).toEqual([]); // never resolved a repo to list against
     expect((await store.readRun(runId))?.state).toBe('running');
   });
 });

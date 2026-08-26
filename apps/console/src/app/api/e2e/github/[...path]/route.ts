@@ -25,6 +25,7 @@ import {
   recordQuickTaskIssue,
   selfHostedRunners,
   updateFixtureIssueContent,
+  workflowRun,
   workflowRuns,
 } from '../../../../../lib/e2e-github-fixtures';
 
@@ -163,6 +164,14 @@ export async function GET(
       return NextResponse.json(
         workflowRuns(rest[2], query.get('status') ?? undefined),
       );
+    }
+
+    // GET /repos/{o}/{r}/actions/runs/{id}
+    if (rest[0] === 'actions' && rest[1] === 'runs' && rest[2]) {
+      const run = workflowRun(Number(rest[2]));
+      return run
+        ? NextResponse.json(run)
+        : NextResponse.json({ message: 'Not Found' }, { status: 404 });
     }
 
     // GET /repos/{o}/{r}/actions/runners

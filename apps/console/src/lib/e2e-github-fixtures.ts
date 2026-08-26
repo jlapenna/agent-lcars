@@ -1060,6 +1060,28 @@ export function workflowRuns(workflowFile: string, status?: string) {
   return { total_count: runs.length, workflow_runs: runs };
 }
 
+/** `GET /repos/{owner}/{repo}/actions/runs/{id}` -- the single-run lookup
+ * `run-binding.ts`'s completion binder and `orchestrator-terminal-runs.ts`
+ * use to join a run id to its dispatch marker. Same fixture run data as
+ * `workflowRuns` above (curated fixtures gated on populated mode, Quick
+ * Task's dynamic runs merged in unconditionally), keyed by run id instead
+ * of workflow file. Returns `undefined` for an unknown id so the route can
+ * 404 like the rest of the catch-all. */
+export function workflowRun(runId: number) {
+  const populated = populatedFixturesEnabled() ? FIXTURE_RUNS : [];
+  const run = [...populated, ...quickTaskState().runs].find(
+    (candidate) => candidate.id === runId,
+  );
+  if (!run) return undefined;
+  return {
+    id: run.id,
+    display_title: run.displayTitle,
+    name: run.workflow,
+    status: run.status,
+    conclusion: run.conclusion,
+  };
+}
+
 /** `GET /repos/{owner}/{repo}/actions/runners` */
 export function selfHostedRunners() {
   if (!populatedFixturesEnabled()) {

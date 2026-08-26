@@ -499,9 +499,9 @@ describe('drainOutbox: report-outcome', () => {
     const before = calls.length;
     await drainOutbox({ store, orchestrator, tokens, fetchImpl });
 
-    expect(
-      calls.slice(before).filter((c) => c.url.includes('/issues/')),
-    ).toEqual([]);
+    // Not just "no /issues/ call" -- a native anchor's report-outcome must
+    // make no GitHub call at all, since it has no issue to comment on.
+    expect(calls.slice(before)).toEqual([]);
   });
 
   it('posts the lost-run comment naming the auto-retried run, and dispatches that retry', async () => {

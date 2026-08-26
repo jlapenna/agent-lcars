@@ -10,7 +10,7 @@
       "cache": false,
       "options": {
         "cwd": "{workspaceRoot}",
-        "command": "pnpm exec firebase emulators:exec --only firestore --project=demo-no-project \"FIRESTORE_EMULATOR_HOST=localhost:4002 ./tools/nx test @agent-lcars/orchestrator --skip-nx-cache -- store-contract.spec.ts\""
+        "command": "pnpm exec firebase emulators:exec --only firestore --project=demo-no-project \"FIRESTORE_EMULATOR_HOST=localhost:4002 REQUIRE_FIRESTORE_EMULATOR=1 ./tools/nx test @agent-lcars/orchestrator --skip-nx-cache -- store-contract.spec.ts\""
       }
     }
   }
