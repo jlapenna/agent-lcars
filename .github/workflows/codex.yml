@@ -20,10 +20,9 @@ name: Codex Issue Agent
 
 # This workflow is workflow_dispatch-only (the hosted controller owns event
 # admission). Keep the console's leading issue-number join key and add the
-# immutable broker marker used for interrupted-bind reconciliation. A
-# native run has no issue; GitHub expressions cannot `fromJSON` an empty
-# string safely, so the fallback is a plain label rather than parsing
-# `work` here -- the item id already lives in the marker's intentId.
+# immutable broker marker used for interrupted-bind reconciliation. Native
+# runs render a fixed label; the work id is already in the dispatch marker
+# tail, which is what the console binds on.
 run-name: "${{ inputs.issue != '' && format('#{0}', inputs.issue) || 'native work' }}: Codex issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]"
 
 on:

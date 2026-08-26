@@ -59,9 +59,8 @@
 #     script no longer reads or forwards either variable.
 #   Optional: ISSUE (empty for a native work-anchored run -- forwarded
 #     unchanged to telemetry-finalize.sh, which is already anchor-agnostic;
-#     the verify-deliverable phase below is still issue/PR-number-only, so
-#     a native run that reaches JOB_STATUS=success fails there instead --
-#     see verify-deliverable.sh's own optionality, a later task's job);
+#     the verify-deliverable phase below is anchor-agnostic too: it is
+#     PR-marker-only when ISSUE is empty, see verify-deliverable.sh);
 #     WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
 #     path; empty is valid, matching telemetry-start being best-effort);
 #     NO_DELIVERABLE_REASON (each lane's own no-deliverable wording,

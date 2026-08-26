@@ -19,9 +19,8 @@ name: OpenCode Issue Agent
 # lane's deliverable-verification gate intentionally does not trust a bare
 # agent success conclusion: the agent must communicate a visible result.
 
-# A native run has no issue; GitHub expressions cannot `fromJSON` an empty
-# string safely, so the fallback is a plain label rather than parsing
-# `work` here -- the item id already lives in the marker's intentId.
+# Native runs render a fixed label; the work id is already in the dispatch
+# marker tail, which is what the console binds on.
 run-name: "${{ inputs.issue != '' && format('#{0}', inputs.issue) || 'native work' }}: OpenCode issue agent [dispatch:g${{ inputs.broker_generation }}:${{ inputs.broker_intent_id }}]"
 
 on:

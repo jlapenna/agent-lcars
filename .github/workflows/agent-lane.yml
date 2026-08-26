@@ -1516,7 +1516,7 @@ jobs:
           # mint can be hours expired by now.
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          CURRENT: ${{ inputs.issue != '' && inputs.issue || (inputs.work != '' && fromJSON(inputs.work).id || '') }}
+          CURRENT: ${{ inputs.issue }}
           FLEET_LOGIN: ${{ inputs.agent-fleet-login }}
         run: |
           set -euo pipefail

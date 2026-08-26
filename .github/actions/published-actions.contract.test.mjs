@@ -92,9 +92,9 @@ const PUBLISHED = {
       reply: { required: false, default: '' },
       runbook: { required: false, default: '' },
       context: { required: false, default: '' },
-      // console_url: additive (agent-lcars#1527) -- builds a native work
+      // console-url: additive (agent-lcars#1527) -- builds a native work
       // item's anchor.html_url; unused, so harmless, for an issue dispatch.
-      console_url: { required: false, default: 'https://lcars.jlapenna.net' },
+      'console-url': { required: false, default: 'https://lcars.jlapenna.net' },
       'prior-terminal-state': { required: false, default: 'null' },
       'budget-minutes': { required: false, default: '60' },
       'artifact-checkpoint-minutes': { required: false, default: '25' },
@@ -363,8 +363,8 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
     [
       // Empty for a native (work-anchored) run -- forwarded unchanged to
       // telemetry-finalize.sh, which is already anchor-agnostic; the
-      // verify-deliverable phase stays issue/PR-number-only for now (a
-      // later task's job) (native work items, plan 3 task 3).
+      // verify-deliverable phase is anchor-agnostic too: it is
+      // PR-marker-only when ISSUE is empty (see verify-deliverable.sh).
       'ISSUE',
       'WRITER_CREDENTIALS_FILE',
       'NO_DELIVERABLE_REASON',

@@ -38,10 +38,10 @@ inputs:
     description: Optional router or deployment context for the dispatch.
     required: false
     default: ''
-  console_url:
+  console-url:
     description: >-
       Base URL of the Agent LCARS console, used to build a native work
-      item's `anchor.html_url` (`<console_url>/work/<id>`).
+      item's `anchor.html_url` (`<console-url>/work/<id>`).
     required: false
     default: 'https://lcars.jlapenna.net'
   prior-terminal-state:
@@ -90,7 +90,7 @@ runs:
         REPLY: ${{ inputs.reply }}
         RUNBOOK: ${{ inputs.runbook }}
         CONTEXT: ${{ inputs.context }}
-        CONSOLE_URL: ${{ inputs.console_url }}
+        CONSOLE_URL: ${{ inputs.console-url }}
         PRIOR_TERMINAL_STATE: ${{ inputs.prior-terminal-state }}
         BUDGET_MINUTES: ${{ inputs.budget-minutes }}
         ARTIFACT_CHECKPOINT_MINUTES: ${{ inputs.artifact-checkpoint-minutes }}

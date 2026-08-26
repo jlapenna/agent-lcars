@@ -491,9 +491,8 @@ JSON
 # optional now (Task 3, native work items): forwarded unchanged to
 # telemetry-finalize.sh (already anchor-agnostic), and report-failure.sh
 # takes no ISSUE input at all (#813), so a native failure logs exactly like
-# an issue-anchored one. JOB_STATUS=success + native is deliberately not
-# covered here: verify-deliverable.sh's own NUM requirement is a separate,
-# later optionality task. ---
+# an issue-anchored one. JOB_STATUS=success + native is covered by Cases
+# 20-21 below. ---
 (
   base_env
   export ISSUE=
@@ -504,6 +503,46 @@ JSON
   grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged for a native run"
   if grep -q 'ISSUE is required' <<<"$output"; then
     fail "ISSUE must be optional now that native (work-anchored) runs pass it empty"
+  fi
+)
+
+# --- Case 20: a native run (ISSUE='') + JOB_STATUS=success with a bot PR
+# carrying this run's attempt-claim marker -- verify-deliverable.sh's
+# PR-marker lookup is the only lookup that ever runs when NUM is empty (no
+# issue/PR number to fetch comments or reviews against, see
+# verify-deliverable.sh). Exit 0, exactly one gh call (the /pulls lookup),
+# and no /issues/ call. ---
+(
+  base_env
+  export ISSUE=
+  case_dir="$test_root/native-success-deliverable-found"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/pulls.json" <<'JSON'
+[{"number":9,"title":"Fix widget","body":"<!-- attempt-claim:g1:test-intent -->","updated_at":"2024-01-02T00:00:00Z","user":{"login":"agent-lcars[bot]","type":"Bot"}}]
+JSON
+  run_case native-success-deliverable-found
+  test "$status" = 0 || fail "a native run with a found deliverable must exit 0"
+  call_count="$(wc -l < "$FAKE_GH_DIR/calls")"
+  test "$call_count" = 1 || fail "expected exactly one gh call for a native success run, got $call_count: $(cat "$FAKE_GH_DIR/calls")"
+  grep -q '/pulls?' "$FAKE_GH_DIR/calls" || fail "expected the one call to be the /pulls lookup"
+  if grep -q '/issues/' "$FAKE_GH_DIR/calls"; then
+    fail "a native run has no issue/PR number to anchor an /issues/ call against"
+  fi
+)
+
+# --- Case 21: same native (ISSUE='') + JOB_STATUS=success, but no PR
+# carries the marker -- non-zero exit, NO_DELIVERABLE=1 written by
+# verify-deliverable.sh, and still no /issues/ call (there is no NUM to
+# anchor one against). ---
+(
+  base_env
+  export ISSUE=
+  run_case native-success-no-deliverable
+  test "$status" = 1 || fail "a native run with no deliverable must exit non-zero"
+  grep -qx 'NO_DELIVERABLE=1' "$GITHUB_ENV" || fail "expected NO_DELIVERABLE=1 written to GITHUB_ENV"
+  grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged for a native run with no deliverable"
+  if grep -q '/issues/' "$FAKE_GH_DIR/calls"; then
+    fail "a native run has no issue/PR number to anchor an /issues/ call against"
   fi
 )
 
