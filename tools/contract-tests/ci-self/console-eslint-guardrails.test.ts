@@ -3,7 +3,7 @@ import path from 'node:path';
 import { loadESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
 
-const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+const workspaceRoot = path.resolve(import.meta.dirname, '../../..');
 
 /**
  * The RSC guardrail rules are registered in flat configs whose `files`
