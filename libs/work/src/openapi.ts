@@ -8,22 +8,15 @@ export async function generateWorkOpenApi(): Promise<object> {
   const generator = new OpenAPIGenerator({
     converters: [new ZodToJsonSchemaConverter()],
   });
-  return generator.generate(
-    { items: itemsContract },
-    {
-      base: {
-        info: { title: 'Agent LCARS work items', version: '1' },
-        servers: [{ url: '/api/work/v1' }],
-        components: {
-          securitySchemes: {
-            bearerAuth: {
-              type: 'http',
-              scheme: 'bearer',
-              bearerFormat: 'JWT',
-            },
-          },
+  return generator.generate(itemsContract, {
+    base: {
+      info: { title: 'Agent LCARS work items', version: '1' },
+      servers: [{ url: '/api/work/v1' }],
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
         },
       },
     },
-  );
+  });
 }
