@@ -486,4 +486,25 @@ JSON
   fi
 )
 
+# --- Case 19: a native run (WORK, no ISSUE) must not die on the top-level
+# `ISSUE:?ISSUE is required` guard this script used to have -- ISSUE is
+# optional now (Task 3, native work items): forwarded unchanged to
+# telemetry-finalize.sh (already anchor-agnostic), and report-failure.sh
+# takes no ISSUE input at all (#813), so a native failure logs exactly like
+# an issue-anchored one. JOB_STATUS=success + native is deliberately not
+# covered here: verify-deliverable.sh's own NUM requirement is a separate,
+# later optionality task. ---
+(
+  base_env
+  export ISSUE=
+  export JOB_STATUS=failure
+  run_case native-no-issue
+  test "$status" = 0 || fail "a native failure with a landed report must still exit 0"
+  assert_telemetry_finalize_ran "telemetry-finalize must still run for a native (issue-less) run"
+  grep -q 'agent run failed' <<<"$output" || fail "expected the failure logged for a native run"
+  if grep -q 'ISSUE is required' <<<"$output"; then
+    fail "ISSUE must be optional now that native (work-anchored) runs pass it empty"
+  fi
+)
+
 echo "post-agent-gates.test.sh: all cases passed"

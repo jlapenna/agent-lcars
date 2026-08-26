@@ -335,7 +335,6 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       'REPO',
       'SERVER_URL',
       'RUN_ID',
-      'ISSUE',
       'JOB_STATUS',
       // Required only when JOB_STATUS is "success" (#815): the verify
       // phase is exact-marker-only. The legacy STARTED_AT +
@@ -350,6 +349,11 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
   assert.deepEqual(
     optional.sort(),
     [
+      // Empty for a native (work-anchored) run -- forwarded unchanged to
+      // telemetry-finalize.sh, which is already anchor-agnostic; the
+      // verify-deliverable phase stays issue/PR-number-only for now (a
+      // later task's job) (native work items, plan 3 task 3).
+      'ISSUE',
       'WRITER_CREDENTIALS_FILE',
       'NO_DELIVERABLE_REASON',
       'FAILURE_LOG_SCAN_SCRIPT',

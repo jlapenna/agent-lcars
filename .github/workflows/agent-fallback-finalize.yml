@@ -417,6 +417,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ inputs.issue }}
+          WORK: ${{ inputs.work }}
           AGENT: ${{ inputs.agent }}
           WORKER_RESULT: ${{ inputs.worker-result }}
           MAINTAINER: ${{ inputs.maintainer }}
@@ -424,6 +425,16 @@ jobs:
           MARKER: <!-- agent-lcars:bootstrap-fallback:v1 run=${{ github.run_id }} -->
         run: |
           set -euo pipefail
+          # A native run carries WORK with no ISSUE -- there is no GitHub
+          # issue/PR to comment on or label, and none is needed: the item
+          # reads 'parked' from the orchestrator settle instead (this
+          # step's whole job is a GitHub-issue-shaped last resort for when
+          # that settle's own callback above could not be delivered).
+          if [ -z "$ISSUE" ] && [ -n "$WORK" ]; then
+            WORK_ID="$(printf '%s' "$WORK" | jq -r '.id // empty')"
+            echo "::warning::Native work item $WORK_ID has no anchor issue to park directly; skipping the fallback issue comment/label calls. The item reads 'parked' from the orchestrator settle."
+            exit 0
+          fi
           case "$ISSUE" in
             ''|*[!0-9]*) echo "::error::Invalid fallback issue number"; exit 1 ;;
           esac
@@ -463,9 +474,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ inputs.issue }}
+          WORK: ${{ inputs.work }}
           FLEET_LOGIN: ${{ inputs.fleet-login }}
         run: |
           set -euo pipefail
+          # Anchor-agnostic in purpose (preserve evidence that this run's
+          # completion callback never landed), but its one mechanism -- the
+          # fleet-assignee reconcile sweep -- is GitHub-issue-shaped: it
+          # discovers open fleet-assigned issues/PRs (dispatch-reconcile.yml),
+          # which a native run has none of. Drop only the issue-number
+          # validation for that branch; an issue-anchored run still gets it.
+          if [ -z "$ISSUE" ] && [ -n "$WORK" ]; then
+            WORK_ID="$(printf '%s' "$WORK" | jq -r '.id // empty')"
+            echo "::warning::Native work item $WORK_ID has no anchor issue for the fleet-assignee reconcile sweep to preserve; skipping."
+            exit 0
+          fi
           case "$ISSUE" in
             ''|*[!0-9]*) echo "::error::Invalid fallback issue number"; exit 1 ;;
           esac

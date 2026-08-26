@@ -585,8 +585,8 @@ jobs:
       # The pickup comment is opencode's recorded divergence: its lane has
       # always posted one; the other lanes never have.
       - name: Claim the issue as the agent fleet
+        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' }}
         id: claim
-        if: ${{ !inputs.dispatch-bootstrap }}
         uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
         with:
           token: ${{ steps.agent-lcars-token.outputs.token }}
@@ -653,6 +653,7 @@ jobs:
         with:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
+          work: ${{ inputs.work }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -1049,6 +1050,7 @@ jobs:
           token: ${{ steps.dispatch-bootstrap.outputs.token }}
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
+          work: ${{ inputs.work }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -1514,7 +1516,7 @@ jobs:
           # mint can be hours expired by now.
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          CURRENT: ${{ inputs.issue }}
+          CURRENT: ${{ inputs.issue != '' && inputs.issue || (inputs.work != '' && fromJSON(inputs.work).id || '') }}
           FLEET_LOGIN: ${{ inputs.agent-fleet-login }}
         run: |
           set -euo pipefail
