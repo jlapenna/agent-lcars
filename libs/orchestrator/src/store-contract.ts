@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { cancelRun, confirmDispatch, isRefusal, requestRun } from './decide';
+import {
+  cancelRun,
+  confirmDispatch,
+  decidedRun,
+  isRefusal,
+  requestRun,
+} from './decide';
 import type { LeasedOutboxEntry, TaskId } from './model';
 import { type Clock, Orchestrator } from './orchestrator';
 import {
@@ -24,6 +30,8 @@ class TestClock implements Clock {
   }
 }
 
+/** `request()` always mints a run, so callers can rely on `.run` directly
+ *  instead of narrowing it at every call site. */
 async function started(orchestrator: Orchestrator, requestId = 'req-1') {
   const outcome = await orchestrator.request({
     taskId: TASK,
@@ -33,7 +41,7 @@ async function started(orchestrator: Orchestrator, requestId = 'req-1') {
   if (isRefusal(outcome)) {
     throw new Error(`unexpected refusal: ${outcome.reason}`);
   }
-  return outcome;
+  return { ...outcome, run: decidedRun(outcome) };
 }
 
 function claimOutbox(store: OrchestratorStore, now: string, limit = 10) {
@@ -178,7 +186,9 @@ export function runOrchestratorStoreContract(
           store.apply({ decision: loser, expectedRevision: undefined }),
         ).rejects.toThrow(StoreConflict);
         // The loser never landed: the winner's run still holds the lock.
-        expect((await store.readActiveRun(TASK))?.runId).toBe(winner.run.runId);
+        expect((await store.readActiveRun(TASK))?.runId).toBe(
+          decidedRun(winner).runId,
+        );
       });
 
       it('rejects a second apply computed from the same non-zero revision', async () => {
@@ -218,6 +228,22 @@ export function runOrchestratorStoreContract(
         // The loser never landed: the winner's transition stuck.
         expect((await store.readRun(first.run.runId))?.state).toBe('running');
       });
+    });
+
+    it('applies a decision that carries no run (closeTask)', async () => {
+      const store = await makeStore();
+      const id: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const now = '2026-08-15T12:00:00.000Z';
+      await store.apply({
+        decision: {
+          task: { task: id, runCount: 0, closedAt: now, updatedAt: now },
+          outbox: [],
+        },
+        expectedRevision: undefined,
+      });
+      const read = await store.readTask(id);
+      expect(read?.task.closedAt).toBe(now);
+      expect(await store.listRuns(id)).toEqual([]);
     });
 
     describe('the outbox', () => {

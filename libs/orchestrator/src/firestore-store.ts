@@ -126,7 +126,9 @@ export class FirestoreStore implements OrchestratorStore {
       };
       tx.set(taskRef, nextTaskDoc);
 
-      tx.set(this.#runRef(decision.run.runId), decision.run);
+      if (decision.run !== undefined) {
+        tx.set(this.#runRef(decision.run.runId), decision.run);
+      }
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }

@@ -1,4 +1,5 @@
 import {
+  decidedRun,
   isRefusal,
   type Orchestrator,
   type OrchestratorStore,
@@ -89,11 +90,13 @@ export async function handleWebhookDelivery(
     }
 
     const drained = await deps.drain();
+    // `request()` never refuses this outcome without carrying a run.
+    const { runId } = decidedRun(outcome);
     return {
       status: 200,
       body: {
-        runId: outcome.run.runId,
-        dispatched: drained.dispatched.includes(outcome.run.runId),
+        runId,
+        dispatched: drained.dispatched.includes(runId),
       },
     };
   } catch (error) {
@@ -185,11 +188,13 @@ export async function handleDispatchRequest(
     }
 
     const drained = await deps.drain();
+    // `request()` never refuses this outcome without carrying a run.
+    const { runId } = decidedRun(outcome);
     return {
       status: 200,
       body: {
-        runId: outcome.run.runId,
-        dispatched: drained.dispatched.includes(outcome.run.runId),
+        runId,
+        dispatched: drained.dispatched.includes(runId),
       },
     };
   } catch (error) {

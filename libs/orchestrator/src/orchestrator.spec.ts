@@ -597,6 +597,48 @@ describe('native anchors', () => {
   });
 });
 
+describe('close', () => {
+  it('refuses while a run is live', async () => {
+    const { orchestrator } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: {},
+    });
+    expect(await orchestrator.close(WORK)).toMatchObject({
+      refused: true,
+      reason: 'task-busy',
+    });
+  });
+
+  it('sets closedAt once no run is live and is idempotent', async () => {
+    const { orchestrator, store } = fixture();
+    await orchestrator.request({
+      taskId: WORK,
+      requestId: 'r1',
+      pipeline: 'claude',
+      work: {},
+    });
+    await orchestrator.report(`work:${WORK.workId}/r1`, { ok: false });
+    const first = await orchestrator.close(WORK);
+    expect(isRefusal(first)).toBe(false);
+    expect((await store.readTask(WORK))?.task.closedAt).toBe(T0);
+    expect(await orchestrator.close(WORK)).toMatchObject({
+      refused: true,
+      reason: 'task-closed',
+    });
+  });
+
+  it('refuses a task that was never created', async () => {
+    const { orchestrator } = fixture();
+    expect(await orchestrator.close(WORK)).toMatchObject({
+      refused: true,
+      reason: 'unknown-task',
+    });
+  });
+});
+
 describe('concurrency', () => {
   it('exactly one of two racing requests wins the lock', async () => {
     const { orchestrator } = fixture();

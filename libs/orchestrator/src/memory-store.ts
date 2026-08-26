@@ -49,7 +49,9 @@ export class MemoryStore implements OrchestratorStore {
       task: structuredClone(decision.task),
       revision: (expectedRevision ?? 0) + 1,
     });
-    this.#runs.set(decision.run.runId, structuredClone(decision.run));
+    if (decision.run !== undefined) {
+      this.#runs.set(decision.run.runId, structuredClone(decision.run));
+    }
     for (const entry of decision.outbox) {
       this.#outbox.set(entry.entryId, structuredClone(entry));
     }
