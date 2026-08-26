@@ -14,6 +14,7 @@ import {
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { settleTerminalRuns } from '@/lib/orchestrator-terminal-runs';
+import { bindCompletionToRun } from '@/lib/run-binding';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -69,18 +70,31 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
   });
   const orchestrator = new Orchestrator(store, utcClock);
-  // Completion binding (`handleCompletion`'s default `bind`, see
-  // `run-binding.ts`) needs the same per-repo token provider/fixture
-  // boundary `drain`/`settleTerminal` resolve fresh on every call below --
-  // resolved once here, at the same memoized lifetime as `store`/
-  // `orchestrator` themselves.
-  const github = orchestratorGithubRuntimeDeps(process.env);
 
   cached = {
     store,
     orchestrator,
-    tokens: github.tokens,
-    githubApiBaseUrl: github.githubApiBaseUrl,
+    // Resolved fresh on every call, exactly like `drain`/`settleTerminal`
+    // below -- NOT captured here at construction time. Two reasons: (1) a
+    // rotated `AGENT_LCARS_APP_PRIVATE_KEY` must take effect on the very
+    // next completion without a restart, same as it already does for
+    // drain/settle (see this file's own top comment); (2) resolving GitHub
+    // App credentials eagerly here would make `createOrchestratorRuntime()`
+    // itself throw for callers that only want `store`/`orchestrator` and
+    // never touch completion binding at all (e.g.
+    // `authoritative-task-state.ts`'s pure Firestore read) -- `deps.tokens`
+    // therefore stays unset on this object; `run-binding.ts`'s
+    // `bindCompletionToRun` gets its own freshly-resolved deps here
+    // instead, never `deps.tokens` (see `orchestrator-routes.ts`'s
+    // `defaultBind`, which reads `deps.tokens` but is only ever reached in
+    // tests -- production always has this closure).
+    bind: (_deps, identity, runId, repo) =>
+      bindCompletionToRun(
+        orchestratorGithubRuntimeDeps(process.env),
+        identity,
+        runId,
+        repo,
+      ),
     drain: () => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return drainOutbox({

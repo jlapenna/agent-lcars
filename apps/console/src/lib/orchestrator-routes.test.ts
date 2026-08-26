@@ -31,10 +31,12 @@ const TOKEN = 'gh-test-token-0123456789';
 // Trivial fixed-token stub (`AmbientTokenProvider` itself was retired in
 // #1284 - see github-app-tokens.ts).
 const tokens: DispatchTokenProvider = { tokenFor: async () => TOKEN };
-// A completion caller's verified OIDC identity. Every `handleCompletion`
-// test below stubs `deps.bind` (see `completionFixture`), so its exact
+// A completion caller's verified OIDC identity. Most `handleCompletion`
+// tests below stub `deps.bind` (see `completionFixture`), so its exact
 // field values are never inspected by the code under test -- only its
-// shape matters.
+// shape matters. The one test that exercises the real default binder (no
+// `bind` override) also relies on `repository` matching `REPO` so
+// `bindCompletionToRun` gets past its own repo pre-check to the fetch.
 const IDENTITY: CompletionOidcIdentity = {
   repository: REPO,
   repositoryId: 1,
@@ -64,12 +66,16 @@ interface FetchCall {
  *  what `drainOutbox` (orchestrator-dispatch.ts) expects from each endpoint.
  *  The workflow-runs listing (`/actions/workflows/.../runs?...`, read by
  *  `settleTerminalRuns`) serves `workflowRuns`, empty unless a test arms it,
- *  so the reconcile route's terminal probe runs for real here. */
+ *  so the reconcile route's terminal probe runs for real here. A single
+ *  Actions run lookup (`/actions/runs/<id>`, read by `bindCompletionToRun`
+ *  through `defaultBind` -- see `run-binding.ts`) serves `actionsRun`,
+ *  `{}` (no marker) unless a test arms it. */
 function fakeFetch(
   overrides: {
     dispatchStatus?: number;
     commentStatus?: number;
     workflowRuns?: () => unknown[];
+    actionsRun?: () => unknown;
   } = {},
 ): { fetchImpl: typeof fetch; calls: FetchCall[] } {
   const { dispatchStatus = 204, commentStatus = 201 } = overrides;
@@ -82,6 +88,12 @@ function fakeFetch(
         JSON.stringify({ workflow_runs: overrides.workflowRuns?.() ?? [] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
+    }
+    if (/\/actions\/runs\/\d+$/u.test(url)) {
+      return new Response(JSON.stringify(overrides.actionsRun?.() ?? {}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
     const status = url.includes('/actions/workflows/')
       ? dispatchStatus
@@ -108,14 +120,16 @@ function fixture(overrides?: Parameters<typeof fakeFetch>[0]) {
   return { clock, store, orchestrator, deps, calls };
 }
 
-/** `fixture()` plus completion-specific helpers: a stubbed `bind` (every
- *  `handleCompletion` test below drives the binding decision explicitly
+/** `fixture()` plus completion-specific helpers: a stubbed `bind` (most
+ *  `handleCompletion` tests below drive the binding decision explicitly
  *  rather than exercising the real GitHub-fetch `bindCompletionToRun` --
- *  that function has its own coverage in `run-binding.test.ts`), and two
- *  ways to seed a run to complete -- a dispatched GitHub-anchored run
- *  (`seedRun`) and an undispatched native/work-anchored one (`seedNativeRun`,
- *  live the moment it's requested since a live run can report from
- *  `pending` just as well as `running`). */
+ *  that function has its own coverage in `run-binding.test.ts`; one test
+ *  deliberately uses bare `fixture()` instead, to prove the *default*
+ *  binder is wired), and two ways to seed a run to complete -- a
+ *  dispatched GitHub-anchored run (`seedRun`) and an undispatched
+ *  native/work-anchored one (`seedNativeRun`, live the moment it's
+ *  requested since a live run can report from `pending` just as well as
+ *  `running`). */
 function completionFixture(
   overrides: { bind?: OrchestratorRouteDeps['bind'] } = {},
 ) {
@@ -481,6 +495,44 @@ describe('handleCompletion', () => {
 
     expect(result.status).toBe(403);
     expect((await deps.store.readRun(run.runId))?.state).toBe('running');
+  });
+
+  it('with no bind override, falls back to the real binder and returns 403 on a mismatched marker', async () => {
+    // No `completionFixture()` here on purpose: `deps.bind` is left unset
+    // so `handleCompletion` exercises its own `defaultBind` -> the real
+    // `bindCompletionToRun` -- proving the production default is actually
+    // wired, not merely present in the type (it could be deleted or
+    // replaced with an always-true stub and every other test here would
+    // stay green, since they all inject `bind` explicitly).
+    const { deps, calls, store } = fixture({
+      actionsRun: () => ({
+        // A real Actions run, but naming a DIFFERENT run (r99) than the
+        // one being completed (r1) -- proves the lookup is keyed on the
+        // token's own `identity.runId`/`repo`, not on the caller-supplied
+        // `intentId` in the body.
+        display_title: `#${ISSUE.issue}: [dispatch:g1:${REPO}#${ISSUE.issue}/r99]`,
+      }),
+    });
+    const runId = await dispatchedRun(deps);
+    calls.length = 0;
+
+    const result = await handleCompletion(
+      deps,
+      {
+        workflow: 'claude.yml',
+        issue: ISSUE.issue,
+        intentId: runId,
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 99 },
+      },
+      IDENTITY,
+    );
+
+    expect(result.status).toBe(403);
+    expect((await store.readRun(runId))?.state).toBe('running');
+    expect(
+      calls.some((c) => c.url.endsWith(`/actions/runs/${IDENTITY.runId}`)),
+    ).toBe(true);
   });
 
   it('settles a native run addressed by runId with no issue in the body', async () => {

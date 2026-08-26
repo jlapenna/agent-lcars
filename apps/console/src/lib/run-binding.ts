@@ -39,10 +39,14 @@ export async function bindCompletionToRun(
   }
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
   const base = (deps.githubApiBaseUrl ?? GITHUB_API).replace(/\/+$/u, '');
-  let response: Response;
+  // The whole GitHub round trip -- request, status check, and body parse --
+  // maps to `BindingUnavailable`: a malformed 2xx body is exactly as
+  // unusable as a network failure or a non-2xx status, and must fail
+  // closed (503) the same way, never surface as an unrelated 500.
+  let body: { display_title?: string | null; name?: string | null };
   try {
     const token = await deps.tokens.tokenFor(repo);
-    response = await fetchImpl(
+    const response = await fetchImpl(
       `${base}/repos/${repo}/actions/runs/${identity.runId}`,
       {
         headers: {
@@ -51,20 +55,21 @@ export async function bindCompletionToRun(
         },
       },
     );
+    if (!response.ok) {
+      throw new BindingUnavailable(
+        `actions run lookup returned ${response.status}`,
+      );
+    }
+    body = (await response.json()) as {
+      display_title?: string | null;
+      name?: string | null;
+    };
   } catch (error) {
+    if (error instanceof BindingUnavailable) throw error;
     throw new BindingUnavailable(
       error instanceof Error ? error.message : String(error),
     );
   }
-  if (!response.ok) {
-    throw new BindingUnavailable(
-      `actions run lookup returned ${response.status}`,
-    );
-  }
-  const body = (await response.json()) as {
-    display_title?: string;
-    name?: string;
-  };
   const marker = parseDispatchMarker(body.display_title ?? body.name);
   if (marker === undefined) return { bound: false, reason: 'no-marker' };
   return marker.intentId === runId
