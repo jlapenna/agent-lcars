@@ -37,25 +37,25 @@ the control-plane surface they already have.
 
 ## Decisions
 
-| Question                       | Decision                                                                                                                                                                                                                                                                            |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First end-to-end consumer      | Agent-initiated work via API                                                                                                                                                                                                                                                        |
-| Structure                      | One store. The orchestrator's `Task` carries an opaque `work` payload for native anchors; `libs/work` is schemas, a derived view, and route handlers                                                                                                                                |
-| Item state                     | Derived from the task's runs, never stored (one small `closedAt` flag aside)                                                                                                                                                                                                        |
-| Deliverable                    | `Run.result` (`ok`, `summary`, `ref`) — already the orchestrator's shape; `ref` is the PR URL. Typed multi-results are a deferred extension                                                                                                                                         |
-| GitHub's role for native tasks | None required. Native-first: console + API are the interaction surface                                                                                                                                                                                                              |
-| API                            | Resource-oriented REST (`items`) + `lcars work` CLI; runs use the existing hosted control-plane routes, generalized to the anchor union                                                                                                                                             |
-| API framework                  | **oRPC**, contract-first — the fleet-wide pick shared with sprinkles#4837 (same rejected alternatives: tRPC has no native OpenAPI, ts-rest's zod 4 support is RC). Contract in `libs/work`, Next fetch adapter in the console, typed client in `lcars`, OpenAPI as a build artifact |
-| Console callers                | The same oRPC procedures exposed as server actions with the Auth.js session as the principal source — no second handler set for the UI                                                                                                                                              |
-| Create                         | `PUT /items/{ulid}` with a client-generated ULID — one existing orchestrator transaction (`requestRun`)                                                                                                                                                                             |
-| Auth                           | OAuth2 resource server with two additive scopes: `work.operator` (grant list) and `work.agent` (GitHub Actions OIDC). Standard library, issuers as configuration                                                                                                                    |
-| v1 human issuer                | Google via per-user service-account impersonation (a Google _user_ credential cannot mint an audience-scoped ID token); LCARS-minted tokens with sub-project 4                                                                                                                      |
-| Pipeline selection             | `spec.pipeline` required; the grant list says which pipelines each principal may request — not every agent may trigger Claude                                                                                                                                                       |
-| Admission                      | One global live-run cap, sized to runner capacity; `429`                                                                                                                                                                                                                            |
-| Spec delivery                  | As `workflow_dispatch` inputs in v1; the direct-runner backend fetches via API later                                                                                                                                                                                                |
-| Execution                      | `Executor` seam at the outbox; GitHub Actions is backend 1, a direct-runner queue is backend 2                                                                                                                                                                                      |
-| Sessions                       | Derived: the telemetry session doc already points at `runId`. Resume + lifecycle-pinned persistence are sub-project 6                                                                                                                                                               |
-| Protocol end state             | Agents become GitHub-issue agnostic and use only the run-facing routes; issue-side affordances become control-plane projections (sub-project 5)                                                                                                                                     |
+| Question                       | Decision                                                                                                                                                                                                                                                                          |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First end-to-end consumer      | Agent-initiated work via API                                                                                                                                                                                                                                                      |
+| Structure                      | One store. The orchestrator's `Task` carries an opaque `work` payload for native anchors; `libs/work` is schemas, a derived view, and route handlers                                                                                                                              |
+| Item state                     | Derived from the task's runs, never stored (one small `closedAt` flag aside)                                                                                                                                                                                                      |
+| Deliverable                    | `Run.result` (`ok`, `summary`, `ref`) — already the orchestrator's shape; `ref` is the PR URL. Typed multi-results are a deferred extension                                                                                                                                       |
+| GitHub's role for native tasks | None required. Native-first: console + API are the interaction surface                                                                                                                                                                                                            |
+| API                            | Resource-oriented REST (`items`) + `lcars work` CLI; runs use the existing hosted control-plane routes, generalized to the anchor union                                                                                                                                           |
+| API framework                  | **oRPC 2** (decided 2026-08-25; `2.0.0-beta.31` on the `beta` dist-tag today, stable 1.15.0), contract-first — the fleet-wide pick shared with sprinkles#4837. Contract in `libs/work`, `@orpc/next` handler in the console, typed client in `lcars`, OpenAPI as a build artifact |
+| Console callers                | The same procedures exposed as Next server functions (`@orpc/next`'s `createServerFunctionable`) with the Auth.js session as the principal source — no second handler set for the UI                                                                                              |
+| Create                         | `PUT /items/{ulid}` with a client-generated ULID — one existing orchestrator transaction (`requestRun`)                                                                                                                                                                           |
+| Auth                           | OAuth2 resource server with two additive scopes: `work.operator` (grant list) and `work.agent` (GitHub Actions OIDC). Standard library, issuers as configuration                                                                                                                  |
+| v1 human issuer                | Google via per-user service-account impersonation (a Google _user_ credential cannot mint an audience-scoped ID token); LCARS-minted tokens with sub-project 4                                                                                                                    |
+| Pipeline selection             | `spec.pipeline` required; the grant list says which pipelines each principal may request — not every agent may trigger Claude                                                                                                                                                     |
+| Admission                      | One global live-run cap, sized to runner capacity; `429`                                                                                                                                                                                                                          |
+| Spec delivery                  | As `workflow_dispatch` inputs in v1; the direct-runner backend fetches via API later                                                                                                                                                                                              |
+| Execution                      | `Executor` seam at the outbox; GitHub Actions is backend 1, a direct-runner queue is backend 2                                                                                                                                                                                    |
+| Sessions                       | Derived: the telemetry session doc already points at `runId`. Resume + lifecycle-pinned persistence are sub-project 6                                                                                                                                                             |
+| Protocol end state             | Agents become GitHub-issue agnostic and use only the run-facing routes; issue-side affordances become control-plane projections (sub-project 5)                                                                                                                                   |
 
 ## Architecture
 
@@ -230,32 +230,48 @@ path not in its allow-list before any handler runs; `/api/work/v1/` is
 added to `publicPrefixes` and `proxy.test.ts`'s route scan is extended to
 the tree (#885 and #1232 each shipped without this).
 
-### Framework: oRPC, contract-first
+### Framework: oRPC 2, contract-first
 
-The fleet's one API framework (decided with sprinkles#4837): **oRPC** —
-zod 4 via Standard Schema, REST-shaped routes declared on the contract
-(`oc.route({ method: 'PUT', path: '/items/{id}' })`), OpenAPI generation,
-and a typed client derived from the contract. Each repository adopts it as
-an ordinary third-party dependency; nothing is shared as source.
+The fleet's one API framework (decided with sprinkles#4837): **oRPC 2**.
+Today that is `2.0.0-beta.31` on the `beta` dist-tag (stable is 1.15.0);
+the fleet adopts the 2.x line deliberately rather than 1.x, because v2
+changed the wire format — a v1 client cannot talk to a v2 server — and
+starting on 1.x would mean a coordinated server-and-client migration
+later. Renovate tracks the dependency to its stable release like any other
+third-party package. Each repository adopts it independently; nothing is
+shared as source.
 
+What v2 means concretely (from the v1→v2 migration guide):
+
+- **Packages:** `@orpc/contract`, `@orpc/server`, `@orpc/client`,
+  `@orpc/openapi` (which absorbed `openapi-client`), `@orpc/next`
+  (which absorbed `@orpc/react`), and `@orpc/zod` for JSON-schema
+  conversion. **Zod v4 is required** — the console is on 4.4.3.
+- **Routing is OpenAPI metadata:** `oc.meta(openapi({ method: 'PUT',
+path: '/items/{id}' }))` on the contract; `.route`/`.prefix`/`.tag` no
+  longer exist.
 - **Contract** lives in `libs/work` beside the schemas, dependency-light
   and free of `server-only` imports so the CLI can import it (the same
   discipline `dispatch-contracts` follows for `'use client'` bundles).
-- **Handler**: one catch-all route,
-  `apps/console/src/app/api/work/v1/[[...rest]]/route.ts`, using the
-  fetch adapter. The per-request **context** is where auth lives: it
-  accepts either a bearer token (Google service-account or GitHub Actions
-  OIDC, verified as below) _or_ an Auth.js session (`auth()`), and maps
-  both to one principal + scopes. The console's own pages therefore call
-  the same procedures as **server actions** (`.actionable()`) with the
-  session as principal — `user:<github-login>` — instead of a second
+- **Handler:** one catch-all route,
+  `apps/console/src/app/api/work/v1/[[...rest]]/route.ts`, serving an
+  `OpenAPIHandler` from `@orpc/next`. The per-request **context** is where
+  auth lives: it accepts either a bearer token (Google service-account or
+  GitHub Actions OIDC, verified as below) _or_ an Auth.js session
+  (`auth()`), and maps both to one principal + scopes. Middleware is
+  guarded with v2's context-flag pattern (automatic deduplication is
+  gone), and HTTP statuses for errors are the handler's `errorStatusMap`.
+- **Console pages** call the same procedures as **server functions** —
+  `createServerFunctionable({ context })` from `@orpc/next` — with the
+  session as principal, `user:<github-login>`, instead of a second
   handler set.
-- **Clients**: `lcars work` uses the typed client; agents and scripts use
-  the generated OpenAPI document with `curl`; a later MCP wrapper is
-  generic tools over the same contract, as sprinkles plans.
-- **Migration-off path**, since oRPC is young: the contract is plain zod
-  plus a route table, so replacing the framework is mechanical. Existing
-  hand-rolled control-plane routes are not migrated in v1.
+- **Clients:** `lcars work` uses the typed contract client
+  (`@orpc/client` + `OpenAPILink` from `@orpc/openapi`); agents and
+  scripts use the generated OpenAPI document with `curl`; a later MCP
+  wrapper is generic tools over the same contract, as sprinkles plans.
+- **Migration-off path**, since v2 is still beta: the contract is plain
+  zod plus route metadata, so replacing the framework is mechanical.
+  Existing hand-rolled control-plane routes are not migrated in v1.
 
 ### `items` — issuing and following work (`work.operator`)
 
@@ -471,7 +487,7 @@ synchronous refusals besides validation.
 
 ## Sequencing
 
-1. **v1 (this spec):** adopt oRPC; anchor union + `work` payload + `anchorTarget` +
+1. **v1 (this spec):** adopt oRPC 2 (`beta` dist-tag); anchor union + `work` payload + `anchorTarget` +
    anchor-aware store; `items` routes, grant list, cap, OAuth2 gate with
    per-job pins and marker binding; generalized completion/renew; native
    lane path; `lcars work`; two console pages; native-mode protocol
