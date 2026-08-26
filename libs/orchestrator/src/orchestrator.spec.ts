@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isRefusal } from './decide';
+import { decidedRun, isRefusal } from './decide';
 import { MemoryStore } from './memory-store';
 import type { TaskId } from './model';
 import { Orchestrator, type RequestInput } from './orchestrator';
@@ -70,6 +70,8 @@ class RacingOrchestrator extends Orchestrator {
   }
 }
 
+/** `request()` always mints a run, so callers can rely on `.run` directly
+ *  instead of narrowing it at every call site. */
 async function started(
   orchestrator: Orchestrator,
   requestId = 'req-1',
@@ -83,7 +85,7 @@ async function started(
   });
   if (isRefusal(outcome))
     throw new Error(`unexpected refusal: ${outcome.reason}`);
-  return outcome;
+  return { ...outcome, run: decidedRun(outcome) };
 }
 
 describe('the per-task mutex', () => {
@@ -167,10 +169,11 @@ describe('the run lifecycle', () => {
       ref: 'https://github.com/octo/example/pull/9',
     });
     if (isRefusal(outcome)) throw new Error('unexpected refusal');
-    expect(
-      outcome.run.events.map((event) => `${event.to}:${event.by}`),
-    ).toEqual(['pending:request', 'running:dispatch', 'finished:report']);
-    expect(outcome.run.result).toEqual({
+    const settledRun = decidedRun(outcome);
+    expect(settledRun.events.map((event) => `${event.to}:${event.by}`)).toEqual(
+      ['pending:request', 'running:dispatch', 'finished:report'],
+    );
+    expect(settledRun.result).toEqual({
       ok: true,
       ref: 'https://github.com/octo/example/pull/9',
     });
@@ -182,7 +185,9 @@ describe('the run lifecycle', () => {
     await orchestrator.confirmDispatch(run.runId);
     const again = await orchestrator.confirmDispatch(run.runId);
     if (isRefusal(again)) throw new Error('unexpected refusal');
-    expect(again.run.events.filter((e) => e.to === 'running')).toHaveLength(1);
+    expect(
+      decidedRun(again).events.filter((e) => e.to === 'running'),
+    ).toHaveLength(1);
   });
 
   it('records the result verbatim and releases the lock on report', async () => {

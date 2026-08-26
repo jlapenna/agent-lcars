@@ -246,6 +246,49 @@ export function runOrchestratorStoreContract(
       expect(await store.listRuns(id)).toEqual([]);
     });
 
+    it('lists runs for a native anchor and keeps anchors apart', async () => {
+      const { store, orchestrator } = await fixture();
+      const work: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const issue: TaskId = { repo: 'octo/example', issue: 7 };
+      await orchestrator.request({
+        taskId: work,
+        requestId: 'w1',
+        pipeline: 'claude',
+        work: {},
+      });
+      await orchestrator.request({
+        taskId: issue,
+        requestId: 'i1',
+        pipeline: 'claude',
+      });
+      expect((await store.listRuns(work)).map((r) => r.runId)).toEqual([
+        'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      ]);
+      expect((await store.listRuns(issue)).map((r) => r.runId)).toEqual([
+        'octo/example#7/r1',
+      ]);
+    });
+
+    it('round-trips work and closedAt on a native task', async () => {
+      const { store, orchestrator } = await fixture();
+      const work: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3H' };
+      await orchestrator.request({
+        taskId: work,
+        requestId: 'w1',
+        pipeline: 'claude',
+        work: { origin: { principal: 'user:jlapenna' } },
+      });
+      await orchestrator.report('work:01J5Z3K9QX8F0N2B4V6C8D1E3H/r1', {
+        ok: false,
+      });
+      await orchestrator.close(work);
+      const read = await store.readTask(work);
+      expect(read?.task.work).toEqual({
+        origin: { principal: 'user:jlapenna' },
+      });
+      expect(read?.task.closedAt).toBe('2026-08-15T12:00:00.000Z');
+    });
+
     describe('the outbox', () => {
       it('gives exactly one of two concurrent claimants each entry', async () => {
         const { clock, store, orchestrator } = await fixture();

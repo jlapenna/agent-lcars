@@ -246,6 +246,17 @@ jobs:
           CGO_ENABLED: '1'
         run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
 
+      # The Firestore emulator needs a JDK; the trusted JIT runner image
+      # bakes 21 (a no-op here), and this is the fallback for ubuntu-latest
+      # (the fork-PR carve-out above), where Java 17 remains the default.
+      - name: Java for the Firestore emulator
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - run: ./tools/nx run @agent-lcars/orchestrator:test-firestore
+
       # `next build` does not execute dynamic server-route imports. Exercise
       # the actual standalone artifact so traced runtime assets (notably the
       # Cloud Tasks GAPIC JSON used by hosted webhook admission) cannot pass
