@@ -8,6 +8,7 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
+import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import type { DispatchTokenProvider } from './github-app-tokens';
@@ -153,28 +154,44 @@ async function handleDispatchRun(
     return;
   }
 
-  const inputs =
-    target.issue !== undefined
-      ? {
-          issue: String(target.issue),
-          mode: run.params?.mode ?? 'implement',
-          reply: run.params?.reply ?? '',
-          runbook: run.params?.runbook ?? '',
-          context: run.params?.context ?? '',
-          broker_intent_id: run.runId,
-          broker_generation: parseGeneration(run.runId),
-          broker_dispatch_token: crypto.randomUUID(),
-        }
-      : {
-          // Plan 3 teaches the worker workflows this input; until then a
-          // native dispatch is refused by GitHub (`issue` is required) and
-          // the entry retries like any other transient failure.
-          work: JSON.stringify({ id: run.task, spec: task?.work?.['spec'] }),
-          mode: 'implement',
-          broker_intent_id: run.runId,
-          broker_generation: parseGeneration(run.runId),
-          broker_dispatch_token: crypto.randomUUID(),
-        };
+  let inputs: Record<string, string>;
+  if (isWorkAnchor(run.task)) {
+    // `run.task` is narrowed to the work anchor here, so `.workId` is the
+    // bare ULID the worker workflow expects as `work.id` -- not the
+    // anchor object itself.
+    let spec: WorkSpec;
+    try {
+      spec = workSpecSchema.parse(task?.work?.['spec']);
+    } catch (error) {
+      // A spec that fails the workflow-side contract can never be
+      // dispatched: permanent, so settle the entry rather than retry it,
+      // exactly as the `anchorTarget` failure above.
+      await settleClaim(deps, entry, 'done');
+      result.failed.push({
+        entryId: entry.entryId,
+        error: errorMessage(error),
+      });
+      return;
+    }
+    inputs = {
+      work: JSON.stringify({ id: run.task.workId, spec }),
+      mode: 'implement',
+      broker_intent_id: run.runId,
+      broker_generation: parseGeneration(run.runId),
+      broker_dispatch_token: crypto.randomUUID(),
+    };
+  } else {
+    inputs = {
+      issue: String(target.issue),
+      mode: run.params?.mode ?? 'implement',
+      reply: run.params?.reply ?? '',
+      runbook: run.params?.runbook ?? '',
+      context: run.params?.context ?? '',
+      broker_intent_id: run.runId,
+      broker_generation: parseGeneration(run.runId),
+      broker_dispatch_token: crypto.randomUUID(),
+    };
+  }
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/actions/workflows/${run.pipeline}.yml/dispatches`;
 
   let response: Response;
