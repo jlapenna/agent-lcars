@@ -1,7 +1,9 @@
+import { REPLY_COMMANDS } from '@agent-lcars/dispatch-contracts';
 import { type TaskId, taskIdSchema } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
 
 import { isControlPlaneRepository } from '@/lib/deployment';
+import { matchReplyTrigger } from '@/lib/reply-trigger';
 
 /**
  * Interprets one GitHub webhook delivery and decides whether it is a
@@ -60,6 +62,7 @@ const issueCommentEventSchema = z.object({
   comment: z.object({
     body: z.string(),
     author_association: z.string(),
+    user: z.object({ type: z.string() }).optional(),
   }),
 });
 
@@ -79,26 +82,9 @@ const REVIEW_LABELS: Readonly<Record<string, Pipeline>> = {
   'review:opencode': 'opencode',
 };
 
-/** Reply commands recognized at the start of a comment body. Order does not
- *  affect matching: a command is only accepted when it is followed by
- *  whitespace or end-of-string, so `/oc` never falsely matches a body that
- *  actually starts with `/opencode`. */
-const REPLY_COMMANDS: ReadonlyArray<{ prefix: string; pipeline: Pipeline }> = [
-  { prefix: '@claude', pipeline: 'claude' },
-  { prefix: '@agent', pipeline: 'claude' },
-  { prefix: '/codex', pipeline: 'codex' },
-  { prefix: '/opencode', pipeline: 'opencode' },
-  { prefix: '/oc', pipeline: 'opencode' },
-];
-
 function matchReplyCommand(body: string): Pipeline | undefined {
-  const trimmed = body.trimStart();
-  for (const { prefix, pipeline } of REPLY_COMMANDS) {
-    if (!trimmed.startsWith(prefix)) continue;
-    const rest = trimmed.slice(prefix.length);
-    if (rest.length === 0 || /^\s/u.test(rest)) return pipeline;
-  }
-  return undefined;
+  const trigger = matchReplyTrigger(body, [...REPLY_COMMANDS.keys()]);
+  return trigger ? REPLY_COMMANDS.get(trigger) : undefined;
 }
 
 function checkRepository(fullName: string): IngestIgnore | undefined {
@@ -199,8 +185,9 @@ function interpretIssueCommentEvent(
   if (!pipeline) return ignore('no-reply-command');
 
   if (
-    comment.author_association !== 'OWNER' &&
-    comment.author_association !== 'MEMBER'
+    comment.user?.type === 'Bot' ||
+    (comment.author_association !== 'OWNER' &&
+      comment.author_association !== 'MEMBER')
   ) {
     return ignore('untrusted-author');
   }

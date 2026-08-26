@@ -27,6 +27,7 @@ import type {
   QuickTaskEvidenceObject,
   QuickTaskEvidencePreIssueCreateHook,
 } from './quick-task-evidence-contract';
+import { matchReplyTrigger } from './reply-trigger';
 import {
   type AgentIntegration,
   agentIntegration,
@@ -54,21 +55,7 @@ function containsReplyTrigger(
   body: string,
   integration: AgentIntegration,
 ): boolean {
-  let fenced = false;
-  const triggers = replyTriggers(integration).map((trigger) =>
-    trigger.toLowerCase(),
-  );
-  return body.split(/\r?\n/u).some((rawLine) => {
-    const line = rawLine.trim().toLowerCase();
-    if (line.startsWith('```')) {
-      fenced = !fenced;
-      return false;
-    }
-    if (fenced || line.startsWith('>')) return false;
-    return triggers.some(
-      (trigger) => line === trigger || line.startsWith(`${trigger} `),
-    );
-  });
+  return matchReplyTrigger(body, replyTriggers(integration)) !== undefined;
 }
 
 // A console reply must carry the repository integration's declared trigger,

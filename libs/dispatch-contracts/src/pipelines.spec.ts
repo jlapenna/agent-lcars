@@ -40,6 +40,7 @@ describe('pipeline registry', () => {
   it('maps every reply command, aliases included', () => {
     expect([...REPLY_COMMANDS]).toEqual([
       ['@claude', 'claude'],
+      ['@agent', 'claude'],
       ['/codex', 'codex'],
       ['/oc', 'opencode'],
       ['/opencode', 'opencode'],

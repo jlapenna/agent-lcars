@@ -206,6 +206,26 @@ describe('interpretDelivery', () => {
       },
     },
     {
+      name: '@agent on a later prose line -> reply/claude',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: 'This is working: https://example.test/image\n\n@agent',
+          author_association: 'OWNER',
+        },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 9 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: {
+          mode: 'reply',
+          reply: 'This is working: https://example.test/image\n\n@agent',
+        },
+      },
+    },
+    {
       name: 'wrong repository -> ignore',
       event: 'issues',
       payload: issuesLabeledPayload({ repository: { full_name: OTHER_REPO } }),
@@ -255,7 +275,7 @@ describe('interpretDelivery', () => {
       expected: { kind: 'ignore', reason: 'no-reply-command' },
     },
     {
-      name: '@claude mid-sentence (not at start) -> ignore',
+      name: '@claude mid-sentence -> reply/claude',
       event: 'issue_comment',
       payload: issueCommentPayload({
         comment: {
@@ -263,7 +283,69 @@ describe('interpretDelivery', () => {
           author_association: 'OWNER',
         },
       }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 9 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: {
+          mode: 'reply',
+          reply: 'hey @claude can you help with this',
+        },
+      },
+    },
+    {
+      name: 'mentions inside quotes and code -> ignore',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: [
+            '> @agent please retry',
+            '',
+            'Type `@claude` to dispatch.',
+            '',
+            '```text',
+            '@agent',
+            '```',
+          ].join('\n'),
+          author_association: 'OWNER',
+        },
+      }),
       expected: { kind: 'ignore', reason: 'no-reply-command' },
+    },
+    {
+      name: 'longer usernames and URL paths do not count as mentions',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: 'Ask @agent-lcars-bot or visit https://example.test/@agent',
+          author_association: 'OWNER',
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'no-reply-command' },
+    },
+    {
+      name: 'slash command mid-sentence -> ignore',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: 'please use /codex for this',
+          author_association: 'OWNER',
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'no-reply-command' },
+    },
+    {
+      name: 'reply mention from a MEMBER bot -> untrusted-author',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          body: 'please retry @agent',
+          author_association: 'MEMBER',
+          user: { type: 'Bot' },
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'untrusted-author' },
     },
     {
       name: 'reply command from NONE association -> untrusted-author',
