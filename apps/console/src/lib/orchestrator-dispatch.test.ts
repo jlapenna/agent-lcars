@@ -490,6 +490,63 @@ describe('drainOutbox: dispatch-run', () => {
     expect(neverCalled).not.toHaveBeenCalled();
   });
 
+  it('a GitHub-anchored run with a work payload emits both issue and work inputs', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'T',
+          description: 'D',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) {
+      throw new Error(`unexpected refusal: ${requested.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls).toHaveLength(1);
+    const inputs = callBody(calls[0]!).inputs as Record<string, string>;
+    // A GitHub anchor is already named by `issue` -- `work` carries only
+    // `spec`, no `id` (unlike the native-anchor `work` input above).
+    expect(Object.keys(inputs).sort()).toEqual(
+      [
+        'broker_dispatch_token',
+        'broker_generation',
+        'broker_intent_id',
+        'context',
+        'issue',
+        'mode',
+        'reply',
+        'runbook',
+        'work',
+      ].sort(),
+    );
+    expect(inputs.issue).toBe('7');
+    expect(JSON.parse(inputs.work)).toEqual({
+      spec: {
+        title: 'T',
+        description: 'D',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+    });
+    expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+  });
+
   it('a queue-executor run is enqueued and confirmed without calling GitHub', async () => {
     const { store, orchestrator } = fixture();
     const requested = await orchestrator.request({

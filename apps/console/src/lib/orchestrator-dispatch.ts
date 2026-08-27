@@ -148,9 +148,7 @@ async function handleDispatchRun(
     return;
   }
 
-  const task = isWorkAnchor(run.task)
-    ? (await store.readTask(run.task))?.task
-    : undefined;
+  const task = (await store.readTask(run.task))?.task;
   let target: AnchorTarget;
   try {
     target = anchorTarget(run, task);
@@ -189,8 +187,29 @@ async function handleDispatchRun(
       broker_dispatch_token: crypto.randomUUID(),
     };
   } else {
+    // A GitHub anchor's `work` (present once Tasks 1-3 have derived one for
+    // this task) carries no separate `id` -- the anchor already names the
+    // task via `issue`. `spec.parse` failing here (an overlong/malformed
+    // stored payload) is the same permanent-failure shape as the native
+    // branch above: settle done, do not retry a spec that can never parse.
+    let workInput: string | undefined;
+    if (task?.work !== undefined) {
+      try {
+        workInput = JSON.stringify({
+          spec: workSpecSchema.parse(task.work['spec']),
+        });
+      } catch (error) {
+        await settleClaim(deps, entry, 'done');
+        result.failed.push({
+          entryId: entry.entryId,
+          error: errorMessage(error),
+        });
+        return;
+      }
+    }
     inputs = {
       issue: String(target.issue),
+      ...(workInput === undefined ? {} : { work: workInput }),
       mode: run.params?.mode ?? 'implement',
       reply: run.params?.reply ?? '',
       runbook: run.params?.runbook ?? '',
