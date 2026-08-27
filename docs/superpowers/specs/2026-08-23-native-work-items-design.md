@@ -552,7 +552,10 @@ synchronous refusals besides validation.
    issue affordances become projections; the protocol collapses to the run
    routes — see
    [Sub-project 5: ingress unification](#sub-project-5-ingress-unification).
-6. **Session resume and persistence.**
+6. **Session resume and persistence:** `redispatch` may resume a prior
+   run's session, and a session pointing at an open item's run is exempt
+   from `expireAt` reaping until the item settles — see
+   [Sub-project 6: session resume and persistence](#sub-project-6-session-resume-and-persistence).
 
 ## Deferred extensions
 
@@ -1630,3 +1633,394 @@ sequenceDiagram
   X-->>D: run finished, report-outcome entry
   D->>GH: POST outcome comment referencing Fixes N
 ```
+
+## Sub-project 6: session resume and persistence
+
+**Purpose.** Two related gaps close together, per the design table's
+"Sessions" row: a `redispatch` on a `parked` item starts a brand-new agent
+turn with no memory of the parked attempt, and a session's telemetry doc is
+reaped by retention (`ISSUE_AGENT_SESSION_RETENTION_DAYS`, 365 days) on a
+clock that has nothing to do with whether its item is still open — a
+long-parked item can outlive its own session evidence. Requires sub-project
+4 (`QueueExecutor`, merged: direct mode is the first resume consumer and
+`GET /runs/{id}/brief` is extended here) and sub-project 5 (ingress
+unification, merged: no interface dependency, but this lands after it per
+Sequencing).
+
+### The resume request
+
+`POST /items/{id}/redispatch`'s input gains an optional `resumeSessionId:
+z.string().max(256)`. The handler (`work-router.ts`) validates it against
+the item being redispatched, not just any session:
+
+1. `resumeSessionId` must name a session doc (`getSessionDoc`, read-only —
+   the console already holds `roles/datastore.viewer` on the telemetry
+   database, the same access `sessionsFor`/`work-mint.ts`'s `view()`
+   already use) whose `source` is `'issue-agent'` and whose `intentId` is
+   one of this item's own `runs[].runId` — otherwise `BAD_REQUEST` (400):
+   the session exists, or doesn't, but it isn't this item's to resume.
+2. The named session must carry a `transcriptGcsUri` — otherwise `CONFLICT`
+   (409): a session with no archived transcript (upload failed, or it never
+   finalized) has nothing to resume from. This reuses the existing
+   `CONFLICT`-for-precondition-not-met idiom `redispatch` already has for
+   "only a parked item can be redispatched", rather than inventing a third
+   error shape for the same kind of refusal.
+3. The named session's effective agent (`sessionAgent(doc)`, defaulting to
+   `'claude-code'`) must be `'claude-code'` — otherwise `BAD_REQUEST` (400):
+   `--resume` is a Claude Code CLI concept, and naming a Codex/OpenCode
+   session here can never mean anything.
+
+On success, `requestRun`'s existing opaque `params: Record<string, string>`
+(`libs/orchestrator/src/decide.ts`) carries the resume forward — no
+orchestrator schema change, `Run.params` already stores whatever the
+caller hands it, uninterpreted, exactly as it does for `mode`/`reply` on
+label-driven runs. The handler passes `params: { resumeSessionId,
+resumeTranscriptGcsUri }`: both string values fit `Run.params`'s existing
+`Record<string, string>` shape, and resolving `transcriptGcsUri` once at
+request time (rather than at drain time) means `orchestrator-dispatch.ts`
+never needs a telemetry read of its own — it already has everything it
+needs on `run.params`. (The design table's "stores it on the new run as
+`params.resumeSessionId`" literally names one field; this plan stores a
+second one alongside it for the same run, which the table's wording does
+not preclude — recorded in the self-review as an elaboration, not a
+deviation.)
+
+The drain (`orchestrator-dispatch.ts`'s `handleDispatchRun`) includes the
+resume in the `work` `workflow_dispatch` input — extending the existing
+JSON, not a new input (the dispatch workflows already declare 9 of
+GitHub's 10 allowed inputs — `issue`, `mode`, `reply`, `runbook`,
+`context`, `work`, `broker_intent_id`, `broker_generation`,
+`broker_dispatch_token` — one slot of headroom left, none of it spent
+here):
+
+```ts
+inputs = {
+  work: JSON.stringify({
+    id: run.task.workId,
+    spec,
+    ...(run.params?.['resumeSessionId'] &&
+    run.params?.['resumeTranscriptGcsUri']
+      ? {
+          resume: {
+            sessionId: run.params['resumeSessionId'],
+            transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
+          },
+        }
+      : {}),
+  }),
+  // ...unchanged
+};
+```
+
+Sub-project 4's `GET /runs/{runId}/brief` (`runBriefSchema`) returns the
+identical `resume` object, read from the same `run.params` — a direct-mode
+run has no `workflow_dispatch` input to read, so `brief` is the one place
+it learns of a resume, exactly as it already is for `id`/`spec`.
+
+### Resume mechanics: one mechanism, lane and direct mode alike
+
+**Where Claude Code keeps a session.** The sidecar's own privacy-allowlist
+code (`apps/telemetry-watcher/src/lib/default-checkout.ts`,
+`checkoutSlugGlobs`) already computes Claude Code's project-directory
+encoding to build its glob allowlist: `root.replace(/\//g, '-')`. Claude
+Code's local session store for an absolute checkout directory `$DIR` is
+`~/.claude/projects/<$DIR with every "/" replaced by "-">/<sessionId>.jsonl`.
+Inverting it for a write is the same substitution.
+
+**Where the transcript lives in GCS.** `transcriptObjectPath` (already in
+`@agent-lcars/telemetry`) names it: `gs://<transcriptsBucket>/runs/<runId>/
+<adapter>/<sessionId>.jsonl` — `gs://agent-lcars-session-transcripts/
+runs/<runId>/claude-code/<sessionId>.jsonl` for a Claude Code session.
+
+**Verified: `claude-code-action` can resume.** The pinned action
+(`anthropics/claude-code-action@5ee796a55f92566ecd7e39d70dd613abcbea0d7c`,
+`v1.0.197`) is SDK-based (`@anthropic-ai/claude-agent-sdk`'s `query()`,
+which itself spawns the real `claude` CLI as a subprocess — confirmed by
+the action's own `path_to_claude_code_executable` input). Its
+`claude_args` string is parsed generically
+(`base-action/src/parse-sdk-options.ts`'s `parseClaudeArgsToExtraArgs`):
+every flag not specifically extracted (`model`, `max-turns`,
+`allowedTools`/`disallowedTools`, `add-dir`, `mcp-config`,
+`setting-sources`) is left in `extraArgs` and forwarded verbatim to the
+SDK's `query()` options, which the SDK passes straight through to the
+spawned `claude` subprocess. `--resume <sessionId>` is not one of the
+extracted flags, so it flows through untouched. This is not just an
+inference from the parser's behavior: the action's own `session_id`
+**output** is documented, in the action's own `action.yml` and
+`base-action/README.md`, as _"The Claude Code session ID that can be used
+with `--resume` to continue this conversation"_ — first-party confirmation
+that `claude_args: --resume <id>` on a later invocation is the action's
+own intended continuation mechanism, not an undocumented side channel.
+
+This overturns the contingency the design brief for this sub-project
+anticipated (a lane-only fallback of prepending prior-transcript context to
+the brief, since the action "owns the auth" and a bare `claude --resume`
+inside the lane step was ruled out). Verification finds no fallback is
+needed: **one mechanism serves both the lane and direct mode** — download
+the transcript to the local session path, then pass `--resume <sessionId>`
+to the real `claude` invocation, whether that invocation is direct-runner
+mode's own `claude` command or `claude-code-action`'s SDK-spawned one.
+Confidence is source-level, not a live-tested fact yet; the real-path proof
+(below) is the live test. If the proof finds `claude_args`'s `--resume`
+does not actually reach a resumable session end-to-end, the documented
+fallback (prior-transcript context prepended to the brief, direct mode
+still resuming for real) is the documented retreat position — see the
+plan's self-review.
+
+**The shared download.** Both runners already hold a
+`telemetry_writer`-scoped credential capable of downloading (it already has
+`roles/storage.objectAdmin` on the transcripts bucket, used today for
+_uploading_): the lane, via `.github/actions/telemetry-start`'s WIF
+impersonation (`credentials-file-path` output); direct mode, via the same
+`/run/secrets/telemetry-writer.json` file the sidecar already mounts for
+its own upload. Rather than adding a `gcloud`/`gsutil` binary to the runner
+image, the download reuses the **already-bundled** `@google-cloud/storage`
+client (`transcript-upload.ts` gains a sibling `downloadTranscript`,
+authenticated via `GOOGLE_APPLICATION_CREDENTIALS` exactly as the upload
+side already is), exposed as a new `runner resume` subcommand on the same
+`sidecar.cjs` bundle `runner sidecar`/`runner finalize` already ship. The
+lane calls it from a new step between "Start telemetry sidecar" and "Run
+Claude Code"; direct mode calls it from `direct-runner.sh` after `cd
+"$workspace"`. Both write to `~/.claude/projects/<slug of the checkout
+dir>/<sessionId>.jsonl`, then conditionally add `--resume <sessionId>` —
+the lane via `claude_args`, direct mode via a literal CLI flag. A failed
+download (network error, missing object) is fail-soft: the step/script logs
+and continues without `--resume`, exactly like every other telemetry
+failure mode in this codebase — a resume that cannot be prepared degrades
+to a fresh run, never blocks dispatch.
+
+One sequence diagram covers both halves of this sub-project — session
+resume on redispatch, and the independent, periodic pin tick that keeps
+that same session's telemetry doc alive while its item stays open:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant O as Operator (work.operator)
+  participant API as Console API
+  participant X as Orchestrator
+  participant D as Outbox drain
+  participant GH as GitHub Actions
+  participant TW as telemetry-writer (WIF)
+  participant A as Agent job (claude-code-action)
+  participant S as work-session-pin-tick.yml (schedule)
+
+  O->>API: POST /items/id/redispatch resumeSessionId
+  API->>API: session belongs to this item and has a transcript
+  API->>X: requestRun params resumeSessionId resumeTranscriptGcsUri
+  X-->>API: task plus run r_n pending
+  API-->>O: 200 state running
+  D->>GH: workflow_dispatch work with id spec resume
+  GH->>TW: Start telemetry sidecar WIF impersonation
+  TW-->>GH: credentials file path
+  GH->>GH: runner resume downloads transcript to local Claude Code session path
+  GH->>A: Run Claude Code claude_args includes --resume sessionId
+  A->>A: continues the resumed conversation, ends with PARK or a PR
+  Note over S,API: independent of any redispatch, every 30 minutes while the item stays open
+  S->>API: GET /items state running or parked, OIDC bearer, work.reaper
+  API-->>S: items with sessions per item
+  S->>TW: impersonate telemetry-writer access token
+  S->>TW: touchSessionExpiry sessionId, now plus 365 days
+```
+
+### Persistence: pinning a session against reaping
+
+**What actually reaps a session doc.** `sessions/{sessionId}`'s `expireAt`
+is written as a native Firestore `Timestamp`
+(`Timestamp.fromDate`/`AdminTimestamp.fromDate`, both `store.ts`
+implementations agree) specifically because — per the code's own comments,
+citing issue #2708/#2761 — a **native GCP Firestore TTL policy** on that
+field is what deletes the document; nothing in this codebase runs a
+sweep/delete pass. That policy is not Terraform-managed in this repository
+(no `google_firestore_field`/TTL resource exists in
+`infra/terraform/main.tf`) — it was enabled out-of-band, and this plan
+does not touch it. Deleting under Firestore's own TTL sweep (typically
+within 24h of `expireAt` passing) is therefore not something application
+code can intercept or veto; the **only** lever is what decision 3 already
+says: keep rewriting `expireAt` into the future so it never goes stale.
+Nothing analogous exists for the transcript object in GCS — the bucket's
+own lifecycle rule (`infra/terraform/main.tf`'s
+`google_storage_bucket.transcripts`) only deletes noncurrent (ARCHIVED)
+object _versions_ after 90 days, never a live object — so there is no
+transcript-side reaping to pin against at all; "persistence" here is
+entirely about the Firestore doc.
+
+**The access boundary this design must route around.** The console's own
+runtime identity (`firebase-app-hosting-compute`) holds
+`roles/datastore.viewer` — **read-only** — on the telemetry database
+(`infra/terraform/main.tf`'s `apphosting_firestore`, condition
+"console-default-database-reader"); only `telemetry_writer` holds
+`roles/datastore.user` there. Conversely `telemetry_writer` holds **no**
+grant at all on the `dispatch-controller` database, where the orchestrator
+(`Task`/`Run`) lives — only the console can read that. So no single
+existing identity can both resolve "is this item still open" (needs the
+orchestrator) and rewrite `expireAt` (needs telemetry write access). This
+is the point decision 3's literal wording ("resolve `intentId` → task via
+the orchestrator store") does not survive contact with: no caller reachable
+without a new IAM grant has a literal `OrchestratorStore` handle _and_
+telemetry write access in the same process.
+
+**The chosen route (zero Terraform/IAM/secrets).** A new scheduled
+workflow, `work-session-pin-tick.yml`, mirroring
+`work-schedules-tick.yml`/`dispatch-reconcile.yml`'s existing pattern,
+combines two credentials the fleet already grants this repository, neither
+newly:
+
+1. **Read** — a GitHub Actions OIDC bearer, verified by a new
+   `assertSessionPinTickOidcClaims`/`verifySessionPinTickOidcToken` pair in
+   `github-actions-oidc.ts` (audience `agent-lcars-session-pin-tick`,
+   `job_workflow_ref` pinned to `.github/workflows/work-session-pin-tick.yml`
+   — the same shape `assertScheduleTickOidcClaims` already established),
+   producing a `{ principal: 'pin:tick', scopes: ['work.reaper'] }`
+   `WorkPrincipal` — a fourth `authenticateWorkRequest` branch, no grant-list
+   entry needed (exactly like `cron:tick` today, the OIDC branches are
+   hardcoded principals, not grant lookups). `work.reaper` is new, narrow,
+   and mirrors `work.cron`/`work.executor`'s existing one-purpose-scope
+   precedent rather than reusing `work.operator` (which would also confer
+   create/cancel/redispatch — broader than this caller ever needs).
+   `work-router.ts`'s `list`/`get` procedures move off the single
+   `operator`-only gate onto a small `reader` gate accepting `work.operator`
+   **or** `work.reaper`; `create`/`cancel`/`redispatch` stay operator-only.
+   The workflow calls `GET /items?state=running&limit=200` and
+   `GET /items?state=parked&limit=200` — each item in the response already
+   carries its own `sessions[]` (the same join `GET /items/{id}` already
+   returns), so no per-session lookup or new route is needed. (This is the
+   plan's chosen inversion of decision 3's literal per-session wording: work
+   forward from "list open items" rather than backward from "resolve each
+   session's item" — cheaper, and the only shape reachable without a new
+   IAM grant. Recorded in the self-review.)
+2. **Write** — a `google-github-actions/auth` step impersonating
+   `telemetry_writer` (`token_format: access_token`), the exact WIF binding
+   `.github/actions/telemetry-start` already exercises for every dispatched
+   run (`fleet_writer_impersonation["jlapenna/agent-lcars"]`,
+   `infra/terraform/main.tf`) — ambient credentials for a new
+   `touchSessionExpiry(sessionId, expireAt)` on `libs/telemetry`'s server
+   store, alongside `upsertSession`, doing a raw partial
+   `set({ expireAt: AdminTimestamp.fromDate(...) }, { merge: true })`
+   rather than round-tripping through `buildSessionWrite`'s full-document
+   shape for what is only ever a watermark touch.
+
+For every session named in an open item's `sessions[]`, the tick rewrites
+`expireAt` forward to `now + ISSUE_AGENT_SESSION_RETENTION_DAYS` (365
+days) — the same horizon a real activity write would set, so a pinned
+session's `expireAt` reads exactly as it would if the agent were still
+actively working it. Cadence (offset from `:00`/`:30`, matching
+`dispatch-reconcile.yml`'s stampede-avoidance convention) is minutes; the
+retention window is a year — there is enormous slack between "tick missed a
+few times" and "TTL would have caught it," so a skipped tick or two is not
+an incident.
+
+**Unpinning is implicit.** `GET /items?state=running` and `?state=parked`
+simply stop naming a settled (`done`/`canceled`) item's sessions on the
+very next tick — nothing explicitly "unpins" a session; its `expireAt`
+just stops being rewritten, and the value from its last real write (or the
+last pin) stands, decaying toward the ordinary retention horizon exactly
+as an ordinary session's does. No new field, no state machine.
+
+**Native items only.** Falls out for free: `GET /items` only ever lists
+native (work-anchored) tasks (`listNativeTasks`); GitHub-anchored tasks are
+structurally outside this route's scope, so no extra filter is needed to
+honor "native items only" (see the single sequence diagram above, which
+covers both the resume and the pin-tick flows).
+
+### Console
+
+`/work/[id]` (`apps/console/src/app/work/[id]/page.tsx`):
+
+- **Redispatch offers resume.** The page computes the latest run
+  (`item.runs.at(-1)`, already sorted oldest-first by `toItemView`) and,
+  among `item.sessions` filtered to that run's `runId`, the one with the
+  latest `lastActivityAt`. When one exists and the item is `parked`,
+  `WorkActions` renders a checked-by-default checkbox — "Resume from
+  session `<id>` (`<title ?? id>`)" — next to the Redispatch button;
+  unchecking it redispatches without `resumeSessionId`, matching today's
+  behavior exactly. `WorkActions`' `redispatch` prop widens from
+  `WorkAction` to accept an optional `resumeSessionId`; `redispatchItem`
+  (`work/actions.ts`) needs no code change — it is already a bare
+  passthrough to `functionable(workRouter.redispatch)`, so widening the
+  contract's input widens its type automatically.
+- **Pinned badge.** `SessionsList` renders a small "pinned" `Badge` next to
+  each session row whenever `item.state` is `running` or `parked` — every
+  session on this page is already this item's own (joined via `intentId`),
+  so the badge condition is exactly the item's own derived state, not a
+  new field the API has to add.
+
+### Testing
+
+- Router (`work-router.test.ts`): `resumeSessionId` accepted/threaded on a
+  valid same-item session; 400 for a missing or other-item session; 400 for
+  a non-`claude-code` session; 409 for a session with no
+  `transcriptGcsUri`; `params.resumeSessionId`/`resumeTranscriptGcsUri`
+  land on the minted run.
+- Drain (`orchestrator-dispatch.test.ts`): `work.resume` present in the
+  `workflow_dispatch` input iff `run.params.resumeSessionId` is set;
+  absent otherwise (regression pin, matching sub-project 4's own
+  negative-case discipline for `dispatch-run`).
+- Brief route (`runs-router.test.ts`): `resume` present in the response iff
+  `run.params` carries it.
+- Session-path derivation (`runner-capture.spec.ts`): the slash-to-dash
+  slug function, table-driven over a few real-shaped checkout paths.
+- Transcript download (`transcript-upload.spec.ts`): `downloadTranscript`
+  against a faked `@google-cloud/storage` client (mirrors
+  `uploadTranscript`'s own existing test double).
+- `runner resume` CLI wiring (`main.spec.ts` or a small shell fixture):
+  writes to the exact `~/.claude/projects/<slug>/<sessionId>.jsonl` path
+  for a given `--cwd`.
+- Lane step and `direct-runner.sh`: shell fixture tests faking the
+  downstream CLI invocation the way `direct-runner.test.sh` already fakes
+  `curl`/`git`/`gh`/`claude` — not `gcloud`/`gsutil` (this design never
+  shells out to either; the download is the bundled Node SDK, reached
+  through the same `sidecar.cjs`/`runner resume` fixture point
+  `direct-runner.test.sh`'s existing fakes already use for other calls).
+- Pinning (`session-pin-tick.spec.ts`): a fake `fetch` returning open items
+  with sessions, and a fake `touchSessionExpiry`, proving every open item's
+  session gets touched and a settled item's does not.
+- OIDC claims (`github-actions-oidc.test.ts`): `assertSessionPinTickOidcClaims`
+  accept/reject table mirroring `assertScheduleTickOidcClaims`'s.
+- Workflow contract (`tools/workflow-session-pin-tick.test.sh`, registered
+  in `ci.yml`): cadence, trigger, `id-token: write`-only permissions,
+  target audience/endpoint.
+- Console (`work-actions.test.tsx`, page test): resume checkbox renders
+  only when a same-run session exists and the item is parked; unchecking it
+  omits `resumeSessionId`; pinned badge shown/hidden by item state.
+- OpenAPI document regenerated and diffed in CI, extended for
+  `redispatch`'s input and `brief`'s output.
+
+### Real-path proof
+
+1. Create an item whose description says: _"Remember the phrase 'blue
+   tangerine' and PARK."_ Confirm it parks.
+2. Redispatch it with `resumeSessionId` set to its parked run's session
+   (via `work-create.yml`, which gains a `resume` input threaded into the
+   existing `redispatch` action's call), with a spec update — no: the spec
+   is immutable post-creation, so this step instead posts a **second**
+   description-carrying field the smoke command supports, or (simpler,
+   matching how sub-project 3's proof reused `work-create.yml`'s existing
+   shape) redispatch as-is and let the _same_ original description's
+   phrasing implicitly ask for continuity — concretely, the smoke's item
+   description is written up front as: _"Remember the phrase 'blue
+   tangerine' and PARK. If you are resuming a prior session, state the
+   phrase from that session, then PARK again."_ One creation, one
+   redispatch-with-resume; the first run parks without a phrase to recall,
+   the second run's transcript/session status shows the phrase.
+3. Confirm the second run's session (`get` via `work-create.yml`, and the
+   session's own status/transcript) states "blue tangerine" — proof the
+   resumed conversation actually carried context forward, not just that
+   `--resume` was passed.
+4. Confirm persistence within a practical timeframe: hand-write a **test**
+   session doc's `expireAt` a few minutes in the future (a throwaway
+   `sessionId`, `intentId` pointing at the still-open proof item's latest
+   run — via `secrets-cli`/`gcloud` direct Firestore access, maintainer
+   only), trigger `work-session-pin-tick.yml` manually
+   (`workflow_dispatch`), and read the doc back: `expireAt` has been pushed
+   out to `now + 365d`, proving the pin, not the counterfactual of an
+   actual TTL deletion (Firestore's own TTL sweep can take up to 24h, which
+   is outside a practical proof window — the proof is that the field never
+   stays in a state TTL would act on, not a wait-and-see for the sweep
+   itself).
+5. Cancel the proof item once the phrase and the pin are both confirmed, so
+   its sessions un-pin on the next tick and settle under ordinary
+   retention.
+6. Append a "Sub-project 6" section to `docs/native-work-smoke-runbook.md`
+   with the item id, both run ids, the session id, the redispatch-with-resume
+   command, the phrase confirmation, and the pin-tick evidence.

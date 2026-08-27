@@ -68,6 +68,9 @@ async function seedQueuedRun(
      *  redispatch, the schedule tick) can never produce since they all
      *  validate through it first. */
     spec?: unknown;
+    /** Mirrors what `redispatch` (Task 2) writes onto a fresh run's
+     *  `params` -- used by the `brief` resume tests below. */
+    params?: Record<string, string>;
   },
 ): Promise<string> {
   const pipeline = opts.pipeline ?? 'claude';
@@ -85,6 +88,7 @@ async function seedQueuedRun(
         target: { repo: 'jlapenna/agent-lcars' },
       },
     },
+    ...(opts.params === undefined ? {} : { params: opts.params }),
   });
   if ('refused' in outcome) {
     throw new Error(`unexpected refusal seeding ${opts.workId}`);
@@ -529,6 +533,63 @@ describe('brief', () => {
       expect.objectContaining({ runId }),
     );
     errorSpy.mockRestore();
+  });
+
+  it('includes resume when the claimed run carries resumeSessionId', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-resume'),
+      now: NOW,
+      params: {
+        resumeSessionId: 'sess_1',
+        resumeTranscriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+      },
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(200);
+    expect(
+      (
+        r.json as {
+          resume?: { sessionId: string; transcriptGcsUri: string };
+        }
+      ).resume,
+    ).toEqual({
+      sessionId: 'sess_1',
+      transcriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+    });
+  });
+
+  it('omits resume when the claimed run carries no resumeSessionId', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-no-resume'),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(200);
+    expect((r.json as { resume?: unknown }).resume).toBeUndefined();
   });
 });
 

@@ -171,6 +171,66 @@ export async function verifyScheduleTickOidcToken(
   return assertScheduleTickOidcClaims(payload, repository);
 }
 
+// Sub-project 6 (2026-08-27-native-work-items-8-sessions, Task 8): the
+// session-pin-tick trigger for the session reaper sweep -- rewrites
+// expireAt forward on sessions belonging to still-open items so the
+// collection's Firestore TTL policy never reaps them out from under a
+// live item. Same shape as the schedule-tick verifier above: one
+// canonical caller, pinned to the control-plane home, not the allow-list.
+const SESSION_PIN_TICK_OIDC_AUDIENCE = 'agent-lcars-session-pin-tick';
+const SESSION_PIN_TICK_WORKFLOW_PATH =
+  '.github/workflows/work-session-pin-tick.yml';
+
+export interface SessionPinTickOidcIdentity {
+  repository: string;
+  repositoryId: number;
+  runId: number;
+}
+
+export function assertSessionPinTickOidcClaims(
+  claims: JWTPayload,
+  repository: string,
+): SessionPinTickOidcIdentity {
+  const expectedJobWorkflowRef = `${repository}/${SESSION_PIN_TICK_WORKFLOW_PATH}@refs/heads/main`;
+  if (claims['repository'] !== repository) {
+    throw new Error('OIDC repository claim does not match the control plane');
+  }
+  if (claims['job_workflow_ref'] !== expectedJobWorkflowRef) {
+    throw new Error(
+      'OIDC job_workflow_ref claim is not the session pin tick workflow on main',
+    );
+  }
+  if (claims['ref'] !== 'refs/heads/main') {
+    throw new Error('OIDC ref claim is not main');
+  }
+  if (
+    !['schedule', 'workflow_dispatch'].includes(String(claims['event_name']))
+  ) {
+    throw new Error(
+      'OIDC event_name claim is not an allowed session-pin-tick event',
+    );
+  }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+  };
+}
+
+export async function verifySessionPinTickOidcToken(
+  token: string,
+  repository: string,
+): Promise<SessionPinTickOidcIdentity> {
+  const { payload } = await jwtVerify(token, githubActionsJwks, {
+    issuer: GITHUB_ACTIONS_ISSUER,
+    audience: SESSION_PIN_TICK_OIDC_AUDIENCE,
+  });
+  return assertSessionPinTickOidcClaims(payload, repository);
+}
+
 /**
  * The one shared, GitHub-hosted completion finalizer every onboarded repo's
  * worker calls as a reusable workflow (`workflow_call`) -- there is no

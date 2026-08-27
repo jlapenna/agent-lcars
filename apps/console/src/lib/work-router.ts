@@ -6,6 +6,7 @@ import {
   isRefusal,
   isWorkAnchor,
 } from '@agent-lcars/orchestrator';
+import { sessionAgent } from '@agent-lcars/telemetry';
 import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
 import type { ItemView } from '@agent-lcars/work/derive';
 import { deriveItemState, toItemViewSafe } from '@agent-lcars/work/derive';
@@ -50,6 +51,24 @@ const operator = os.use(async ({ context, next }) => {
   return next({ context: { principal } });
 });
 
+/** `list`/`get` additionally accept `work.reaper` (sub-project 6's
+ *  session-pin tick, a read-only caller) -- `create`/`cancel`/`redispatch`
+ *  stay `operator`-only; a reaper-scoped principal must never mint or
+ *  settle a run. */
+const reader = os.use(async ({ context, next }) => {
+  const { principal } = context;
+  if (
+    principal === undefined ||
+    (!principal.scopes.has('work.operator') &&
+      !principal.scopes.has('work.reaper'))
+  ) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator or work.reaper scope required',
+    });
+  }
+  return next({ context: { principal } });
+});
+
 export const workRouter = os.router({
   create: operator.create.handler(async ({ input, context, errors }) => {
     const { principal } = context;
@@ -76,13 +95,13 @@ export const workRouter = os.router({
     return view(context, input.id, result.task);
   }),
 
-  get: operator.get.handler(async ({ input, context, errors }) => {
+  get: reader.get.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
     return view(context, input.id, task.task);
   }),
 
-  list: operator.list.handler(async ({ input, context }) => {
+  list: reader.list.handler(async ({ input, context }) => {
     const tasks = await context.runtime.store.listNativeTasks(input.limit);
     const native = tasks.flatMap(({ task }) =>
       isWorkAnchor(task.task) ? [{ workId: task.task.workId, task }] : [],
@@ -194,6 +213,38 @@ export const workRouter = os.router({
         throw errors.FORBIDDEN({ message: forbidden });
       }
 
+      // Sub-project 6: `resumeSessionId` names a session to resume, not just
+      // reference -- so it must be validated for OWNERSHIP, not mere
+      // existence: it has to be a claude-code session whose `intentId`
+      // names a run of THIS item, and it has to carry an archived
+      // transcript for the new run to actually resume from.
+      let resumeParams: Record<string, string> | undefined;
+      if (input.resumeSessionId !== undefined) {
+        const session = await context.getSessionDoc(input.resumeSessionId);
+        const runIds = new Set(runs.map((run) => run.runId));
+        if (
+          session === undefined ||
+          session.source !== 'issue-agent' ||
+          session.intentId === undefined ||
+          !runIds.has(session.intentId) ||
+          sessionAgent(session) !== 'claude-code'
+        ) {
+          throw errors.BAD_REQUEST({
+            message:
+              'resumeSessionId must name a claude-code session belonging to a run of this item',
+          });
+        }
+        if (session.transcriptGcsUri === undefined) {
+          throw errors.CONFLICT({
+            message: 'session has no archived transcript to resume from',
+          });
+        }
+        resumeParams = {
+          resumeSessionId: input.resumeSessionId,
+          resumeTranscriptGcsUri: session.transcriptGcsUri,
+        };
+      }
+
       if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
         throw errors.TOO_MANY_REQUESTS({
           data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
@@ -205,6 +256,7 @@ export const workRouter = os.router({
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
         executor: executorFor(spec.pipeline, context.queuePipelines),
+        ...(resumeParams === undefined ? {} : { params: resumeParams }),
       });
       if (isRefusal(outcome)) {
         throw errors.CONFLICT({ message: outcome.reason });

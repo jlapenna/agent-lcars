@@ -2,7 +2,10 @@ import 'server-only';
 
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
-import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
+import {
+  verifyScheduleTickOidcToken,
+  verifySessionPinTickOidcToken,
+} from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
@@ -20,7 +23,7 @@ import {
 } from '@/lib/work-auth';
 import { queuePipelines, workGrants, workMaxLiveRuns } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
-import { sessionsForRuns } from '@/lib/work-sessions';
+import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
 
 /** The `servers` URL in the generated OpenAPI document, and the prefix
  *  proxy.ts allow-lists (as `/api/work/v1/` -- see the comment there for
@@ -65,6 +68,8 @@ async function handle(request: Request): Promise<Response> {
     // allow-list. See github-actions-oidc.ts's schedule-tick section.
     verifyScheduleTickOidcToken: (token) =>
       verifyScheduleTickOidcToken(token, controlPlaneRepository()),
+    verifySessionPinTickOidcToken: (token) =>
+      verifySessionPinTickOidcToken(token, controlPlaneRepository()),
     session: async () => (await auth()) as { user?: { login?: string } } | null,
     grants: workGrants,
   });
@@ -105,6 +110,7 @@ async function handle(request: Request): Promise<Response> {
       ...(principal === undefined ? {} : { principal }),
       runtime,
       sessionsFor: sessionsForRuns,
+      getSessionDoc: sessionForResume,
       maxLiveRuns: workMaxLiveRuns(),
       scheduleStore: createScheduleStore(),
       grants: workGrants,

@@ -97,6 +97,47 @@ export async function upsertSession(write: SessionWrite): Promise<void> {
     );
 }
 
+/**
+ * Rewrites only `expireAt` on an existing session doc -- the
+ * watermark-only write the session-pin reaper needs (sub-project 6), as
+ * opposed to `upsertSession`'s full reduce-then-merge write. Same
+ * Timestamp conversion `upsertSession` already applies to the same field,
+ * for the same reason: the collection's native Firestore TTL policy only
+ * recognizes a Timestamp, not the ISO string `SessionDoc` carries it as --
+ * see `upsertSession`'s own doc comment for why it must be `AdminTimestamp`
+ * (the `firebase-admin` re-export) rather than `@google-cloud/firestore`'s
+ * own `Timestamp`.
+ *
+ * This is an UNCONDITIONAL overwrite, not a clamp/max -- it never reads the
+ * doc's current `expireAt` before writing, so a caller that ever passed an
+ * earlier date would shrink the horizon, not extend it. "Extend-only" is
+ * true in practice only because every caller today (the session-pin
+ * reaper) computes `expireAt` as `now + ISSUE_AGENT_SESSION_RETENTION_DAYS`
+ * with `lastActivityAt <= now`, so the computed value is always at or
+ * after whatever a real activity write would already have set. A future
+ * caller with a different horizon or a backdated `now` would silently
+ * break that invariant -- this function itself does not enforce it.
+ */
+export async function touchSessionExpiry(
+  sessionId: string,
+  expireAt: string,
+): Promise<void> {
+  const firestore = getAgentTelemetryWriterFirestore();
+  // `.set(..., { merge: true })`, not `.update(...)`: if the session doc
+  // were TTL-deleted by Firestore between the reaper's read (the items API
+  // call that produced this sessionId) and this write, `.update` would
+  // throw NOT_FOUND while `.set(..., { merge: true })` silently resurrects
+  // a field-less ghost document carrying only `expireAt`. Deliberate --
+  // see sub-project 6's design tradeoffs; do not change this to `.update`.
+  await firestore
+    .collection(SESSIONS_COLLECTION)
+    .doc(sessionId)
+    .set(
+      { expireAt: AdminTimestamp.fromDate(new Date(expireAt)) },
+      { merge: true },
+    );
+}
+
 /** Default page size for `listSessionDocs` when the caller doesn't ask for a
  * specific `limit` - generous enough for the dashboard's 24h window, small
  * enough to keep the archive page's default 14-day window cheap. */

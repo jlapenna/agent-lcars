@@ -95,9 +95,15 @@ case "$url" in
       echo "fake curl: simulated brief failure (expired/invalid run token)" >&2
       exit 22
     fi
-    cat <<'JSON'
+    if [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
+      cat <<'JSON'
 {"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"claude","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
+    else
+      cat <<'JSON'
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"claude","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+JSON
+    fi
     ;;
   */checkout-token)
     echo "{\"token\":\"$FAKE_TOKEN\",\"expiresAt\":\"2026-08-27T01:00:00.000Z\"}"
@@ -159,13 +165,31 @@ echo '[]'
 FAKE
   chmod +x "$bindir/gh"
 
-  # Ignores every flag, including the real --dangerously-skip-permissions/
+  # Records its argv (including any --resume flag) to $CLAUDE_ARGS_LOG, then
+  # ignores every flag, including the real --dangerously-skip-permissions/
   # --allowedTools/--disallowedTools direct-runner.sh passes.
   cat > "$bindir/claude" <<'FAKE'
 #!/usr/bin/env bash
+echo "$@" >> "$CLAUDE_ARGS_LOG"
 exit 0
 FAKE
   chmod +x "$bindir/claude"
+
+  # Mirrors .github/actions/resume-session/resume.test.sh's own fake node:
+  # records its argv (proving direct-runner.sh's `runner resume` call site
+  # passes the right session id/transcript uri/cwd) and either prints a
+  # fake resumed local path or, when FAKE_RESUME_FAIL is set, fails closed
+  # with no output -- exercising direct-runner.sh's own fail-soft handling
+  # (a failed restore must not stop the run, and must not add --resume).
+  cat > "$bindir/node" <<'FAKE'
+#!/usr/bin/env bash
+echo "$@" >> "$NODE_ARGS_LOG"
+if [ "${FAKE_RESUME_FAIL:-}" = "1" ]; then
+  exit 1
+fi
+echo "/fake/claude/projects/-fake-cwd/sess_1.jsonl"
+FAKE
+  chmod +x "$bindir/node"
 }
 
 run_scenario() {
@@ -184,6 +208,8 @@ run_scenario() {
 
   export COMPLETE_LOG="$dir/complete-calls.log"
   export GIT_CLONE_ARGV_LOG="$dir/git-clone-argv.log"
+  export CLAUDE_ARGS_LOG="$dir/claude-args.log"
+  export NODE_ARGS_LOG="$dir/node-args.log"
 
   # Bounds the background heartbeat loop's orphaned-sleep lifetime to
   # ~1 second instead of the production 300s default: fake `claude` returns
@@ -243,7 +269,59 @@ if ! grep -q "user.email" "$workspace/.git/config" 2>/dev/null; then
   fail "happy path: git commit identity (user.email) was not configured in $workspace/.git/config"
 fi
 
+# The fake brief's `resume` object must reach `runner resume` (session id,
+# transcript uri, and the checkout cwd), and a successful restore must add
+# `--resume <sessionId>` to the claude invocation.
+if [ ! -f "$NODE_ARGS_LOG" ]; then
+  fail "happy path: direct-runner.sh never invoked \`runner resume\` despite a resume brief"
+fi
+grep -q -- '--session-id sess_1' "$NODE_ARGS_LOG" ||
+  fail "happy path: runner resume was not passed the session id ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE_ARGS_LOG" ||
+  fail "happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- "--cwd $workspace" "$NODE_ARGS_LOG" ||
+  fail "happy path: runner resume was not passed the checkout cwd ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "happy path: claude was not passed --resume sess_1 ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+
 echo "scenario happy-path: OK"
+
+# --- Scenario 1b: no resume in the brief -------------------------------------
+# A brief with no `resume` field must leave direct-runner.sh byte-identical
+# to today: no `runner resume` invocation, and claude receives no --resume
+# flag at all.
+export FAKE_BRIEF_NO_RESUME=1
+run_scenario no-resume
+unset FAKE_BRIEF_NO_RESUME
+
+[ "$rc" -eq 0 ] || fail "no-resume: expected exit 0, got $rc"
+if [ -s "$NODE_ARGS_LOG" ]; then
+  fail "no-resume: runner resume was invoked despite no resume field in the brief ($(cat "$NODE_ARGS_LOG"))"
+fi
+if grep -q -- '--resume' "$CLAUDE_ARGS_LOG" 2>/dev/null; then
+  fail "no-resume: claude was passed --resume despite no resume field in the brief ($(cat "$CLAUDE_ARGS_LOG"))"
+fi
+
+echo "scenario no-resume: OK"
+
+# --- Scenario 1c: resume present but the restore fails -----------------------
+# `runner resume` fails closed (simulating a missing/expired transcript);
+# direct-runner.sh's restore is fail-soft -- the run must still proceed to
+# a normal pull-request outcome, just without --resume on the claude
+# invocation.
+export FAKE_RESUME_FAIL=1
+run_scenario resume-failed
+unset FAKE_RESUME_FAIL
+
+[ "$rc" -eq 0 ] || fail "resume-failed: expected exit 0 (fail-soft), got $rc"
+[ -f "$COMPLETE_LOG" ] || fail "resume-failed: direct-runner.sh never called POST .../complete"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "resume-failed: complete call did not report outcome: pull-request ($(cat "$COMPLETE_LOG"))"
+if grep -q -- '--resume' "$CLAUDE_ARGS_LOG" 2>/dev/null; then
+  fail "resume-failed: claude was passed --resume despite a failed restore ($(cat "$CLAUDE_ARGS_LOG"))"
+fi
+
+echo "scenario resume-failed: OK"
 
 # --- Scenario 2: no-deliverable ---------------------------------------------
 # The PR-marker lookup gh api call finds nothing, so verify-deliverable.sh's

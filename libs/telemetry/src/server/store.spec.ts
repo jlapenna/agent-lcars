@@ -12,6 +12,7 @@ import { SessionDoc, SessionWrite } from '../lib/types';
 import {
   _resetForTesting,
   getAgentTelemetryWriterFirestore,
+  touchSessionExpiry,
   upsertSession,
 } from './store';
 
@@ -167,6 +168,51 @@ describe('agent-telemetry store', () => {
         .get();
       expect(snap.data()).not.toHaveProperty('status');
       expect(snap.data()).not.toHaveProperty('statusUpdatedAt');
+    });
+  });
+
+  describe('touchSessionExpiry', () => {
+    it('rewrites only expireAt, leaving other fields untouched', async () => {
+      await upsertSession(sessionWrite({ turns: 3 }));
+      const future = new Date('2027-08-27T00:00:00.000Z').toISOString();
+
+      await touchSessionExpiry('session-1', future);
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      expect(snap.data()?.['expireAt']).toEqual(
+        Timestamp.fromDate(new Date(future)),
+      );
+      expect(snap.data()?.['turns']).toBe(3);
+    });
+
+    it('writes expireAt as a native Firestore Timestamp, not the ISO string', async () => {
+      await upsertSession(sessionWrite());
+
+      await touchSessionExpiry('session-1', '2027-01-01T00:00:00.000Z');
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      expect(snap.data()?.['expireAt']).toBeInstanceOf(Timestamp);
+    });
+
+    it("overwrites expireAt unconditionally, even backward -- not a clamp/max (pins today's behavior)", async () => {
+      await upsertSession(sessionWrite());
+      await touchSessionExpiry('session-1', '2030-01-01T00:00:00.000Z');
+
+      await touchSessionExpiry('session-1', '2020-01-01T00:00:00.000Z');
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      expect(snap.data()?.['expireAt']).toEqual(
+        Timestamp.fromDate(new Date('2020-01-01T00:00:00.000Z')),
+      );
     });
   });
 });

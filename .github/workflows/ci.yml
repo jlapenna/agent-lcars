@@ -130,6 +130,9 @@ jobs:
       - name: Test the work-schedules-tick workflow
         run: bash tools/workflow-schedule-tick.test.sh
 
+      - name: Test the work-session-pin-tick workflow
+        run: bash tools/workflow-session-pin-tick.test.sh
+
       - name: Test layer-1 skill install (#1269)
         run: bash .github/actions/prepare-agent-dispatch/install-skills.test.sh
 
@@ -192,6 +195,9 @@ jobs:
 
       - name: Test live-base merging
         run: bash .github/actions/merge-live-base/merge-live-base.test.sh
+
+      - name: Test resume-session action
+        run: bash .github/actions/resume-session/resume.test.sh
 
       - name: Test published-action contracts
         run: node .github/actions/published-actions.contract.test.mjs

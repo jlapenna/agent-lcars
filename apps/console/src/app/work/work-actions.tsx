@@ -1,10 +1,10 @@
 'use client';
 
 import type { ItemState } from '@agent-lcars/work/derive';
-import { Button, Group } from '@mantine/core';
+import { Button, Checkbox, Group, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRouter } from 'next/navigation';
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 
 import { showErrorToast } from '../show-error-toast';
 
@@ -21,62 +21,102 @@ export type WorkActionResult = readonly [
   unknown,
 ];
 export type WorkAction = (input: { id: string }) => Promise<WorkActionResult>;
+export type RedispatchAction = (input: {
+  id: string;
+  resumeSessionId?: string;
+}) => Promise<WorkActionResult>;
+
+/** The session offered as a resume target on redispatch: the latest
+ *  session of the item's latest run. */
+export interface ResumeCandidate {
+  sessionId: string;
+  title?: string;
+}
 
 export function WorkActions({
   id,
   state,
   cancel,
   redispatch,
+  resumeCandidate,
 }: {
   id: string;
   state: ItemState;
   cancel: WorkAction;
-  redispatch: WorkAction;
+  redispatch: RedispatchAction;
+  resumeCandidate?: ResumeCandidate;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [resumeChecked, setResumeChecked] = useState(true);
 
   const canCancel = state !== 'done' && state !== 'canceled';
   const canRedispatch = state === 'parked';
 
   if (!canCancel && !canRedispatch) return null;
 
-  const run = (action: WorkAction, successMessage: string) => {
+  const runCancel = () => {
     startTransition(async () => {
-      const [err] = await action({ id });
+      const [err] = await cancel({ id });
       if (err) {
         showErrorToast(err.message);
         return;
       }
-      notifications.show({ message: successMessage, color: 'green' });
+      notifications.show({ message: 'Canceled', color: 'green' });
+      router.refresh();
+    });
+  };
+
+  const runRedispatch = () => {
+    startTransition(async () => {
+      const [err] = await redispatch({
+        id,
+        ...(resumeChecked &&
+          resumeCandidate && { resumeSessionId: resumeCandidate.sessionId }),
+      });
+      if (err) {
+        showErrorToast(err.message);
+        return;
+      }
+      notifications.show({ message: 'Redispatched', color: 'green' });
       router.refresh();
     });
   };
 
   return (
-    <Group gap="xs">
-      {canRedispatch && (
-        <Button
-          size="compact-sm"
-          disabled={isPending}
-          loading={isPending}
-          onClick={() => run(redispatch, 'Redispatched')}
-        >
-          Redispatch
-        </Button>
+    <Stack gap="xs">
+      {canRedispatch && resumeCandidate && (
+        <Checkbox
+          checked={resumeChecked}
+          onChange={(event) => setResumeChecked(event.currentTarget.checked)}
+          label={`Resume from session ${resumeCandidate.sessionId} (${resumeCandidate.title ?? resumeCandidate.sessionId})`}
+          size="sm"
+        />
       )}
-      {canCancel && (
-        <Button
-          variant="subtle"
-          color="red"
-          size="compact-sm"
-          disabled={isPending}
-          loading={isPending}
-          onClick={() => run(cancel, 'Canceled')}
-        >
-          Cancel
-        </Button>
-      )}
-    </Group>
+      <Group gap="xs">
+        {canRedispatch && (
+          <Button
+            size="compact-sm"
+            disabled={isPending}
+            loading={isPending}
+            onClick={runRedispatch}
+          >
+            Redispatch
+          </Button>
+        )}
+        {canCancel && (
+          <Button
+            variant="subtle"
+            color="red"
+            size="compact-sm"
+            disabled={isPending}
+            loading={isPending}
+            onClick={runCancel}
+          >
+            Cancel
+          </Button>
+        )}
+      </Group>
+    </Stack>
   );
 }

@@ -1,8 +1,10 @@
 import { WORK_ID_RE } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
   itemsContract,
+  runBriefSchema,
   runsContract,
   schedulesContract,
   WORK_ID_PATTERN,
@@ -32,6 +34,29 @@ describe('itemsContract', () => {
   });
 });
 
+describe('itemsContract.redispatch', () => {
+  it('accepts an optional resumeSessionId and declares BAD_REQUEST', () => {
+    // oRPC beta.31 exposes the zod input schema as the first element of
+    // `~orpc.inputSchemas` (plural, an array) -- not a singular
+    // `inputSchema` field. Statically typed as the erased `AnySchema`
+    // (StandardSchemaV1), so cast back to the concrete zod type this
+    // contract actually builds to call `.parse` from a test.
+    const [rawShape] = itemsContract.redispatch['~orpc'].inputSchemas ?? [];
+    const shape = rawShape as z.ZodTypeAny | undefined;
+    expect(shape).toBeDefined();
+    const parsed = shape?.parse({
+      id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      resumeSessionId: 'sess_123',
+    });
+    expect(parsed).toMatchObject({ resumeSessionId: 'sess_123' });
+    expect(
+      shape?.parse({
+        id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      }),
+    ).toEqual({ id: '01J5Z3K9QX8F0N2B4V6C8D1E3G' });
+  });
+});
+
 describe('schedulesContract', () => {
   it('declares the six schedule procedures', () => {
     expect(Object.keys(schedulesContract).sort()).toEqual([
@@ -51,6 +76,37 @@ describe('runsContract', () => {
     expect(paths.sort()).toEqual(
       ['claim', 'brief', 'heartbeat', 'complete', 'checkoutToken'].sort(),
     );
+  });
+});
+
+describe('runsContract.brief resume field', () => {
+  it('runBriefSchema accepts an optional resume object', () => {
+    const withResume = runBriefSchema.parse({
+      id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+      anchor: {
+        type: 'work',
+        id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+        title: 't',
+        body: 'd',
+        target_repo: 'octo/example',
+        html_url: 'https://lcars.test/work/01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      },
+      attemptId: 'g1:work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      generation: 1,
+      intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      resume: {
+        sessionId: 'sess_123',
+        transcriptGcsUri:
+          'gs://agent-lcars-session-transcripts/runs/x/claude-code/sess_123.jsonl',
+      },
+    });
+    expect(withResume.resume?.sessionId).toBe('sess_123');
   });
 });
 
@@ -145,7 +201,7 @@ describe('generateWorkOpenApi', () => {
       'GET /items/{id}': ['200', '404'],
       'GET /items': ['200'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
-      'POST /items/{id}/redispatch': ['200', '403', '404', '409', '429'],
+      'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409', '429'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],
       'GET /schedules': ['200'],
@@ -158,5 +214,21 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/{runId}/complete': ['200', '401'],
       'GET /runs/{runId}/checkout-token': ['200', '401'],
     });
+  });
+});
+
+describe('generateWorkOpenApi resume additions', () => {
+  it('documents 400 for redispatch', async () => {
+    const doc = (await generateWorkOpenApi()) as {
+      paths: Record<
+        string,
+        Record<string, { responses: Record<string, unknown> }>
+      >;
+    };
+    expect(
+      Object.keys(
+        doc.paths['/items/{id}/redispatch']?.['post']?.responses ?? {},
+      ).sort(),
+    ).toEqual(['200', '400', '403', '404', '409', '429']);
   });
 });

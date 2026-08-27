@@ -42,4 +42,34 @@ n=$(grep -c "WORK: \${{ inputs.work }}" "$finalize" || true)
 [ "$n" -ge 3 ] || { echo "finalize: park/preserve fallback steps must receive WORK (found $n, need >=3)"; fail=1; }
 grep -q '::warning::.*[Nn]ative work item' "$finalize" || { echo "finalize: fallback steps must warn (not exit 1) for a native run with no issue anchor"; fail=1; }
 
+# C1 regression: `uses: ./.github/actions/...` resolves against the
+# CALLER's checkout in a reusable workflow -- fine for a step gated to an
+# agent-lcars-only era (this repo's own dispatch-bootstrap checkout, or
+# opencode's own trajectory-export step), but any other local `uses:` in
+# this lane silently breaks every consumer repo that calls the lane at
+# `@main`, since they don't carry this repo's `.github/actions/*`
+# directories. Every local action step's own `if:` must therefore gate on
+# `inputs.dispatch-bootstrap` or `inputs.trajectory-export` -- the two eras
+# that actually check out this repo's action directories.
+#
+# The gate must be POSITIVE. A negated one (`!inputs.dispatch-bootstrap`)
+# runs the local `uses: ./...` in precisely the consumer era it must never
+# run in -- the original C1 bug, reintroduced by inverting rather than
+# deleting the condition. Substring presence alone cannot tell the two
+# apart, so strip the negated forms before testing for the positive token.
+awk '
+  /^      - name:/ { ifline = "" }
+  /^        if:/ { ifline = $0 }
+  /^        uses: \.\/\.github\/actions\// {
+    probe = ifline
+    gsub(/![[:space:]]*inputs\.dispatch-bootstrap/, "", probe)
+    gsub(/![[:space:]]*inputs\.trajectory-export/, "", probe)
+    if (probe !~ /inputs\.dispatch-bootstrap/ && probe !~ /inputs\.trajectory-export/) {
+      print "lane: local action step not gated to an agent-lcars-only era (" $0 ")"
+      bad = 1
+    }
+  }
+  END { if (bad) exit 1 }
+' "$lane" || fail=1
+
 exit $fail

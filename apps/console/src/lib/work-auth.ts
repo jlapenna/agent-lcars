@@ -4,7 +4,8 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 import { resolvePrincipal, type WorkGrant } from './work-grants';
 
-export type WorkScope = 'work.operator' | 'work.executor' | 'work.cron';
+export type WorkScope =
+  'work.operator' | 'work.executor' | 'work.cron' | 'work.reaper';
 
 export interface WorkPrincipal {
   principal: string;
@@ -24,6 +25,11 @@ export interface WorkAuthDeps {
    *  below. Resolves on a trusted token, throws otherwise; the identity
    *  itself is not needed past "this is the trusted tick caller". */
   verifyScheduleTickOidcToken: (token: string) => Promise<unknown>;
+  /** GitHub Actions OIDC verifier for the session-pin-tick trigger
+   *  (`work-session-pin-tick.yml`, sub-project 6) -- tried after the
+   *  schedule-tick verifier, on the same "not Google, try the next
+   *  pinned workflow" fallthrough `authenticateWorkRequest` already uses. */
+  verifySessionPinTickOidcToken: (token: string) => Promise<unknown>;
   session: () => Promise<{ user?: { login?: string } } | null>;
   grants: () => WorkGrant[];
 }
@@ -85,10 +91,11 @@ export function rawBearerToken(request: Request): string | undefined {
 }
 
 /**
- * Bearer token first, tried against Google and then, on failure, against
- * the schedule-tick OIDC verifier; an Auth.js session only when no bearer
- * header is present. A bearer that fails both never falls back to the
- * session -- a caller that presented a credential is judged on it.
+ * Bearer token first, tried against Google, then on failure against the
+ * schedule-tick OIDC verifier, then on failure against the session-pin-tick
+ * OIDC verifier; an Auth.js session only when no bearer header is present.
+ * A bearer that fails all three never falls back to the session -- a
+ * caller that presented a credential is judged on it.
  */
 export async function authenticateWorkRequest(
   request: Request,
@@ -120,6 +127,19 @@ export async function authenticateWorkRequest(
         principal: 'cron:tick',
         subject: 'cron:tick',
         scopes: new Set<WorkScope>(['work.cron']),
+        pipelines: [],
+        via: 'oidc',
+      };
+    } catch {
+      // Not the schedule-tick caller either -- fall through to the
+      // session-pin-tick branch below.
+    }
+    try {
+      await deps.verifySessionPinTickOidcToken(token);
+      return {
+        principal: 'pin:tick',
+        subject: 'pin:tick',
+        scopes: new Set<WorkScope>(['work.reaper']),
         pipelines: [],
         via: 'oidc',
       };

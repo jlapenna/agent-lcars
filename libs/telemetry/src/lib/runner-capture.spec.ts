@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  claudeProjectSlugFor,
   RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   transcriptObjectPath,
@@ -76,4 +77,37 @@ describe('transcriptObjectPath', () => {
       }),
     ).toBe('runs/unknown/claude-code/session-c.jsonl');
   });
+});
+
+describe('claudeProjectSlugFor', () => {
+  it.each([
+    // Dot-free cases: unaffected by fix round 1 (widening the rule from
+    // `/`-only to every non-alphanumeric character) — kept as originally
+    // written.
+    ['/home/jlapenna/p/agent-lcars', '-home-jlapenna-p-agent-lcars'],
+    ['/tmp/agent-lcars-direct/checkout', '-tmp-agent-lcars-direct-checkout'],
+    ['/', '-'],
+    // A trailing slash: no normalization happens here (that's
+    // `default-checkout.ts`'s `normalizeRoot`'s job, one layer up), so a
+    // trailing `/` becomes a trailing `-`.
+    ['/home/jlapenna/p/agent-lcars/', '-home-jlapenna-p-agent-lcars-'],
+    // A dotted path segment, pinned against Claude Code's REAL on-disk
+    // encoding (verified empirically — see this function's own doc
+    // comment for how), not `checkoutSlugGlobs`'s looser `/`-only glob
+    // rule: `.` is also replaced, one dash per character, un-collapsed.
+    [
+      '/home/runner/work/agent-lcars.git/repo',
+      '-home-runner-work-agent-lcars-git-repo',
+    ],
+    // A dotted, hidden path segment (a leading `.`) — the double dash is
+    // `/` then `.`, each becoming its own `-`, matching the real
+    // `~/.claude/projects/` entry this was cross-checked against
+    // (`/home/jlapenna/.openclaw` -> `-home-jlapenna--openclaw`).
+    ['/home/jlapenna/.openclaw', '-home-jlapenna--openclaw'],
+  ])(
+    'replaces every non-alphanumeric character with "-": %s -> %s',
+    (cwd, expected) => {
+      expect(claudeProjectSlugFor(cwd)).toBe(expected);
+    },
+  );
 });

@@ -1,0 +1,96 @@
+name: Work Session Pin Tick
+
+# Sub-project 6: rewrites expireAt forward on every session belonging to a
+# still-open (running/parked) native work item, so Firestore's native TTL
+# policy on sessions.expireAt never reaps them out from under an item that
+# is still in play. See
+# docs/superpowers/specs/2026-08-23-native-work-items-design.md,
+# "Sub-project 6: session resume and persistence".
+#
+# Cadence and its rationale (#1542): GitHub drops most scheduled runs in
+# this repo -- the evidence there shows work-schedules-tick.yml's `*/5`
+# schedule firing zero times over several hours, while
+# dispatch-reconcile.yml's 30-minute-offset `7,37 * * * *` schedule (the
+# one pattern confirmed to actually fire) still only completed 3 of an
+# expected 16 runs in an 8-hour window. This workflow deliberately copies
+# that same offset-from-:00/:30 pattern rather than something tighter --
+# tightening the cadence cannot fix a dropped-run problem, and a sparser
+# cadence buys nothing here either, given the safety margin below.
+#
+# Each successful run pins every open item's sessions to
+# `now + ISSUE_AGENT_SESSION_RETENTION_DAYS` (365 days -- see
+# libs/telemetry/src/lib/session-doc.ts), the same horizon a real activity
+# write would set. A missed tick simply leaves the previous pin's
+# 365-day watermark standing; even a run rate as sparse as the 3-in-8-hours
+# observed in #1542 -- or far worse, days of nothing -- leaves enormous
+# headroom before that watermark could lapse. The tick only has to beat
+# the TTL window by a wide margin, not fire reliably.
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: work-session-pin-tick
+  cancel-in-progress: false
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      # Read side: a session-pin-tick-audienced GitHub Actions OIDC token,
+      # verified by work-auth.ts's fourth branch (work.reaper scope, no
+      # grant-list entry needed -- an OIDC principal, like cron:tick).
+      # Minted by hand rather than through
+      # .github/actions/request-control-plane: that action mints a token
+      # and POSTs it in the same step, but the token here needs to survive
+      # into a later step that runs the pin sweep script (which itself
+      # issues two GETs, not a POST) -- the same
+      # OIDC-mint-then-jq-parse shape that action's own request.sh uses
+      # internally, just without its single-step POST wrapper.
+      - name: Mint a session-pin-tick bearer
+        id: pin-tick-token
+        run: |
+          set -euo pipefail
+          token_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=agent-lcars-session-pin-tick")"
+          oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' <<<"$token_response")"
+          echo "::add-mask::$oidc_token"
+          echo "token=$oidc_token" >> "$GITHUB_OUTPUT"
+
+      # Write side: WIF-impersonate telemetry_writer -- the exact same
+      # binding .github/actions/telemetry-start already exercises for
+      # every dispatched run (fleet_writer_impersonation, infra/terraform/
+      # main.tf). No new Terraform, IAM, or secret. Unlike telemetry-start,
+      # this keeps the default `export_environment_variables: true`: that
+      # action turns it off because a *later* step in its job runs an
+      # untrusted, possibly prompt-injected agent whose Bash tool must
+      # never see an ambient write-scoped credential -- no such step exists
+      # in this job, and the ambient `GCLOUD_PROJECT` this action also
+      # exports is what lets `touchSessionExpiry`'s Firestore client
+      # (`getProjectId()`) resolve its project outside of GCP's own
+      # ambient-metadata runtimes.
+      - name: Authenticate telemetry writer
+        id: telemetry-auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_TELEMETRY_WRITER_SA }}
+          token_format: access_token
+
+      - name: Run the pin sweep
+        env:
+          SESSION_PIN_TICK_BEARER: ${{ steps.pin-tick-token.outputs.token }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.telemetry-auth.outputs.credentials_file_path }}
+        run: pnpm exec tsx apps/telemetry-watcher/bin/session-pin-tick.ts

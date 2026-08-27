@@ -116,7 +116,16 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
   );
 }
 
-function SessionsList({ sessions }: { sessions: ItemView['sessions'] }) {
+/** `pinned` reflects whether the item that owns these sessions is still
+ *  open (`running`/`parked`) - derived from state already on hand, not a
+ *  new fetch. */
+export function SessionsList({
+  sessions,
+  pinned,
+}: {
+  sessions: ItemView['sessions'];
+  pinned: boolean;
+}) {
   if (sessions.length === 0) {
     return (
       <Text c="dimmed" size="sm">
@@ -127,14 +136,20 @@ function SessionsList({ sessions }: { sessions: ItemView['sessions'] }) {
   return (
     <Stack gap={4}>
       {sessions.map((session) => (
-        <Anchor
-          key={session.sessionId}
-          href={`/sessions/${encodeURIComponent(session.sessionId)}`}
-          size="sm"
-        >
-          {session.title ?? session.sessionId}
-          {session.status ? ` · ${session.status}` : ''}
-        </Anchor>
+        <Group key={session.sessionId} gap="xs">
+          <Anchor
+            href={`/sessions/${encodeURIComponent(session.sessionId)}`}
+            size="sm"
+          >
+            {session.title ?? session.sessionId}
+            {session.status ? ` · ${session.status}` : ''}
+          </Anchor>
+          {pinned && (
+            <Badge size="xs" variant="outline" color="cyan">
+              pinned
+            </Badge>
+          )}
+        </Group>
       ))}
     </Stack>
   );
@@ -151,7 +166,7 @@ interface WorkDetailViewProps {
   subtitle: string;
 }
 
-function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
+export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
   if (detail.status === 'error') {
     return (
       <Text c="dimmed" size="sm">
@@ -161,6 +176,28 @@ function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
   }
 
   const { item } = detail;
+
+  // Offer resume from the latest session of the item's latest run - `runs`
+  // is sorted oldest-first (see `toItemView`), so `.at(-1)` is the latest.
+  const latestRunView = item.runs.at(-1);
+  const latestSession = latestRunView
+    ? [...item.sessions]
+        .filter((s) => s.runId === latestRunView.runId)
+        .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))[0]
+    : undefined;
+  // Gated on pipeline and an archived transcript (I2): `work-router.ts`'s
+  // resume validation rejects a non-claude-code session with BAD_REQUEST
+  // and a session with no `transcriptGcsUri` with CONFLICT. Telemetry
+  // starts for every pipeline, so a parked codex/opencode item has
+  // sessions too -- without this gate its Redispatch button (which works
+  // today with the checkbox unchecked) would start failing by default the
+  // moment the checked-by-default resume checkbox appears for it.
+  const resumeCandidate =
+    item.spec.pipeline === 'claude' &&
+    latestSession?.transcriptGcsUri !== undefined
+      ? latestSession
+      : undefined;
+  const pinned = item.state === 'running' || item.state === 'parked';
 
   return (
     <Stack gap="md">
@@ -181,6 +218,14 @@ function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
         state={item.state}
         cancel={cancelItem}
         redispatch={redispatchItem}
+        {...(resumeCandidate && {
+          resumeCandidate: {
+            sessionId: resumeCandidate.sessionId,
+            ...(resumeCandidate.title !== undefined && {
+              title: resumeCandidate.title,
+            }),
+          },
+        })}
       />
       <Stack gap="xs">
         <Title order={2} size="h4">
@@ -192,7 +237,7 @@ function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
         <Title order={2} size="h4">
           Sessions
         </Title>
-        <SessionsList sessions={item.sessions} />
+        <SessionsList sessions={item.sessions} pinned={pinned} />
       </Stack>
     </Stack>
   );

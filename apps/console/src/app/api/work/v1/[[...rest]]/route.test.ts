@@ -11,12 +11,14 @@ const {
   controlPlaneRepository,
   verifyScheduleTickOidcToken,
   sessionsForRuns,
+  sessionForResume,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   authenticateWorkRequest: vi.fn(),
   controlPlaneRepository: vi.fn(() => 'jlapenna/agent-lcars'),
   verifyScheduleTickOidcToken: vi.fn(),
   sessionsForRuns: vi.fn(async () => []),
+  sessionForResume: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/auth', () => ({ auth }));
@@ -30,7 +32,7 @@ vi.mock('@/lib/work-auth', () => ({
   }),
   rawBearerToken: () => undefined,
 }));
-vi.mock('@/lib/work-sessions', () => ({ sessionsForRuns }));
+vi.mock('@/lib/work-sessions', () => ({ sessionsForRuns, sessionForResume }));
 
 // Plain top-level bindings, not `vi.hoisted` -- `vi.hoisted`'s callback runs
 // before this file's own static imports resolve, so `MemoryStore` et al.

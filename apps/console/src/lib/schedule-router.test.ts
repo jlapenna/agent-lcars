@@ -39,6 +39,13 @@ const executorOnly = {
   pipelines: ['claude'],
   via: 'google' as const,
 };
+const reaperOnly = {
+  principal: 'pin:tick',
+  subject: 'pin:tick',
+  scopes: new Set(['work.reaper'] as const),
+  pipelines: [],
+  via: 'oidc' as const,
+};
 const GRANTS = [
   {
     principal: 'user:jlapenna',
@@ -155,6 +162,24 @@ describe('schedules routes', () => {
       ['GET', '/schedules'],
       ['POST', `/schedules/${ID}/enable`],
       ['POST', `/schedules/${ID}/disable`],
+    ] as const) {
+      expect((await call(ctx, m, p, b)).status, `${m} ${p}`).toBe(401);
+    }
+  });
+
+  // Sub-project 6 (Task 8): `work.reaper` is items list/get-only -- the
+  // schedule router carries no reader gate of its own, so a reaper-only
+  // principal (carrying neither work.operator nor work.cron) must be
+  // refused everywhere here, tick included.
+  it('refuses every schedules route, including tick, for a work.reaper-only principal', async () => {
+    const ctx = withPrincipal(context(), reaperOnly);
+    for (const [m, p, b] of [
+      ['PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec }],
+      ['GET', `/schedules/${ID}`],
+      ['GET', '/schedules'],
+      ['POST', `/schedules/${ID}/enable`],
+      ['POST', `/schedules/${ID}/disable`],
+      ['POST', '/schedules/tick', {}],
     ] as const) {
       expect((await call(ctx, m, p, b)).status, `${m} ${p}`).toBe(401);
     }

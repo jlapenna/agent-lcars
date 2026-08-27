@@ -47,6 +47,19 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
    whichever `live`/`idle` snapshot the sidecar above last wrote, and
    never gets a browsable archived transcript.
 
+3. **Resume, pre-run (`runner resume` — native work items sub-project 6):**
+   `agent-lane.yml`'s "Resume prior session" step runs it before "Run
+   Claude Code", when the dispatched work carries a resume request —
+   `node sidecar.cjs runner resume --session-id <id> --transcript-uri
+<gcsUri> --cwd <dir>` — to download a prior session's archived
+   transcript into Claude Code's local session store, so the step's own
+   `--session-id` is later spliced into `claude_args` as `--resume
+<sessionId>` and finds it. See `src/main.ts`'s
+   `_runRunnerResumeForTesting`. Fail-soft like the two modes above:
+   prints nothing and never exits nonzero on a missing flag, an unsafe
+   session id, or a failed download — a broken resume degrades to a fresh
+   run rather than failing the dispatch.
+
 ## What it does
 
 On an interval (`AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`, default 10s, with
@@ -118,24 +131,25 @@ generated title.
 
 All via environment variables (see `src/lib/config.ts`):
 
-| Variable                                 | Default                         | Purpose                                                                                                                                                                              |
-| ---------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required without explicit roots | Comma-separated checkout roots used by the host fallback and deploy script to construct privacy allowlists.                                                                          |
-| `AGENT_TELEMETRY_WATCH_ROOTS`            | deployed host contract          | JSON array of explicit per-agent roots and privacy allowlists.                                                                                                                       |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`            | Runner-mode fallback only.                                                                                                                                                           |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`             | Runner-mode fallback only.                                                                                                                                                           |
-| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`   | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes follow the configured checkout roots.                                      |
-| `AGENT_TELEMETRY_SESSION_STATE_DIR`      | `~/.local/state/agent-lcars`    | Declared-title overlay root — `session-metadata/`. Empty string disables the overlay, same convention as `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` above. See "Session titles" above. |
-| `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                 | Host label recorded on each session doc.                                                                                                                                             |
-| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`  | `10000`                         | Tick interval.                                                                                                                                                                       |
-| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`    | `heartbeatIntervalMs * 5`       | How long a session can go unrediscovered before it's marked `stale`.                                                                                                                 |
-| `AGENT_TELEMETRY_SHARE_DIR`              | `~/share`                       | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                                                                        |
-| `AGENT_TELEMETRY_METRICS_HOST`           | `0.0.0.0`                       | Address for the host watcher's Prometheus endpoint. Runner sidecar/finalize modes never start it.                                                                                    |
-| `AGENT_TELEMETRY_METRICS_PORT`           | `9464`                          | Port for the host watcher's `/metrics` endpoint.                                                                                                                                     |
-| `AGENT_TELEMETRY_PROJECT_ID`             | —                               | Firestore project id for the real store.                                                                                                                                             |
-| `AGENT_TELEMETRY_DATABASE_ID`            | `(default)`                     | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                      |
-| `AGENT_TELEMETRY_WRITER_KEY_JSON`        | —                               | Service-account key JSON for the real store's writer credentials.                                                                                                                    |
-| `FIRESTORE_EMULATOR_HOST`                | —                               | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                        |
+| Variable                                 | Default                                   | Purpose                                                                                                                                                                              |
+| ---------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AGENT_TELEMETRY_CHECKOUT_ROOTS`         | required without explicit roots           | Comma-separated checkout roots used by the host fallback and deploy script to construct privacy allowlists.                                                                          |
+| `AGENT_TELEMETRY_WATCH_ROOTS`            | deployed host contract                    | JSON array of explicit per-agent roots and privacy allowlists.                                                                                                                       |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`    | `~/.claude/projects`                      | Runner-mode fallback only.                                                                                                                                                           |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`     | `~/.codex/sessions`                       | Runner-mode fallback only.                                                                                                                                                           |
+| `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` | `~/.gemini/antigravity-cli/…`             | Antigravity summary-tier SQLite DB. Set to the empty string to disable the poller; its workspace prefixes follow the configured checkout roots.                                      |
+| `AGENT_TELEMETRY_SESSION_STATE_DIR`      | `~/.local/state/agent-lcars`              | Declared-title overlay root — `session-metadata/`. Empty string disables the overlay, same convention as `AGENT_TELEMETRY_ANTIGRAVITY_SUMMARY_DB` above. See "Session titles" above. |
+| `AGENT_TELEMETRY_HOST`                   | `os.hostname()`                           | Host label recorded on each session doc.                                                                                                                                             |
+| `AGENT_TELEMETRY_HEARTBEAT_INTERVAL_MS`  | `10000`                                   | Tick interval.                                                                                                                                                                       |
+| `AGENT_TELEMETRY_STALENESS_WINDOW_MS`    | `heartbeatIntervalMs * 5`                 | How long a session can go unrediscovered before it's marked `stale`.                                                                                                                 |
+| `AGENT_TELEMETRY_SHARE_DIR`              | `~/share`                                 | Root for the share-media skill convention; artifact discovery is skipped entirely when unset.                                                                                        |
+| `AGENT_TELEMETRY_METRICS_HOST`           | `0.0.0.0`                                 | Address for the host watcher's Prometheus endpoint. Runner sidecar/finalize modes never start it.                                                                                    |
+| `AGENT_TELEMETRY_METRICS_PORT`           | `9464`                                    | Port for the host watcher's `/metrics` endpoint.                                                                                                                                     |
+| `AGENT_TELEMETRY_PROJECT_ID`             | —                                         | Firestore project id for the real store.                                                                                                                                             |
+| `AGENT_TELEMETRY_DATABASE_ID`            | `(default)`                               | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                      |
+| `AGENT_TELEMETRY_WRITER_KEY_JSON`        | —                                         | Service-account key JSON for the real store's writer credentials.                                                                                                                    |
+| `FIRESTORE_EMULATOR_HOST`                | —                                         | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                        |
+| `SESSION_PIN_TICK_BEARER`                | required (`bin/session-pin-tick.ts` only) | GitHub-Actions-OIDC bearer (`work.reaper` scope) the session-pin reaper reads the work API with — see `work-session-pin-tick.yml`. Unused by the daemon itself.                      |
 
 The allowlist rows deliberately describe how their defaults are derived
 rather than restating literals. The old deployment duplicated independently

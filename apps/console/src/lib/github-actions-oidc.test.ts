@@ -25,6 +25,7 @@ import {
   assertReconcileOidcClaims,
   assertRequestOidcClaims,
   assertScheduleTickOidcClaims,
+  assertSessionPinTickOidcClaims,
   verifyCompletionOidcToken,
   verifyReconcileOidcToken,
   verifyRequestOidcToken,
@@ -236,6 +237,52 @@ describe('verifyScheduleTickOidcToken', () => {
     await expect(
       verifyScheduleTickOidcToken('token', repository),
     ).rejects.toThrow('exp');
+  });
+});
+
+// Sub-project 6 (Task 8): the session-pin-tick trigger for the session
+// reaper sweep -- same claim shape as the schedule-tick trigger above,
+// pinned to its own workflow file.
+const SESSION_PIN_TICK_OIDC_AUDIENCE = 'agent-lcars-session-pin-tick';
+const SESSION_PIN_TICK_WORKFLOW_PATH =
+  '.github/workflows/work-session-pin-tick.yml';
+
+const sessionPinTickClaims = {
+  aud: SESSION_PIN_TICK_OIDC_AUDIENCE,
+  repository,
+  repository_id: '1307149765',
+  run_id: '93099054200',
+  job_workflow_ref: `${repository}/${SESSION_PIN_TICK_WORKFLOW_PATH}@refs/heads/main`,
+  ref: 'refs/heads/main',
+  event_name: 'schedule',
+};
+
+describe('GitHub Actions session-pin-tick OIDC claims', () => {
+  it('accepts the scheduled and manual tick workflow on main', () => {
+    expect(
+      assertSessionPinTickOidcClaims(sessionPinTickClaims, repository),
+    ).toEqual({
+      repository,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_200,
+    });
+  });
+
+  it.each([
+    [{ ...sessionPinTickClaims, repository: 'attacker/fork' }, 'repository'],
+    [
+      {
+        ...sessionPinTickClaims,
+        job_workflow_ref: `${repository}/.github/workflows/ci.yml@refs/heads/main`,
+      },
+      'job_workflow_ref',
+    ],
+    [{ ...sessionPinTickClaims, ref: 'refs/heads/feature' }, 'ref'],
+    [{ ...sessionPinTickClaims, event_name: 'pull_request' }, 'event_name'],
+  ])('rejects a caller with the wrong %s claim', (claims, field) => {
+    expect(() => assertSessionPinTickOidcClaims(claims, repository)).toThrow(
+      field,
+    );
   });
 });
 
