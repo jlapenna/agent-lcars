@@ -456,6 +456,73 @@ describe('drainOutbox: dispatch-run', () => {
     expect(inputs.broker_intent_id).toBe('work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1');
   });
 
+  it('includes resume in the work input when the run carries a resumeSessionId', async () => {
+    const { store, orchestrator } = fixture();
+    const decision = await orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E5X' },
+      requestId: 'w-resume-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'console' },
+        spec: {
+          title: 'x',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+      params: {
+        resumeSessionId: 'sess_1',
+        resumeTranscriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+      },
+    });
+    if (isRefusal(decision)) {
+      throw new Error(`unexpected refusal: ${decision.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    expect(calls).toHaveLength(1);
+    const body = callBody(calls[0]!);
+    const inputs = body.inputs as Record<string, unknown>;
+    const work = JSON.parse(inputs.work as string) as Record<string, unknown>;
+    expect(work.resume).toEqual({
+      sessionId: 'sess_1',
+      transcriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+    });
+  });
+
+  it('omits resume from the work input when the run carries no resumeSessionId', async () => {
+    const { store, orchestrator } = fixture();
+    const decision = await orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E6Y' },
+      requestId: 'w-resume-2',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'console' },
+        spec: {
+          title: 'x',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(decision)) {
+      throw new Error(`unexpected refusal: ${decision.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    expect(calls).toHaveLength(1);
+    const body = callBody(calls[0]!);
+    const inputs = body.inputs as Record<string, unknown>;
+    const work = JSON.parse(inputs.work as string) as Record<string, unknown>;
+    expect(work.resume).toBeUndefined();
+  });
+
   it('fails a native run permanently when the work spec is invalid (missing description)', async () => {
     const { store, orchestrator } = fixture();
     const decision = await orchestrator.request({

@@ -196,7 +196,27 @@ async function handleDispatchRun(
       return;
     }
     inputs = {
-      work: JSON.stringify({ id: run.task.workId, spec }),
+      work: JSON.stringify({
+        id: run.task.workId,
+        spec,
+        // Sub-project 6: `resumeSessionId`/`resumeTranscriptGcsUri` are
+        // written together onto `run.params` by work-router.ts's
+        // `redispatch` handler (Task 2), which already resolved the
+        // session's transcript at redispatch time -- no further lookup
+        // needed here. Checking both rather than just `resumeSessionId`
+        // keeps a half-written params record (which should never happen,
+        // but this is cheap insurance) from producing a `resume` with no
+        // transcript to fetch.
+        ...(run.params?.['resumeSessionId'] !== undefined &&
+        run.params?.['resumeTranscriptGcsUri'] !== undefined
+          ? {
+              resume: {
+                sessionId: run.params['resumeSessionId'],
+                transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
+              },
+            }
+          : {}),
+      }),
       mode: 'implement',
       broker_intent_id: run.runId,
       broker_generation: parseGeneration(run.runId),

@@ -207,6 +207,20 @@ export const runsRouter = os.router({
       attemptId: `g${generation}:${run.runId}`,
       generation,
       intentId: run.runId,
+      // Sub-project 6: mirrors the drain's `work` input `resume` field
+      // (`orchestrator-dispatch.ts`) -- same params, same both-fields-
+      // present guard, same reasoning: `redispatch` (Task 2) already
+      // resolved and stored both together, so no further lookup is needed
+      // here either.
+      ...(run.params?.['resumeSessionId'] !== undefined &&
+      run.params?.['resumeTranscriptGcsUri'] !== undefined
+        ? {
+            resume: {
+              sessionId: run.params['resumeSessionId'],
+              transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
+            },
+          }
+        : {}),
     };
   }),
 
