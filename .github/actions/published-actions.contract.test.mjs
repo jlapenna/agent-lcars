@@ -3,10 +3,12 @@
 // requiredness, default) and outputs are asserted against the manifest
 // below. A failing run means the surface changed - removing/renaming an
 // input or output, flipping optional->required, or changing a default is
-// a breaking change for the consumer repos (sprinkles, homelab) that
-// resolve these actions cross-repo, and must be a deliberate edit to this
-// manifest, called out in review (and, once consumers pin by SHA again,
-// a major version bump - see docs/published-actions.md's pinning note).
+// a breaking change for any consumer repo that resolves these actions
+// cross-repo (all track `@main`; none pins a release tag today), and
+// must be a deliberate edit to this manifest, called out in review and
+// backed by the zero-consumer evidence docs/published-actions.md's
+// removal policy requires - a version bump is not the gate here, because
+// no consumer would ever pin it.
 //
 // Line-based parsing, no YAML dependency - the same convention
 // dispatch-broker/workflow-contract.test.mjs uses; action.yml files here
