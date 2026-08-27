@@ -97,3 +97,60 @@ Not directly observed from outside the runner: the brief's `anchor.html_url`
 Observed follow-ups: the run renders under "unattributed attempts" on the
 console dashboard (#1530); the lane's default prompt still offers the
 issue-mode park recipe (#1528) — the agent did not need it this time.
+
+## Sub-project 2: parked work on the Bridge (2026-08-27)
+
+Sub-project 2 landed as [PR #1535](https://github.com/jlapenna/agent-lcars/pull/1535)
+(`fcf7b8e`): a Bridge "Parked work" panel, `/work` in the primary nav, a
+create form on `/work`, and native-run links plus cancel-by-dispatch-marker
+(#1530), shipped by
+[deploy-console run 33049007495](https://github.com/jlapenna/agent-lcars/actions/runs/33049007495).
+[PR #1536](https://github.com/jlapenna/agent-lcars/pull/1536) (`d6659a0`)
+followed with a `redispatch` action on `.github/workflows/work-create.yml`,
+letting a parked item be re-run without minting a new one. This smoke drives
+a native item through a full park → Bridge-panel-render → redispatch → park
+again → cancel cycle to prove both land together.
+
+| Step              | Expected                                                                                                                                                                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT /items/{id}` | `201`; item created via `work-create.yml`                                                                                                                                                                                                                                   |
+| r1 parks          | agent step succeeds, "Run post-agent gates" fails (no deliverable, by design), finalizer "Return completion observation to the broker" succeeds, park/preserve steps skipped; `GET` shows `state: "parked"`, `runs[0].result: {ok: false, summary: "outcome-gate-failure"}` |
+| Bridge panel row  | the parked item is the first real row the Bridge "Parked work" panel renders — the panel itself is unit-tested; this is the maintainer's eyeball check against the live Bridge                                                                                              |
+| Redispatch        | `POST /items/{id}/redispatch -> 200`; item `state: running`; `runs[1].runId = work:<id>/r2`                                                                                                                                                                                 |
+| r2 parks          | parks the same way as r1; `GET` shows `state: parked`; item `updatedAt` moves from r1's park time to r2's, so the panel's "parked … ago" follows the latest park                                                                                                            |
+| Cancel            | first `POST /items/{id}/cancel -> 200` (`state: canceled`); second `-> 409`                                                                                                                                                                                                 |
+
+### Source evidence
+
+| What          | Value                                                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy        | [deploy-console run 33049007495](https://github.com/jlapenna/agent-lcars/actions/runs/33049007495) shipped PR #1535 (`fcf7b8e`)                                                                                                                                                                                |
+| Item          | `01M111J6RZFRC6TECEX1ABEW79` — https://lcars.jlapenna.net/work/01M111J6RZFRC6TECEX1ABEW79                                                                                                                                                                                                                      |
+| Create        | [work-create run 33049440147](https://github.com/jlapenna/agent-lcars/actions/runs/33049440147): `PUT … -> 201`; title "Native work smoke: park", description asking the agent to end with `PARK smoke-test — no work requested`                                                                               |
+| r1            | [claude.yml run 33049453010](https://github.com/jlapenna/agent-lcars/actions/runs/33049453010): agent step succeeded, "Run post-agent gates" failed (no deliverable, by design), finalizer "Return completion observation to the broker" succeeded, park/preserve steps skipped; workflow conclusion `failure` |
+| Item after r1 | [get run 33049611109](https://github.com/jlapenna/agent-lcars/actions/runs/33049611109): `state: "parked"`, `runs[0].result: {ok: false, summary: "outcome-gate-failure"}`, session status `"smoke-test — no work requested; parking per brief instructions"`                                                  |
+| Redispatch    | [redispatch run 33049692857](https://github.com/jlapenna/agent-lcars/actions/runs/33049692857), dispatched from the #1536 branch (`feat/work-redispatch-action`) with `--ref`: `POST …/redispatch -> 200`, item `running`, `runs[1].runId = work:01M111J6RZFRC6TECEX1ABEW79/r2`                                |
+| r2            | [claude.yml run 33049702626](https://github.com/jlapenna/agent-lcars/actions/runs/33049702626): parked the same way as r1                                                                                                                                                                                      |
+| Item after r2 | `get`: `state: parked`; item `updatedAt` moved from `2026-08-27T07:24:12.694Z` (r1) to `2026-08-27T07:27:51.863Z` (r2)                                                                                                                                                                                         |
+| Cancel        | first `POST …/cancel -> 200` (`state: canceled`); second `POST …/cancel -> 409`                                                                                                                                                                                                                                |
+
+Commands used:
+
+```bash
+gh workflow run work-create.yml \
+  -f title='Native work smoke: park' \
+  -f description='PARK smoke-test — no work requested' \
+  -f repo=jlapenna/agent-lcars -f pipeline=claude
+
+gh workflow run work-create.yml -f action=get -f id=01M111J6RZFRC6TECEX1ABEW79
+
+gh workflow run work-create.yml --ref feat/work-redispatch-action \
+  -f action=redispatch -f id=01M111J6RZFRC6TECEX1ABEW79
+
+gh workflow run work-create.yml -f action=cancel -f id=01M111J6RZFRC6TECEX1ABEW79
+```
+
+Residual/known: native runs still appear in the Bridge's agent-activity
+"unattributed" group, but now link to `/work/<id>` — the attribution half of
+#1530. The panel reads the 200 newest native items before filtering (see the
+comment in `page.tsx`).
