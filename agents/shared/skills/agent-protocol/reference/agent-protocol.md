@@ -80,14 +80,18 @@ says exactly that), and that label-triggered redispatch hands your brief only
 the anchor's original title and body — never anything posted since,
 including a maintainer's direct response to your own prior blocker. Before
 repeating an identical `PARK`, or otherwise concluding a blocker still holds,
-read the anchor's comments too:
+read the anchor's comments too — with pagination, the same way the shared
+attachment helper already does, so a newer comment past the first page is
+not silently dropped:
 
 ```bash
-gh api "repos/$GITHUB_REPOSITORY/issues/<N>/comments"
+gh api "repos/$GITHUB_REPOSITORY/issues/<N>/comments?per_page=100" --paginate
 ```
 
-(a pull-request anchor also has `/reviews`). Do not infer "nothing has
-changed" from an unchanged body alone.
+(a pull-request anchor also has `/reviews`, same pagination caveat). A
+truncated read that returns 200 and looks complete is not evidence that
+nothing has changed — do not infer "nothing has changed" from an unchanged
+body, or from a first page of comments, alone.
 
 ## 1. Takeover — your first action
 
