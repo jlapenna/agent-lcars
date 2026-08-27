@@ -73,9 +73,15 @@ env:
   # Not sensitive - grants for the native work items API (see
   # apps/console/src/lib/work-grants.ts). Maps a Google service-account
   # email or a `github:<login>` session subject to a principal and the
-  # pipelines it may operate.
+  # pipelines it may operate. svc:telemetry-writer is the runner-autoscaler
+  # queue executor's own claim identity (native-work-items sub-project 4,
+  # #1502): scoped to work.executor only, never work.operator -- see
+  # docs/deployment-boundary.md's work-grants table. Durable and inert on
+  # its own: an unset/empty AGENT_LCARS_QUEUE_PIPELINES means no pipeline
+  # is opted into the queue executor, so nothing ever calls /runs/claim as
+  # this principal regardless of this grant existing.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.executor"]}]'
     availability:
       - RUNTIME
 
