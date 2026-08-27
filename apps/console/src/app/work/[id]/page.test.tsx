@@ -2,7 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { RunsTable } from './page';
+import { RunsTable, SessionsList } from './page';
 
 // `page.tsx` also imports `../actions`, a `'use server'` module built on
 // `@orpc/next`'s `createServerFunctionable` -- that package's own compiled
@@ -53,5 +53,32 @@ describe('RunsTable', () => {
       },
     ]);
     expect(screen.getByText('github-actions')).toBeInTheDocument();
+  });
+});
+
+const session: Parameters<typeof SessionsList>[0]['sessions'][number] = {
+  sessionId: 'sess_1',
+  runId: 'work:x/r1',
+  startedAt: '2026-08-27T00:00:00.000Z',
+  lastActivityAt: '2026-08-27T00:05:00.000Z',
+};
+
+function renderSessions(pinned: boolean) {
+  render(
+    <MantineProvider>
+      <SessionsList sessions={[session]} pinned={pinned} />
+    </MantineProvider>,
+  );
+}
+
+describe('SessionsList', () => {
+  it('shows a pinned badge for a session of an open item', () => {
+    renderSessions(true);
+    expect(screen.getByText('pinned')).toBeInTheDocument();
+  });
+
+  it('shows no pinned badge for a session of a settled item', () => {
+    renderSessions(false);
+    expect(screen.queryByText('pinned')).not.toBeInTheDocument();
   });
 });
