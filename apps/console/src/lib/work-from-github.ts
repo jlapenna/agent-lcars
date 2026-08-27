@@ -5,9 +5,14 @@ import {
   WORK_TITLE_MAX,
   type WorkOrigin,
   type WorkPayload,
+  type WorkSpec,
 } from '@agent-lcars/work';
 
-import type { Pipeline } from './orchestrator-ingest';
+/** The pipeline names `workSpecSchema` accepts. Taken from the schema rather
+ *  than from `./orchestrator-ingest`'s own `Pipeline` alias: that module
+ *  imports this one, and the back-reference made the pair a cycle
+ *  (`pnpm lint:circular`). */
+type Pipeline = WorkSpec['pipeline'];
 
 /** `workSpecSchema.description` is `min(1)`; a GitHub issue or PR may have
  *  a null or whitespace-only body. */
