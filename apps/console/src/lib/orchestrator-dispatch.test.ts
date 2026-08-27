@@ -11,7 +11,10 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { drainOutbox } from './orchestrator-dispatch';
+import {
+  drainOutbox,
+  MAX_OUTBOX_DELIVERY_ATTEMPTS,
+} from './orchestrator-dispatch';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
@@ -1511,5 +1514,130 @@ describe('drainOutbox: report-outcome', () => {
     const again = await drainOutbox({ store, orchestrator, tokens, fetchImpl });
     expect(again.reported).toEqual([]);
     expect(calls.filter((c) => c.url.endsWith('/comments'))).toHaveLength(1);
+  });
+});
+
+// #1548: the outbox drain was found stuck fleet-wide -- 162 pending
+// `report-outcome` entries, some up to six days old, with `reported: []`
+// from a manual reconcile. Root cause: `claimPendingOutbox`'s pending query
+// has no ordering, and the old `drainOutbox` stopped its *entire* loop on
+// the first failure -- so whichever entry an unordered query happened to
+// hand back first, every invocation anywhere in the fleet claimed it,
+// failed it, and gave up before ever reaching any other entry.
+describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
+  /** A GitHub-anchored run for `issue`, dispatched and reported `finished`,
+   *  so it has exactly one pending `report-outcome` entry left. Each test
+   *  below needs more than one such entry pending at once -- `started()`
+   *  above is pinned to a single fixed `TASK`, so this dials the issue
+   *  number instead. */
+  async function reportedRun(
+    orchestrator: Orchestrator,
+    store: MemoryStore,
+    issue: number,
+  ): Promise<string> {
+    const requested = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue },
+      requestId: `req-${issue}`,
+      pipeline: 'claude',
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const run = decidedRun(requested);
+    // Drains just this task's own dispatch-run entry (the only one pending
+    // at this point), confirming the run so `report()` accepts it.
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+    });
+    const reported = await orchestrator.report(run.runId, { ok: true });
+    if (isRefusal(reported)) throw new Error('unexpected refusal');
+    return run.runId;
+  }
+
+  it('does not let one persistently-failing report-outcome entry block a later, healthy one', async () => {
+    const { store, orchestrator } = fixture();
+
+    // Two independent tasks, each with its own pending report-outcome
+    // entry. #101's is created first, so an unordered claim query hands it
+    // back before #102's -- exactly the shape that starved 145 of 162 real
+    // pending entries: every one of them was created *after* the handful
+    // that kept winning the race to the front of the queue.
+    const badRunId = await reportedRun(orchestrator, store, 101);
+    const goodRunId = await reportedRun(orchestrator, store, 102);
+
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/issues/101/')) {
+        return new Response('server exploded', { status: 500 });
+      }
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    // The healthy entry is still delivered in this same drain call, despite
+    // the other one failing -- it is not starved behind it.
+    expect(result.reported).toEqual([goodRunId]);
+    expect(result.failed).toEqual([
+      {
+        entryId: `outcome/${badRunId}`,
+        error: expect.stringContaining('500'),
+      },
+    ]);
+
+    // The failing entry is released for a later drain, not stuck forever
+    // and not silently dropped.
+    const retry = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(201).fetchImpl,
+    });
+    expect(retry.reported).toEqual([badRunId]);
+  });
+
+  it('retires a report-outcome entry after MAX_OUTBOX_DELIVERY_ATTEMPTS failed deliveries instead of retrying it forever', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 201);
+    const entryId = `outcome/${runId}`;
+    const failing = fakeFetch(500);
+
+    // Every attempt up to and including the budget still fails "normally"
+    // (released back to `pending`, reported as a failure) -- it's the
+    // *next* attempt past the budget whose outcome changes.
+    for (
+      let attempt = 1;
+      attempt <= MAX_OUTBOX_DELIVERY_ATTEMPTS;
+      attempt += 1
+    ) {
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl: failing.fetchImpl,
+      });
+      expect(result.failed).toEqual([
+        { entryId, error: expect.stringContaining('500') },
+      ]);
+    }
+
+    // The budget is exhausted: the entry is retired, not released back to
+    // `pending` -- a later drain finds nothing left to claim for it, and
+    // (unlike every attempt above) never calls GitHub again.
+    const callsBefore = failing.calls.length;
+    const afterBudget = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+    });
+    expect(afterBudget).toEqual({ dispatched: [], reported: [], failed: [] });
+    expect(failing.calls.length).toBe(callsBefore);
   });
 });

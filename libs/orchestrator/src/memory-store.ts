@@ -61,17 +61,22 @@ export class MemoryStore implements OrchestratorStore {
     limit: number;
     now: string;
     leaseExpiresAt: string;
+    excludeEntryIds?: ReadonlySet<string>;
   }): Promise<LeasedOutboxEntry[]> {
     if (input.limit <= 0) return [];
 
     const now = Date.parse(input.now);
     const entries = [...this.#outbox.values()];
+    const excluded = input.excludeEntryIds;
     const eligible = [
       ...entries.filter(
         (entry) =>
           entry.state === 'leased' && Date.parse(entry.leaseExpiresAt) <= now,
       ),
-      ...entries.filter((entry) => entry.state === 'pending'),
+      ...entries.filter(
+        (entry) =>
+          entry.state === 'pending' && !(excluded?.has(entry.entryId) ?? false),
+      ),
     ].slice(0, input.limit);
 
     const claimed = eligible.map((entry): LeasedOutboxEntry => {
@@ -93,7 +98,7 @@ export class MemoryStore implements OrchestratorStore {
   async settleOutbox(input: {
     entryId: string;
     claimId: string;
-    state: 'pending' | 'done';
+    state: 'pending' | 'done' | 'failed';
     now: string;
   }): Promise<boolean> {
     const entry = this.#outbox.get(input.entryId);

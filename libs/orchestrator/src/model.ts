@@ -225,7 +225,13 @@ const outboxEntryBaseSchema = z.strictObject({
  *
  * `pending` and `done` deliberately retain their original document shape so
  * entries written before leasing was introduced remain valid without a data
- * migration.
+ * migration. `failed` is additive the same way (#1548): a terminal
+ * dead-letter state for an entry that exhausted its delivery-attempt budget
+ * (`MAX_OUTBOX_DELIVERY_ATTEMPTS` in `orchestrator-dispatch.ts`) without ever
+ * delivering, so it stops being retried forever instead of either retrying
+ * indefinitely or being misrecorded as `done` (which means "delivered").
+ * Existing `pending`/`leased`/`done` documents parse unchanged; no migration
+ * needed for this either.
  */
 export const outboxEntrySchema = z.discriminatedUnion('state', [
   outboxEntryBaseSchema.extend({ state: z.literal('pending') }),
@@ -235,6 +241,7 @@ export const outboxEntrySchema = z.discriminatedUnion('state', [
     leaseExpiresAt: isoUtc,
   }),
   outboxEntryBaseSchema.extend({ state: z.literal('done') }),
+  outboxEntryBaseSchema.extend({ state: z.literal('failed') }),
 ]);
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;

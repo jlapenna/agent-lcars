@@ -426,6 +426,14 @@ export async function handleReconcile(
         ...(terminal.failed.length === 0
           ? {}
           : { terminalProbeFailed: terminal.failed }),
+        // #1548: the drain itself now logs every per-entry failure (see
+        // `orchestrator-dispatch.ts`'s `logOutboxFailure`), but surfacing it
+        // here too, next to `terminalProbeFailed`, means a reconcile run's
+        // own response already shows an outbox problem without needing a
+        // separate log lookup.
+        ...(drained.failed.length === 0
+          ? {}
+          : { outboxDrainFailed: drained.failed }),
       },
     };
   } catch (error) {

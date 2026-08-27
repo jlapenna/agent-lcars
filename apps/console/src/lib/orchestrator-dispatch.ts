@@ -31,7 +31,9 @@ export type { DispatchTokenProvider };
  *
  * Nothing here is durable itself - `store.claimPendingOutbox` /
  * `store.settleOutbox` own that. A failed GitHub call just leaves its entry
- * `pending` for a later `drainOutbox` call to retry.
+ * `pending` for a later `drainOutbox` call to retry, up to
+ * `MAX_OUTBOX_DELIVERY_ATTEMPTS` attempts -- past that it is retired
+ * (`failed`) rather than retried forever (#1548).
  *
  * Every GitHub call resolves its bearer token per-repo through `tokens`
  * (see `github-app-tokens.ts`) rather than a single ambient token, so a
@@ -42,6 +44,17 @@ export type { DispatchTokenProvider };
 /** GitHub's REST API accepts a bearer token for both endpoints this module
  * calls. */
 const GITHUB_API = 'https://api.github.com';
+
+/** Bounds how many times a single outbox entry can be released back to
+ *  `pending` before it is retired (`failed`) instead. GitHub outages, token
+ *  hiccups, and secondary rate limits normally clear within a handful of
+ *  drain cycles (the fleet's reconcile heartbeat alone runs every 30
+ *  minutes, on top of whichever webhook/completion traffic triggers a drain
+ *  in between); twenty attempts gives that kind of transient failure ample
+ *  room while still guaranteeing a genuinely undeliverable entry stops
+ *  consuming a claim slot forever (#1548 -- one entry reached 485 attempts
+ *  over six days with no bound at all). */
+export const MAX_OUTBOX_DELIVERY_ATTEMPTS = 20;
 
 export interface DispatchDeps {
   store: OrchestratorStore;
@@ -66,9 +79,21 @@ export interface DrainOutboxResult {
 
 /**
  * Claims up to `limit` available outbox entries and attempts to deliver each.
- * Never throws: every handled entry is either settled (`done`) or explicitly
- * released (`pending`) with its failure recorded. If the process itself dies,
- * the durable lease expires so a later invocation can retry it.
+ * Never throws: every handled entry is either settled (`done`), retired
+ * (`failed`, once it exhausts `MAX_OUTBOX_DELIVERY_ATTEMPTS`), or explicitly
+ * released (`pending`) with its failure recorded and logged. If the process
+ * itself dies, the durable lease expires so a later invocation can retry it.
+ *
+ * #1548: earlier versions stopped the whole drain on the first failure, on
+ * the theory that continuing would just let this same invocation immediately
+ * reclaim the entry it had just failed and burn its whole `limit` budget
+ * retrying it. That protection came at the cost of blocking every *other*
+ * pending entry too -- for six days, fleet-wide, since the claim query has
+ * no ordering and kept handing drains the same unlucky entries first. The
+ * fix keeps the original protection (`failedThisDrain` excludes an entry
+ * this invocation already failed from being reclaimed within the same
+ * call) without the collateral damage: the loop now keeps going, so every
+ * *other* pending entry still gets its fair attempt this invocation.
  */
 export async function drainOutbox(
   deps: DispatchDeps,
@@ -79,6 +104,7 @@ export async function drainOutbox(
     reported: [],
     failed: [],
   };
+  const failedThisDrain = new Set<string>();
 
   // Claim immediately before delivery, not as one upfront batch. Otherwise a
   // slow first GitHub call can consume the leases of later entries before
@@ -92,6 +118,7 @@ export async function drainOutbox(
       leaseExpiresAt: new Date(
         Date.parse(claimedAt) + OUTBOX_LEASE_MS,
       ).toISOString(),
+      excludeEntryIds: failedThisDrain,
     });
     if (entry === undefined) break;
 
@@ -103,19 +130,14 @@ export async function drainOutbox(
         await handleReportOutcome(deps, entry, result);
       }
     } catch (error) {
-      result.failed.push({
-        entryId: entry.entryId,
-        error: errorMessage(error),
-      });
-      // Best-effort: the entry may already be settled by the failed
-      // handler; leaving it `pending` here just means a later drain
-      // retries it, which is always safe.
-      await settleQuietly(deps, entry, 'pending');
+      await settleRetryableFailureQuietly(deps, entry, result, error);
     }
-    // An explicit failure releases the current entry for a future invocation.
-    // Stop here so this same drain cannot immediately reclaim it and consume
-    // the rest of its limit retrying one persistent failure.
-    if (result.failed.length > failuresBefore) break;
+    // Excluded from this invocation's remaining claims only -- not stopped
+    // entirely -- so forward progress continues on every other pending
+    // entry. A later, separate `drainOutbox` call is free to reclaim it.
+    if (result.failed.length > failuresBefore) {
+      failedThisDrain.add(entry.entryId);
+    }
   }
 
   return result;
@@ -172,7 +194,7 @@ async function handleDispatchRun(
     // A native run whose payload cannot name a repository can never be
     // dispatched: permanent, so settle the entry rather than retry it.
     await settleClaim(deps, entry, 'done');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    recordPermanentFailure(entry, result, error);
     return;
   }
 
@@ -189,10 +211,7 @@ async function handleDispatchRun(
       // dispatched: permanent, so settle the entry rather than retry it,
       // exactly as the `anchorTarget` failure above.
       await settleClaim(deps, entry, 'done');
-      result.failed.push({
-        entryId: entry.entryId,
-        error: errorMessage(error),
-      });
+      recordPermanentFailure(entry, result, error);
       return;
     }
     inputs = {
@@ -240,6 +259,14 @@ async function handleDispatchRun(
     // (see `orchestrator-ingest.ts`'s `checkRepository`), and every
     // admitted repo now declares the input. Emit it whenever the task has
     // one.
+    //
+    // If an admitted repo's workflow hasn't actually caught up yet (a real
+    // possibility mid-onboarding -- see the 422-retry block below), the
+    // dispatch below 422s. That no longer risks poisoning the outbox the
+    // way it once did: `drainOutbox`'s per-entry fairness means one
+    // persistently-failing entry no longer blocks any other, and a
+    // dispatch that keeps failing is bounded by `OUTBOX_RETIRE_AFTER_MS`
+    // (with backoff between attempts) rather than retried forever.
     let workInput: string | undefined;
     if (task?.work !== undefined) {
       try {
@@ -248,10 +275,7 @@ async function handleDispatchRun(
         });
       } catch (error) {
         await settleClaim(deps, entry, 'done');
-        result.failed.push({
-          entryId: entry.entryId,
-          error: errorMessage(error),
-        });
+        recordPermanentFailure(entry, result, error);
         return;
       }
     }
@@ -278,8 +302,7 @@ async function handleDispatchRun(
       body: JSON.stringify({ ref: 'main', inputs }),
     });
   } catch (error) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    await settleRetryableFailure(deps, entry, result, error);
     return;
   }
 
@@ -297,6 +320,15 @@ async function handleDispatchRun(
   // run, whose only content *is* `work`) and only for the specific 422
   // shape GitHub uses for an undeclared input -- any other 422 reason
   // fails exactly as before.
+  //
+  // #1548 interaction: the initial 422 that triggers this retry is never
+  // itself recorded via `settleRetryableFailure` -- only the outcome
+  // below (`response`, reassigned to the retry's result when a retry
+  // happens) is. So a retry that lands 204 leaves no failure/backoff state
+  // on the entry at all, and a retry that fails (network error above, or a
+  // non-204 status falling through to the check below) is recorded
+  // exactly once, against its own outcome -- never twice for what is, from
+  // the outbox's perspective, a single delivery attempt.
   if (
     response.status === 422 &&
     inputs['work'] !== undefined &&
@@ -321,22 +353,19 @@ async function handleDispatchRun(
           body: JSON.stringify({ ref: 'main', inputs: retryInputs }),
         });
       } catch (error) {
-        await settleClaim(deps, entry, 'pending');
-        result.failed.push({
-          entryId: entry.entryId,
-          error: errorMessage(error),
-        });
+        await settleRetryableFailure(deps, entry, result, error);
         return;
       }
     }
   }
 
   if (response.status !== 204) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({
-      entryId: entry.entryId,
-      error: `workflow_dispatch returned ${response.status}`,
-    });
+    await settleRetryableFailure(
+      deps,
+      entry,
+      result,
+      `workflow_dispatch returned ${response.status}`,
+    );
     return;
   }
 
@@ -458,11 +487,12 @@ async function handleReportOutcome(
     // expireLease), so this should not happen. Guard it anyway rather than
     // throw: leave the entry for a later drain in case of a transient
     // read issue.
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({
-      entryId: entry.entryId,
-      error: `no such run: ${entry.runId}`,
-    });
+    await settleRetryableFailure(
+      deps,
+      entry,
+      result,
+      `no such run: ${entry.runId}`,
+    );
     return;
   }
 
@@ -481,7 +511,7 @@ async function handleReportOutcome(
     target = anchorTarget(run, task);
   } catch (error) {
     await settleClaim(deps, entry, 'done');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    recordPermanentFailure(entry, result, error);
     return;
   }
   if (target.issue === undefined) {
@@ -509,17 +539,17 @@ async function handleReportOutcome(
       body: JSON.stringify({ body: outcome.body }),
     });
   } catch (error) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    await settleRetryableFailure(deps, entry, result, error);
     return;
   }
 
   if (response.status !== 201) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({
-      entryId: entry.entryId,
-      error: `issue comment returned ${response.status}`,
-    });
+    await settleRetryableFailure(
+      deps,
+      entry,
+      result,
+      `issue comment returned ${response.status}`,
+    );
     return;
   }
 
@@ -751,16 +781,80 @@ function githubApiBaseUrl(
   return (deps.githubApiBaseUrl ?? GITHUB_API).replace(/\/+$/u, '');
 }
 
-async function settleQuietly(
+/**
+ * The one place every per-entry drain failure is logged (#1548: previously
+ * none of them were -- six days of a stuck outbox produced no log line
+ * anywhere, only a raw Firestore query eventually surfaced it). `outcome`
+ * says what happened to the entry as a result, so a reader doesn't have to
+ * cross-reference the outbox document itself to know whether this was
+ * retried, retired, or was never retryable to begin with.
+ */
+function logOutboxFailure(
+  entry: LeasedOutboxEntry,
+  error: string,
+  outcome: 'retrying' | 'retired' | 'permanent',
+): void {
+  console.error(
+    'agent-lcars: outbox drain failed for %s (kind %s, attempt %d, %s): %s',
+    entry.entryId,
+    entry.kind,
+    entry.attempts,
+    outcome,
+    error,
+  );
+}
+
+/** Records and logs a failure that can never succeed on retry (an
+ *  unparseable payload, an anchor that can't be resolved) -- the caller has
+ *  already settled the entry `done` rather than releasing it, exactly as a
+ *  successful delivery would, so there's nothing left for a later drain to
+ *  do. Logging it as `permanent` distinguishes that from an entry that
+ *  actually delivered. */
+function recordPermanentFailure(
+  entry: LeasedOutboxEntry,
+  result: DrainOutboxResult,
+  error: unknown,
+): void {
+  const message = errorMessage(error);
+  result.failed.push({ entryId: entry.entryId, error: message });
+  logOutboxFailure(entry, message, 'permanent');
+}
+
+/**
+ * Records, logs, and settles a retryable delivery failure (#1548). Below
+ * `MAX_OUTBOX_DELIVERY_ATTEMPTS`, the entry is released back to `pending`
+ * for a later attempt, exactly as before; once it reaches that bound it is
+ * retired (`failed`) instead, so a genuinely undeliverable entry stops
+ * consuming a claim slot forever rather than retrying indefinitely.
+ */
+async function settleRetryableFailure(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
-  state: 'pending' | 'done',
+  result: DrainOutboxResult,
+  error: unknown,
+): Promise<void> {
+  const message = errorMessage(error);
+  result.failed.push({ entryId: entry.entryId, error: message });
+  const retired = entry.attempts >= MAX_OUTBOX_DELIVERY_ATTEMPTS;
+  logOutboxFailure(entry, message, retired ? 'retired' : 'retrying');
+  await settleClaim(deps, entry, retired ? 'failed' : 'pending');
+}
+
+/** Same as {@link settleRetryableFailure}, but never throws: for the
+ *  top-level per-entry catch in `drainOutbox`, where the entry may already
+ *  be settled by the failed handler and a settle failure here just means
+ *  the next drain reclaims it, which is always safe. */
+async function settleRetryableFailureQuietly(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+  result: DrainOutboxResult,
+  error: unknown,
 ): Promise<void> {
   try {
-    await settleClaim(deps, entry, state);
+    await settleRetryableFailure(deps, entry, result, error);
   } catch {
-    // Already recorded as a failure by the caller; a settle failure here
-    // just means the next drain reclaims it, which is fine.
+    // Already recorded as a failure above; a settle failure here just
+    // means the next drain reclaims it, which is fine.
   }
 }
 
@@ -771,7 +865,7 @@ function now(deps: DispatchDeps): string {
 async function settleClaim(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
-  state: 'pending' | 'done',
+  state: 'pending' | 'done' | 'failed',
 ): Promise<boolean> {
   return deps.store.settleOutbox({
     entryId: entry.entryId,

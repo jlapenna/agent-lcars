@@ -35,20 +35,31 @@ export interface OrchestratorStore {
    * Atomically leases up to `limit` pending or expired outbox entries. Every
    * returned entry is exclusively owned by its `claimId` until
    * `leaseExpiresAt`; attempts increments only for claims actually acquired.
+   *
+   * `excludeEntryIds` (#1548), when given, skips those entryIds when
+   * choosing which *pending* entries to claim -- it does not affect expired-
+   * lease recovery. A caller draining entries one at a time uses this to
+   * keep a persistently-failing entry it already tried this invocation from
+   * being reclaimed ahead of every other pending entry: without it, an
+   * unordered pending query has no way to make forward progress past a
+   * single entry that keeps losing the race back to the front of the queue.
    */
   claimPendingOutbox(input: {
     limit: number;
     now: string;
     leaseExpiresAt: string;
+    excludeEntryIds?: ReadonlySet<string>;
   }): Promise<LeasedOutboxEntry[]>;
   /**
    * Completes or releases a lease only while `claimId` still owns it. Returns
    * false for missing entries and stale claims without changing stored state.
+   * `'failed'` (#1548) retires an entry permanently -- see `OutboxEntry`'s
+   * `failed` state in `model.ts`.
    */
   settleOutbox(input: {
     entryId: string;
     claimId: string;
-    state: 'pending' | 'done';
+    state: 'pending' | 'done' | 'failed';
     now: string;
   }): Promise<boolean>;
 
