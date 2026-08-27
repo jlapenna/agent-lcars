@@ -283,7 +283,8 @@ jq -e '
   .reply == "" and
   .latest_agent_result == null and
   .requested_results == ["pull-request"] and
-  .truncated == []' "$native_context_path" >/dev/null
+  .truncated == [] and
+  .runtime.projections == false' "$native_context_path" >/dev/null
 
 # A GitHub-anchored task that carries a work payload (WORK and ISSUE both
 # set, sub-project 5): the brief's title/body come from WORK.spec, but its

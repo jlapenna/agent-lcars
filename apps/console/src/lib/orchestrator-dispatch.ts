@@ -145,7 +145,11 @@ async function handleDispatchRun(
     // trigger for it. Re-attempt it here, best-effort (`claimGithubAnchor`
     // never throws), for a GitHub anchor only -- a native run's `target`
     // never carries an `issue` for it to project onto anyway.
-    if (run?.state === 'running' && !isWorkAnchor(run.task)) {
+    if (
+      run?.state === 'running' &&
+      run.executor !== 'queue' &&
+      !isWorkAnchor(run.task)
+    ) {
       await claimGithubAnchor(deps, anchorTarget(run));
     }
     await settleClaim(deps, entry, 'done');
@@ -597,6 +601,16 @@ function outcomeCommentBody(run: Run): string {
         lines.push(run.result.ref);
       }
       if (run.result?.summary !== undefined) lines.push(run.result.summary);
+      if (run.result?.ok === false) {
+        // Mirrors `describeLostOutcome`'s exhausted-budget clause: the run
+        // itself never called this a retryable loss, so (unlike `lost`)
+        // no auto-retry will follow it -- the task is parked either way,
+        // and only a manual re-request moves it forward.
+        lines.push(
+          'No auto-retry will follow -- re-request manually (re-add the ' +
+            'agent label) when ready.',
+        );
+      }
       return lines.join('\n');
     }
     case 'canceled':

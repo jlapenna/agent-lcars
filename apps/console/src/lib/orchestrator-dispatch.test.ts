@@ -1169,6 +1169,17 @@ describe('drainOutbox: report-outcome', () => {
     expect(JSON.parse(labelCall!.init.body as string)).toEqual({
       labels: ['status:needs-human'],
     });
+
+    const commentCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/comments'),
+    );
+    const commentBody = callBody(commentCall!).body as string;
+    expect(commentBody).toBe(
+      `❌ Run ${runId} failed.\n` +
+        `blocked\n` +
+        `No auto-retry will follow -- re-request manually (re-add the ` +
+        `agent label) when ready.`,
+    );
   });
 
   it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {

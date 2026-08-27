@@ -155,8 +155,10 @@ run whose deliverable carries no exact marker fails its deliverable gate
 (the earlier time-window/bot-login inference that used to catch this case
 was removed once every consumer passed attempt identity). Stamp only the
 artifact that IS your deliverable, never your takeover or progress comment
-(§1, §3): the marker is a claim of authorship over one specific object, not
-a running commentary tag.
+(see "Takeover comment — your first action" and "One edited progress
+comment" under Legacy — the native §1/§3 above post neither): the marker is
+a claim of authorship over one specific object, not a running commentary
+tag.
 
 When the requested result already exists before the run starts, finish with
 one evidence-backed structured no-op comment. Name the existing commit, PR,
@@ -239,8 +241,9 @@ gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
 Keep ONE continuously edited status comment per run
 (`gh issue comment --edit-last`, or `gh pr comment --edit-last` on a PR
 anchor), updated at plan time and at each milestone — never a stream of new
-comments. Your takeover comment from §1 can serve as this same comment; edit
-it in place rather than starting a second one.
+comments. Your takeover comment from "Takeover comment — your first action"
+above can serve as this same comment; edit it in place rather than starting
+a second one.
 
 ### Dispatch mode
 
