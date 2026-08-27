@@ -29,6 +29,13 @@ const cronTick = {
   pipelines: [],
   via: 'oidc' as const,
 };
+const executorOnly = {
+  principal: 'svc:autoscaler',
+  subject: 'google:autoscaler@example.iam.gserviceaccount.com',
+  scopes: new Set(['work.executor'] as const),
+  pipelines: ['claude'],
+  via: 'google' as const,
+};
 
 function context(over: Partial<WorkContext> = {}): WorkContext {
   const store = new MemoryStore();
@@ -108,6 +115,20 @@ describe('items routes', () => {
 
   it('refuses every items route for a work.cron-only principal, which carries no work.operator scope', async () => {
     const ctx = context({ principal: cronTick });
+    for (const [m, p, b] of [
+      ['PUT', `/items/${ID}`, { spec }],
+      ['GET', `/items/${ID}`],
+      ['GET', '/items'],
+      ['POST', `/items/${ID}/cancel`],
+      ['POST', `/items/${ID}/redispatch`],
+    ] as const) {
+      const r = await call(ctx, m, p, b);
+      expect(r.status, `${m} ${p}`).toBe(401);
+    }
+  });
+
+  it('refuses every items route for a work.executor-only principal, which carries no work.operator scope', async () => {
+    const ctx = context({ principal: executorOnly });
     for (const [m, p, b] of [
       ['PUT', `/items/${ID}`, { spec }],
       ['GET', `/items/${ID}`],

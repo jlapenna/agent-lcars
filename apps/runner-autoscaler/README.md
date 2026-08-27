@@ -120,6 +120,29 @@ this host or another) to claim again. A launch failure therefore costs one
 lease window of latency, not a stuck run, but it is not instantaneous --
 don't expect a retry within the poll interval.
 
+### The one credential this code does not deliver
+
+`launchDirectRunnerOnHost` (`queue_executor.go`) sets `RUNNER_MODE`,
+`LCARS_RUN_ID`, `LCARS_RUN_TOKEN`, and optionally `LCARS_CONSOLE_URL` on the
+direct-mode container, plus the `telemetry-writer.json` bind-mount above.
+That is deliberately everything it sets: `CLAUDE_CODE_OAUTH_TOKEN` (the
+`claude` CLI's own credential -- `direct-runner.sh` never touches it by
+name, `claude` reads it straight from its process environment) is reachable
+today only via GitHub-Actions-WIF impersonation of
+`claude-token-reader@agent-lcars.iam.gserviceaccount.com`, which a homelab
+Docker container cannot do. Wiring a _second_ delivery path is out of this
+repo's own scope by design (design spec, "Real-path proof").
+
+**Before the queue executor can run a real `claude` pipeline**, a maintainer
+places a copy of that secret's current value into the homelab encrypted
+secret store (`secrets-cli` skill) and adds a file-mount/env entry exposing
+it into direct-mode containers -- the same pattern `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH`
+already uses for `telemetry-writer.json`. One-time manual credential
+placement, not a Terraform change, not a new IAM grant, and not something
+any workflow in this repo performs. See
+`docs/deployment-boundary.md`'s "Queue executor live-proof" section for the
+full maintainer checklist this is one step of.
+
 ## Host telemetry timeout
 
 Host telemetry probes use a one-second deadline by default. A host with a

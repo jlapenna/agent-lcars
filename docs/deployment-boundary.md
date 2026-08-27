@@ -87,8 +87,61 @@ operate the API), not a default principal. `AGENT_LCARS_QUEUE_PIPELINES` follows
 the same pattern: it decides the executor per pipeline at request time
 (`work-mint.ts`'s `executorFor`, called from inside `mintItem` so both
 `items.create` and the schedule tick honour it), never the item's own spec,
-and an unset
-value keeps the queue executor entirely off.
+and an unset value keeps the queue executor entirely off.
+
+The autoscaler's own `work.executor` claim identity needs its own grant row
+in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
+
+```json
+{
+  "principal": "svc:telemetry-writer",
+  "subjects": ["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],
+  "pipelines": ["claude"],
+  "scopes": ["work.executor"]
+}
+```
+
+`runs-router.ts`'s `claim` route requires `work.executor`, never
+`work.operator` -- a principal granted only `work.executor` is refused on
+every `/items`/`/schedules` route (`work-router.test.ts`/
+`schedule-router.test.ts`'s "…-only principal" tests), and the reverse
+holds too. `pipelines` here gates which pipelines this claim identity may
+claim, the same field an operator's grant uses to gate `create`/
+`redispatch` -- it is intersected against `POST /runs/claim`'s own
+`pipelines` input before the store is ever touched
+(`runs-router.ts`'s `claim` handler).
+
+#### Queue executor live-proof (maintainer-gated)
+
+Every task up to this one lands and is verifiable with
+`AGENT_LCARS_QUEUE_PIPELINES` at its default `[]` -- production stays on
+`github-actions` for every pipeline until a maintainer deliberately opts one
+in. Turning it on for real needs four steps outside this repo's own CI,
+none of them a code change:
+
+1. **Console**: set `AGENT_LCARS_QUEUE_PIPELINES='["claude"]'` in
+   `apps/console/apphosting.yaml`'s env block → triggers a rollout.
+2. **Grants**: add the `svc:telemetry-writer` row above to
+   `AGENT_LCARS_WORK_GRANTS` (same file, same rollout).
+3. **Autoscaler** (homelab repo, its own deploy path -- not owned by this
+   repo): set `LCARS_QUEUE_POLL=1` and
+   `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` (see
+   `apps/runner-autoscaler/README.md`'s "Queue executor" section for the
+   full env-var list), and deliver `CLAUDE_CODE_OAUTH_TOKEN` to direct-mode
+   containers -- a one-time manual credential-placement action into the
+   homelab encrypted secret store, since no code in this repo wires that
+   delivery (see that same README's "The one credential this code does not
+   deliver").
+4. **Runner image**: rebuild and publish it (bakes the direct-runner
+   bootstrap — see `AGENTS.md`'s image-build integration point) so the
+   image the autoscaler launches actually has `RUNNER_MODE=direct` support.
+
+With all four done: create one item via `work-create.yml`, watch the
+autoscaler's logs claim it and the direct runner produce a PR, `get` →
+`done`. Record the run in `docs/native-work-smoke-runbook.md`, then set
+`AGENT_LCARS_QUEUE_PIPELINES` back to `[]` (and `LCARS_QUEUE_POLL` back to
+unset) so production reverts to `github-actions` until deliberately opted
+in again.
 
 ### 4. Workflows — repo variables
 

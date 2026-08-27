@@ -6,19 +6,17 @@ import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 
 /**
- * Every "this run's token/lease is still good" assertion below needs a
- * `leaseExpiresAt` safely ahead of the REAL wall clock, not just ahead of
- * the fixture's own injected clock. `requireRunToken`
- * (`runs-router.ts`) checks lease expiry with its own default
- * `now = () => new Date().toISOString()` -- `Orchestrator`'s `clock` is a
- * private field with no accessor, so there is no way to hand it the
- * fixture's clock instead. Task 7's own smoke tests fixed their clock at
- * "today" and never noticed, because none of them reach a run-token
- * route's success path (every case there is a 401). This suite does reach
- * that path, so its clock is pinned years in the future instead -- the
- * outcome then doesn't depend on the hour this suite happens to run.
+ * `requireRunToken` (`runs-router.ts`) now reads its "is this lease still
+ * good" clock from `RunsContext.now()` rather than the real wall clock, so
+ * every context this suite builds shares one fixture-controlled clock with
+ * the `Orchestrator` instance that actually stamps `leaseExpiresAt` --
+ * `fixture()`'s `now` field, below. There is no more need to pin that
+ * clock years in the future to outrun the real clock (the pre-#1502 sub-
+ * project-4 shape of this suite did exactly that): an ordinary fixed
+ * instant works, since nothing here is ever compared against real wall
+ * time anymore.
  */
-const FUTURE_NOW = '2030-01-01T00:00:00.000Z';
+const NOW = '2026-08-26T10:00:00.000Z';
 
 /** `claim`'s and `brief`'s output schemas both pin `workId` to
  *  `workIdSchema` -- a strict 26-character Crockford-base32 pattern (see
@@ -37,16 +35,20 @@ function wid(label: string): string {
   return (upper + '0'.repeat(26)).slice(0, 26);
 }
 
-function fixture(initialNow: string = FUTURE_NOW) {
+function fixture(initialNow: string = NOW) {
   const store = new MemoryStore();
   let now = initialNow;
   const orchestrator = new Orchestrator(store, { now: () => now });
   return {
     store,
     orchestrator,
-    /** Advances the fixture's own (fictional) clock -- used to prove a
-     *  renewed lease actually moved forward, independent of the real-wall-
-     *  clock check `requireRunToken` performs separately. */
+    /** The same clock the `Orchestrator` above stamps `leaseExpiresAt`
+     *  with, exposed the way `RunsContext.now` is -- so `requireRunToken`'s
+     *  lease-expiry check runs against this fixture's own clock instead of
+     *  the real wall clock. */
+    now: () => new Date(now),
+    /** Advances the fixture's own clock -- used to prove a renewed lease
+     *  actually moved forward. */
     setNow: (next: string) => {
       now = next;
     },
@@ -56,7 +58,17 @@ function fixture(initialNow: string = FUTURE_NOW) {
 async function seedQueuedRun(
   store: MemoryStore,
   orchestrator: Orchestrator,
-  opts: { workId: string; pipeline?: string; now: string },
+  opts: {
+    workId: string;
+    pipeline?: string;
+    now: string;
+    /** Overrides the stored spec's shape entirely -- used only by the
+     *  "corrupted spec" brief test below, which needs a stored spec that
+     *  fails `workSpecSchema`, something a real request path (create,
+     *  redispatch, the schedule tick) can never produce since they all
+     *  validate through it first. */
+    spec?: unknown;
+  },
 ): Promise<string> {
   const pipeline = opts.pipeline ?? 'claude';
   const outcome = await orchestrator.request({
@@ -66,7 +78,7 @@ async function seedQueuedRun(
     executor: 'queue',
     work: {
       origin: { principal: 'user:jlapenna', channel: 'api' },
-      spec: {
+      spec: opts.spec ?? {
         title: 't',
         description: 'd',
         pipeline,
@@ -182,9 +194,9 @@ const context = {
 
 describe('claim', () => {
   it('refuses a request with no principal', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const r = await call(
-      { store, orchestrator, ...context, principal: undefined },
+      { store, orchestrator, now, ...context, principal: undefined },
       'POST',
       '/runs/claim',
       { runner: 'runner-1', pipelines: ['claude'] },
@@ -193,9 +205,9 @@ describe('claim', () => {
   });
 
   it('refuses an operator-scoped principal (no work.executor scope)', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const r = await call(
-      { store, orchestrator, ...context, principal: operatorPrincipal() },
+      { store, orchestrator, now, ...context, principal: operatorPrincipal() },
       'POST',
       '/runs/claim',
       { runner: 'runner-1', pipelines: ['claude'] },
@@ -204,11 +216,12 @@ describe('claim', () => {
   });
 
   it('returns 200 with an empty body when nothing is queued', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const r = await call(
       {
         store,
         orchestrator,
+        now,
         ...context,
         principal: executorPrincipal(['claude']),
       },
@@ -228,17 +241,18 @@ describe('claim', () => {
   // intersects `input.pipelines` with `context.principal.pipelines`
   // before ever touching the store.
   it('claims nothing for a pipeline outside the principal grant, without calling the store', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex'),
       pipeline: 'codex',
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const claimSpy = vi.spyOn(store, 'claimQueuedRun');
     const r = await call(
       {
         store,
         orchestrator,
+        now,
         ...context,
         principal: executorPrincipal(['claude']),
       },
@@ -252,21 +266,22 @@ describe('claim', () => {
   });
 
   it('claims only the grant-allowed pipeline even when an older, ungranted pipeline is queued', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const codexRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-older'),
       pipeline: 'codex',
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const claudeRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-claude-newer'),
       pipeline: 'claude',
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const r = await call(
       {
         store,
         orchestrator,
+        now,
         ...context,
         principal: executorPrincipal(['claude']),
       },
@@ -283,10 +298,10 @@ describe('claim', () => {
   });
 
   it('skips a non-live queued run and returns the next live one', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const staleRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-stale'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     // Cancellation settles the run without touching `Run.queue` (Task 7's
     // own report, deviation 2) -- so this run stays `queue.state: 'queued'`
@@ -295,12 +310,13 @@ describe('claim', () => {
     expect('refused' in canceled).toBe(false);
     const liveRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-live'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const r = await call(
       {
         store,
         orchestrator,
+        now,
         ...context,
         principal: executorPrincipal(['claude']),
       },
@@ -313,14 +329,15 @@ describe('claim', () => {
   });
 
   it('grants only one token on a double claim of the same run', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     await seedQueuedRun(store, orchestrator, {
       workId: wid('work-single'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const ctx: RunsContext = {
       store,
       orchestrator,
+      now,
       ...context,
       principal: executorPrincipal(['claude']),
     };
@@ -339,18 +356,19 @@ describe('claim', () => {
   });
 
   it('gives two claimers two different queued runs', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runA = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-a'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const runB = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-b'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const ctx: RunsContext = {
       store,
       orchestrator,
+      now,
       ...context,
       principal: executorPrincipal(['claude']),
     };
@@ -369,16 +387,17 @@ describe('claim', () => {
 
 describe('claim -> brief -> heartbeat -> complete', () => {
   it('settles the run finished/ok and the item derives done', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-happy-path'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
 
     const claimed = await call(
       {
         store,
         orchestrator,
+        now,
         ...context,
         principal: executorPrincipal(['claude']),
       },
@@ -405,6 +424,7 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     const runCtx: RunsContext = {
       store,
       orchestrator,
+      now,
       ...context,
       bearerToken: token,
     };
@@ -440,20 +460,60 @@ describe('claim -> brief -> heartbeat -> complete', () => {
   });
 });
 
+describe('brief', () => {
+  it('500s on a stored spec that no longer parses as workSpecSchema, without leaking it', async () => {
+    // No real request path can produce this -- `mintItem` always validates
+    // through `workSpecSchema` first (`work-mint.ts`) -- so this reaches
+    // under the router the same way `forceLeaseExpired` does, to prove the
+    // handler itself treats a corrupted stored spec as the server bug it
+    // is: a 500 that never echoes the raw stored value back to the caller.
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-corrupt-spec'),
+      now: NOW,
+      // Missing `pipeline` and `target` -- fails `workSpecSchema`.
+      spec: { title: 't', description: 'd', secretField: 'do-not-leak-me' },
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(500);
+    expect(JSON.stringify(r.json)).not.toContain('secretField');
+    expect(JSON.stringify(r.json)).not.toContain('do-not-leak-me');
+    expect(errorSpy).toHaveBeenCalledWith(
+      'agent-lcars: claimed run has a stored spec that no longer parses',
+      expect.objectContaining({ runId }),
+    );
+    errorSpy.mockRestore();
+  });
+});
+
 describe('run-token gate', () => {
   it('refuses every run-token route on a missing bearer', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-missing-bearer'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(mintRunToken()),
     });
-    const ctx: RunsContext = { store, orchestrator, ...context };
+    const ctx: RunsContext = { store, orchestrator, now, ...context };
     for (const [method, suffix, body] of [
       ['GET', '/brief', undefined],
       ['POST', '/heartbeat', undefined],
@@ -466,20 +526,21 @@ describe('run-token gate', () => {
   });
 
   it('refuses every run-token route on a wrong bearer', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-wrong-bearer'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(mintRunToken()),
     });
     const ctx: RunsContext = {
       store,
       orchestrator,
+      now,
       ...context,
       bearerToken: 'definitely-the-wrong-token',
     };
@@ -495,21 +556,21 @@ describe('run-token gate', () => {
   });
 
   it('refuses a token whose lease has already expired', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-expired-lease'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const token = mintRunToken();
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(token),
     });
     await forceLeaseExpired(store, runId);
     const r = await call(
-      { store, orchestrator, ...context, bearerToken: token },
+      { store, orchestrator, now, ...context, bearerToken: token },
       'POST',
       runPath(runId, '/heartbeat'),
     );
@@ -517,21 +578,22 @@ describe('run-token gate', () => {
   });
 
   it('refuses a completed run its own token on every run route', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-already-complete'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const token = mintRunToken();
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(token),
     });
     const ctx: RunsContext = {
       store,
       orchestrator,
+      now,
       ...context,
       bearerToken: token,
     };
@@ -553,40 +615,83 @@ describe('run-token gate', () => {
     expect(checkoutToken.status).toBe(401);
   });
 
+  it('refuses a canceled run its own token on every run route, even though queue.state stays claimed', async () => {
+    // Deviation 2 (design spec, "Queue state machine"): cancellation
+    // settles the run without touching `Run.queue` at all -- so
+    // `run.queue.state` is still whatever `claimQueuedRun` set it to
+    // (`'claimed'`, not `'queued'` here, since this run was claimed before
+    // being canceled -- see `claim`'s own "skips a non-live queued run"
+    // test above for the still-`'queued'` case). Liveness alone must gate
+    // every run-token route; `requireRunToken` must never trust
+    // `run.queue.state` as a proxy for "is this run still live".
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-canceled-claimed'),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const canceled = await orchestrator.cancel(runId);
+    expect('refused' in canceled).toBe(false);
+    expect((await store.readRun(runId))?.queue?.state).toBe('claimed');
+
+    const ctx: RunsContext = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      bearerToken: token,
+    };
+    for (const [method, suffix, body] of [
+      ['GET', '/brief', undefined],
+      ['POST', '/heartbeat', undefined],
+      ['POST', '/complete', { outcome: 'pull-request' }],
+      ['GET', '/checkout-token', undefined],
+    ] as const) {
+      const r = await call(ctx, method, runPath(runId, suffix), body);
+      expect(r.status, `${method} ${suffix}`).toBe(401);
+    }
+  });
+
   it("refuses run A's token on run B's routes", async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runA = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-run-a'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const runB = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-run-b'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const tokenA = mintRunToken();
     const tokenB = mintRunToken();
     // Oldest queued run claims first, so this claims runA then runB.
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(tokenA),
     });
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-2',
       tokenHash: hashRunToken(tokenB),
     });
     const r = await call(
-      { store, orchestrator, ...context, bearerToken: tokenA },
+      { store, orchestrator, now, ...context, bearerToken: tokenA },
       'GET',
       runPath(runB, '/brief'),
     );
     expect(r.status).toBe(401);
     // Sanity: tokenA is genuinely valid on its own run.
     const own = await call(
-      { store, orchestrator, ...context, bearerToken: tokenA },
+      { store, orchestrator, now, ...context, bearerToken: tokenA },
       'GET',
       runPath(runA, '/brief'),
     );
@@ -596,23 +701,28 @@ describe('run-token gate', () => {
 
 describe('heartbeat', () => {
   it("extends the run's leaseExpiresAt", async () => {
-    const { store, orchestrator, setNow } = fixture();
+    const { store, orchestrator, now, setNow } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-heartbeat'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const token = mintRunToken();
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(token),
     });
     const before = (await store.readRun(runId))!.leaseExpiresAt;
 
-    setNow('2030-01-01T01:00:00.000Z');
+    // An hour on, still well inside the 2h lease (`LEASE_MS`, `decide.ts`)
+    // -- far enough to prove the renewed `leaseExpiresAt` moved forward,
+    // not so far that this shared fixture clock (now also
+    // `requireRunToken`'s own clock, via `RunsContext.now`) would expire
+    // the very token this call is renewing before it got there.
+    setNow('2026-08-26T11:00:00.000Z');
     const r = await call(
-      { store, orchestrator, ...context, bearerToken: token },
+      { store, orchestrator, now, ...context, bearerToken: token },
       'POST',
       runPath(runId, '/heartbeat'),
     );
@@ -625,15 +735,15 @@ describe('heartbeat', () => {
 
 describe('complete', () => {
   it('refuses a malformed body with 400 and leaves the run state unchanged', async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-malformed-complete'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const token = mintRunToken();
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(token),
     });
@@ -653,7 +763,7 @@ describe('complete', () => {
       ),
       {
         prefix: '/api/work/v1',
-        context: { store, orchestrator, ...context, bearerToken: token },
+        context: { store, orchestrator, now, ...context, bearerToken: token },
       },
     );
     expect(response?.status).toBe(400);
@@ -663,15 +773,15 @@ describe('complete', () => {
 
 describe('checkoutToken', () => {
   it("mints a token for the spec's target repo without leaking the run token", async () => {
-    const { store, orchestrator } = fixture();
+    const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-checkout-token'),
-      now: FUTURE_NOW,
+      now: NOW,
     });
     const runToken = mintRunToken();
     await store.claimQueuedRun({
       pipelines: ['claude'],
-      now: FUTURE_NOW,
+      now: NOW,
       claimedBy: 'runner-1',
       tokenHash: hashRunToken(runToken),
     });
@@ -680,6 +790,7 @@ describe('checkoutToken', () => {
       {
         store,
         orchestrator,
+        now,
         tokens: context.tokens,
         checkoutTokens: { tokenFor },
         bearerToken: runToken,

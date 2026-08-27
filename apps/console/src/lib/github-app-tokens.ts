@@ -218,6 +218,34 @@ export function createDispatchTokenProvider(
 }
 
 /**
+ * Defers `factory` (normally a `createDispatchTokenProvider` call) until
+ * this provider's `tokenFor` is actually invoked, then builds and caches
+ * the real provider for every later call on this instance.
+ *
+ * Needed anywhere a `DispatchTokenProvider` value is required in a context
+ * object built once per request but not every request path reaches a
+ * GitHub call -- `apps/console/src/app/api/work/v1/[[...rest]]/route.ts`'s
+ * catch-all handler is the motivating case: it builds `RunsContext` (whose
+ * `tokens`/`checkoutTokens` are `DispatchTokenProvider`s, not factories) on
+ * every `/api/work/v1/*` request, including `/items` and `/schedules`
+ * traffic that never reaches a run-token route. Calling
+ * `createDispatchTokenProvider` there directly would fail-fast on missing
+ * `AGENT_LCARS_APP_*` credentials for those requests too, even though
+ * they never touch a GitHub token. Wrapping the same factory in this
+ * function keeps that same-request fail-fast behavior for the routes that
+ * DO reach a GitHub call (`checkoutToken`), without imposing it on routes
+ * that don't.
+ */
+export function lazyDispatchTokenProvider(
+  factory: () => DispatchTokenProvider,
+): DispatchTokenProvider {
+  let provider: DispatchTokenProvider | undefined;
+  return {
+    tokenFor: (repo) => (provider ??= factory()).tokenFor(repo),
+  };
+}
+
+/**
  * Parses a GitHub App private key PEM into a key usable for RS256 signing.
  * `node:crypto`'s `createPrivateKey` auto-detects the PEM label, so both
  * PKCS1 (`-----BEGIN RSA PRIVATE KEY-----`, the format GitHub's own "Generate

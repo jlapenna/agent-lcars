@@ -7,7 +7,7 @@ import {
   type OrchestratorStore,
   type Run,
 } from '@agent-lcars/orchestrator';
-import { runsContract } from '@agent-lcars/work';
+import { runsContract, workSpecSchema } from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
@@ -31,6 +31,14 @@ export interface RunsContext {
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
   checkoutTokens: DispatchTokenProvider;
+  /** Injected clock: `requireRunToken`'s lease-expiry check must be
+   *  deterministic under test, not tied to wall-clock `Date.now()` --
+   *  mirrors `WorkContext.now` (`work-mint.ts`). The `Orchestrator`
+   *  instance above owns the clock that actually stamps `leaseExpiresAt`
+   *  (its own private `Clock`, not this field), so production wires both
+   *  to the same `() => new Date()` source; a test fixture wires both to
+   *  the same fictional clock instead. */
+  now: () => Date;
 }
 
 const os = implement(runsContract).$context<RunsContext>();
@@ -68,7 +76,6 @@ const executor = os.use(async ({ context, next }) => {
 async function requireRunToken(
   context: RunsContext,
   runId: string,
-  now: () => string = () => new Date().toISOString(),
 ): Promise<Run> {
   const run = await context.store.readRun(runId);
   const token = context.bearerToken;
@@ -82,7 +89,7 @@ async function requireRunToken(
   if (!isLive(run.state)) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run is no longer live' });
   }
-  if (Date.parse(run.leaseExpiresAt) <= Date.parse(now())) {
+  if (Date.parse(run.leaseExpiresAt) <= context.now().getTime()) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
   return run;
@@ -159,26 +166,38 @@ export const runsRouter = os.router({
     if (!('workId' in run.task)) throw errors.UNAUTHORIZED();
     const task = await context.store.readTask(run.task);
     const work = task?.task.work;
-    const spec = work?.['spec'];
-    if (spec === undefined || typeof spec !== 'object' || task === undefined) {
+    if (work === undefined || task === undefined) {
       throw errors.UNAUTHORIZED({ message: 'run has no dispatchable spec' });
     }
+    // `mintItem` never stores a spec that doesn't already pass this exact
+    // schema, so a claimed run whose stored spec fails to parse here is
+    // not a caller mistake -- it is a server bug (a schema tightened out
+    // from under an already-stored task, or corrupted data). Logged with
+    // the parse issues for diagnosis; the caller gets only the generic
+    // 500 an undeclared `ORPCError` already produces, never the parse
+    // detail or the raw stored value.
+    const parsed = workSpecSchema.safeParse(work['spec']);
+    if (!parsed.success) {
+      console.error(
+        'agent-lcars: claimed run has a stored spec that no longer parses',
+        { runId: run.runId, workId: run.task.workId, error: parsed.error },
+      );
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: 'run has a corrupted spec',
+      });
+    }
+    const spec = parsed.data;
     const target = anchorTarget(run, task.task);
     const generationMatch = /\/r(\d+)$/u.exec(run.runId);
     const generation = generationMatch ? Number(generationMatch[1]) : 1;
-    const specRecord = spec as {
-      title: string;
-      description: string;
-      target: { repo: string };
-    };
     return {
       id: run.task.workId,
-      spec: specRecord as never,
+      spec,
       anchor: {
         type: 'work' as const,
         id: run.task.workId,
-        title: specRecord.title,
-        body: specRecord.description,
+        title: spec.title,
+        body: spec.description,
         target_repo: target.repo,
         html_url: `${process.env['AGENT_LCARS_CONSOLE_URL'] ?? 'https://lcars.jlapenna.net'}/work/${run.task.workId}`,
       },

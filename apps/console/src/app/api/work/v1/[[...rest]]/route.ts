@@ -6,6 +6,7 @@ import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
+  lazyDispatchTokenProvider,
 } from '@/lib/github-app-tokens';
 import {
   createOrchestratorRuntime,
@@ -76,10 +77,21 @@ async function handle(request: Request): Promise<Response> {
       ...(principal === undefined ? {} : { principal }),
       store: runtime.store,
       orchestrator: runtime.orchestrator,
-      tokens: createDispatchTokenProvider(process.env),
-      checkoutTokens: createDispatchTokenProvider(
-        process.env,
-        DIRECT_RUNNER_PERMISSIONS,
+      // Same clock the orchestrator's own `utcClock` (`orchestrator-
+      // runtime.ts`) stamps `leaseExpiresAt` with, so `requireRunToken`'s
+      // lease-expiry check is never independently skewed from it.
+      now: () => new Date(),
+      // Lazy: this context is built on every /api/work/v1/* request, most
+      // of which (/items, /schedules) never reach a run-token route and so
+      // never call `tokenFor`. Constructing `createDispatchTokenProvider`
+      // eagerly here would fail-fast on missing `AGENT_LCARS_APP_*`
+      // credentials for those requests too -- see
+      // `lazyDispatchTokenProvider`'s own comment.
+      tokens: lazyDispatchTokenProvider(() =>
+        createDispatchTokenProvider(process.env),
+      ),
+      checkoutTokens: lazyDispatchTokenProvider(() =>
+        createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
       ),
     },
   });
