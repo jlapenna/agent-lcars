@@ -62,6 +62,12 @@ TARGET_REPO="$(jq -r '.spec.target.repo' <<<"$brief")"
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
 export GITHUB_REPOSITORY="$TARGET_REPO"
+# Native work items sub-project 8: a claimed run may carry a resume request
+# (populated by the console's own drain input -- Task 3) for a prior
+# session's own transcript. Empty when the run is a fresh dispatch; both
+# fields are required below before attempting a restore.
+RESUME_SESSION_ID="$(jq -r '.resume.sessionId // empty' <<<"$brief")"
+RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 
 checkout="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/checkout-token"
@@ -118,6 +124,28 @@ git config --local "http.https://github.com/.extraheader" "$CHECKOUT_AUTH_HEADER
 GIT_LOGIN="${LCARS_GIT_LOGIN:-agent-lcars[bot]}"
 git config --local user.name "$GIT_LOGIN"
 git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
+
+# Same restore .github/actions/resume-session/resume.sh performs for the
+# GitHub-Actions lane (Task 6) -- mirrored here rather than shared, since
+# direct mode has no composite-action step to invoke it from. Fail-soft:
+# any missing input or failed download leaves RESUME_FLAG empty and this
+# run proceeds as a fresh dispatch (`|| true` below), never blocking the
+# agent on a broken restore.
+RESUME_FLAG=()
+if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
+  # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
+  # exported inline exactly as sidecar-lifecycle.sh already does for
+  # `runner sidecar`/`runner finalize` -- the same telemetry-writer
+  # credential and GCS project the transcript was uploaded to/from.
+  resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
+    AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+    node /usr/local/lib/agent-lcars/sidecar.cjs runner resume \
+    --session-id "$RESUME_SESSION_ID" --transcript-uri "$RESUME_TRANSCRIPT_URI" \
+    --cwd "$PWD" 2>/dev/null || true)"
+  if [ -n "$resumed_path" ]; then
+    RESUME_FLAG=(--resume "$RESUME_SESSION_ID")
+  fi
+fi
 
 export GITHUB_ACTION_PATH="$PREPARE_DISPATCH_DIR"
 export GITHUB_WORKSPACE="$workspace"
@@ -213,6 +241,7 @@ claude \
   --dangerously-skip-permissions \
   --allowedTools "Bash,Edit,Write,MultiEdit" \
   --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
+  "${RESUME_FLAG[@]}" \
   --print "$AGENT_PROMPT"
 CLAUDE_EXIT=$?
 set -e
