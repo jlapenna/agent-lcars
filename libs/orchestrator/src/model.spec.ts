@@ -4,6 +4,7 @@ import {
   isGithubAnchor,
   isWorkAnchor,
   outboxEntrySchema,
+  runQueueSchema,
   runSchema,
   taskIdSchema,
   taskKey,
@@ -152,5 +153,49 @@ describe('taskSchema work payload', () => {
     const work = { blob: '漢'.repeat(11_000) };
     expect(work.blob.length).toBe(11_000);
     expect(() => taskSchema.parse({ ...base, work })).toThrow();
+  });
+});
+
+describe('Run.executor / Run.queue', () => {
+  const base = {
+    runId: 'work:01M107KR3X6VDH7NZ4JDXZNSS2/r1',
+    task: { workId: '01M107KR3X6VDH7NZ4JDXZNSS2' },
+    state: 'pending' as const,
+    pipeline: 'claude',
+    requestId: 'req-1',
+    leaseExpiresAt: '2026-08-27T00:00:00.000Z',
+    events: [],
+    createdAt: '2026-08-27T00:00:00.000Z',
+    updatedAt: '2026-08-27T00:00:00.000Z',
+  };
+
+  it('parses a run with no executor/queue field (existing documents)', () => {
+    expect(runSchema.parse(base).executor).toBeUndefined();
+  });
+
+  it('accepts an explicit executor and a queued claim state', () => {
+    const parsed = runSchema.parse({
+      ...base,
+      executor: 'queue',
+      queue: { state: 'queued' },
+    });
+    expect(parsed.executor).toBe('queue');
+    expect(parsed.queue).toEqual({ state: 'queued' });
+  });
+
+  it('accepts a claimed state with claimedBy/tokenHash', () => {
+    const claimed = {
+      state: 'claimed' as const,
+      claimedAt: '2026-08-27T00:05:00.000Z',
+      claimedBy: 'runner-pike-1',
+      tokenHash: 'a'.repeat(64),
+    };
+    expect(runQueueSchema.parse(claimed)).toEqual(claimed);
+  });
+
+  it('rejects a tokenHash that is not a 64-character hex sha256', () => {
+    expect(() =>
+      runQueueSchema.parse({ state: 'claimed', tokenHash: 'short' }),
+    ).toThrow();
   });
 });
