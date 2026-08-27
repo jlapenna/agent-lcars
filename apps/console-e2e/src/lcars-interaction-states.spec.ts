@@ -30,6 +30,7 @@ const agentsPill = (page: Page) =>
   nav(page).getByRole('link', { name: 'Agents' });
 const shuttlebayPill = (page: Page) =>
   nav(page).getByRole('link', { name: 'Shuttlebay' });
+const workPill = (page: Page) => nav(page).getByRole('link', { name: 'Work' });
 
 function longestCssTimeInSeconds(value: string): number | undefined {
   const durations = value.split(',').map((part) => {
@@ -130,6 +131,7 @@ test.describe('LCARS pill nav interaction states', () => {
       'Inbox',
       'Agents',
       'Shuttlebay',
+      'Work',
       'Sessions',
       'Costs',
     ]) {
@@ -154,6 +156,8 @@ test.describe('LCARS pill nav interaction states', () => {
     await expect(agentsPill(page)).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(shuttlebayPill(page)).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(workPill(page)).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(
       nav(page).getByRole('link', { name: 'Sessions' }),
