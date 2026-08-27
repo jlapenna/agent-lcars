@@ -265,6 +265,33 @@ describe('console deployment workflow', () => {
     );
   });
 
+  it("grants Sprinkles' ambient App Hosting identity only the native claude operator path", async () => {
+    const config = parseYaml(
+      await readFile('apps/console/apphosting.yaml', 'utf8'),
+    ) as {
+      env?: Array<{ variable?: string; value?: string }>;
+    };
+    const grantsValue = config.env?.find(
+      ({ variable }) => variable === 'AGENT_LCARS_WORK_GRANTS',
+    )?.value;
+
+    expect(grantsValue).toBeDefined();
+    expect(JSON.parse(grantsValue ?? '[]')).toContainEqual({
+      principal:
+        'svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com',
+      subjects: [
+        'firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com',
+      ],
+      pipelines: ['claude'],
+      scopes: ['work.operator'],
+    });
+    expect(
+      config.env?.find(
+        ({ variable }) => variable === 'AGENT_LCARS_WORK_AUDIENCE',
+      )?.value,
+    ).toBe('agent-lcars-work');
+  });
+
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {
     const fixtureRoot = await mkdtemp(
       path.join(os.tmpdir(), 'agent-lcars-cloud-build-prebuild-'),

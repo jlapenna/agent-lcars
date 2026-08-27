@@ -80,8 +80,15 @@ env:
   # its own: an unset/empty AGENT_LCARS_QUEUE_PIPELINES means no pipeline
   # is opted into the queue executor, so nothing ever calls /runs/claim as
   # this principal regardless of this grant existing.
+  #
+  # The Firebase App Hosting default compute service account is Sprinkles'
+  # current ambient backend identity. Its ID token's raw `email` is the
+  # grant subject (work-auth verifies that value); the service-prefixed
+  # principal is the stable audit identity. It replaces the restricted
+  # `/lcars` Slack command's direct GitHub issue filing with a native item,
+  # limited to the command's existing `claude` pipeline and work.operator.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.executor"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.executor"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.operator"]}]'
     availability:
       - RUNTIME
 
