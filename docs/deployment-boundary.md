@@ -125,14 +125,16 @@ none of them a code change:
 2. **Grants**: add the `svc:telemetry-writer` row above to
    `AGENT_LCARS_WORK_GRANTS` (same file, same rollout).
 3. **Autoscaler** (homelab repo, its own deploy path -- not owned by this
-   repo): set `LCARS_QUEUE_POLL=1` and
-   `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` (see
+   repo): set `LCARS_QUEUE_POLL=1`,
+   `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH`, and
+   `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` (see
    `apps/runner-autoscaler/README.md`'s "Queue executor" section for the
-   full env-var list), and deliver `CLAUDE_CODE_OAUTH_TOKEN` to direct-mode
-   containers -- a one-time manual credential-placement action into the
-   homelab encrypted secret store, since no code in this repo wires that
-   delivery (see that same README's "The one credential this code does not
-   deliver").
+   full env-var list). The bind mount and in-container read-and-export
+   for `CLAUDE_CODE_OAUTH_TOKEN` are wired code (see that same README's
+   "Delivering the claude CLI's own credential"); what remains a one-time
+   manual action is placing the secret's current value into the homelab
+   encrypted secret store and staging it as a file at whatever host path
+   `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` names.
 4. **Runner image**: rebuild and publish it (bakes the direct-runner
    bootstrap — see `AGENTS.md`'s image-build integration point) so the
    image the autoscaler launches actually has `RUNNER_MODE=direct` support.

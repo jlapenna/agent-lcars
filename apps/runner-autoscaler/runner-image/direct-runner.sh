@@ -69,6 +69,43 @@ export GITHUB_REPOSITORY="$TARGET_REPO"
 RESUME_SESSION_ID="$(jq -r '.resume.sessionId // empty' <<<"$brief")"
 RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 
+# From here through the real /complete POST near the end of this script,
+# the run is claimed and LCARS_RUN_TOKEN is confirmed valid -- the /brief
+# call above just proved it, and runs-router.ts's requireRunToken accepts
+# this same token for this run's own completion report right up until it
+# settles. Every step in that window can still fail outright under `set
+# -e` (checkout-token, git clone, prepare.sh, the claude-token file check
+# below, ...): review fix (PR #1568) -- an early abort here used to just
+# exit, leaving the run claimed and silently stuck until its 2h lease
+# expires and passive retry mints a replacement, even though the console
+# would have accepted an immediate failure report. COMPLETED is flipped to
+# 1 only once the real /complete call below actually succeeds, so a normal
+# exit (including the intentional non-zero exit for a legitimately reported
+# non-pull-request outcome) never reports twice. A second report attempt
+# here is otherwise harmless even if one somehow raced past that guard --
+# requireRunToken refuses a token whose run already settled, and `|| true`
+# below swallows that refusal exactly like every other best-effort call in
+# this script.
+COMPLETED=0
+report_early_failure() {
+  early_exit_code=$?
+  [ -n "${HEARTBEAT_PID:-}" ] && { kill "$HEARTBEAT_PID" 2>/dev/null || true; }
+  if [ "$early_exit_code" -ne 0 ] && [ "$COMPLETED" -ne 1 ]; then
+    early_payload="$RUNNER_TEMP/early-failure-payload.json"
+    printf '%s' '{"outcome":"no-deliverable","outcomeReference":null}' > "$early_payload" 2>/dev/null
+    curl -sf --config - >/dev/null 2>&1 <<CURLCFG || true
+url = "$RUNS_API/complete"
+request = "POST"
+header = "$AUTH_HEADER"
+header = "content-type: application/json"
+$CURL_TIMEOUT_CONFIG
+data-binary = "@$early_payload"
+CURLCFG
+  fi
+  return 0
+}
+trap report_early_failure EXIT
+
 checkout="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/checkout-token"
 header = "$AUTH_HEADER"
@@ -202,15 +239,18 @@ WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
 # included, the instant it expires. A long agent turn with no renewal risks
 # racing that expiry and losing the ability to ever report back. Backgrounded
 # for exactly the `claude` invocation below and killed (not waited on) the
-# moment it exits -- explicitly right after, AND via the EXIT trap below as
-# a safety net for any earlier abort (e.g. `set -e` unwinding out of the
-# `claude` step itself before reaching that explicit kill). This container's
-# whole process tree ends with the script regardless, so there is nothing
-# further to clean up beyond not leaving the loop running through the
-# verify/complete tail below once it is no longer needed. Failures are
-# swallowed (`|| true`): a missed heartbeat is not fatal on its own, unlike
-# telemetry (sidecar-lifecycle.sh's own fail-soft contract) -- there is
-# nothing else that could restore a lease already lost.
+# moment it exits -- explicitly right after, AND via report_early_failure's
+# own EXIT trap above as a safety net for any earlier abort (e.g. `set -e`
+# unwinding out of the `claude` step itself before reaching that explicit
+# kill; that function already kills HEARTBEAT_PID when it is set, so there
+# is deliberately no second `trap ... EXIT` here to overwrite it -- bash
+# keeps only the most recently installed handler per signal). This
+# container's whole process tree ends with the script regardless, so there
+# is nothing further to clean up beyond not leaving the loop running
+# through the verify/complete tail below once it is no longer needed.
+# Failures are swallowed (`|| true`): a missed heartbeat is not fatal on
+# its own, unlike telemetry (sidecar-lifecycle.sh's own fail-soft contract)
+# -- there is nothing else that could restore a lease already lost.
 HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-300}"
 (
   while true; do
@@ -224,7 +264,30 @@ CURLCFG
   done
 ) &
 HEARTBEAT_PID=$!
-trap 'kill "$HEARTBEAT_PID" 2>/dev/null || true' EXIT
+
+# The claude CLI reads its long-lived subscription credential straight from
+# its own process environment -- no file-based alternative exists (checked
+# against `claude --help`'s auth section) -- but the value never lands in
+# THIS container's Config.Env: launchDirectRunnerOnHost (queue_executor.go)
+# bind-mounts it here as a read-only file instead, exactly like
+# WRITER_CREDENTIALS_FILE above, specifically so it never shows up in a
+# `docker inspect` of this container the way a Config.Env entry would --
+# only something with exec/proc access to the running process can see it,
+# and only from here forward, immediately before the one command that needs
+# it. CLAUDE_TOKEN_FILE is env-overridable like every other baked-tool path
+# above, defaulting to where launchDirectRunnerOnHost actually mounts it
+# (directRunnerClaudeTokenMountPath), so direct-runner.test.sh can point it
+# at a fixture file instead of a real bind mount. A missing/unreadable file
+# exits loudly (review fix, PR #1568) -- report_early_failure's trap above
+# reports the resulting run as no-deliverable instead of leaving it claimed
+# and silently stuck for its whole 2h lease.
+CLAUDE_TOKEN_FILE="${CLAUDE_TOKEN_FILE:-/run/secrets/claude-code-oauth-token}"
+if [ ! -r "$CLAUDE_TOKEN_FILE" ]; then
+  echo "FATAL: $CLAUDE_TOKEN_FILE is required (CLAUDE_CODE_OAUTH_TOKEN source) but is missing or unreadable" >&2
+  exit 1
+fi
+CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_TOKEN_FILE")"
+export CLAUDE_CODE_OAUTH_TOKEN
 
 set +e
 # --dangerously-skip-permissions: this container is dedicated to one
@@ -294,6 +357,12 @@ header = "content-type: application/json"
 $CURL_TIMEOUT_CONFIG
 data-binary = "@$payload_file"
 CURLCFG
+# The real report succeeded (the curl call above would have aborted the
+# script under `set -e` otherwise) -- report_early_failure's trap must not
+# report a second, stale "no-deliverable" over this one now that the real
+# outcome is recorded, including for the intentional non-zero exit just
+# below.
+COMPLETED=1
 
 # Exit code reflects the reported outcome (design choice, not the OpenAPI
 # contract's own concern -- the console already has the true outcome via

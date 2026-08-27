@@ -481,6 +481,25 @@ func TestDirectRunnerTelemetryWriterHostPath(t *testing.T) {
 	})
 }
 
+func TestDirectRunnerClaudeTokenHostPath(t *testing.T) {
+	t.Run("required", func(t *testing.T) {
+		t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "")
+		if _, err := directRunnerClaudeTokenHostPath(); err == nil {
+			t.Fatalf("expected an error when the host path env var is unset")
+		}
+	})
+	t.Run("passes through a configured path", func(t *testing.T) {
+		t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
+		got, err := directRunnerClaudeTokenHostPath()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "/secrets/claude-code-oauth-token" {
+			t.Errorf("got %q", got)
+		}
+	})
+}
+
 // TestNewDirectRunnerIDTokenSourceErrors pins the plumbing runOrchestrator
 // relies on to disable the queue poller (rather than start it and fail
 // every poll) when the credentials file is missing or unreadable: a bad
@@ -509,7 +528,7 @@ func TestLaunchDirectRunnerOnHostLogsPlacementWithoutToken(t *testing.T) {
 		runToken: "super-secret-run-token",
 		pipeline: "claude",
 	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, logger)
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", "/secrets/claude-code-oauth-token", 1, l, logger)
 	if err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
@@ -545,7 +564,7 @@ func TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv(t *testing.T) {
 		pipeline:   "claude",
 		consoleURL: "https://lcars.test",
 	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, discardLogger())
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", "/secrets/claude-code-oauth-token", 1, l, discardLogger())
 	if err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
@@ -580,9 +599,21 @@ func TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv(t *testing.T) {
 	if created.Labels[directRunnerRunIDLabelKey] != l.runID {
 		t.Errorf("expected run-id label %q, got %q", l.runID, created.Labels[directRunnerRunIDLabelKey])
 	}
-	wantBind := "/secrets/telemetry-writer.json:" + directRunnerTelemetryWriterMountPath + ":ro"
-	if len(created.HostConfig.Binds) != 1 || created.HostConfig.Binds[0] != wantBind {
-		t.Errorf("expected bind %q, got %v", wantBind, created.HostConfig.Binds)
+	// Exactly two binds: the telemetry-writer key and the claude OAuth
+	// token file -- CLAUDE_CODE_OAUTH_TOKEN must never appear in Env above
+	// (asserted by the exact wantEnv count), only as this second file bind
+	// direct-runner.sh reads and exports at runtime.
+	wantBinds := map[string]bool{
+		"/secrets/telemetry-writer.json:" + directRunnerTelemetryWriterMountPath + ":ro": true,
+		"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro":   true,
+	}
+	if len(created.HostConfig.Binds) != len(wantBinds) {
+		t.Fatalf("expected %d binds, got %v", len(wantBinds), created.HostConfig.Binds)
+	}
+	for _, b := range created.HostConfig.Binds {
+		if !wantBinds[b] {
+			t.Errorf("unexpected bind %q", b)
+		}
 	}
 }
 
@@ -601,7 +632,7 @@ func TestLaunchDirectRunnerOnHostAtCapacity(t *testing.T) {
 	f.mu.Unlock()
 
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX02/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, discardLogger())
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", "/secrets/claude-code-oauth-token", 1, l, discardLogger())
 	if err == nil {
 		t.Fatalf("expected an error when the host is already at its direct-runner cap")
 	}
@@ -615,6 +646,7 @@ func TestLaunchDirectRunnerOnHostAtCapacity(t *testing.T) {
 // so the container must land on the second.
 func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
 	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
+	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
 
 	full := newFakeDockerServer(t)
 	full.mu.Lock()
@@ -660,7 +692,7 @@ func TestLaunchDirectRunnerOnHostRemovesContainerOnStartFailure(t *testing.T) {
 	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
 
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX04/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, discardLogger())
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", "/secrets/claude-code-oauth-token", 1, l, discardLogger())
 	if err == nil {
 		t.Fatalf("expected an error when ContainerStart fails")
 	}
