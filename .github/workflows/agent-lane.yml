@@ -713,7 +713,6 @@ jobs:
           agent-fleet-login: ${{ inputs.agent-fleet-login }}
           agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
           agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-          control-plane-projections: ${{ inputs.control-plane-projections }}
 
       # The real checkout, now that the App token exists: for
       # codex/opencode this one carries fetch-depth: 0 and the minted
