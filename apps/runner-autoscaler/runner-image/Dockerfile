@@ -390,6 +390,23 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
+# Native work items sub-project 4 ("direct runner mode"): direct-runner.sh's
+# baked-tool defaults (PREPARE_DISPATCH_DIR/VERIFY_DELIVERABLE) point here.
+# Same fresh-`main`-checkout stage as sidecar.cjs/job-daemon.sh above, not
+# `/tmp/fleet-repo-github/.github` a few lines up -- that copy is `rm -rf`'d
+# right after populating the action-archive cache, so nothing downstream can
+# depend on it surviving.
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/.github/actions/prepare-agent-dispatch \
+    /usr/local/lib/agent-lcars/prepare-agent-dispatch
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/.github/actions/verify-deliverable/verify-deliverable.sh \
+    /usr/local/lib/agent-lcars/verify-deliverable.sh
+RUN chmod +x /usr/local/lib/agent-lcars/prepare-agent-dispatch/*.sh \
+    /usr/local/lib/agent-lcars/verify-deliverable.sh
+COPY direct-runner.sh /usr/local/lib/agent-lcars/direct-runner.sh
+RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh
+
 # agent-lcars#1289: the `lcars` CLI (`lcars session title "..."`/`lcars
 # session status "..."`), built above as a second, independent bundle
 # (session-title-cli target). This closes the gap #1289 exists for: the
