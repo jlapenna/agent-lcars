@@ -137,6 +137,14 @@ export const itemsContract = {
         path: '/items',
         operationId: 'listItems',
         summary: 'List work items',
+        description:
+          'Pages over native items newest-first. A response carrying ' +
+          '`nextCursor` may still have more behind it -- pass that value ' +
+          'back as `cursor` to continue. `state`/`principal`/`repo` filter ' +
+          'each page after it is read, so an empty `items` array with a ' +
+          '`nextCursor` present means "none on this page", not "no more ' +
+          'pages" -- keep paging until `nextCursor` is absent to see every ' +
+          'matching item (issue #1546).',
       }),
     )
     .input(
@@ -145,9 +153,23 @@ export const itemsContract = {
         principal: z.string().max(128).optional(),
         repo: z.string().max(256).optional(),
         limit: z.coerce.number().int().min(1).max(200).default(50),
+        // Additive (issue #1546): the previous `workId` page's *last* raw
+        // native task, i.e. a prior response's `nextCursor`. Omitted, a
+        // caller sees the first (newest) page exactly as before this
+        // field existed -- an old client that never sends it is
+        // unaffected.
+        cursor: workIdSchema.optional(),
       }),
     )
-    .output(z.strictObject({ items: z.array(itemViewSchema) })),
+    .output(
+      z.strictObject({
+        items: z.array(itemViewSchema),
+        // Present only when more native tasks may exist behind this page
+        // (see `description` above); absent means the underlying store is
+        // exhausted, not that this page happened to come back non-empty.
+        nextCursor: workIdSchema.optional(),
+      }),
+    ),
   cancel: base
     .meta(
       openapi({

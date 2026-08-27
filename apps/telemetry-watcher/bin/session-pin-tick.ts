@@ -1,8 +1,10 @@
 #!/usr/bin/env -S pnpm exec tsx
 // apps/telemetry-watcher/bin/session-pin-tick.ts
 //
-// Sub-project 6's reaper. Lists every open (running/parked) native item via
-// the read-only work API (a GitHub-Actions-OIDC bearer, work.reaper scope --
+// Sub-project 6's reaper. Lists every open (running/parked) native item,
+// paging the read-only work API's `list` route to cover the whole fleet
+// history rather than just its newest page (issue #1546), via the
+// read-only work API (a GitHub-Actions-OIDC bearer, work.reaper scope --
 // see work-auth.ts) and rewrites `expireAt` forward on every session those
 // items carry, via telemetry_writer's own Firestore write access
 // (WIF-impersonated by the calling workflow). Run by
@@ -32,7 +34,30 @@ interface ItemLike {
 }
 interface ItemsResponse {
   items: ItemLike[];
+  /** Present iff more native tasks may exist behind this page -- see
+   *  `itemsContract.list`'s doc comment. Absent means this state's sweep
+   *  is exhausted, regardless of whether this particular page came back
+   *  with any items in it (the state filter is applied per-page, after
+   *  the underlying store read). */
+  nextCursor?: string;
 }
+
+/** Safety valve on items *traversed*, not on the one extra request that
+ *  proves a full last page was actually the end: a full page always
+ *  carries a `nextCursor` per `itemsContract.list`'s contract, so when
+ *  native-task history is *exactly* `PAGE_LIMIT * MAX_PAGES` items long,
+ *  the `MAX_PAGES`-th page is full and still reports a cursor even though
+ *  nothing remains. One further, `(MAX_PAGES + 1)`-th "exhaustion probe"
+ *  request per state is always allowed to resolve that: an empty page
+ *  with no cursor confirms exhaustion and that state's pass succeeds. Real
+ *  fleet history is nowhere near `PAGE_LIMIT * MAX_PAGES` (=100,000)
+ *  native items, so a cursor still standing after the probe means the API
+ *  is misbehaving -- e.g. always answering a `nextCursor` regardless of
+ *  progress -- not that the fleet grew, and that state's pass fails
+ *  loudly (see `pinOpenItemSessions`'s per-state handling) instead of
+ *  looping forever. */
+export const MAX_PAGES = 500;
+const PAGE_LIMIT = 200;
 
 export interface PinOpenItemSessionsDeps {
   bearer: string;
@@ -54,30 +79,79 @@ export async function pinOpenItemSessions(
   ).toISOString();
 
   const pinned: string[] = [];
-  for (const state of ['running', 'parked'] as const) {
-    // `limit=200` does NOT mean "the 200 newest items in this state" --
-    // `work-router.ts`'s `list` handler applies the limit to
-    // `listNativeTasks` BEFORE the state filter, and `firestore-store.ts`'s
-    // `listNativeTasks` orders by `workId` desc (creation order). So this
-    // really reads "of the 200 newest native items overall, the ones in
-    // this state" -- a busy item history could push an old-but-still-open
-    // item's sessions out of this tick's reach. That pagination gap is a
-    // separate follow-up issue, not fixed here.
-    const response = await fetchImpl(
-      `${consoleUrl}/api/work/v1/items?state=${state}&limit=200`,
-      { headers: { authorization: `Bearer ${deps.bearer}` } },
-    );
-    if (!response.ok) {
-      throw new Error(`GET /items?state=${state} -> ${response.status}`);
-    }
-    const body = (await response.json()) as ItemsResponse;
-    for (const item of body.items) {
-      for (const session of item.sessions) {
-        await touchExpiry(session.sessionId, expireAt);
-        pinned.push(session.sessionId);
+
+  // Pages one state until the API stops offering a `nextCursor` -- that,
+  // not a single `limit=200` read, is what covers every open item
+  // regardless of how many native items the fleet has created in total.
+  // (Issue #1546: `limit=200` alone reads as "the 200 open items", but
+  // `work-router.ts`'s `list` handler filters by state AFTER reading only
+  // the 200 newest native items overall, so a single unpaginated read
+  // silently drops any open item older than that.) `MAX_PAGES` (plus one
+  // exhaustion-probe request -- see its own comment) bounds this loop even
+  // if the API keeps answering a cursor forever.
+  async function pinState(state: 'running' | 'parked'): Promise<void> {
+    let cursor: string | undefined;
+    for (let page = 0; page <= MAX_PAGES; page += 1) {
+      const url = new URL(`${consoleUrl}/api/work/v1/items`);
+      url.searchParams.set('state', state);
+      url.searchParams.set('limit', String(PAGE_LIMIT));
+      if (cursor !== undefined) url.searchParams.set('cursor', cursor);
+      const response = await fetchImpl(url.toString(), {
+        headers: { authorization: `Bearer ${deps.bearer}` },
+      });
+      if (!response.ok) {
+        throw new Error(`GET /items?state=${state} -> ${response.status}`);
+      }
+      const body = (await response.json()) as ItemsResponse;
+      for (const item of body.items) {
+        for (const session of item.sessions) {
+          await touchExpiry(session.sessionId, expireAt);
+          pinned.push(session.sessionId);
+        }
+      }
+      if (body.nextCursor === undefined) return;
+      cursor = body.nextCursor;
+      if (page === MAX_PAGES) {
+        // Only reached after the exhaustion probe (the (MAX_PAGES + 1)th
+        // request) itself came back still carrying a cursor -- genuine
+        // misbehavior, not the exactly-full-history boundary case.
+        throw new Error(
+          `GET /items?state=${state} kept returning nextCursor past ` +
+            `${MAX_PAGES} pages (plus one exhaustion probe) -- aborting ` +
+            `rather than scanning forever`,
+        );
       }
     }
   }
+
+  // The two states' passes are independent: this reaper exists
+  // specifically to keep sessions from silently aging out (issue #1546),
+  // so a failure sweeping `running` must never suppress the `parked` pass
+  // -- that coupling would silently leave a whole state's sessions
+  // unpinned, the same shape of bug as this repo's incident #1548 (a
+  // silent drain failure). Every state gets its chance to run before this
+  // function decides whether to fail.
+  const failures: { state: string; error: unknown }[] = [];
+  for (const state of ['running', 'parked'] as const) {
+    try {
+      await pinState(state);
+    } catch (error) {
+      failures.push({ state, error });
+    }
+  }
+
+  if (failures.length > 0) {
+    const detail = failures
+      .map(
+        ({ state, error }) =>
+          `${state} (${error instanceof Error ? error.message : String(error)})`,
+      )
+      .join('; ');
+    throw new Error(
+      `session-pin sweep failed for ${failures.length}/2 state(s): ${detail}`,
+    );
+  }
+
   return { pinned };
 }
 

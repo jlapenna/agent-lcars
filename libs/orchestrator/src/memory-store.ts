@@ -117,15 +117,25 @@ export class MemoryStore implements OrchestratorStore {
     return true;
   }
 
-  async listNativeTasks(limit?: number): Promise<VersionedTask[]> {
+  async listNativeTasks(
+    limit?: number,
+    before?: string,
+  ): Promise<VersionedTask[]> {
     // Newest first, matching `FirestoreStore`: `workId` is a ULID, so
     // descending lexicographic order on it is descending creation order.
+    // `before`, when given, drops everything from `workId === before`
+    // onward -- the same "strictly after the cursor, in this same order"
+    // cut `FirestoreStore.startAfter` makes.
     const native = [...this.#tasks.values()]
-      .filter((entry) => isWorkAnchor(entry.task.task))
       .map((entry) => {
         const id = entry.task.task;
-        return { entry, workId: isWorkAnchor(id) ? id.workId : '' };
+        return { entry, workId: isWorkAnchor(id) ? id.workId : undefined };
       })
+      .filter(
+        (item): item is { entry: VersionedTask; workId: string } =>
+          item.workId !== undefined &&
+          (before === undefined || item.workId < before),
+      )
       .sort((a, b) => b.workId.localeCompare(a.workId))
       .map(({ entry }) => entry);
     return structuredClone(native.slice(0, limit ?? 200));

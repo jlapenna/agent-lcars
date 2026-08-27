@@ -214,7 +214,10 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
-  async listNativeTasks(limit?: number): Promise<VersionedTask[]> {
+  async listNativeTasks(
+    limit?: number,
+    before?: string,
+  ): Promise<VersionedTask[]> {
     // The `orderBy` IS the filter. Firestore excludes any document that
     // lacks the ordered field entirely, and a GitHub-anchored task
     // document stores `task.task.repo`/`task.task.issue` with no
@@ -229,10 +232,13 @@ export class FirestoreStore implements OrchestratorStore {
     // same automatic single-field index (Firestore indexes both
     // directions), and `limit` bounds the read itself rather than reading
     // every native task ever created just to slice it down after.
-    const snapshot = await this.#tasks
-      .orderBy('task.task.workId', 'desc')
-      .limit(limit ?? 200)
-      .get();
+    let query = this.#tasks.orderBy('task.task.workId', 'desc');
+    // `startAfter` on a single orderBy'd field takes the field's value
+    // directly (no document snapshot needed) and returns strictly older
+    // entries than it in this same order -- exactly "the page after the
+    // one that ended in `before`".
+    if (before !== undefined) query = query.startAfter(before);
+    const snapshot = await query.limit(limit ?? 200).get();
     return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }
 
