@@ -34,7 +34,10 @@ export interface OrchestratorStore {
   /**
    * Atomically leases up to `limit` pending or expired outbox entries. Every
    * returned entry is exclusively owned by its `claimId` until
-   * `leaseExpiresAt`; attempts increments only for claims actually acquired.
+   * `leaseExpiresAt`; attempts increments only for claims actually acquired
+   * -- including expired-lease recovery, which is a claim but not itself a
+   * delivery attempt (see `OutboxEntry.attempts`'s doc comment in
+   * `model.ts`).
    *
    * `excludeEntryIds` (#1548), when given, skips those entryIds when
    * choosing which *pending* entries to claim -- it does not affect expired-
@@ -43,6 +46,15 @@ export interface OrchestratorStore {
    * being reclaimed ahead of every other pending entry: without it, an
    * unordered pending query has no way to make forward progress past a
    * single entry that keeps losing the race back to the front of the queue.
+   *
+   * A *pending* entry whose `nextAttemptAt` is still in the future (#1548
+   * follow-up: backoff after a delivery failure) is likewise skipped --
+   * silently, the same as `excludeEntryIds` -- until that instant passes;
+   * this never affects expired-lease recovery either, since a lease can
+   * only be outstanding on an entry that was itself already eligible to be
+   * claimed. Skipping it this way, rather than returning it and having the
+   * caller decline to act on it, keeps a backing-off entry from being
+   * mistaken for a claim this invocation attempted and failed.
    */
   claimPendingOutbox(input: {
     limit: number;
@@ -55,12 +67,25 @@ export interface OrchestratorStore {
    * false for missing entries and stale claims without changing stored state.
    * `'failed'` (#1548) retires an entry permanently -- see `OutboxEntry`'s
    * `failed` state in `model.ts`.
+   *
+   * `firstFailedAt`/`nextAttemptAt`/`deliveryFailures` (#1548 follow-up),
+   * when given, are written onto the entry atomically with the state
+   * transition -- the caller uses this when releasing a real delivery
+   * failure back to `pending` (or retiring it to `failed`) to record the
+   * elapsed-time/backoff bookkeeping in the same transaction, rather than
+   * as a separate write a crash could tear apart from the settle itself.
+   * Omitted (`undefined`) leaves the corresponding field on the stored
+   * entry unchanged -- every other settle path (a successful delivery, a
+   * permanent failure) omits all three and so never touches them.
    */
   settleOutbox(input: {
     entryId: string;
     claimId: string;
     state: 'pending' | 'done' | 'failed';
     now: string;
+    firstFailedAt?: string;
+    nextAttemptAt?: string;
+    deliveryFailures?: number;
   }): Promise<boolean>;
 
   /** Live runs whose lease expired at or before `now`; the sweeper's feed. */

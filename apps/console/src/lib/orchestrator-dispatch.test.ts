@@ -13,7 +13,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import {
   drainOutbox,
-  MAX_OUTBOX_DELIVERY_ATTEMPTS,
+  OUTBOX_BACKOFF_BASE_MS,
+  OUTBOX_BACKOFF_CAP_MS,
+  OUTBOX_RETIRE_AFTER_MS,
   OUTBOX_STALE_REPORT_AGE_MS,
 } from './orchestrator-dispatch';
 
@@ -367,7 +369,7 @@ describe('drainOutbox: dispatch-run', () => {
   });
 
   it('leaves the entry pending and records a failure on a non-204 response, retrying later', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
 
     const failing = fakeFetch(500);
@@ -376,6 +378,7 @@ describe('drainOutbox: dispatch-run', () => {
       orchestrator,
       tokens,
       fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
     });
 
     expect(first.dispatched).toEqual([]);
@@ -387,12 +390,19 @@ describe('drainOutbox: dispatch-run', () => {
     ]);
     expect((await store.readRun(run.runId))?.state).toBe('pending');
 
+    // #1548 follow-up: the failure above started this entry's backoff
+    // window (see `OUTBOX_BACKOFF_BASE_MS`) -- advance past it, otherwise
+    // this immediate retry is exactly the "fast dispatch/completion drain
+    // cadence hammering a currently-failing entry" the backoff exists to
+    // prevent (covered on its own below).
+    clock.advanceMinutes(2);
     const succeeding = fakeFetch(204);
     const second = await drainOutbox({
       store,
       orchestrator,
       tokens,
       fetchImpl: succeeding.fetchImpl,
+      now: () => clock.now(),
     });
 
     expect(second.dispatched).toEqual([run.runId]);
@@ -1544,15 +1554,20 @@ describe('drainOutbox: report-outcome', () => {
 // hand back first, every invocation anywhere in the fleet claimed it,
 // failed it, and gave up before ever reaching any other entry.
 describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
-  /** A GitHub-anchored run for `issue`, dispatched and reported `finished`,
-   *  so it has exactly one pending `report-outcome` entry left. Each test
-   *  below needs more than one such entry pending at once -- `started()`
-   *  above is pinned to a single fixed `TASK`, so this dials the issue
-   *  number instead. */
-  async function reportedRun(
+  /** Requests a GitHub-anchored run for `issue` and drains just its own
+   *  dispatch-run entry, confirming the run so `report()` accepts it.
+   *  Deliberately does NOT also report the outcome -- see the two-phase
+   *  comment at this function's call site below for why. `now` must be
+   *  the test's own fixture clock: a mismatched real-wall-clock `now`
+   *  here could make this drain observe an *other*, unrelated pending
+   *  entry as stale/backing-off against the real clock (since #1548's
+   *  follow-up), spuriously touching state a fixture-clock-timed
+   *  assertion elsewhere in the test depends on. */
+  async function dispatchedRun(
     orchestrator: Orchestrator,
     store: MemoryStore,
     issue: number,
+    now: () => string,
   ): Promise<string> {
     const requested = await orchestrator.request({
       taskId: { repo: 'octo/example', issue },
@@ -1561,29 +1576,40 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
     });
     if (isRefusal(requested)) throw new Error('unexpected refusal');
     const run = decidedRun(requested);
-    // Drains just this task's own dispatch-run entry (the only one pending
-    // at this point), confirming the run so `report()` accepts it.
     await drainOutbox({
       store,
       orchestrator,
       tokens,
       fetchImpl: fakeFetch(204).fetchImpl,
+      now,
     });
-    const reported = await orchestrator.report(run.runId, { ok: true });
-    if (isRefusal(reported)) throw new Error('unexpected refusal');
     return run.runId;
   }
 
   it('does not let one persistently-failing report-outcome entry block a later, healthy one', async () => {
     const { clock, store, orchestrator } = fixture();
 
-    // Two independent tasks, each with its own pending report-outcome
-    // entry. #101's is created first, so an unordered claim query hands it
-    // back before #102's -- exactly the shape that starved 145 of 162 real
-    // pending entries: every one of them was created *after* the handful
-    // that kept winning the race to the front of the queue.
-    const badRunId = await reportedRun(orchestrator, store, 101);
-    const goodRunId = await reportedRun(orchestrator, store, 102);
+    // Two independent tasks, each dispatched (and only dispatched) first,
+    // so no *report-outcome* entry exists yet while either dispatch-run
+    // entry is being drained -- with one already pending, `drainOutbox`'s
+    // default limit would otherwise happily claim it too, alongside the
+    // one this call actually intends to touch.
+    const badRunId = await dispatchedRun(orchestrator, store, 101, () =>
+      clock.now(),
+    );
+    const goodRunId = await dispatchedRun(orchestrator, store, 102, () =>
+      clock.now(),
+    );
+
+    // *Now* report both outcomes -- #101's report-outcome entry is created
+    // first, so an unordered claim query hands it back before #102's --
+    // exactly the shape that starved 145 of 162 real pending entries:
+    // every one of them was created *after* the handful that kept winning
+    // the race to the front of the queue.
+    const badReport = await orchestrator.report(badRunId, { ok: true });
+    if (isRefusal(badReport)) throw new Error('unexpected refusal');
+    const goodReport = await orchestrator.report(goodRunId, { ok: true });
+    if (isRefusal(goodReport)) throw new Error('unexpected refusal');
 
     const fetchImpl = (async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -1612,7 +1638,11 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
     ]);
 
     // The failing entry is released for a later drain, not stuck forever
-    // and not silently dropped.
+    // and not silently dropped -- but its first failure also started its
+    // backoff window (see the dedicated backoff tests below), so the next
+    // drain has to land after that window for the retry to actually be
+    // attempted.
+    clock.advanceMinutes(2);
     const retry = await drainOutbox({
       store,
       orchestrator,
@@ -1622,21 +1652,68 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
     });
     expect(retry.reported).toEqual([badRunId]);
   });
+});
 
-  it('retires a report-outcome entry after MAX_OUTBOX_DELIVERY_ATTEMPTS failed deliveries instead of retrying it forever', async () => {
+// #1548 follow-up (review thread PRRT_kwDOTemFxc6c54X_, P1): the original
+// version of this fix retired an entry after `MAX_OUTBOX_DELIVERY_ATTEMPTS`
+// (20) claims, with no backoff between them. Drains fire on every dispatch
+// and completion, on top of the 30-minute reconcile heartbeat -- so normal
+// fleet traffic could burn through 20 claims within minutes, and a lease
+// recovered after a crash counted as a "claim" too, without a single
+// delivery ever having been attempted. A transient GitHub outage or a bout
+// of rate-limiting would therefore permanently lose a dispatch or outcome
+// report -- worse than the unbounded-retry bug #1548 itself fixed.
+// Retirement is now gated on elapsed time since the *first actual delivery
+// failure* (`OUTBOX_RETIRE_AFTER_MS`), with exponential backoff between
+// attempts (`OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) so the entry isn't
+// re-attempted on every single drain while it's failing.
+describe('drainOutbox: elapsed-time retirement and backoff (#1548 follow-up)', () => {
+  // Unlike the `reportedRun` above (which never touches backoff/retirement
+  // timing), every call here MUST share the one fixture clock for its
+  // internal drain -- otherwise that drain's default real-wall-clock `now`
+  // could claim and re-judge some *other* entry's retirement/backoff state
+  // (already set against the fixture clock's simulated time) against the
+  // real clock instead, which is wildly, spuriously far in the future
+  // relative to it.
+  async function reportedRun(
+    orchestrator: Orchestrator,
+    store: MemoryStore,
+    issue: number,
+    now: () => string,
+  ): Promise<string> {
+    const requested = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue },
+      requestId: `req-${issue}`,
+      pipeline: 'claude',
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const run = decidedRun(requested);
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+      now,
+    });
+    const reported = await orchestrator.report(run.runId, { ok: true });
+    if (isRefusal(reported)) throw new Error('unexpected refusal');
+    return run.runId;
+  }
+
+  it('does not retire an entry that keeps failing within the retirement window, even after far more than 20 (the old attempt cap) claims', async () => {
     const { clock, store, orchestrator } = fixture();
-    const runId = await reportedRun(orchestrator, store, 201);
+    const runId = await reportedRun(orchestrator, store, 401, () =>
+      clock.now(),
+    );
     const entryId = `outcome/${runId}`;
     const failing = fakeFetch(500);
 
-    // Every attempt up to and including the budget still fails "normally"
-    // (released back to `pending`, reported as a failure) -- it's the
-    // *next* attempt past the budget whose outcome changes.
-    for (
-      let attempt = 1;
-      attempt <= MAX_OUTBOX_DELIVERY_ATTEMPTS;
-      attempt += 1
-    ) {
+    // 25 real delivery failures, each one advancing the clock by the full
+    // backoff cap (so every drain lands past backoff, regardless of which
+    // step it's on) -- 25 * 30 minutes is 12.5 hours, comfortably inside
+    // `OUTBOX_RETIRE_AFTER_MS` (72 hours), but already well past the old
+    // `MAX_OUTBOX_DELIVERY_ATTEMPTS` (20) claim-count cap this replaces.
+    for (let attempt = 1; attempt <= 25; attempt += 1) {
       const result = await drainOutbox({
         store,
         orchestrator,
@@ -1647,21 +1724,233 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
       expect(result.failed).toEqual([
         { entryId, error: expect.stringContaining('500') },
       ]);
+      clock.advanceMinutes(OUTBOX_BACKOFF_CAP_MS / 60_000);
     }
 
-    // The budget is exhausted: the entry is retired, not released back to
-    // `pending` -- a later drain finds nothing left to claim for it, and
-    // (unlike every attempt above) never calls GitHub again.
+    // Still not retired: the entry is still `pending` and still gets a
+    // real delivery attempt, not silently skipped.
     const callsBefore = failing.calls.length;
-    const afterBudget = await drainOutbox({
+    const stillTrying = await drainOutbox({
       store,
       orchestrator,
       tokens,
       fetchImpl: failing.fetchImpl,
       now: () => clock.now(),
     });
-    expect(afterBudget).toEqual({ dispatched: [], reported: [], failed: [] });
+    expect(stillTrying.failed).toEqual([
+      { entryId, error: expect.stringContaining('500') },
+    ]);
+    expect(failing.calls.length).toBe(callsBefore + 1);
+  });
+
+  it('retires an entry once it has been failing longer than the retirement window', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 402, () =>
+      clock.now(),
+    );
+    const entryId = `outcome/${runId}`;
+    const failing = fakeFetch(500);
+
+    const first = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(first.failed).toEqual([
+      { entryId, error: expect.stringContaining('500') },
+    ]);
+
+    // Well past the retirement window since that first failure -- this
+    // drain's delivery attempt is the one that tips it over.
+    clock.advanceMinutes(OUTBOX_RETIRE_AFTER_MS / 60_000 + 60);
+    const tipsItOver = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(tipsItOver.failed).toEqual([
+      { entryId, error: expect.stringContaining('500') },
+    ]);
+
+    // Retired: a later drain finds nothing left to claim for it, and
+    // (unlike every attempt above) never calls GitHub again.
+    const callsBefore = failing.calls.length;
+    const afterRetirement = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(afterRetirement).toEqual({
+      dispatched: [],
+      reported: [],
+      failed: [],
+    });
     expect(failing.calls.length).toBe(callsBefore);
+  });
+
+  it('backoff suppresses re-attempts until it expires', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 403, () =>
+      clock.now(),
+    );
+    const entryId = `outcome/${runId}`;
+    const failing = fakeFetch(500);
+
+    const first = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(first.failed).toEqual([
+      { entryId, error: expect.stringContaining('500') },
+    ]);
+    const callsAfterFirstFailure = failing.calls.length;
+
+    // Immediately re-draining (same instant, no clock advance) is exactly
+    // what a dispatch/completion-triggered drain landing right after a
+    // failure looks like -- the entry is still backing off, so no delivery
+    // call is made at all, and the drain simply finds nothing to claim.
+    const whileBackingOff = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(whileBackingOff).toEqual({
+      dispatched: [],
+      reported: [],
+      failed: [],
+    });
+    expect(failing.calls.length).toBe(callsAfterFirstFailure);
+
+    // Once backoff has elapsed, the entry is claimable and delivered again
+    // -- this time successfully.
+    clock.advanceMinutes(OUTBOX_BACKOFF_BASE_MS / 60_000 + 1);
+    const succeeding = fakeFetch(201);
+    const afterBackoff = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: succeeding.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(afterBackoff.reported).toEqual([runId]);
+    expect(succeeding.calls.length).toBe(1);
+  });
+
+  it('a backing-off entry does not prevent a different, healthy entry from being delivered in the same drain', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const badRunId = await reportedRun(orchestrator, store, 404, () =>
+      clock.now(),
+    );
+
+    // Put #404 into backoff via a standalone failing drain first (this
+    // models a *prior* drain call's failure, distinct from the
+    // `failedThisDrain` same-invocation exclusion covered above).
+    const failFirst = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(500).fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(failFirst.failed).toEqual([
+      {
+        entryId: `outcome/${badRunId}`,
+        error: expect.stringContaining('500'),
+      },
+    ]);
+
+    // A second, healthy task's report-outcome entry, created and pending
+    // only now -- #404 is still backing off (no clock advance) throughout.
+    const goodRunId = await reportedRun(orchestrator, store, 405, () =>
+      clock.now(),
+    );
+
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/issues/404/')) {
+        throw new Error('must not be re-attempted while backing off');
+      }
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(result.reported).toEqual([goodRunId]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('lease recovery alone does not advance the failure state toward retirement', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    const entryId = `dispatch/${run.runId}`;
+
+    // Claim the dispatch-run entry, let its lease expire, and repeat --
+    // simulating a drain process that crashes immediately after claiming,
+    // before ever attempting a single GitHub call. `attempts` climbs with
+    // every recovery, but `settleOutbox` (and therefore
+    // `firstFailedAt`/`nextAttemptAt`) is never touched.
+    for (let i = 0; i < 25; i += 1) {
+      const [claimed] = await store.claimPendingOutbox({
+        limit: 1,
+        now: clock.now(),
+        leaseExpiresAt: new Date(
+          Date.parse(clock.now()) + OUTBOX_LEASE_MS,
+        ).toISOString(),
+      });
+      expect(claimed?.entryId).toBe(entryId);
+      expect(claimed?.firstFailedAt).toBeUndefined();
+      expect(claimed?.nextAttemptAt).toBeUndefined();
+      clock.advanceMinutes(6); // past OUTBOX_LEASE_MS, so it recovers again
+    }
+
+    // `attempts` is now 26 (well past the old `MAX_OUTBOX_DELIVERY_ATTEMPTS`
+    // of 20), yet a real delivery attempt made right now is treated as this
+    // entry's *first* failure: it is not skipped for backoff, and not
+    // retired -- both of which would only be possible if some earlier
+    // recovery above had wrongly advanced the failure state.
+    const failing = fakeFetch(500);
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(failing.calls.length).toBe(1);
+    expect(result.failed).toEqual([
+      { entryId, error: expect.stringContaining('500') },
+    ]);
+
+    // Decisively: it was released back to `pending`, not retired -- if the
+    // 25 lease recoveries above had wrongly counted toward retirement (via
+    // the polluted `attempts` counter, already past the old 20-claim cap),
+    // this single real failure would have retired it immediately instead.
+    // Confirm by letting backoff elapse and successfully delivering it.
+    clock.advanceMinutes(OUTBOX_BACKOFF_BASE_MS / 60_000 + 1);
+    const retry = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(retry.dispatched).toEqual([run.runId]);
   });
 });
 

@@ -73,9 +73,16 @@ export class MemoryStore implements OrchestratorStore {
         (entry) =>
           entry.state === 'leased' && Date.parse(entry.leaseExpiresAt) <= now,
       ),
+      // #1548 follow-up: a pending entry still backing off from its last
+      // delivery failure (`nextAttemptAt` in the future) is skipped here,
+      // the same as an explicitly excluded one -- see
+      // `OrchestratorStore.claimPendingOutbox`'s doc comment.
       ...entries.filter(
         (entry) =>
-          entry.state === 'pending' && !(excluded?.has(entry.entryId) ?? false),
+          entry.state === 'pending' &&
+          !(excluded?.has(entry.entryId) ?? false) &&
+          (entry.nextAttemptAt === undefined ||
+            Date.parse(entry.nextAttemptAt) <= now),
       ),
     ].slice(0, input.limit);
 
@@ -100,6 +107,9 @@ export class MemoryStore implements OrchestratorStore {
     claimId: string;
     state: 'pending' | 'done' | 'failed';
     now: string;
+    firstFailedAt?: string;
+    nextAttemptAt?: string;
+    deliveryFailures?: number;
   }): Promise<boolean> {
     const entry = this.#outbox.get(input.entryId);
     if (
@@ -118,6 +128,18 @@ export class MemoryStore implements OrchestratorStore {
       ...rest,
       state: input.state,
       updatedAt: input.now,
+      // #1548 follow-up: omitted (`undefined`) leaves the field as `rest`
+      // already carried it forward from `entry` -- only a caller settling
+      // an actual delivery failure passes these.
+      ...(input.firstFailedAt === undefined
+        ? {}
+        : { firstFailedAt: input.firstFailedAt }),
+      ...(input.nextAttemptAt === undefined
+        ? {}
+        : { nextAttemptAt: input.nextAttemptAt }),
+      ...(input.deliveryFailures === undefined
+        ? {}
+        : { deliveryFailures: input.deliveryFailures }),
     });
     return true;
   }

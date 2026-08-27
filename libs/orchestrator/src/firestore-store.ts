@@ -177,13 +177,20 @@ export class FirestoreStore implements OrchestratorStore {
         );
       });
       const excluded = input.excludeEntryIds;
-      const pendingCandidates =
-        excluded === undefined
-          ? pendingSnapshot.docs
-          : pendingSnapshot.docs.filter(
-              (doc) =>
-                !excluded.has(outboxEntrySchema.parse(doc.data()).entryId),
-            );
+      // #1548 follow-up: a pending entry still backing off from its last
+      // delivery failure (`nextAttemptAt` in the future) is skipped here,
+      // the same as an explicitly excluded one -- it never affects expired-
+      // lease recovery above, since a lease can only be outstanding on an
+      // entry that was itself already eligible to be claimed. See
+      // `OrchestratorStore.claimPendingOutbox`'s doc comment.
+      const pendingCandidates = pendingSnapshot.docs.filter((doc) => {
+        const entry = outboxEntrySchema.parse(doc.data());
+        return (
+          !(excluded?.has(entry.entryId) ?? false) &&
+          (entry.nextAttemptAt === undefined ||
+            Date.parse(entry.nextAttemptAt) <= cutoff)
+        );
+      });
       const eligible = [...expired, ...pendingCandidates].slice(0, input.limit);
 
       return eligible.map((doc): LeasedOutboxEntry => {
@@ -208,6 +215,9 @@ export class FirestoreStore implements OrchestratorStore {
     claimId: string;
     state: 'pending' | 'done' | 'failed';
     now: string;
+    firstFailedAt?: string;
+    nextAttemptAt?: string;
+    deliveryFailures?: number;
   }): Promise<boolean> {
     const ref = this.#outboxRef(input.entryId);
     return this.#firestore.runTransaction(async (tx) => {
@@ -226,6 +236,18 @@ export class FirestoreStore implements OrchestratorStore {
         ...rest,
         state: input.state,
         updatedAt: input.now,
+        // #1548 follow-up: omitted (`undefined`) leaves the field as
+        // `rest` already carried it forward from `current` -- only a
+        // caller settling an actual delivery failure passes these.
+        ...(input.firstFailedAt === undefined
+          ? {}
+          : { firstFailedAt: input.firstFailedAt }),
+        ...(input.nextAttemptAt === undefined
+          ? {}
+          : { nextAttemptAt: input.nextAttemptAt }),
+        ...(input.deliveryFailures === undefined
+          ? {}
+          : { deliveryFailures: input.deliveryFailures }),
       };
       tx.set(ref, settled);
       return true;

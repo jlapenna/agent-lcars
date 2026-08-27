@@ -31,9 +31,14 @@ export type { DispatchTokenProvider };
  *
  * Nothing here is durable itself - `store.claimPendingOutbox` /
  * `store.settleOutbox` own that. A failed GitHub call just leaves its entry
- * `pending` for a later `drainOutbox` call to retry, up to
- * `MAX_OUTBOX_DELIVERY_ATTEMPTS` attempts -- past that it is retired
- * (`failed`) rather than retried forever (#1548).
+ * `pending` for a later `drainOutbox` call to retry, with exponential
+ * backoff between attempts (`OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) until it has
+ * been failing for `OUTBOX_RETIRE_AFTER_MS` -- past that it is retired
+ * (`failed`) rather than retried forever (#1548, and its own follow-up: a
+ * bound keyed on claim *count* rather than failure *time* let normal fleet
+ * traffic -- dispatches and completions each trigger a drain, on top of the
+ * 30-minute reconcile -- burn through it in minutes during a transient
+ * GitHub outage, which is a worse failure than the one being fixed).
  *
  * Every GitHub call resolves its bearer token per-repo through `tokens`
  * (see `github-app-tokens.ts`) rather than a single ambient token, so a
@@ -53,16 +58,45 @@ export type { DispatchTokenProvider };
  * calls. */
 const GITHUB_API = 'https://api.github.com';
 
-/** Bounds how many times a single outbox entry can be released back to
- *  `pending` before it is retired (`failed`) instead. GitHub outages, token
- *  hiccups, and secondary rate limits normally clear within a handful of
- *  drain cycles (the fleet's reconcile heartbeat alone runs every 30
- *  minutes, on top of whichever webhook/completion traffic triggers a drain
- *  in between); twenty attempts gives that kind of transient failure ample
- *  room while still guaranteeing a genuinely undeliverable entry stops
- *  consuming a claim slot forever (#1548 -- one entry reached 485 attempts
- *  over six days with no bound at all). */
-export const MAX_OUTBOX_DELIVERY_ATTEMPTS = 20;
+/**
+ * Bounds how long a single outbox entry may keep failing actual delivery
+ * attempts, measured from the first one (`OutboxEntry.firstFailedAt`),
+ * before it is retired (`failed`) instead of released back to `pending`
+ * (#1548 follow-up). Deliberately a *time* budget, not a claim-count one:
+ * drains fire on every dispatch and completion in addition to the
+ * 30-minute reconcile heartbeat, so a count-based budget (the original
+ * version of this fix used `attempts >= 20`) can be exhausted by ordinary
+ * fleet traffic within minutes of a transient GitHub outage or a bout of
+ * rate-limiting -- turning something that should just clear on its own
+ * into a permanently lost dispatch or outcome report, which is worse than
+ * the unbounded-retry bug this PR fixes (#1548's own backlog: one entry
+ * reached 485 attempts over six days with no bound at all).
+ *
+ * 72 hours (three days) is comfortably longer than any plausible GitHub
+ * outage or rate-limit episode (these clear in minutes to low hours, not
+ * days) while still being well short of the six-day backlog #1548
+ * produced, so an entry that is *actually* dead -- not just caught in a
+ * passing outage -- still gets retired instead of accumulating forever.
+ * Paired with `OUTBOX_BACKOFF_CAP_MS` below, an entry failing for the
+ * entire window gets on the order of 100-150 real delivery attempts, not
+ * thousands.
+ */
+export const OUTBOX_RETIRE_AFTER_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Backoff between delivery attempts for a failing outbox entry (#1548
+ * follow-up), so the fast dispatch/completion drain cadence doesn't
+ * hammer an entry that is currently failing -- only the slower, steadier
+ * reconcile heartbeat (or a drain that happens to land after backoff has
+ * elapsed) gets to retry it. Doubles per consecutive delivery failure
+ * (`OutboxEntry.deliveryFailures`) starting at one minute, capped at 30
+ * minutes -- deliberately the same as the reconcile interval, so once an
+ * entry's backoff has ramped all the way up it settles into being retried
+ * roughly once per reconcile pass, no faster, regardless of how much
+ * dispatch/completion traffic happens in between.
+ */
+export const OUTBOX_BACKOFF_BASE_MS = 60_000;
+export const OUTBOX_BACKOFF_CAP_MS = 30 * 60_000;
 
 /** Bounds when a `report-outcome` entry is old enough to pay for an extra
  *  GitHub lookup (`isAnchorOpen`) before delivery, checking whether its
@@ -102,9 +136,11 @@ export interface DrainOutboxResult {
 /**
  * Claims up to `limit` available outbox entries and attempts to deliver each.
  * Never throws: every handled entry is either settled (`done`), retired
- * (`failed`, once it exhausts `MAX_OUTBOX_DELIVERY_ATTEMPTS`), or explicitly
- * released (`pending`) with its failure recorded and logged. If the process
- * itself dies, the durable lease expires so a later invocation can retry it.
+ * (`failed`, once it has been failing for `OUTBOX_RETIRE_AFTER_MS`), or
+ * explicitly released (`pending`, with backoff -- see
+ * `OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) with its failure recorded and logged.
+ * If the process itself dies, the durable lease expires so a later
+ * invocation can retry it.
  *
  * #1548: earlier versions stopped the whole drain on the first failure, on
  * the theory that continuing would just let this same invocation immediately
@@ -893,12 +929,12 @@ function githubApiBaseUrl(
  * anywhere, only a raw Firestore query eventually surfaced it). `outcome`
  * says what happened to the entry as a result, so a reader doesn't have to
  * cross-reference the outbox document itself to know whether this was
- * retried, retired for exhausting its attempt budget, retired because its
- * anchor closed, or was never retryable to begin with. `'anchor-closed'` is
- * deliberately distinct from `'retired'` (the `MAX_OUTBOX_DELIVERY_ATTEMPTS`
- * case) even though both settle the entry `failed` -- one is "GitHub kept
- * rejecting this," the other is "the anchor resolved before we got to it,"
- * and a reader scanning logs should be able to tell which happened without
+ * retried, retired for failing longer than `OUTBOX_RETIRE_AFTER_MS`,
+ * retired because its anchor closed, or was never retryable to begin with.
+ * `'anchor-closed'` is deliberately distinct from `'retired'` even though
+ * both settle the entry `failed` -- one is "GitHub kept rejecting this,"
+ * the other is "the anchor resolved before we got to it," and a reader
+ * scanning logs should be able to tell which happened without
  * cross-referencing the entry's attempt count.
  */
 function logOutboxFailure(
@@ -933,11 +969,24 @@ function recordPermanentFailure(
 }
 
 /**
- * Records, logs, and settles a retryable delivery failure (#1548). Below
- * `MAX_OUTBOX_DELIVERY_ATTEMPTS`, the entry is released back to `pending`
- * for a later attempt, exactly as before; once it reaches that bound it is
- * retired (`failed`) instead, so a genuinely undeliverable entry stops
- * consuming a claim slot forever rather than retrying indefinitely.
+ * Records, logs, and settles a retryable delivery failure (#1548, and its
+ * follow-up: see `OUTBOX_RETIRE_AFTER_MS`'s doc comment for why this is
+ * gated on elapsed failure time rather than claim count). This only runs
+ * for an *actual* delivery attempt that failed -- unlike `attempts` (which
+ * the store also bumps on lease recovery, before any delivery is even
+ * attempted), `entry.firstFailedAt`/`deliveryFailures` therefore only ever
+ * advance here, so a crashed drain that keeps losing its lease without
+ * ever reaching GitHub can never by itself push an entry toward
+ * retirement or backoff.
+ *
+ * Below `OUTBOX_RETIRE_AFTER_MS` (measured from the first such failure),
+ * the entry is released back to `pending` for a later attempt, with
+ * `nextAttemptAt` set so `claimPendingOutbox` skips it until backoff
+ * elapses (`OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) -- exactly as before this
+ * follow-up, except that a fast-firing drain can no longer reclaim it
+ * immediately. Once the window is exceeded, it is retired (`failed`)
+ * instead, so a genuinely undeliverable entry stops consuming a claim slot
+ * forever rather than retrying indefinitely.
  */
 async function settleRetryableFailure(
   deps: DispatchDeps,
@@ -947,9 +996,35 @@ async function settleRetryableFailure(
 ): Promise<void> {
   const message = errorMessage(error);
   result.failed.push({ entryId: entry.entryId, error: message });
-  const retired = entry.attempts >= MAX_OUTBOX_DELIVERY_ATTEMPTS;
-  logOutboxFailure(entry, message, retired ? 'retired' : 'retrying');
-  await settleClaim(deps, entry, retired ? 'failed' : 'pending');
+
+  const nowStr = now(deps);
+  // Absent means this entry has never failed an actual delivery attempt
+  // before -- treated as failing for the first time right now, never
+  // backdated (see `OutboxEntry.firstFailedAt`'s doc comment in model.ts).
+  const firstFailedAt = entry.firstFailedAt ?? nowStr;
+  const retired =
+    Date.parse(nowStr) - Date.parse(firstFailedAt) >= OUTBOX_RETIRE_AFTER_MS;
+
+  if (retired) {
+    logOutboxFailure(entry, message, 'retired');
+    await settleClaim(deps, entry, 'failed', { now: nowStr, firstFailedAt });
+    return;
+  }
+
+  const deliveryFailures = (entry.deliveryFailures ?? 0) + 1;
+  const backoffMs = Math.min(
+    OUTBOX_BACKOFF_CAP_MS,
+    OUTBOX_BACKOFF_BASE_MS * 2 ** (deliveryFailures - 1),
+  );
+  const nextAttemptAt = new Date(Date.parse(nowStr) + backoffMs).toISOString();
+
+  logOutboxFailure(entry, message, 'retrying');
+  await settleClaim(deps, entry, 'pending', {
+    now: nowStr,
+    firstFailedAt,
+    nextAttemptAt,
+    deliveryFailures,
+  });
 }
 
 /** Same as {@link settleRetryableFailure}, but never throws: for the
@@ -978,11 +1053,26 @@ async function settleClaim(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
   state: 'pending' | 'done' | 'failed',
+  /** #1548 follow-up: the elapsed-time/backoff bookkeeping to persist
+   *  alongside the settle, when the caller is `settleRetryableFailure`.
+   *  `now` lets that caller pin the exact instant its own retirement/
+   *  backoff math was computed against, rather than this function calling
+   *  `now(deps)` a second time and risking a (harmless but confusing)
+   *  mismatch against it. */
+  failureState?: {
+    now?: string;
+    firstFailedAt?: string;
+    nextAttemptAt?: string;
+    deliveryFailures?: number;
+  },
 ): Promise<boolean> {
   return deps.store.settleOutbox({
     entryId: entry.entryId,
     claimId: entry.claimId,
     state,
-    now: now(deps),
+    now: failureState?.now ?? now(deps),
+    firstFailedAt: failureState?.firstFailedAt,
+    nextAttemptAt: failureState?.nextAttemptAt,
+    deliveryFailures: failureState?.deliveryFailures,
   });
 }
