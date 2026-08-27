@@ -140,6 +140,14 @@ async function handleDispatchRun(
     return;
   }
 
+  if (run.executor === 'queue') {
+    await store.enqueueRun({ runId: run.runId, now: now(deps) });
+    await orchestrator.confirmDispatch(run.runId);
+    await settleClaim(deps, entry, 'done');
+    result.dispatched.push(run.runId);
+    return;
+  }
+
   const task = isWorkAnchor(run.task)
     ? (await store.readTask(run.task))?.task
     : undefined;

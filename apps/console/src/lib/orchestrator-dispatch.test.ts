@@ -1,4 +1,5 @@
 import {
+  decidedRun,
   expireLease,
   isRefusal,
   MAX_AUTO_RETRIES,
@@ -487,6 +488,41 @@ describe('drainOutbox: dispatch-run', () => {
     expect(again.dispatched).toEqual([]);
     expect(again.failed).toEqual([]);
     expect(neverCalled).not.toHaveBeenCalled();
+  });
+
+  it('a queue-executor run is enqueued and confirmed without calling GitHub', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { workId: '01QUEUEDRAINTESTFIXTUREX01' },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      executor: 'queue',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 't',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const runId = decidedRun(requested).runId;
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(result.dispatched).toEqual([runId]);
+    const run = await store.readRun(runId);
+    expect(run?.state).toBe('running');
+    expect(run?.queue).toEqual({ state: 'queued' });
   });
 });
 
