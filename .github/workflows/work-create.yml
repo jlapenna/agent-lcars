@@ -52,6 +52,13 @@ on:
         required: false
         default: ''
         type: string
+      resume_session_id:
+        description: >-
+          redispatch — session id to resume (sub-project 6); omitted means a
+          fresh session, same as before this input existed
+        required: false
+        default: ''
+        type: string
       console_url:
         description: Console origin hosting the work API
         required: false
@@ -88,6 +95,7 @@ jobs:
           REPO: ${{ inputs.repo }}
           PIPELINE: ${{ inputs.pipeline }}
           CRON: ${{ inputs.cron }}
+          RESUME_SESSION_ID: ${{ inputs.resume_session_id }}
         run: |
           set -euo pipefail
           api="$CONSOLE_URL/api/work/v1/items"
@@ -164,7 +172,16 @@ jobs:
               esac
               ;;
             redispatch)
-              status="$(call POST "$api/$ITEM_ID/redispatch")"
+              # resume_session_id (sub-project 6) is optional: an empty value
+              # sends the same bodyless POST this action always sent, so a
+              # plain redispatch still starts a fresh session exactly as
+              # before this input existed.
+              if [ -n "$RESUME_SESSION_ID" ]; then
+                body="$(jq -cn --arg s "$RESUME_SESSION_ID" '{resumeSessionId: $s}')"
+                status="$(call POST "$api/$ITEM_ID/redispatch" "$body")"
+              else
+                status="$(call POST "$api/$ITEM_ID/redispatch")"
+              fi
               echo "POST /api/work/v1/items/$ITEM_ID/redispatch -> $status"; show
               case "$status" in
                 200|409) echo "- redispatch $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
