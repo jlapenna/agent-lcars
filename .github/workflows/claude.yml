@@ -108,6 +108,12 @@ jobs:
       # This repo is the hosted-orchestrator thin executor (#1015) and
       # preserves the dispatch brief for trajectory evaluation.
       dispatch-bootstrap: true
+      # This repo's own dispatches run under the console's issue-side
+      # projections (sub-project 5): the console owns the eyes reaction,
+      # fleet claim, and park label/comment, so the lane skips its own
+      # claim step. Every other consumer omits this and keeps today's
+      # behavior.
+      control-plane-projections: true
       protected-snapshot: true
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
       agent-lcars-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}

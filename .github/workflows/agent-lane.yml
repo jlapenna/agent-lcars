@@ -165,6 +165,16 @@ on:
         required: false
         default: false
         type: boolean
+      control-plane-projections:
+        description: >-
+          When true, the console owns the issue-side eyes reaction, fleet
+          assignee claim, and park label/comment for this dispatch (sub-project
+          5) -- this lane skips its own claim step and the agent follows the
+          protocol's native rules instead of writing the issue directly. Default
+          false: every consumer's lane call is unchanged until it opts in.
+        required: false
+        default: false
+        type: boolean
       protected-snapshot:
         description: 'Upload the dispatch brief as a run artifact for evaluation'
         required: false
@@ -585,7 +595,7 @@ jobs:
       # The pickup comment is opencode's recorded divergence: its lane has
       # always posted one; the other lanes never have.
       - name: Claim the issue as the agent fleet
-        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' }}
+        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' && !inputs.control-plane-projections }}
         id: claim
         uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
         with:
@@ -654,6 +664,7 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           work: ${{ inputs.work }}
+          control-plane-projections: ${{ inputs.control-plane-projections }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -702,6 +713,7 @@ jobs:
           agent-fleet-login: ${{ inputs.agent-fleet-login }}
           agent-lcars-client-id: ${{ inputs.agent-lcars-client-id }}
           agent-lcars-private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          control-plane-projections: ${{ inputs.control-plane-projections }}
 
       # The real checkout, now that the App token exists: for
       # codex/opencode this one carries fetch-depth: 0 and the minted
@@ -1051,6 +1063,7 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           work: ${{ inputs.work }}
+          control-plane-projections: ${{ inputs.control-plane-projections }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}

@@ -76,6 +76,13 @@ inputs:
       never varied across callers and stays hardcoded so it cannot drift.
     required: false
     default: ''
+  control-plane-projections:
+    description: >-
+      Passthrough of the lane's own `control-plane-projections` input
+      (sub-project 5) -- when true, skips this action's own claim step
+      because the console claims the issue itself on dispatch confirm.
+    required: false
+    default: 'false'
 
 outputs:
   token:
@@ -176,7 +183,7 @@ runs:
     # Additive and idempotent: this never removes a human assignee.
     - name: Claim the issue as the agent fleet
       id: claim
-      if: inputs.issue != ''
+      if: inputs.issue != '' && inputs.control-plane-projections != 'true'
       uses: ./.github/actions/claim-issue
       with:
         token: ${{ steps.agent-lcars-token.outputs.token }}

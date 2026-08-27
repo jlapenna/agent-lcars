@@ -88,6 +88,10 @@ const PUBLISHED = {
       // consumer that still always passes `issue` is unaffected.
       issue: { required: false, default: '' },
       work: { required: false, default: '' },
+      // control-plane-projections: additive (sub-project 5) -- 'true'
+      // makes the brief's runtime.projections true; every existing
+      // consumer omits it and keeps today's 'false' behavior.
+      'control-plane-projections': { required: false, default: 'false' },
       mode: { required: true },
       reply: { required: false, default: '' },
       runbook: { required: false, default: '' },

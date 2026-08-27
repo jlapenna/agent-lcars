@@ -449,6 +449,11 @@ const COMMON_LANE_INPUTS: Record<string, InputSpec> = {
   'job-timeout-minutes': { required: false, type: 'number', default: 90 },
   'agent-timeout-minutes': { required: false, type: 'number', default: 60 },
   'dispatch-bootstrap': { required: false, type: 'boolean', default: false },
+  'control-plane-projections': {
+    required: false,
+    type: 'boolean',
+    default: false,
+  },
   'protected-snapshot': { required: false, type: 'boolean', default: false },
   'install-workspace-deps': {
     required: false,
@@ -613,6 +618,16 @@ describe('published reusable lane workflow surface (#1312)', () => {
       }
     },
   );
+
+  it('agent-lane.yml: control-plane-projections defaults off (sub-project 5)', () => {
+    const { doc } = loadWorkflow(UNIFIED_LANE_FILE);
+    const input = doc.on?.workflow_call?.inputs?.['control-plane-projections'];
+    expect(input).toMatchObject({
+      required: false,
+      type: 'boolean',
+      default: false,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -774,4 +789,21 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
     }
     expect(published?.if).toBe('always() && !inputs.dispatch-bootstrap');
   });
+
+  it.each(DISPATCH_PIPELINES)(
+    '%s.yml: opts into the dispatch-bootstrap and control-plane-projections era',
+    (pipeline) => {
+      const contract = PIPELINE_CONTRACTS[pipeline];
+      const { doc } = loadWorkflow(contract.workflowFile);
+      const callerJob = doc.jobs?.[pipeline];
+      expect(
+        callerJob?.with?.['dispatch-bootstrap'],
+        `${contract.workflowFile} must pass dispatch-bootstrap: true to its shim`,
+      ).toBe(true);
+      expect(
+        callerJob?.with?.['control-plane-projections'],
+        `${contract.workflowFile} must pass control-plane-projections: true to its shim (sub-project 5)`,
+      ).toBe(true);
+    },
+  );
 });

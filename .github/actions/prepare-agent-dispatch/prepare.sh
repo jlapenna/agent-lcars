@@ -39,6 +39,11 @@ if [ "$ARTIFACT_CHECKPOINT_MINUTES" -ge "$BUDGET_MINUTES" ] ||
   exit 1
 fi
 
+if [ "${CONTROL_PLANE_PROJECTIONS:-false}" != 'true' ] && [ "${CONTROL_PLANE_PROJECTIONS:-false}" != 'false' ]; then
+  echo "::error::CONTROL_PLANE_PROJECTIONS must be 'true' or 'false'" >&2
+  exit 1
+fi
+
 dispatch_dir="$RUNNER_TEMP/agent-dispatch"
 context_path="$dispatch_dir/context.json"
 protocol_path="$(realpath "$GITHUB_ACTION_PATH/../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md")"
@@ -158,6 +163,7 @@ jq -n \
   --arg artifact_by "$artifact_by" \
   --arg finalize_by "$finalize_by" \
   --argjson budget_minutes "$BUDGET_MINUTES" \
+  --argjson projections "$([ "${CONTROL_PLANE_PROJECTIONS:-false}" = 'true' ] && echo true || echo false)" \
   --argjson max_anchor_body "$MAX_ANCHOR_BODY_CHARACTERS" \
   --argjson max_reply "$MAX_REPLY_CHARACTERS" \
   --argjson max_context "$MAX_CONTEXT_CHARACTERS" \
@@ -242,6 +248,7 @@ jq -n \
       started_at: $started_at,
       deadline: $deadline,
       budget_minutes: $budget_minutes,
+      projections: $projections,
       checkpoints: {
         takeover_by: $takeover_by,
         diagnosis_by: $diagnosis_by,
