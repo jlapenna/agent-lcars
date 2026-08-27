@@ -1,3 +1,4 @@
+import { ISSUE_AGENT_SESSION_RETENTION_DAYS } from '@agent-lcars/telemetry';
 import { describe, expect, it, vi } from 'vitest';
 
 import { pinOpenItemSessions } from './session-pin-tick';
@@ -31,6 +32,16 @@ describe('pinOpenItemSessions', () => {
     expect(touchExpiry).toHaveBeenCalledWith('s1', '2027-08-27T00:00:00.000Z');
     expect(fetchImpl.mock.calls[0]?.[0]).toContain('state=running');
     expect(fetchImpl.mock.calls[1]?.[0]).toContain('state=parked');
+    // A dropped bearer or a dropped limit should fail a test, not just
+    // 401/mis-scope in production.
+    expect(fetchImpl.mock.calls[0]?.[0]).toContain('limit=200');
+    expect(fetchImpl.mock.calls[1]?.[0]).toContain('limit=200');
+    expect(fetchImpl.mock.calls[0]?.[1]).toEqual({
+      headers: { authorization: 'Bearer tok' },
+    });
+    expect(fetchImpl.mock.calls[1]?.[1]).toEqual({
+      headers: { authorization: 'Bearer tok' },
+    });
   });
 
   it('touches nothing when both states return no items (a settled item is simply absent)', async () => {
@@ -46,6 +57,26 @@ describe('pinOpenItemSessions', () => {
     });
     expect(pinned).toEqual([]);
     expect(touchExpiry).not.toHaveBeenCalled();
+  });
+
+  it("pins its local RETENTION_DAYS to session-doc.ts's ISSUE_AGENT_SESSION_RETENTION_DAYS", async () => {
+    // session-pin-tick.ts's RETENTION_DAYS is a hand-synced local literal
+    // (see its own comment), not an import -- this pins the two together
+    // by asserting the actual retention horizon it touches sessions
+    // forward to matches the shared constant, not just the literal 365.
+    const now = new Date('2026-08-27T00:00:00.000Z');
+    const expireAt = new Date(
+      now.getTime() + ISSUE_AGENT_SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        itemsResponse([{ id: 'A', sessions: [{ sessionId: 's1' }] }]),
+      )
+      .mockResolvedValueOnce(itemsResponse([]));
+    const touchExpiry = vi.fn();
+    await pinOpenItemSessions({ bearer: 'tok', now, fetchImpl, touchExpiry });
+    expect(touchExpiry).toHaveBeenCalledWith('s1', expireAt);
   });
 
   it('throws on a non-ok response rather than silently skipping', async () => {

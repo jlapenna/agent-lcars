@@ -211,3 +211,19 @@ their `schedule` event — the new cron had not produced a single
 OIDC pin backing `work-schedules-tick.yml` accepts `workflow_dispatch` from
 `main`, which is the manual fallback used above and the one to reach for
 whenever a cron smoke can't wait out GitHub's schedule-activation lag.
+
+## Sub-project 6: session resume and reaper
+
+Sub-project 6 (session resume and persistence) adds a `resume-session`
+lane step (era-split like every other local action in `agent-lane.yml` —
+see [Published actions](published-actions.md)) and the
+`work-session-pin-tick.yml` scheduled workflow (`17,47 * * * *`), which
+authenticates with a GitHub-Actions-OIDC bearer scoped to `work.reaper`
+(`work-auth.ts`'s fourth verification branch, no grant-list entry needed)
+and rewrites `expireAt` forward on every session belonging to a still-open
+(running/parked) native item, so Firestore's native TTL policy on
+`sessions.expireAt` never reaps a session out from under an item that is
+still in play. Its own production smoke (the design spec's Sub-project 6
+step 6, `docs/superpowers/specs/2026-08-23-native-work-items-design.md`)
+has not run yet; this entry exists so both surfaces are named in a `docs/`
+page ahead of that smoke.

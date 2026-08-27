@@ -44,6 +44,16 @@ resumed_path="$(AGENT_TELEMETRY_PROJECT_ID=agent-lcars node "$SIDECAR_BIN" runne
   2>/dev/null || true)"
 
 if [ -n "$resumed_path" ]; then
+  # session_id originates in document content (WORK_JSON's `.resume.
+  # sessionId`, ultimately whatever a prior session's own transcript
+  # named). It is only ever guarded transitively today, inside the
+  # separately-shipped sidecar.cjs -- a different release cadence than
+  # this action. Reject anything that isn't a safe identifier (mirrors
+  # sidecar.cjs's own isSafeIdentifier shape) before it reaches
+  # $GITHUB_OUTPUT and thence agent-lane.yml's claude_args. Fail-soft,
+  # like every other guard in this script: a rejected id degrades to a
+  # fresh session, it does not fail the step.
+  [[ $session_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || exit 0
   echo "session-id=$session_id"
 fi
 exit 0

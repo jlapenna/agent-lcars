@@ -166,7 +166,7 @@ interface WorkDetailViewProps {
   subtitle: string;
 }
 
-function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
+export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
   if (detail.status === 'error') {
     return (
       <Text c="dimmed" size="sm">
@@ -180,11 +180,23 @@ function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
   // Offer resume from the latest session of the item's latest run - `runs`
   // is sorted oldest-first (see `toItemView`), so `.at(-1)` is the latest.
   const latestRunView = item.runs.at(-1);
-  const resumeCandidate = latestRunView
+  const latestSession = latestRunView
     ? [...item.sessions]
         .filter((s) => s.runId === latestRunView.runId)
         .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))[0]
     : undefined;
+  // Gated on pipeline and an archived transcript (I2): `work-router.ts`'s
+  // resume validation rejects a non-claude-code session with BAD_REQUEST
+  // and a session with no `transcriptGcsUri` with CONFLICT. Telemetry
+  // starts for every pipeline, so a parked codex/opencode item has
+  // sessions too -- without this gate its Redispatch button (which works
+  // today with the checkbox unchecked) would start failing by default the
+  // moment the checked-by-default resume checkbox appears for it.
+  const resumeCandidate =
+    item.spec.pipeline === 'claude' &&
+    latestSession?.transcriptGcsUri !== undefined
+      ? latestSession
+      : undefined;
   const pinned = item.state === 'running' || item.state === 'parked';
 
   return (

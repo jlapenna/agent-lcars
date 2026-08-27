@@ -66,6 +66,7 @@ jobs:
             -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=agent-lcars-session-pin-tick")"
           oidc_token="$(jq -er '.value | select(type == "string" and length > 0)' <<<"$token_response")"
+          echo "::add-mask::$oidc_token"
           echo "token=$oidc_token" >> "$GITHUB_OUTPUT"
 
       # Write side: WIF-impersonate telemetry_writer -- the exact same

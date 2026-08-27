@@ -55,10 +55,10 @@ Do not use it through `uses:` after the agent step.
 
 ## Not consumer surfaces
 
-| Tier     | Names                                                                                        |
-| -------- | -------------------------------------------------------------------------------------------- |
-| Internal | `setup-node-pnpm`, `stamp-attempt-marker`, `agent-handoff`, `archive-opencode-trajectory`    |
-| Coupled  | `dispatch-bootstrap`, `telemetry-start`, `telemetry-finalize`, `agent-fallback-finalize.yml` |
+| Tier     | Names                                                                                                          |
+| -------- | -------------------------------------------------------------------------------------------------------------- |
+| Internal | `setup-node-pnpm`, `stamp-attempt-marker`, `agent-handoff`, `archive-opencode-trajectory`                      |
+| Coupled  | `dispatch-bootstrap`, `telemetry-start`, `telemetry-finalize`, `resume-session`, `agent-fallback-finalize.yml` |
 
 `agent-fallback-finalize.yml` is a dispatch-protocol component, not a
 general-purpose reusable workflow. See [Agent dispatch ownership](lifecycle-systems.md).

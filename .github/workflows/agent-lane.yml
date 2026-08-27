@@ -839,10 +839,26 @@ jobs:
       # transcript lives in the same GCS bucket. `work` is empty for an
       # issue-anchored dispatch, so this is a no-op there too (resume.sh's
       # own jq read finds no `.resume`).
+      #
+      # Era-split like every other local action here (e.g. the
+      # telemetry-start pair above): a bare `uses: ./...` resolves against
+      # the CALLER's checkout in a reusable workflow, and the six consumer
+      # repos that call this lane at `@main` do not carry this repo's
+      # `.github/actions/resume-session` directory. Without the published
+      # fallback, every claude dispatch in those repos would fail before
+      # the agent even runs (C1).
       - name: Resume prior session
         id: resume-session
-        if: ${{ inputs.pipeline == 'claude' }}
+        if: ${{ inputs.pipeline == 'claude' && inputs.dispatch-bootstrap }}
         uses: ./.github/actions/resume-session
+        with:
+          work-json: ${{ inputs.work }}
+          credentials-file-path: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
+
+      - name: Resume prior session (published)
+        id: resume-session-published
+        if: ${{ inputs.pipeline == 'claude' && !inputs.dispatch-bootstrap }}
+        uses: jlapenna/agent-lcars/.github/actions/resume-session@main # latest
         with:
           work-json: ${{ inputs.work }}
           credentials-file-path: ${{ steps.telemetry-start.outputs['credentials-file-path'] || steps.telemetry-start-published.outputs['credentials-file-path'] }}
@@ -1237,7 +1253,7 @@ jobs:
             --max-turns ${{ steps.budget.outputs.max_turns }}
             --allowedTools "Bash,Edit,Write,MultiEdit"
             --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task"
-            ${{ steps.resume-session.outputs.session-id && format('--resume {0}', steps.resume-session.outputs.session-id) || '' }}
+            ${{ (steps.resume-session.outputs.session-id || steps.resume-session-published.outputs.session-id) && format('--resume {0}', steps.resume-session.outputs.session-id || steps.resume-session-published.outputs.session-id) || '' }}
 
       # Claude-only trusted adapter check, era-split. The
       # dispatch-bootstrap variant requires the pinned action's completed

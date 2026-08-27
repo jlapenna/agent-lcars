@@ -78,4 +78,30 @@ out="$(WORK_JSON="" GOOGLE_APPLICATION_CREDENTIALS="$tmp/creds.json" \
 [ ! -s "$tmp/node-args.log" ] || { echo "FAIL: sidecar invoked for an empty (issue-anchored) work-json"; exit 1; }
 echo "PASS: empty work-json (issue-anchored dispatch) -> fail-soft, no output"
 
+# --- Scenario 6 (I3): a traversal-shaped session id -- the fake sidecar
+# still happily "resumes" it (it just echoes a fixed path regardless of
+# argv), but resume.sh's own local guard must reject the id before it
+# reaches its $GITHUB_OUTPUT line.
+WORK_JSON_TRAVERSAL='{"id":"01X","spec":{"title":"t","description":"d","pipeline":"claude","target":{"repo":"o/r"}},"resume":{"sessionId":"../../etc/passwd","transcriptGcsUri":"gs://b/x.jsonl"}}'
+rm -f "$tmp/node-args.log"
+out="$(WORK_JSON="$WORK_JSON_TRAVERSAL" GOOGLE_APPLICATION_CREDENTIALS="$tmp/creds.json" \
+  SIDECAR_BIN="$sidecar" bash "$here/resume.sh")"
+[ -z "$out" ] || { echo "FAIL: expected no output for a traversal-shaped session id, got: $out"; exit 1; }
+echo "PASS: traversal-shaped session id -> local guard rejects, no output"
+
+# --- Scenario 7 (I3): the sidecar runs but the download itself fails (no
+# resumed path on stdout) -- fail-soft, no output, same as a missing
+# sidecar binary but this time the binary ran.
+cat > "$tmp/bin/node" <<'FAKE'
+#!/usr/bin/env bash
+echo "$@" > "$tmp/node-args.log"
+FAKE
+chmod +x "$tmp/bin/node"
+rm -f "$tmp/node-args.log"
+out="$(WORK_JSON="$WORK_JSON_WITH_RESUME" GOOGLE_APPLICATION_CREDENTIALS="$tmp/creds.json" \
+  SIDECAR_BIN="$sidecar" bash "$here/resume.sh")"
+[ -z "$out" ] || { echo "FAIL: expected no output when the download fails, got: $out"; exit 1; }
+grep -q 'sess_1' "$tmp/node-args.log" || { echo "FAIL: sidecar was not invoked before failing"; exit 1; }
+echo "PASS: download failure -> fail-soft, no output"
+
 echo "PASS"

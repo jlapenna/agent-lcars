@@ -55,6 +55,14 @@ export async function pinOpenItemSessions(
 
   const pinned: string[] = [];
   for (const state of ['running', 'parked'] as const) {
+    // `limit=200` does NOT mean "the 200 newest items in this state" --
+    // `work-router.ts`'s `list` handler applies the limit to
+    // `listNativeTasks` BEFORE the state filter, and `firestore-store.ts`'s
+    // `listNativeTasks` orders by `workId` desc (creation order). So this
+    // really reads "of the 200 newest native items overall, the ones in
+    // this state" -- a busy item history could push an old-but-still-open
+    // item's sessions out of this tick's reach. That pagination gap is a
+    // separate follow-up issue, not fixed here.
     const response = await fetchImpl(
       `${consoleUrl}/api/work/v1/items?state=${state}&limit=200`,
       { headers: { authorization: `Bearer ${deps.bearer}` } },

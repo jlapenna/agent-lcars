@@ -89,7 +89,7 @@ export function WorkActions({
         <Checkbox
           checked={resumeChecked}
           onChange={(event) => setResumeChecked(event.currentTarget.checked)}
-          label={`Resume from session ${resumeCandidate.title ?? resumeCandidate.sessionId}`}
+          label={`Resume from session ${resumeCandidate.sessionId} (${resumeCandidate.title ?? resumeCandidate.sessionId})`}
           size="sm"
         />
       )}

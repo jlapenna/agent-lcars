@@ -199,5 +199,20 @@ describe('agent-telemetry store', () => {
         .get();
       expect(snap.data()?.['expireAt']).toBeInstanceOf(Timestamp);
     });
+
+    it("overwrites expireAt unconditionally, even backward -- not a clamp/max (pins today's behavior)", async () => {
+      await upsertSession(sessionWrite());
+      await touchSessionExpiry('session-1', '2030-01-01T00:00:00.000Z');
+
+      await touchSessionExpiry('session-1', '2020-01-01T00:00:00.000Z');
+
+      const snap = await fakeFirestore
+        .collection('sessions')
+        .doc('session-1')
+        .get();
+      expect(snap.data()?.['expireAt']).toEqual(
+        Timestamp.fromDate(new Date('2020-01-01T00:00:00.000Z')),
+      );
+    });
   });
 });
