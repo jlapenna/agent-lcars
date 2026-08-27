@@ -3,6 +3,7 @@ import 'server-only';
 import {
   isRefusal,
   isWorkAnchor,
+  type RunExecutor,
   type ScheduleStore,
   type Task,
 } from '@agent-lcars/orchestrator';
@@ -47,6 +48,8 @@ export interface WorkContext {
   /** Injected clock: the tick handler's "latest due slot" computation must
    *  be deterministic under test, not tied to wall-clock `Date.now()`. */
   now: () => Date;
+  /** Pipelines routed to the `queue` executor -- see `executorFor` below. */
+  queuePipelines: readonly string[];
 }
 
 export async function view(
@@ -93,6 +96,20 @@ export function forbiddenReason(
     return `${spec.target.repo} is not a control-plane repository`;
   }
   return undefined;
+}
+
+/** Console configuration decides the executor, per pipeline, at request
+ *  time -- never the item's own spec (design spec, "The `executor`
+ *  field"). Called from inside `mintItem`, so both `items.create` and the
+ *  schedule tick (which both route through `mintItem`) honour queue
+ *  pipelines identically; `redispatch` (which mints a fresh run for an
+ *  already-existing item without going through `mintItem`) calls it
+ *  directly instead. */
+export function executorFor(
+  pipeline: string,
+  queuePipelines: readonly string[],
+): RunExecutor | undefined {
+  return queuePipelines.includes(pipeline) ? 'queue' : undefined;
 }
 
 /** Both sides go through the same schema first, so the comparison is over
@@ -152,6 +169,7 @@ export async function mintItem(
     requestId: input.id,
     pipeline: input.spec.pipeline,
     work: { origin: input.origin, spec: input.spec },
+    executor: executorFor(input.spec.pipeline, context.queuePipelines),
   });
   if (isRefusal(outcome)) {
     return { kind: 'conflict', message: outcome.reason };

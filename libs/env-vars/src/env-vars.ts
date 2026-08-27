@@ -42,6 +42,11 @@ export interface EnvVars {
   AGENT_LCARS_WORK_GRANTS?: string;
   /** Global live-run cap for native work items (default 4). */
   AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;
+  /** JSON array of pipeline names routed to the `queue` executor at request
+   *  time (default `[]` -- every pipeline dispatches through GitHub
+   *  Actions). See `apps/console/src/lib/work-grants.ts`'s
+   *  `queuePipelines`. */
+  AGENT_LCARS_QUEUE_PIPELINES?: string;
   DISPATCH_FIRESTORE_DATABASE_ID?: string;
   QUICK_TASK_EVIDENCE_BUCKET?: string;
 

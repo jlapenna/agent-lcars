@@ -79,10 +79,16 @@ of how it authenticated.
 | grants                   | `AGENT_LCARS_WORK_GRANTS`        | `[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]}]` |
 | max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                     |
 | Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                      |
+| queue-executor pipelines | `AGENT_LCARS_QUEUE_PIPELINES`    | unset (default `[]` -- every pipeline still dispatches through GitHub Actions)          |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
-operate the API), not a default principal.
+operate the API), not a default principal. `AGENT_LCARS_QUEUE_PIPELINES` follows
+the same pattern: it decides the executor per pipeline at request time
+(`work-mint.ts`'s `executorFor`, called from inside `mintItem` so both
+`items.create` and the schedule tick honour it), never the item's own spec,
+and an unset
+value keeps the queue executor entirely off.
 
 ### 4. Workflows — repo variables
 

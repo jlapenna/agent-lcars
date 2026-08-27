@@ -11,7 +11,7 @@ import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
 } from '@/lib/work-auth';
-import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
+import { queuePipelines, workGrants, workMaxLiveRuns } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
 import { sessionsForRuns } from '@/lib/work-sessions';
 
@@ -57,6 +57,7 @@ async function handle(request: Request): Promise<Response> {
       scheduleStore: createScheduleStore(),
       grants: workGrants,
       now: () => new Date(),
+      queuePipelines: queuePipelines(),
     },
   });
   return matched && response !== undefined

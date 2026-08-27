@@ -48,6 +48,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
     now: () => new Date('2026-08-26T10:00:00.000Z'),
+    queuePipelines: [],
     ...over,
   };
 }
@@ -136,6 +137,22 @@ describe('items routes', () => {
     const again = await call(ctx, 'PUT', `/items/${ID}`, { spec });
     expect(again.status).toBe(201);
     expect(again.json.runs).toHaveLength(1);
+  });
+
+  it('create sets executor: queue only for a configured pipeline', async () => {
+    const ctx = context({ queuePipelines: ['claude'] });
+    const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    expect(r.status).toBe(201);
+    const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
+    expect(run?.executor).toBe('queue');
+  });
+
+  it('create leaves executor unset for a pipeline not in the queue list', async () => {
+    const ctx = context({ queuePipelines: ['codex'] });
+    const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    expect(r.status).toBe(201);
+    const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
+    expect(run?.executor).toBeUndefined();
   });
 
   it('refuses a replay whose spec differs from the stored one with 409', async () => {

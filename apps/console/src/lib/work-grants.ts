@@ -48,6 +48,17 @@ export function grantForPrincipal(
   return grants.find((g) => g.principal === principal);
 }
 
+/** Pipelines routed to the `queue` executor at request time. Default `[]`:
+ *  with nothing configured, `work-mint.ts`'s `executorFor` never returns
+ *  `'queue'` and every run dispatches through GitHub Actions exactly as
+ *  before this sub-project. */
+export function queuePipelines(
+  raw: string | undefined = process.env['AGENT_LCARS_QUEUE_PIPELINES'],
+): string[] {
+  if (raw === undefined || raw.trim() === '') return [];
+  return z.array(z.string().min(1).max(64)).parse(JSON.parse(raw));
+}
+
 export function workMaxLiveRuns(): number {
   const raw = process.env['AGENT_LCARS_WORK_MAX_LIVE_RUNS'];
   if (raw === undefined || raw === '') return 4;

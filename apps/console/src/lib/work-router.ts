@@ -14,6 +14,7 @@ import { implement, ORPCError } from '@orpc/server';
 
 import { scheduleRouter } from './schedule-router';
 import {
+  executorFor,
   forbiddenReason,
   liveNativeRunCount,
   mintItem,
@@ -203,6 +204,7 @@ export const workRouter = os.router({
         taskId: { workId: input.id },
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
+        executor: executorFor(spec.pipeline, context.queuePipelines),
       });
       if (isRefusal(outcome)) {
         throw errors.CONFLICT({ message: outcome.reason });

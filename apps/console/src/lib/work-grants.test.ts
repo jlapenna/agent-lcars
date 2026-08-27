@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   grantForPrincipal,
   parseWorkGrants,
+  queuePipelines,
   resolvePrincipal,
 } from './work-grants';
 
@@ -92,5 +93,17 @@ describe('grant scopes', () => {
       ]),
     );
     expect(grants[0]?.scopes).toEqual(['work.executor']);
+  });
+});
+
+describe('queuePipelines', () => {
+  it('defaults to empty and parses a JSON array', () => {
+    expect(queuePipelines(undefined)).toEqual([]);
+    expect(queuePipelines('["claude"]')).toEqual(['claude']);
+  });
+
+  it('rejects malformed input loudly', () => {
+    expect(() => queuePipelines('not json')).toThrow();
+    expect(() => queuePipelines('{"not":"an array"}')).toThrow();
   });
 });
