@@ -184,7 +184,33 @@ jobs:
               fi
               echo "POST /api/work/v1/items/$ITEM_ID/redispatch -> $status"; show
               case "$status" in
-                200|409) echo "- redispatch $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                200) echo "- redispatch $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                409)
+                  if [ -n "$RESUME_SESSION_ID" ]; then
+                    # workRouter.redispatch's 409 is not one thing: it is
+                    # thrown both for the ordinary "item is not parked"
+                    # conflict (safe to treat as an idempotent no-op for a
+                    # PLAIN redispatch, below) and, only reachable once
+                    # resumeSessionId is set, for "session has no archived
+                    # transcript to resume from" -- meaning no new run was
+                    # minted and the resume the caller explicitly asked for
+                    # did not happen. Silently reporting success here would
+                    # be exactly the failure class this whole proof exists
+                    # to rule out, and worse than elsewhere: resuming is the
+                    # entire reason this call passed resume_session_id.
+                    # Fail closed and surface the API's own message rather
+                    # than assume which of the two conflicts this was.
+                    api_message="$(jq -r '.message // empty' "$response" 2>/dev/null || true)"
+                    echo "::error::redispatch with resume_session_id=$RESUME_SESSION_ID -> 409, no run was minted: ${api_message:-<no message in response body>} (most likely cause: that session has no archived transcript to resume from; also possible: the item was no longer parked)"
+                    exit 1
+                  fi
+                  # A plain redispatch (no resume requested) hitting 409
+                  # only ever means "item is not parked" -- e.g. a
+                  # concurrent redispatch already moved it to running.
+                  # That is a legitimate idempotent no-op, as this action
+                  # has always treated it.
+                  echo "- redispatch $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY"
+                  ;;
                 *) echo "::error::work API returned $status"; exit 1 ;;
               esac
               ;;
