@@ -21,6 +21,9 @@ function deps(over: Partial<WorkAuthDeps> = {}): WorkAuthDeps {
     verifyScheduleTickOidcToken: async () => {
       throw new Error('not a schedule-tick token');
     },
+    verifySessionPinTickOidcToken: async () => {
+      throw new Error('not a session-pin-tick token');
+    },
     session: async () => null,
     grants: () => grants,
     ...over,
@@ -133,7 +136,27 @@ describe('authenticateWorkRequest', () => {
     });
     expect(p?.scopes.has('work.cron')).toBe(true);
   });
-  it('refuses a bearer neither verifier accepts', async () => {
+  it('falls through to the session-pin-tick verifier when neither Google nor schedule-tick match', async () => {
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => {
+          throw new Error('not Google');
+        },
+        verifyScheduleTickOidcToken: async () => {
+          throw new Error('not schedule-tick');
+        },
+        verifySessionPinTickOidcToken: async () => ({ ok: true }),
+      }),
+    );
+    expect(p).toMatchObject({
+      principal: 'pin:tick',
+      subject: 'pin:tick',
+      via: 'oidc',
+    });
+    expect(p?.scopes.has('work.reaper')).toBe(true);
+  });
+  it('refuses a bearer no verifier accepts', async () => {
     const p = await authenticateWorkRequest(
       req({ authorization: 'Bearer t' }),
       deps({
@@ -142,6 +165,9 @@ describe('authenticateWorkRequest', () => {
         },
         verifyScheduleTickOidcToken: async () => {
           throw new Error('not schedule-tick either');
+        },
+        verifySessionPinTickOidcToken: async () => {
+          throw new Error('not session-pin-tick either');
         },
       }),
     );

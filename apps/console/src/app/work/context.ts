@@ -1,6 +1,9 @@
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
-import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
+import {
+  verifyScheduleTickOidcToken,
+  verifySessionPinTickOidcToken,
+} from '@/lib/github-actions-oidc';
 import {
   createOrchestratorRuntime,
   createScheduleStore,
@@ -18,9 +21,10 @@ import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
  * header - a server function always runs on behalf of the signed-in
  * console user, the same way `queue-workspace.tsx`'s server actions do, so
  * `authenticateWorkRequest` is handed a header-less request and only its
- * session fallback path (`work-auth.ts`) ever runs. The Google ID token
- * verifier and the schedule-tick OIDC verifier are still required by
- * `WorkAuthDeps`'s shape but neither is ever invoked on this path.
+ * session fallback path (`work-auth.ts`) ever runs. The Google ID token,
+ * schedule-tick OIDC, and session-pin-tick OIDC verifiers are still
+ * required by `WorkAuthDeps`'s shape but none is ever invoked on this
+ * path.
  *
  * Deliberately not a `'use server'` module: this is a plain helper shared
  * by `work/actions.ts` and `work/schedules/actions.ts`, not itself a
@@ -35,6 +39,8 @@ export async function context(): Promise<WorkContext> {
       verifyGoogleIdToken: googleIdTokenVerifier('unused'),
       verifyScheduleTickOidcToken: (token) =>
         verifyScheduleTickOidcToken(token, controlPlaneRepository()),
+      verifySessionPinTickOidcToken: (token) =>
+        verifySessionPinTickOidcToken(token, controlPlaneRepository()),
       session: async () =>
         (await auth()) as { user?: { login?: string } } | null,
       grants: workGrants,

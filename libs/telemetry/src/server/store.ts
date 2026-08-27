@@ -97,6 +97,31 @@ export async function upsertSession(write: SessionWrite): Promise<void> {
     );
 }
 
+/**
+ * Rewrites only `expireAt` on an existing session doc -- the
+ * watermark-only write the session-pin reaper needs (sub-project 6), as
+ * opposed to `upsertSession`'s full reduce-then-merge write. Same
+ * Timestamp conversion `upsertSession` already applies to the same field,
+ * for the same reason: the collection's native Firestore TTL policy only
+ * recognizes a Timestamp, not the ISO string `SessionDoc` carries it as --
+ * see `upsertSession`'s own doc comment for why it must be `AdminTimestamp`
+ * (the `firebase-admin` re-export) rather than `@google-cloud/firestore`'s
+ * own `Timestamp`.
+ */
+export async function touchSessionExpiry(
+  sessionId: string,
+  expireAt: string,
+): Promise<void> {
+  const firestore = getAgentTelemetryWriterFirestore();
+  await firestore
+    .collection(SESSIONS_COLLECTION)
+    .doc(sessionId)
+    .set(
+      { expireAt: AdminTimestamp.fromDate(new Date(expireAt)) },
+      { merge: true },
+    );
+}
+
 /** Default page size for `listSessionDocs` when the caller doesn't ask for a
  * specific `limit` - generous enough for the dashboard's 24h window, small
  * enough to keep the archive page's default 14-day window cheap. */

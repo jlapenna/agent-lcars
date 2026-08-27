@@ -38,6 +38,13 @@ const executorOnly = {
   pipelines: ['claude'],
   via: 'google' as const,
 };
+const reaperOnly = {
+  principal: 'pin:tick',
+  subject: 'pin:tick',
+  scopes: new Set(['work.reaper'] as const),
+  pipelines: [],
+  via: 'oidc' as const,
+};
 
 function context(over: Partial<WorkContext> = {}): WorkContext {
   const store = new MemoryStore();
@@ -165,6 +172,29 @@ describe('items routes', () => {
       const r = await call(ctx, m, p, b);
       expect(r.status, `${m} ${p}`).toBe(401);
     }
+  });
+
+  describe('a work.reaper-only principal (sub-project 6 session-pin tick)', () => {
+    it('refuses create/cancel/redispatch -- reaper is read-only', async () => {
+      const ctx = context({ principal: reaperOnly });
+      for (const [m, p, b] of [
+        ['PUT', `/items/${ID}`, { spec }],
+        ['POST', `/items/${ID}/cancel`],
+        ['POST', `/items/${ID}/redispatch`],
+      ] as const) {
+        const r = await call(ctx, m, p, b);
+        expect(r.status, `${m} ${p}`).toBe(401);
+      }
+    });
+
+    it('accepts list and get, same as an operator', async () => {
+      const ctx = context();
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      const reaperCtx = { ...ctx, principal: reaperOnly };
+
+      expect((await call(reaperCtx, 'GET', '/items')).status).toBe(200);
+      expect((await call(reaperCtx, 'GET', `/items/${ID}`)).status).toBe(200);
+    });
   });
 
   it('creates an item, replays it idempotently, and derives running', async () => {

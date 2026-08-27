@@ -2,7 +2,10 @@ import 'server-only';
 
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
-import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
+import {
+  verifyScheduleTickOidcToken,
+  verifySessionPinTickOidcToken,
+} from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
@@ -65,6 +68,8 @@ async function handle(request: Request): Promise<Response> {
     // allow-list. See github-actions-oidc.ts's schedule-tick section.
     verifyScheduleTickOidcToken: (token) =>
       verifyScheduleTickOidcToken(token, controlPlaneRepository()),
+    verifySessionPinTickOidcToken: (token) =>
+      verifySessionPinTickOidcToken(token, controlPlaneRepository()),
     session: async () => (await auth()) as { user?: { login?: string } } | null,
     grants: workGrants,
   });
