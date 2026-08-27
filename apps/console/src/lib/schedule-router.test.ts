@@ -6,6 +6,7 @@ import {
 import { latestDueSlot, parseCron, slotItemId } from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
 
+import { controlPlaneRepository } from './deployment';
 import type { WorkContext } from './work-mint';
 import { createWorkHandler } from './work-router';
 
@@ -200,6 +201,56 @@ describe('schedules routes', () => {
       spec: { ...spec, pipeline: 'codex' },
     });
     expect(r.status).toBe(403);
+  });
+
+  it('refuses a repository outside the control plane with 403, and creates nothing (#1544 round 2)', async () => {
+    const ctx = context();
+    const r = await call(ctx, 'PUT', `/schedules/${ID}`, {
+      cron: '0 * * * *',
+      spec: { ...spec, target: { repo: 'octo/example' } },
+    });
+    expect(r.status).toBe(403);
+    // Same `forbiddenReason` (work-mint.ts) wording `items.create` and
+    // `redispatch` refuse with -- one ruling, one function.
+    expect(r.json).toMatchObject({
+      message: `native work items can only target ${controlPlaneRepository()} until every consumer declares the work input (#1544)`,
+    });
+    expect((await call(ctx, 'GET', `/schedules/${ID}`)).status).toBe(404);
+  });
+
+  it('disables a schedule on tick whose spec targets a repo outside the control plane, and mints nothing (#1544 round 2)', async () => {
+    const ctx = context();
+    // Written directly to the store, bypassing `create`'s own
+    // `forbiddenReason` check -- the same "how did an already-stored
+    // schedule end up bad" shape as the corrupt-spec/cron fixtures above.
+    // A schedule that somehow exists with a non-control-plane target must
+    // still be caught by `tick`'s own `mintItem` -> `forbiddenReason`
+    // call, not just at `create` time.
+    await ctx.scheduleStore.writeSchedule({
+      scheduleId: ID,
+      cron: '* * * * *',
+      spec: { ...spec, target: { repo: 'octo/example' } },
+      enabled: true,
+      createdBy: 'user:jlapenna',
+      createdAt: CREATE_NOW.toISOString(),
+      updatedAt: CREATE_NOW.toISOString(),
+      lastSlotAt: CREATE_NOW.toISOString(),
+    });
+
+    const r = await call(
+      withPrincipal(withNow(ctx, NOW), cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(r.json).toMatchObject({
+      minted: [],
+      skippedCap: [],
+      disabled: [ID],
+    });
+    expect(await call(ctx, 'GET', `/schedules/${ID}`)).toMatchObject({
+      json: { enabled: false, disabledReason: 'grant-revoked' },
+    });
   });
 
   it('lists newest first, enables, and disables', async () => {

@@ -39,9 +39,17 @@ const EMPTY_DESCRIPTION = '(no description)';
  * `DESCRIPTION_BYTE_HEADROOM` reserves room in the byte budget for the
  * rest of the payload this description gets embedded in: `title` (up to
  * `WORK_TITLE_MAX` chars, up to 4 bytes each worst case), `origin`
- * (`principal`/`channel`, comfortably under a few hundred bytes), and the
- * JSON object structure itself. 2,048 bytes comfortably covers all of
- * that with margin.
+ * (`principal`/`channel`, comfortably under a few hundred bytes),
+ * `spec.target.repo`, and the JSON object structure itself. 2,048 bytes
+ * comfortably covers all of that with margin -- with one caveat:
+ * `workTargetSchema.repo` (`@agent-lcars/work`) has no `.max()`, so it is
+ * unbounded in the schema itself. This accounting assumes a real GitHub
+ * `owner/name` full name, which GitHub itself caps around ~140
+ * characters (39-char max login + `/` + 100-char max repo name); this
+ * module's only caller of `truncatedDescription` (`workPayloadFromGithub`)
+ * always sources `repo` from a real webhook delivery's
+ * `repository.full_name`, never free text, so that assumption holds here
+ * in practice even though nothing in the type system enforces it.
  */
 const DESCRIPTION_BYTE_HEADROOM = 2_048;
 const DESCRIPTION_MAX_BYTES =

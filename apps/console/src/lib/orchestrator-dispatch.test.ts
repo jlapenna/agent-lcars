@@ -706,6 +706,63 @@ describe('drainOutbox: dispatch-run', () => {
     expect(result.failed).toHaveLength(0);
   });
 
+  it('logs the status and body when a claim-projection POST returns a non-2xx response (item 4)', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      // workflow_dispatch succeeds (204); both claim-projection POSTs come
+      // back as a real HTTP failure (not a network-level rejection -- see
+      // the dedicated network-failure test above/below) so `response.ok`
+      // is false and the new logging path (not the `catch` block) fires.
+      let call = 0;
+      const fetchImpl = (async () => {
+        call += 1;
+        if (call === 1) return new Response(null, { status: 204 });
+        return new Response('server exploded', { status: 500 });
+      }) as typeof fetch;
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      // Best-effort: a projection failure must never fail the dispatch
+      // itself, exactly as the pre-existing 500 test above already
+      // covers -- this test's own job is proving the *logging*.
+      expect(result.dispatched).toHaveLength(1);
+      expect(result.failed).toHaveLength(0);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        'agent-lcars: claim projection (reaction) failed for %s#%s: %s %s',
+        'jlapenna/agent-lcars',
+        42,
+        500,
+        'server exploded',
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        'agent-lcars: claim projection (assignee) failed for %s#%s: %s %s',
+        'jlapenna/agent-lcars',
+        42,
+        500,
+        'server exploded',
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('projects the assignee independently of a reactions-call network failure', async () => {
     const { store, orchestrator } = fixture();
     const requested = await orchestrator.request({
