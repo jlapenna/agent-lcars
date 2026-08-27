@@ -9,6 +9,7 @@ import {
 } from './decide';
 import type { LeasedOutboxEntry, TaskId } from './model';
 import { type Clock, Orchestrator } from './orchestrator';
+import type { Schedule, ScheduleStore } from './schedule-store';
 import {
   type OrchestratorStore,
   OUTBOX_LEASE_MS,
@@ -472,6 +473,91 @@ export function runOrchestratorStoreContract(
         expect(isRefusal(late)).toBe(true);
         expect((await store.readActiveRun(TASK))?.runId).toBe(freshRunId);
       });
+    });
+  });
+}
+
+const SCHEDULE_T0 = '2026-08-15T12:00:00.000Z';
+
+/**
+ * Behavioural contract every `ScheduleStore` implementation must satisfy,
+ * parallel to {@link runOrchestratorStoreContract} but for schedules,
+ * which have no mutex and no version guard -- see `schedule-store.ts`'s
+ * `writeSchedule` doc for why last-write-wins is acceptable here.
+ */
+export function runScheduleStoreContract(
+  name: string,
+  makeStore: () => ScheduleStore | Promise<ScheduleStore>,
+): void {
+  describe(`ScheduleStore contract: ${name}`, () => {
+    function schedule(over: Partial<Schedule> = {}): Schedule {
+      return {
+        scheduleId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+        cron: '*/15 * * * *',
+        spec: { title: 't' },
+        enabled: true,
+        createdBy: 'user:jlapenna',
+        createdAt: SCHEDULE_T0,
+        updatedAt: SCHEDULE_T0,
+        ...over,
+      };
+    }
+
+    it('round-trips a written schedule', async () => {
+      const store = await makeStore();
+      await store.writeSchedule(schedule());
+      expect(await store.readSchedule('01J5Z3K9QX8F0N2B4V6C8D1E3G')).toEqual(
+        schedule(),
+      );
+    });
+
+    it('reads undefined for an unknown schedule', async () => {
+      const store = await makeStore();
+      expect(await store.readSchedule('missing')).toBeUndefined();
+    });
+
+    it('overwrites on a second write (last write wins)', async () => {
+      const store = await makeStore();
+      await store.writeSchedule(schedule());
+      await store.writeSchedule(schedule({ enabled: false }));
+      expect(
+        (await store.readSchedule('01J5Z3K9QX8F0N2B4V6C8D1E3G'))?.enabled,
+      ).toBe(false);
+    });
+
+    it('lists newest first and honors a limit', async () => {
+      const store = await makeStore();
+      const ids = [
+        '01J5Z3K9QX8F0N2B4V6C8D1E3A',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3B',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3C',
+      ];
+      for (const scheduleId of ids) {
+        await store.writeSchedule(schedule({ scheduleId }));
+      }
+      expect((await store.listSchedules()).map((s) => s.scheduleId)).toEqual(
+        [...ids].reverse(),
+      );
+      expect((await store.listSchedules(2)).map((s) => s.scheduleId)).toEqual([
+        '01J5Z3K9QX8F0N2B4V6C8D1E3C',
+        '01J5Z3K9QX8F0N2B4V6C8D1E3B',
+      ]);
+    });
+
+    it('lists only enabled schedules', async () => {
+      const store = await makeStore();
+      await store.writeSchedule(
+        schedule({ scheduleId: '01J5Z3K9QX8F0N2B4V6C8D1E3D', enabled: true }),
+      );
+      await store.writeSchedule(
+        schedule({
+          scheduleId: '01J5Z3K9QX8F0N2B4V6C8D1E3E',
+          enabled: false,
+        }),
+      );
+      expect(
+        (await store.listEnabledSchedules()).map((s) => s.scheduleId),
+      ).toEqual(['01J5Z3K9QX8F0N2B4V6C8D1E3D']);
     });
   });
 }

@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
+import { FirestoreScheduleStore } from './firestore-schedule-store';
 import { FirestoreStore } from './firestore-store';
+import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
 import { outboxEntrySchema, taskSchema } from './model';
-import { runOrchestratorStoreContract } from './store-contract';
+import {
+  runOrchestratorStoreContract,
+  runScheduleStoreContract,
+} from './store-contract';
 
 runOrchestratorStoreContract('MemoryStore', () => new MemoryStore());
+runScheduleStoreContract(
+  'MemoryScheduleStore',
+  () => new MemoryScheduleStore(),
+);
 
 describe('taskSchema', () => {
   it('reads a legacy task document that predates consecutiveLost fine', () => {
@@ -73,6 +82,16 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
     // fixture() calls makeStore() anew) so concurrent/re-run test suites
     // never collide on the same documents in the shared emulator.
     return new FirestoreStore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix: `orchestrator-test-${Date.now()}-${prefixCounter}-`,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+    });
+  });
+
+  runScheduleStoreContract('FirestoreScheduleStore', () => {
+    prefixCounter += 1;
+    return new FirestoreScheduleStore({
       projectId: 'demo-orchestrator',
       databaseId: '(default)',
       collectionPrefix: `orchestrator-test-${Date.now()}-${prefixCounter}-`,
