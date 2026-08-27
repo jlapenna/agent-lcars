@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import * as fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,7 +36,7 @@ const workflowPath = path.join(
   repoRoot,
   '.github/workflows/agent-fallback-finalize.yml',
 );
-const workflowText = readFileSync(workflowPath, 'utf8');
+const workflowText = fs.readFileSync(workflowPath, 'utf8');
 
 /**
  * Pulls the single-quoted program/value that follows `marker`. The
@@ -344,5 +345,221 @@ describe('fallback-finalize agent-step derivation', () => {
     expect(workflowText).toContain(
       "''|skipped) outcome_kind='startup-failure' ;;",
     );
+  });
+});
+
+// --- Success-branch outcome derivation: executes the REAL embedded
+// "Derive trusted completion evidence" script end-to-end (not an isolated
+// jq snippet) against a fake `gh`, following the same extract-and-execute
+// convention as the jq fixtures above -- extended here to the whole
+// script because the bug this pins is about the ORDER independent lookup
+// blocks run in, not any single jq program.
+//
+// The regression (Codex review on #1564, jlapenna/agent-lcars PR #1564
+// line 243): a run that opens a PR and only then discovers a blocker
+// stamps the SAME attempt-claim marker on both the PR and its structured
+// park comment. The PR lookup runs first and sets outcome_kind=
+// 'pull-request'; the comment-lookup block used to be gated on
+// `[ -z "$outcome_kind" ]`, so it never ran at all once a PR was found --
+// the run's own explicit "I am blocked" was silently discarded and the
+// broker reported success.
+
+function extractRunScript(stepNameMarker: string): string {
+  const stepIndex = workflowText.indexOf(stepNameMarker);
+  if (stepIndex < 0) {
+    throw new Error(`step not found: ${stepNameMarker}`);
+  }
+  const runLineMatch = /\n( *)run: \|\n/u.exec(workflowText.slice(stepIndex));
+  if (runLineMatch === null || runLineMatch.index === undefined) {
+    throw new Error(`run block not found after: ${stepNameMarker}`);
+  }
+  const runLineIndent = runLineMatch[1]!.length;
+  const contentIndent = runLineIndent + 2;
+  const bodyStart = stepIndex + runLineMatch.index + runLineMatch[0].length;
+  const lines: string[] = [];
+  for (const line of workflowText.slice(bodyStart).split('\n')) {
+    if (line.trim() === '') {
+      lines.push('');
+      continue;
+    }
+    const indent = /^ */u.exec(line)![0].length;
+    if (indent <= runLineIndent) break;
+    lines.push(line.slice(contentIndent));
+  }
+  return lines.join('\n');
+}
+
+const evidenceScript = extractRunScript(
+  '- name: Derive trusted completion evidence',
+);
+
+// A bash FUNCTION, not an external binary on PATH: this sandbox's process
+// spawning rewrites/prepends a child's PATH (verified directly -- an
+// explicitly-set PATH with a fake `gh` shim first still resolved the
+// REAL `gh` from elsewhere), so shadowing `gh` via PATH is not reliable
+// here. A shell function named `gh`, defined in the SAME bash invocation
+// ahead of the extracted script, takes priority over any PATH search for
+// an unqualified command and is inherited by every `$(...)` command
+// substitution the extracted script uses -- no PATH, tempdir, or chmod
+// involved.
+const fakeGhFunction = `
+gh() {
+  if [ "\${1:-}" != "api" ]; then
+    echo "fake gh: unsupported invocation: $*" >&2
+    return 64
+  fi
+  shift
+  # The real script calls this with flags (--paginate --slurp) BEFORE the
+  # path for some endpoints and no flags at all for others, so find the
+  # one arg that actually looks like an API path rather than assuming a
+  # fixed position.
+  local path=""
+  for arg in "$@"; do
+    case "$arg" in
+      repos/*) path="$arg" ;;
+    esac
+  done
+  local key
+  case "$path" in
+    *"/pulls?state=all"*) key=pulls ;;
+    *"/comments?"*) key=comments ;;
+    *"/reviews?"*) key=reviews ;;
+    *"/actions/runs/"*"/jobs"*) key=jobs ;;
+    *"/issues/"*) key=issue ;;
+    *)
+      echo "fake gh: unrecognized api path: $path" >&2
+      return 64
+      ;;
+  esac
+  if [ -f "$FAKE_GH_DIR/$key.json" ]; then
+    cat "$FAKE_GH_DIR/$key.json"
+  else
+    case "$key" in
+      jobs) printf '[{"total_count":0,"jobs":[]}]\\n' ;;
+      pulls|comments|reviews) printf '[[]]\\n' ;;
+      issue) printf '{"pull_request":null}\\n' ;;
+    esac
+  fi
+}
+`;
+
+interface EvidenceFixtures {
+  pulls?: unknown;
+  comments?: unknown;
+  reviews?: unknown;
+}
+
+/** Runs the real embedded evidence-derivation script end to end (real
+ *  bash, real jq, a fake `gh`) and returns the parsed GITHUB_OUTPUT
+ *  contents as a plain key/value map. `pulls`/`comments`/`reviews`
+ *  fixtures follow `gh api --paginate --slurp`'s own shape: an array of
+ *  pages, each page the raw array that endpoint returns (so `[[]]` is
+ *  one empty page, matching the script's `.[][]` double-iteration). */
+function runEvidenceScript(
+  fixtures: EvidenceFixtures,
+  envOverrides: Record<string, string> = {},
+): Record<string, string> {
+  const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-gh-'));
+  for (const [key, value] of Object.entries(fixtures)) {
+    if (value === undefined) continue;
+    fs.writeFileSync(
+      path.join(fakeGhDir, `${key}.json`),
+      JSON.stringify(value),
+    );
+  }
+  const outputPath = path.join(fakeGhDir, 'github-output');
+  fs.writeFileSync(outputPath, '');
+
+  const result = spawnSync(
+    'bash',
+    ['-c', `${fakeGhFunction}\n${evidenceScript}`],
+    {
+      encoding: 'utf8',
+      env: {
+        // A real interactive PATH, not narrowed to a fake-only bin dir --
+        // the real `gh` is never reached (the function above shadows it
+        // unconditionally), but `bash`/`jq`/coreutils still need to
+        // resolve normally.
+        PATH: process.env['PATH'] ?? '',
+        FAKE_GH_DIR: fakeGhDir,
+        GH_TOKEN: 'test-token',
+        REPO: 'example/consumer',
+        ISSUE: '70',
+        WORK: '',
+        GENERATION: '1',
+        INTENT_ID: 'example/consumer#70/r1',
+        WORKER_WORKFLOW: 'claude.yml',
+        WORKER_RESULT: 'success',
+        GITHUB_RUN_ID: '999',
+        GITHUB_OUTPUT: outputPath,
+        ...envOverrides,
+      },
+    },
+  );
+  expect(result.stderr).toBe('');
+  expect(result.status).toBe(0);
+
+  const output: Record<string, string> = {};
+  for (const line of fs.readFileSync(outputPath, 'utf8').split('\n')) {
+    if (line === '') continue;
+    const eq = line.indexOf('=');
+    output[line.slice(0, eq)] = line.slice(eq + 1);
+  }
+  return output;
+}
+
+const claimMarker = '<!-- attempt-claim:g1:example/consumer#70/r1 -->';
+
+describe('fallback-finalize success-branch outcome derivation', () => {
+  it('classifies a marked PR alone as pull-request', () => {
+    const output = runEvidenceScript({
+      pulls: [[{ number: 42, title: '', body: `Fixes #70\n\n${claimMarker}` }]],
+    });
+    expect(output['outcome-kind']).toBe('pull-request');
+    expect(output['outcome-reference']).toBe('42');
+  });
+
+  it('classifies a marked park comment alone as park', () => {
+    const output = runEvidenceScript({
+      comments: [
+        [
+          {
+            id: 1,
+            body: `PARK: blocked.\n<!-- agent-result:v1:park -->\n${claimMarker}`,
+          },
+        ],
+      ],
+    });
+    expect(output['outcome-kind']).toBe('park');
+  });
+
+  it(
+    'lets an explicit park override an already-found PR outcome -- a run ' +
+      'that opens a PR and then discovers a blocker is still parked, not ' +
+      'a silent success (Codex review on #1564)',
+    () => {
+      const output = runEvidenceScript({
+        pulls: [
+          [{ number: 42, title: '', body: `Fixes #70\n\n${claimMarker}` }],
+        ],
+        comments: [
+          [
+            {
+              id: 1,
+              body: `PARK: blocked.\n<!-- agent-result:v1:park -->\n${claimMarker}`,
+            },
+          ],
+        ],
+      });
+      expect(output['outcome-kind']).toBe('park');
+    },
+  );
+
+  it('still lets a marked PR win when there is no park comment (unchanged behavior)', () => {
+    const output = runEvidenceScript({
+      pulls: [[{ number: 42, title: '', body: `Fixes #70\n\n${claimMarker}` }]],
+      comments: [[{ id: 1, body: `Just a status update.\n${claimMarker}` }]],
+    });
+    expect(output['outcome-kind']).toBe('pull-request');
   });
 });

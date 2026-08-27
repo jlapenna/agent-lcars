@@ -677,7 +677,7 @@ async function handleReportOutcome(
       ? await describeLostOutcome(store, run, task)
       : {
           body: outcomeCommentBody(run),
-          needsHumanLabel: run.state === 'finished' && run.result?.ok === false,
+          needsHumanLabel: run.state === 'finished' && runNeedsHumanLabel(run),
         };
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
@@ -903,6 +903,26 @@ function parseGeneration(runId: string): string {
   return match[1];
 }
 
+/** `run.result.summary` value the executor sends for a run that parked
+ *  with real evidence (agent-protocol.md #4's issue-anchor path: a comment
+ *  carrying both the attempt-claim and `agent-result:v1:park` markers).
+ *  Shared between `outcomeCommentBody` (which swaps in human-facing
+ *  wording instead of echoing this raw token) and `runNeedsHumanLabel`
+ *  (which flags the issue despite `ok: true`). */
+const PARK_OUTCOME_SUMMARY = 'park';
+
+/** A finished run flags the issue for human attention either the old way
+ *  (it failed outright, `ok: false`) or the new one (agent-protocol.md #4:
+ *  it succeeded at leaving a real, marker-stamped `park` deliverable, but
+ *  that deliverable itself says a human is needed). Both cases still post
+ *  their own outcome comment above/alongside this label -- see
+ *  `outcomeCommentBody`. */
+function runNeedsHumanLabel(run: Run): boolean {
+  return (
+    run.result?.ok === false || run.result?.summary === PARK_OUTCOME_SUMMARY
+  );
+}
+
 function outcomeCommentBody(run: Run): string {
   switch (run.state) {
     case 'finished': {
@@ -912,7 +932,17 @@ function outcomeCommentBody(run: Run): string {
       if (run.result?.ok && run.result.ref !== undefined) {
         lines.push(run.result.ref);
       }
-      if (run.result?.summary !== undefined) lines.push(run.result.summary);
+      if (run.result?.summary === PARK_OUTCOME_SUMMARY) {
+        // The agent's own comment (carrying both markers) already states
+        // the actual blocker in the thread above this one -- don't echo
+        // the raw outcome token, point at it instead.
+        lines.push(
+          "Parked -- see this run's own comment above for the blocker " +
+            'and how to resume it.',
+        );
+      } else if (run.result?.summary !== undefined) {
+        lines.push(run.result.summary);
+      }
       if (run.result?.ok === false) {
         // Mirrors `describeLostOutcome`'s exhausted-budget clause: the run
         // itself never called this a retryable loss, so (unlike `lost`)

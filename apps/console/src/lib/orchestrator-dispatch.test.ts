@@ -1641,6 +1641,45 @@ describe('drainOutbox: report-outcome', () => {
     );
   });
 
+  it('a finished park outcome (ok: true) also gets the status:needs-human label -- the run succeeded at leaving evidence (agent-protocol.md #4), but a human is still needed', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const runId = decidedRun(requested).runId;
+    await orchestrator.confirmDispatch(runId);
+    await orchestrator.report(runId, { ok: true, summary: 'park' });
+
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    const labelCall = calls.find((c) => c.url.endsWith('/issues/42/labels'));
+    expect(labelCall).toBeDefined();
+    expect(JSON.parse(labelCall!.init.body as string)).toEqual({
+      labels: ['status:needs-human'],
+    });
+
+    const commentCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/comments'),
+    );
+    const commentBody = callBody(commentCall!).body as string;
+    expect(commentBody).toBe(
+      `✅ Run ${runId} finished.\n` +
+        `Parked -- see this run's own comment above for the blocker and ` +
+        `how to resume it.`,
+    );
+  });
+
   it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
