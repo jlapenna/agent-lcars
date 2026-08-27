@@ -226,6 +226,27 @@ CURLCFG
 HEARTBEAT_PID=$!
 trap 'kill "$HEARTBEAT_PID" 2>/dev/null || true' EXIT
 
+# The claude CLI reads its long-lived subscription credential straight from
+# its own process environment -- no file-based alternative exists (checked
+# against `claude --help`'s auth section) -- but the value never lands in
+# THIS container's Config.Env: launchDirectRunnerOnHost (queue_executor.go)
+# bind-mounts it here as a read-only file instead, exactly like
+# WRITER_CREDENTIALS_FILE above, specifically so it never shows up in a
+# `docker inspect` of this container the way a Config.Env entry would --
+# only something with exec/proc access to the running process can see it,
+# and only from here forward, immediately before the one command that needs
+# it. CLAUDE_TOKEN_FILE is env-overridable like every other baked-tool path
+# above, defaulting to where launchDirectRunnerOnHost actually mounts it
+# (directRunnerClaudeTokenMountPath), so direct-runner.test.sh can point it
+# at a fixture file instead of a real bind mount.
+CLAUDE_TOKEN_FILE="${CLAUDE_TOKEN_FILE:-/run/secrets/claude-code-oauth-token}"
+if [ ! -r "$CLAUDE_TOKEN_FILE" ]; then
+  echo "FATAL: $CLAUDE_TOKEN_FILE is required (CLAUDE_CODE_OAUTH_TOKEN source) but is missing or unreadable" >&2
+  exit 1
+fi
+CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_TOKEN_FILE")"
+export CLAUDE_CODE_OAUTH_TOKEN
+
 set +e
 # --dangerously-skip-permissions: this container is dedicated to one
 # claimed run, the same trust boundary the claude-code-action's own

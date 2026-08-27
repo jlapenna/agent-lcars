@@ -88,6 +88,7 @@ LCARS_CONSOLE_URL=https://lcars.jlapenna.net
 LCARS_WORK_AUDIENCE=agent-lcars-work
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
+LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH=/secrets/claude-code-oauth-token
 LCARS_QUEUE_MAX_CONCURRENT=1
 ```
 
@@ -161,28 +162,42 @@ it. There is no sweeper for these yet, unlike `cleanupOrphans` for
 GitHub-mode runners; `docker container prune` (or an equivalent scheduled
 job) on each fleet host is the operator-side stopgap until one exists.
 
-### The one credential this code does not deliver
+### Delivering the claude CLI's own credential
 
 `launchDirectRunnerOnHost` (`queue_executor.go`) sets `RUNNER_MODE`,
 `LCARS_RUN_ID`, `LCARS_RUN_TOKEN`, and optionally `LCARS_CONSOLE_URL` on the
-direct-mode container, plus the `telemetry-writer.json` bind-mount above.
-That is deliberately everything it sets: `CLAUDE_CODE_OAUTH_TOKEN` (the
-`claude` CLI's own credential -- `direct-runner.sh` never touches it by
-name, `claude` reads it straight from its process environment) is reachable
-today only via GitHub-Actions-WIF impersonation of
+direct-mode container's `Config.Env`, plus two read-only file bind-mounts:
+`telemetry-writer.json` (above) and, at the fixed in-container path
+`/run/secrets/claude-code-oauth-token`, a plain-text file holding the
+current `CLAUDE_CODE_OAUTH_TOKEN` value -- the `claude` CLI's own
+subscription credential (in GitHub Actions mode this is reachable via
+GitHub-Actions-WIF impersonation of
 `claude-token-reader@agent-lcars.iam.gserviceaccount.com`, which a homelab
-Docker container cannot do. Wiring a _second_ delivery path is out of this
-repo's own scope by design (design spec, "Real-path proof").
+Docker container cannot do; there is no other delivery path). `direct-runner.sh`
+reads that file and exports it as `CLAUDE_CODE_OAUTH_TOKEN` into its own
+process environment immediately before invoking `claude` (`claude` reads it
+straight from its process environment; no flag or file path is accepted
+directly). This is deliberately a file mount, not a third `Config.Env`
+entry: a `Config.Env` value set at `ContainerCreate` time is visible to
+anything that can `docker inspect` the container on that host, while a file
+this script reads and exports at runtime is not.
 
-**Before the queue executor can run a real `claude` pipeline**, a maintainer
-places a copy of that secret's current value into the homelab encrypted
-secret store (`secrets-cli` skill) and adds a file-mount/env entry exposing
-it into direct-mode containers -- the same pattern `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH`
-already uses for `telemetry-writer.json`. One-time manual credential
-placement, not a Terraform change, not a new IAM grant, and not something
-any workflow in this repo performs. See
-`docs/deployment-boundary.md`'s "Queue executor live-proof" section for the
-full maintainer checklist this is one step of.
+`LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` is that file's path **on the Docker
+host** -- the same "cannot be inferred, so it is required and fails loudly"
+reasoning as `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` immediately above,
+and every pipeline the queue executor launches today is `claude`, so it is
+unconditionally required whenever `LCARS_QUEUE_POLL=1`.
+
+**Placing the secret's value on the Docker host is still a one-time,
+maintainer-gated action this repo's own code cannot perform**: a maintainer
+copies the current `CLAUDE_CODE_OAUTH_TOKEN` secret value into the homelab
+encrypted secret store (`secrets-cli` skill) and stages it as a file at
+whatever path `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` names, mode `0600`, same
+as `telemetry-writer.json`. Not a Terraform change, not a new IAM grant, and
+not something any workflow in this repo performs -- but the bind mount and
+the in-container read-and-export it feeds are wired code, not an
+outstanding gap. See `docs/deployment-boundary.md`'s "Queue executor
+live-proof" section for the full maintainer checklist this is one step of.
 
 ## Host telemetry timeout
 

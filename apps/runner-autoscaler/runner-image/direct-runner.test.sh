@@ -45,6 +45,12 @@ BAKED_SIDECAR_LIFECYCLE="$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle
 # git's recorded clone argv (fix round 1, review-critical #2).
 export FAKE_TOKEN="fake-checkout-token-xyz789"
 
+# A distinctive value (not a real secret) for the claude OAuth token file
+# -- asserted present in the fake claude's own recorded env
+# (CLAUDE_ENV_TOKEN_LOG) and absent from anywhere a `docker run`-style
+# Config.Env leak would show up, mirroring FAKE_TOKEN's own discipline.
+export FAKE_CLAUDE_OAUTH_TOKEN="fake-claude-oauth-token-abc123"
+
 # --- Fake binary factory ----------------------------------------------------
 # Installs curl/git/gh/claude fakes into "$1/bin". Every curl call in
 # direct-runner.sh sends its bearer/url/timeouts via `--config -` (stdin),
@@ -167,10 +173,17 @@ FAKE
 
   # Records its argv (including any --resume flag) to $CLAUDE_ARGS_LOG, then
   # ignores every flag, including the real --dangerously-skip-permissions/
-  # --allowedTools/--disallowedTools direct-runner.sh passes.
+  # --allowedTools/--disallowedTools direct-runner.sh passes. Also records
+  # its own CLAUDE_CODE_OAUTH_TOKEN env value to $CLAUDE_ENV_TOKEN_LOG --
+  # `claude` reads that credential straight from its process environment
+  # (no flag carries it), so this is the only way to prove direct-runner.sh
+  # actually exported it before invoking `claude`, and to prove it never
+  # showed up as a `docker run`-style Config.Env entry the queue-executor
+  # side already pins in queue_executor_test.go.
   cat > "$bindir/claude" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
+printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
 exit 0
 FAKE
   chmod +x "$bindir/claude"
@@ -210,6 +223,20 @@ run_scenario() {
   export GIT_CLONE_ARGV_LOG="$dir/git-clone-argv.log"
   export CLAUDE_ARGS_LOG="$dir/claude-args.log"
   export NODE_ARGS_LOG="$dir/node-args.log"
+  export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
+
+  # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
+  # real bind mount produces -- a plain-text file holding just the token --
+  # so this test exercises direct-runner.sh's own read-and-export, not a
+  # fake standing in for it. FAKE_MISSING_CLAUDE_TOKEN (scenario 4) instead
+  # points CLAUDE_TOKEN_FILE at a path this function never creates, so the
+  # missing-file branch is exercised for real too.
+  if [ "${FAKE_MISSING_CLAUDE_TOKEN:-}" = "1" ]; then
+    export CLAUDE_TOKEN_FILE="$dir/nonexistent-claude-token"
+  else
+    printf '%s' "$FAKE_CLAUDE_OAUTH_TOKEN" > "$dir/claude-code-oauth-token"
+    export CLAUDE_TOKEN_FILE="$dir/claude-code-oauth-token"
+  fi
 
   # Bounds the background heartbeat loop's orphaned-sleep lifetime to
   # ~1 second instead of the production 300s default: fake `claude` returns
@@ -284,6 +311,13 @@ grep -q -- "--cwd $workspace" "$NODE_ARGS_LOG" ||
 grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
   fail "happy path: claude was not passed --resume sess_1 ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
 
+# The credential-delivery fix under test: CLAUDE_TOKEN_FILE's contents must
+# reach claude's own process environment as CLAUDE_CODE_OAUTH_TOKEN.
+[ -f "$CLAUDE_ENV_TOKEN_LOG" ] || fail "happy path: claude was never invoked with an env to record"
+if [ "$(cat "$CLAUDE_ENV_TOKEN_LOG")" != "$FAKE_CLAUDE_OAUTH_TOKEN" ]; then
+  fail "happy path: claude did not see CLAUDE_CODE_OAUTH_TOKEN from CLAUDE_TOKEN_FILE (got $(cat "$CLAUDE_ENV_TOKEN_LOG"))"
+fi
+
 echo "scenario happy-path: OK"
 
 # --- Scenario 1b: no resume in the brief -------------------------------------
@@ -355,5 +389,24 @@ unset FAKE_BRIEF_FAIL
 [ ! -f "$COMPLETE_LOG" ] || fail "brief-401: direct-runner.sh called POST .../complete after a failed brief fetch"
 
 echo "scenario brief-401: OK"
+
+# --- Scenario 4: missing claude token file -----------------------------------
+# A missing/unreadable CLAUDE_TOKEN_FILE must fail the run loudly rather
+# than silently invoking claude with no credential (which would instead
+# fail deep inside the claude CLI with a less legible auth error). By this
+# point in the script (after checkout and the sidecar's own `start` call)
+# there is still no run-token-authenticated way to report failure back
+# through /complete for a run that never got as far as invoking claude --
+# same as brief-401 above -- so the only contract to assert is a non-zero
+# exit and no completion callback.
+export FAKE_MISSING_CLAUDE_TOKEN=1
+run_scenario missing-claude-token
+unset FAKE_MISSING_CLAUDE_TOKEN
+
+[ "$rc" -ne 0 ] || fail "missing-claude-token: expected a non-zero exit, got 0"
+[ ! -f "$COMPLETE_LOG" ] || fail "missing-claude-token: direct-runner.sh called POST .../complete despite a missing token file"
+[ ! -f "$CLAUDE_ARGS_LOG" ] || fail "missing-claude-token: claude was invoked despite a missing token file"
+
+echo "scenario missing-claude-token: OK"
 
 echo "direct-runner.sh: OK"

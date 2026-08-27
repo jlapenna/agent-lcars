@@ -309,6 +309,16 @@ const (
 	// (WRITER_CREDENTIALS_FILE is hard-coded to this path in
 	// runner-image/direct-runner.sh, not caller-configurable).
 	directRunnerTelemetryWriterMountPath = "/run/secrets/telemetry-writer.json"
+	// directRunnerClaudeTokenMountPath is the fixed in-container path
+	// direct-runner.sh reads the claude CLI's long-lived OAuth token from
+	// and exports as CLAUDE_CODE_OAUTH_TOKEN immediately before invoking
+	// `claude` -- never placed in this container's Config.Env (see
+	// launchDirectRunnerOnHost): a file mounted here is only visible to
+	// something with exec/proc access to the running container, while an
+	// env var set at ContainerCreate time is visible to anything that can
+	// `docker inspect` the container on this host. Matches the
+	// telemetry-writer.json pattern immediately above, not a new one.
+	directRunnerClaudeTokenMountPath = "/run/secrets/claude-code-oauth-token"
 )
 
 // directRunnerHostCursor round-robins launchDirectRunner across the
@@ -347,13 +357,17 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	if err != nil {
 		return err
 	}
+	claudeTokenHostPath, err := directRunnerClaudeTokenHostPath()
+	if err != nil {
+		return err
+	}
 	maxConcurrent := directRunnerMaxConcurrent()
 
 	start := directRunnerHostCursor.Add(1) - 1
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, claudeTokenHostPath, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -423,13 +437,35 @@ func directRunnerTelemetryWriterHostPath() (string, error) {
 	return path, nil
 }
 
+// directRunnerClaudeTokenHostPath returns the Docker-host-side path of a
+// plain-text file holding the current CLAUDE_CODE_OAUTH_TOKEN value, to
+// bind-mount into a direct-mode container at directRunnerClaudeTokenMountPath
+// (see that constant's comment for why this is a file mount and not a
+// Config.Env entry). Same shape and same reasoning as
+// directRunnerTelemetryWriterHostPath immediately above: this is homelab
+// deployment knowledge -- where the operator staged the secret on the
+// specific Docker host that will perform the bind mount -- this repo cannot
+// infer, so it is required, explicit, and fails loudly rather than guessing
+// a path that could silently mount the wrong file or nothing. Every
+// pipeline the queue executor launches today is `claude` (README's own
+// "codex/opencode are not covered" caveat), so this is unconditionally
+// required whenever a direct-mode runner launches at all, exactly like the
+// telemetry-writer path above.
+func directRunnerClaudeTokenHostPath() (string, error) {
+	path := strings.TrimSpace(os.Getenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH"))
+	if path == "" {
+		return "", fmt.Errorf("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH is required to launch a direct-mode runner (Docker-host path of a file holding the current CLAUDE_CODE_OAUTH_TOKEN value, bind-mounted read-only to %s)", directRunnerClaudeTokenMountPath)
+	}
+	return path, nil
+}
+
 // launchDirectRunnerOnHost attempts one host: connects, checks the
 // concurrency cap via a label-filtered ContainerList (the same
 // count-matching-labelled-containers pattern Scaler.checkHostRunnerLimit
 // uses for GitHub-mode runners), and on capacity, creates and starts the
 // container. Returns an error (never fatal to the caller's round-robin) if
 // this host is unreachable, full, or the create/start call fails.
-func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
+func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath, claudeTokenHostPath string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("host %q: connecting: %w", host, err)
@@ -458,7 +494,15 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 		env = append(env, "LCARS_CONSOLE_URL="+l.consoleURL)
 	}
 	hostConfig := &container.HostConfig{
-		Binds: []string{writerKeyHostPath + ":" + directRunnerTelemetryWriterMountPath + ":ro"},
+		// The claude-token bind is deliberately the only path that puts
+		// CLAUDE_CODE_OAUTH_TOKEN anywhere near this container: it never
+		// appears in the env list below, only as a file direct-runner.sh
+		// reads and exports into its own process just before invoking
+		// `claude` (see directRunnerClaudeTokenMountPath's comment).
+		Binds: []string{
+			writerKeyHostPath + ":" + directRunnerTelemetryWriterMountPath + ":ro",
+			claudeTokenHostPath + ":" + directRunnerClaudeTokenMountPath + ":ro",
+		},
 		// Deliberately NOT AutoRemove (final-review fix): AutoRemove reaps
 		// the container -- logs included -- the instant it exits, which
 		// would erase a non-zero-exit direct-runner's own stdout/stderr
