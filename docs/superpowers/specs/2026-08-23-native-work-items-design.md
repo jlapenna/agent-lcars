@@ -543,7 +543,8 @@ synchronous refusals besides validation.
 2. **Parked-work visibility + console polish** (see the section below; the
    Telegram paging originally listed here was dropped on 2026-08-27 — the
    console is the notification surface).
-3. **Cron ingress:** a scheduler minting items from a schedule.
+3. **Cron ingress:** a scheduler minting items from a schedule — see
+   [Sub-project 3: cron ingress](#sub-project-3-cron-ingress).
 4. **`QueueExecutor`:** direct runner mode + LCARS-minted run tokens +
    spec-fetch route.
 5. **Ingress unification:** label-driven work and Quick Tasks carry `work`;
@@ -642,3 +643,168 @@ wired); `workIdFromIntentId`; cancel path with a native display title
 native item is created and driven to `parked` (its description asks the
 agent to `PARK`) and the Bridge is checked by the maintainer; `get` via
 `work-create.yml` shows `parked`; `redispatch` is exercised from the panel.
+
+## Sub-project 3: cron ingress
+
+**Purpose.** Recurring native work: an operator declares a cron expression
+and a spec once, and a scheduled tick mints a work item for each due slot.
+No new store and no new dispatch mechanism — the tick reuses `items`'
+create path exactly (grants, the live-run cap, idempotent minting) via a
+`mintItem` primitive extracted from `items.create`'s body. Requires
+sub-project 2 (console polish) merged, for `libs/work`'s `ulid()`.
+
+### Resource: `schedules`
+
+`/api/work/v1/schedules`, the same `work.operator` auth every `items`
+route uses, with one exception:
+
+| Route                          | Scope           | Purpose                                                                                                                           |
+| ------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT /schedules/{id}`          | `work.operator` | Create. `{id}` a client ULID; body `{ cron, spec, enabled? = true }`. 201-always, idempotent by id (same rule as `items.create`). |
+| `GET /schedules/{id}`          | `work.operator` | Read one schedule.                                                                                                                |
+| `GET /schedules`               | `work.operator` | List, newest first, `limit`.                                                                                                      |
+| `POST /schedules/{id}/enable`  | `work.operator` | Re-enable a disabled schedule; clears `disabledReason`.                                                                           |
+| `POST /schedules/{id}/disable` | `work.operator` | Disable; sets `disabledReason: 'operator'`.                                                                                       |
+| `POST /schedules/tick`         | `work.cron`     | Mint items for every enabled schedule's latest due slot. Not an operator route — see Auth below.                                  |
+
+### Schedule document
+
+Strict zod, stored opaquely by a new `ScheduleStore` (`libs/orchestrator`)
+exactly the way `Task.work` is opaque to the orchestrator itself — `spec`
+is a bounded record at the store layer, validated as `workSpecSchema` by
+`libs/work` on every read and write:
+
+```
+{ scheduleId: WORK_ID_RE, cron: string, spec: WorkSpec,
+  enabled: boolean, createdBy: principal string,
+  createdAt, updatedAt,
+  lastSlotAt?: ISO, lastItemId?: WORK_ID_RE,
+  disabledReason?: 'grant-revoked' | 'operator' }
+```
+
+`ScheduleStore`: `readSchedule`, `writeSchedule` (create-or-replace,
+last-write-wins — a schedule is configuration plus a watermark, not a
+mutex over live work like `Task`), `listSchedules(limit)`,
+`listEnabledSchedules()`. Memory and Firestore implementations, collection
+`${prefix}schedules` beside `${prefix}tasks`/`runs`/`outbox`, the
+Firestore half run against the same CI emulator `items`' store contract
+already uses.
+
+### Cron grammar
+
+5-field (`min hour dom mon dow`), UTC only, `*`, lists, ranges, `*/n`
+steps, minute granularity — no third-party dependency
+(`libs/work/src/cron.ts`; third-party deps are root-only and need
+Renovate). `parseCron(expr)` throws on anything malformed.
+`latestDueSlot(spec, now, after?)` returns the latest minute boundary
+`<= now` that matches and is strictly after `after`, or `undefined`.
+
+### Tick semantics
+
+`work-schedules-tick.yml` calls `POST /schedules/tick` every 5 minutes
+with an empty JSON body. For each enabled schedule:
+
+1. `slot = latestDueSlot(cron, now, schedule.lastSlotAt)`. No slot → skip;
+   `lastSlotAt` untouched.
+2. `itemId = slotItemId(scheduleId, slot)`: the 10-char ULID time prefix
+   of `slot.getTime()` plus 16 Crockford characters derived from
+   `sha256(scheduleId + ':' + slot.toISOString())` (each of the digest's
+   first 16 bytes mapped through `byte % 32`). Deterministic — a re-tick
+   of the same slot (a retry, or two ticks racing before `lastSlotAt`
+   advances) always names the same item, so minting goes through
+   `mintItem`'s idempotent-create path rather than starting a second run.
+   A missed slot is never backfilled: only the latest due slot is minted
+   each tick, and an older one is silently superseded.
+3. Grants are re-checked at mint time against the schedule's `createdBy`
+   principal — never the tick caller's own `cron:tick` identity, which
+   carries no grant of its own — using the same `forbiddenReason` rule
+   `create` and `redispatch` already apply. A refusal disables the
+   schedule (`disabledReason: 'grant-revoked'`) instead of retrying a
+   refusal every 5 minutes forever.
+4. The live-run cap applies. At the cap, this schedule is skipped for
+   this tick and `lastSlotAt` does **not** advance — the same slot is
+   retried on the next tick until it mints or a newer slot supersedes it
+   (`latestDueSlot` always resolves to the _latest_ due slot, never a
+   queue of missed ones).
+5. On a mint (new or idempotently replayed), `lastSlotAt = slot` and
+   `lastItemId = itemId`.
+
+Origin on the minted item: `{ principal: 'cron:<scheduleId>', channel:
+'cron' }` — the `'cron'` channel `workOriginSchema` already reserved.
+Response: `{ ticked, minted: [{scheduleId, itemId}], skippedCap: [...],
+disabled: [...] }`, `ticked` the count of enabled schedules considered.
+
+`mintItem(context, { id, spec, origin, grantsPrincipal })` is extracted
+from `items.create`'s body so both paths run the identical
+existing-item / `CONFLICT` / cap / `request` / `drain` sequence; the only
+difference between a client-driven create and a tick-driven mint is which
+principal's grant is checked and where the id comes from.
+
+### Auth for the tick
+
+`POST /schedules/tick` has no human or service-account caller — only the
+scheduled workflow. A new scope `work.cron` (beside `work.operator`) is
+granted by GitHub Actions OIDC alone:
+`assertScheduleTickOidcClaims`/`verifyScheduleTickOidcToken` in
+`github-actions-oidc.ts` mirror the reconciler's pair — audience
+`agent-lcars-work-schedules`, repository pinned to the control-plane home
+(not the allow-list, like the reconciler), `ref: refs/heads/main`,
+`event_name` in `{schedule, workflow_dispatch}`, `job_workflow_ref`
+pinned to `.github/workflows/work-schedules-tick.yml@refs/heads/main`.
+`authenticateWorkRequest` grows a third branch: a bearer that fails Google
+verification is tried against this verifier before the request is
+refused, producing `{ principal: 'cron:tick', via: 'oidc', scopes:
+['work.cron'] }`. No grant-list entry for `cron:tick` itself — `work.cron`
+confers nothing but tick access, and the tick re-checks every schedule's
+own `createdBy` grant per schedule.
+
+### Console
+
+`/work/schedules` (session-gated like `/work`, `current: 'work'`): a table
+(title, cron, pipeline, repo, enabled, last item linking to `/work/<id>`),
+a create form (title, description, repo defaulting to the control-plane
+repository, pipeline select, a cron field validated client-side with the
+same `parseCron`), and enable/disable buttons as server functions — the
+same `createServerFunctionable` pattern `/work`'s cancel/redispatch
+already use. `/work`'s header links to it. No CLI changes in this
+sub-project; the API and console suffice.
+
+### Testing
+
+Cron evaluator table tests (every operator, invalid expressions throw);
+`slotItemId` determinism against `WORK_ID_RE`; `ScheduleStore` contract
+against memory and the Firestore emulator; router tests for
+create/get/list/enable/disable and for the tick (not due, due plus
+idempotent re-tick, cap-skip leaving `lastSlotAt` untouched,
+grant-revoked disabling); OIDC claim tests mirroring the reconciler's;
+console page/form tests; a workflow text-assertion test for
+`work-schedules-tick.yml`'s cadence, trigger, minimal permissions, and
+target; the OpenAPI document regenerated and diffed in CI as it already
+is for `items`. `/api/work/v1/` is already the whole prefix's proxy
+allow-list entry (`proxy.ts`) — the tick route needs no proxy change.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant S as work-schedules-tick.yml (schedule)
+  participant API as Console API
+  participant G as Grants
+  participant X as Orchestrator
+  participant D as Outbox drain
+
+  S->>API: POST /schedules/tick (OIDC, work.cron)
+  API->>API: for each enabled schedule, latestDueSlot(cron, now, lastSlotAt)
+  API->>API: itemId = slotItemId(scheduleId, slot)
+  API->>G: forbiddenReason(schedule.createdBy, spec)
+  alt refused
+    API->>API: disable schedule (grant-revoked)
+  else at live-run cap
+    API->>API: skip, leave lastSlotAt untouched
+  else granted
+    API->>X: mintItem calls requestRun (idempotent by itemId)
+    X-->>API: task plus run r1 pending
+    API->>D: drain dispatches to GitHub Actions
+    API->>API: writeSchedule with lastSlotAt=slot lastItemId=itemId
+  end
+  API-->>S: ticked, minted, skippedCap, disabled
+```
