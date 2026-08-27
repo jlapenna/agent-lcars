@@ -1,3 +1,4 @@
+import { WORK_DESCRIPTION_MAX, workPayloadSchema } from '@agent-lcars/work';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,11 +18,15 @@ describe('truncatedDescription', () => {
     expect(truncatedDescription('   ')).toBe('(no description)');
   });
 
-  it('clamps an overlong body with a truncation marker', () => {
+  it('leaves a body exactly at the bound untouched', () => {
+    const body = 'x'.repeat(WORK_DESCRIPTION_MAX);
+    expect(truncatedDescription(body)).toBe(body);
+  });
+
+  it('clamps an overlong body to exactly the bound, with a truncation marker', () => {
     const body = 'x'.repeat(20_000);
     const result = truncatedDescription(body);
-    expect(result.length).toBeGreaterThan(16_384);
-    expect(result.startsWith('x'.repeat(16_384))).toBe(true);
+    expect(result.length).toBe(WORK_DESCRIPTION_MAX);
     expect(result).toContain('truncated to 16384 of 20000 characters');
   });
 });
@@ -70,7 +75,7 @@ describe('workPayloadFromGithub', () => {
     });
   });
 
-  it('clamps a title over WORK_TITLE_MAX defensively', () => {
+  it('clamps a title over WORK_TITLE_MAX defensively, producing a valid payload', () => {
     const title = 'y'.repeat(300);
     const payload = workPayloadFromGithub({
       title,
@@ -80,5 +85,31 @@ describe('workPayloadFromGithub', () => {
       actor: 'jlapenna',
     });
     expect(payload.spec.title).toBe('y'.repeat(256));
+    expect(workPayloadSchema.parse(payload)).toEqual(payload);
+  });
+
+  it('clamps an overlong body to exactly the description bound and stays valid', () => {
+    const payload = workPayloadFromGithub({
+      title: 'Fix the thing',
+      body: 'x'.repeat(20_000),
+      pipeline: 'claude',
+      repo: 'jlapenna/agent-lcars',
+      actor: 'jlapenna',
+    });
+    expect(payload.spec.description.length).toBe(WORK_DESCRIPTION_MAX);
+    expect(workPayloadSchema.parse(payload)).toEqual(payload);
+  });
+
+  it('leaves a body exactly at the description bound untouched and valid', () => {
+    const body = 'x'.repeat(WORK_DESCRIPTION_MAX);
+    const payload = workPayloadFromGithub({
+      title: 'Fix the thing',
+      body,
+      pipeline: 'claude',
+      repo: 'jlapenna/agent-lcars',
+      actor: 'jlapenna',
+    });
+    expect(payload.spec.description).toBe(body);
+    expect(workPayloadSchema.parse(payload)).toEqual(payload);
   });
 });

@@ -20,11 +20,13 @@ export function truncatedDescription(body: string | null | undefined): string {
   const text = body?.trim();
   if (!text) return EMPTY_DESCRIPTION;
   if (text.length <= WORK_DESCRIPTION_MAX) return text;
-  return (
-    text.slice(0, WORK_DESCRIPTION_MAX) +
+  const marker =
     `\n\n[work: truncated to ${WORK_DESCRIPTION_MAX} of ${text.length} ` +
-    `characters. Read the full body on the issue.]`
-  );
+    `characters. Read the full body on the issue.]`;
+  // Slice leaves room for the marker itself, so the total stays within
+  // WORK_DESCRIPTION_MAX -- appending the marker after a full-length slice
+  // would push the result over the bound `workPayloadSchema` enforces.
+  return text.slice(0, WORK_DESCRIPTION_MAX - marker.length) + marker;
 }
 
 /** GitHub's own issue/PR title limit (256 characters) already equals
