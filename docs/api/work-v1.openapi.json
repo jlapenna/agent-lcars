@@ -1333,7 +1333,13 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                  "resumeSessionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
               }
             }
           }
@@ -1542,6 +1548,23 @@
               }
             }
           },
+          "400": {
+            "description": "resumeSessionId does not name a resumable session for this item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BadRequest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "403": {
             "description": "Principal may not request this pipeline or repository",
             "content": {
@@ -1577,7 +1600,7 @@
             }
           },
           "409": {
-            "description": "Only a parked item can be redispatched",
+            "description": "Only a parked item can be redispatched, or the named session has no archived transcript",
             "content": {
               "application/json": {
                 "schema": {
@@ -2674,6 +2697,19 @@
                     },
                     "intentId": {
                       "type": "string"
+                    },
+                    "resume": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string"
+                        },
+                        "transcriptGcsUri": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["sessionId", "transcriptGcsUri"],
+                      "additionalProperties": false
                     }
                   },
                   "required": [

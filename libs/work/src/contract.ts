@@ -183,13 +183,30 @@ export const itemsContract = {
       FORBIDDEN: {
         message: 'Principal may not request this pipeline or repository',
       },
-      CONFLICT: { message: 'Only a parked item can be redispatched' },
+      CONFLICT: {
+        message:
+          'Only a parked item can be redispatched, or the named session has no archived transcript',
+      },
       TOO_MANY_REQUESTS: {
         message: 'Fleet is at its live-run cap',
         data: z.object({ retryAfterSeconds: z.number() }),
       },
+      // Sub-project 6: `resumeSessionId` names a session that either
+      // doesn't exist, doesn't belong to a run of this item, or isn't a
+      // claude-code session -- a malformed request, not a state conflict.
+      BAD_REQUEST: {
+        message:
+          'resumeSessionId does not name a resumable session for this item',
+      },
     })
-    .input(z.strictObject({ id: workIdSchema }))
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        // Session ids are opaque UUIDs from the agent CLI, not ULIDs --
+        // bounded generously above any real id.
+        resumeSessionId: z.string().min(1).max(256).optional(),
+      }),
+    )
     .output(itemViewSchema),
 };
 export type ItemsContract = typeof itemsContract;
@@ -393,6 +410,15 @@ export const runBriefSchema = z.strictObject({
   attemptId: z.string(),
   generation: z.number().int().positive(),
   intentId: z.string(),
+  // Sub-project 6: present iff the run's params carried a resume request.
+  // The same shape the drain puts on the `work` workflow_dispatch input's
+  // `resume` field -- one shape for both runners.
+  resume: z
+    .strictObject({
+      sessionId: z.string(),
+      transcriptGcsUri: z.string(),
+    })
+    .optional(),
 });
 
 /** `claim` is called by a runner authenticating with its own console
