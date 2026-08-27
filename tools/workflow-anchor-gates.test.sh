@@ -51,11 +51,20 @@ grep -q '::warning::.*[Nn]ative work item' "$finalize" || { echo "finalize: fall
 # directories. Every local action step's own `if:` must therefore gate on
 # `inputs.dispatch-bootstrap` or `inputs.trajectory-export` -- the two eras
 # that actually check out this repo's action directories.
+#
+# The gate must be POSITIVE. A negated one (`!inputs.dispatch-bootstrap`)
+# runs the local `uses: ./...` in precisely the consumer era it must never
+# run in -- the original C1 bug, reintroduced by inverting rather than
+# deleting the condition. Substring presence alone cannot tell the two
+# apart, so strip the negated forms before testing for the positive token.
 awk '
   /^      - name:/ { ifline = "" }
   /^        if:/ { ifline = $0 }
   /^        uses: \.\/\.github\/actions\// {
-    if (ifline !~ /inputs\.dispatch-bootstrap/ && ifline !~ /inputs\.trajectory-export/) {
+    probe = ifline
+    gsub(/![[:space:]]*inputs\.dispatch-bootstrap/, "", probe)
+    gsub(/![[:space:]]*inputs\.trajectory-export/, "", probe)
+    if (probe !~ /inputs\.dispatch-bootstrap/ && probe !~ /inputs\.trajectory-export/) {
       print "lane: local action step not gated to an agent-lcars-only era (" $0 ")"
       bad = 1
     }
