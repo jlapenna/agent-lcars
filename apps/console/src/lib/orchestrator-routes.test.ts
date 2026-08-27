@@ -6,7 +6,7 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CompletionOidcIdentity } from './github-actions-oidc';
 import type { DispatchTokenProvider } from './github-app-tokens';
@@ -281,6 +281,35 @@ describe('handleWebhookDelivery', () => {
     expect(second).toEqual({ status: 200, body: { refused: 'task-busy' } });
     expect(calls).toHaveLength(0);
     expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+
+  it('forwards a derived work payload from interpretDelivery to orchestrator.request', async () => {
+    const { deps } = fixture();
+    const requestSpy = vi.spyOn(deps.orchestrator, 'request');
+    await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'd1',
+      payload: {
+        action: 'labeled',
+        repository: { full_name: 'jlapenna/agent-lcars' },
+        issue: { number: 1, title: 'T', body: 'B' },
+        label: { name: 'agent:claude' },
+        sender: { login: 'jlapenna' },
+      },
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'T',
+            description: 'B',
+            pipeline: 'claude',
+            target: { repo: 'jlapenna/agent-lcars' },
+          },
+        },
+      }),
+    );
   });
 });
 
