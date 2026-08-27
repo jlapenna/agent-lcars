@@ -59,7 +59,7 @@ skills_digest="$(bash "$GITHUB_ACTION_PATH/install-skills.sh" \
 
 mkdir -p "$dispatch_dir"
 
-if [ -n "${WORK:-}" ]; then
+if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
   # Native work item: the anchor is the dispatch input itself. No GitHub
   # reads -- there is no issue, thread, or label to consult. WORK is a
   # dispatch-time input under caller control, not untrusted GitHub prose,
@@ -84,7 +84,35 @@ if [ -n "${WORK:-}" ]; then
   # A native run has no maintainer thread to reply on; force this
   # regardless of what the caller happened to pass as REPLY.
   REPLY=''
+elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
+  # Sub-project 5: a GitHub-anchored task that carries a work payload.
+  # The task text comes from WORK.spec -- the issue is evidence for
+  # linking (number, html_url, labels, assignees, state, and -- via the
+  # merge below -- whether this anchor is actually a PR) and, in reply
+  # mode, for the comment thread; it is not the source of the brief's
+  # title/body.
+  if ! jq -e '.spec.title and .spec.target.repo' <<<"$WORK" >/dev/null 2>&1; then
+    echo "::error::WORK is malformed: expected {spec:{title, target:{repo}}}" >&2
+    exit 1
+  fi
+  work_json="$(jq -c . <<<"$WORK")"
+  issue_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
+  comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+  # Merge, right side wins: every field the raw issue/PR response carries
+  # (number, labels, assignees, state, state_reason, html_url, and --
+  # load-bearing -- pull_request) survives untouched, with only
+  # title/body overridden from WORK.spec. No `type` is set here on
+  # purpose -- the downstream anchor.type fallback ($anchor.type // (if
+  # $anchor.pull_request then "pull-request" else "issue" end)) infers it
+  # from the merged $anchor.pull_request exactly as the legacy (no-WORK)
+  # branch below already relies on, so a PR-backed anchor keeps its
+  # "pull-request" type instead of being hardcoded to "issue".
+  anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
+    '$i + { title: $w.spec.title, body: $w.spec.description }')"
 else
+  # Legacy: no work payload yet on this task (pre-sub-project-5, or a task
+  # created through the internal-request path -- see the design spec's
+  # "handleDispatchRequest is not a derivation site" note). Unchanged.
   anchor_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
   comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
 fi

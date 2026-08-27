@@ -242,6 +242,90 @@ jq -e '
   .requested_results == ["pull-request"] and
   .truncated == []' "$native_context_path" >/dev/null
 
+# A GitHub-anchored task that carries a work payload (WORK and ISSUE both
+# set, sub-project 5): the brief's title/body come from WORK.spec, but its
+# number/html_url/labels/assignees/state still come from the live issue --
+# and, critically, `type` is not hardcoded here, so a PR-backed anchor
+# still resolves "pull-request" through the same fallback the legacy
+# (no-WORK) branch already relies on.
+work_and_issue_root="$test_root/work-and-issue"
+mkdir -p "$work_and_issue_root/runner-temp" "$work_and_issue_root/consumer"
+
+wi_bin="$work_and_issue_root/bin"
+mkdir -p "$wi_bin"
+WI_ANCHOR="$work_and_issue_root/anchor.json"
+WI_COMMENTS="$work_and_issue_root/comments.json"
+cat > "$wi_bin/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = api
+case "$2" in
+  */comments*) cat "$WI_COMMENTS" ;;
+  */issues/42) cat "$WI_ANCHOR" ;;
+  *) echo "unexpected gh api path: $2" >&2; exit 64 ;;
+esac
+FAKE_GH
+chmod +x "$wi_bin/gh"
+
+# The live issue's own title/body deliberately DIFFER from WORK.spec, to
+# prove the brief uses the WORK snapshot, not this live read.
+cat > "$WI_ANCHOR" <<'JSON'
+{"number":42,"state":"open","state_reason":null,"title":"Live title (stale)","body":"Live body (stale)","labels":[{"name":"agent:claude"}],"assignees":[{"login":"agent-lcars-bot"}],"html_url":"https://github.com/jlapenna/agent-lcars/issues/42"}
+JSON
+echo '[]' > "$WI_COMMENTS"
+
+WORK='{"spec":{"title":"Snapshot title","description":"Snapshot body","pipeline":"claude","target":{"repo":"jlapenna/agent-lcars"}}}'
+ISSUE="42"
+MODE="implement"
+REPLY=""
+CONTEXT=""
+RUNNER_TEMP="$work_and_issue_root/runner-temp"
+GITHUB_ENV="$work_and_issue_root/github-env"
+GITHUB_OUTPUT="$work_and_issue_root/github-output"
+# GITHUB_REPOSITORY deliberately stays the file-wide "example/consumer"
+# (not "jlapenna/agent-lcars" as in the task brief's literal fixture):
+# assert-consumer-boundaries.sh applies a stricter, unrelated check -- a
+# real .agents/skills/agent-protocol symlink into this repo's own
+# agents/shared/skills/ -- only for that exact repository name, which this
+# mktemp consumer workspace does not have. Every other section in this file
+# relies on the same "example/consumer" default for the same reason.
+export WORK ISSUE MODE REPLY CONTEXT RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT \
+  WI_ANCHOR WI_COMMENTS
+
+(
+  cd "$work_and_issue_root/consumer"
+  GITHUB_WORKSPACE="$work_and_issue_root/consumer" PATH="$wi_bin:$PATH" \
+    bash "$action_dir/prepare.sh"
+)
+
+wi_context_path="$RUNNER_TEMP/agent-dispatch/context.json"
+jq -e '
+  .anchor.type == "issue" and
+  .anchor.number == 42 and
+  .anchor.title == "Snapshot title" and
+  .anchor.body == "Snapshot body" and
+  .anchor.labels == ["agent:claude"] and
+  .anchor.assignees == ["agent-lcars-bot"] and
+  .anchor.html_url == "https://github.com/jlapenna/agent-lcars/issues/42" and
+  .anchor.id == null' "$wi_context_path" >/dev/null
+
+# Same fixture, but the live issue IS a pull request (`pull_request` key
+# present): the brief must still resolve "pull-request", proving the new
+# branch does not hardcode `type: "issue"`.
+cat > "$WI_ANCHOR" <<'JSON'
+{"number":42,"state":"open","state_reason":null,"title":"Live title (stale)","body":"Live body (stale)","labels":[],"assignees":[],"html_url":"https://github.com/jlapenna/agent-lcars/pull/42","pull_request":{"url":"https://api.github.com/repos/jlapenna/agent-lcars/pulls/42"}}
+JSON
+
+(
+  cd "$work_and_issue_root/consumer"
+  GITHUB_WORKSPACE="$work_and_issue_root/consumer" PATH="$wi_bin:$PATH" \
+    bash "$action_dir/prepare.sh"
+)
+
+jq -e '.anchor.type == "pull-request"' "$wi_context_path" >/dev/null
+
+echo "prepare.test.sh: work-and-issue anchor cases passed"
+
 # A malformed WORK payload is a caller bug, not a retryable condition: fail
 # fast with a named error rather than writing a half-built anchor.
 malformed_root="$test_root/malformed"
