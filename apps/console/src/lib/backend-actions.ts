@@ -40,6 +40,7 @@ import {
   supportedAgentPipelines,
   taskRefUrl,
 } from './watched-repo';
+import { workPayloadFromGithub } from './work-from-github';
 
 export class ActionError extends Error {
   constructor(
@@ -657,6 +658,7 @@ export async function retriggerIssue(
   issueNumber: number,
   callerId: string,
   note?: string,
+  actorLogin?: string,
 ): Promise<RetriggerOutcome> {
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
@@ -664,7 +666,10 @@ export async function retriggerIssue(
 
   const { store, orchestrator, drain } = createOrchestratorRuntime();
   const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
-  const runs = await store.listRuns(taskId);
+  const [runs, existingTask] = await Promise.all([
+    store.listRuns(taskId),
+    store.readTask(taskId),
+  ]);
   const previousPipeline = latestOrchestratorPipeline(runs);
   const pipelineFallback = previousPipeline === undefined;
   const pipeline = previousPipeline ?? RETRIGGER_FALLBACK_PIPELINE;
@@ -690,11 +695,33 @@ export async function retriggerIssue(
     }
   }
 
+  // A task that already carries `work` keeps it forever (decide.ts's
+  // "write once" rule) -- deriving one here would be discarded, so this
+  // reads the live issue only when there is something for the derivation
+  // to actually set.
+  let work;
+  if (existingTask?.task.work === undefined) {
+    const octokit = getGithubClient();
+    const { data: issue } = await octokit.rest.issues.get({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+    });
+    work = workPayloadFromGithub({
+      title: issue.title,
+      body: issue.body,
+      pipeline,
+      repo: repoKey(repo),
+      actor: actorLogin,
+    });
+  }
+
   const outcome = await orchestrator.request({
     taskId,
     requestId: `console-retry:${randomUUID()}`,
     pipeline,
     params: { mode: 'implement' },
+    ...(work === undefined ? {} : { work }),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'task-busy') {
@@ -735,6 +762,7 @@ export async function reassignPipeline(
   issueNumber: number,
   targetPipeline: Pipeline,
   callerId: string,
+  actorLogin?: string,
 ): Promise<void> {
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
@@ -776,7 +804,10 @@ export async function reassignPipeline(
 
   const { store, orchestrator, drain } = createOrchestratorRuntime();
   const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
-  const activeRun = await store.readActiveRun(taskId);
+  const [activeRun, existingTask] = await Promise.all([
+    store.readActiveRun(taskId),
+    store.readTask(taskId),
+  ]);
   if (activeRun) {
     // `cancel` only ever refuses `unknown-run`/`run-not-live` - both mean
     // the run already stopped being live between the read above and this
@@ -787,6 +818,21 @@ export async function reassignPipeline(
     );
   }
 
+  // Reuses the issue already read above for the label swap -- no second
+  // GitHub call, unlike retriggerIssue, which has no other reason to read
+  // the issue. Same write-once reasoning as retriggerIssue's own `work`
+  // derivation (decide.ts's "write once" rule).
+  const work =
+    existingTask?.task.work === undefined
+      ? workPayloadFromGithub({
+          title: issue.title,
+          body: issue.body,
+          pipeline: targetPipeline,
+          repo: repoKey(repo),
+          actor: actorLogin,
+        })
+      : undefined;
+
   const outcome = await orchestrator.request({
     taskId,
     requestId: `console-reassign:${randomUUID()}`,
@@ -795,6 +841,7 @@ export async function reassignPipeline(
       activeRun?.params?.mode !== undefined
         ? { mode: activeRun.params.mode }
         : { mode: 'implement' },
+    ...(work === undefined ? {} : { work }),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'task-busy') {

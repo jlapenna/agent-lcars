@@ -153,13 +153,14 @@ export async function retriggerIssue(
   callerId: string,
   note?: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
     const { pipelineFallback } = await retriggerIssueLib(
       resolveWatchedRepo(repo),
       number,
       callerId,
       note,
+      session.user.login,
     );
     revalidateDashboard();
     return {
@@ -275,13 +276,14 @@ export async function reassignPipeline(
   pipeline: Pipeline,
   callerId: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
     await reassignPipelineLib(
       resolveWatchedRepo(repo),
       number,
       pipeline,
       callerId,
+      session.user.login,
     );
     revalidateDashboard();
     return { ok: true };
