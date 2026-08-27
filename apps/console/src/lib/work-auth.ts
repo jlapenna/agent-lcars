@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 import { resolvePrincipal, type WorkGrant } from './work-grants';
 
-export type WorkScope = 'work.operator' | 'work.cron';
+export type WorkScope = 'work.operator' | 'work.executor' | 'work.cron';
 
 export interface WorkPrincipal {
   principal: string;
@@ -64,10 +64,24 @@ function principalFor(
   return {
     principal: grant.principal,
     subject,
-    scopes: new Set<WorkScope>(['work.operator']),
+    scopes: new Set<WorkScope>(grant.scopes ?? ['work.operator']),
     pipelines: grant.pipelines,
     via,
   };
+}
+
+/** Extracts the raw bearer token from `Authorization: Bearer <token>`,
+ *  verbatim -- no verification. `route.ts` uses this to populate
+ *  `RunsContext.bearerToken` for the run-token routes, which hash and
+ *  compare it against a claimed run's own `queue.tokenHash` rather than
+ *  verifying it as a Google ID token the way `authenticateWorkRequest`
+ *  does below. Kept as a small, separately-testable duplicate of the same
+ *  regex `authenticateWorkRequest` uses inline, not a refactor of that
+ *  function's control flow. */
+export function rawBearerToken(request: Request): string | undefined {
+  const header = request.headers.get('authorization');
+  const match = header === null ? null : /^Bearer\s+(\S+)$/iu.exec(header);
+  return match?.[1];
 }
 
 /**

@@ -59,7 +59,7 @@ function RunRef({ value }: { value: string | undefined }) {
   return null;
 }
 
-function RunsTable({ runs }: { runs: ItemView['runs'] }) {
+export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
   if (runs.length === 0) {
     return (
       <Text c="dimmed" size="sm">
@@ -73,6 +73,7 @@ function RunsTable({ runs }: { runs: ItemView['runs'] }) {
         <TableTr>
           <TableTh>Run</TableTh>
           <TableTh>State</TableTh>
+          <TableTh>Executor</TableTh>
           <TableTh>Result</TableTh>
           <TableTh>Summary</TableTh>
           <TableTh>Ref</TableTh>
@@ -83,6 +84,16 @@ function RunsTable({ runs }: { runs: ItemView['runs'] }) {
           <TableTr key={run.runId}>
             <TableTd>{run.runId}</TableTd>
             <TableTd>{run.state}</TableTd>
+            <TableTd>
+              <Stack gap={0}>
+                <Text size="xs">{run.executor ?? 'github-actions'}</Text>
+                {run.queue?.state === 'claimed' && run.queue.claimedBy && (
+                  <Text size="xs" c="dimmed">
+                    claimed by {run.queue.claimedBy}
+                  </Text>
+                )}
+              </Stack>
+            </TableTd>
             <TableTd>
               {run.result && (
                 <Badge

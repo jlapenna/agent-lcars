@@ -42,6 +42,29 @@ type fakeDockerServer struct {
 	pullStreamError  bool
 	containerCreates int
 	createFailures   []int
+	// lastCreate captures the most recent /containers/create request body so
+	// a test can assert exactly what a caller (e.g. launchDirectRunner) sent
+	// -- image, env, labels, bind mounts -- without a real docker daemon.
+	lastCreate createdContainerRequest
+	// starts counts POST .../containers/{id}/start calls; startFailures pops
+	// one status per call (0 means succeed) the same way createFailures does.
+	starts        int
+	startFailures []int
+}
+
+// createdContainerRequest mirrors the JSON shape the docker client sends to
+// POST /containers/create: container.Config's fields at the top level plus a
+// nested "HostConfig". Decoded loosely (only the fields this fixture's
+// callers assert on) rather than via the real container.Config/HostConfig
+// types, which carry no json tags of their own to lean on.
+type createdContainerRequest struct {
+	Image      string
+	User       string
+	Env        []string
+	Labels     map[string]string
+	HostConfig struct {
+		Binds []string
+	}
 }
 
 // inspectStub is the canned response for one container ID's ContainerInspect
@@ -217,8 +240,11 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("{\"status\":\"Pull complete\"}\n"))
 
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/create"):
+		var req createdContainerRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
 		f.containerCreates++
+		f.lastCreate = req
 		status := 0
 		if len(f.createFailures) > 0 {
 			status = f.createFailures[0]
@@ -238,6 +264,22 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(container.CreateResponse{ID: "created-container"})
+
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start"):
+		f.mu.Lock()
+		f.starts++
+		status := 0
+		if len(f.startFailures) > 0 {
+			status = f.startFailures[0]
+			f.startFailures = f.startFailures[1:]
+		}
+		f.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "boom"})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -269,6 +311,28 @@ func (f *fakeDockerServer) createCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.containerCreates
+}
+
+// getLastCreate returns the most recently decoded /containers/create body.
+func (f *fakeDockerServer) getLastCreate() createdContainerRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastCreate
+}
+
+// startCount returns how many POST .../start calls this fixture has seen.
+func (f *fakeDockerServer) startCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
+}
+
+// setStartFailures queues per-call ContainerStart response statuses (0 means
+// succeed), the same way setCreateFailures does for ContainerCreate.
+func (f *fakeDockerServer) setStartFailures(statuses ...int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startFailures = append([]int(nil), statuses...)
 }
 
 // containerIDFromPath extracts the {id} segment from versioned docker API

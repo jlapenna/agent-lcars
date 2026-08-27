@@ -157,6 +157,26 @@ describe('the per-task mutex', () => {
     expect(first.run.runId).toBe('octo/example#7/r1');
     expect(second.run.runId).toBe('octo/example#7/r2');
   });
+
+  it('threads executor onto the minted run, defaulting to undefined', async () => {
+    const { orchestrator } = fixture();
+    const queued = await orchestrator.request({
+      taskId: WORK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      executor: 'queue',
+    });
+    if (isRefusal(queued)) throw new Error('unexpected refusal');
+    expect(decidedRun(queued).executor).toBe('queue');
+
+    const defaulted = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-2',
+      pipeline: 'claude',
+    });
+    if (isRefusal(defaulted)) throw new Error('unexpected refusal');
+    expect(decidedRun(defaulted).executor).toBeUndefined();
+  });
 });
 
 describe('the run lifecycle', () => {
@@ -428,6 +448,25 @@ describe('auto-retry on loss', () => {
       activeRunId === undefined ? undefined : await store.readRun(activeRunId);
     expect(activeRun?.requestId).toBe('manual-race'); // the operator's run won
     expect(await store.listRuns(TASK)).toHaveLength(2); // original + operator's
+  });
+
+  it('a lost queue-executor run auto-retries as queue, not github-actions', async () => {
+    const { store, orchestrator, clock } = fixture();
+    const requested = await orchestrator.request({
+      taskId: WORK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      executor: 'queue',
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const runId = decidedRun(requested).runId;
+    await orchestrator.confirmDispatch(runId);
+    // Past LEASE_MS (2h) so sweepExpired treats it as lost.
+    clock.advanceMinutes(121);
+    const swept = await orchestrator.sweepExpired();
+    expect(swept.retried).toHaveLength(1);
+    const retriedRun = await store.readRun(swept.retried[0]!.newRunId);
+    expect(retriedRun?.executor).toBe('queue');
   });
 });
 

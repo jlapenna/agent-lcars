@@ -13,7 +13,7 @@ import {
   requestRun,
   settleTerminal,
 } from './decide';
-import type { Run, RunResult, TaskId, WorkPayload } from './model';
+import type { Run, RunExecutor, RunResult, TaskId, WorkPayload } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -68,6 +68,7 @@ export interface RequestInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  executor?: RunExecutor;
 }
 
 export class Orchestrator {
@@ -87,6 +88,7 @@ export class Orchestrator {
         pipeline: input.pipeline,
         ...(input.params === undefined ? {} : { params: input.params }),
         ...(input.work === undefined ? {} : { work: input.work }),
+        ...(input.executor === undefined ? {} : { executor: input.executor }),
       }),
     );
   }
@@ -236,6 +238,9 @@ export class Orchestrator {
       requestId: `retry:${settledRun.runId}`,
       pipeline: settledRun.pipeline,
       ...(settledRun.params === undefined ? {} : { params: settledRun.params }),
+      ...(settledRun.executor === undefined
+        ? {}
+        : { executor: settledRun.executor }),
     });
     if (!isRefusal(retry)) {
       retried.push({

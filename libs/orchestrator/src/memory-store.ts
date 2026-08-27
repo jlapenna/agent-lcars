@@ -145,4 +145,50 @@ export class MemoryStore implements OrchestratorStore {
       [...this.#runs.values()].filter((run) => isLive(run.state)),
     );
   }
+
+  async enqueueRun(input: { runId: string; now: string }): Promise<void> {
+    const run = this.#runs.get(input.runId);
+    if (run === undefined || run.queue !== undefined) return;
+    this.#runs.set(input.runId, {
+      ...run,
+      queue: { state: 'queued' },
+      updatedAt: input.now,
+    });
+  }
+
+  async claimQueuedRun(input: {
+    pipelines: readonly string[];
+    now: string;
+    claimedBy: string;
+    tokenHash: string;
+  }): Promise<Run | undefined> {
+    const pipelines = new Set(input.pipelines);
+    const candidate = [...this.#runs.values()]
+      .filter(
+        (run) => run.queue?.state === 'queued' && pipelines.has(run.pipeline),
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (candidate === undefined) return undefined;
+    const claimed: Run = {
+      ...candidate,
+      queue: {
+        state: 'claimed',
+        claimedAt: input.now,
+        claimedBy: input.claimedBy,
+        tokenHash: input.tokenHash,
+      },
+      updatedAt: input.now,
+    };
+    this.#runs.set(candidate.runId, claimed);
+    return structuredClone(claimed);
+  }
+
+  async listQueuedRuns(limit?: number): Promise<Run[]> {
+    return structuredClone(
+      [...this.#runs.values()]
+        .filter((run) => run.queue?.state === 'queued')
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .slice(0, limit ?? 200),
+    );
+  }
 }

@@ -458,6 +458,117 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    describe('the queue claim state', () => {
+      // WORK_ID_RE (model.ts) requires exactly 26 Crockford base32
+      // characters, excluding I, L, O, U. Deriving the id straight from
+      // `requestId` (e.g. 'q1', 'q2') would fail that regex, so this pulls
+      // out only the digits and pads them into a fixed, charset-safe id.
+      function queueWorkId(requestId: string): string {
+        const digits = requestId.replace(/\D/gu, '').padStart(16, '0');
+        return `01TESTQVEV${digits}`;
+      }
+
+      async function queuedRun(orchestrator: Orchestrator, requestId: string) {
+        const outcome = await orchestrator.request({
+          taskId: { workId: queueWorkId(requestId) },
+          requestId,
+          pipeline: 'claude',
+          executor: 'queue',
+        });
+        if (isRefusal(outcome)) throw new Error('unexpected refusal');
+        return decidedRun(outcome);
+      }
+
+      it('enqueueRun is idempotent and listQueuedRuns finds it', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q1');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        await store.enqueueRun({ runId: run.runId, now: T0 }); // idempotent
+        const queued = await store.listQueuedRuns();
+        expect(queued.map((r) => r.runId)).toEqual([run.runId]);
+        expect(queued[0]?.queue).toEqual({ state: 'queued' });
+      });
+
+      it('claimQueuedRun picks the oldest queued run for a matching pipeline', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const first = await queuedRun(orchestrator, 'q1');
+        await store.enqueueRun({ runId: first.runId, now: T0 });
+        clock.advanceMinutes(1);
+        const second = await queuedRun(orchestrator, 'q2');
+        await store.enqueueRun({ runId: second.runId, now: clock.now() });
+
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'runner-1',
+          tokenHash: 'b'.repeat(64),
+        });
+        expect(claimed?.runId).toBe(first.runId);
+        expect(claimed?.queue).toMatchObject({
+          state: 'claimed',
+          claimedBy: 'runner-1',
+          tokenHash: 'b'.repeat(64),
+        });
+      });
+
+      it('gives exactly one of two concurrent claimants the queued run', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q1');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+
+        // Concurrent, not sequential (final-review fix): two claims fired
+        // via Promise.all, the same shape as the outbox's own "gives
+        // exactly one of two concurrent claimants each entry" test above.
+        // A sequential await-then-await pair only proves the SECOND call
+        // sees the FIRST call's already-committed write; it says nothing
+        // about whether the store's own compare-and-set actually
+        // serializes two in-flight claims against each other, which is
+        // exactly what a real race between two runner hosts polling at
+        // once needs -- and exactly what FirestoreStore's transaction
+        // retry is for (this contract also runs against a live emulator;
+        // see store-contract.spec.ts).
+        const [first, second] = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: 'runner-1',
+            tokenHash: 'c'.repeat(64),
+          }),
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: 'runner-2',
+            tokenHash: 'd'.repeat(64),
+          }),
+        ]);
+        const winners = [first, second].filter((r) => r !== undefined);
+        expect(winners).toHaveLength(1);
+        const winner = winners[0];
+        expect(winner?.runId).toBe(run.runId);
+        // Whichever claimant won, ITS OWN tokenHash landed -- proves the
+        // store committed one claimant's write atomically rather than
+        // merging fields from both racing calls.
+        const expectedTokenHash =
+          winner?.queue?.claimedBy === 'runner-1'
+            ? 'c'.repeat(64)
+            : 'd'.repeat(64);
+        expect(winner?.queue?.tokenHash).toBe(expectedTokenHash);
+      });
+
+      it('claimQueuedRun ignores a non-matching pipeline', async () => {
+        const { store, orchestrator } = await fixture();
+        const run = await queuedRun(orchestrator, 'q1');
+        await store.enqueueRun({ runId: run.runId, now: T0 });
+        const claimed = await store.claimQueuedRun({
+          pipelines: ['codex'],
+          now: T0,
+          claimedBy: 'runner-1',
+          tokenHash: 'e'.repeat(64),
+        });
+        expect(claimed).toBeUndefined();
+      });
+    });
+
     describe('a stale run can never overwrite its successor', () => {
       it('refuses a renew from a run that already lost the lock, after a fresh run took it', async () => {
         const { clock, store, orchestrator } = await fixture();

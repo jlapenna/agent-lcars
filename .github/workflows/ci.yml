@@ -184,6 +184,9 @@ jobs:
       - name: Test runner-image externals repair (#395)
         run: bash apps/runner-autoscaler/runner-image/externals-health.test.sh
 
+      - name: Test direct-runner.sh
+        run: bash apps/runner-autoscaler/runner-image/direct-runner.test.sh
+
       - name: Test repo-variable assertion
         run: bash .github/actions/assert-repo-vars/assert.test.sh
 

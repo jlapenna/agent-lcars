@@ -3,6 +3,7 @@ import {
   isWorkAnchor,
   type OutboxEntry,
   type Run,
+  type RunExecutor,
   type RunResult,
   type Task,
   type TaskId,
@@ -82,6 +83,7 @@ export interface RequestRunInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  executor?: RunExecutor;
 }
 
 /**
@@ -127,6 +129,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     requestId,
     pipeline: input.pipeline,
     params: input.params,
+    executor: input.executor,
   });
 }
 
@@ -138,8 +141,9 @@ function mintRun(input: {
   requestId: string;
   pipeline: string;
   params?: Record<string, string>;
+  executor?: RunExecutor;
 }): Decision {
-  const { now, taskId, task, requestId, pipeline, params } = input;
+  const { now, taskId, task, requestId, pipeline, params, executor } = input;
   const runCount = task.runCount + 1;
   const runId = `${taskKey(taskId)}/r${runCount}`;
   const run: Run = {
@@ -149,6 +153,7 @@ function mintRun(input: {
     pipeline,
     requestId,
     ...(params === undefined ? {} : { params }),
+    ...(executor === undefined ? {} : { executor }),
     leaseExpiresAt: lease(now),
     events: [{ at: now, to: 'pending', by: 'request' }],
     createdAt: now,

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -92,6 +93,75 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	}
 
 	generation := startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
+
+	// queueDraining mirrors the fleet's own SIGUSR1 drain flag for the queue
+	// executor's poller goroutine below: a claim minted moments before this
+	// instance is replaced is just another launch failure to recover from
+	// (see queueExecutorConfig.launch's doc comment), so a drain stops the
+	// poller from claiming at all -- the same "stop accepting new work"
+	// BeginDrain already gives every GitHub-mode scale set. atomic because
+	// it is written only by this function's own select loop below (the
+	// SIGUSR1 case, and the drain watchdog's self-heal branch) and read
+	// only by the poller goroutine, which run concurrently. Live config
+	// reloads (SIGHUP) do NOT reach the poller at all -- see this block's
+	// own comment just below, and the README's "Queue executor" section.
+	var queueDraining atomic.Bool
+
+	// Native work items, queue-executor sub-project: an additional,
+	// independently-gated goroutine that polls the console's run-claim API
+	// and launches direct-mode containers, entirely outside the GitHub
+	// scale-set state machine above. LCARS_QUEUE_POLL unset (the default)
+	// means this block is skipped and nothing else in the process changes --
+	// see queue_executor.go's package doc comment and the design spec's
+	// "Autoscaler change" section. Deliberately read once at startup, not on
+	// every config reload -- a live SIGHUP reload below never restarts or
+	// reconfigures this goroutine, so a change to any LCARS_QUEUE_*/
+	// LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE env var (or to the Docker hosts
+	// pool launchDirectRunner reads from `resolved`) needs a full daemon
+	// restart to take effect, not just a config-file replace-and-SIGHUP.
+	pipelines, startQueuePoller, queueDisabledReason := queueExecutorStartupDecision(
+		os.Getenv("LCARS_QUEUE_POLL"), os.Getenv("LCARS_QUEUE_PIPELINES"))
+	if queueDisabledReason != "" {
+		logger.Error("Queue executor disabled", slog.String("reason", queueDisabledReason))
+	}
+	if startQueuePoller {
+		keyPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+		consoleURL := os.Getenv("LCARS_CONSOLE_URL")
+		if consoleURL == "" {
+			consoleURL = "https://lcars.jlapenna.net"
+		}
+		audience := queueExecutorAudience(os.Getenv("LCARS_WORK_AUDIENCE"))
+		hostname, hostErr := os.Hostname()
+		runnerName := queueExecutorRunnerName(hostname, hostErr)
+		// Captured by value at startup, not read from the outer `resolved`
+		// directly: a config reload later in this function's select loop
+		// reassigns `resolved` from this same goroutine, and closing over
+		// that variable instead of a snapshot would race the poller
+		// goroutine's reads of it.
+		queueExecutorResolved := resolved
+		// Built once here, not per poll: see newDirectRunnerIDTokenSource's
+		// doc comment. A bad/missing key fails this the same way a bad
+		// GitHub credential fails registration elsewhere in this
+		// function -- loudly, at startup, rather than silently every 15s.
+		tokenSource, tokenErr := newDirectRunnerIDTokenSource(ctx, keyPath, audience)
+		if tokenErr != nil {
+			logger.Error("Queue executor disabled: could not build the claim ID token source", slog.Any("error", tokenErr))
+		} else {
+			go runQueueExecutorPoller(ctx, queueExecutorConfig{
+				consoleURL: consoleURL,
+				pipelines:  pipelines,
+				runnerName: runnerName,
+				idToken: func() (string, error) {
+					return idTokenFromSource(tokenSource)
+				},
+				launch: func(l directRunnerLaunch) error {
+					return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
+				},
+				draining: queueDraining.Load,
+			}, 15*time.Second, logger)
+		}
+	}
+
 	drainSignals := make(chan os.Signal, 1)
 	reloadSignals := make(chan os.Signal, 1)
 	signal.Notify(drainSignals, syscall.SIGUSR1)
@@ -124,6 +194,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				continue
 			}
 			draining = true
+			queueDraining.Store(true)
 			drainZeroSince = time.Time{}
 			logger.Info("Global drain requested")
 			for _, runtime := range runtimes {
@@ -138,6 +209,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				continue
 			}
 			draining = false
+			queueDraining.Store(false)
 			for _, runtime := range runtimes {
 				runtime.scaler.EndDrain()
 			}

@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+# agent-lcars (native-work-items sub-project 4): a container the
+# runner-autoscaler launched directly for one claimed queue-executor run,
+# not a registered GitHub Actions runner at all. Checked first so a
+# preflight failure in the GitHub-runner path below never gates it.
+if [ "${RUNNER_MODE:-}" = "direct" ]; then
+  exec /usr/local/lib/agent-lcars/direct-runner.sh
+fi
+
 # Invoke each required Actions Node runtime rather than merely checking that
 # its binary exists.
 # shellcheck source=externals-health.sh

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   itemsContract,
+  runsContract,
   schedulesContract,
   WORK_ID_PATTERN,
   workIdSchema,
@@ -44,26 +45,47 @@ describe('schedulesContract', () => {
   });
 });
 
+describe('runsContract', () => {
+  it('declares the five run routes with bearer security', () => {
+    const paths = Object.keys(runsContract);
+    expect(paths.sort()).toEqual(
+      ['claim', 'brief', 'heartbeat', 'complete', 'checkoutToken'].sort(),
+    );
+  });
+});
+
 describe('generateWorkOpenApi', () => {
-  it('emits both the items and schedules REST routes with bearer security', async () => {
+  it('emits the items, schedules, and runs REST routes with bearer and run-token security', async () => {
     const doc = (await generateWorkOpenApi()) as {
       openapi: string;
       paths: Record<string, Record<string, unknown>>;
       components: { securitySchemes?: Record<string, unknown> };
     };
     expect(doc.openapi).toMatch(/^3\./);
-    expect(Object.keys(doc.paths).sort()).toEqual([
-      '/items',
-      '/items/{id}',
-      '/items/{id}/cancel',
-      '/items/{id}/redispatch',
-      '/schedules',
-      '/schedules/tick',
-      '/schedules/{id}',
-      '/schedules/{id}/disable',
-      '/schedules/{id}/enable',
+    expect(Object.keys(doc.paths).sort()).toEqual(
+      [
+        '/items',
+        '/items/{id}',
+        '/items/{id}/cancel',
+        '/items/{id}/redispatch',
+        '/schedules',
+        '/schedules/tick',
+        '/schedules/{id}',
+        '/schedules/{id}/disable',
+        '/schedules/{id}/enable',
+        '/runs/claim',
+        '/runs/{runId}/brief',
+        '/runs/{runId}/heartbeat',
+        '/runs/{runId}/complete',
+        '/runs/{runId}/checkout-token',
+      ].sort(),
+    );
+    expect(Object.keys(doc.paths['/items/{id}'] ?? {}).sort()).toEqual([
+      'get',
+      'put',
     ]);
     expect(doc.components.securitySchemes).toHaveProperty('bearerAuth');
+    expect(doc.components.securitySchemes).toHaveProperty('runToken');
   });
 
   it('gives tick a distinct presentation: the cron tag and GitHub Actions OIDC security', async () => {
@@ -130,6 +152,11 @@ describe('generateWorkOpenApi', () => {
       'POST /schedules/{id}/enable': ['200', '404'],
       'POST /schedules/{id}/disable': ['200', '404'],
       'POST /schedules/tick': ['200'],
+      'POST /runs/claim': ['200', '401'],
+      'GET /runs/{runId}/brief': ['200', '401'],
+      'POST /runs/{runId}/heartbeat': ['200', '401'],
+      'POST /runs/{runId}/complete': ['200', '401'],
+      'GET /runs/{runId}/checkout-token': ['200', '401'],
     });
   });
 });

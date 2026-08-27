@@ -258,7 +258,7 @@ const pullRequestOutcomeReferenceSchema = z.object({
  *  orchestrator's `RunResult` -- verbatim `summary`, a best-effort `ref`
  *  URL when the reference is a recognizable pull request, `ok` from the
  *  fixed outcome vocabulary above. */
-function toRunResult(
+export function toRunResult(
   repo: string,
   outcome: unknown,
   outcomeReference: unknown,

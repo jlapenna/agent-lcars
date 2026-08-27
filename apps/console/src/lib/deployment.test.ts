@@ -7,6 +7,7 @@ import {
   artifactShareBaseUrl,
   consoleDescription,
   consoleRepositoryUrl,
+  consoleUrl,
   controlPlaneRepositories,
   controlPlaneRepository,
   isAdminGithubLogin,
@@ -22,6 +23,7 @@ const VARS = [
   'AGENT_LCARS_ARTIFACT_SHARE_BASE_URL',
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORY',
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
+  'AGENT_LCARS_CONSOLE_URL',
 ] as const;
 
 afterEach(() => {
@@ -81,6 +83,17 @@ describe('deployment config', () => {
   it('reads the control-plane repository from the environment', () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/controller';
     expect(controlPlaneRepository()).toBe('owner/controller');
+  });
+
+  describe('consoleUrl', () => {
+    it('defaults to this deployment when unset', () => {
+      expect(consoleUrl()).toBe('https://lcars.jlapenna.net');
+    });
+
+    it('reads the console URL from the environment', () => {
+      process.env['AGENT_LCARS_CONSOLE_URL'] = 'https://lcars.example.test';
+      expect(consoleUrl()).toBe('https://lcars.example.test');
+    });
   });
 
   // #1190 slice 1: `controlPlaneRepositories` generalizes the single pinned

@@ -42,6 +42,16 @@ export interface EnvVars {
   AGENT_LCARS_WORK_GRANTS?: string;
   /** Global live-run cap for native work items (default 4). */
   AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;
+  /** JSON array of pipeline names routed to the `queue` executor at request
+   *  time (default `[]` -- every pipeline dispatches through GitHub
+   *  Actions). See `apps/console/src/lib/work-grants.ts`'s
+   *  `queuePipelines`. */
+  AGENT_LCARS_QUEUE_PIPELINES?: string;
+  /** This console deployment's own public base URL, embedded in a native
+   *  work item's `brief.anchor.html_url` for a direct-mode agent to read
+   *  back (`runs-router.ts`'s `brief` handler). Defaults to
+   *  `https://lcars.jlapenna.net` -- see `deployment.ts`'s `consoleUrl`. */
+  AGENT_LCARS_CONSOLE_URL?: string;
   DISPATCH_FIRESTORE_DATABASE_ID?: string;
   QUICK_TASK_EVIDENCE_BUCKET?: string;
 

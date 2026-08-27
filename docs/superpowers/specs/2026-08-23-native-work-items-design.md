@@ -546,7 +546,8 @@ synchronous refusals besides validation.
 3. **Cron ingress:** a scheduler minting items from a schedule — see
    [Sub-project 3: cron ingress](#sub-project-3-cron-ingress).
 4. **`QueueExecutor`:** direct runner mode + LCARS-minted run tokens +
-   spec-fetch route.
+   spec-fetch route — see
+   [Sub-project 4: QueueExecutor](#sub-project-4-queueexecutor).
 5. **Ingress unification:** label-driven work and Quick Tasks carry `work`;
    issue affordances become projections; the protocol collapses to the run
    routes.
@@ -818,3 +819,464 @@ sequenceDiagram
   end
   API-->>S: ticked, minted, skippedCap, disabled
 ```
+
+## Sub-project 4: QueueExecutor
+
+**Purpose.** The actual de-GitHub-ing (#547's "Execution abstraction" §
+`QueueExecutor`). A `github-actions`-executor run is unchanged end to end;
+a `queue`-executor run is drained onto the run document itself instead of
+into a `workflow_dispatch` call, a runner-autoscaler-launched container
+claims it directly, and it reports through four new run routes instead of
+the GitHub-OIDC-authenticated completion path. No new collection, no new
+Terraform, no new secret: claiming reuses the outbox's lease/fencing
+pattern on `Run` itself, and every new credential (the autoscaler's claim
+identity, a run's checkout token) is minted from App/service-account
+material already deployed for a different purpose. One pipeline —
+`claude` — end to end; `codex`/`opencode` follow later (the `claude-code-
+action` GitHub Action they run through in `github-actions` mode has no
+direct-mode equivalent yet).
+
+### The `executor` field
+
+`Run` gains `executor: z.enum(['github-actions', 'queue']).optional()`
+(absent means `'github-actions'`, so every existing persisted run parses
+unchanged — zero migration, the same discipline `Task.consecutiveLost`
+already established). `workSpecSchema` is **unchanged**: an item's spec
+carries no executor opinion. Instead, console configuration
+`AGENT_LCARS_QUEUE_PIPELINES` (a JSON array of pipeline names, default
+`[]`) says which pipelines route to the queue; `RequestRunInput` (`libs/
+orchestrator/src/decide.ts`) gains an optional `executor`, threaded from
+`Orchestrator.request`'s `RequestInput` straight into the minted `Run` by
+`mintRun`. `work-router.ts`'s `create` and `redispatch` handlers are the
+only two callers that decide it, both the same way:
+
+```ts
+function executorFor(
+  spec: WorkSpec,
+  queuePipelines: readonly string[],
+): RunExecutor | undefined {
+  return queuePipelines.includes(spec.pipeline) ? 'queue' : undefined;
+}
+```
+
+Returns `undefined`, not the literal `'github-actions'`, when the pipeline
+is not in the list: `executor` is optional and "absent means
+`github-actions`" (see the field's own definition just above), so this
+keeps the field genuinely absent on the minted `Run` rather than writing out
+its own default value explicitly — the same "don't persist a value equal to
+the default" discipline as leaving any other optional field unset.
+
+Evaluated **at request time**, against the config as it stands _then_ —
+identical in spirit to `forbiddenReason`'s existing "re-checked against
+grants and the repository list as they stand now" rule for `redispatch`.
+A GitHub-anchored task (`handleWebhookDelivery`, `handleDispatchRequest`)
+never sets `executor`: those requests have no `WorkSpec.pipeline` to look
+up in `AGENT_LCARS_QUEUE_PIPELINES` in the first place, and GitHub-
+anchored tasks always run `github-actions` — the queue only ever serves
+native work.
+
+### Queue state machine
+
+A `queue`-executor run's outbox `dispatch-run` entry is drained by writing
+a claimable state directly onto the run document — `Run` gains an optional
+`queue` field:
+
+```ts
+export const runQueueSchema = z.strictObject({
+  state: z.enum(['queued', 'claimed']),
+  claimedAt: isoUtc.optional(),
+  claimedBy: z.string().min(1).max(256).optional(),
+  tokenHash: z.string().length(64).optional(), // hex sha256
+});
+```
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> queued : drain writes run.queue (executor=queue), confirmDispatch -> run.state=running
+  queued --> claimed : POST /runs/claim transaction (queue.state cas)
+  claimed --> [*] : POST /runs/:id/complete -> orchestrator.report (run.state=finished/lost)
+```
+
+`run.state` itself follows exactly the path a GitHub-Actions run already
+follows: `pending` → `running` the moment dispatch is confirmed, which for
+`queue` executor means "successfully written to the claimable state," the
+same way it means "the `workflow_dispatch` API call returned 204" for
+`github-actions` — in both cases `running` means "handed to the execution
+mechanism," never "an agent is actively working." `run.queue.state` is the
+finer-grained fact private to the queue mechanism: `queued` until some
+runner claims it, `claimed` from then on. There is no `queue.state`
+transition back to `queued` — a claimed-but-abandoned run is caught by the
+**existing** run lease (`Orchestrator.sweepExpired` → `lost` → bounded
+auto-retry via `MAX_AUTO_RETRIES` → `parked`), exactly as an abandoned
+GitHub Actions run is today. Nothing new for liveness.
+
+`OrchestratorStore` (`libs/orchestrator/src/store.ts`) gains:
+
+```ts
+/** Writes `run.queue = { state: 'queued' }` on an executor:'queue' run
+ *  whose dispatch-run entry the drain is handling. Idempotent: a run
+ *  already `queued` or `claimed` is left untouched. */
+enqueueRun(input: { runId: string; now: string }): Promise<void>;
+
+/** Transactionally claims the oldest `queued` run whose `pipeline` is one
+ *  of `pipelines`, setting `queue.state = 'claimed'`,
+ *  `queue.claimedAt`/`claimedBy`, and `queue.tokenHash`. Returns
+ *  `undefined` when nothing is queued for those pipelines -- the caller's
+ *  204. The same lease/fencing discipline `claimPendingOutbox` uses,
+ *  scoped to `Run` documents instead of `OutboxEntry` ones: one Firestore
+ *  transaction reads the candidate set and writes the winning claim, so
+ *  two concurrent claim calls can never both win the same run. */
+claimQueuedRun(input: {
+  pipelines: readonly string[];
+  now: string;
+  claimedBy: string;
+  tokenHash: string;
+}): Promise<Run | undefined>;
+
+/** Every run in `queue.state === 'queued'`, oldest (`createdAt`) first,
+ *  bounded by `limit` (default 200) -- the same bound
+ *  `listNativeTasks` already applies, for the same reason: a caller must
+ *  not be able to force a full collection scan. Console-facing (queue
+ *  depth on an operator page); `claimQueuedRun` does its own query. */
+listQueuedRuns(limit?: number): Promise<Run[]>;
+```
+
+`MemoryStore` implements the equivalent in-process; `FirestoreStore`
+implements `claimQueuedRun` as a `runTransaction` reading `#runs.where
+('queue.state', '==', 'queued').where('pipeline', '==', p)` per candidate
+pipeline (single-field-equality-only, no composite index, mirroring
+`listRuns`'s existing two-clause equality query), picking the
+lexicographically-least `createdAt` across the union, and writing the
+claim inside the same transaction.
+
+### Run routes
+
+New resource, `/api/work/v1/runs`, served by the **same** oRPC catch-all
+handler `items` already uses (`apps/console/src/app/api/work/v1/
+[[...rest]]/route.ts` — no proxy change: `/api/work/v1/` is already the
+whole allow-listed prefix). A new `runsContract` sits beside
+`itemsContract` in `libs/work/src/contract.ts`; a new `runsRouter`
+(`apps/console/src/lib/runs-router.ts`) implements it.
+
+| Route                              | Auth                  | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /runs/claim`                 | `work.executor` scope | Body `{ runner: string, pipelines: string[] }`. Claims the oldest `queued` run for one of `pipelines`, renews its lease, mints and returns a run token. `204` when nothing is queued. Response `{ runId, workId, pipeline, token, expiresAt }`.                                                                                                                                                                                                                                        |
+| `GET /runs/{runId}/brief`          | run-token bearer      | `{ id, spec, anchor, attemptId: 'g<generation>:<runId>', generation, intentId: runId }` — `id`/`spec` are exactly `prepare.sh`'s `WORK` input shape; `anchor` is what `prepare.sh` itself builds from `WORK` for a native run (title/body/target_repo/html_url); `attemptId`/`generation`/`intentId` substitute for the `broker_intent_id`/`broker_generation` `workflow_dispatch` inputs a GitHub-Actions run gets for free.                                                          |
+| `POST /runs/{runId}/heartbeat`     | run-token bearer      | Renews the run's lease (`Orchestrator.renew`) — the same lease `github-actions` runs get from `confirmDispatch`/the (unused-by-workers) renew path; a direct runner is the first caller that actually needs it, since nothing external re-confirms it mid-flight.                                                                                                                                                                                                                      |
+| `POST /runs/{runId}/complete`      | run-token bearer      | Body `{ outcome: unknown, outcomeReference: unknown }` — deliberately **not** `hostedCompletionRequestSchema` (that schema's `workflow`/`generation`/`issue`/`token` fields are GitHub-Actions-ledger concepts with no queue-executor analog); mapped through the **same** `toRunResult` helper `handleCompletion` uses. Binds by `runId` in the URL plus the bearer's `tokenHash` match — no marker binding, no OIDC.                                                                 |
+| `GET /runs/{runId}/checkout-token` | run-token bearer      | Mints a short-lived GitHub App installation token scoped to `spec.target.repo`, via the **same** `AGENT_LCARS_APP_CLIENT_ID`/`AGENT_LCARS_APP_PRIVATE_KEY` credentials `createDispatchTokenProvider` already uses, with a broader permission set (`contents: write`, `pull-requests: write`, `issues: write` — the direct runner both checks out and pushes with this token, since there is no separate `claude[bot]`-vending Action in direct mode). Response `{ token, expiresAt }`. |
+
+All four run-token routes share one gate, implemented in the handler (not
+router middleware — the token check needs the `runId` path parameter,
+which is only available after input validation, unlike the `operator`
+gate's principal-only check): read the run, verify `run.queue?.tokenHash`
+equals `sha256(bearer)` in constant time, and that `now <= run.
+leaseExpiresAt` — an expired lease answers 401 even before the run settles
+`lost`, so "expired token" is a synchronous fact, not something that waits
+for the next reconcile sweep.
+
+`claim` is gated the ordinary way: a `WorkPrincipal` with the new
+`work.executor` scope, checked by a router-level `.use` middleware exactly
+like `operator`'s.
+
+### Token model
+
+256-bit random (`crypto.randomBytes(32)`, base64url — `apps/console/src/
+lib/run-token.ts`, mirroring `control-plane-request.ts`'s existing
+`crypto.randomBytes(24).toString('base64url')` dispatch-token pattern),
+returned **once**, on claim. Only `sha256(token)` (hex) is ever persisted,
+on `run.queue.tokenHash`; every run-token route hashes the bearer and
+compares against it with `crypto.timingSafeEqual`. No signing secret, no
+JWT, no new Secret Manager entry — a stolen `tokenHash` is useless without
+the token, and a stolen token is scoped to exactly one run and dies with
+its lease. Invalidation on completion/cancel is **emergent**, not a
+separate mechanism, but it is not automatic either: `orchestrator.report`/
+`orchestrator.cancel` settle the run out of `isLive`, and it is
+`requireRunToken` — the one gate every run-token route (`brief`,
+`heartbeat`, `complete`, `checkout-token`) calls before doing anything
+else — that turns that fact into a refusal, by checking `isLive(run.
+state)` explicitly alongside the hash match and the lease-expiry check.
+Skipping that check would leave a completed run's leaked token usable
+against `brief`/`checkout-token` for as long as its (no-longer-advancing)
+`leaseExpiresAt` still reads as future — a real gap the first draft of
+this design left open and the implementation plan's Task 7/Task 8 close
+with a dedicated test.
+
+### Claim authentication: what the autoscaler actually is
+
+The design brief for this sub-project assumed the runner-autoscaler is a
+Cloud Run/GCE-hosted service that can mint a metadata-server ID token.
+**That is not what it is.** `apps/runner-autoscaler` is a homelab Go
+daemon (`orchestrator.go`) that supervises Docker containers over SSH/
+local sockets across `pike`/`laforge`/`janeway`/`spark`
+(`apps/runner-autoscaler/README.md`, `hosts.go`) — there is no GCE/Cloud
+Run metadata server anywhere in its runtime. Its only existing GCP
+identity is the `telemetry_writer` service account
+(`infra/terraform/main.tf`), used **today**, optionally, to publish queue-
+depth status to Firestore (`console_status.go`) — authenticated by a
+downloaded JSON key (`google_secret_manager_secret.telemetry_writer_key`)
+synced into the homelab's encrypted secret store and mounted as
+`GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json`.
+
+A service-account JSON key can self-mint a Google ID token for **any**
+audience directly from its own private key (a JWT-bearer token-endpoint
+exchange — no metadata server, no extra IAM grant beyond holding the key
+itself; Go's `google.golang.org/api/idtoken` package does this via
+`idtoken.NewTokenSource(ctx, audience, idtoken.WithCredentialsFile(path))`,
+and `google.golang.org/api` is already a transitive dependency of this
+module's `cloud.google.com/go/firestore` import). So the claim identity
+is: the **existing** `telemetry_writer` key, minting an ID token for
+audience `agent-lcars-work` (the same audience `AGENT_LCARS_WORK_AUDIENCE`
+already verifies for human/service-account operators), and a new
+`AGENT_LCARS_WORK_GRANTS` entry naming that SA's email as a subject with
+`scopes: ['work.executor']` (`WorkGrant.scopes` — see below). **No new
+Terraform, no new IAM binding, no new secret** — this reuses a credential
+and a role the fleet already granted for an unrelated purpose, which is
+exactly the kind of coupling worth flagging rather than hiding: telemetry-
+writer becomes, incidentally, also the claim identity. Acceptable because
+it is read-scoped from the API's point of view (`work.executor` confers
+only `POST /runs/claim`) and because minting a self-audience ID token
+needs no permission beyond possessing the key.
+
+`grantSchema` (`work-grants.ts`) gains an optional `scopes` field:
+
+```ts
+const grantSchema = z.strictObject({
+  principal: z.string().min(1).max(128),
+  subjects: z.array(z.string().min(1).max(256)).min(1),
+  pipelines: z.array(z.string().min(1).max(64)).min(1),
+  scopes: z.array(z.enum(['work.operator', 'work.executor'])).optional(),
+});
+```
+
+absent means `['work.operator']` — every existing grant entry keeps its
+current meaning unchanged. `WorkScope` (`work-auth.ts`) gains
+`'work.executor'`; `principalFor` maps `grant.scopes ?? ['work.operator']`
+onto `WorkPrincipal.scopes` instead of the hard-coded `Set(['work.
+operator'])` it builds today.
+
+### Direct runner mode
+
+The runner image (`apps/runner-autoscaler/runner-image/`) gains a second
+entrypoint mode. `entrypoint.sh` branches on `RUNNER_MODE`:
+
+```bash
+if [ "${RUNNER_MODE:-}" = "direct" ]; then
+  exec /usr/local/lib/agent-lcars/direct-runner.sh
+fi
+exec /home/runner/run.sh "$@"
+```
+
+`bin/direct-runner.sh` (new, baked into the image the same way `sidecar-
+lifecycle.sh`/`lcars.sh` already are) reproduces the `claude`-pipeline
+slice of `agent-lane.yml`, sourced from `LCARS_RUN_ID`/`LCARS_RUN_TOKEN`
+(env, set by the autoscaler at container launch — decision: the
+autoscaler claims, then hands the claim to the container by env, rather
+than the container claiming for itself, so a failed launch never strands
+a claimed-but-never-started run beyond the ordinary lease backstop):
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant AS as runner-autoscaler
+  participant API as Console API (runs)
+  participant C as Direct-runner container
+  participant CL as claude CLI
+  participant GH as GitHub
+
+  AS->>API: POST /runs/claim {runner, pipelines:["claude"]} (Google ID token, work.executor)
+  API-->>AS: {runId, workId, pipeline, token, expiresAt} or 204
+  AS->>C: docker run RUNNER_MODE=direct LCARS_RUN_ID LCARS_RUN_TOKEN (image FileMount: telemetry-writer.json)
+  C->>API: GET /runs/:id/brief (run token)
+  API-->>C: {id, spec, anchor, attemptId, generation, intentId}
+  C->>API: GET /runs/:id/checkout-token (run token)
+  API-->>C: {token, expiresAt}
+  C->>GH: git checkout spec.target.repo (checkout token)
+  C->>C: prepare.sh WORK=... -> context.json, install-skills.sh (unmodified)
+  C->>C: start telemetry sidecar (--intent-id, WRITER_CREDENTIALS_FILE=mounted key)
+  C->>CL: claude headless run with the lane's resolved prompt + attempt-claim marker
+  CL->>GH: push branch, open PR (checkout token as push credential)
+  C->>C: verify-deliverable.sh NUM='' ATTEMPT_ID=...
+  C->>API: POST /runs/:id/complete {outcome, outcomeReference} (run token)
+  API-->>C: {runId, state: finished}
+```
+
+Concretely, `direct-runner.sh`:
+
+1. Fetches the brief, builds `WORK="$(jq -c '{id,spec}' <<<"$brief")"`.
+2. Fetches a checkout token; `git clone`/checkout `spec.target.repo` with
+   it persisted as the git credential (the same `http.extraheader` shape
+   `actions/checkout persist-credentials: true` leaves behind), and
+   exports it as `GH_TOKEN` for the deliverable gate's `gh` calls.
+   **Ruling:** this one `agent-lcars[bot]` installation token is used for
+   BOTH checkout AND the agent's own push — the codex/opencode lane's
+   pattern (`agent-lane.yml`: `token: steps.dispatch-bootstrap.outputs.token`
+   for both), not the `claude` lane's, which deliberately checks out with
+   the job's own `github.token` and lets `anthropics/claude-code-action`
+   vend a separate `claude[bot]` push credential internally (#645's
+   boundary). Direct mode never runs that Action, so there is no second
+   credential to vend — a single App-token boundary for checkout and push
+   is the accepted departure from `claude`'s own lane, not an oversight.
+3. `export GITHUB_REPOSITORY="$(jq -r '.spec.target.repo' <<<"$brief")"`
+   — the sidecar's `--repo` flag falls back to this env var
+   (`runner-config.ts`'s `loadRunnerConfig`), so `sidecar-lifecycle.sh`
+   needs no new flag.
+4. Runs `prepare.sh` unmodified (`GITHUB_ACTION_PATH`/`GITHUB_WORKSPACE`/
+   `GITHUB_OUTPUT`/`GITHUB_ENV` pointed at scratch files/dirs it creates;
+   `WORK`, `MODE=implement`, `REPLY=''`, `RUNBOOK=''`, `CONTEXT=''`,
+   budget minutes) to produce `$RUNNER_TEMP/agent-dispatch/context.json`
+   and install skills — both already anchor-agnostic.
+5. Builds `AGENT_PROMPT` by the **same template** `agent-lane.yml`'s
+   "Resolve the canonical dispatch prompt" step inlines (copied, since
+   that step is workflow YAML, not an extractable script — a duplication
+   this plan's self-review flags as a drift risk, not fixed here).
+6. Starts the telemetry sidecar (`sidecar-lifecycle.sh start`,
+   `WRITER_CREDENTIALS_FILE` pointed at a bind-mounted copy of the
+   _same_ `telemetry-writer.json` the autoscaler itself already mounts —
+   delivered into the container the way `Config.FileMounts` already
+   delivers host secret files into any runner container, homelab#101 —
+   `RUN_ID="$LCARS_RUN_ID"`, `INTENT_ID` from the brief).
+7. Runs `claude --dangerously-skip-permissions --allowedTools
+"Bash,Edit,Write,MultiEdit" --disallowedTools
+"ScheduleWakeup,SendMessage,Monitor,Task" --print "$AGENT_PROMPT"` —
+   the tool-permission flags copied verbatim from `agent-lane.yml`'s own
+   "Run Claude Code" step; `--dangerously-skip-permissions` because this
+   container, like the GitHub-Actions runner it replaces, is dedicated to
+   exactly one claimed run. **Ruling:** exact parity with `anthropics/
+claude-code-action`'s internal invocation (its own `max_turns`
+   enforcement, `allowed_bots`, `additional_permissions`, MCP wiring) is
+   out of scope for this sub-project — the Action is a GitHub-Actions-only
+   wrapper direct mode cannot run at all, so "parity" has no single target
+   to match; a materially different headless surface (raw CLI flags
+   instead of an Action's own orchestration) is the accepted shape of
+   direct mode, not a gap to close later.
+8. `verify-deliverable.sh` (`GH_TOKEN`=checkout token, `NUM=''`,
+   `MODE=implement`, `ATTEMPT_ID`) — unmodified, already anchor-agnostic.
+9. On a pass, re-derives `{outcome: 'pull-request', outcomeReference:
+{kind: 'pull-request', number}}` with the identical bot-authored-PR-
+   carrying-the-marker `gh api` search `verify-deliverable.sh` already
+   runs internally (that script deliberately emits no structured output
+   — `agent-fallback-finalize.yml` re-derives evidence the same way for
+   GitHub-Actions runs, and direct mode is its own finalizer, so it does
+   the same). On a failure, posts `{outcome: 'no-deliverable'}` (outside
+   `OK_OUTCOMES`, so `toRunResult` reports `ok: false`).
+10. `POST /runs/:id/complete`.
+
+Only `claude` ships in this sub-project. `codex`/`opencode` route through
+`anthropics/claude-code-action`-shaped or CLI-native wrappers that were
+not audited here; extending direct mode to them is follow-up work.
+
+### Autoscaler change
+
+`runOrchestrator` (`orchestrator.go`) starts one more goroutine, gated on
+`LCARS_QUEUE_POLL=1`, alongside the existing `RunHostSampler`/orphan-
+sweeper goroutines: a new `apps/runner-autoscaler/queue_executor.go`
+polls `POST /runs/claim` on a fixed interval (`LCARS_QUEUE_POLL_INTERVAL`,
+default 15s) for the pipelines named by `LCARS_QUEUE_PIPELINES` (comma-
+separated; independently configured from the console's
+`AGENT_LCARS_QUEUE_PIPELINES` — operationally they should agree, but
+nothing enforces it, the same way no code enforces that a GitHub scale
+set's `Labels` matches what a workflow actually requests). On a
+successful claim it launches the direct-runner image as a plain, one-shot
+Docker container (`newDockerClient`/`hosts.go` for host connectivity,
+reused as-is) on a host from the existing pool — **not** wired through
+`Scaler.HandleDesiredRunnerCount`/the GitHub scale-set state machine,
+which is inherently about persistent, GitHub-registered, multi-job
+runners; a direct-mode container is ephemeral and one-shot by design, so
+a simpler dedicated launch path is the closest fit, not a corner cut.
+Host placement is round-robin over the configured Docker hosts in this
+first cut — the load-aware `pickHost` scoring `Scaler` uses for GitHub
+scale sets is not reused here; a follow-up can adopt it once the queue
+path has real traffic to justify the complexity. With `LCARS_QUEUE_POLL`
+unset, this goroutine never starts and nothing else in the binary
+changes — the GitHub scale-set path is untouched line for line.
+
+### Feature flags
+
+- **Console:** `AGENT_LCARS_QUEUE_PIPELINES` (JSON array, default `[]`).
+  Empty means every request routes `github-actions` exactly as today —
+  `executorFor` never returns `'queue'` for an empty list.
+- **Autoscaler:** `LCARS_QUEUE_POLL=1` (default unset/`0`) plus
+  `LCARS_QUEUE_PIPELINES` (comma-separated). Unset means the new
+  goroutine never starts.
+- Both must be set for the path to do anything; either alone is inert —
+  the console would mint `queue`-executor runs nobody ever claims (caught
+  by the ordinary lease/auto-retry/park backstop, same as any other
+  undispatchable run) or the autoscaler would poll and find nothing
+  (`204` every time).
+
+### What stays unchanged
+
+`github-actions`-executor runs: the whole `GithubActionsExecutor` drain
+path, `confirmDispatch`, the hosted `/api/control-plane/completion` OIDC +
+marker-binding route, the fallback finalizer, `agent-lane.yml`,
+`work-auth.ts`'s Google/session principal paths, every existing grant
+entry's meaning, the console `/work` pages' existing behavior beyond the
+new column below, and `codex`/`opencode` end to end.
+
+### Console
+
+`/work/[id]`'s runs table gains an **Executor** column (`run.executor ??
+'github-actions'`) and, for a `queue`-executor run with `run.queue`
+present, a "claimed by `<claimedBy>`" line under its row when `queue.state
+=== 'claimed'`. `ItemRunView` (`libs/work/src/derive.ts`) and
+`itemRunViewSchema` (`contract.ts`) both gain `executor` and an optional
+`queue: { state, claimedBy? }` projection (not `tokenHash` — that never
+leaves the store). Nothing else on `/work` changes.
+
+### Testing
+
+- Store contract (`store-contract.ts`, run against `MemoryStore` and the
+  Firestore emulator): `enqueueRun` idempotent on a re-drain,
+  `claimQueuedRun` picks oldest-first, a claimed run is invisible to a
+  second concurrent claim (transactional), `listQueuedRuns` ordering and
+  `limit`.
+- `orchestrator-dispatch.ts` drain test: an `executor: 'queue'` run's
+  `dispatch-run` entry calls `store.enqueueRun` and `orchestrator.
+confirmDispatch`, and calls **no** `fetch` (the injected `fetchImpl`
+  stub asserts zero calls) — the negative case decision #8 exists to
+  prove.
+- `runs-router.test.ts` (mirroring `work-router.test.ts`'s harness):
+  claim (found/none/wrong-scope), brief/heartbeat/complete/checkout-token
+  each with a valid token, a wrong token (403), an expired-lease token
+  (401), and a double-complete (second call refused `run-not-live`); a
+  double-claim race resolved by the store contract test above, not
+  re-proven here.
+- `direct-runner.sh` bash test (`direct-runner.test.sh`, modeled on
+  `prepare.test.sh`): fake `curl` (serves canned brief/checkout-token/
+  complete responses) and a fake `claude` binary that writes a marked PR
+  stub via a faked `gh`, asserting the script's `POST .../complete` body
+  and that `verify-deliverable.sh` gates it.
+- OpenAPI document regenerated and diffed in CI, extended for `runs`.
+- Autoscaler: Go unit tests for the poll loop (claim → launch, `204` →
+  no launch, `LCARS_QUEUE_POLL` unset → goroutine never starts) using a
+  fake `POST /runs/claim` HTTP server and the existing `fakedocker_test.go`
+  double.
+
+### Real-path proof (last task, maintainer-gated)
+
+Everything above works in `github-actions` mode with **zero** Terraform,
+IAM, or new secrets. One thing does not: the direct runner needs
+`CLAUDE_CODE_OAUTH_TOKEN` (today reachable only via GitHub-Actions-WIF
+impersonation of `claude-token-reader@agent-lcars.iam.gserviceaccount.com`,
+which a homelab Docker container cannot do) delivered some other way. The
+closest option that adds no Terraform/IAM is the same pattern this design
+already leans on twice: a maintainer places a copy of that secret's value
+into the homelab encrypted secret store (`secrets-cli` skill) and adds a
+`file_mount`/`queue_executor` config entry exposing it read-only into
+direct-mode containers, exactly like `telemetry-writer.json`. This is a
+**one-time manual credential-placement action, not a code change**, and
+it is the one step in this whole sub-project that needs a human: every
+task up to it lands and is verifiable with `AGENT_LCARS_QUEUE_PIPELINES`
+at its default `[]`.
+
+With that placement done: set `AGENT_LCARS_QUEUE_PIPELINES='["claude"]'`
+on the console, `LCARS_QUEUE_POLL=1` plus `LCARS_QUEUE_PIPELINES=claude`
+on the autoscaler's deploy (its config/env, homelab-side — deploy path
+not owned by this repo), create one item via `work-create.yml`, watch the
+autoscaler's logs claim it and the direct runner produce a PR, `get` →
+`done`. Append a "Sub-project 4" section to `docs/native-work-smoke-
+runbook.md` with the run id, container/host, and PR URL. Then set
+`AGENT_LCARS_QUEUE_PIPELINES` back to `[]` so production stays on
+`github-actions` until a maintainer deliberately opts a pipeline in.

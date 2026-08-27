@@ -92,6 +92,26 @@ export const runResultSchema = z.strictObject({
 });
 export type RunResult = z.infer<typeof runResultSchema>;
 
+export const runExecutorSchema = z.enum(['github-actions', 'queue']);
+export type RunExecutor = z.infer<typeof runExecutorSchema>;
+
+/** A `queue`-executor run's claim state, written directly onto the run
+ *  document by the outbox drain and by `POST /runs/claim` — see the design
+ *  spec's "Queue state machine". Absent means "not a queue-executor run,
+ *  or not yet drained". `tokenHash` is `sha256(token)` hex, never the raw
+ *  token; `apps/console/src/lib/run-token.ts` mints/hashes it. */
+export const runQueueSchema = z.strictObject({
+  state: z.enum(['queued', 'claimed']),
+  claimedAt: isoUtc.optional(),
+  claimedBy: z.string().min(1).max(256).optional(),
+  tokenHash: z
+    .string()
+    .length(64)
+    .regex(/^[0-9a-f]{64}$/u)
+    .optional(),
+});
+export type RunQueue = z.infer<typeof runQueueSchema>;
+
 /** One recorded transition. The list of these is the run's whole history. */
 export const runEventSchema = z.strictObject({
   at: isoUtc,
@@ -121,6 +141,13 @@ export const runSchema = z.strictObject({
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here. */
   params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
+  /** Which executor drains this run's dispatch. Absent means
+   *  `'github-actions'` -- every run persisted before this field existed
+   *  parses unchanged (see model.ts's top comment on the anchor union for
+   *  why this stays optional-with-a-default rather than required). */
+  executor: runExecutorSchema.optional(),
+  /** `executor: 'queue'` runs only -- see `runQueueSchema`. */
+  queue: runQueueSchema.optional(),
   /** A live run must renew before this instant or it is presumed lost. */
   leaseExpiresAt: isoUtc,
   result: runResultSchema.optional(),

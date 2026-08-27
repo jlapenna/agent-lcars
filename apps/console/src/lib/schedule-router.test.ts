@@ -31,6 +31,13 @@ const cronTick = {
   pipelines: [],
   via: 'oidc' as const,
 };
+const executorOnly = {
+  principal: 'svc:autoscaler',
+  subject: 'google:autoscaler@example.iam.gserviceaccount.com',
+  scopes: new Set(['work.executor'] as const),
+  pipelines: ['claude'],
+  via: 'google' as const,
+};
 const GRANTS = [
   {
     principal: 'user:jlapenna',
@@ -65,6 +72,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     scheduleStore: new MemoryScheduleStore(),
     grants: () => GRANTS,
     now: () => NOW,
+    queuePipelines: [],
     ...over,
   };
 }
@@ -127,6 +135,19 @@ describe('schedules routes', () => {
 
   it('refuses schedule CRUD for a cron:tick principal, which carries no work.operator scope', async () => {
     const ctx = withPrincipal(context(), cronTick);
+    for (const [m, p, b] of [
+      ['PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec }],
+      ['GET', `/schedules/${ID}`],
+      ['GET', '/schedules'],
+      ['POST', `/schedules/${ID}/enable`],
+      ['POST', `/schedules/${ID}/disable`],
+    ] as const) {
+      expect((await call(ctx, m, p, b)).status, `${m} ${p}`).toBe(401);
+    }
+  });
+
+  it('refuses schedule CRUD for a work.executor-only principal, which carries no work.operator scope', async () => {
+    const ctx = withPrincipal(context(), executorOnly);
     for (const [m, p, b] of [
       ['PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec }],
       ['GET', `/schedules/${ID}`],
@@ -352,6 +373,28 @@ describe('tick', () => {
     const gotAfterSecond = await call(ctx, 'GET', `/schedules/${ID}`);
     expect(gotAfterSecond.json.lastSlotAt).toBe(gotAfterFirst.json.lastSlotAt);
     expect(gotAfterSecond.json.lastItemId).toBe(itemId);
+  });
+
+  it("honours AGENT_LCARS_QUEUE_PIPELINES on a minted tick run, same as items.create: executor 'queue' for a configured pipeline", async () => {
+    // Both `items.create` and the schedule tick route through `mintItem`
+    // (`work-mint.ts`), which is where `executorFor(spec.pipeline,
+    // context.queuePipelines)` is called -- proving it here proves the
+    // cron path gets the same executor selection as `items.create`
+    // without duplicating it.
+    const ctx = context({ queuePipelines: ['claude'] });
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    const tickCtx = withPrincipal(ctx, cronTick);
+
+    const r = await call(tickCtx, 'POST', '/schedules/tick', {});
+    expect(r.status).toBe(200);
+    expect(r.json.minted).toHaveLength(1);
+    const itemId = r.json.minted[0].itemId;
+
+    const run = await ctx.runtime.store.readRun(`work:${itemId}/r1`);
+    expect(run?.executor).toBe('queue');
   });
 
   it("replays mintItem's idempotent-create path when the deterministic slot item already exists", async () => {

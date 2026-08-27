@@ -1,11 +1,30 @@
 import 'server-only';
 
+import { PIPELINES } from '@agent-lcars/work';
 import { z } from 'zod';
+
+const workScopeSchema = z.enum(['work.operator', 'work.executor']);
+
+/** A pipeline name checked against the same closed set `workSpecSchema`
+ *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
+ *  `AGENT_LCARS_WORK_GRANTS`/`AGENT_LCARS_QUEUE_PIPELINES` (a grant or a
+ *  queue-pipeline entry that can never match a real request) is a startup
+ *  config error, not a silently-inert grant/entry discovered later by a
+ *  principal who mysteriously has no access, or a queue pipeline that
+ *  mysteriously never routes. */
+const pipelineNameSchema = z.enum(PIPELINES);
 
 const grantSchema = z.strictObject({
   principal: z.string().min(1).max(128),
   subjects: z.array(z.string().min(1).max(256)).min(1),
-  pipelines: z.array(z.string().min(1).max(64)).min(1),
+  pipelines: z.array(pipelineNameSchema).min(1),
+  /** Absent means `['work.operator']` -- every grant written before this
+   *  field existed keeps its exact current meaning. Explicitly empty is
+   *  refused (`.min(1)`), not silently treated as "no scopes": there is no
+   *  reading of `scopes: []` in a config file that means anything other
+   *  than a mistake -- it is either absent (the operator default) or a
+   *  deliberate non-empty list. */
+  scopes: z.array(workScopeSchema).min(1).optional(),
 });
 const grantsSchema = z.array(grantSchema);
 
@@ -41,6 +60,17 @@ export function grantForPrincipal(
   grants: WorkGrant[] = workGrants(),
 ): WorkGrant | undefined {
   return grants.find((g) => g.principal === principal);
+}
+
+/** Pipelines routed to the `queue` executor at request time. Default `[]`:
+ *  with nothing configured, `work-mint.ts`'s `executorFor` never returns
+ *  `'queue'` and every run dispatches through GitHub Actions exactly as
+ *  before this sub-project. */
+export function queuePipelines(
+  raw: string | undefined = process.env['AGENT_LCARS_QUEUE_PIPELINES'],
+): string[] {
+  if (raw === undefined || raw.trim() === '') return [];
+  return z.array(pipelineNameSchema).parse(JSON.parse(raw));
 }
 
 export function workMaxLiveRuns(): number {

@@ -76,6 +76,16 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   issues: 'write',
 };
 
+/** Permission set for a direct-mode checkout/push token -- broader than
+ *  the drain's `DEFAULT_PERMISSIONS` because there is no separate
+ *  `claude[bot]`-vending Action in direct mode: this one token both
+ *  checks out and pushes. */
+export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
+  contents: 'write',
+  'pull-requests': 'write',
+  issues: 'write',
+};
+
 export interface AppInstallationTokenProviderOptions {
   /** The GitHub App's client ID -- used as the JWT `iss` claim. */
   clientId: string;
@@ -184,6 +194,7 @@ export class AppInstallationTokenProvider implements DispatchTokenProvider {
  */
 export function createDispatchTokenProvider(
   env: Record<string, string | undefined>,
+  permissions?: Record<string, string>,
 ): DispatchTokenProvider {
   const clientId = env['AGENT_LCARS_APP_CLIENT_ID'];
   if (clientId === undefined) {
@@ -199,7 +210,39 @@ export function createDispatchTokenProvider(
   // first dispatch. See the doc comment above.
   parsePrivateKey(privateKeyPem);
 
-  return new AppInstallationTokenProvider({ clientId, privateKeyPem });
+  return new AppInstallationTokenProvider({
+    clientId,
+    privateKeyPem,
+    permissions,
+  });
+}
+
+/**
+ * Defers `factory` (normally a `createDispatchTokenProvider` call) until
+ * this provider's `tokenFor` is actually invoked, then builds and caches
+ * the real provider for every later call on this instance.
+ *
+ * Needed anywhere a `DispatchTokenProvider` value is required in a context
+ * object built once per request but not every request path reaches a
+ * GitHub call -- `apps/console/src/app/api/work/v1/[[...rest]]/route.ts`'s
+ * catch-all handler is the motivating case: it builds `RunsContext` (whose
+ * `tokens`/`checkoutTokens` are `DispatchTokenProvider`s, not factories) on
+ * every `/api/work/v1/*` request, including `/items` and `/schedules`
+ * traffic that never reaches a run-token route. Calling
+ * `createDispatchTokenProvider` there directly would fail-fast on missing
+ * `AGENT_LCARS_APP_*` credentials for those requests too, even though
+ * they never touch a GitHub token. Wrapping the same factory in this
+ * function keeps that same-request fail-fast behavior for the routes that
+ * DO reach a GitHub call (`checkoutToken`), without imposing it on routes
+ * that don't.
+ */
+export function lazyDispatchTokenProvider(
+  factory: () => DispatchTokenProvider,
+): DispatchTokenProvider {
+  let provider: DispatchTokenProvider | undefined;
+  return {
+    tokenFor: (repo) => (provider ??= factory()).tokenFor(repo),
+  };
 }
 
 /**
