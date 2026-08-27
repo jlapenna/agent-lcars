@@ -32,14 +32,37 @@ import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { NavPageLoading, PageLoading } from './page-loading';
+import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 import { withConsolePageShell } from './with-console-page-shell';
+import { cancelItem, listItems, redispatchItem } from './work/actions';
 
 function toCard(item: ActionItem): BoardCard {
   return {
     item,
     primaryAction: derivePrimaryAction(item),
   };
+}
+
+/**
+ * Bridge slot: fetches through the same grant-checked server function the
+ * /work page uses; an admin without a work grant sees no panel. Lives here
+ * rather than alongside the pure `ParkedWorkPanel` - importing the
+ * `'use server'` `./work/actions` module into that file drags in
+ * `@orpc/next`'s Node-only `next/navigation` resolution, which vitest's
+ * jsdom environment can't load (see parked-work-panel.test.tsx, which only
+ * ever imports the pure component).
+ */
+async function ParkedWork() {
+  const [err, data] = await listItems({ limit: 200 });
+  if (err) return null;
+  return (
+    <ParkedWorkPanel
+      items={data.items}
+      cancel={cancelItem}
+      redispatch={redispatchItem}
+    />
+  );
 }
 
 interface PageProps {
@@ -152,6 +175,10 @@ async function IndexBody({
             ?.inbox ?? '/inbox'
         }
       />
+
+      <Suspense fallback={null}>
+        <ParkedWork />
+      </Suspense>
 
       <AgentActivityPanel
         activity={filteredActivity}
