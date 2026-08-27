@@ -13,11 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: create (needs title+description), get, or cancel (need id)
+        description: create (needs title+description), get, cancel, or redispatch (need id)
         required: false
         default: create
         type: choice
-        options: [create, get, cancel]
+        options: [create, get, cancel, redispatch]
       title:
         description: create — item title (≤256 chars)
         required: false
@@ -145,6 +145,14 @@ jobs:
               echo "POST /api/work/v1/items/$ITEM_ID/cancel -> $status"; show
               case "$status" in
                 200|409) echo "- cancel $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                *) echo "::error::work API returned $status"; exit 1 ;;
+              esac
+              ;;
+            redispatch)
+              status="$(call POST "$api/$ITEM_ID/redispatch")"
+              echo "POST /api/work/v1/items/$ITEM_ID/redispatch -> $status"; show
+              case "$status" in
+                200|409) echo "- redispatch $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
                 *) echo "::error::work API returned $status"; exit 1 ;;
               esac
               ;;
