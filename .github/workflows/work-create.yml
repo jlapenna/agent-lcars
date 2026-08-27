@@ -1,4 +1,5 @@
-# Create a native work item from GitHub Actions.
+# Drive the native work API from GitHub Actions: create an item, read it, or
+# cancel it.
 #
 # The work API (`PUT /api/work/v1/items/{id}`) accepts Google ID tokens whose
 # subject carries a grant in AGENT_LCARS_WORK_GRANTS. This workflow mints one
@@ -6,18 +7,26 @@
 # WIF pool — the same impersonation the codex lane already uses — so a
 # maintainer can create items with `gh workflow run work-create.yml` from
 # anywhere, without a browser session or a personal service account.
-name: Create work item
+name: Work API
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: create (needs title+description), get, or cancel (need id)
+        required: false
+        default: create
+        type: choice
+        options: [create, get, cancel]
       title:
-        description: Item title (≤256 chars)
-        required: true
+        description: create — item title (≤256 chars)
+        required: false
+        default: ''
         type: string
       description:
-        description: What the agent should do (≤16384 chars)
-        required: true
+        description: create — what the agent should do (≤16384 chars)
+        required: false
+        default: ''
         type: string
       repo:
         description: Target repository (owner/name)
@@ -30,7 +39,7 @@ on:
         default: claude
         type: string
       id:
-        description: Item id (26-char Crockford ULID); generated when empty
+        description: Item id (26-char Crockford ULID); generated for create when empty
         required: false
         default: ''
         type: string
@@ -45,7 +54,7 @@ permissions:
   id-token: write
 
 jobs:
-  create:
+  work:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -59,8 +68,9 @@ jobs:
           id_token_audience: agent-lcars-work
           id_token_include_email: true
 
-      - name: Create the item
+      - name: Call the work API
         env:
+          ACTION: ${{ inputs.action }}
           BEARER: ${{ steps.auth.outputs.id_token }}
           CONSOLE_URL: ${{ inputs.console_url }}
           ITEM_ID: ${{ inputs.id }}
@@ -70,7 +80,22 @@ jobs:
           PIPELINE: ${{ inputs.pipeline }}
         run: |
           set -euo pipefail
-          if [ -z "$ITEM_ID" ]; then
+          api="$CONSOLE_URL/api/work/v1/items"
+          response="$(mktemp)"
+          call() { # method url [body]
+            if [ "$#" -ge 3 ]; then
+              curl -sS -o "$response" -w '%{http_code}' -X "$1" "$2" \
+                -H "authorization: Bearer $BEARER" -H 'content-type: application/json' --data "$3"
+            else
+              curl -sS -o "$response" -w '%{http_code}' -X "$1" "$2" \
+                -H "authorization: Bearer $BEARER"
+            fi
+          }
+          show() { jq . "$response" 2>/dev/null || cat "$response"; echo; }
+          if [ "$ACTION" != "create" ] && [ -z "$ITEM_ID" ]; then
+            echo "::error::$ACTION needs an id"; exit 1
+          fi
+          if [ "$ACTION" = "create" ] && [ -z "$ITEM_ID" ]; then
             ITEM_ID="$(node -e '
               const A = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
               let t = Date.now(), s = "";
@@ -84,24 +109,44 @@ jobs:
           if ! printf '%s' "$ITEM_ID" | grep -Eq '^[0-9A-HJKMNP-TV-Z]{26}$'; then
             echo "::error::id must be a 26-character Crockford ULID"; exit 1
           fi
-          body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" \
-            '{spec: {title: $t, description: $d, pipeline: $p, target: {repo: $r}}}')"
-          response="$(mktemp)"
-          status="$(curl -sS -o "$response" -w '%{http_code}' \
-            -X PUT "$CONSOLE_URL/api/work/v1/items/$ITEM_ID" \
-            -H "authorization: Bearer $BEARER" \
-            -H 'content-type: application/json' \
-            --data "$body")"
-          echo "PUT /api/work/v1/items/$ITEM_ID -> $status"
-          jq . "$response" || cat "$response"
-          if [ "$status" != "201" ]; then
-            echo "::error::work API returned $status"; exit 1
-          fi
-          run_id="$(jq -r '.runs[0].runId // empty' "$response")"
-          {
-            echo "## Work item created"
-            echo
-            echo "- id: \`$ITEM_ID\`"
-            echo "- page: $CONSOLE_URL/work/$ITEM_ID"
-            echo "- run: \`${run_id:-?}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          case "$ACTION" in
+            create)
+              if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ]; then
+                echo "::error::create needs title and description"; exit 1
+              fi
+              body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" \
+                '{spec: {title: $t, description: $d, pipeline: $p, target: {repo: $r}}}')"
+              status="$(call PUT "$api/$ITEM_ID" "$body")"
+              echo "PUT /api/work/v1/items/$ITEM_ID -> $status"; show
+              [ "$status" = "201" ] || { echo "::error::work API returned $status"; exit 1; }
+              run_id="$(jq -r '.runs[0].runId // empty' "$response")"
+              {
+                echo "## Work item created"
+                echo
+                echo "- id: \`$ITEM_ID\`"
+                echo "- page: $CONSOLE_URL/work/$ITEM_ID"
+                echo "- run: \`${run_id:-?}\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            get)
+              status="$(call GET "$api/$ITEM_ID")"
+              echo "GET /api/work/v1/items/$ITEM_ID -> $status"; show
+              [ "$status" = "200" ] || { echo "::error::work API returned $status"; exit 1; }
+              {
+                echo "## Work item $ITEM_ID"
+                echo
+                echo '```json'
+                jq '{state, spec: {title: .spec.title}, runs: [.runs[] | {runId, state, result}]}' "$response"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            cancel)
+              status="$(call POST "$api/$ITEM_ID/cancel")"
+              echo "POST /api/work/v1/items/$ITEM_ID/cancel -> $status"; show
+              case "$status" in
+                200|409) echo "- cancel $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                *) echo "::error::work API returned $status"; exit 1 ;;
+              esac
+              ;;
+            *) echo "::error::unknown action $ACTION"; exit 1 ;;
+          esac
