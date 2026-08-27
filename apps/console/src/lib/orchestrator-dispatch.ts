@@ -137,6 +137,17 @@ async function handleDispatchRun(
 
   const run = await store.readRun(entry.runId);
   if (run === undefined || run.state !== 'pending') {
+    // A run that is already `running` (not settled/canceled) got there via
+    // this same function's primary path below on some earlier attempt --
+    // but a crash between that path's `confirmDispatch` and its own
+    // `claimGithubAnchor`/`settleClaim` would otherwise lose the claim
+    // projection permanently: this reclaimed entry is the only remaining
+    // trigger for it. Re-attempt it here, best-effort (`claimGithubAnchor`
+    // never throws), for a GitHub anchor only -- a native run's `target`
+    // never carries an `issue` for it to project onto anyway.
+    if (run?.state === 'running' && !isWorkAnchor(run.task)) {
+      await claimGithubAnchor(deps, anchorTarget(run));
+    }
     await settleClaim(deps, entry, 'done');
     return;
   }
@@ -263,7 +274,13 @@ async function handleDispatchRun(
  *  this point), as the single visible acknowledgement a human watching the
  *  issue looks for right when the dispatch is confirmed. A failure here must
  *  not cost the dispatch, which has already succeeded by the time this
- *  runs. See the design spec's "Projections" note. */
+ *  runs. See the design spec's "Projections" note.
+ *
+ *  The two POSTs are independent, deliberately not sharing one `try`: both
+ *  are idempotent (a repeated reaction returns the existing one; assigning
+ *  an already-assigned login is a no-op), so a network-level failure on the
+ *  reactions call must not skip the assignees call. Only the token fetch,
+ *  which both calls need, is allowed to skip both. */
 async function claimGithubAnchor(
   deps: DispatchDeps,
   target: AnchorTarget,
@@ -271,26 +288,49 @@ async function claimGithubAnchor(
   if (target.issue === undefined) return;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
   const apiBaseUrl = githubApiBaseUrl(deps);
+  const { repo, issue } = target;
+
+  let token: string;
   try {
-    const token = await deps.tokens.tokenFor(target.repo);
-    await fetchImpl(
-      `${apiBaseUrl}/repos/${target.repo}/issues/${target.issue}/reactions`,
-      {
-        method: 'POST',
-        headers: githubHeaders(token),
-        body: JSON.stringify({ content: 'eyes' }),
-      },
+    token = await deps.tokens.tokenFor(repo);
+  } catch (error) {
+    console.error(
+      'agent-lcars: claim projection failed for %s#%s:',
+      repo,
+      issue,
+      error,
     );
-    await fetchImpl(
-      `${apiBaseUrl}/repos/${target.repo}/issues/${target.issue}/assignees`,
-      {
-        method: 'POST',
-        headers: githubHeaders(token),
-        body: JSON.stringify({ assignees: [agentFleetLogin()] }),
-      },
+    return;
+  }
+
+  try {
+    await fetchImpl(`${apiBaseUrl}/repos/${repo}/issues/${issue}/reactions`, {
+      method: 'POST',
+      headers: githubHeaders(token),
+      body: JSON.stringify({ content: 'eyes' }),
+    });
+  } catch (error) {
+    console.error(
+      'agent-lcars: claim projection failed for %s#%s:',
+      repo,
+      issue,
+      error,
     );
-  } catch {
-    // Swallowed deliberately -- see the doc comment above.
+  }
+
+  try {
+    await fetchImpl(`${apiBaseUrl}/repos/${repo}/issues/${issue}/assignees`, {
+      method: 'POST',
+      headers: githubHeaders(token),
+      body: JSON.stringify({ assignees: [agentFleetLogin()] }),
+    });
+  } catch (error) {
+    console.error(
+      'agent-lcars: claim projection failed for %s#%s:',
+      repo,
+      issue,
+      error,
+    );
   }
 }
 

@@ -643,6 +643,99 @@ describe('drainOutbox: dispatch-run', () => {
     expect(result.failed).toHaveLength(0);
   });
 
+  it('projects the assignee independently of a reactions-call network failure', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    // workflow_dispatch succeeds; the reactions call rejects at the network
+    // level (not merely a bad status) -- the assignees call must still fire.
+    const calls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init: init ?? {} });
+      if (url.endsWith('/reactions')) {
+        throw new TypeError('network error');
+      }
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls.some((c) => c.url.endsWith('/issues/42/reactions'))).toBe(
+      true,
+    );
+    const assigneeCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/assignees'),
+    );
+    expect(assigneeCall).toBeDefined();
+    expect(JSON.parse(assigneeCall!.init.body as string)).toEqual({
+      assignees: ['agent-lcars-bot'],
+    });
+    // The dispatch itself, and the outbox entry, are unaffected.
+    expect(result.dispatched).toHaveLength(1);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('re-projects the claim (once) for a reclaimed dispatch-run entry whose run is already running, then settles done', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+
+    // Simulate a crash between `confirmDispatch` succeeding and this
+    // entry's own settlement: claim the entry (as a first drain would),
+    // advance the run to `running` exactly like the primary dispatch path
+    // does, but never settle the entry itself.
+    const [claimed] = await store.claimPendingOutbox({
+      limit: 1,
+      now: clock.now(),
+      leaseExpiresAt: new Date(
+        Date.parse(clock.now()) + OUTBOX_LEASE_MS,
+      ).toISOString(),
+    });
+    expect(claimed?.entryId).toBe(`dispatch/${run.runId}`);
+    await orchestrator.confirmDispatch(run.runId);
+    expect((await store.readRun(run.runId))?.state).toBe('running');
+
+    // Advance past the original lease so a later drain can reclaim the
+    // still-`leased`-but-expired entry, as a real recovering drain would.
+    clock.advanceMinutes(OUTBOX_LEASE_MS / 60_000 + 1);
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    // No workflow_dispatch fired again -- only the idempotent projection.
+    expect(calls).toHaveLength(2);
+    expect(calls.some((c) => c.url.endsWith(`/issues/7/reactions`))).toBe(true);
+    expect(calls.some((c) => c.url.endsWith(`/issues/7/assignees`))).toBe(true);
+    expect(result.dispatched).toEqual([]);
+    expect(result.failed).toEqual([]);
+
+    // The entry itself settled `done`: nothing left for a later drain.
+    const again = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: vi.fn<typeof fetch>(),
+    });
+    expect(again).toEqual({ dispatched: [], reported: [], failed: [] });
+  });
+
   it('a queue-executor run is enqueued and confirmed without calling GitHub', async () => {
     const { store, orchestrator } = fixture();
     const requested = await orchestrator.request({
