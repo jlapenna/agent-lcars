@@ -814,7 +814,7 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
   });
 
   it.each(DISPATCH_PIPELINES)(
-    '%s.yml: opts into the dispatch-bootstrap and control-plane-projections era',
+    '%s.yml: opts into the dispatch-bootstrap era and derives control-plane-projections from provenance',
     (pipeline) => {
       const contract = PIPELINE_CONTRACTS[pipeline];
       const { doc } = loadWorkflow(contract.workflowFile);
@@ -823,10 +823,17 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
         callerJob?.with?.['dispatch-bootstrap'],
         `${contract.workflowFile} must pass dispatch-bootstrap: true to its shim`,
       ).toBe(true);
+      // Not a literal `true` (found by review on jlapenna/homelab#906): this
+      // workflow is also runnable by hand via workflow_dispatch, where the
+      // console has projected nothing. `broker_intent_id` is the console's
+      // own run id, minted on every dispatch it makes and left at its `''`
+      // default on a manual run, so it is the correct provenance signal --
+      // see the `control-plane-projections:` comment in the workflow file
+      // itself for the full account.
       expect(
         callerJob?.with?.['control-plane-projections'],
-        `${contract.workflowFile} must pass control-plane-projections: true to its shim (sub-project 5)`,
-      ).toBe(true);
+        `${contract.workflowFile} must derive control-plane-projections from broker_intent_id provenance, not hardcode true (sub-project 5, homelab#906)`,
+      ).toBe("${{ inputs.broker_intent_id != '' }}");
     },
   );
 });

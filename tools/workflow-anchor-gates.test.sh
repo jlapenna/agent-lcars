@@ -72,4 +72,19 @@ awk '
   END { if (bad) exit 1 }
 ' "$lane" || fail=1
 
+# Regression (found by review, jlapenna/homelab#906): this repo's own
+# caller workflows are also runnable by hand via workflow_dispatch from the
+# Actions UI. A literal `control-plane-projections: true` makes the lane
+# skip its own claim step (the "Claim the issue as the agent fleet" gate in
+# agent-lane.yml) unconditionally -- including on a hand-run dispatch,
+# where the console has projected nothing, silently leaving the issue
+# unclaimed with no reaction and no assignee. The flag must instead be
+# derived from broker_intent_id provenance, which the console always sets
+# and a manual dispatch always leaves empty.
+for wf in claude codex opencode; do
+  f=".github/workflows/$wf.yml"
+  grep -qE "^\s*control-plane-projections:\s*true\s*$" "$f" && { echo "$f: control-plane-projections must be derived from provenance, not a literal true"; fail=1; }
+  grep -qF "control-plane-projections: \${{ inputs.broker_intent_id != '' }}" "$f" || { echo "$f: expected control-plane-projections derived from inputs.broker_intent_id"; fail=1; }
+done
+
 exit $fail
