@@ -226,33 +226,60 @@ jobs:
 
           # A native run has no ISSUE, so there is no comment/review
           # thread to read -- the PR-marker lookup above is the whole
-          # evidence surface for it.
-          if [ -z "$outcome_kind" ] && [ -n "$ISSUE" ]; then
+          # evidence surface for it. Deliberately NOT gated on
+          # `-z "$outcome_kind"` the way the no-op/comment classification
+          # below still is: an explicit park must be checked regardless of
+          # what the PR lookup above already found, and must win when
+          # present (Codex review on jlapenna/agent-lcars#1564). A run
+          # that opens a PR and only then discovers a blocker stamps the
+          # SAME attempt-claim marker on both the PR and its structured
+          # park comment; skipping this lookup once outcome_kind was
+          # already 'pull-request' silently turned a run that explicitly
+          # said "I am blocked" into a reported success, with
+          # status:needs-human never applied and the operator never
+          # pointed at the blocker -- the exact silent-failure shape this
+          # whole marker-stamping mechanism exists to eliminate, one level
+          # up. no-op and the plain-comment classification stay gated on
+          # `-z "$outcome_kind"`: unlike park, a no-op run is
+          # protocol-defined to never open a PR in the same run (nothing
+          # needed doing, so there is nothing to push -- agent-protocol.md
+          # #6's push-early discipline is implement-mode only), so an
+          # earlier PR find silently winning there is not a realistic
+          # scenario, let alone one that hides a blocker.
+          if [ -n "$ISSUE" ]; then
             if comments_json="$(gh api --paginate --slurp \
               "repos/$REPO/issues/$ISSUE/comments?per_page=100")"; then
-              comment_hits="$(jq -r --arg marker "$claim_marker" \
-                '.[][] | select((.body // "") | contains($marker)) | .id' \
+              park_hits="$(jq -r --arg marker "$claim_marker" \
+                '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:park -->"))) | .id' \
                 <<<"$comments_json")"
-              if [ -n "$comment_hits" ]; then
-                outcome_kind='comment'
-                no_op_hits="$(jq -r --arg marker "$claim_marker" \
-                  '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:no-op -->"))) | .id' \
+              if [ -n "$park_hits" ]; then
+                # agent-protocol.md #4's issue-anchor park path: a
+                # structured, marker-stamped comment IS the deliverable,
+                # same shape as no-op below, but this run still needs a
+                # human, so it is kept distinct rather than folded into
+                # 'comment' -- see toRunResult/needsHumanLabel in
+                # apps/console/src/lib/orchestrator-dispatch.ts and
+                # orchestrator-routes.ts, which key off this exact string
+                # to still flag the issue even though the run succeeded.
+                # outcome_reference (a same-run PR number, if the PR
+                # lookup above found one) is deliberately left set here,
+                # not cleared: the completion payload still carries it
+                # alongside outcome=park, and the console links the
+                # half-finished PR next to the "parked" note instead of
+                # hiding it.
+                outcome_kind='park'
+              elif [ -z "$outcome_kind" ]; then
+                comment_hits="$(jq -r --arg marker "$claim_marker" \
+                  '.[][] | select((.body // "") | contains($marker)) | .id' \
                   <<<"$comments_json")"
-                park_hits="$(jq -r --arg marker "$claim_marker" \
-                  '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:park -->"))) | .id' \
-                  <<<"$comments_json")"
-                if [ -n "$no_op_hits" ]; then
-                  outcome_kind='no-op'
-                elif [ -n "$park_hits" ]; then
-                  # agent-protocol.md #4's issue-anchor park path: a
-                  # structured, marker-stamped comment IS the deliverable,
-                  # same shape as no-op above, but this run still needs a
-                  # human, so it is kept distinct rather than folded into
-                  # 'comment' -- see toRunResult/needsHumanLabel in
-                  # apps/console/src/lib/orchestrator-dispatch.ts and
-                  # orchestrator-routes.ts, which key off this exact string
-                  # to still flag the issue even though the run succeeded.
-                  outcome_kind='park'
+                if [ -n "$comment_hits" ]; then
+                  outcome_kind='comment'
+                  no_op_hits="$(jq -r --arg marker "$claim_marker" \
+                    '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:no-op -->"))) | .id' \
+                    <<<"$comments_json")"
+                  if [ -n "$no_op_hits" ]; then
+                    outcome_kind='no-op'
+                  fi
                 fi
               fi
             else
