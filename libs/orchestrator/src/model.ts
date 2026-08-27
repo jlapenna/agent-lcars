@@ -213,7 +213,41 @@ const outboxEntryBaseSchema = z.strictObject({
   kind: z.enum(['dispatch-run', 'report-outcome']),
   task: taskIdSchema,
   runId: z.string().min(1).max(64),
+  /** Incremented by every `claimPendingOutbox` claim, including expired-
+   *  lease recovery -- so this counts how many times the entry has been
+   *  handed to a worker, not how many times delivery was actually
+   *  attempted (a claim can be lost to a crash before a single GitHub call
+   *  happens). Retirement/backoff below deliberately do NOT key off this
+   *  field for that reason; it remains purely descriptive bookkeeping
+   *  (surfaced in `orchestrator-dispatch.ts`'s failure logging). */
   attempts: z.number().int().nonnegative(),
+  /** #1548 follow-up: when this entry first failed an *actual* delivery
+   *  attempt -- set once, by `orchestrator-dispatch.ts`'s
+   *  `settleRetryableFailure`, and never touched by a mere claim or by
+   *  expired-lease recovery (see `attempts` above). Retirement
+   *  (`OUTBOX_RETIRE_AFTER_MS`) is gated on elapsed time since this
+   *  instant, not on `attempts`, so a burst of claim traffic during a
+   *  transient GitHub outage can no longer exhaust a retry budget within
+   *  minutes. Additive/optional: absent means "has not failed a delivery
+   *  attempt (yet)" -- both for a `pending` entry with no history, and for
+   *  any entry persisted before this field existed, which is treated as
+   *  "failing for the first time now" the moment a failure IS next
+   *  recorded for it, never backdated. */
+  firstFailedAt: isoUtc.optional(),
+  /** #1548 follow-up: backoff. An entry that just failed a delivery
+   *  attempt is not eligible to be reclaimed again until this instant, so
+   *  the fast dispatch/completion drain cadence (on top of the 30-minute
+   *  reconcile) can't hammer an entry that is currently failing -- see
+   *  `OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`. Additive/optional: absent means
+   *  claimable immediately, which is every entry's state before its first
+   *  delivery failure. */
+  nextAttemptAt: isoUtc.optional(),
+  /** #1548 follow-up: how many *actual* delivery attempts have failed in a
+   *  row -- exponential backoff's exponent. Unlike `attempts`, never
+   *  incremented by a claim or by lease recovery on their own; only by
+   *  `settleRetryableFailure` recording a real failed delivery. Additive/
+   *  optional: absent means zero. */
+  deliveryFailures: z.number().int().nonnegative().optional(),
   createdAt: isoUtc,
   updatedAt: isoUtc,
 });
@@ -225,7 +259,15 @@ const outboxEntryBaseSchema = z.strictObject({
  *
  * `pending` and `done` deliberately retain their original document shape so
  * entries written before leasing was introduced remain valid without a data
- * migration.
+ * migration. `failed` is additive the same way (#1548): a terminal
+ * dead-letter state for an entry that has been failing actual delivery
+ * attempts for longer than `OUTBOX_RETIRE_AFTER_MS` (in
+ * `orchestrator-dispatch.ts`) without ever delivering, so it stops being
+ * retried forever instead of either retrying indefinitely or being
+ * misrecorded as `done` (which means "delivered"). Existing
+ * `pending`/`leased`/`done` documents parse unchanged; no migration needed
+ * for this either, nor for `firstFailedAt`/`nextAttemptAt`/
+ * `deliveryFailures` above (same additive-optional treatment).
  */
 export const outboxEntrySchema = z.discriminatedUnion('state', [
   outboxEntryBaseSchema.extend({ state: z.literal('pending') }),
@@ -235,6 +277,7 @@ export const outboxEntrySchema = z.discriminatedUnion('state', [
     leaseExpiresAt: isoUtc,
   }),
   outboxEntryBaseSchema.extend({ state: z.literal('done') }),
+  outboxEntryBaseSchema.extend({ state: z.literal('failed') }),
 ]);
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;

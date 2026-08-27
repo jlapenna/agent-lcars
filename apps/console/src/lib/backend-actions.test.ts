@@ -88,12 +88,20 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
   const tokens: DispatchTokenProvider = {
     tokenFor: async () => 'gh-test-token-0123456789',
   };
+  // `now` pins `drainOutbox`'s own clock to the same fixed instant the
+  // orchestrator's `clock` uses for entry `createdAt` -- otherwise the
+  // default (real wall-clock) `now` would make every entry here look
+  // days/weeks stale against this fixture's frozen 2026-08-15 timestamp,
+  // spuriously tripping the anchor-closed check (`isStaleReport` in
+  // orchestrator-dispatch.ts) that a handful of these tests never intend
+  // to exercise.
   const drain = () =>
     drainOutbox({
       store,
       orchestrator,
       tokens,
       fetchImpl,
+      now: () => clock.now(),
     });
   const settleTerminal = () =>
     settleTerminalRuns({ store, orchestrator, tokens, fetchImpl });

@@ -31,17 +31,86 @@ export type { DispatchTokenProvider };
  *
  * Nothing here is durable itself - `store.claimPendingOutbox` /
  * `store.settleOutbox` own that. A failed GitHub call just leaves its entry
- * `pending` for a later `drainOutbox` call to retry.
+ * `pending` for a later `drainOutbox` call to retry, with exponential
+ * backoff between attempts (`OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) until it has
+ * been failing for `OUTBOX_RETIRE_AFTER_MS` -- past that it is retired
+ * (`failed`) rather than retried forever (#1548, and its own follow-up: a
+ * bound keyed on claim *count* rather than failure *time* let normal fleet
+ * traffic -- dispatches and completions each trigger a drain, on top of the
+ * 30-minute reconcile -- burn through it in minutes during a transient
+ * GitHub outage, which is a worse failure than the one being fixed).
  *
  * Every GitHub call resolves its bearer token per-repo through `tokens`
  * (see `github-app-tokens.ts`) rather than a single ambient token, so a
  * dispatch or outcome comment against a foreign repo can use a token
  * actually scoped there.
+ *
+ * A `report-outcome` entry old enough to be considered stale
+ * (`OUTBOX_STALE_REPORT_AGE_MS`) is additionally checked against its
+ * anchor issue/PR before delivery: if the anchor has since closed, the
+ * entry is retired instead of delivered. This is a maintainer decision
+ * about outward-facing delivery (#1548's backlog release should not spam
+ * resolved issues with days-old outcome reports), not a technical
+ * constraint -- see `isAnchorOpen`/`handleReportOutcome` below.
  */
 
 /** GitHub's REST API accepts a bearer token for both endpoints this module
  * calls. */
 const GITHUB_API = 'https://api.github.com';
+
+/**
+ * Bounds how long a single outbox entry may keep failing actual delivery
+ * attempts, measured from the first one (`OutboxEntry.firstFailedAt`),
+ * before it is retired (`failed`) instead of released back to `pending`
+ * (#1548 follow-up). Deliberately a *time* budget, not a claim-count one:
+ * drains fire on every dispatch and completion in addition to the
+ * 30-minute reconcile heartbeat, so a count-based budget (the original
+ * version of this fix used `attempts >= 20`) can be exhausted by ordinary
+ * fleet traffic within minutes of a transient GitHub outage or a bout of
+ * rate-limiting -- turning something that should just clear on its own
+ * into a permanently lost dispatch or outcome report, which is worse than
+ * the unbounded-retry bug this PR fixes (#1548's own backlog: one entry
+ * reached 485 attempts over six days with no bound at all).
+ *
+ * 72 hours (three days) is comfortably longer than any plausible GitHub
+ * outage or rate-limit episode (these clear in minutes to low hours, not
+ * days) while still being well short of the six-day backlog #1548
+ * produced, so an entry that is *actually* dead -- not just caught in a
+ * passing outage -- still gets retired instead of accumulating forever.
+ * Paired with `OUTBOX_BACKOFF_CAP_MS` below, an entry failing for the
+ * entire window gets on the order of 100-150 real delivery attempts, not
+ * thousands.
+ */
+export const OUTBOX_RETIRE_AFTER_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Backoff between delivery attempts for a failing outbox entry (#1548
+ * follow-up), so the fast dispatch/completion drain cadence doesn't
+ * hammer an entry that is currently failing -- only the slower, steadier
+ * reconcile heartbeat (or a drain that happens to land after backoff has
+ * elapsed) gets to retry it. Doubles per consecutive delivery failure
+ * (`OutboxEntry.deliveryFailures`) starting at one minute, capped at 30
+ * minutes -- deliberately the same as the reconcile interval, so once an
+ * entry's backoff has ramped all the way up it settles into being retried
+ * roughly once per reconcile pass, no faster, regardless of how much
+ * dispatch/completion traffic happens in between.
+ */
+export const OUTBOX_BACKOFF_BASE_MS = 60_000;
+export const OUTBOX_BACKOFF_CAP_MS = 30 * 60_000;
+
+/** Bounds when a `report-outcome` entry is old enough to pay for an extra
+ *  GitHub lookup (`isAnchorOpen`) before delivery, checking whether its
+ *  anchor issue/PR is still open. A run's outcome normally lands within
+ *  minutes of completion -- the very next drain cycle after `decide.ts`
+ *  writes the entry -- so an entry below this age is virtually never a
+ *  stale backlog item, and charging every single delivery an extra API
+ *  call just to cover that near-impossible case would be pure overhead.
+ *  24 hours is deliberately generous headroom above "minutes": comfortably
+ *  clear of a transient drain pause, a burst of claim contention, or a
+ *  brief GitHub outage, while still catching entries anywhere near the
+ *  multi-day backlog #1548 actually produced (up to six days old) long
+ *  before they would otherwise reach delivery. */
+export const OUTBOX_STALE_REPORT_AGE_MS = 24 * 60 * 60 * 1000;
 
 export interface DispatchDeps {
   store: OrchestratorStore;
@@ -66,9 +135,23 @@ export interface DrainOutboxResult {
 
 /**
  * Claims up to `limit` available outbox entries and attempts to deliver each.
- * Never throws: every handled entry is either settled (`done`) or explicitly
- * released (`pending`) with its failure recorded. If the process itself dies,
- * the durable lease expires so a later invocation can retry it.
+ * Never throws: every handled entry is either settled (`done`), retired
+ * (`failed`, once it has been failing for `OUTBOX_RETIRE_AFTER_MS`), or
+ * explicitly released (`pending`, with backoff -- see
+ * `OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) with its failure recorded and logged.
+ * If the process itself dies, the durable lease expires so a later
+ * invocation can retry it.
+ *
+ * #1548: earlier versions stopped the whole drain on the first failure, on
+ * the theory that continuing would just let this same invocation immediately
+ * reclaim the entry it had just failed and burn its whole `limit` budget
+ * retrying it. That protection came at the cost of blocking every *other*
+ * pending entry too -- for six days, fleet-wide, since the claim query has
+ * no ordering and kept handing drains the same unlucky entries first. The
+ * fix keeps the original protection (`failedThisDrain` excludes an entry
+ * this invocation already failed from being reclaimed within the same
+ * call) without the collateral damage: the loop now keeps going, so every
+ * *other* pending entry still gets its fair attempt this invocation.
  */
 export async function drainOutbox(
   deps: DispatchDeps,
@@ -79,6 +162,7 @@ export async function drainOutbox(
     reported: [],
     failed: [],
   };
+  const failedThisDrain = new Set<string>();
 
   // Claim immediately before delivery, not as one upfront batch. Otherwise a
   // slow first GitHub call can consume the leases of later entries before
@@ -92,6 +176,7 @@ export async function drainOutbox(
       leaseExpiresAt: new Date(
         Date.parse(claimedAt) + OUTBOX_LEASE_MS,
       ).toISOString(),
+      excludeEntryIds: failedThisDrain,
     });
     if (entry === undefined) break;
 
@@ -103,19 +188,14 @@ export async function drainOutbox(
         await handleReportOutcome(deps, entry, result);
       }
     } catch (error) {
-      result.failed.push({
-        entryId: entry.entryId,
-        error: errorMessage(error),
-      });
-      // Best-effort: the entry may already be settled by the failed
-      // handler; leaving it `pending` here just means a later drain
-      // retries it, which is always safe.
-      await settleQuietly(deps, entry, 'pending');
+      await settleRetryableFailureQuietly(deps, entry, result, error);
     }
-    // An explicit failure releases the current entry for a future invocation.
-    // Stop here so this same drain cannot immediately reclaim it and consume
-    // the rest of its limit retrying one persistent failure.
-    if (result.failed.length > failuresBefore) break;
+    // Excluded from this invocation's remaining claims only -- not stopped
+    // entirely -- so forward progress continues on every other pending
+    // entry. A later, separate `drainOutbox` call is free to reclaim it.
+    if (result.failed.length > failuresBefore) {
+      failedThisDrain.add(entry.entryId);
+    }
   }
 
   return result;
@@ -172,7 +252,7 @@ async function handleDispatchRun(
     // A native run whose payload cannot name a repository can never be
     // dispatched: permanent, so settle the entry rather than retry it.
     await settleClaim(deps, entry, 'done');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    recordPermanentFailure(entry, result, error);
     return;
   }
 
@@ -189,10 +269,7 @@ async function handleDispatchRun(
       // dispatched: permanent, so settle the entry rather than retry it,
       // exactly as the `anchorTarget` failure above.
       await settleClaim(deps, entry, 'done');
-      result.failed.push({
-        entryId: entry.entryId,
-        error: errorMessage(error),
-      });
+      recordPermanentFailure(entry, result, error);
       return;
     }
     inputs = {
@@ -240,6 +317,14 @@ async function handleDispatchRun(
     // (see `orchestrator-ingest.ts`'s `checkRepository`), and every
     // admitted repo now declares the input. Emit it whenever the task has
     // one.
+    //
+    // If an admitted repo's workflow hasn't actually caught up yet (a real
+    // possibility mid-onboarding -- see the 422-retry block below), the
+    // dispatch below 422s. That no longer risks poisoning the outbox the
+    // way it once did: `drainOutbox`'s per-entry fairness means one
+    // persistently-failing entry no longer blocks any other, and a
+    // dispatch that keeps failing is bounded by `OUTBOX_RETIRE_AFTER_MS`
+    // (with backoff between attempts) rather than retried forever.
     let workInput: string | undefined;
     if (task?.work !== undefined) {
       try {
@@ -248,10 +333,7 @@ async function handleDispatchRun(
         });
       } catch (error) {
         await settleClaim(deps, entry, 'done');
-        result.failed.push({
-          entryId: entry.entryId,
-          error: errorMessage(error),
-        });
+        recordPermanentFailure(entry, result, error);
         return;
       }
     }
@@ -278,8 +360,7 @@ async function handleDispatchRun(
       body: JSON.stringify({ ref: 'main', inputs }),
     });
   } catch (error) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    await settleRetryableFailure(deps, entry, result, error);
     return;
   }
 
@@ -297,6 +378,15 @@ async function handleDispatchRun(
   // run, whose only content *is* `work`) and only for the specific 422
   // shape GitHub uses for an undeclared input -- any other 422 reason
   // fails exactly as before.
+  //
+  // #1548 interaction: the initial 422 that triggers this retry is never
+  // itself recorded via `settleRetryableFailure` -- only the outcome
+  // below (`response`, reassigned to the retry's result when a retry
+  // happens) is. So a retry that lands 204 leaves no failure/backoff state
+  // on the entry at all, and a retry that fails (network error above, or a
+  // non-204 status falling through to the check below) is recorded
+  // exactly once, against its own outcome -- never twice for what is, from
+  // the outbox's perspective, a single delivery attempt.
   if (
     response.status === 422 &&
     inputs['work'] !== undefined &&
@@ -321,22 +411,19 @@ async function handleDispatchRun(
           body: JSON.stringify({ ref: 'main', inputs: retryInputs }),
         });
       } catch (error) {
-        await settleClaim(deps, entry, 'pending');
-        result.failed.push({
-          entryId: entry.entryId,
-          error: errorMessage(error),
-        });
+        await settleRetryableFailure(deps, entry, result, error);
         return;
       }
     }
   }
 
   if (response.status !== 204) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({
-      entryId: entry.entryId,
-      error: `workflow_dispatch returned ${response.status}`,
-    });
+    await settleRetryableFailure(
+      deps,
+      entry,
+      result,
+      `workflow_dispatch returned ${response.status}`,
+    );
     return;
   }
 
@@ -458,11 +545,12 @@ async function handleReportOutcome(
     // expireLease), so this should not happen. Guard it anyway rather than
     // throw: leave the entry for a later drain in case of a transient
     // read issue.
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({
-      entryId: entry.entryId,
-      error: `no such run: ${entry.runId}`,
-    });
+    await settleRetryableFailure(
+      deps,
+      entry,
+      result,
+      `no such run: ${entry.runId}`,
+    );
     return;
   }
 
@@ -481,7 +569,7 @@ async function handleReportOutcome(
     target = anchorTarget(run, task);
   } catch (error) {
     await settleClaim(deps, entry, 'done');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    recordPermanentFailure(entry, result, error);
     return;
   }
   if (target.issue === undefined) {
@@ -489,6 +577,28 @@ async function handleReportOutcome(
     // outcome is derivable from the run/task documents themselves.
     await settleClaim(deps, entry, 'done');
     return;
+  }
+
+  // #1548's fix (fairness + the attempt cap above) means deploying it
+  // releases a backlog of report-outcome entries up to six days old across
+  // several repos. Delivering all of them regardless would post outcome
+  // comments onto issues/PRs a human has since closed -- noise on
+  // something already resolved. Maintainer decision: only pay for the
+  // anchor lookup once an entry is old enough that it could plausibly be
+  // part of that backlog (see `OUTBOX_STALE_REPORT_AGE_MS`), and only
+  // retire it if the anchor is confirmed closed.
+  if (isStaleReport(entry, deps)) {
+    const anchorOpen = await isAnchorOpen(deps, target);
+    if (anchorOpen === false) {
+      await settleClaim(deps, entry, 'failed');
+      const message = `anchor ${target.repo}#${target.issue} is closed; retiring stale outcome report`;
+      result.failed.push({ entryId: entry.entryId, error: message });
+      logOutboxFailure(entry, message, 'anchor-closed');
+      return;
+    }
+    // `anchorOpen === true` (still open) or `undefined` (the lookup
+    // itself failed -- see `isAnchorOpen`'s doc comment) both fall through
+    // to normal delivery below.
   }
 
   const outcome =
@@ -509,17 +619,17 @@ async function handleReportOutcome(
       body: JSON.stringify({ body: outcome.body }),
     });
   } catch (error) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({ entryId: entry.entryId, error: errorMessage(error) });
+    await settleRetryableFailure(deps, entry, result, error);
     return;
   }
 
   if (response.status !== 201) {
-    await settleClaim(deps, entry, 'pending');
-    result.failed.push({
-      entryId: entry.entryId,
-      error: `issue comment returned ${response.status}`,
-    });
+    await settleRetryableFailure(
+      deps,
+      entry,
+      result,
+      `issue comment returned ${response.status}`,
+    );
     return;
   }
 
@@ -534,6 +644,68 @@ async function handleReportOutcome(
 
   await settleClaim(deps, entry, 'done');
   result.reported.push(run.runId);
+}
+
+/** Whether a `report-outcome` entry is old enough to warrant the extra
+ *  `isAnchorOpen` lookup before delivery -- see
+ *  `OUTBOX_STALE_REPORT_AGE_MS`'s doc comment for why 24 hours. */
+function isStaleReport(entry: LeasedOutboxEntry, deps: DispatchDeps): boolean {
+  return (
+    Date.parse(now(deps)) - Date.parse(entry.createdAt) >=
+    OUTBOX_STALE_REPORT_AGE_MS
+  );
+}
+
+/**
+ * Whether a stale `report-outcome` entry's anchor issue or PR is still
+ * open -- `undefined` if that could not be determined. GitHub serves pull
+ * requests through the same issues endpoint (a PR *is* an issue for this
+ * purpose, including its `state`), so one lookup covers both anchor kinds
+ * without a separate PR-aware client.
+ *
+ * Never throws. A network failure or a response this call can't interpret
+ * must not delete the entry (this is advisory, not the delivery attempt
+ * itself) and must not abort the drain -- so this defers rather than
+ * retries: it reports "unknown" back to `handleReportOutcome`, which falls
+ * through to attempting normal delivery exactly as it would for a
+ * confirmed-open anchor, rather than releasing the entry back to `pending`
+ * without ever trying to deliver it. A transient failure here is
+ * indistinguishable from a transient failure on the delivery call itself
+ * immediately below it, which already tolerates retrying -- there is no
+ * reason to treat the lookup more conservatively than the delivery it is
+ * gating.
+ */
+async function isAnchorOpen(
+  deps: DispatchDeps,
+  target: AnchorTarget,
+): Promise<boolean | undefined> {
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  try {
+    const token = await deps.tokens.tokenFor(target.repo);
+    const response = await fetchImpl(
+      `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}`,
+      { method: 'GET', headers: githubHeaders(token) },
+    );
+    if (!response.ok) {
+      console.error(
+        'agent-lcars: anchor lookup failed for %s#%s: %s',
+        target.repo,
+        target.issue,
+        response.status,
+      );
+      return undefined;
+    }
+    const body = (await response.json()) as { state?: unknown };
+    return body.state !== 'closed';
+  } catch (error) {
+    console.error(
+      'agent-lcars: anchor lookup failed for %s#%s:',
+      target.repo,
+      target.issue,
+      error,
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -751,16 +923,125 @@ function githubApiBaseUrl(
   return (deps.githubApiBaseUrl ?? GITHUB_API).replace(/\/+$/u, '');
 }
 
-async function settleQuietly(
+/**
+ * The one place every per-entry drain failure is logged (#1548: previously
+ * none of them were -- six days of a stuck outbox produced no log line
+ * anywhere, only a raw Firestore query eventually surfaced it). `outcome`
+ * says what happened to the entry as a result, so a reader doesn't have to
+ * cross-reference the outbox document itself to know whether this was
+ * retried, retired for failing longer than `OUTBOX_RETIRE_AFTER_MS`,
+ * retired because its anchor closed, or was never retryable to begin with.
+ * `'anchor-closed'` is deliberately distinct from `'retired'` even though
+ * both settle the entry `failed` -- one is "GitHub kept rejecting this,"
+ * the other is "the anchor resolved before we got to it," and a reader
+ * scanning logs should be able to tell which happened without
+ * cross-referencing the entry's attempt count.
+ */
+function logOutboxFailure(
+  entry: LeasedOutboxEntry,
+  error: string,
+  outcome: 'retrying' | 'retired' | 'permanent' | 'anchor-closed',
+): void {
+  console.error(
+    'agent-lcars: outbox drain failed for %s (kind %s, attempt %d, %s): %s',
+    entry.entryId,
+    entry.kind,
+    entry.attempts,
+    outcome,
+    error,
+  );
+}
+
+/** Records and logs a failure that can never succeed on retry (an
+ *  unparseable payload, an anchor that can't be resolved) -- the caller has
+ *  already settled the entry `done` rather than releasing it, exactly as a
+ *  successful delivery would, so there's nothing left for a later drain to
+ *  do. Logging it as `permanent` distinguishes that from an entry that
+ *  actually delivered. */
+function recordPermanentFailure(
+  entry: LeasedOutboxEntry,
+  result: DrainOutboxResult,
+  error: unknown,
+): void {
+  const message = errorMessage(error);
+  result.failed.push({ entryId: entry.entryId, error: message });
+  logOutboxFailure(entry, message, 'permanent');
+}
+
+/**
+ * Records, logs, and settles a retryable delivery failure (#1548, and its
+ * follow-up: see `OUTBOX_RETIRE_AFTER_MS`'s doc comment for why this is
+ * gated on elapsed failure time rather than claim count). This only runs
+ * for an *actual* delivery attempt that failed -- unlike `attempts` (which
+ * the store also bumps on lease recovery, before any delivery is even
+ * attempted), `entry.firstFailedAt`/`deliveryFailures` therefore only ever
+ * advance here, so a crashed drain that keeps losing its lease without
+ * ever reaching GitHub can never by itself push an entry toward
+ * retirement or backoff.
+ *
+ * Below `OUTBOX_RETIRE_AFTER_MS` (measured from the first such failure),
+ * the entry is released back to `pending` for a later attempt, with
+ * `nextAttemptAt` set so `claimPendingOutbox` skips it until backoff
+ * elapses (`OUTBOX_BACKOFF_BASE_MS`/`_CAP_MS`) -- exactly as before this
+ * follow-up, except that a fast-firing drain can no longer reclaim it
+ * immediately. Once the window is exceeded, it is retired (`failed`)
+ * instead, so a genuinely undeliverable entry stops consuming a claim slot
+ * forever rather than retrying indefinitely.
+ */
+async function settleRetryableFailure(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
-  state: 'pending' | 'done',
+  result: DrainOutboxResult,
+  error: unknown,
+): Promise<void> {
+  const message = errorMessage(error);
+  result.failed.push({ entryId: entry.entryId, error: message });
+
+  const nowStr = now(deps);
+  // Absent means this entry has never failed an actual delivery attempt
+  // before -- treated as failing for the first time right now, never
+  // backdated (see `OutboxEntry.firstFailedAt`'s doc comment in model.ts).
+  const firstFailedAt = entry.firstFailedAt ?? nowStr;
+  const retired =
+    Date.parse(nowStr) - Date.parse(firstFailedAt) >= OUTBOX_RETIRE_AFTER_MS;
+
+  if (retired) {
+    logOutboxFailure(entry, message, 'retired');
+    await settleClaim(deps, entry, 'failed', { now: nowStr, firstFailedAt });
+    return;
+  }
+
+  const deliveryFailures = (entry.deliveryFailures ?? 0) + 1;
+  const backoffMs = Math.min(
+    OUTBOX_BACKOFF_CAP_MS,
+    OUTBOX_BACKOFF_BASE_MS * 2 ** (deliveryFailures - 1),
+  );
+  const nextAttemptAt = new Date(Date.parse(nowStr) + backoffMs).toISOString();
+
+  logOutboxFailure(entry, message, 'retrying');
+  await settleClaim(deps, entry, 'pending', {
+    now: nowStr,
+    firstFailedAt,
+    nextAttemptAt,
+    deliveryFailures,
+  });
+}
+
+/** Same as {@link settleRetryableFailure}, but never throws: for the
+ *  top-level per-entry catch in `drainOutbox`, where the entry may already
+ *  be settled by the failed handler and a settle failure here just means
+ *  the next drain reclaims it, which is always safe. */
+async function settleRetryableFailureQuietly(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+  result: DrainOutboxResult,
+  error: unknown,
 ): Promise<void> {
   try {
-    await settleClaim(deps, entry, state);
+    await settleRetryableFailure(deps, entry, result, error);
   } catch {
-    // Already recorded as a failure by the caller; a settle failure here
-    // just means the next drain reclaims it, which is fine.
+    // Already recorded as a failure above; a settle failure here just
+    // means the next drain reclaims it, which is fine.
   }
 }
 
@@ -771,12 +1052,27 @@ function now(deps: DispatchDeps): string {
 async function settleClaim(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
-  state: 'pending' | 'done',
+  state: 'pending' | 'done' | 'failed',
+  /** #1548 follow-up: the elapsed-time/backoff bookkeeping to persist
+   *  alongside the settle, when the caller is `settleRetryableFailure`.
+   *  `now` lets that caller pin the exact instant its own retirement/
+   *  backoff math was computed against, rather than this function calling
+   *  `now(deps)` a second time and risking a (harmless but confusing)
+   *  mismatch against it. */
+  failureState?: {
+    now?: string;
+    firstFailedAt?: string;
+    nextAttemptAt?: string;
+    deliveryFailures?: number;
+  },
 ): Promise<boolean> {
   return deps.store.settleOutbox({
     entryId: entry.entryId,
     claimId: entry.claimId,
     state,
-    now: now(deps),
+    now: failureState?.now ?? now(deps),
+    firstFailedAt: failureState?.firstFailedAt,
+    nextAttemptAt: failureState?.nextAttemptAt,
+    deliveryFailures: failureState?.deliveryFailures,
   });
 }

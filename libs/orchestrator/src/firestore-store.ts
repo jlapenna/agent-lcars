@@ -141,20 +141,33 @@ export class FirestoreStore implements OrchestratorStore {
     limit: number;
     now: string;
     leaseExpiresAt: string;
+    excludeEntryIds?: ReadonlySet<string>;
   }): Promise<LeasedOutboxEntry[]> {
     if (input.limit <= 0) return [];
 
     return this.#firestore.runTransaction(async (tx) => {
       // Keep this index-free: both queries are single-field equality queries.
-      // The leased population is bounded by active drains and the short lease,
-      // so reading it to filter expiry client-side stays small. Crucially, the
-      // query and every claim write share one transaction: concurrent drains
-      // cannot both return ownership of the same document.
+      // The leased population is bounded by active drains and the short
+      // lease, so reading it to filter expiry client-side stays small.
+      // Crucially, the query and every claim write share one transaction:
+      // concurrent drains cannot both return ownership of the same document.
       const leasedSnapshot = await tx.get(
         this.#outbox.where('state', '==', 'leased'),
       );
+      // No server-side `.limit()` on the pending query (#1548): the pending
+      // population is exactly the backlog this store exists to drain, so
+      // truncating it server-side before `excludeEntryIds` is applied would
+      // silently favor whatever arbitrary subset Firestore's unordered
+      // index scan happens to return first -- which is precisely how one
+      // persistently-failing entry starved 145 of 162 pending entries for
+      // six days without ever giving them a single claim attempt. Reading
+      // the whole equality-filtered set and slicing client-side, after the
+      // exclusion filter, is the same trade `listQueuedRuns` already makes
+      // for the same reason (composite-index-free, and this population is
+      // expected to stay small in steady state -- large only during exactly
+      // the incident this fix targets, which drains it back down).
       const pendingSnapshot = await tx.get(
-        this.#outbox.where('state', '==', 'pending').limit(input.limit),
+        this.#outbox.where('state', '==', 'pending'),
       );
       const cutoff = Date.parse(input.now);
       const expired = leasedSnapshot.docs.filter((doc) => {
@@ -163,10 +176,22 @@ export class FirestoreStore implements OrchestratorStore {
           entry.state === 'leased' && Date.parse(entry.leaseExpiresAt) <= cutoff
         );
       });
-      const eligible = [...expired, ...pendingSnapshot.docs].slice(
-        0,
-        input.limit,
-      );
+      const excluded = input.excludeEntryIds;
+      // #1548 follow-up: a pending entry still backing off from its last
+      // delivery failure (`nextAttemptAt` in the future) is skipped here,
+      // the same as an explicitly excluded one -- it never affects expired-
+      // lease recovery above, since a lease can only be outstanding on an
+      // entry that was itself already eligible to be claimed. See
+      // `OrchestratorStore.claimPendingOutbox`'s doc comment.
+      const pendingCandidates = pendingSnapshot.docs.filter((doc) => {
+        const entry = outboxEntrySchema.parse(doc.data());
+        return (
+          !(excluded?.has(entry.entryId) ?? false) &&
+          (entry.nextAttemptAt === undefined ||
+            Date.parse(entry.nextAttemptAt) <= cutoff)
+        );
+      });
+      const eligible = [...expired, ...pendingCandidates].slice(0, input.limit);
 
       return eligible.map((doc): LeasedOutboxEntry => {
         const entry = outboxEntrySchema.parse(doc.data());
@@ -188,8 +213,11 @@ export class FirestoreStore implements OrchestratorStore {
   async settleOutbox(input: {
     entryId: string;
     claimId: string;
-    state: 'pending' | 'done';
+    state: 'pending' | 'done' | 'failed';
     now: string;
+    firstFailedAt?: string;
+    nextAttemptAt?: string;
+    deliveryFailures?: number;
   }): Promise<boolean> {
     const ref = this.#outboxRef(input.entryId);
     return this.#firestore.runTransaction(async (tx) => {
@@ -208,6 +236,18 @@ export class FirestoreStore implements OrchestratorStore {
         ...rest,
         state: input.state,
         updatedAt: input.now,
+        // #1548 follow-up: omitted (`undefined`) leaves the field as
+        // `rest` already carried it forward from `current` -- only a
+        // caller settling an actual delivery failure passes these.
+        ...(input.firstFailedAt === undefined
+          ? {}
+          : { firstFailedAt: input.firstFailedAt }),
+        ...(input.nextAttemptAt === undefined
+          ? {}
+          : { nextAttemptAt: input.nextAttemptAt }),
+        ...(input.deliveryFailures === undefined
+          ? {}
+          : { deliveryFailures: input.deliveryFailures }),
       };
       tx.set(ref, settled);
       return true;
