@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  claudeProjectSlugFor,
   RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   transcriptObjectPath,
@@ -75,5 +76,27 @@ describe('transcriptObjectPath', () => {
         sessionId: 'session-c',
       }),
     ).toBe('runs/unknown/claude-code/session-c.jsonl');
+  });
+});
+
+describe('claudeProjectSlugFor', () => {
+  it.each([
+    ['/home/jlapenna/p/agent-lcars', '-home-jlapenna-p-agent-lcars'],
+    ['/tmp/agent-lcars-direct/checkout', '-tmp-agent-lcars-direct-checkout'],
+    ['/', '-'],
+    // A dotted path segment, matching `default-checkout.ts`'s
+    // `checkoutSlugGlobs` (`root.replace(/\//g, '-')`) exactly: only `/`
+    // is substituted, so a literal `.` in the cwd passes through
+    // unchanged.
+    [
+      '/home/jlapenna/p/agent-lcars.wiki/checkout',
+      '-home-jlapenna-p-agent-lcars.wiki-checkout',
+    ],
+    // A trailing slash: no normalization happens here (that's
+    // `default-checkout.ts`'s `normalizeRoot`'s job, one layer up), so a
+    // trailing `/` becomes a trailing `-`.
+    ['/home/jlapenna/p/agent-lcars/', '-home-jlapenna-p-agent-lcars-'],
+  ])('replaces every "/" with "-": %s -> %s', (cwd, expected) => {
+    expect(claudeProjectSlugFor(cwd)).toBe(expected);
   });
 });

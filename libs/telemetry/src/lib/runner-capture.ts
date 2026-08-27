@@ -109,3 +109,17 @@ export function transcriptObjectPath(options: {
 }): string {
   return `runs/${options.runId ?? 'unknown'}/${options.adapter}/${options.sessionId}.jsonl`;
 }
+
+/**
+ * Claude Code's own project-directory encoding for an absolute checkout
+ * path: every `/` becomes `-`. Verified against the sidecar's own
+ * privacy-allowlist code (`apps/telemetry-watcher/src/lib/
+ * default-checkout.ts`'s `checkoutSlugGlobs`, which builds `<root>-*` globs
+ * for exactly this substitution) rather than assumed. Inverted by
+ * `resume-transcript.ts` (sub-project 6): given a checkout directory, this
+ * names the subdirectory under `~/.claude/projects/` a resumed session's
+ * transcript must be written to before Claude Code can `--resume` it.
+ */
+export function claudeProjectSlugFor(absoluteCwd: string): string {
+  return absoluteCwd.replace(/\//g, '-');
+}
