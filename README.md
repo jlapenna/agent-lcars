@@ -81,3 +81,7 @@ Start with the focused document that matches your task. This README intentionall
 does not duplicate deployment steps, runner topology, credential setup, or
 migration history; those operational contracts live with their owning systems
 and should be verified there.
+
+## Native work smoke
+
+2026-08-27
