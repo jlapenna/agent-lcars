@@ -212,7 +212,7 @@ OIDC pin backing `work-schedules-tick.yml` accepts `workflow_dispatch` from
 `main`, which is the manual fallback used above and the one to reach for
 whenever a cron smoke can't wait out GitHub's schedule-activation lag.
 
-## Sub-project 6: session resume and reaper
+## Sub-project 6: session resume and reaper (2026-08-27)
 
 Sub-project 6 (session resume and persistence) adds a `resume-session`
 lane step (era-split like every other local action in `agent-lane.yml` —
@@ -223,7 +223,151 @@ authenticates with a GitHub-Actions-OIDC bearer scoped to `work.reaper`
 and rewrites `expireAt` forward on every session belonging to a still-open
 (running/parked) native item, so Firestore's native TTL policy on
 `sessions.expireAt` never reaps a session out from under an item that is
-still in play. Its own production smoke (the design spec's Sub-project 6
-step 6, `docs/superpowers/specs/2026-08-23-native-work-items-design.md`)
-has not run yet; this entry exists so both surfaces are named in a `docs/`
-page ahead of that smoke.
+still in play. Landed as [PR #1543](https://github.com/jlapenna/agent-lcars/pull/1543)
+(`0374789d`), shipped by
+[deploy-console run 33094008052](https://github.com/jlapenna/agent-lcars/actions/runs/33094008052).
+
+This smoke proves the **persistence half only** (the reaper sweep), and
+only for the open items this run's API reads actually returned — not
+universal coverage; see the pagination note under check 3 below. The
+**`--resume` half is NOT proven here** — see the note at the end of this
+section.
+
+Two things had never run outside a test before this smoke: `firebase-admin`
+driven by only a WIF external-account credentials file plus an exported
+project id (no ambient GCP runtime), and `touchSessionExpiry` writing
+against real production Firestore rather than an emulator. Because GitHub
+drops most scheduled runs in this repo (#1542), the schedule was not
+trusted to fire on its own — every run below was a manual
+`workflow_dispatch`.
+
+| #   | Check                              | Result                                                                                                                                                              |
+| --- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Job runs green                     | **PASS** — run 33095379007, conclusion `success`                                                                                                                    |
+| 2   | OIDC read authenticated and listed | **PASS** — `work.reaper` bearer verified; found 2 open items (both `parked`, 0 `running`), 2 sessions total                                                         |
+| 3   | Write moved `expireAt` forward     | **PASS** — before/after read directly against Firestore; delta +3m15s from dispatch time, `lastActivityAt` untouched (watermark-only write, as designed)            |
+| 4   | Reaper identity is read-only       | **PASS** — structural on two independent axes; live probe also confirmed a third, stronger gate (see below)                                                         |
+| 5   | First-run behaviour                | **PASS** — this was literally the first run of the workflow ever (run history shows only this dispatch and the throwaway probe below); nothing pre-pinned, no error |
+
+### 1-2. The job ran green and the OIDC read worked
+
+[Run 33095379007](https://github.com/jlapenna/agent-lcars/actions/runs/33095379007),
+dispatched `workflow_dispatch` against `main` at 16:51:25Z, conclusion
+`success` at 16:52:17Z (48s). The "Run the pin sweep" step logged:
+
+```
+pinned 2 session(s): c8a433c6-6d46-4f18-9abb-1bb2425cb940, 66e18401-100d-4491-8183-bfe78cb39f13
+```
+
+Both sessions belonged to `parked` native items (0 items were `running` at
+dispatch time) — the sweep's two-query shape (`state=running` then
+`state=parked`) found nothing in the first bucket and both open items in
+the second, and touched both without error, confirming the `work.reaper`
+OIDC bearer authenticated and the read against the work API succeeded.
+
+### 3. The write moved `expireAt` forward (before/after)
+
+No open native item with a session existed at the start of this proof (the
+sub-project 1-5 smoke items had all been closed or canceled) — a fresh
+one was created so the check would be real, per the runbook's own
+practice:
+
+```bash
+gh workflow run work-create.yml -f action=create \
+  -f title='Sub-project 6 proof: session-pin-tick smoke (park immediately)' \
+  -f description='... PARK sub-project-6-smoke — no work requested ...' \
+  -f repo=jlapenna/agent-lcars -f pipeline=claude
+```
+
+| What                | Value                                                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Item                | `01M121WWNXZ95KT6E3AVCN7B0Y`, created by [work-create run 33095028437](https://github.com/jlapenna/agent-lcars/actions/runs/33095028437): `PUT … -> 201` at 16:47:27Z                                                                                  |
+| Dispatch            | [claude.yml run 33095045778](https://github.com/jlapenna/agent-lcars/actions/runs/33095045778), parked by design (conclusion `failure`, matching sub-project 2's park shape)                                                                           |
+| Item confirmed open | [get run 33095230890](https://github.com/jlapenna/agent-lcars/actions/runs/33095230890) at 16:49:46Z: `state: "parked"`, session `c8a433c6-6d46-4f18-9abb-1bb2425cb940`                                                                                |
+| `expireAt` BEFORE   | `2027-08-27T16:48:56.809Z` — read directly from `projects/agent-lcars/databases/(default)/documents/sessions/c8a433c6-…` via Firestore `runQuery` (REST `GET` 404s on this doc id form; `runQuery` filtered on `sessionId` instead, per prior finding) |
+| Pin-tick dispatch   | run 33095379007 (above), executed 16:52:14Z                                                                                                                                                                                                            |
+| `expireAt` AFTER    | `2027-08-27T16:52:11.858Z` — same `runQuery`, re-read after the run completed                                                                                                                                                                          |
+| Delta               | **+3m15s**, exactly the gap between the two reads/writes; `lastActivityAt` stayed `2026-08-27T16:48:56.809Z` in both reads — confirming `touchSessionExpiry` rewrote only `expireAt`, matching its own doc comment                                     |
+
+The second pinned session (`66e18401-…`) turned out to belong to
+`01M1171FE03SFA06DAW6M5CXMY`, the "Cron smoke: park" item from the
+sub-project 3 proof above — `schedule-disable` had disabled the _schedule_
+but the _item_ itself was never canceled, so it was still sitting `parked`
+five hours later. Its `expireAt` moved to the same `2027-08-27T16:52:11.858Z`
+in the same write batch — real evidence the sweep touched both open items
+the API returned in this run, not just the one created for this proof, and
+an incidental finding that sub-project 2/3 smokes should cancel their
+minted items when they park, not just disable the schedule.
+
+This is evidence for the open items this run's reads actually returned,
+not universal coverage. Both `state=running` and `state=parked` requests
+in `session-pin-tick.ts` pass `limit=200`, and that limit is applied
+before the state filter — `work-router.ts`'s `listNativeTasks` orders by
+`workId` desc, so a request really returns "the open items among the 200
+newest native items," not "the 200 newest open items." Once total native
+item history passes 200, an older still-open item can fall outside every
+future sweep and its session can expire out from under it. That
+pagination gap is a known follow-up, tracked in
+[#1546](https://github.com/jlapenna/agent-lcars/issues/1546), not fixed
+here.
+
+Cleanup: `01M121WWNXZ95KT6E3AVCN7B0Y` canceled via
+[cancel run 33095653252](https://github.com/jlapenna/agent-lcars/actions/runs/33095653252):
+`POST …/cancel -> 200`.
+
+### 4. The reaper identity is read-only
+
+Structural on two independent layers, neither grant-list-dependent:
+
+- `work-auth.ts`'s `authenticateWorkRequest` hardcodes the principal for a
+  verified session-pin-tick OIDC token — `scopes: new Set(['work.reaper'])`
+  — built directly in code, never looked up from `AGENT_LCARS_WORK_GRANTS`.
+  There is no config path that could grant this token `work.operator`.
+- `work-router.ts`'s `create`/`cancel`/`redispatch` procedures are built
+  from the `operator` middleware, which checks only
+  `principal.scopes.has('work.operator')`. `list`/`get` use the separate
+  `reader` middleware, which accepts `work.operator` **or** `work.reaper`.
+  A `work.reaper`-only principal fails `operator`'s check unconditionally.
+
+A live negative probe was attempted, not just reasoned about statically:
+a throwaway branch (`chore/sp6-reaper-probe-throwaway`, deleted after)
+added a debug step calling
+`POST /api/work/v1/items/01M121WWNXZ95KT6E3AVCN7B0Y/cancel` with the same
+bearer the pin sweep mints, dispatched via `workflow_dispatch --ref
+chore/sp6-reaper-probe-throwaway`
+([run 33095525130](https://github.com/jlapenna/agent-lcars/actions/runs/33095525130)).
+It surfaced a **third, earlier gate**: `github-actions-oidc.ts`'s
+`assertSessionPinTickOidcClaims` pins `job_workflow_ref` to
+`…/work-session-pin-tick.yml@refs/heads/main` and `ref` to
+`refs/heads/main` exactly, so a token minted from any other branch is
+rejected at authentication — the run's own "Run the pin sweep" step failed
+with `GET /items?state=running -> 401` before the debug cancel step could
+even run. That is a real, live-confirmed rejection, just one layer higher
+than the operator-vs-reader boundary — exercising that specific boundary
+live would require dispatching the debug step from `main` itself, which
+this proof deliberately did not do. The two static findings above cover
+it with high confidence instead.
+
+### 5. First-run behaviour
+
+This was the first time this workflow has ever executed successfully in
+production — `gh run list --workflow work-session-pin-tick.yml` shows
+exactly two runs total: the production dispatch above and the throwaway
+probe. No scheduled `17,47 * * * *` tick had fired by the time of this
+proof, consistent with #1542. With nothing ever pinned before, the sweep
+simply pinned every open item's sessions it found (2 of them) and
+completed without error — there is no "first run" special case in the
+code, and none was needed.
+
+### `--resume` is NOT proven by this smoke
+
+Sub-project 6 also ships a `resume-session` lane step. That step and
+`direct-runner.sh` both call the `runner resume` subcommand out of the
+sidecar bundle baked into the runner image
+(`apps/runner-autoscaler/runner-image/Dockerfile`), and that image is built
+on the homelab host — not from this repo's CI. Until the runner image is
+rebuilt from `main` to pick up sub-project 6's sidecar changes, the
+`resume-session` step cannot be exercised for real. Today, calling it
+against a stale image degrades to starting a fresh session rather than
+failing outright — worth knowing if a redispatch or resume looks like it
+"worked" but didn't actually resume anything.
