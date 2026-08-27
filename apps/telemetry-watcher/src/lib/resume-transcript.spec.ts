@@ -77,4 +77,28 @@ describe('resumeTranscript', () => {
     });
     expect(result).toBeUndefined();
   });
+
+  // sessionId arrives from untrusted document content (jq -r over the work
+  // payload) and is joined directly into a filesystem path -- a traversal
+  // shape like this must be rejected before any I/O, not just handled by
+  // luck of where path.join happens to land.
+  it('rejects a session id that is not a safe identifier (path traversal), writing nothing', async () => {
+    const download = vi.fn().mockResolvedValue('{"line":1}\n');
+    const mkdir = vi.fn();
+    const writeFile = vi.fn();
+    const result = await resumeTranscript({
+      sessionId: '../../../etc/passwd',
+      transcriptGcsUri: 'gs://bucket/x.jsonl',
+      cwd: '/x',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download,
+      mkdir,
+      writeFile,
+    });
+
+    expect(result).toBeUndefined();
+    expect(download).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
 });

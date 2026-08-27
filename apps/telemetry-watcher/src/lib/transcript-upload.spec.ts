@@ -97,6 +97,12 @@ describe('downloadTranscript', () => {
     );
   });
 
+  it('rejects a URI with a non-gs:// scheme', async () => {
+    await expect(
+      downloadTranscript('s3://bucket/runs/x/claude-code/sess_1.jsonl'),
+    ).rejects.toThrow(/Malformed transcript GCS URI/);
+  });
+
   // The plan review's finding: AGENT_TELEMETRY_PROJECT_ID must reach the
   // download path, not just uploadTranscript's. getStorageClient caches by
   // projectId (see transcript-upload.ts), so this also proves the client
