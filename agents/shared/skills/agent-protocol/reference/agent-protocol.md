@@ -94,6 +94,32 @@ target being approved. The comment is evidence that the trusted policy's
 condition was satisfied; it does not create a new exception, and a general or
 third-party approval cannot waive any hard limit.
 
+### The anchor's comments carry newer information than its body
+
+A GitHub issue or pull request body is not retroactively rewritten when
+someone responds to it — a clarification, an approval, or a newly attached
+file almost always lands as a **comment**, not an edit to the body. Reading
+only `body`/`body_html` (`gh issue view`, or `gh api .../issues/<n>`) can
+make an anchor look unchanged when it is not. This matters most on a
+redispatch after a prior park: removing and re-adding `agent:claude` is this
+fleet's own documented recovery step (see a failed run's own comment, which
+says exactly that), and that label-triggered redispatch hands your brief only
+the anchor's original title and body — never anything posted since,
+including a maintainer's direct response to your own prior blocker. Before
+repeating an identical `PARK`, or otherwise concluding a blocker still holds,
+read the anchor's comments too — with pagination, the same way the shared
+attachment helper already does, so a newer comment past the first page is
+not silently dropped:
+
+```bash
+gh api "repos/$GITHUB_REPOSITORY/issues/<N>/comments?per_page=100" --paginate
+```
+
+(a pull-request anchor also has `/reviews`, same pagination caveat). A
+truncated read that returns 200 and looks complete is not evidence that
+nothing has changed — do not infer "nothing has changed" from an unchanged
+body, or from a first page of comments, alone.
+
 ## 1. Takeover — your first action
 
 Skip — post nothing. The console posts the eyes reaction and claims the
@@ -140,6 +166,12 @@ from a run that reasoned to nothing and produced nothing.
   record. Your blocker text reaches a human only through `lcars session
 status` (§12) and this run's log — set it there before you end your
   turn.
+
+Before parking with the same blocker a prior run on this anchor already
+reported, check the anchor's comments for a response first — see "The
+anchor's comments carry newer information than its body" above. A
+label-triggered redispatch carries none of that context into your brief for
+you.
 
 ## 5. Deliverable rule — silence is failure
 
