@@ -113,7 +113,19 @@ function fixture(overrides?: Parameters<typeof fakeFetch>[0]) {
     orchestrator,
     tokens,
     fetchImpl,
-    drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
+    // `now` pins `drainOutbox`'s own clock to `clock` -- the same one
+    // stamping entry `createdAt` -- so a fixture built on `T0` never looks
+    // stale against the default (real wall-clock) `now` and spuriously
+    // trips the anchor-closed check (`isStaleReport` in
+    // orchestrator-dispatch.ts).
+    drain: () =>
+      drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+        now: () => clock.now(),
+      }),
     settleTerminal: () =>
       settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
   };
@@ -705,7 +717,14 @@ describe('error handling', () => {
       orchestrator,
       tokens,
       fetchImpl,
-      drain: () => drainOutbox({ store, orchestrator, tokens, fetchImpl }),
+      drain: () =>
+        drainOutbox({
+          store,
+          orchestrator,
+          tokens,
+          fetchImpl,
+          now: () => clock.now(),
+        }),
       settleTerminal: () =>
         settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
     };

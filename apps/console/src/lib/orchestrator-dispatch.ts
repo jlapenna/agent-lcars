@@ -39,6 +39,14 @@ export type { DispatchTokenProvider };
  * (see `github-app-tokens.ts`) rather than a single ambient token, so a
  * dispatch or outcome comment against a foreign repo can use a token
  * actually scoped there.
+ *
+ * A `report-outcome` entry old enough to be considered stale
+ * (`OUTBOX_STALE_REPORT_AGE_MS`) is additionally checked against its
+ * anchor issue/PR before delivery: if the anchor has since closed, the
+ * entry is retired instead of delivered. This is a maintainer decision
+ * about outward-facing delivery (#1548's backlog release should not spam
+ * resolved issues with days-old outcome reports), not a technical
+ * constraint -- see `isAnchorOpen`/`handleReportOutcome` below.
  */
 
 /** GitHub's REST API accepts a bearer token for both endpoints this module
@@ -55,6 +63,20 @@ const GITHUB_API = 'https://api.github.com';
  *  consuming a claim slot forever (#1548 -- one entry reached 485 attempts
  *  over six days with no bound at all). */
 export const MAX_OUTBOX_DELIVERY_ATTEMPTS = 20;
+
+/** Bounds when a `report-outcome` entry is old enough to pay for an extra
+ *  GitHub lookup (`isAnchorOpen`) before delivery, checking whether its
+ *  anchor issue/PR is still open. A run's outcome normally lands within
+ *  minutes of completion -- the very next drain cycle after `decide.ts`
+ *  writes the entry -- so an entry below this age is virtually never a
+ *  stale backlog item, and charging every single delivery an extra API
+ *  call just to cover that near-impossible case would be pure overhead.
+ *  24 hours is deliberately generous headroom above "minutes": comfortably
+ *  clear of a transient drain pause, a burst of claim contention, or a
+ *  brief GitHub outage, while still catching entries anywhere near the
+ *  multi-day backlog #1548 actually produced (up to six days old) long
+ *  before they would otherwise reach delivery. */
+export const OUTBOX_STALE_REPORT_AGE_MS = 24 * 60 * 60 * 1000;
 
 export interface DispatchDeps {
   store: OrchestratorStore;
@@ -521,6 +543,28 @@ async function handleReportOutcome(
     return;
   }
 
+  // #1548's fix (fairness + the attempt cap above) means deploying it
+  // releases a backlog of report-outcome entries up to six days old across
+  // several repos. Delivering all of them regardless would post outcome
+  // comments onto issues/PRs a human has since closed -- noise on
+  // something already resolved. Maintainer decision: only pay for the
+  // anchor lookup once an entry is old enough that it could plausibly be
+  // part of that backlog (see `OUTBOX_STALE_REPORT_AGE_MS`), and only
+  // retire it if the anchor is confirmed closed.
+  if (isStaleReport(entry, deps)) {
+    const anchorOpen = await isAnchorOpen(deps, target);
+    if (anchorOpen === false) {
+      await settleClaim(deps, entry, 'failed');
+      const message = `anchor ${target.repo}#${target.issue} is closed; retiring stale outcome report`;
+      result.failed.push({ entryId: entry.entryId, error: message });
+      logOutboxFailure(entry, message, 'anchor-closed');
+      return;
+    }
+    // `anchorOpen === true` (still open) or `undefined` (the lookup
+    // itself failed -- see `isAnchorOpen`'s doc comment) both fall through
+    // to normal delivery below.
+  }
+
   const outcome =
     run.state === 'lost'
       ? await describeLostOutcome(store, run, task)
@@ -564,6 +608,68 @@ async function handleReportOutcome(
 
   await settleClaim(deps, entry, 'done');
   result.reported.push(run.runId);
+}
+
+/** Whether a `report-outcome` entry is old enough to warrant the extra
+ *  `isAnchorOpen` lookup before delivery -- see
+ *  `OUTBOX_STALE_REPORT_AGE_MS`'s doc comment for why 24 hours. */
+function isStaleReport(entry: LeasedOutboxEntry, deps: DispatchDeps): boolean {
+  return (
+    Date.parse(now(deps)) - Date.parse(entry.createdAt) >=
+    OUTBOX_STALE_REPORT_AGE_MS
+  );
+}
+
+/**
+ * Whether a stale `report-outcome` entry's anchor issue or PR is still
+ * open -- `undefined` if that could not be determined. GitHub serves pull
+ * requests through the same issues endpoint (a PR *is* an issue for this
+ * purpose, including its `state`), so one lookup covers both anchor kinds
+ * without a separate PR-aware client.
+ *
+ * Never throws. A network failure or a response this call can't interpret
+ * must not delete the entry (this is advisory, not the delivery attempt
+ * itself) and must not abort the drain -- so this defers rather than
+ * retries: it reports "unknown" back to `handleReportOutcome`, which falls
+ * through to attempting normal delivery exactly as it would for a
+ * confirmed-open anchor, rather than releasing the entry back to `pending`
+ * without ever trying to deliver it. A transient failure here is
+ * indistinguishable from a transient failure on the delivery call itself
+ * immediately below it, which already tolerates retrying -- there is no
+ * reason to treat the lookup more conservatively than the delivery it is
+ * gating.
+ */
+async function isAnchorOpen(
+  deps: DispatchDeps,
+  target: AnchorTarget,
+): Promise<boolean | undefined> {
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  try {
+    const token = await deps.tokens.tokenFor(target.repo);
+    const response = await fetchImpl(
+      `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}`,
+      { method: 'GET', headers: githubHeaders(token) },
+    );
+    if (!response.ok) {
+      console.error(
+        'agent-lcars: anchor lookup failed for %s#%s: %s',
+        target.repo,
+        target.issue,
+        response.status,
+      );
+      return undefined;
+    }
+    const body = (await response.json()) as { state?: unknown };
+    return body.state !== 'closed';
+  } catch (error) {
+    console.error(
+      'agent-lcars: anchor lookup failed for %s#%s:',
+      target.repo,
+      target.issue,
+      error,
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -787,12 +893,18 @@ function githubApiBaseUrl(
  * anywhere, only a raw Firestore query eventually surfaced it). `outcome`
  * says what happened to the entry as a result, so a reader doesn't have to
  * cross-reference the outbox document itself to know whether this was
- * retried, retired, or was never retryable to begin with.
+ * retried, retired for exhausting its attempt budget, retired because its
+ * anchor closed, or was never retryable to begin with. `'anchor-closed'` is
+ * deliberately distinct from `'retired'` (the `MAX_OUTBOX_DELIVERY_ATTEMPTS`
+ * case) even though both settle the entry `failed` -- one is "GitHub kept
+ * rejecting this," the other is "the anchor resolved before we got to it,"
+ * and a reader scanning logs should be able to tell which happened without
+ * cross-referencing the entry's attempt count.
  */
 function logOutboxFailure(
   entry: LeasedOutboxEntry,
   error: string,
-  outcome: 'retrying' | 'retired' | 'permanent',
+  outcome: 'retrying' | 'retired' | 'permanent' | 'anchor-closed',
 ): void {
   console.error(
     'agent-lcars: outbox drain failed for %s (kind %s, attempt %d, %s): %s',

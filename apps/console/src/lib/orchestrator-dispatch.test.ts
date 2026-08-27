@@ -14,6 +14,7 @@ import type { DispatchTokenProvider } from './github-app-tokens';
 import {
   drainOutbox,
   MAX_OUTBOX_DELIVERY_ATTEMPTS,
+  OUTBOX_STALE_REPORT_AGE_MS,
 } from './orchestrator-dispatch';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
@@ -1191,7 +1192,7 @@ describe('drainOutbox: dispatch-run', () => {
 
 describe('drainOutbox: report-outcome', () => {
   it('posts the finished outcome, including the ref, and settles', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
     await drainOutbox({
       store,
@@ -1216,6 +1217,7 @@ describe('drainOutbox: report-outcome', () => {
       tokens,
       fetchImpl,
       githubApiBaseUrl: 'https://fixture.invalid/github',
+      now: () => clock.now(),
     });
 
     expect(calls).toHaveLength(1);
@@ -1292,6 +1294,7 @@ describe('drainOutbox: report-outcome', () => {
       tokens,
       fetchImpl,
       githubApiBaseUrl: 'https://fixture.invalid/github',
+      now: () => clock.now(),
     });
 
     // the retry's dispatch + its eyes-reaction/assignee projection, and the
@@ -1325,7 +1328,13 @@ describe('drainOutbox: report-outcome', () => {
     const newRunId = settled.retried[0]!.newRunId;
 
     const { fetchImpl, calls } = routedFetch();
-    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
 
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
     expect(callBody(commentCall!).body).toBe(
@@ -1357,6 +1366,7 @@ describe('drainOutbox: report-outcome', () => {
         orchestrator,
         tokens,
         fetchImpl: routedFetch().fetchImpl,
+        now: () => clock.now(),
       });
     }
     clock.advanceMinutes(121);
@@ -1371,6 +1381,7 @@ describe('drainOutbox: report-outcome', () => {
       tokens,
       fetchImpl,
       githubApiBaseUrl: 'https://fixture.invalid/github',
+      now: () => clock.now(),
     });
 
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
@@ -1426,6 +1437,7 @@ describe('drainOutbox: report-outcome', () => {
       orchestrator,
       tokens,
       fetchImpl,
+      now: () => clock.now(),
     });
 
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
@@ -1439,7 +1451,7 @@ describe('drainOutbox: report-outcome', () => {
   });
 
   it('a finished-not-ok outcome also gets the status:needs-human label', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const requested = await orchestrator.request({
       taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
       requestId: 'req-1',
@@ -1459,7 +1471,13 @@ describe('drainOutbox: report-outcome', () => {
     // calling fetch), and the report-outcome entry `report()` created,
     // which needs both a comment (201) and a label (200) call to succeed.
     const { fetchImpl, calls } = routedFetch();
-    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
 
     const labelCall = calls.find((c) => c.url.endsWith('/issues/42/labels'));
     expect(labelCall).toBeDefined();
@@ -1480,7 +1498,7 @@ describe('drainOutbox: report-outcome', () => {
   });
 
   it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);
     await drainOutbox({
       store,
@@ -1503,6 +1521,7 @@ describe('drainOutbox: report-outcome', () => {
       orchestrator,
       tokens,
       fetchImpl,
+      now: () => clock.now(),
     });
 
     expect(calls.some((c) => c.url.endsWith('/labels'))).toBe(true);
@@ -1556,7 +1575,7 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
   }
 
   it('does not let one persistently-failing report-outcome entry block a later, healthy one', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
 
     // Two independent tasks, each with its own pending report-outcome
     // entry. #101's is created first, so an unordered claim query hands it
@@ -1579,6 +1598,7 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
       orchestrator,
       tokens,
       fetchImpl,
+      now: () => clock.now(),
     });
 
     // The healthy entry is still delivered in this same drain call, despite
@@ -1598,12 +1618,13 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
       orchestrator,
       tokens,
       fetchImpl: fakeFetch(201).fetchImpl,
+      now: () => clock.now(),
     });
     expect(retry.reported).toEqual([badRunId]);
   });
 
   it('retires a report-outcome entry after MAX_OUTBOX_DELIVERY_ATTEMPTS failed deliveries instead of retrying it forever', async () => {
-    const { store, orchestrator } = fixture();
+    const { clock, store, orchestrator } = fixture();
     const runId = await reportedRun(orchestrator, store, 201);
     const entryId = `outcome/${runId}`;
     const failing = fakeFetch(500);
@@ -1621,6 +1642,7 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
         orchestrator,
         tokens,
         fetchImpl: failing.fetchImpl,
+        now: () => clock.now(),
       });
       expect(result.failed).toEqual([
         { entryId, error: expect.stringContaining('500') },
@@ -1636,8 +1658,206 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
       orchestrator,
       tokens,
       fetchImpl: failing.fetchImpl,
+      now: () => clock.now(),
     });
     expect(afterBudget).toEqual({ dispatched: [], reported: [], failed: [] });
     expect(failing.calls.length).toBe(callsBefore);
+  });
+});
+
+// #1548's fix releases a backlog of report-outcome entries up to six days
+// old across several repos the moment it deploys. Maintainer decision:
+// deliver an entry only if its anchor issue/PR is still open; retire it
+// (to the same terminal `failed` state the attempt-cap retirement above
+// uses, but with a distinct 'anchor-closed' log reason) if the anchor has
+// since closed -- a stale outcome report on a resolved issue is noise, and
+// delivery is the outward-facing act. This is an outward-facing-delivery
+// decision, not a technical constraint.
+describe('drainOutbox: stale report-outcome anchor check (#1548)', () => {
+  /** A GitHub-anchored run for `issue`, dispatched and reported `finished`,
+   *  so it has exactly one pending `report-outcome` entry left -- the same
+   *  shape as the fairness-block `reportedRun` helper above, but local to
+   *  this describe block. */
+  async function reportedRun(
+    orchestrator: Orchestrator,
+    store: MemoryStore,
+    issue: number,
+  ): Promise<string> {
+    const requested = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue },
+      requestId: `req-${issue}`,
+      pipeline: 'claude',
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const run = decidedRun(requested);
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+    });
+    const reported = await orchestrator.report(run.runId, { ok: true });
+    if (isRefusal(reported)) throw new Error('unexpected refusal');
+    return run.runId;
+  }
+
+  /** Routes the anchor lookup (`GET .../issues/<n>`, no trailing path
+   *  segment -- unlike the outcome comment's `.../issues/<n>/comments`) to
+   *  a given `state`; every other call (the outcome comment POST) succeeds
+   *  with 201. */
+  function anchorAwareFetch(anchorState: 'open' | 'closed'): {
+    fetchImpl: typeof fetch;
+    calls: FetchCall[];
+  } {
+    const calls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init: init ?? {} });
+      if (/\/issues\/\d+$/u.test(url)) {
+        return new Response(JSON.stringify({ state: anchorState }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  }
+
+  // 25 hours: strictly past `OUTBOX_STALE_REPORT_AGE_MS` (24 hours) without
+  // depending on its exact value at runtime -- computing the advance from
+  // the imported constant would make a RED run (against a revision that
+  // doesn't export it yet) fail with an unrelated `Invalid time value`
+  // instead of a real assertion failure. `expect(OUTBOX_STALE_REPORT_AGE_MS)
+  // .toBeLessThan(...)` below still ties this fixed margin back to the
+  // real constant, so a future threshold change past a day breaks loudly
+  // here instead of silently under-advancing the clock.
+  const PAST_STALE_THRESHOLD_MINUTES = 25 * 60;
+
+  /** Strictly past `OUTBOX_STALE_REPORT_AGE_MS`. */
+  function advancePastStaleThreshold(clock: Clock): void {
+    clock.advanceMinutes(PAST_STALE_THRESHOLD_MINUTES);
+  }
+
+  it('sanity: the fixed 25h margin used above is actually past OUTBOX_STALE_REPORT_AGE_MS', () => {
+    expect(OUTBOX_STALE_REPORT_AGE_MS).toBeLessThan(
+      PAST_STALE_THRESHOLD_MINUTES * 60_000,
+    );
+  });
+
+  it('retires a stale report-outcome entry without delivering when its anchor has closed', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 301);
+    advancePastStaleThreshold(clock);
+
+    const { fetchImpl, calls } = anchorAwareFetch('closed');
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(result.reported).toEqual([]);
+    expect(result.failed).toEqual([
+      {
+        entryId: `outcome/${runId}`,
+        error: expect.stringContaining('closed'),
+      },
+    ]);
+    // The anchor lookup happened, but the outcome comment was never posted.
+    expect(calls.some((c) => c.url.endsWith('/comments'))).toBe(false);
+
+    // Retired to the terminal `failed` state, same as the attempt-cap
+    // retirement above -- a later drain finds nothing left to claim for
+    // it, and never calls GitHub again.
+    const callsBefore = calls.length;
+    const again = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+    expect(again).toEqual({ dispatched: [], reported: [], failed: [] });
+    expect(calls.length).toBe(callsBefore);
+  });
+
+  it('delivers a stale report-outcome entry normally when its anchor is still open', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 302);
+    advancePastStaleThreshold(clock);
+
+    const { fetchImpl, calls } = anchorAwareFetch('open');
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(result.reported).toEqual([runId]);
+    expect(result.failed).toEqual([]);
+    // The anchor lookup (GET) plus the outcome comment (POST): checking
+    // does not replace delivery when the anchor is still open.
+    expect(calls).toHaveLength(2);
+    expect(calls.some((c) => c.url.endsWith('/comments'))).toBe(true);
+  });
+
+  it('delivers a fresh report-outcome entry with no anchor lookup at all', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 303);
+    // No clock advance -- this entry is well under
+    // OUTBOX_STALE_REPORT_AGE_MS, so it should never trigger the check.
+    // `anchorState: 'closed'` proves that: if the lookup ran, it would see
+    // a closed anchor and retire the entry instead of delivering it.
+    const { fetchImpl, calls } = anchorAwareFetch('closed');
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(result.reported).toEqual([runId]);
+    // Only the comment POST -- no GET to the issue itself. Proves the
+    // anchor lookup was never called for a fresh entry, not just that it
+    // came back "open".
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url.endsWith('/comments')).toBe(true);
+  });
+
+  it('leaves a stale entry deliverable, rather than dropping it, when the anchor lookup itself throws', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const runId = await reportedRun(orchestrator, store, 304);
+    advancePastStaleThreshold(clock);
+
+    const calls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init: init ?? {} });
+      if (/\/issues\/\d+$/u.test(url)) {
+        throw new Error('network exploded');
+      }
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    // Not retired (not in `failed`) and not silently dropped: the lookup
+    // failure defers to normal delivery, which goes on to succeed exactly
+    // as it would for a confirmed-open anchor.
+    expect(result.failed).toEqual([]);
+    expect(result.reported).toEqual([runId]);
+    expect(calls.some((c) => c.url.endsWith('/comments'))).toBe(true);
   });
 });
