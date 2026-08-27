@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -92,6 +93,42 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	}
 
 	generation := startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
+
+	// Native work items, queue-executor sub-project: an additional,
+	// independently-gated goroutine that polls the console's run-claim API
+	// and launches direct-mode containers, entirely outside the GitHub
+	// scale-set state machine above. LCARS_QUEUE_POLL unset (the default)
+	// means this block is skipped and nothing else in the process changes --
+	// see queue_executor.go's package doc comment and the design spec's
+	// "Autoscaler change" section. Deliberately read once at startup, not on
+	// every config reload, matching how simple this first cut stays.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LCARS_QUEUE_POLL")), "1") {
+		pipelines := strings.Split(strings.TrimSpace(os.Getenv("LCARS_QUEUE_PIPELINES")), ",")
+		keyPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+		consoleURL := os.Getenv("LCARS_CONSOLE_URL")
+		if consoleURL == "" {
+			consoleURL = "https://lcars.jlapenna.net"
+		}
+		hostname, _ := os.Hostname()
+		// Captured by value at startup, not read from the outer `resolved`
+		// directly: a config reload later in this function's select loop
+		// reassigns `resolved` from this same goroutine, and closing over
+		// that variable instead of a snapshot would race the poller
+		// goroutine's reads of it.
+		queueExecutorResolved := resolved
+		go runQueueExecutorPoller(ctx, queueExecutorConfig{
+			consoleURL: consoleURL,
+			pipelines:  pipelines,
+			runnerName: hostname,
+			idToken: func() (string, error) {
+				return idTokenFromTelemetryWriterKey(ctx, keyPath, "agent-lcars-work")
+			},
+			launch: func(l directRunnerLaunch) error {
+				return launchDirectRunner(ctx, queueExecutorResolved, l)
+			},
+		}, 15*time.Second, logger)
+	}
+
 	drainSignals := make(chan os.Signal, 1)
 	reloadSignals := make(chan os.Signal, 1)
 	signal.Notify(drainSignals, syscall.SIGUSR1)

@@ -71,6 +71,46 @@ listener, runner placement, or cleanup. Snapshots publish immediately on
 startup and then every 10 seconds; the console stops presenting a snapshot as
 live after 30 seconds without an update.
 
+## Queue executor (direct-mode runners)
+
+Native work items (native-work-items sub-project 4): an additional,
+independently-gated goroutine that polls the console's `POST
+/api/work/v1/runs/claim` and, on a successful claim, launches one direct-mode
+runner container -- entirely outside the GitHub scale-set state machine
+above (not GitHub-registered, not tracked by any `Scaler`, one-shot). Off by
+default; set these only on a homelab deployment that has opted a pipeline
+into `AGENT_LCARS_QUEUE_PIPELINES` on the console side:
+
+```sh
+LCARS_QUEUE_POLL=1
+LCARS_QUEUE_PIPELINES=claude
+LCARS_CONSOLE_URL=https://lcars.jlapenna.net
+GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
+LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
+LCARS_QUEUE_MAX_CONCURRENT=1
+```
+
+The console claim call is authenticated with a Google ID token minted
+directly from the telemetry-writer service-account key (self-signed, no
+metadata server, no new IAM grant -- this fleet does not run on GCE/Cloud
+Run).
+
+`LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` is the telemetry-writer key's path
+**on the Docker host**, not this process's own
+`GOOGLE_APPLICATION_CREDENTIALS` path: a claimed run's container is
+bind-mounted this file (read-only, at `/run/secrets/telemetry-writer.json`,
+the fixed path `direct-runner.sh` reads) by the Docker daemon that actually
+creates it, which may be a remote fleet host over SSH -- so it cannot be
+inferred from a path meaningful only inside the autoscaler's own container.
+Required whenever `LCARS_QUEUE_POLL=1`; a claim that cannot resolve it fails
+loudly rather than guessing.
+
+`LCARS_QUEUE_MAX_CONCURRENT` (default `1`) caps how many direct-mode
+containers may run concurrently on any one host. Placement itself is
+round-robin over the same `--docker-hosts` pool used for GitHub-mode
+runners -- deliberately not `Scaler`'s load-aware host scoring, a stated
+simplification for this first cut.
+
 ## Host telemetry timeout
 
 Host telemetry probes use a one-second deadline by default. A host with a
