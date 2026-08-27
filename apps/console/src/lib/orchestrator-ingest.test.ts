@@ -174,6 +174,43 @@ describe('interpretDelivery', () => {
       },
     },
     {
+      // Proves Task 2's derivation covers Quick Tasks for free: the issue
+      // Quick Tasks create already carries both QUICK_TASK_LABEL and the
+      // pipeline label at creation time (see backend-actions.ts's
+      // createQuickTaskOnce), but this webhook's `label` field is always
+      // just the one label that triggered this delivery -- identical in
+      // shape to any other labeled issue, so no Quick-Task-specific
+      // handling is needed here.
+      name: 'a Quick Task issue (intake:quick-task + agent:claude labels) derives work like any other labeled issue',
+      event: 'issues',
+      payload: issuesLabeledPayload({
+        issue: {
+          number: 55,
+          title: 'Quick task: fix the thing',
+          body: 'Please fix it.\n\n<!-- agent-lcars:quick-task-request:v1 ... -->',
+        },
+        label: { name: 'agent:claude' },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 55 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Quick task: fix the thing',
+            description:
+              'Please fix it.\n\n<!-- agent-lcars:quick-task-request:v1 ... -->',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
+      },
+    },
+    {
       name: 'pull_request labeled agent:claude -> implement/claude',
       event: 'pull_request',
       payload: pullRequestLabeledPayload({ label: { name: 'agent:claude' } }),
