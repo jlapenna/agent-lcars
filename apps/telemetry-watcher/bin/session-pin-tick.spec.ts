@@ -139,15 +139,99 @@ describe('pinOpenItemSessions', () => {
     );
   });
 
-  it('aborts rather than scanning forever if the backend keeps answering nextCursor', async () => {
+  // Review thread PRRT_kwDOTemFxc6c7mZ4: MAX_PAGES bounds items
+  // *traversed*, not the one extra request that proves a full last page
+  // was actually the end. When history is exactly `PAGE_LIMIT * MAX_PAGES`
+  // items long, the MAX_PAGES-th page is full and (per itemsContract.list)
+  // still carries a `nextCursor` even though nothing remains -- an
+  // `(MAX_PAGES + 1)`-th "exhaustion probe" request per state must be
+  // allowed to come back empty with no cursor, rather than the sweep
+  // throwing on a cursor that was always going to be there.
+  it('completes without throwing when history is exactly PAGE_LIMIT * MAX_PAGES items long (the last page is full and still carries a cursor)', async () => {
+    // Modeling this with real PAGE_LIMIT-sized item arrays would mean
+    // allocating 100,000 objects per state; the loop only ever inspects
+    // whether `nextCursor` is present, never how many items came back, so
+    // a page count keyed off the request's own `state` is a cleaner seam
+    // than a real-sized fixture.
+    const callsByState: Record<string, number> = { running: 0, parked: 0 };
+    const fetchImpl = vi.fn().mockImplementation(async (input: string) => {
+      const state = new URL(input).searchParams.get('state') as string;
+      callsByState[state] = (callsByState[state] ?? 0) + 1;
+      const call = callsByState[state] ?? 0;
+      if (call <= MAX_PAGES) {
+        // A full page: still carries a cursor per itemsContract.list's
+        // contract, even on the MAX_PAGES-th (final, boundary) page.
+        return itemsResponse([], `CURSOR_${state}_${call}`);
+      }
+      // The exhaustion probe: nothing left, no cursor.
+      return itemsResponse([]);
+    });
+    const { pinned } = await pinOpenItemSessions({
+      bearer: 'tok',
+      fetchImpl,
+      touchExpiry: vi.fn(),
+    });
+    expect(pinned).toEqual([]);
+    // MAX_PAGES full pages plus one exhaustion probe, per state.
+    expect(callsByState['running']).toBe(MAX_PAGES + 1);
+    expect(callsByState['parked']).toBe(MAX_PAGES + 1);
+  });
+
+  it('aborts each state rather than scanning forever if the backend keeps answering nextCursor, but still runs every state', async () => {
     const fetchImpl = vi
       .fn()
       .mockImplementation(async () => itemsResponse([], 'ALWAYS_MORE'));
-    await expect(
-      pinOpenItemSessions({ bearer: 'tok', fetchImpl, touchExpiry: vi.fn() }),
-    ).rejects.toThrow(/nextCursor/);
-    // Bounded, not infinite: exactly MAX_PAGES requests for the first
-    // state (`running`) before it gives up, never reaching `parked`.
-    expect(fetchImpl).toHaveBeenCalledTimes(MAX_PAGES);
+    const rejection = await pinOpenItemSessions({
+      bearer: 'tok',
+      fetchImpl,
+      touchExpiry: vi.fn(),
+    }).catch((error: unknown) => error as Error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toMatch(/nextCursor/);
+    // Both states are named as failed -- a persistently-misbehaving
+    // backend fails `running` AND `parked`, not just the first one tried.
+    expect((rejection as Error).message).toMatch(/running/);
+    expect((rejection as Error).message).toMatch(/parked/);
+    // Bounded, not infinite: MAX_PAGES full pages plus one exhaustion
+    // probe per state (see the boundary test above) -- for BOTH states,
+    // since a persistent failure in `running` must not skip `parked`.
+    expect(fetchImpl).toHaveBeenCalledTimes((MAX_PAGES + 1) * 2);
+  });
+
+  // Review thread PRRT_kwDOTemFxc6c7mZ4's second finding: the two states'
+  // passes must be independent. A throw while sweeping `running` must not
+  // prevent `parked` from running at all -- that coupling would silently
+  // leave a whole state's sessions unpinned (the same shape of bug as
+  // incident #1548's silent drain failure), and the job must still exit
+  // in failure overall rather than swallowing the `running` error.
+  it('runs the parked pass even when the running pass fails, and still fails the job overall', async () => {
+    const fetchImpl = vi
+      .fn()
+      // `running`: the backend errors outright.
+      .mockResolvedValueOnce(new Response('', { status: 500 }))
+      // `parked`: succeeds normally, one page, done.
+      .mockResolvedValueOnce(
+        itemsResponse([{ id: 'P', sessions: [{ sessionId: 's-parked' }] }]),
+      );
+    const touchExpiry = vi.fn();
+
+    const rejection = await pinOpenItemSessions({
+      bearer: 'tok',
+      now: new Date('2026-08-27T00:00:00.000Z'),
+      fetchImpl,
+      touchExpiry,
+    }).catch((error: unknown) => error as Error);
+
+    // The job still fails loudly overall...
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toMatch(/running/);
+    expect((rejection as Error).message).toMatch(/500/);
+    // ...but the parked pass still ran and pinned its session, proving
+    // the running failure did not short-circuit it.
+    expect(touchExpiry).toHaveBeenCalledWith(
+      's-parked',
+      '2027-08-27T00:00:00.000Z',
+    );
+    expect(fetchImpl.mock.calls[1]?.[0]).toContain('state=parked');
   });
 });
