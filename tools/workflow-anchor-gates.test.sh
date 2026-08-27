@@ -78,13 +78,21 @@ awk '
 # skip its own claim step (the "Claim the issue as the agent fleet" gate in
 # agent-lane.yml) unconditionally -- including on a hand-run dispatch,
 # where the console has projected nothing, silently leaving the issue
-# unclaimed with no reaction and no assignee. The flag must instead be
-# derived from broker_intent_id provenance, which the console always sets
-# and a manual dispatch always leaves empty.
+# unclaimed with no reaction and no assignee.
+#
+# `broker_intent_id` cannot be the derivation signal: it is declared
+# `required: true` in each workflow's workflow_dispatch inputs, so the
+# Actions UI forces an operator to supply a value on a hand-run dispatch
+# too, and the condition can never be false (Codex review on #1551,
+# thread PRRT_kwDOTemFxc6c5p9Q). `work` is the correct signal --
+# `required: false` with a `''` default -- because the console sends a
+# `work` payload on every dispatch it makes (native and GitHub-anchored
+# alike, sub-project 5), and a manual dispatch always leaves it empty.
 for wf in claude codex opencode; do
   f=".github/workflows/$wf.yml"
   grep -qE "^\s*control-plane-projections:\s*true\s*$" "$f" && { echo "$f: control-plane-projections must be derived from provenance, not a literal true"; fail=1; }
-  grep -qF "control-plane-projections: \${{ inputs.broker_intent_id != '' }}" "$f" || { echo "$f: expected control-plane-projections derived from inputs.broker_intent_id"; fail=1; }
+  grep -qF "control-plane-projections: \${{ inputs.broker_intent_id != '' }}" "$f" && { echo "$f: control-plane-projections must not be derived from broker_intent_id (always non-empty on a hand-run dispatch -- required: true)"; fail=1; }
+  grep -qF "control-plane-projections: \${{ inputs.work != '' }}" "$f" || { echo "$f: expected control-plane-projections derived from inputs.work"; fail=1; }
 done
 
 exit $fail

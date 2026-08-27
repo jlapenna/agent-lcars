@@ -126,14 +126,34 @@ jobs:
       # workflow_dispatch from the Actions UI, and a hand-run dispatch
       # projects nothing -- no eyes reaction, no fleet assignee. A literal
       # `true` here made the lane skip its own claim step unconditionally,
-      # silently leaving a manually-dispatched issue unclaimed. The
-      # console always mints `broker_intent_id` as its own run's `runId`
-      # (`orchestrator-dispatch.ts`'s `handleDispatchRun`) on every
-      # dispatch it makes; a manual `workflow_dispatch` leaves that input
-      # at its declared `''` default. Non-empty is therefore true console
-      # provenance, matching the same signal already used for
-      # `HAS_ATTEMPT_ID` in `agent-lane.yml`.
-      control-plane-projections: ${{ inputs.broker_intent_id != '' }}
+      # silently leaving a manually-dispatched issue unclaimed.
+      #
+      # `broker_intent_id` cannot be that signal: it is declared
+      # `required: true` above, so the Actions UI forces an operator to
+      # supply *some* value on a hand-run dispatch too, and the condition
+      # can never be false. `work` is the correct signal instead --
+      # `required: false` with a `''` default above, and
+      # `orchestrator-dispatch.ts`'s `handleDispatchRun` sends a
+      # `work: JSON.stringify({...})` payload on every dispatch it makes,
+      # for a native work-anchored run and a GitHub-anchored one alike
+      # (sub-project 5: every anchor carries a work payload). A manual
+      # `workflow_dispatch` leaves `work` at its declared `''` default, so
+      # non-empty `work` is true console provenance -- "this dispatch
+      # carries a control-plane work payload" is the same statement as
+      # "the control plane made this dispatch."
+      #
+      # Consumer-repo caveat: the console currently gates the `work`
+      # input to the control-plane repository only (same guard in
+      # `orchestrator-dispatch.ts`, pending #1544 wave 2), so until that
+      # gate comes out, this evaluates to `false` in consumer repos even
+      # for a console-dispatched run -- their lane keeps claiming the
+      # issue itself while the console also projects a claim. Both claim
+      # effects are idempotent (`claimGithubAnchor`'s doc comment: a
+      # repeated reaction returns the existing one, assigning an
+      # already-assigned login is a no-op), so the double-claim is
+      # harmless, and rollout is self-sequencing -- consumer projections
+      # switch on by themselves once the wave-2 gate is removed.
+      control-plane-projections: ${{ inputs.work != '' }}
       protected-snapshot: true
       trajectory-export: true
       # default-nothink, not default (#1227): same deepseek-v4-flash
