@@ -23,3 +23,21 @@ variables: `LCARS_URL`, and either `LCARS_TOKEN` or the combination of
 Regenerate `docs/api/work-v1.openapi.json` with `pnpm work:openapi`; CI
 fails when it is stale. Design:
 `docs/superpowers/specs/2026-08-23-native-work-items-design.md`.
+
+## Creating items from GitHub Actions
+
+`.github/workflows/work-create.yml` is a `workflow_dispatch` surface for
+maintainers without a browser session or a personal service account. It mints
+a Google ID token for the Codex agent service account through the
+repository-bounded GitHub WIF pool (the same impersonation the codex lane
+uses) and `PUT`s the item; that service account carries the
+`workflow:work-create` grant in `apps/console/apphosting.yaml`.
+
+```bash
+gh workflow run work-create.yml \
+  -f title='Add healthz' \
+  -f description='Expose GET /healthz. Open a PR; do not merge.' \
+  -f repo=jlapenna/agent-lcars -f pipeline=claude
+```
+
+The run's step summary links the item's console page and names its first run.

@@ -1,0 +1,107 @@
+# Create a native work item from GitHub Actions.
+#
+# The work API (`PUT /api/work/v1/items/{id}`) accepts Google ID tokens whose
+# subject carries a grant in AGENT_LCARS_WORK_GRANTS. This workflow mints one
+# for the Codex agent service account through the repository-bounded GitHub
+# WIF pool — the same impersonation the codex lane already uses — so a
+# maintainer can create items with `gh workflow run work-create.yml` from
+# anywhere, without a browser session or a personal service account.
+name: Create work item
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Item title (≤256 chars)
+        required: true
+        type: string
+      description:
+        description: What the agent should do (≤16384 chars)
+        required: true
+        type: string
+      repo:
+        description: Target repository (owner/name)
+        required: false
+        default: jlapenna/agent-lcars
+        type: string
+      pipeline:
+        description: Pipeline the item runs on
+        required: false
+        default: claude
+        type: string
+      id:
+        description: Item id (26-char Crockford ULID); generated when empty
+        required: false
+        default: ''
+        type: string
+      console_url:
+        description: Console origin hosting the work API
+        required: false
+        default: https://lcars.jlapenna.net
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint a work API bearer for the Codex agent service account
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CODEX_AGENT_SA }}
+          token_format: id_token
+          id_token_audience: agent-lcars-work
+          id_token_include_email: true
+
+      - name: Create the item
+        env:
+          BEARER: ${{ steps.auth.outputs.id_token }}
+          CONSOLE_URL: ${{ inputs.console_url }}
+          ITEM_ID: ${{ inputs.id }}
+          TITLE: ${{ inputs.title }}
+          DESCRIPTION: ${{ inputs.description }}
+          REPO: ${{ inputs.repo }}
+          PIPELINE: ${{ inputs.pipeline }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ITEM_ID" ]; then
+            ITEM_ID="$(node -e '
+              const A = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+              let t = Date.now(), s = "";
+              for (let i = 0; i < 10; i++) { s = A[t % 32] + s; t = Math.floor(t / 32); }
+              const r = require("crypto").randomBytes(16);
+              let x = "";
+              for (let i = 0; i < 16; i++) x += A[r[i] % 32];
+              process.stdout.write(s + x);
+            ')"
+          fi
+          if ! printf '%s' "$ITEM_ID" | grep -Eq '^[0-9A-HJKMNP-TV-Z]{26}$'; then
+            echo "::error::id must be a 26-character Crockford ULID"; exit 1
+          fi
+          body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" \
+            '{spec: {title: $t, description: $d, pipeline: $p, target: {repo: $r}}}')"
+          response="$(mktemp)"
+          status="$(curl -sS -o "$response" -w '%{http_code}' \
+            -X PUT "$CONSOLE_URL/api/work/v1/items/$ITEM_ID" \
+            -H "authorization: Bearer $BEARER" \
+            -H 'content-type: application/json' \
+            --data "$body")"
+          echo "PUT /api/work/v1/items/$ITEM_ID -> $status"
+          jq . "$response" || cat "$response"
+          if [ "$status" != "201" ]; then
+            echo "::error::work API returned $status"; exit 1
+          fi
+          run_id="$(jq -r '.runs[0].runId // empty' "$response")"
+          {
+            echo "## Work item created"
+            echo
+            echo "- id: \`$ITEM_ID\`"
+            echo "- page: $CONSOLE_URL/work/$ITEM_ID"
+            echo "- run: \`${run_id:-?}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
