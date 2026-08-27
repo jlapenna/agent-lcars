@@ -77,6 +77,26 @@ export interface OrchestratorStore {
    *  `Orchestrator.settleTerminalRuns`. Deliberately unfiltered by lease:
    *  the whole point is to catch a run long before its lease runs out. */
   listLiveRuns(): Promise<Run[]>;
+
+  /** Writes `run.queue = { state: 'queued' }` on a run the drain is
+   *  handling as `executor: 'queue'`. Idempotent: a run already `queued`
+   *  or `claimed` is left untouched. */
+  enqueueRun(input: { runId: string; now: string }): Promise<void>;
+
+  /** Transactionally claims the oldest (`createdAt`) `queued` run whose
+   *  `pipeline` is one of `pipelines`, setting `queue.state = 'claimed'`
+   *  plus `claimedAt`/`claimedBy`/`tokenHash`. `undefined` when nothing is
+   *  queued for those pipelines. */
+  claimQueuedRun(input: {
+    pipelines: readonly string[];
+    now: string;
+    claimedBy: string;
+    tokenHash: string;
+  }): Promise<Run | undefined>;
+
+  /** Every `queue.state === 'queued'` run, oldest first, bounded by
+   *  `limit` (default 200). */
+  listQueuedRuns(limit?: number): Promise<Run[]>;
 }
 
 export interface VersionedTask {

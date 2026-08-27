@@ -261,6 +261,83 @@ export class FirestoreStore implements OrchestratorStore {
     );
   }
 
+  async enqueueRun(input: { runId: string; now: string }): Promise<void> {
+    const ref = this.#runRef(input.runId);
+    await this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (!snapshot.exists) return;
+      const run = runSchema.parse(snapshot.data());
+      if (run.queue !== undefined) return;
+      tx.set(ref, {
+        ...run,
+        queue: { state: 'queued' },
+        updatedAt: input.now,
+      });
+    });
+  }
+
+  async claimQueuedRun(input: {
+    pipelines: readonly string[];
+    now: string;
+    claimedBy: string;
+    tokenHash: string;
+  }): Promise<Run | undefined> {
+    return this.#firestore.runTransaction(async (tx) => {
+      // One query per candidate pipeline, each a two-clause equality query
+      // (`queue.state == 'queued' AND pipeline == p`) -- like `listRuns`'s
+      // GitHub-anchor query, this is equality-only across both fields and
+      // needs no composite index, so splitting by pipeline keeps every
+      // query shape identical to a single-pipeline claim rather than
+      // reaching for an `in` filter that would change that shape.
+      const snapshots = await Promise.all(
+        input.pipelines.map((pipeline) =>
+          tx.get(
+            this.#runs
+              .where('queue.state', '==', 'queued')
+              .where('pipeline', '==', pipeline),
+          ),
+        ),
+      );
+      const candidates = snapshots
+        .flatMap((snapshot) => snapshot.docs)
+        .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }))
+        .sort((a, b) => a.run.createdAt.localeCompare(b.run.createdAt));
+      const first = candidates[0];
+      if (first === undefined) return undefined;
+      const claimed: Run = {
+        ...first.run,
+        queue: {
+          state: 'claimed',
+          claimedAt: input.now,
+          claimedBy: input.claimedBy,
+          tokenHash: input.tokenHash,
+        },
+        updatedAt: input.now,
+      };
+      tx.set(first.doc.ref, claimed);
+      return claimed;
+    });
+  }
+
+  async listQueuedRuns(limit?: number): Promise<Run[]> {
+    // Combining the `queue.state` equality filter with `orderBy('createdAt')`
+    // (a different field) would need a composite index -- see
+    // `listExpiredRuns`/`claimPendingOutbox` above for the same trade-off
+    // elsewhere in this file. Instead, read every queued run through the
+    // automatic single-field index and sort/bound client-side; the queued
+    // population is expected to stay small by design (the queue exists for
+    // fast pickup, not as a backlog), so reading it in full before slicing
+    // is the same trade `claimPendingOutbox` already makes for its pending
+    // population.
+    const snapshot = await this.#runs
+      .where('queue.state', '==', 'queued')
+      .get();
+    return snapshot.docs
+      .map((doc) => runSchema.parse(doc.data()))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit ?? 200);
+  }
+
   #taskRef(id: TaskId): DocumentReference {
     return this.#tasks.doc(encodeURIComponent(taskKey(id)));
   }
