@@ -249,19 +249,44 @@ describe('items routes', () => {
     expect(r.status).toBe(403);
   });
 
-  it('refuses a repository outside the control plane with 403', async () => {
+  it('refuses a repository that is not admitted at all, with 403', async () => {
     const ctx = context();
     const r = await call(ctx, 'PUT', `/items/${ID}`, {
       spec: { ...spec, target: { repo: 'octo/example' } },
     });
     expect(r.status).toBe(403);
     // Exact wording: `forbiddenReason` (work-mint.ts) refuses at creation
-    // rather than let the dispatch itself 422 later (#1544 round 2).
+    // rather than let the dispatch itself 422 later. `octo/example` is not
+    // in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (unset here, so it
+    // defaults to just `controlPlaneRepository()`) -- #1544 wave 2.
     expect(r.json).toMatchObject({
-      message: `native work items can only target ${controlPlaneRepository()} until every consumer declares the work input (#1544)`,
+      message:
+        'native work items can only target a control-plane repository ' +
+        '(octo/example is not admitted)',
     });
     // No task minted for the refused create -- same context/store.
     expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(404);
+  });
+
+  it('allows an admitted repository that is not the control-plane repo (#1544 wave 2)', async () => {
+    // Wave 1 of #1544 landed a `work` `workflow_dispatch` input on every
+    // consumer repo declared in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` --
+    // once a repo is on that allow-list, minting a native item against it
+    // is no longer refused just for not being `controlPlaneRepository()`
+    // itself.
+    const otherRepo = 'other-org/other-repo';
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+      `${controlPlaneRepository()},${otherRepo}`;
+    try {
+      const ctx = context();
+      const r = await call(ctx, 'PUT', `/items/${ID}`, {
+        spec: { ...spec, target: { repo: otherRepo } },
+      });
+      expect(r.status).toBe(201);
+      expect(r.json).toMatchObject({ state: 'running' });
+    } finally {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+    }
   });
 
   it('enforces the global live-run cap with 429', async () => {
@@ -334,14 +359,14 @@ describe('items routes', () => {
     expect(after?.executor).toBe('queue');
   });
 
-  it('refuses to redispatch an item whose repo left the control plane, with 403', async () => {
+  it('refuses to redispatch an item whose repo is not admitted, with 403', async () => {
     const ctx = context();
     // Seeded straight through the orchestrator, because `create` would
     // refuse this repo today -- and that is precisely the situation under
     // test: an item somehow exists (e.g. minted before this check existed,
-    // or hand-written) targeting a repo that is not (or is no longer) the
-    // control plane. Redispatch must re-check `forbiddenReason` as it
-    // stands now, not inherit the permission the item was created with.
+    // or hand-written) targeting a repo that is not (or is no longer)
+    // admitted. Redispatch must re-check `forbiddenReason` as it stands
+    // now, not inherit the permission the item was created with.
     await ctx.runtime.orchestrator.request({
       taskId: { workId: ID },
       requestId: ID,
@@ -357,7 +382,9 @@ describe('items routes', () => {
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(403);
     expect(r.json).toMatchObject({
-      message: `native work items can only target ${controlPlaneRepository()} until every consumer declares the work input (#1544)`,
+      message:
+        'native work items can only target a control-plane repository ' +
+        '(octo/example is not admitted)',
     });
     // Still parked: the refusal must not have minted a run.
     expect((await call(ctx, 'GET', `/items/${ID}`)).json.runs).toHaveLength(1);

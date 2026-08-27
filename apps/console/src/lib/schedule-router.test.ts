@@ -228,7 +228,7 @@ describe('schedules routes', () => {
     expect(r.status).toBe(403);
   });
 
-  it('refuses a repository outside the control plane with 403, and creates nothing (#1544 round 2)', async () => {
+  it('refuses a repository that is not admitted at all, with 403, and creates nothing (#1544 wave 2)', async () => {
     const ctx = context();
     const r = await call(ctx, 'PUT', `/schedules/${ID}`, {
       cron: '0 * * * *',
@@ -236,21 +236,41 @@ describe('schedules routes', () => {
     });
     expect(r.status).toBe(403);
     // Same `forbiddenReason` (work-mint.ts) wording `items.create` and
-    // `redispatch` refuse with -- one ruling, one function.
+    // `redispatch` refuse with -- one ruling, one function. `octo/example`
+    // is not in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (unset here, so
+    // it defaults to just `controlPlaneRepository()`).
     expect(r.json).toMatchObject({
-      message: `native work items can only target ${controlPlaneRepository()} until every consumer declares the work input (#1544)`,
+      message:
+        'native work items can only target a control-plane repository ' +
+        '(octo/example is not admitted)',
     });
     expect((await call(ctx, 'GET', `/schedules/${ID}`)).status).toBe(404);
   });
 
-  it('disables a schedule on tick whose spec targets a repo outside the control plane, and mints nothing (#1544 round 2)', async () => {
+  it('allows an admitted repository that is not the control-plane repo (#1544 wave 2)', async () => {
+    const otherRepo = 'other-org/other-repo';
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+      `${controlPlaneRepository()},${otherRepo}`;
+    try {
+      const ctx = context();
+      const r = await call(ctx, 'PUT', `/schedules/${ID}`, {
+        cron: '0 * * * *',
+        spec: { ...spec, target: { repo: otherRepo } },
+      });
+      expect(r.status).toBe(201);
+    } finally {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+    }
+  });
+
+  it('disables a schedule on tick whose spec targets a repo that is not admitted, and mints nothing (#1544 wave 2)', async () => {
     const ctx = context();
     // Written directly to the store, bypassing `create`'s own
     // `forbiddenReason` check -- the same "how did an already-stored
     // schedule end up bad" shape as the corrupt-spec/cron fixtures above.
-    // A schedule that somehow exists with a non-control-plane target must
-    // still be caught by `tick`'s own `mintItem` -> `forbiddenReason`
-    // call, not just at `create` time.
+    // A schedule that somehow exists with a non-admitted target must still
+    // be caught by `tick`'s own `mintItem` -> `forbiddenReason` call, not
+    // just at `create` time.
     await ctx.scheduleStore.writeSchedule({
       scheduleId: ID,
       cron: '* * * * *',

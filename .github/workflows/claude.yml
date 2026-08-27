@@ -135,17 +135,19 @@ jobs:
       # carries a control-plane work payload" is the same statement as
       # "the control plane made this dispatch."
       #
-      # Consumer-repo caveat: the console currently gates the `work`
-      # input to the control-plane repository only (same guard in
-      # `orchestrator-dispatch.ts`, pending #1544 wave 2), so until that
-      # gate comes out, this evaluates to `false` in consumer repos even
-      # for a console-dispatched run -- their lane keeps claiming the
-      # issue itself while the console also projects a claim. Both claim
-      # effects are idempotent (`claimGithubAnchor`'s doc comment: a
-      # repeated reaction returns the existing one, assigning an
-      # already-assigned login is a no-op), so the double-claim is
-      # harmless, and rollout is self-sequencing -- consumer projections
-      # switch on by themselves once the wave-2 gate is removed.
+      # Consumer-repo caveat: this used to evaluate to `false` in every
+      # consumer repo even for a console-dispatched run, because
+      # `orchestrator-dispatch.ts` gated the `work` input to the
+      # control-plane repository only -- #1544 wave 2 removed that gate
+      # (dispatch now sends `work` for every admitted target), so this now
+      # also evaluates true for a console-dispatched run against an
+      # admitted consumer repo. Until wave 3 removes this lane's own claim
+      # step (pending a live consumer dispatch observed taking this
+      # projected-claim path), both claim effects fire: this lane's own
+      # claim below, and the console's projection. Both are idempotent
+      # (`claimGithubAnchor`'s doc comment: a repeated reaction returns the
+      # existing one, assigning an already-assigned login is a no-op), so
+      # the double-claim is harmless.
       control-plane-projections: ${{ inputs.work != '' }}
       protected-snapshot: true
       agent-fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}

@@ -11,7 +11,7 @@ import {
 import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
-import { agentFleetLogin, controlPlaneRepository } from './deployment';
+import { agentFleetLogin } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
 // Re-exported so `run-binding.ts` (and its tests) can depend on this
@@ -229,18 +229,19 @@ async function handleDispatchRun(
     // stored payload) is the same permanent-failure shape as the native
     // branch above: settle done, do not retry a spec that can never parse.
     //
-    // Only emit it for the control-plane repo, though: the webhook admits
-    // every repo in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`, but today
-    // only this repo's own `claude/codex/opencode.yml` declare a `work`
-    // `workflow_dispatch` input -- #1544 tracks adding it to the six
-    // consumer repos. Sending an undeclared input 422s the whole
-    // dispatch, and because `drainOutbox` treats any non-204 as a
-    // retryable failure and stops draining on the first one, that single
-    // poisoned entry would block every later outbox entry (dispatches
-    // *and* outcome comments) forever. Drop `work` for a non-control-plane
-    // target until the consumers have caught up.
+    // Wave 1 of #1544 landed a `work` `workflow_dispatch` input on every
+    // consumer repo's `claude/codex/opencode.yml` (six repos, all merged),
+    // forwarded to the agent-lane shim alongside a
+    // `control-plane-projections` flag derived from whether `work` was
+    // sent -- so this no longer needs to gate `work` down to the single
+    // control-plane repo itself. `target.repo` reaching this point is
+    // already admitted: the webhook that created this GitHub-anchored task
+    // only ever does so for a repo in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`
+    // (see `orchestrator-ingest.ts`'s `checkRepository`), and every
+    // admitted repo now declares the input. Emit it whenever the task has
+    // one.
     let workInput: string | undefined;
-    if (task?.work !== undefined && target.repo === controlPlaneRepository()) {
+    if (task?.work !== undefined) {
       try {
         workInput = JSON.stringify({
           spec: workSpecSchema.parse(task.work['spec']),
