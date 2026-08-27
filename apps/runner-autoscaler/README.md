@@ -111,6 +111,15 @@ round-robin over the same `--docker-hosts` pool used for GitHub-mode
 runners -- deliberately not `Scaler`'s load-aware host scoring, a stated
 simplification for this first cut.
 
+**A failed launch leaves the run claimed on the control plane.** There is no
+callback here to un-claim it -- by design, see the design spec's "Autoscaler
+change". Recovery is passive: the failure is logged and the poller moves on;
+the claim's lease eventually expires, the control plane falls the run back
+to queued, and its own auto-retry logic requeues it for a later poll (from
+this host or another) to claim again. A launch failure therefore costs one
+lease window of latency, not a stuck run, but it is not instantaneous --
+don't expect a retry within the poll interval.
+
 ## Host telemetry timeout
 
 Host telemetry probes use a one-second deadline by default. A host with a

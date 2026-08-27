@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 	"google.golang.org/api/idtoken"
 )
 
@@ -48,6 +50,15 @@ type queueExecutorConfig struct {
 	// host picked from the configured pool (round-robin -- see the design
 	// spec's "Autoscaler change": deliberately not Scaler.pickHost's
 	// load-aware logic, a stated simplification for this first cut).
+	//
+	// A launch failure here leaves the run claimed on the control plane --
+	// there is no callback to un-claim it, by design (see the design spec's
+	// "Autoscaler change"). Recovery is passive: runQueueExecutorPoller logs
+	// the error and moves on, the claim's lease eventually expires, the
+	// control plane falls the run back to queued, and its own auto-retry
+	// logic requeues it for a later poll (from this host or another) to
+	// claim again. Nothing in this file attempts to un-claim or retry a
+	// failed launch directly.
 	launch func(directRunnerLaunch) error
 }
 
@@ -58,6 +69,14 @@ type claimResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt string `json:"expiresAt"`
 }
+
+// claimResponseBodyLimit bounds how much of a claim response pollOnce will
+// ever read, mirroring github_http.go's readBoundedBody convention: an
+// unbounded json.Decoder read against a misbehaving or compromised console
+// (or a proxy sitting in front of it) could pin unbounded memory decoding a
+// single claim response. 64 KiB is far larger than any real claim body
+// (run id, work id, pipeline name, token, timestamp).
+const claimResponseBodyLimit = 64 << 10
 
 // pollOnce claims at most one run and, on success, launches it. A 204 (no
 // queued run for these pipelines) is not an error -- the caller's loop
@@ -98,7 +117,7 @@ func pollOnce(cfg queueExecutorConfig) error {
 		return fmt.Errorf("claim returned %d", resp.StatusCode)
 	}
 	var claimed claimResponse
-	if err := json.NewDecoder(resp.Body).Decode(&claimed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, claimResponseBodyLimit)).Decode(&claimed); err != nil {
 		return fmt.Errorf("decoding claim response: %w", err)
 	}
 	return cfg.launch(directRunnerLaunch{
@@ -109,17 +128,35 @@ func pollOnce(cfg queueExecutorConfig) error {
 	})
 }
 
-// idTokenFromTelemetryWriterKey mints a Google ID token for `audience`
-// directly from the same telemetry-writer service-account key
-// console_status.go already reads via GOOGLE_APPLICATION_CREDENTIALS --
-// no metadata server (this fleet does not run on GCE/Cloud Run -- see the
-// design spec), no new IAM grant: a service-account key can self-mint an
-// ID token for any audience from its own private key alone.
-func idTokenFromTelemetryWriterKey(ctx context.Context, keyPath, audience string) (string, error) {
+// newDirectRunnerIDTokenSource builds the Google ID token source used to
+// authenticate every claim poll, directly from the same telemetry-writer
+// service-account key console_status.go already reads via
+// GOOGLE_APPLICATION_CREDENTIALS -- no metadata server (this fleet does not
+// run on GCE/Cloud Run -- see the design spec), no new IAM grant: a
+// service-account key can self-mint an ID token for any audience from its
+// own private key alone.
+//
+// Built once, at orchestrator startup (see runOrchestrator's
+// LCARS_QUEUE_POLL block), not per poll: idtoken.NewTokenSource reads and
+// validates the credentials file on construction, and that file never
+// changes at runtime, so rebuilding it every 15s tick was repeated,
+// unnecessary I/O. The returned source caches and refreshes the minted
+// token itself (ordinary oauth2.TokenSource semantics) -- callers just call
+// .Token() per poll, which is what queueExecutorConfig.idToken does.
+func newDirectRunnerIDTokenSource(ctx context.Context, keyPath, audience string) (oauth2.TokenSource, error) {
 	source, err := idtoken.NewTokenSource(ctx, audience, idtoken.WithCredentialsFile(keyPath))
 	if err != nil {
-		return "", fmt.Errorf("building id token source: %w", err)
+		return nil, fmt.Errorf("building id token source: %w", err)
 	}
+	return source, nil
+}
+
+// idTokenFromSource adapts an oauth2.TokenSource's .Token() call to the
+// queueExecutorConfig.idToken shape (func() (string, error)) pollOnce
+// expects. A thin wrapper so runOrchestrator only builds the token source
+// once (see newDirectRunnerIDTokenSource) and this is what actually runs on
+// every poll tick.
+func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 	tok, err := source.Token()
 	if err != nil {
 		return "", fmt.Errorf("minting id token: %w", err)
@@ -130,7 +167,10 @@ func idTokenFromTelemetryWriterKey(ctx context.Context, keyPath, audience string
 // runQueueExecutorPoller ticks pollOnce on cfg's interval until ctx is
 // done. A single failed claim is logged and never fatal -- the same
 // level-triggered, keep-trying-next-tick discipline HandleDesiredRunnerCount
-// already uses for a failed scale-up.
+// already uses for a failed scale-up. This is also the only handling a
+// failed launch gets: see queueExecutorConfig.launch's doc comment for how
+// a claimed-but-never-launched run recovers (lease expiry -> requeue), since
+// there is no un-claim callback to call here instead.
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -144,6 +184,26 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 			}
 		}
 	}
+}
+
+// parseQueuePipelines parses LCARS_QUEUE_PIPELINES's comma-separated value:
+// each entry is trimmed and empty entries are dropped, so an unset or
+// blank/whitespace-only value yields an empty slice (not strings.Split's own
+// [""], which would otherwise become a literal, un-matchable pipeline name
+// in the claim request body), and stray whitespace or a trailing comma
+// around a real pipeline name doesn't silently turn it into a different,
+// never-configured pipeline.
+func parseQueuePipelines(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // Direct-mode containers are launched outside any Scaler's runner-tracking
@@ -177,11 +237,11 @@ var directRunnerHostCursor atomic.Uint64
 // launchDirectRunnerOnHost (and this function's round-robin) directly
 // against fakeDockerServer, via an injected client factory the same way
 // newDockerClient itself is the injected default here.
-func launchDirectRunner(ctx context.Context, resolved resolvedOrchestratorConfig, l directRunnerLaunch) error {
-	return launchDirectRunnerWithClient(ctx, resolved, l, newDockerClient)
+func launchDirectRunner(ctx context.Context, resolved resolvedOrchestratorConfig, l directRunnerLaunch, logger *slog.Logger) error {
+	return launchDirectRunnerWithClient(ctx, resolved, l, newDockerClient, logger)
 }
 
-func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestratorConfig, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error)) error {
+func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestratorConfig, l directRunnerLaunch, newClient func(target string) (*dockerclient.Client, error), logger *slog.Logger) error {
 	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
 	if err != nil {
 		return fmt.Errorf("parsing fleet docker hosts: %w", err)
@@ -203,7 +263,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, maxConcurrent, l); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -279,7 +339,7 @@ func directRunnerTelemetryWriterHostPath() (string, error) {
 // uses for GitHub-mode runners), and on capacity, creates and starts the
 // container. Returns an error (never fatal to the caller's round-robin) if
 // this host is unreachable, full, or the create/start call fails.
-func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, maxConcurrent int, l directRunnerLaunch) error {
+func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("host %q: connecting: %w", host, err)
@@ -343,5 +403,8 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 		cancelRemove()
 		return fmt.Errorf("host %q: starting direct-runner container: %w", host, err)
 	}
+	// Never logs l.runToken -- only the run id and the host it landed on,
+	// mirroring Scaler.startRunner's own "Placed runner" log line.
+	logger.Info("Placed direct runner", slog.String("runId", l.runID), slog.String("host", host))
 	return nil
 }

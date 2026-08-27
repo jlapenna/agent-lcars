@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +14,13 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 )
+
+// discardLogger matches this package's own test convention
+// (slog.New(slog.NewTextHandler(io.Discard, nil)), see checkpoint_test.go)
+// for a logger tests don't care to inspect.
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestPollOnceClaimsAndLaunches(t *testing.T) {
 	var gotBody map[string]any
@@ -148,6 +158,46 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 	}
 }
 
+// TestPollOnceClaimResponseTooLargeIsError proves pollOnce bounds how much
+// of a claim response it will decode (claimResponseBodyLimit): a response
+// whose JSON object cannot close within that bound must error out rather
+// than launch on a partially-decoded value. The oversized field lives
+// INSIDE the JSON object (not as harmless trailing padding after a
+// complete, valid object) so truncating at the limit actually breaks
+// decoding -- json.Decoder.Decode stops after one complete value and
+// ignores anything after it, so padding appended past a complete object
+// would prove nothing here.
+func TestPollOnceClaimResponseTooLargeIsError(t *testing.T) {
+	hugeWorkID := strings.Repeat("x", claimResponseBodyLimit+1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"runId":     "work:01QUEUEEXECUTORTESTFIX05/r1",
+			"workId":    hugeWorkID,
+			"pipeline":  "claude",
+			"token":     "test-token",
+			"expiresAt": "2026-08-27T01:00:00.000Z",
+		})
+	}))
+	defer server.Close()
+
+	launchCount := 0
+	cfg := queueExecutorConfig{
+		consoleURL: server.URL,
+		pipelines:  []string{"claude"},
+		runnerName: "test-runner",
+		idToken:    func() (string, error) { return "fake-id-token", nil },
+		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+	}
+	err := pollOnce(cfg)
+	if err == nil {
+		t.Fatalf("expected an error for a claim response over claimResponseBodyLimit")
+	}
+	if launchCount != 0 {
+		t.Fatalf("expected no launch for an oversized claim response, got %d", launchCount)
+	}
+}
+
 func TestDirectRunnerImageFor(t *testing.T) {
 	resolved := resolvedOrchestratorConfig{
 		ScaleSets: []Config{
@@ -216,6 +266,40 @@ func TestDirectRunnerMaxConcurrent(t *testing.T) {
 	}
 }
 
+// TestParseQueuePipelines pins LCARS_QUEUE_PIPELINES's parsing: trimmed,
+// empties dropped, so an unset/blank value never becomes a literal ""
+// pipeline name in the claim request body (see pollOnce's own body-shape
+// test) and stray whitespace/a trailing comma never turns a real pipeline
+// name into a different one.
+func TestParseQueuePipelines(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"whitespace only", "   ", nil},
+		{"single", "claude", []string{"claude"}},
+		{"multiple", "claude,codex", []string{"claude", "codex"}},
+		{"whitespace around entries", " claude , codex ", []string{"claude", "codex"}},
+		{"trailing comma dropped", "claude,codex,", []string{"claude", "codex"}},
+		{"blank entries between commas dropped", "claude,,codex", []string{"claude", "codex"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseQueuePipelines(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("parseQueuePipelines(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("parseQueuePipelines(%q) = %v, want %v", tc.raw, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestDirectRunnerTelemetryWriterHostPath(t *testing.T) {
 	t.Run("required", func(t *testing.T) {
 		t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "")
@@ -235,6 +319,54 @@ func TestDirectRunnerTelemetryWriterHostPath(t *testing.T) {
 	})
 }
 
+// TestNewDirectRunnerIDTokenSourceErrors pins the plumbing runOrchestrator
+// relies on to disable the queue poller (rather than start it and fail
+// every poll) when the credentials file is missing or unreadable: a bad
+// keyPath must surface as an error from the builder itself, not lazily on
+// first .Token() call.
+func TestNewDirectRunnerIDTokenSourceErrors(t *testing.T) {
+	_, err := newDirectRunnerIDTokenSource(context.Background(), "/nonexistent/telemetry-writer.json", "agent-lcars-work")
+	if err == nil {
+		t.Fatalf("expected an error building an id token source from a nonexistent key file")
+	}
+}
+
+// TestLaunchDirectRunnerOnHostLogsPlacementWithoutToken proves a successful
+// launch logs the run id and host (so an operator can find "which run
+// landed where" without grepping Docker), and proves the run token -- a
+// live credential -- never appears in that log line.
+func TestLaunchDirectRunnerOnHostLogsPlacementWithoutToken(t *testing.T) {
+	f := newFakeDockerServer(t)
+	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	l := directRunnerLaunch{
+		runID:    "work:01QUEUEEXECUTORTESTFIX06/r1",
+		runToken: "super-secret-run-token",
+		pipeline: "claude",
+	}
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, logger)
+	if err != nil {
+		t.Fatalf("launchDirectRunnerOnHost: %v", err)
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "Placed direct runner") {
+		t.Errorf("expected a placement log line, got %q", logged)
+	}
+	if !strings.Contains(logged, l.runID) {
+		t.Errorf("expected the log line to name the run id, got %q", logged)
+	}
+	if !strings.Contains(logged, "host-a") {
+		t.Errorf("expected the log line to name the host, got %q", logged)
+	}
+	if strings.Contains(logged, l.runToken) {
+		t.Fatalf("run token must never be logged, got %q", logged)
+	}
+}
+
 // TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv is the "fake launcher
 // interface asserting the docker-run env" case: it exercises
 // launchDirectRunnerOnHost against fakeDockerServer end to end and checks
@@ -251,7 +383,7 @@ func TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv(t *testing.T) {
 		pipeline:   "claude",
 		consoleURL: "https://lcars.test",
 	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l)
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, discardLogger())
 	if err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
@@ -307,7 +439,7 @@ func TestLaunchDirectRunnerOnHostAtCapacity(t *testing.T) {
 	f.mu.Unlock()
 
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX02/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l)
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, discardLogger())
 	if err == nil {
 		t.Fatalf("expected an error when the host is already at its direct-runner cap")
 	}
@@ -346,7 +478,7 @@ func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
 	}
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX03/r1", runToken: "t", pipeline: "claude"}
 
-	if err := launchDirectRunnerWithClient(context.Background(), resolved, l, newClient); err != nil {
+	if err := launchDirectRunnerWithClient(context.Background(), resolved, l, newClient, discardLogger()); err != nil {
 		t.Fatalf("launchDirectRunnerWithClient: %v", err)
 	}
 	if full.createCount() != 0 {
@@ -366,7 +498,7 @@ func TestLaunchDirectRunnerOnHostRemovesContainerOnStartFailure(t *testing.T) {
 	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
 
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX04/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l)
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", 1, l, discardLogger())
 	if err == nil {
 		t.Fatalf("expected an error when ContainerStart fails")
 	}

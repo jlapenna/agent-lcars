@@ -103,7 +103,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// "Autoscaler change" section. Deliberately read once at startup, not on
 	// every config reload, matching how simple this first cut stays.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("LCARS_QUEUE_POLL")), "1") {
-		pipelines := strings.Split(strings.TrimSpace(os.Getenv("LCARS_QUEUE_PIPELINES")), ",")
+		pipelines := parseQueuePipelines(os.Getenv("LCARS_QUEUE_PIPELINES"))
 		keyPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 		consoleURL := os.Getenv("LCARS_CONSOLE_URL")
 		if consoleURL == "" {
@@ -116,17 +116,26 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		// that variable instead of a snapshot would race the poller
 		// goroutine's reads of it.
 		queueExecutorResolved := resolved
-		go runQueueExecutorPoller(ctx, queueExecutorConfig{
-			consoleURL: consoleURL,
-			pipelines:  pipelines,
-			runnerName: hostname,
-			idToken: func() (string, error) {
-				return idTokenFromTelemetryWriterKey(ctx, keyPath, "agent-lcars-work")
-			},
-			launch: func(l directRunnerLaunch) error {
-				return launchDirectRunner(ctx, queueExecutorResolved, l)
-			},
-		}, 15*time.Second, logger)
+		// Built once here, not per poll: see newDirectRunnerIDTokenSource's
+		// doc comment. A bad/missing key fails this the same way a bad
+		// GitHub credential fails registration elsewhere in this
+		// function -- loudly, at startup, rather than silently every 15s.
+		tokenSource, tokenErr := newDirectRunnerIDTokenSource(ctx, keyPath, "agent-lcars-work")
+		if tokenErr != nil {
+			logger.Error("Queue executor disabled: could not build the claim ID token source", slog.Any("error", tokenErr))
+		} else {
+			go runQueueExecutorPoller(ctx, queueExecutorConfig{
+				consoleURL: consoleURL,
+				pipelines:  pipelines,
+				runnerName: hostname,
+				idToken: func() (string, error) {
+					return idTokenFromSource(tokenSource)
+				},
+				launch: func(l directRunnerLaunch) error {
+					return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
+				},
+			}, 15*time.Second, logger)
+		}
 	}
 
 	drainSignals := make(chan os.Signal, 1)
