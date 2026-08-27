@@ -227,7 +227,9 @@ still in play. Landed as [PR #1543](https://github.com/jlapenna/agent-lcars/pull
 (`0374789d`), shipped by
 [deploy-console run 33094008052](https://github.com/jlapenna/agent-lcars/actions/runs/33094008052).
 
-This smoke proves the **persistence half only** (the reaper sweep). The
+This smoke proves the **persistence half only** (the reaper sweep), and
+only for the open items this run's API reads actually returned — not
+universal coverage; see the pagination note under check 3 below. The
 **`--resume` half is NOT proven here** — see the note at the end of this
 section.
 
@@ -292,10 +294,22 @@ The second pinned session (`66e18401-…`) turned out to belong to
 sub-project 3 proof above — `schedule-disable` had disabled the _schedule_
 but the _item_ itself was never canceled, so it was still sitting `parked`
 five hours later. Its `expireAt` moved to the same `2027-08-27T16:52:11.858Z`
-in the same write batch — real evidence the sweep touches every open
-item's sessions, not just the one created for this proof, and an
-incidental finding that sub-project 2/3 smokes should cancel their minted
-items when they park, not just disable the schedule.
+in the same write batch — real evidence the sweep touched both open items
+the API returned in this run, not just the one created for this proof, and
+an incidental finding that sub-project 2/3 smokes should cancel their
+minted items when they park, not just disable the schedule.
+
+This is evidence for the open items this run's reads actually returned,
+not universal coverage. Both `state=running` and `state=parked` requests
+in `session-pin-tick.ts` pass `limit=200`, and that limit is applied
+before the state filter — `work-router.ts`'s `listNativeTasks` orders by
+`workId` desc, so a request really returns "the open items among the 200
+newest native items," not "the 200 newest open items." Once total native
+item history passes 200, an older still-open item can fall outside every
+future sweep and its session can expire out from under it. That
+pagination gap is a known follow-up, tracked in
+[#1546](https://github.com/jlapenna/agent-lcars/issues/1546), not fixed
+here.
 
 Cleanup: `01M121WWNXZ95KT6E3AVCN7B0Y` canceled via
 [cancel run 33095653252](https://github.com/jlapenna/agent-lcars/actions/runs/33095653252):
