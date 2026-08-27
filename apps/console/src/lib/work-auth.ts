@@ -4,20 +4,26 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 import { resolvePrincipal, type WorkGrant } from './work-grants';
 
-export type WorkScope = 'work.operator';
+export type WorkScope = 'work.operator' | 'work.cron';
 
 export interface WorkPrincipal {
   principal: string;
   subject: string;
   scopes: ReadonlySet<WorkScope>;
   pipelines: readonly string[];
-  via: 'google' | 'session';
+  via: 'google' | 'session' | 'oidc';
 }
 
 export interface WorkAuthDeps {
   verifyGoogleIdToken: (
     token: string,
   ) => Promise<{ email: string; emailVerified: boolean }>;
+  /** GitHub Actions OIDC verifier for the scheduled tick trigger
+   *  (`work-schedules-tick.yml`). Only reached when the bearer is not a
+   *  valid Google token for our audience -- see `authenticateWorkRequest`
+   *  below. Resolves on a trusted token, throws otherwise; the identity
+   *  itself is not needed past "this is the trusted tick caller". */
+  verifyScheduleTickOidcToken: (token: string) => Promise<unknown>;
   session: () => Promise<{ user?: { login?: string } } | null>;
   grants: () => WorkGrant[];
 }
@@ -65,9 +71,10 @@ function principalFor(
 }
 
 /**
- * Bearer token first; an Auth.js session only when no bearer header is
- * present. A bearer that fails never falls back to the session -- a
- * caller that presented a credential gets judged on it.
+ * Bearer token first, tried against Google and then, on failure, against
+ * the schedule-tick OIDC verifier; an Auth.js session only when no bearer
+ * header is present. A bearer that fails both never falls back to the
+ * session -- a caller that presented a credential is judged on it.
  */
 export async function authenticateWorkRequest(
   request: Request,
@@ -77,12 +84,25 @@ export async function authenticateWorkRequest(
   if (header !== null) {
     const match = /^Bearer\s+(\S+)$/iu.exec(header);
     if (match === null) return undefined;
+    const token = match[1] ?? '';
     try {
-      const { email, emailVerified } = await deps.verifyGoogleIdToken(
-        match[1] ?? '',
-      );
-      if (!emailVerified || email === '') return undefined;
-      return principalFor(email, 'google', deps.grants());
+      const { email, emailVerified } = await deps.verifyGoogleIdToken(token);
+      if (emailVerified && email !== '') {
+        return principalFor(email, 'google', deps.grants());
+      }
+    } catch {
+      // Not a Google-issued token for our audience -- fall through to the
+      // GitHub Actions schedule-tick branch below.
+    }
+    try {
+      await deps.verifyScheduleTickOidcToken(token);
+      return {
+        principal: 'cron:tick',
+        subject: 'cron:tick',
+        scopes: new Set<WorkScope>(['work.cron']),
+        pipelines: [],
+        via: 'oidc',
+      };
     } catch {
       return undefined;
     }

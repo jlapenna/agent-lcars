@@ -18,6 +18,9 @@ function deps(over: Partial<WorkAuthDeps> = {}): WorkAuthDeps {
       email: 'sa@example.iam.gserviceaccount.com',
       emailVerified: true,
     }),
+    verifyScheduleTickOidcToken: async () => {
+      throw new Error('not a schedule-tick token');
+    },
     session: async () => null,
     grants: () => grants,
     ...over,
@@ -97,5 +100,56 @@ describe('authenticateWorkRequest', () => {
       }),
     );
     expect(p).toBeUndefined();
+  });
+  it('falls through to the schedule-tick verifier when the bearer is not a Google token', async () => {
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => {
+          throw new Error('not Google');
+        },
+        verifyScheduleTickOidcToken: async () => ({ ok: true }),
+      }),
+    );
+    expect(p).toMatchObject({
+      principal: 'cron:tick',
+      subject: 'cron:tick',
+      via: 'oidc',
+      pipelines: [],
+    });
+    expect(p?.scopes.has('work.cron')).toBe(true);
+  });
+  it('refuses a bearer neither verifier accepts', async () => {
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => {
+          throw new Error('not Google');
+        },
+        verifyScheduleTickOidcToken: async () => {
+          throw new Error('not schedule-tick either');
+        },
+      }),
+    );
+    expect(p).toBeUndefined();
+  });
+  it('an operator bearer does not satisfy work.cron', async () => {
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps(),
+    );
+    expect(p?.scopes.has('work.cron')).toBe(false);
+  });
+  it('the schedule-tick principal does not satisfy work.operator', async () => {
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => {
+          throw new Error('not Google');
+        },
+        verifyScheduleTickOidcToken: async () => ({ ok: true }),
+      }),
+    );
+    expect(p?.scopes.has('work.operator')).toBe(false);
   });
 });

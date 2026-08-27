@@ -18,14 +18,17 @@ import { sessionsForRuns } from '@/lib/work-sessions';
  * console user, the same way `queue-workspace.tsx`'s server actions do, so
  * `authenticateWorkRequest` is handed a header-less request and only its
  * session fallback path (`work-auth.ts`) ever runs. The Google ID token
- * verifier is still required by `WorkAuthDeps`'s shape but is never
- * invoked on this path.
+ * verifier and the schedule-tick OIDC verifier are still required by
+ * `WorkAuthDeps`'s shape but neither is ever invoked on this path.
  */
 async function context(): Promise<WorkContext> {
   const principal = await authenticateWorkRequest(
     new Request('https://console.local/'),
     {
       verifyGoogleIdToken: googleIdTokenVerifier('unused'),
+      verifyScheduleTickOidcToken: () => {
+        throw new Error('unused');
+      },
       session: async () =>
         (await auth()) as { user?: { login?: string } } | null,
       grants: workGrants,
