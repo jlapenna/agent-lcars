@@ -91,8 +91,7 @@ jq -e \
    .runtime.started_at == "2026-08-08T00:00:00Z" and
    .runtime.deadline == "2026-08-08T01:00:00Z" and
    .runtime.checkpoints.durable_artifact_by == "2026-08-08T00:25:00Z" and
-   .runtime.checkpoints.finalize_by == "2026-08-08T00:45:00Z" and
-   .runtime.projections == false' \
+   .runtime.checkpoints.finalize_by == "2026-08-08T00:45:00Z"' \
   "$context_path" >/dev/null
 
 grep -Fx "AGENT_DISPATCH_CONTEXT=$context_path" "$GITHUB_ENV" >/dev/null
@@ -111,48 +110,6 @@ case "$protocol_path" in
     exit 1
     ;;
 esac
-
-# CONTROL_PLANE_PROJECTIONS=true (sub-project 5) threads through to
-# runtime.projections; the default (unset, asserted above) stays false.
-projections_root="$test_root/projections"
-mkdir -p "$projections_root/runner-temp" "$projections_root/consumer"
-RUNNER_TEMP="$projections_root/runner-temp"
-GITHUB_ENV="$projections_root/github-env"
-GITHUB_OUTPUT="$projections_root/github-output"
-export RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT
-(
-  cd "$projections_root/consumer"
-  CONTROL_PLANE_PROJECTIONS=true \
-    GITHUB_WORKSPACE="$projections_root/consumer" \
-    bash "$action_dir/prepare.sh"
-)
-projections_context_path="$RUNNER_TEMP/agent-dispatch/context.json"
-jq -e '.runtime.projections == true' "$projections_context_path" >/dev/null
-
-# An invalid CONTROL_PLANE_PROJECTIONS value fails the dispatch outright,
-# matching the malformed-WORK failure mode below.
-projections_invalid_output="$test_root/projections-invalid-output"
-set +e
-(
-  cd "$projections_root/consumer"
-  CONTROL_PLANE_PROJECTIONS="yes" \
-    RUNNER_TEMP="$projections_root/runner-temp" \
-    GITHUB_ENV="$projections_root/github-env" \
-    GITHUB_OUTPUT="$projections_root/github-output" \
-    GITHUB_WORKSPACE="$projections_root/consumer" \
-    bash "$action_dir/prepare.sh" > "$projections_invalid_output" 2>&1
-)
-projections_invalid_status=$?
-set -e
-test "$projections_invalid_status" -ne 0 || {
-  echo "an invalid CONTROL_PLANE_PROJECTIONS must fail the dispatch, not succeed" >&2
-  exit 1
-}
-grep -q '::error::CONTROL_PLANE_PROJECTIONS must be' "$projections_invalid_output" || {
-  echo "expected a named ::error:: for an invalid CONTROL_PLANE_PROJECTIONS" >&2
-  cat "$projections_invalid_output" >&2
-  exit 1
-}
 
 # A brief built from oversized GitHub content must stay bounded. The budgets
 # are constants in prepare.sh, so this exercises the real shipped values
@@ -283,8 +240,7 @@ jq -e '
   .reply == "" and
   .latest_agent_result == null and
   .requested_results == ["pull-request"] and
-  .truncated == [] and
-  .runtime.projections == false' "$native_context_path" >/dev/null
+  .truncated == []' "$native_context_path" >/dev/null
 
 # A GitHub-anchored task that carries a work payload (WORK and ISSUE both
 # set, sub-project 5): the brief's title/body come from WORK.spec, but its
@@ -351,19 +307,7 @@ jq -e '
   .anchor.labels == ["agent:claude"] and
   .anchor.assignees == ["agent-lcars-bot"] and
   .anchor.html_url == "https://github.com/jlapenna/agent-lcars/issues/42" and
-  .anchor.id == null and
-  .runtime.projections == false' "$wi_context_path" >/dev/null
-
-# Same GitHub-anchored-work fixture, but with CONTROL_PLANE_PROJECTIONS=true:
-# the brief's runtime.projections must flip to true even on this branch.
-(
-  cd "$work_and_issue_root/consumer"
-  CONTROL_PLANE_PROJECTIONS=true \
-    GITHUB_WORKSPACE="$work_and_issue_root/consumer" PATH="$wi_bin:$PATH" \
-    bash "$action_dir/prepare.sh"
-)
-
-jq -e '.runtime.projections == true' "$wi_context_path" >/dev/null
+  .anchor.id == null' "$wi_context_path" >/dev/null
 
 # Same fixture, but the live issue IS a pull request (`pull_request` key
 # present): the brief must still resolve "pull-request", proving the new
@@ -378,7 +322,7 @@ JSON
     bash "$action_dir/prepare.sh"
 )
 
-jq -e '.anchor.type == "pull-request" and .runtime.projections == false' "$wi_context_path" >/dev/null
+jq -e '.anchor.type == "pull-request"' "$wi_context_path" >/dev/null
 
 echo "prepare.test.sh: work-and-issue anchor cases passed"
 

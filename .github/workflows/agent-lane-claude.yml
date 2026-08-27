@@ -88,11 +88,6 @@ on:
         required: false
         default: false
         type: boolean
-      control-plane-projections:
-        description: 'Console owns issue-side claim/eyes/park for this dispatch (see agent-lane.yml)'
-        required: false
-        default: false
-        type: boolean
       protected-snapshot:
         description: 'Upload the dispatch brief as a run artifact for evaluation'
         required: false
@@ -234,7 +229,6 @@ jobs:
       max-turns: ${{ inputs.max-turns }}
       long-run-budget: ${{ inputs.long-run-budget }}
       dispatch-bootstrap: ${{ inputs.dispatch-bootstrap }}
-      control-plane-projections: ${{ inputs.control-plane-projections }}
       protected-snapshot: ${{ inputs.protected-snapshot }}
       install-workspace-deps: ${{ inputs.install-workspace-deps }}
       gcp-auth: ${{ inputs.gcp-auth }}

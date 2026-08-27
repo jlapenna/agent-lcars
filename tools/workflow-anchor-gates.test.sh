@@ -16,18 +16,24 @@ for wf in claude codex opencode; do
 done
 grep -q "inputs.work" ".github/workflows/agent-fallback-finalize.yml" || { echo "finalizer must receive work"; fail=1; }
 
-# agent-lane.yml's own issue-reading steps (Task 3): the claim step, both
-# prepare-agent-dispatch calls, and the sidecar's INTENT_ID passthrough must
-# all admit a work-anchored (native) run alongside an issue-anchored one.
+# agent-lane.yml's own issue-reading steps (Task 3): both prepare-agent-
+# dispatch calls and the sidecar's INTENT_ID passthrough must all admit a
+# work-anchored (native) run alongside an issue-anchored one.
 lane=.github/workflows/agent-lane.yml
 grep -q "work: \${{ inputs.work }}" "$lane" || { echo "lane: prepare-agent-dispatch must receive work"; fail=1; }
-grep -Pzo "Claim the issue as the agent fleet\n(\s+#[^\n]*\n)*\s+if: [^\n]*inputs\.issue != ''" "$lane" >/dev/null || { echo "lane: claim step must be gated on issue"; fail=1; }
 grep -q "INTENT_ID: \${{ inputs.broker-intent-id }}" "$lane" || { echo "lane: sidecar must receive INTENT_ID"; fail=1; }
 
-# dispatch-bootstrap's own claim step was deleted (agent-lcars own workers
-# always pass control-plane-projections: true alongside dispatch-bootstrap:
-# true, so the step's gate was never reachable; the console claims the
-# anchor instead) -- assert it stays gone rather than pinning a gate on it.
+# The lane's own claim step was deleted (agent-lcars#1544/#1557): the
+# console claims every GitHub-anchored dispatch itself
+# (orchestrator-dispatch.ts's claimGithubAnchor) now that a hand-run
+# workflow_dispatch is a retired escape hatch -- assert it stays gone
+# rather than pinning a gate on it.
+grep -q "^      - name: Claim the issue as the agent fleet$" "$lane" && { echo "lane: claim step should stay deleted (console projects the claim)"; fail=1; }
+
+# dispatch-bootstrap's own claim step was deleted earlier still (agent-lcars
+# own workers always ran dispatch-bootstrap under the console, so the
+# step's gate was never reachable) -- assert it stays gone rather than
+# pinning a gate on it.
 bootstrap=.github/actions/dispatch-bootstrap/action.yml
 grep -q "^    - name: Claim the issue as the agent fleet$" "$bootstrap" && { echo "dispatch-bootstrap: claim step should stay deleted (console projects the claim)"; fail=1; }
 
@@ -72,27 +78,17 @@ awk '
   END { if (bad) exit 1 }
 ' "$lane" || fail=1
 
-# Regression (found by review, jlapenna/homelab#906): this repo's own
-# caller workflows are also runnable by hand via workflow_dispatch from the
-# Actions UI. A literal `control-plane-projections: true` makes the lane
-# skip its own claim step (the "Claim the issue as the agent fleet" gate in
-# agent-lane.yml) unconditionally -- including on a hand-run dispatch,
-# where the console has projected nothing, silently leaving the issue
-# unclaimed with no reaction and no assignee.
-#
-# `broker_intent_id` cannot be the derivation signal: it is declared
-# `required: true` in each workflow's workflow_dispatch inputs, so the
-# Actions UI forces an operator to supply a value on a hand-run dispatch
-# too, and the condition can never be false (Codex review on #1551,
-# thread PRRT_kwDOTemFxc6c5p9Q). `work` is the correct signal --
-# `required: false` with a `''` default -- because the console sends a
-# `work` payload on every dispatch it makes (native and GitHub-anchored
-# alike, sub-project 5), and a manual dispatch always leaves it empty.
+# The `control-plane-projections` provenance-derivation regression this
+# block used to pin (jlapenna/homelab#906: a literal `true` made the lane
+# skip its own claim step even on a hand-run dispatch) is moot now that the
+# input itself is gone (agent-lcars#1544/#1557) -- a hand-run
+# `workflow_dispatch` is a retired escape hatch by policy, and the console
+# claims every GitHub-anchored dispatch itself regardless. Assert the input
+# stays deleted from this repo's own callers rather than pinning a
+# derivation rule that no longer applies.
 for wf in claude codex opencode; do
   f=".github/workflows/$wf.yml"
-  grep -qE "^\s*control-plane-projections:\s*true\s*$" "$f" && { echo "$f: control-plane-projections must be derived from provenance, not a literal true"; fail=1; }
-  grep -qF "control-plane-projections: \${{ inputs.broker_intent_id != '' }}" "$f" && { echo "$f: control-plane-projections must not be derived from broker_intent_id (always non-empty on a hand-run dispatch -- required: true)"; fail=1; }
-  grep -qF "control-plane-projections: \${{ inputs.work != '' }}" "$f" || { echo "$f: expected control-plane-projections derived from inputs.work"; fail=1; }
+  grep -q "control-plane-projections:" "$f" && { echo "$f: control-plane-projections should stay deleted (legacy claim path removed)"; fail=1; }
 done
 
 exit $fail

@@ -28,13 +28,6 @@ inputs:
       dispatch with no work payload yet.
     required: false
     default: ''
-  control-plane-projections:
-    description: >-
-      When 'true', the brief's `runtime.projections` is `true` -- the
-      protocol's native rules apply to this dispatch regardless of anchor
-      (sub-project 5). Default 'false'.
-    required: false
-    default: 'false'
   mode:
     description: Dispatch mode selected by the router.
     required: true
@@ -98,7 +91,6 @@ runs:
         AGENT: ${{ inputs.agent }}
         ISSUE: ${{ inputs.issue }}
         WORK: ${{ inputs.work }}
-        CONTROL_PLANE_PROJECTIONS: ${{ inputs.control-plane-projections }}
         MODE: ${{ inputs.mode }}
         REPLY: ${{ inputs.reply }}
         RUNBOOK: ${{ inputs.runbook }}

@@ -37,10 +37,13 @@
 # exists because one repo needs it, and defaults to the consumer behavior:
 #
 # - dispatch-bootstrap: agent-lcars is the hosted-orchestrator thin
-#   executor (#1015) — admission, attempt identity, App-token mint, claim,
-#   and enforcement-snapshot run through its local dispatch-bootstrap/
+#   executor (#1015) — admission, attempt identity, App-token mint, and
+#   enforcement-snapshot run through its local dispatch-bootstrap/
 #   agent-handoff composites; consumer repos run the published
-#   snapshot/mint/claim/verify path against `@main` instead. The opencode
+#   snapshot/mint/verify path against `@main` instead. The console claims
+#   every GitHub-anchored dispatch itself (orchestrator-dispatch.ts's
+#   claimGithubAnchor), so neither era runs a lane-owned claim step
+#   anymore (#1544/#1557). The opencode
 #   agent step is also era-split: agent-lcars runs the SHA-pinned
 #   anomalyco/opencode published action (plus its authenticated-release
 #   curl wrapper), while consumers run the published setup-opencode
@@ -162,16 +165,6 @@ on:
         type: boolean
       dispatch-bootstrap:
         description: 'agent-lcars thin-executor admission era (see header)'
-        required: false
-        default: false
-        type: boolean
-      control-plane-projections:
-        description: >-
-          When true, the console owns the issue-side eyes reaction, fleet
-          assignee claim, and park label/comment for this dispatch (sub-project
-          5) -- this lane skips its own claim step and the agent follows the
-          protocol's native rules instead of writing the issue directly. Default
-          false: every consumer's lane call is unchanged until it opts in.
         required: false
         default: false
         type: boolean
@@ -545,7 +538,7 @@ jobs:
             AGENT_FLEET_LOGIN=${{ inputs.agent-fleet-login }}
 
       # Freeze the trusted failure path at the earliest point possible, so
-      # mint/claim/checkout can fail without stranding the issue. The
+      # mint/checkout can fail without stranding the issue. The
       # composite copies bytes from the pinned-ref fetch of
       # jlapenna/agent-lcars itself, not this checkout's working tree.
       - name: Snapshot post-agent enforcement scripts
@@ -587,24 +580,6 @@ jobs:
           permission-issues: write
           permission-metadata: read
           permission-pull-requests: write
-
-      # Claim the anchor issue/PR for the agent fleet the moment the run
-      # starts. Before checkout on purpose — a cross-repo action needs no
-      # local checkout, so the claim still lands even if workspace setup
-      # fails. Additive and idempotent: never removes a human assignee.
-      # The pickup comment is opencode's recorded divergence: its lane has
-      # always posted one; the other lanes never have.
-      - name: Claim the issue as the agent fleet
-        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' && !inputs.control-plane-projections }}
-        id: claim
-        uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
-        with:
-          token: ${{ steps.agent-lcars-token.outputs.token }}
-          issue: ${{ inputs.issue }}
-          claim-login: ${{ inputs.agent-fleet-login }}
-          post-pickup-comment: ${{ inputs.pipeline == 'opencode' && 'true' || 'false' }}
-          agent: ${{ env.AGENT_NAME }}
-          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       # The only consumer-era checkout, now that the App token exists. For
       # codex/opencode it carries fetch-depth: 0 and the minted token, so
@@ -664,7 +639,6 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           work: ${{ inputs.work }}
-          control-plane-projections: ${{ inputs.control-plane-projections }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -696,10 +670,11 @@ jobs:
         uses: actions/checkout@v7
 
       # Freezes the post-agent enforcement scripts, asserts required repo
-      # variables, publishes this attempt's stable identity, mints the
-      # Agent LCARS App token, and claims the anchor issue/PR for the
-      # agent fleet — admission was already decided server-side by the
-      # hosted orchestrator before this workflow ran. See
+      # variables, publishes this attempt's stable identity, and mints the
+      # Agent LCARS App token — admission was already decided server-side by
+      # the hosted orchestrator before this workflow ran, and that same
+      # orchestrator already claimed the anchor issue/PR for the agent fleet
+      # at dispatch-confirm time. See
       # .github/actions/dispatch-bootstrap/action.yml for the full
       # step-by-step rationale.
       - name: Dispatch bootstrap
@@ -1096,7 +1071,6 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           work: ${{ inputs.work }}
-          control-plane-projections: ${{ inputs.control-plane-projections }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -1556,8 +1530,12 @@ jobs:
       # pass the baton, or one bad issue strands everything behind it.
       # Self-healing by construction: a dispatched run that is itself
       # cancelled leaves its issue unclaimed for the next completing run.
+      # Gated on `inputs.issue != ''` (not a claim-step output — the lane's
+      # own claim step was deleted in #1544/#1557; the console now claims
+      # every GitHub-anchored dispatch itself, so this only needs to know
+      # there IS an issue anchor to drain the queue for).
       - name: Dispatch the next queued Codex issue
-        if: always() && inputs.pipeline == 'codex' && inputs.queue-drain && steps.claim.outputs.claimed == 'true'
+        if: always() && inputs.pipeline == 'codex' && inputs.queue-drain && inputs.issue != ''
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token — the
           # mint can be hours expired by now.

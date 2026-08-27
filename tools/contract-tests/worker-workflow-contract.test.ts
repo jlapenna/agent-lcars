@@ -419,7 +419,7 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(localPrGuide).toContain('they do not request human');
   });
 
-  it('collapses §1-4 to native rules gated on runtime.projections or a work anchor, with a legacy subsection', () => {
+  it('§1-4 state the native rules unconditionally, with no legacy subsection (agent-lcars#1544/#1557)', () => {
     const protocol = readFileSync(
       path.join(
         repoRoot,
@@ -427,19 +427,27 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
       ),
       'utf8',
     );
-    expect(protocol).toContain(
-      "runtime.projections === true || anchor.type === 'work'",
-    );
-    expect(protocol).toContain('## Legacy (projections off)');
+    // The runtime.projections/anchor.type gate and the "Legacy (projections
+    // off)" branch it pointed to are gone: the console claims every
+    // GitHub-anchored dispatch itself now that a hand-run workflow_dispatch
+    // is a retired escape hatch, so §1-4 apply to every dispatch, always.
+    expect(protocol).not.toContain('runtime.projections');
+    expect(protocol).not.toContain('## Legacy (projections off)');
     expect(protocol).not.toContain('## 5a. Native work items');
-    const legacy = protocol.slice(
-      protocol.indexOf('## Legacy (projections off)'),
+    expect(protocol).toContain('## 1. Takeover — your first action');
+    expect(protocol).toMatch(/Skip — post nothing\./u);
+    // The "Dispatch mode" table and reply-trigger recognition text used to
+    // live only inside the deleted Legacy section; both still apply
+    // unconditionally, so they were folded into §5 rather than deleted.
+    const section5 = protocol.slice(
+      protocol.indexOf('## 5. Deliverable rule'),
+      protocol.indexOf('## 6. Push early'),
     );
-    expect(legacy).toContain('eyes (👀) reaction');
-    expect(legacy).toContain('status:needs-human');
-    expect(legacy).toContain(
-      'gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna',
+    expect(section5).toContain('### Dispatch mode');
+    expect(section5).toContain(
+      '| `implement` | issue        | open a PR on a new branch',
     );
+    expect(section5).toContain('`/codex`, `/opencode`, and `/oc`');
   });
 });
 
@@ -472,11 +480,6 @@ const COMMON_LANE_INPUTS: Record<string, InputSpec> = {
   'job-timeout-minutes': { required: false, type: 'number', default: 90 },
   'agent-timeout-minutes': { required: false, type: 'number', default: 60 },
   'dispatch-bootstrap': { required: false, type: 'boolean', default: false },
-  'control-plane-projections': {
-    required: false,
-    type: 'boolean',
-    default: false,
-  },
   'protected-snapshot': { required: false, type: 'boolean', default: false },
   'install-workspace-deps': {
     required: false,
@@ -642,14 +645,11 @@ describe('published reusable lane workflow surface (#1312)', () => {
     },
   );
 
-  it('agent-lane.yml: control-plane-projections defaults off (sub-project 5)', () => {
+  it('agent-lane.yml: control-plane-projections stays deleted (agent-lcars#1544/#1557)', () => {
     const { doc } = loadWorkflow(UNIFIED_LANE_FILE);
-    const input = doc.on?.workflow_call?.inputs?.['control-plane-projections'];
-    expect(input).toMatchObject({
-      required: false,
-      type: 'boolean',
-      default: false,
-    });
+    expect(
+      doc.on?.workflow_call?.inputs?.['control-plane-projections'],
+    ).toBeUndefined();
   });
 });
 
@@ -814,7 +814,7 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
   });
 
   it.each(DISPATCH_PIPELINES)(
-    '%s.yml: opts into the dispatch-bootstrap era and derives control-plane-projections from provenance',
+    '%s.yml: opts into the dispatch-bootstrap era, with control-plane-projections gone (agent-lcars#1544/#1557)',
     (pipeline) => {
       const contract = PIPELINE_CONTRACTS[pipeline];
       const { doc } = loadWorkflow(contract.workflowFile);
@@ -823,21 +823,16 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
         callerJob?.with?.['dispatch-bootstrap'],
         `${contract.workflowFile} must pass dispatch-bootstrap: true to its shim`,
       ).toBe(true);
-      // Not a literal `true` (found by review on jlapenna/homelab#906): this
-      // workflow is also runnable by hand via workflow_dispatch, where the
-      // console has projected nothing. `broker_intent_id` cannot be the
-      // signal -- it is `required: true`, so a hand-run dispatch always
-      // supplies a value and the condition can never be false. `work` is
-      // the correct signal: `required: false` with a `''` default, sent by
-      // `orchestrator-dispatch.ts`'s `handleDispatchRun` on every dispatch
-      // the console makes (native and GitHub-anchored alike, sub-project
-      // 5), and left at `''` on a manual run -- see the
-      // `control-plane-projections:` comment in the workflow file itself
-      // for the full account.
+      // The provenance-derivation rule this test used to pin
+      // (jlapenna/homelab#906: `work` != '' as proof the console made this
+      // dispatch, not a hand-run workflow_dispatch) is moot now that the
+      // input itself is gone: a hand-run dispatch is a retired escape
+      // hatch by policy, and the console claims every GitHub-anchored
+      // dispatch itself regardless of how it got triggered.
       expect(
         callerJob?.with?.['control-plane-projections'],
-        `${contract.workflowFile} must derive control-plane-projections from work provenance, not hardcode true or key off broker_intent_id (sub-project 5, homelab#906)`,
-      ).toBe("${{ inputs.work != '' }}");
+        `${contract.workflowFile} must not pass control-plane-projections (legacy claim path removed)`,
+      ).toBeUndefined();
     },
   );
 });

@@ -106,47 +106,6 @@ jobs:
       # This repo is the hosted-orchestrator thin executor (#1015) and
       # preserves the dispatch brief for trajectory evaluation.
       dispatch-bootstrap: true
-      # This repo's own dispatches run under the console's issue-side
-      # projections (sub-project 5): the console owns the eyes reaction,
-      # fleet claim, and park label/comment, so the lane skips its own
-      # claim step. Every other consumer omits this and keeps today's
-      # behavior.
-      #
-      # Derived from provenance, not hardcoded (found by review on
-      # jlapenna/homelab#906): this workflow is also runnable by hand via
-      # workflow_dispatch from the Actions UI, and a hand-run dispatch
-      # projects nothing -- no eyes reaction, no fleet assignee. A literal
-      # `true` here made the lane skip its own claim step unconditionally,
-      # silently leaving a manually-dispatched issue unclaimed.
-      #
-      # `broker_intent_id` cannot be that signal: it is declared
-      # `required: true` above, so the Actions UI forces an operator to
-      # supply *some* value on a hand-run dispatch too, and the condition
-      # can never be false. `work` is the correct signal instead --
-      # `required: false` with a `''` default above, and
-      # `orchestrator-dispatch.ts`'s `handleDispatchRun` sends a
-      # `work: JSON.stringify({...})` payload on every dispatch it makes,
-      # for a native work-anchored run and a GitHub-anchored one alike
-      # (sub-project 5: every anchor carries a work payload). A manual
-      # `workflow_dispatch` leaves `work` at its declared `''` default, so
-      # non-empty `work` is true console provenance -- "this dispatch
-      # carries a control-plane work payload" is the same statement as
-      # "the control plane made this dispatch."
-      #
-      # Consumer-repo caveat: this used to evaluate to `false` in every
-      # consumer repo even for a console-dispatched run, because
-      # `orchestrator-dispatch.ts` gated the `work` input to the
-      # control-plane repository only -- #1544 wave 2 removed that gate
-      # (dispatch now sends `work` for every admitted target), so this now
-      # also evaluates true for a console-dispatched run against an
-      # admitted consumer repo. Until wave 3 removes this lane's own claim
-      # step (pending a live consumer dispatch observed taking this
-      # projected-claim path), both claim effects fire: this lane's own
-      # claim below, and the console's projection. Both are idempotent
-      # (`claimGithubAnchor`'s doc comment: a repeated reaction returns the
-      # existing one, assigning an already-assigned login is a no-op), so
-      # the double-claim is harmless.
-      control-plane-projections: ${{ inputs.work != '' }}
       protected-snapshot: true
       gcp-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
       gcp-service-account: ${{ vars.GCP_CODEX_AGENT_SA }}

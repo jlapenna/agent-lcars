@@ -433,16 +433,16 @@ async function handleDispatchRun(
   result.dispatched.push(run.runId);
 }
 
-/** Additive, idempotent, best-effort -- projects the two claim effects that
- *  today happen elsewhere for a GitHub anchor: the assignee call is
- *  byte-identical to `.github/actions/claim-issue/claim.sh`'s own mutation
- *  (`POST .../assignees` with `{assignees: [<fleet login>]}`); the eyes
- *  reaction's endpoint/body (`POST .../reactions` with `{content: 'eyes'}`)
- *  matches agent-protocol.md §2, which claim.sh itself does not post. §2
- *  tells the dispatched agent to skip posting the reaction itself when its
- *  own dispatch brief reports `runtime.projections === true` -- outside
- *  that case (the "Legacy" path), the agent posts it itself as its own
- *  first action once it starts reading the anchor's thread. Here it is
+/** Additive, idempotent, best-effort -- projects the two claim effects for
+ *  a GitHub anchor that the fleet lane's own claim step used to perform
+ *  (`.github/actions/claim-issue`, deleted in #1544/#1557 once every
+ *  dispatch became console-owned): the assignee call posts the same shape
+ *  GitHub's assignees endpoint expects (`POST .../assignees` with
+ *  `{assignees: [<fleet login>]}`); the eyes reaction's endpoint/body
+ *  (`POST .../reactions` with `{content: 'eyes'}`) matches agent-
+ *  protocol.md §2, which unconditionally tells the dispatched agent to
+ *  skip posting the reaction itself -- the console always does it here, at
+ *  dispatch-confirm time, before the agent's turn starts. Here it is
  *  posted once, on the issue body only (not per-comment -- the console has
  *  not read any comments at this point), as the single visible
  *  acknowledgement a human watching the issue looks for right when the
