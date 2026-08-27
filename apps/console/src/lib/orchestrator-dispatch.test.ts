@@ -962,6 +962,123 @@ describe('drainOutbox: dispatch-run', () => {
     });
   });
 
+  // #1548 canary (jlapenna/sync-padd#89, 2026-08-27): GitHub's
+  // `POST .../issues/{n}/assignees` returns 2xx even when the requested
+  // login lacks push access to the repository -- it silently omits the
+  // login from the returned issue's `assignees` array instead of erroring.
+  // A bare `response.ok` check cannot see this; only the response body can.
+  it('logs an actionable warning when a 2xx assignee response silently drops the fleet login (not assignable -- no push access)', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/sync-padd', issue: 89 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const fetchImpl = (async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        const url = String(input);
+        if (url.includes('/actions/workflows/')) {
+          return new Response(null, { status: 204 });
+        }
+        if (url.endsWith('/reactions')) {
+          return new Response(JSON.stringify({ content: 'eyes' }), {
+            status: 201,
+          });
+        }
+        if (url.endsWith('/assignees')) {
+          // GitHub's real shape: the (unchanged) issue, whose `assignees`
+          // does not include a login that isn't assignable there.
+          return new Response(JSON.stringify({ assignees: [] }), {
+            status: 201,
+          });
+        }
+        throw new Error(`unexpected fetch: ${url} ${JSON.stringify(init)}`);
+      }) as typeof fetch;
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      // Best-effort projection: a silently-dropped claim must not fail the
+      // dispatch, which already succeeded.
+      expect(result.dispatched).toHaveLength(1);
+      expect(result.failed).toHaveLength(0);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('claim projection (assignee)'),
+        'jlapenna/sync-padd',
+        89,
+        'agent-lcars-bot',
+      );
+      const [message] = errorSpy.mock.calls.find(
+        (call) => call[1] === 'jlapenna/sync-padd' && call[2] === 89,
+      )!;
+      expect(message as string).toMatch(/not assignable|push access/);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs nothing extra when a 2xx assignee response body confirms the fleet login was attached', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/actions/workflows/')) {
+          return new Response(null, { status: 204 });
+        }
+        if (url.endsWith('/reactions')) {
+          return new Response(JSON.stringify({ content: 'eyes' }), {
+            status: 201,
+          });
+        }
+        if (url.endsWith('/assignees')) {
+          return new Response(
+            JSON.stringify({ assignees: [{ login: 'agent-lcars-bot' }] }),
+            { status: 201 },
+          );
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }) as typeof fetch;
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      expect(result.dispatched).toHaveLength(1);
+      expect(result.failed).toHaveLength(0);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it('a native anchor posts no eyes reaction or claim', async () => {
     const { store, orchestrator } = fixture();
     const requested = await orchestrator.request({

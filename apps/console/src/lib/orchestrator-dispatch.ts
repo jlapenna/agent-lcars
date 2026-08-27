@@ -451,7 +451,24 @@ async function handleDispatchRun(
  *  are idempotent (a repeated reaction returns the existing one; assigning
  *  an already-assigned login is a no-op), so a network-level failure on the
  *  reactions call must not skip the assignees call. Only the token fetch,
- *  which both calls need, is allowed to skip both. */
+ *  which both calls need, is allowed to skip both.
+ *
+ *  The two calls are NOT symmetric in what a 2xx means, though (#1548):
+ *  the assignees endpoint filters the requested login against repository
+ *  eligibility (collaborator/push access) and silently omits an
+ *  ineligible one from the returned `assignees` array rather than
+ *  erroring, so a 2xx status alone does not prove the claim landed --
+ *  `assigneeWasAttached` checks the body itself. The reactions endpoint
+ *  has no equivalent eligibility filter to silently fail: reacting only
+ *  requires read access (which the token calling this function already
+ *  has, or the whole run would not exist), and its 2xx response is always
+ *  the actual reaction record (created, or the caller's pre-existing one)
+ *  -- there is no "not applied" reaction to keep out of a listed
+ *  collection the way an ineligible assignee is kept out of the assignee
+ *  collection. So its `response.ok` check is left as the sufficient
+ *  success signal it always was; only the assignee path gained body
+ *  verification, and both still report failure with the same
+ *  `'...failed for %s#%s: %s %s'` shape. */
 async function claimGithubAnchor(
   deps: DispatchDeps,
   target: AnchorTarget,
@@ -502,12 +519,13 @@ async function claimGithubAnchor(
   }
 
   try {
+    const login = agentFleetLogin();
     const response = await fetchImpl(
       `${apiBaseUrl}/repos/${repo}/issues/${issue}/assignees`,
       {
         method: 'POST',
         headers: githubHeaders(token),
-        body: JSON.stringify({ assignees: [agentFleetLogin()] }),
+        body: JSON.stringify({ assignees: [login] }),
       },
     );
     if (!response.ok) {
@@ -518,6 +536,20 @@ async function claimGithubAnchor(
         response.status,
         await response.text(),
       );
+    } else if (!(await assigneeWasAttached(response, login))) {
+      // GitHub returns 2xx here even when the login lacks push access to
+      // the repository (not a collaborator, not assignable) -- it just
+      // silently omits it from the response's `assignees` array instead of
+      // erroring. `response.ok` alone cannot tell a real claim from a
+      // silent no-op; see `assigneeWasAttached`'s doc comment.
+      console.error(
+        'agent-lcars: claim projection (assignee) silently dropped for ' +
+          '%s#%s: %s was not added to the assignees list -- likely not ' +
+          'assignable on this repository (missing push access)',
+        repo,
+        issue,
+        login,
+      );
     }
   } catch (error) {
     console.error(
@@ -527,6 +559,42 @@ async function claimGithubAnchor(
       error,
     );
   }
+}
+
+/** GitHub's `POST .../issues/{n}/assignees` returns 2xx even when the
+ *  requested login lacks push access to the repository -- rather than
+ *  erroring, it silently drops the login from the returned issue's
+ *  `assignees` array. A bare `response.ok` check therefore cannot
+ *  distinguish a real claim from a silent no-op; the response body is the
+ *  only signal. Confirmed in production: canary run on
+ *  jlapenna/sync-padd#89 (2026-08-27) -- the reaction landed, the assignee
+ *  never attached, `agent-lcars-bot` had `permission: none` on that repo,
+ *  and the 2xx status meant nothing was logged (issue #1548). Returns
+ *  `false` (never throws) for a body that isn't the expected shape, so a
+ *  malformed or empty response is treated the same as "not confirmed"
+ *  rather than crashing this best-effort projection. */
+async function assigneeWasAttached(
+  response: Response,
+  login: string,
+): Promise<boolean> {
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return false;
+  }
+  const assignees =
+    typeof body === 'object' && body !== null && 'assignees' in body
+      ? (body as { assignees: unknown }).assignees
+      : undefined;
+  if (!Array.isArray(assignees)) return false;
+  return assignees.some(
+    (a: unknown) =>
+      typeof a === 'object' &&
+      a !== null &&
+      'login' in a &&
+      (a as { login: unknown }).login === login,
+  );
 }
 
 /** Posts the run's outcome onward as an issue comment. */
