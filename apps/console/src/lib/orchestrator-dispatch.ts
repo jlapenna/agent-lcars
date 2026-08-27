@@ -438,14 +438,17 @@ async function handleDispatchRun(
  *  byte-identical to `.github/actions/claim-issue/claim.sh`'s own mutation
  *  (`POST .../assignees` with `{assignees: [<fleet login>]}`); the eyes
  *  reaction's endpoint/body (`POST .../reactions` with `{content: 'eyes'}`)
- *  matches agent-protocol.md §2, which claim.sh itself does not post -- that
- *  reaction is normally the dispatched agent's own first action, once it
- *  starts reading the anchor's thread. Here it is posted once, on the issue
- *  body only (not per-comment -- the console has not read any comments at
- *  this point), as the single visible acknowledgement a human watching the
- *  issue looks for right when the dispatch is confirmed. A failure here must
- *  not cost the dispatch, which has already succeeded by the time this
- *  runs. See the design spec's "Projections" note.
+ *  matches agent-protocol.md §2, which claim.sh itself does not post. §2
+ *  tells the dispatched agent to skip posting the reaction itself when its
+ *  own dispatch brief reports `runtime.projections === true` -- outside
+ *  that case (the "Legacy" path), the agent posts it itself as its own
+ *  first action once it starts reading the anchor's thread. Here it is
+ *  posted once, on the issue body only (not per-comment -- the console has
+ *  not read any comments at this point), as the single visible
+ *  acknowledgement a human watching the issue looks for right when the
+ *  dispatch is confirmed. A failure here must not cost the dispatch, which
+ *  has already succeeded by the time this runs. See the design spec's
+ *  "Projections" note.
  *
  *  The two POSTs are independent, deliberately not sharing one `try`: both
  *  are idempotent (a repeated reaction returns the existing one; assigning
