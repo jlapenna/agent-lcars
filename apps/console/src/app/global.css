@@ -1591,6 +1591,8 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   .console-header[data-current]
     .lcars-nav-pill[data-destination='shuttlebay']:not([data-active]),
   .console-header[data-current]
+    .lcars-nav-pill[data-destination='work']:not([data-active]),
+  .console-header[data-current]
     .lcars-nav-pill[data-accent='teal']:not([data-active]),
   .console-header[data-current]
     .lcars-nav-pill[data-accent='gold']:not([data-active]) {
