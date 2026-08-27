@@ -112,6 +112,10 @@ JSON
     fi
     ;;
   */checkout-token)
+    if [ "${FAKE_CHECKOUT_TOKEN_FAIL:-}" = "1" ]; then
+      echo "fake curl: simulated checkout-token failure" >&2
+      exit 22
+    fi
     echo "{\"token\":\"$FAKE_TOKEN\",\"expiresAt\":\"2026-08-27T01:00:00.000Z\"}"
     ;;
   */heartbeat)
@@ -393,20 +397,39 @@ echo "scenario brief-401: OK"
 # --- Scenario 4: missing claude token file -----------------------------------
 # A missing/unreadable CLAUDE_TOKEN_FILE must fail the run loudly rather
 # than silently invoking claude with no credential (which would instead
-# fail deep inside the claude CLI with a less legible auth error). By this
-# point in the script (after checkout and the sidecar's own `start` call)
-# there is still no run-token-authenticated way to report failure back
-# through /complete for a run that never got as far as invoking claude --
-# same as brief-401 above -- so the only contract to assert is a non-zero
-# exit and no completion callback.
+# fail deep inside the claude CLI with a less legible auth error). Review
+# fix (PR #1568): by this point the run is claimed and LCARS_RUN_TOKEN is
+# confirmed valid (the earlier /brief call proved it), so this must NOT be
+# treated like brief-401 -- report_early_failure's trap means the run still
+# gets a completion callback (outcome: no-deliverable) instead of sitting
+# claimed and silently stuck for its whole 2h lease.
 export FAKE_MISSING_CLAUDE_TOKEN=1
 run_scenario missing-claude-token
 unset FAKE_MISSING_CLAUDE_TOKEN
 
 [ "$rc" -ne 0 ] || fail "missing-claude-token: expected a non-zero exit, got 0"
-[ ! -f "$COMPLETE_LOG" ] || fail "missing-claude-token: direct-runner.sh called POST .../complete despite a missing token file"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "missing-claude-token: claude was invoked despite a missing token file"
+[ -f "$COMPLETE_LOG" ] || fail "missing-claude-token: direct-runner.sh never called POST .../complete despite a claimed, token-valid run"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "missing-claude-token: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario missing-claude-token: OK"
+
+# --- Scenario 5: checkout-token call fails ------------------------------------
+# The same early-failure trap must cover every abort in the claimed-and-
+# token-valid window, not just the claude-token check above -- this is the
+# earliest such point (immediately after /brief succeeds). No checkout ever
+# happens, so no GIT_CLONE_ARGV_LOG is written either.
+export FAKE_CHECKOUT_TOKEN_FAIL=1
+run_scenario checkout-token-401
+unset FAKE_CHECKOUT_TOKEN_FAIL
+
+[ "$rc" -ne 0 ] || fail "checkout-token-401: expected a non-zero exit, got 0"
+[ ! -f "$GIT_CLONE_ARGV_LOG" ] || fail "checkout-token-401: git clone ran despite a failed checkout-token call"
+[ -f "$COMPLETE_LOG" ] || fail "checkout-token-401: direct-runner.sh never called POST .../complete despite a claimed, token-valid run"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "checkout-token-401: complete call did not report outcome: no-deliverable ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario checkout-token-401: OK"
 
 echo "direct-runner.sh: OK"
