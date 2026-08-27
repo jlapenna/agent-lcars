@@ -104,6 +104,7 @@ export async function handleWebhookDelivery(
       requestId: interpreted.requestId,
       pipeline: interpreted.pipeline,
       params: interpreted.params,
+      ...(interpreted.work === undefined ? {} : { work: interpreted.work }),
     });
 
     if (isRefusal(outcome)) {

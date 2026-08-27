@@ -3,11 +3,24 @@ description: >-
   Shared trusted worker lifecycle scaffolding common to claude.yml,
   codex.yml, and opencode.yml (agent-lcars#823): freeze the post-agent
   enforcement scripts, assert required repo variables are set, publish this
-  attempt's stable identity, mint the Agent LCARS App token, and claim the
-  anchor issue/PR for the agent fleet - in that exact order, byte-identical
-  across all three lanes before this extraction. One implementation now owns
-  this sequence instead of three hand-copied ones, so a change to the
-  claim/attempt-identity contract can never drift between lanes.
+  attempt's stable identity, and mint the Agent LCARS App token - in that
+  exact order, byte-identical across all three lanes before this
+  extraction. One implementation now owns this sequence instead of three
+  hand-copied ones, so a change to the attempt-identity contract can never
+  drift between lanes.
+
+  This action used to also claim the anchor issue/PR for the agent fleet
+  here ("Claim the issue as the agent fleet", via
+  `./.github/actions/claim-issue`), gated on
+  `inputs.issue != '' && inputs.control-plane-projections != 'true'`. That
+  step was deleted once every caller of this action (claude.yml, codex.yml,
+  opencode.yml - the only callers that ever pass `dispatch-bootstrap: true`)
+  also passed `control-plane-projections: true`, which made the gate always
+  false: the console now claims the anchor itself at dispatch-confirm time
+  (`claimGithubAnchor` in the drain) instead. `.github/actions/claim-issue`
+  itself was not deleted - it is still called from agent-lane.yml's own
+  consumer-era claim step, kept until external fleet consumers opt into
+  `control-plane-projections` too.
 
   Thin executor (agent-lcars#1015): this action does NOT re-verify
   admission or bind state against any ledger. `workflow_dispatch` on this
@@ -40,9 +53,6 @@ description: >-
   difference, not scaffolding, and stays in each lane's own workflow file.
 
 inputs:
-  issue:
-    description: Issue number to run against (the worker workflow's own `inputs.issue`).
-    required: true
   broker-generation:
     description: Monotonic broker generation (the worker workflow's own `inputs.broker_generation`).
     required: true
@@ -55,9 +65,8 @@ inputs:
     required: true
   agent-fleet-login:
     description: >-
-      Fleet-claim login (repo variable AGENT_FLEET_LOGIN) - used both for
-      the required-repo-vars assertion and as the issue claim's
-      claim-login.
+      Fleet-claim login (repo variable AGENT_FLEET_LOGIN), asserted by the
+      required-repo-vars check below.
     required: true
   agent-lcars-client-id:
     description: Agent LCARS GitHub App client ID (repo variable AGENT_LCARS_CLIENT_ID).
@@ -167,18 +176,3 @@ runs:
         permission-metadata: read
         permission-pull-requests: write
         permission-workflows: ${{ inputs.permission-workflows }}
-
-    # Only a broker-authorized run may mutate the anchor or start the paid
-    # agent. The fleet login is assignable; the provider App identities are
-    # not (see agent-protocol.md §10). Claim the anchor issue/PR for the
-    # agent fleet the moment the run starts, so ownership is visible at a
-    # glance (and filterable via `gh issue list --assignee <fleet-login>`).
-    # Additive and idempotent: this never removes a human assignee.
-    - name: Claim the issue as the agent fleet
-      id: claim
-      if: inputs.issue != ''
-      uses: ./.github/actions/claim-issue
-      with:
-        token: ${{ steps.agent-lcars-token.outputs.token }}
-        issue: ${{ inputs.issue }}
-        claim-login: ${{ inputs.agent-fleet-login }}

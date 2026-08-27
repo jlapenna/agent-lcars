@@ -17,12 +17,24 @@ inputs:
     default: ''
   work:
     description: >-
-      JSON dispatch payload for a native work item (no issue anchor):
-      `{"id":"<ulid>","spec":{"title","description","pipeline","target":{"repo"}}}`.
-      When set, the brief's `anchor` is built from this input directly, with
-      no GitHub read. Empty for an issue-anchored dispatch.
+      JSON dispatch payload: `{"spec":{"title","description","pipeline","target":{"repo"}}}`
+      for a GitHub-anchored task that carries one (sub-project 5), or
+      `{"id","spec":{...}}` for a native work item with no issue anchor. When
+      `issue` is also set, the brief's `anchor.title`/`anchor.body` come from
+      this input's `spec`, merged over the issue's own number/labels/
+      assignees/state/pull_request for linking and type inference. When
+      `issue` is empty, the brief's `anchor` is `type: "work"` built from
+      this input alone, with no GitHub read. Empty for a legacy issue-anchored
+      dispatch with no work payload yet.
     required: false
     default: ''
+  control-plane-projections:
+    description: >-
+      When 'true', the brief's `runtime.projections` is `true` -- the
+      protocol's native rules apply to this dispatch regardless of anchor
+      (sub-project 5). Default 'false'.
+    required: false
+    default: 'false'
   mode:
     description: Dispatch mode selected by the router.
     required: true
@@ -86,6 +98,7 @@ runs:
         AGENT: ${{ inputs.agent }}
         ISSUE: ${{ inputs.issue }}
         WORK: ${{ inputs.work }}
+        CONTROL_PLANE_PROJECTIONS: ${{ inputs.control-plane-projections }}
         MODE: ${{ inputs.mode }}
         REPLY: ${{ inputs.reply }}
         RUNBOOK: ${{ inputs.runbook }}

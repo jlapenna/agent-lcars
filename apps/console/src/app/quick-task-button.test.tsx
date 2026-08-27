@@ -11,10 +11,13 @@ import {
   vi,
 } from 'vitest';
 
-import { createQuickTask } from './actions';
+import { createQuickTask, readQuickTaskState } from './actions';
 import { QuickTaskButton } from './quick-task-button';
 
-vi.mock('./actions', () => ({ createQuickTask: vi.fn() }));
+vi.mock('./actions', () => ({
+  createQuickTask: vi.fn(),
+  readQuickTaskState: vi.fn(),
+}));
 vi.mock('@mantine/notifications', () => ({
   notifications: { show: vi.fn(), update: vi.fn() },
 }));
@@ -148,6 +151,36 @@ describe('QuickTaskButton', () => {
     expect(link.href).toBe(
       'https://github.com/supersprinklesracing/sprinkles/issues/99',
     );
+  });
+
+  it('shows the orchestrator-derived state once the created issue has one', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    (readQuickTaskState as Mock).mockResolvedValue({
+      schema: 'agent-lcars.authoritative-task-state/v2',
+      task: { repo: 'supersprinklesracing/sprinkles', issue: 99 },
+      storageRevision: 1,
+      updatedAt: '2026-08-27T00:00:00.000Z',
+      activeRunId: 'supersprinklesracing/sprinkles#99/r1',
+      runs: [
+        { runId: 'supersprinklesracing/sprinkles#99/r1', state: 'running' },
+      ],
+    });
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+
+    await waitFor(() =>
+      expect(notifications.update).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'green' }),
+      ),
+    );
+    expect(readQuickTaskState).toHaveBeenCalledWith(receipt().task);
+    const success = (notifications.update as Mock).mock.calls.find(
+      ([update]) => update.color === 'green',
+    )![0];
+    render(<MantineProvider>{success.message}</MantineProvider>);
+    expect(await screen.findByText(/running/i)).toBeInTheDocument();
   });
 
   it('generates a request ID on an insecure HTTP context', async () => {

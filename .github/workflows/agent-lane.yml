@@ -103,7 +103,7 @@ on:
         default: ''
         type: string
       work:
-        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        description: 'Native work item JSON: {id, spec} for a work-anchored dispatch, or {spec} merged onto issue context for a GitHub anchor (see prepare-agent-dispatch/action.yml)'
         required: false
         default: ''
         type: string
@@ -162,6 +162,16 @@ on:
         type: boolean
       dispatch-bootstrap:
         description: 'agent-lcars thin-executor admission era (see header)'
+        required: false
+        default: false
+        type: boolean
+      control-plane-projections:
+        description: >-
+          When true, the console owns the issue-side eyes reaction, fleet
+          assignee claim, and park label/comment for this dispatch (sub-project
+          5) -- this lane skips its own claim step and the agent follows the
+          protocol's native rules instead of writing the issue directly. Default
+          false: every consumer's lane call is unchanged until it opts in.
         required: false
         default: false
         type: boolean
@@ -464,10 +474,10 @@ jobs:
           Every dispatch must end with visible GitHub state; a summary in the
           model response alone is not a deliverable. For implement work, push
           the focused change and open or update the PR; for review work,
-          submit the required pull-request review; for a real blocker, park
-          using the protocol's exact comment, label, and maintainer-assignee
-          recipe; for an already-resolved request, post the evidence-backed
-          no-op. End your response with exactly one of: PR <url>, REVIEW
+          submit the required pull-request review; for a real blocker,
+          park per the protocol's parking rule for this dispatch; for an
+          already-resolved request, post the evidence-backed no-op. End your
+          response with exactly one of: PR <url>, REVIEW
           <evidence>, PARK <blocker and resume trigger>, or NO-OP <evidence>.
           PROMPT
           )"
@@ -585,7 +595,7 @@ jobs:
       # The pickup comment is opencode's recorded divergence: its lane has
       # always posted one; the other lanes never have.
       - name: Claim the issue as the agent fleet
-        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' }}
+        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' && !inputs.control-plane-projections }}
         id: claim
         uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
         with:
@@ -654,6 +664,7 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           work: ${{ inputs.work }}
+          control-plane-projections: ${{ inputs.control-plane-projections }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}
@@ -696,7 +707,6 @@ jobs:
         if: ${{ inputs.dispatch-bootstrap }}
         uses: ./.github/actions/dispatch-bootstrap
         with:
-          issue: ${{ inputs.issue }}
           broker-generation: ${{ inputs.broker-generation }}
           broker-intent-id: ${{ inputs.broker-intent-id }}
           agent-fleet-login: ${{ inputs.agent-fleet-login }}
@@ -1051,6 +1061,7 @@ jobs:
           agent: ${{ env.AGENT_NAME }}
           issue: ${{ inputs.issue }}
           work: ${{ inputs.work }}
+          control-plane-projections: ${{ inputs.control-plane-projections }}
           mode: ${{ inputs.mode }}
           reply: ${{ inputs.reply }}
           runbook: ${{ inputs.runbook }}

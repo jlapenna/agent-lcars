@@ -9,10 +9,12 @@ pay for the section about them (agent-lcars#1210).
 Section numbers match the main file exactly — cross-references to §8 and §10
 from any repo still resolve to these.
 
-§5a (native work items, no issue anchor) is _not_ split out here even though
-it only applies to some dispatches: `anchor.type` is known from the first
-read of the dispatch brief in §0, not discovered mid-run the way the
-situations below are, so it stays in the mandatory main file next to §5.
+The native-vs-legacy branch in §1–§4 (and the "Legacy (projections off)"
+subsection it points to for a non-projecting issue dispatch) is _not_ split
+out here even though only some dispatches take the legacy branch:
+`runtime.projections` and `anchor.type` are known from the first read of the
+dispatch brief in §0, not discovered mid-run the way the situations below
+are, so they stay in the mandatory main file next to §1–§5.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 

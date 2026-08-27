@@ -130,7 +130,16 @@ function orchestratorRun(
 
 function useAuthoritativeState(
   runs: ReturnType<typeof orchestratorRun>[],
-  overrides: { activeRunId?: string; storageRevision?: number } = {},
+  overrides: {
+    activeRunId?: string;
+    storageRevision?: number;
+    spec?: {
+      title: string;
+      description: string;
+      pipeline: 'claude' | 'codex' | 'opencode';
+      target: { repo: string };
+    };
+  } = {},
 ) {
   authoritativeResult = {
     states: new Map([
@@ -145,6 +154,7 @@ function useAuthoritativeState(
             ? {}
             : { activeRunId: overrides.activeRunId }),
           runs,
+          ...(overrides.spec === undefined ? {} : { spec: overrides.spec }),
         },
       ],
     ]),
@@ -434,6 +444,49 @@ describe('getTaskDetail', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.work.attempts[0].outcome).toBe('merged-deliverable');
+  });
+
+  it("threads the authoritative state's work.spec snapshot onto the result", async () => {
+    useAuthoritativeState([], {
+      spec: {
+        title: 'Snapshot title',
+        description: 'Snapshot body',
+        pipeline: 'claude',
+        target: { repo: 'supersprinklesracing/sprinkles' },
+      },
+    });
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+    cachedActivity = EMPTY_ACTIVITY;
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.spec).toEqual({
+      title: 'Snapshot title',
+      description: 'Snapshot body',
+      pipeline: 'claude',
+      target: { repo: 'supersprinklesracing/sprinkles' },
+    });
+  });
+
+  it('omits spec when there is no authoritative state for the task', async () => {
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+    cachedActivity = EMPTY_ACTIVITY;
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.spec).toBeUndefined();
   });
 
   it('resolves the watched repo for a supported owner/repo pair regardless of casing in the URL params', async () => {

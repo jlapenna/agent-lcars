@@ -326,7 +326,7 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console"]
+                          "enum": ["api", "cron", "console", "github"]
                         }
                       },
                       "required": ["principal", "channel"],
@@ -603,7 +603,7 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console"]
+                          "enum": ["api", "cron", "console", "github"]
                         }
                       },
                       "required": ["principal", "channel"],
@@ -886,7 +886,7 @@
                               },
                               "channel": {
                                 "type": "string",
-                                "enum": ["api", "cron", "console"]
+                                "enum": ["api", "cron", "console", "github"]
                               }
                             },
                             "required": ["principal", "channel"],
@@ -1129,7 +1129,7 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console"]
+                          "enum": ["api", "cron", "console", "github"]
                         }
                       },
                       "required": ["principal", "channel"],
@@ -1401,7 +1401,7 @@
                         },
                         "channel": {
                           "type": "string",
-                          "enum": ["api", "cron", "console"]
+                          "enum": ["api", "cron", "console", "github"]
                         }
                       },
                       "required": ["principal", "channel"],

@@ -15,7 +15,11 @@ import {
 import { notifications } from '@mantine/notifications';
 import { startTransition, useEffect, useRef, useState } from 'react';
 
-import type { QuickTaskRequest } from '../lib/quick-task-contract';
+import type { AuthoritativeTaskState } from '../lib/authoritative-task-state';
+import type {
+  QuickTaskReceipt,
+  QuickTaskRequest,
+} from '../lib/quick-task-contract';
 import {
   captureQuickTaskSource,
   composeQuickTaskIssueBody,
@@ -32,7 +36,7 @@ import {
   taskRefKey,
   type WatchedRepo,
 } from '../lib/watched-repo';
-import { createQuickTask } from './actions';
+import { createQuickTask, readQuickTaskState } from './actions';
 import {
   readQuickTaskPreferences,
   writeQuickTaskPreferences,
@@ -52,6 +56,50 @@ const emptySourceContext = (): QuickTaskSourceContext => ({
   identities: '',
   capturedAt: '',
 });
+
+/** Coarse lifecycle label shown once the created issue has orchestrator
+ * state. `@agent-lcars/work/derive`'s `deriveItemState` is the fleet's one
+ * running/parked/done vocabulary for a task+runs shape, but it keys off
+ * `task.closedAt`/`consecutiveLost` - fields a GitHub-anchored
+ * `AuthoritativeTaskState` never carries (see its own doc comment) - so
+ * reusing it here isn't possible without generalizing that module, which is
+ * out of scope. This is the smallest adapter over the two fields Quick
+ * Task's badge actually has: `activeRunId` and `runs`. `canceled` and
+ * `lost` both fold into `parked` - this badge has no dedicated "canceled"
+ * state, and both already mean "not currently being worked". */
+type QuickTaskItemState = 'running' | 'parked' | 'done' | 'unknown';
+
+function deriveQuickTaskItemState(
+  state: Pick<AuthoritativeTaskState, 'activeRunId' | 'runs'>,
+): QuickTaskItemState {
+  const activeRun = state.activeRunId
+    ? state.runs.find((run) => run.runId === state.activeRunId)
+    : undefined;
+  if (activeRun) return 'running';
+  const latest = [...state.runs].sort(
+    (a, b) =>
+      b.createdAt.localeCompare(a.createdAt) || b.runId.localeCompare(a.runId),
+  )[0];
+  if (!latest) return 'unknown';
+  if (latest.state === 'pending' || latest.state === 'running')
+    return 'running';
+  if (latest.state === 'finished') return latest.result?.ok ? 'done' : 'parked';
+  return 'parked'; // 'canceled' | 'lost'
+}
+
+/** Best-effort enrichment, never allowed to turn a successful issue
+ * creation into a reported failure: a read that fails (or simply hasn't
+ * caught up with the ingest webhook yet) just means no badge shows. */
+async function readQuickTaskItemState(
+  task: QuickTaskReceipt['task'],
+): Promise<QuickTaskItemState | undefined> {
+  try {
+    const state = await readQuickTaskState(task);
+    return state ? deriveQuickTaskItemState(state) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface QuickTaskSubmission {
   requestId: string;
@@ -269,17 +317,25 @@ export function QuickTaskButton({
         throw new Error(
           result.ok ? 'Quick Task submission failed' : result.message,
         );
+      const itemState = await readQuickTaskItemState(result.task);
       notifications.update({
         id: submissionNotificationId(request),
         message: (
-          <Anchor
-            href={result.url}
-            target="_blank"
-            rel="noreferrer"
-            c="inherit"
-          >
-            Quick task filed as {taskRefKey(result.task)}
-          </Anchor>
+          <Stack gap={2}>
+            <Anchor
+              href={result.url}
+              target="_blank"
+              rel="noreferrer"
+              c="inherit"
+            >
+              Quick task filed as {taskRefKey(result.task)}
+            </Anchor>
+            {itemState && (
+              <Text size="xs" c="dimmed">
+                {itemState}
+              </Text>
+            )}
+          </Stack>
         ),
         color: 'green',
         loading: false,

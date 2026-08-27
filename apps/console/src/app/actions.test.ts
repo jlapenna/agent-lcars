@@ -330,6 +330,7 @@ describe('agent-lcars Server Actions', () => {
         42,
         DISPATCH_ID,
         'try again',
+        undefined,
       );
     });
 

@@ -641,6 +641,33 @@ describe('native anchors', () => {
   });
 });
 
+describe('GitHub anchors', () => {
+  // `requestRun` (decide.ts) stores `work` for any anchor, not only native
+  // ones -- console-side derivation (sub-project 5) populates it for a
+  // GitHub-anchored task the same way it always has for a native one.
+  it('stores a work payload on first request, same as a native anchor', async () => {
+    const { orchestrator, store } = fixture();
+    const work = {
+      origin: { principal: 'github:jlapenna', channel: 'github' },
+      spec: {
+        title: 'Fix the thing',
+        description: 'Please fix it.',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+    };
+    const outcome = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work,
+    });
+    expect(isRefusal(outcome)).toBe(false);
+    const stored = await store.readTask(TASK);
+    expect(stored?.task.work).toEqual(work);
+  });
+});
+
 describe('close', () => {
   it('refuses while a run is live', async () => {
     const { orchestrator } = fixture();

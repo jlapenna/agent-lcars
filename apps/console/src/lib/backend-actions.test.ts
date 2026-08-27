@@ -928,10 +928,16 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   function mockOctokit() {
     const removeLabel = vi.fn().mockResolvedValue({});
     const createComment = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { removeLabel, createComment } },
+    // Read by the `work` derivation below when the task has no `work` yet
+    // (every test in this block, unless it seeds one) - a default so the
+    // existing tests, which don't care about `work`, don't have to stub it.
+    const get = vi.fn().mockResolvedValue({
+      data: { title: 'Issue title', body: 'Issue body' },
     });
-    return { removeLabel, createComment };
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { removeLabel, createComment, get } },
+    });
+    return { removeLabel, createComment, get };
   }
 
   it('falls back to claude and dispatches it when the task has no prior orchestrator run', async () => {
@@ -1046,6 +1052,83 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     ).rejects.toThrow('A valid dispatch caller ID is required');
     expect(requestSpy).not.toHaveBeenCalled();
   });
+
+  it('derives and forwards work from the live issue when the task has none yet', async () => {
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const { get } = mockOctokit();
+    get.mockResolvedValue({
+      data: { title: 'Live title', body: 'Live body' },
+    });
+    const requestSpy = vi.spyOn(orchestrator, 'request');
+
+    await retriggerIssue(
+      DEFAULT_REPO,
+      2709,
+      DISPATCH_ID,
+      undefined,
+      'jlapenna',
+    );
+
+    expect(get).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: DEFAULT_REPO.owner,
+        repo: DEFAULT_REPO.name,
+        issue_number: 2709,
+      }),
+    );
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Live title',
+            description: 'Live body',
+            pipeline: 'claude',
+            target: { repo: 'supersprinklesracing/sprinkles' },
+          },
+        },
+      }),
+    );
+  });
+
+  it('does not re-read the issue or forward work when the task already carries one', async () => {
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    mockOctokit();
+    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:someone-else', channel: 'github' },
+        spec: {
+          title: 'Seed title',
+          description: 'Seed body',
+          pipeline: 'claude',
+          target: { repo: 'supersprinklesracing/sprinkles' },
+        },
+      },
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    // Settle the seeded run so the task's lock is free for retriggerIssue's
+    // own request below - only the pre-existing `work` should matter here.
+    await orchestrator.report(seeded.run.runId, { ok: true });
+    const { get } = mockOctokit();
+    const requestSpy = vi.spyOn(orchestrator, 'request');
+
+    await retriggerIssue(
+      DEFAULT_REPO,
+      2709,
+      DISPATCH_ID,
+      undefined,
+      'jlapenna',
+    );
+
+    expect(get).not.toHaveBeenCalled();
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.not.objectContaining({ work: expect.anything() }),
+    );
+  });
 });
 
 describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
@@ -1054,7 +1137,13 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
   // function's doc comment), then hands the task's orchestrator lock to the
   // new pipeline.
   function mockOctokit(labels: string[] = []) {
-    const get = vi.fn().mockResolvedValue({ data: { labels } });
+    // `title`/`body` feed the `work` derivation below (reusing this same
+    // read) when the task has no `work` yet - every test in this block,
+    // unless it seeds one - so they get defaults here too, same reasoning
+    // as retriggerIssue's own `mockOctokit`'s `get` default.
+    const get = vi.fn().mockResolvedValue({
+      data: { title: 'Issue title', body: 'Issue body', labels },
+    });
     const setLabels = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
       rest: { issues: { get, setLabels } },
@@ -1190,6 +1279,74 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     ).rejects.toThrow(/does not declare a claude agent integration/);
     expect(setLabels).not.toHaveBeenCalled();
     expect(requestSpy).not.toHaveBeenCalled();
+  });
+
+  it('derives and forwards work from the already-fetched issue when the task has none yet', async () => {
+    const { get } = mockOctokit(['agent:codex']);
+    get.mockResolvedValue({
+      data: { title: 'Live title', body: 'Live body', labels: ['agent:codex'] },
+    });
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const requestSpy = vi.spyOn(orchestrator, 'request');
+
+    await reassignPipeline(
+      DEFAULT_REPO,
+      2709,
+      'claude',
+      DISPATCH_ID,
+      'jlapenna',
+    );
+
+    // Not a second read: the label swap's own issues.get is the only one.
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Live title',
+            description: 'Live body',
+            pipeline: 'claude',
+            target: { repo: 'supersprinklesracing/sprinkles' },
+          },
+        },
+      }),
+    );
+  });
+
+  it('does not forward work when the task already carries one', async () => {
+    mockOctokit(['agent:codex']);
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed',
+      pipeline: 'codex',
+      work: {
+        origin: { principal: 'github:someone-else', channel: 'github' },
+        spec: {
+          title: 'Seed title',
+          description: 'Seed body',
+          pipeline: 'codex',
+          target: { repo: 'supersprinklesracing/sprinkles' },
+        },
+      },
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+    const requestSpy = vi.spyOn(orchestrator, 'request');
+
+    await reassignPipeline(
+      DEFAULT_REPO,
+      2709,
+      'claude',
+      DISPATCH_ID,
+      'jlapenna',
+    );
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.not.objectContaining({ work: expect.anything() }),
+    );
   });
 });
 

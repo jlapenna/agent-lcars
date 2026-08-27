@@ -5,6 +5,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
+import { controlPlaneRepository } from './deployment';
 import { createWorkHandler, type WorkContext } from './work-router';
 
 const ID = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
@@ -194,10 +195,18 @@ describe('items routes', () => {
   });
 
   it('refuses a repository outside the control plane with 403', async () => {
-    const r = await call(context(), 'PUT', `/items/${ID}`, {
+    const ctx = context();
+    const r = await call(ctx, 'PUT', `/items/${ID}`, {
       spec: { ...spec, target: { repo: 'octo/example' } },
     });
     expect(r.status).toBe(403);
+    // Exact wording: `forbiddenReason` (work-mint.ts) refuses at creation
+    // rather than let the dispatch itself 422 later (#1544 round 2).
+    expect(r.json).toMatchObject({
+      message: `native work items can only target ${controlPlaneRepository()} until every consumer declares the work input (#1544)`,
+    });
+    // No task minted for the refused create -- same context/store.
+    expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(404);
   });
 
   it('enforces the global live-run cap with 429', async () => {
@@ -270,10 +279,10 @@ describe('items routes', () => {
     const ctx = context();
     // Seeded straight through the orchestrator, because `create` would
     // refuse this repo today -- and that is precisely the situation under
-    // test: the item was created while its repo WAS a control-plane
-    // repository, and AGENT_LCARS_CONTROL_PLANE_REPOSITORIES has since
-    // changed. Redispatch must re-check against the list as it stands now,
-    // not inherit the permission the item was created with.
+    // test: an item somehow exists (e.g. minted before this check existed,
+    // or hand-written) targeting a repo that is not (or is no longer) the
+    // control plane. Redispatch must re-check `forbiddenReason` as it
+    // stands now, not inherit the permission the item was created with.
     await ctx.runtime.orchestrator.request({
       taskId: { workId: ID },
       requestId: ID,
@@ -288,6 +297,9 @@ describe('items routes', () => {
 
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(403);
+    expect(r.json).toMatchObject({
+      message: `native work items can only target ${controlPlaneRepository()} until every consumer declares the work input (#1544)`,
+    });
     // Still parked: the refusal must not have minted a run.
     expect((await call(ctx, 'GET', `/items/${ID}`)).json.runs).toHaveLength(1);
   });

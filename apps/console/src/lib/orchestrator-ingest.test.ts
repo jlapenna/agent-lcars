@@ -1,3 +1,4 @@
+import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { type IngestResult, interpretDelivery } from './orchestrator-ingest';
@@ -41,6 +42,19 @@ function issueCommentPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// The overlong-body case's raw fixture body, and the description
+// `truncatedDescription` (work-from-github.ts) derives from it: sliced to
+// leave room for the marker, so the total lands exactly at
+// WORK_DESCRIPTION_MAX -- see that function's own coverage in
+// work-from-github.test.ts for the truncation math itself.
+const OVERLONG_BODY = 'x'.repeat(20_000);
+const OVERLONG_MARKER =
+  `\n\n[work: truncated to ${WORK_DESCRIPTION_MAX} of ${OVERLONG_BODY.length} ` +
+  `characters. Read the full body on the issue.]`;
+const OVERLONG_DESCRIPTION =
+  OVERLONG_BODY.slice(0, WORK_DESCRIPTION_MAX - OVERLONG_MARKER.length) +
+  OVERLONG_MARKER;
+
 describe('interpretDelivery', () => {
   const cases: Array<{
     name: string;
@@ -82,6 +96,118 @@ describe('interpretDelivery', () => {
         requestId: DELIVERY_ID,
         pipeline: 'opencode',
         params: { mode: 'implement' },
+      },
+    },
+    {
+      name: 'issues labeled with a title/body/sender derives work',
+      event: 'issues',
+      payload: issuesLabeledPayload({
+        issue: { number: 42, title: 'Fix the thing', body: 'Please fix it.' },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 42 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Fix the thing',
+            description: 'Please fix it.',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
+      },
+    },
+    {
+      name: 'issues labeled with a title but no sender falls back to the label',
+      event: 'issues',
+      payload: issuesLabeledPayload({
+        issue: { number: 42, title: 'Fix the thing', body: null },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 42 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:label:agent:claude', channel: 'github' },
+          spec: {
+            title: 'Fix the thing',
+            description: '(no description)',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
+      },
+    },
+    {
+      name: 'issues labeled with an overlong body truncates the work description',
+      event: 'issues',
+      payload: issuesLabeledPayload({
+        issue: {
+          number: 42,
+          title: 'Fix the thing',
+          body: OVERLONG_BODY,
+        },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 42 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Fix the thing',
+            description: OVERLONG_DESCRIPTION,
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
+      },
+    },
+    {
+      // Proves Task 2's derivation covers Quick Tasks for free: the issue
+      // Quick Tasks create already carries both QUICK_TASK_LABEL and the
+      // pipeline label at creation time (see backend-actions.ts's
+      // createQuickTaskOnce), but this webhook's `label` field is always
+      // just the one label that triggered this delivery -- identical in
+      // shape to any other labeled issue, so no Quick-Task-specific
+      // handling is needed here.
+      name: 'a Quick Task issue (intake:quick-task + agent:claude labels) derives work like any other labeled issue',
+      event: 'issues',
+      payload: issuesLabeledPayload({
+        issue: {
+          number: 55,
+          title: 'Quick task: fix the thing',
+          body: 'Please fix it.\n\n<!-- agent-lcars:quick-task-request:v1 ... -->',
+        },
+        label: { name: 'agent:claude' },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 55 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Quick task: fix the thing',
+            description:
+              'Please fix it.\n\n<!-- agent-lcars:quick-task-request:v1 ... -->',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
       },
     },
     {
@@ -135,6 +261,56 @@ describe('interpretDelivery', () => {
       },
     },
     {
+      name: 'pull_request labeled agent:claude with a title/body/sender derives work',
+      event: 'pull_request',
+      payload: pullRequestLabeledPayload({
+        pull_request: { number: 7, title: 'Add the feature', body: 'Adds it.' },
+        label: { name: 'agent:claude' },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 7 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Add the feature',
+            description: 'Adds it.',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
+      },
+    },
+    {
+      name: 'pull_request labeled review:codex with a title/body/sender derives work',
+      event: 'pull_request',
+      payload: pullRequestLabeledPayload({
+        pull_request: { number: 7, title: 'Add the feature', body: 'Adds it.' },
+        label: { name: 'review:codex' },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 7 },
+        requestId: DELIVERY_ID,
+        pipeline: 'codex',
+        params: { mode: 'review' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Add the feature',
+            description: 'Adds it.',
+            pipeline: 'codex',
+            target: { repo: REPO },
+          },
+        },
+      },
+    },
+    {
       name: '@claude comment from OWNER -> reply/claude',
       event: 'issue_comment',
       payload: issueCommentPayload(),
@@ -144,6 +320,30 @@ describe('interpretDelivery', () => {
         requestId: DELIVERY_ID,
         pipeline: 'claude',
         params: { mode: 'reply', reply: '@claude please take a look' },
+      },
+    },
+    {
+      name: 'issue_comment reply derives work from the issue being replied to, not the comment',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        issue: { number: 9, title: 'Question about X', body: 'Some context.' },
+        sender: { login: 'jlapenna' },
+      }),
+      expected: {
+        kind: 'request',
+        taskId: { repo: REPO, issue: 9 },
+        requestId: DELIVERY_ID,
+        pipeline: 'claude',
+        params: { mode: 'reply', reply: '@claude please take a look' },
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'Question about X',
+            description: 'Some context.',
+            pipeline: 'claude',
+            target: { repo: REPO },
+          },
+        },
       },
     },
     {

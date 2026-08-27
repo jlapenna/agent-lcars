@@ -123,7 +123,9 @@ describe('drainOutbox: dispatch-run', () => {
       fetchImpl,
     });
 
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // projection (see the dedicated tests below).
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.url).toBe(
       'https://api.github.com/repos/octo/example/actions/workflows/claude.yml/dispatches',
     );
@@ -169,7 +171,7 @@ describe('drainOutbox: dispatch-run', () => {
       fetchImpl,
     });
     expect(second.dispatched).toEqual([]);
-    expect(calls).toHaveLength(1); // no additional fetch call
+    expect(calls).toHaveLength(3); // no additional fetch call
   });
 
   it('dispatches against an injected GitHub API root', async () => {
@@ -230,7 +232,10 @@ describe('drainOutbox: dispatch-run', () => {
     releaseFetch();
     const firstResult = await firstDrain;
     expect(firstResult.dispatched).toEqual([run.runId]);
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // projection, all unblocked once `releaseFetch()` resolves the shared
+    // `fetchReleased` promise.
+    expect(calls).toHaveLength(3);
   });
 
   it('does not pre-lease later entries while an earlier delivery is slow', async () => {
@@ -241,7 +246,14 @@ describe('drainOutbox: dispatch-run', () => {
     const claimSpy = vi.spyOn(store, 'claimPendingOutbox');
     const fetchImpl = (async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/actions/workflows/')) {
+      // The workflow_dispatch call and its confirmed-dispatch eyes-reaction/
+      // assignee projection all resolve instantly, matching the dispatch
+      // path above -- only the outcome-comment delivery below is slow.
+      if (
+        url.includes('/actions/workflows/') ||
+        url.endsWith('/reactions') ||
+        url.endsWith('/assignees')
+      ) {
         return new Response(null, { status: 204 });
       }
       // Simulate a slow-but-successful earlier delivery. The next entry's
@@ -490,6 +502,360 @@ describe('drainOutbox: dispatch-run', () => {
     expect(neverCalled).not.toHaveBeenCalled();
   });
 
+  it('a control-plane GitHub-anchored run with a work payload emits both issue and work inputs', async () => {
+    // Only this repo's own worker/shim workflows declare a `work`
+    // workflow_dispatch input today (#1544 tracks adding it to the six
+    // consumer repos) -- so the gate in orchestrator-dispatch.ts only
+    // allows `work` through when the anchor's own repo (not the spec's
+    // `target.repo`, which is independent -- see anchor-target.ts) is the
+    // control plane. `controlPlaneRepository()` falls back to
+    // `jlapenna/agent-lcars` with no env var set (see deployment.test.ts).
+    const { store, orchestrator } = fixture();
+    const controlPlaneTask: TaskId = { repo: 'jlapenna/agent-lcars', issue: 7 };
+    const requested = await orchestrator.request({
+      taskId: controlPlaneTask,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'T',
+          description: 'D',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) {
+      throw new Error(`unexpected refusal: ${requested.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // projection (see the dedicated tests below).
+    expect(calls).toHaveLength(3);
+    const inputs = callBody(calls[0]!).inputs as Record<string, string>;
+    // A GitHub anchor is already named by `issue` -- `work` carries only
+    // `spec`, no `id` (unlike the native-anchor `work` input above).
+    expect(Object.keys(inputs).sort()).toEqual(
+      [
+        'broker_dispatch_token',
+        'broker_generation',
+        'broker_intent_id',
+        'context',
+        'issue',
+        'mode',
+        'reply',
+        'runbook',
+        'work',
+      ].sort(),
+    );
+    expect(inputs.issue).toBe('7');
+    expect(JSON.parse(inputs.work)).toEqual({
+      spec: {
+        title: 'T',
+        description: 'D',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+    });
+    expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+  });
+
+  it('a NON-control-plane GitHub-anchored run with a work payload omits the work input (#1544)', async () => {
+    // The webhook admits every repo in AGENT_LCARS_CONTROL_PLANE_REPOSITORIES,
+    // but only this repo's own worker/shim workflows declare `work` as a
+    // workflow_dispatch input today -- sending it to a consumer repo 422s
+    // and, because `drainOutbox` treats a non-204 response as retryable and
+    // stops draining on the first failure, that one poisoned entry would
+    // block every later outbox entry forever. `TASK` (octo/example) is not
+    // the control-plane repo, so `work` must be dropped, leaving exactly
+    // the pre-existing input set.
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'T',
+          description: 'D',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) {
+      throw new Error(`unexpected refusal: ${requested.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls).toHaveLength(3);
+    const inputs = callBody(calls[0]!).inputs as Record<string, string>;
+    expect(Object.keys(inputs).sort()).toEqual(
+      [
+        'broker_dispatch_token',
+        'broker_generation',
+        'broker_intent_id',
+        'context',
+        'issue',
+        'mode',
+        'reply',
+        'runbook',
+      ].sort(),
+    );
+    expect(inputs.issue).toBe('7');
+    expect(inputs.work).toBeUndefined();
+    expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+  });
+
+  it('posts an eyes reaction and claims the fleet assignee after confirming a GitHub-anchored dispatch', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const reactionCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/reactions'),
+    );
+    expect(reactionCall).toBeDefined();
+    expect(JSON.parse(reactionCall!.init.body as string)).toEqual({
+      content: 'eyes',
+    });
+
+    const assigneeCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/assignees'),
+    );
+    expect(assigneeCall).toBeDefined();
+    expect(JSON.parse(assigneeCall!.init.body as string)).toEqual({
+      assignees: ['agent-lcars-bot'],
+    });
+  });
+
+  it('a native anchor posts no eyes reaction or claim', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { workId: '01PROJECTIONTESTFIXTUREX01' },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 't',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    expect(calls.some((c) => c.url.includes('/reactions'))).toBe(false);
+    expect(calls.some((c) => c.url.includes('/assignees'))).toBe(false);
+  });
+
+  it('a failed claim/reaction call does not fail the dispatch', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    // First call (workflow_dispatch) succeeds; reaction/assignee calls fail.
+    let call = 0;
+    const fetchImpl = (async () => {
+      call += 1;
+      return new Response(null, { status: call === 1 ? 204 : 500 });
+    }) as typeof fetch;
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(result.dispatched).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
+  });
+
+  it('logs the status and body when a claim-projection POST returns a non-2xx response (item 4)', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      // workflow_dispatch succeeds (204); both claim-projection POSTs come
+      // back as a real HTTP failure (not a network-level rejection -- see
+      // the dedicated network-failure test above/below) so `response.ok`
+      // is false and the new logging path (not the `catch` block) fires.
+      let call = 0;
+      const fetchImpl = (async () => {
+        call += 1;
+        if (call === 1) return new Response(null, { status: 204 });
+        return new Response('server exploded', { status: 500 });
+      }) as typeof fetch;
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      // Best-effort: a projection failure must never fail the dispatch
+      // itself, exactly as the pre-existing 500 test above already
+      // covers -- this test's own job is proving the *logging*.
+      expect(result.dispatched).toHaveLength(1);
+      expect(result.failed).toHaveLength(0);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        'agent-lcars: claim projection (reaction) failed for %s#%s: %s %s',
+        'jlapenna/agent-lcars',
+        42,
+        500,
+        'server exploded',
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        'agent-lcars: claim projection (assignee) failed for %s#%s: %s %s',
+        'jlapenna/agent-lcars',
+        42,
+        500,
+        'server exploded',
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('projects the assignee independently of a reactions-call network failure', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    // workflow_dispatch succeeds; the reactions call rejects at the network
+    // level (not merely a bad status) -- the assignees call must still fire.
+    const calls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init: init ?? {} });
+      if (url.endsWith('/reactions')) {
+        throw new TypeError('network error');
+      }
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls.some((c) => c.url.endsWith('/issues/42/reactions'))).toBe(
+      true,
+    );
+    const assigneeCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/assignees'),
+    );
+    expect(assigneeCall).toBeDefined();
+    expect(JSON.parse(assigneeCall!.init.body as string)).toEqual({
+      assignees: ['agent-lcars-bot'],
+    });
+    // The dispatch itself, and the outbox entry, are unaffected.
+    expect(result.dispatched).toHaveLength(1);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('re-projects the claim (once) for a reclaimed dispatch-run entry whose run is already running, then settles done', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+
+    // Simulate a crash between `confirmDispatch` succeeding and this
+    // entry's own settlement: claim the entry (as a first drain would),
+    // advance the run to `running` exactly like the primary dispatch path
+    // does, but never settle the entry itself.
+    const [claimed] = await store.claimPendingOutbox({
+      limit: 1,
+      now: clock.now(),
+      leaseExpiresAt: new Date(
+        Date.parse(clock.now()) + OUTBOX_LEASE_MS,
+      ).toISOString(),
+    });
+    expect(claimed?.entryId).toBe(`dispatch/${run.runId}`);
+    await orchestrator.confirmDispatch(run.runId);
+    expect((await store.readRun(run.runId))?.state).toBe('running');
+
+    // Advance past the original lease so a later drain can reclaim the
+    // still-`leased`-but-expired entry, as a real recovering drain would.
+    clock.advanceMinutes(OUTBOX_LEASE_MS / 60_000 + 1);
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    // No workflow_dispatch fired again -- only the idempotent projection.
+    expect(calls).toHaveLength(2);
+    expect(calls.some((c) => c.url.endsWith(`/issues/7/reactions`))).toBe(true);
+    expect(calls.some((c) => c.url.endsWith(`/issues/7/assignees`))).toBe(true);
+    expect(result.dispatched).toEqual([]);
+    expect(result.failed).toEqual([]);
+
+    // The entry itself settled `done`: nothing left for a later drain.
+    const again = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: vi.fn<typeof fetch>(),
+    });
+    expect(again).toEqual({ dispatched: [], reported: [], failed: [] });
+  });
+
   it('a queue-executor run is enqueued and confirmed without calling GitHub', async () => {
     const { store, orchestrator } = fixture();
     const requested = await orchestrator.request({
@@ -631,7 +997,9 @@ describe('drainOutbox: report-outcome', () => {
       githubApiBaseUrl: 'https://fixture.invalid/github',
     });
 
-    expect(calls).toHaveLength(2); // the retry's dispatch + the lost comment
+    // the retry's dispatch + its eyes-reaction/assignee projection, and the
+    // lost comment.
+    expect(calls).toHaveLength(4);
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
     expect(commentCall?.url).toBe(
       'https://fixture.invalid/github/repos/octo/example/issues/7/comments',
@@ -771,5 +1139,83 @@ describe('drainOutbox: report-outcome', () => {
     );
     expect(calls.some((c) => c.url.endsWith('/labels'))).toBe(false);
     expect(result.reported).toEqual([run.runId]);
+  });
+
+  it('a finished-not-ok outcome also gets the status:needs-human label', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const runId = decidedRun(requested).runId;
+    await orchestrator.confirmDispatch(runId);
+    await orchestrator.report(runId, { ok: false, summary: 'blocked' });
+
+    // routedFetch, not fakeFetch (which only ever takes one status): this
+    // one drainOutbox call settles two outbox entries -- the original
+    // dispatch-run entry, now stale since confirmDispatch was called
+    // directly above rather than through a drain (handleDispatchRun's own
+    // `run.state !== 'pending'` guard settles it `done` without ever
+    // calling fetch), and the report-outcome entry `report()` created,
+    // which needs both a comment (201) and a label (200) call to succeed.
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const labelCall = calls.find((c) => c.url.endsWith('/issues/42/labels'));
+    expect(labelCall).toBeDefined();
+    expect(JSON.parse(labelCall!.init.body as string)).toEqual({
+      labels: ['status:needs-human'],
+    });
+
+    const commentCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/comments'),
+    );
+    const commentBody = callBody(commentCall!).body as string;
+    expect(commentBody).toBe(
+      `❌ Run ${runId} failed.\n` +
+        `blocked\n` +
+        `No auto-retry will follow -- re-request manually (re-add the ` +
+        `agent label) when ready.`,
+    );
+  });
+
+  it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+    });
+
+    const reportOutcome = await orchestrator.report(run.runId, {
+      ok: false,
+      summary: 'blocked',
+    });
+    if (isRefusal(reportOutcome)) {
+      throw new Error(`unexpected refusal: ${reportOutcome.reason}`);
+    }
+
+    const { fetchImpl, calls } = routedFetch({ labelStatus: 500 });
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls.some((c) => c.url.endsWith('/labels'))).toBe(true);
+    expect(result.failed).toEqual([]);
+    expect(result.reported).toEqual([run.runId]);
+
+    // Settled `done` despite the label failure: a later drain does not
+    // re-post the (already-delivered) comment.
+    const again = await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+    expect(again.reported).toEqual([]);
+    expect(calls.filter((c) => c.url.endsWith('/comments'))).toHaveLength(1);
   });
 });

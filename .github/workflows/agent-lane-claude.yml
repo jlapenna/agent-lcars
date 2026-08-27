@@ -26,7 +26,7 @@ on:
         required: true
         type: string
       work:
-        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        description: 'Native work item JSON: {id, spec} for a work-anchored dispatch, or {spec} merged onto issue context for a GitHub anchor (see prepare-agent-dispatch/action.yml)'
         required: false
         default: ''
         type: string
@@ -85,6 +85,11 @@ on:
         type: boolean
       dispatch-bootstrap:
         description: 'agent-lcars thin-executor admission era (see agent-lane.yml)'
+        required: false
+        default: false
+        type: boolean
+      control-plane-projections:
+        description: 'Console owns issue-side claim/eyes/park for this dispatch (see agent-lane.yml)'
         required: false
         default: false
         type: boolean
@@ -229,6 +234,7 @@ jobs:
       max-turns: ${{ inputs.max-turns }}
       long-run-budget: ${{ inputs.long-run-budget }}
       dispatch-bootstrap: ${{ inputs.dispatch-bootstrap }}
+      control-plane-projections: ${{ inputs.control-plane-projections }}
       protected-snapshot: ${{ inputs.protected-snapshot }}
       install-workspace-deps: ${{ inputs.install-workspace-deps }}
       gcp-auth: ${{ inputs.gcp-auth }}

@@ -6,6 +6,10 @@ import { createAdminAction } from '@/lib/auth-guards';
 
 import { auth } from '../auth';
 import {
+  type AuthoritativeTaskState,
+  readAuthoritativeTaskState,
+} from '../lib/authoritative-task-state';
+import {
   ActionError,
   approveAndMergePr,
   approveAndRebasePr,
@@ -28,6 +32,7 @@ import type {
   QuickTaskReceipt,
   QuickTaskRequest,
 } from '../lib/quick-task-contract';
+import { repoKey } from '../lib/watched-repo';
 
 // LAN preview goes through the shared test-session adapter inside auth()
 // (IMPERSONATE_AUTOMATIC_LOGIN), so no bypass is needed here.
@@ -153,13 +158,14 @@ export async function retriggerIssue(
   callerId: string,
   note?: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
     const { pipelineFallback } = await retriggerIssueLib(
       resolveWatchedRepo(repo),
       number,
       callerId,
       note,
+      session.user.login,
     );
     revalidateDashboard();
     return {
@@ -226,6 +232,26 @@ export async function createQuickTask(
   }
 }
 
+/**
+ * Post-creation read for the Quick Task button's success notification: the
+ * orchestrator-authoritative lifecycle state for the issue Quick Task just
+ * filed, so the badge can show what actually happened next rather than
+ * treating issue creation alone as the whole outcome. A missing read (the
+ * repo is outside the orchestrator's control-plane coverage, or the ingest
+ * webhook simply hasn't landed yet) is not an error - `undefined` here
+ * just means the caller shows no state badge yet.
+ */
+export async function readQuickTaskState(
+  task: QuickTaskReceipt['task'],
+): Promise<AuthoritativeTaskState | undefined> {
+  await requireAdmin();
+  const repository = resolveWatchedRepo(task.repository);
+  return readAuthoritativeTaskState({
+    repository: repoKey(repository),
+    issue: task.issueNumber,
+  });
+}
+
 export async function closeIssue(
   repo: WatchedRepo,
   number: number,
@@ -275,13 +301,14 @@ export async function reassignPipeline(
   pipeline: Pipeline,
   callerId: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
     await reassignPipelineLib(
       resolveWatchedRepo(repo),
       number,
       pipeline,
       callerId,
+      session.user.login,
     );
     revalidateDashboard();
     return { ok: true };

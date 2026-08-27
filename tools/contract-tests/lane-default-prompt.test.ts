@@ -171,6 +171,14 @@ describe('agent-lane.yml canonical prompt rendering', () => {
     expect(AGENT_PROMPT).not.toMatch(/,\s{2,}and follow them/u);
   });
 
+  it('describes parking as flag-agnostic (#1528) rather than naming the issue-mode label/comment recipe', () => {
+    const { AGENT_PROMPT } = renderLaneDefaults({ pipeline: 'claude' });
+    expect(AGENT_PROMPT).toContain(
+      "park per the protocol's parking rule for this dispatch",
+    );
+    expect(AGENT_PROMPT).not.toContain('maintainer-assignee recipe');
+  });
+
   it.each(DISPATCH_PIPELINES)(
     '%s: the silent-stall wording uses that pipeline own label and redispatch command',
     (pipeline) => {

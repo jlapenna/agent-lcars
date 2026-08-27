@@ -189,9 +189,13 @@ export const taskSchema = z.strictObject({
    *  `FirestoreStore`'s zod validation). Drives the bounded auto-retry
    *  budget in `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
   consecutiveLost: z.number().int().nonnegative().optional(),
-  /** Native anchors only: the work item's payload, written once when the
-   *  task is created by its first request and never modified by the
-   *  orchestrator. Absent on GitHub-anchored tasks. */
+  /** The work item's payload, written once when the task is created by
+   *  its first request and never modified by the orchestrator afterward.
+   *  A native anchor always carries one; a GitHub anchor carries one once
+   *  console-side derivation has populated it (sub-project 5's `work` for
+   *  every anchor) and is absent otherwise -- a legacy task, or one
+   *  requested through a path that does not derive it
+   *  (`handleDispatchRequest`; see the design spec). */
   work: workPayloadSchema.optional(),
   /** Native anchors only: set by `closeTask` when an operator closes an
    *  item that has no live run. A closed task refuses further requests. */

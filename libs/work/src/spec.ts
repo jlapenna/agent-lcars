@@ -29,9 +29,11 @@ export const workSpecSchema = z.strictObject({
 export type WorkSpec = z.infer<typeof workSpecSchema>;
 
 export const workOriginSchema = z.strictObject({
-  /** LCARS-native principal, e.g. `user:jlapenna`, `svc:lcars-admin`. */
+  /** LCARS-native principal, e.g. `user:jlapenna`, `svc:lcars-admin`,
+   *  `github:<login>` for a task derived from a GitHub webhook or console
+   *  retrigger (sub-project 5). */
   principal: z.string().min(1).max(128),
-  channel: z.enum(['api', 'cron', 'console']),
+  channel: z.enum(['api', 'cron', 'console', 'github']),
 });
 export type WorkOrigin = z.infer<typeof workOriginSchema>;
 

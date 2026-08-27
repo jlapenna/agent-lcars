@@ -47,7 +47,7 @@ on:
         required: false
         default: ''
       work:
-        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        description: 'Native work item JSON: {id, spec} for a work-anchored dispatch, or {spec} merged onto issue context for a GitHub anchor (see prepare-agent-dispatch/action.yml)'
         required: false
         default: ''
       broker_intent_id:
@@ -115,6 +115,12 @@ jobs:
       # preserves the dispatch brief for trajectory evaluation, and
       # exports sanitized OpenCode sessions for trajectory diagnosis.
       dispatch-bootstrap: true
+      # This repo's own dispatches run under the console's issue-side
+      # projections (sub-project 5): the console owns the eyes reaction,
+      # fleet claim, and park label/comment, so the lane skips its own
+      # claim step. Every other consumer omits this and keeps today's
+      # behavior.
+      control-plane-projections: true
       protected-snapshot: true
       trajectory-export: true
       # default-nothink, not default (#1227): same deepseek-v4-flash

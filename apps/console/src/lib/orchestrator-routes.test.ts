@@ -6,7 +6,7 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CompletionOidcIdentity } from './github-actions-oidc';
 import type { DispatchTokenProvider } from './github-app-tokens';
@@ -232,9 +232,17 @@ describe('handleWebhookDelivery', () => {
     expect(runId).toBe(`${REPO}#42/r1`);
     expect(result.body['dispatched']).toBe(true);
 
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // claim projection (`claimGithubAnchor` in orchestrator-dispatch.ts).
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.url).toBe(
       `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
+    );
+    expect(calls.some((c) => c.url.endsWith(`/issues/42/reactions`))).toBe(
+      true,
+    );
+    expect(calls.some((c) => c.url.endsWith(`/issues/42/assignees`))).toBe(
+      true,
     );
 
     const run = await store.readRun(runId);
@@ -281,6 +289,35 @@ describe('handleWebhookDelivery', () => {
     expect(second).toEqual({ status: 200, body: { refused: 'task-busy' } });
     expect(calls).toHaveLength(0);
     expect(await store.listRuns(ISSUE)).toHaveLength(1);
+  });
+
+  it('forwards a derived work payload from interpretDelivery to orchestrator.request', async () => {
+    const { deps } = fixture();
+    const requestSpy = vi.spyOn(deps.orchestrator, 'request');
+    await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'd1',
+      payload: {
+        action: 'labeled',
+        repository: { full_name: 'jlapenna/agent-lcars' },
+        issue: { number: 1, title: 'T', body: 'B' },
+        label: { name: 'agent:claude' },
+        sender: { login: 'jlapenna' },
+      },
+    });
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        work: {
+          origin: { principal: 'github:jlapenna', channel: 'github' },
+          spec: {
+            title: 'T',
+            description: 'B',
+            pipeline: 'claude',
+            target: { repo: 'jlapenna/agent-lcars' },
+          },
+        },
+      }),
+    );
   });
 });
 
@@ -587,16 +624,19 @@ describe('handleReconcile', () => {
     expect(newRun?.requestId).toBe(`retry:${runId}`);
     expect(newRun?.pipeline).toBe('claude');
 
-    // Three calls: the terminal probe's workflow-runs listing (which found
+    // Five calls: the terminal probe's workflow-runs listing (which found
     // nothing terminal here, so the lease sweep did the settling), then the
-    // retry's dispatch and the lost run's outcome comment.
-    expect(calls).toHaveLength(3);
+    // retry's dispatch, the retry's confirmed-dispatch eyes-reaction/
+    // assignee claim projection, and the lost run's outcome comment.
+    expect(calls).toHaveLength(5);
     expect(calls.map((c) => c.url).sort()).toEqual(
       [
         `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
         `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/runs` +
           `?event=workflow_dispatch&per_page=100`,
         `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
+        `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/reactions`,
+        `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/assignees`,
       ].sort(),
     );
     const commentCall = calls.find((c) => c.url.includes('/comments'));

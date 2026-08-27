@@ -550,7 +550,8 @@ synchronous refusals besides validation.
    [Sub-project 4: QueueExecutor](#sub-project-4-queueexecutor).
 5. **Ingress unification:** label-driven work and Quick Tasks carry `work`;
    issue affordances become projections; the protocol collapses to the run
-   routes.
+   routes — see
+   [Sub-project 5: ingress unification](#sub-project-5-ingress-unification).
 6. **Session resume and persistence.**
 
 ## Deferred extensions
@@ -1280,3 +1281,352 @@ autoscaler's logs claim it and the direct runner produce a PR, `get` →
 runbook.md` with the run id, container/host, and PR URL. Then set
 `AGENT_LCARS_QUEUE_PIPELINES` back to `[]` so production stays on
 `github-actions` until a maintainer deliberately opts a pipeline in.
+
+## Sub-project 5: ingress unification
+
+**Purpose.** Sub-projects 1–4 gave native work `Task.work`, a derived
+console view, and (in-flight, sub-project 4) direct execution. Label-driven
+work — the fleet's original and still primary ingress — never gained a
+`work` payload: its task text lives only in the GitHub issue, its brief is
+built by reading that issue at dispatch time, and every human-visible
+acknowledgement (eyes, claim, progress, park) is a write the agent or the
+lane makes directly against the issue. That split means two dispatched-agent
+protocols, two brief-construction paths, and an issue-shaped write surface
+that a native runner (sub-project 4) cannot use at all. This sub-project
+closes the split: every GitHub-anchored task gets a `work` payload too, the
+brief is always built from `work`, the console becomes the sole writer of
+the issue-side acknowledgements a human still watches for, and the
+dispatched-agent protocol collapses to the native rules for every anchor.
+The issue stays the human evidence trail — it stops being the source of the
+task text or the place the agent writes progress.
+
+### `work` for every anchor
+
+`requestRun({ work })` already accepts a `WorkPayload` for native anchors
+(`libs/orchestrator/src/decide.ts`'s `RequestRunInput.work`); nothing there
+is anchor-specific — `mintRun`'s `baseTask` carries `work` forward once set
+and accepts it on the first request that supplies it, for either anchor
+shape. `libs/work/src/spec.ts`'s `workOriginSchema.channel` gains
+`'github'` alongside `'api' | 'cron' | 'console'`. The four sites that call
+`orchestrator.request()` for a GitHub anchor each derive a `WorkPayload`
+before calling it:
+
+| Ingress                                 | Where                                                                                                                                              | `spec.title` / `spec.description`                                                                                          | `origin.principal`                                                                      |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Label webhook (`issues`/`pull_request`) | `orchestrator-ingest.ts`'s `interpretIssuesEvent`/`interpretPullRequestEvent`, threaded through `orchestrator-routes.ts`'s `handleWebhookDelivery` | the webhook payload's own `issue.title`/`body` or `pull_request.title`/`body`                                              | `github:<sender.login>` when the payload carries a `sender`, else `github:<label.name>` |
+| Reply comment (`issue_comment`)         | `orchestrator-ingest.ts`'s `interpretIssueCommentEvent`                                                                                            | the commented-on issue's `title`/`body` (not the comment itself — the comment is `params.reply`, already a separate field) | `github:<comment.user.login>`                                                           |
+| Console retrigger                       | `backend-actions.ts`'s `retriggerIssue`                                                                                                            | a fresh `octokit.rest.issues.get` read at retrigger time (the issue may have been edited since the original request)       | `github:<the console session's github-login>`                                           |
+| Console pipeline reassignment           | `backend-actions.ts`'s `reassignPipeline`                                                                                                          | the issue it already reads for its own label swap — no extra GitHub call                                                   | `github:<the console session's github-login>`                                           |
+
+`spec.description` is the issue/PR body, truncated to `WORK_DESCRIPTION_MAX`
+(16,384 bytes) with the same clamp-and-marker shape `prepare.sh` already
+uses for the brief's `anchor.body`; an empty body becomes the literal string
+`(no description)` since `workSpecSchema.description` is `min(1)`.
+`spec.title` needs no truncation — GitHub's issue/PR title limit (256
+characters) already equals `WORK_TITLE_MAX`, though the derivation clamps
+defensively rather than trusting that GitHub's API never returns a longer
+value. `spec.pipeline` is the already-resolved pipeline (`IMPLEMENT_LABELS`/
+`REVIEW_LABELS`/`REPLY_COMMANDS`, the retrigger's own resolved pipeline —
+`retriggerIssue` already computes one before this change — or the target
+pipeline `reassignPipeline`'s caller names).
+`spec.target.repo` is the task's own repository — always the control-plane
+repository for these four call sites, so no new lookup. `origin.channel`
+is `'github'` for all four.
+
+**Reconcile and retries need nothing new.** `decide.ts`'s `requestRun`
+already carries `task.work` forward on every subsequent request against the
+same task (the "written once" rule is really "written on the first request
+that supplies it, then never touched again" — see `mintRun`'s `baseTask`
+spread). `Orchestrator`'s auto-retry request (`#settleAndRetry`, driven by
+`handleReconcile`'s `sweepExpired`) calls `this.request()` with the lost
+run's own `taskId`, and `requestRun` reads that task's already-stored `work`
+back out — no `work` argument needs to flow through the retry path at all.
+A task created before this sub-project (no `work` yet) is backfilled the
+next time any of the four sites above requests it, not only at creation;
+until then it dispatches through the legacy issue-reading brief path
+(decision below), which stays exactly as it is today.
+
+`handleDispatchRequest` (`/api/control-plane/request`, the OIDC-gated
+internal-automation path used by pr-heal/playbook-unstick-prs/
+visual-refresh/post-deploy-verify) is **not** one of the four derivation
+sites: its callers send `{issue, mode, runbook, context}` with no issue
+title/body, and deriving `work` there would mean an extra GitHub read on
+every internal-automation dispatch for a caller this sub-project's proof
+doesn't exercise. A task first created through that path stays legacy
+(brief built by reading the issue) until one of the four sites above
+requests it — which happens on the very next human label, reply, or
+console action, since that path is used for already-labeled issues, not
+fresh ones. This is scope discipline, not an oversight: see the plan's
+self-review.
+
+### The brief is built from `work`
+
+`prepare.sh` (`.github/actions/prepare-agent-dispatch`) already branches on
+`WORK` for a native (issue-less) dispatch, building `anchor.type: 'work'`
+with no GitHub read at all. This sub-project adds a third branch: `WORK`
+**and** `ISSUE` both present (a label-driven or reply dispatch whose task
+now carries `work`). That branch still fetches the issue and its comments
+via `gh api` — `anchor.number`, `anchor.html_url`, `anchor.labels`,
+`anchor.assignees`, `anchor.state` need real GitHub metadata, and reply mode
+needs the comment thread — but overrides `anchor.title`/`anchor.body` with
+`WORK.spec.title`/`WORK.spec.description` instead of the issue's own
+title/body, and sets `anchor.type: 'issue'` (not `'work'`, since a real
+issue anchor exists). The issue is evidence for linking and for the reply
+thread; it is no longer where the task text comes from. `reply` stays
+exactly as it is today — decision 4 below does not remove reply mode, it
+only stops the agent from writing progress/park state onto the issue
+directly. `agent-lane.yml`'s existing `work` workflow input, currently
+documented "mutually exclusive with issue", becomes non-exclusive: the
+drain (`orchestrator-dispatch.ts`'s `handleDispatchRun`) emits `work` (the
+same `{id, spec}` shape it already builds for native anchors) alongside
+`issue` whenever the task carries one, for both the `dispatch-bootstrap`
+and consumer wiring paths.
+
+A GitHub-anchored task's `work.spec.title`/`description` is a **snapshot**
+taken at first-request time, not a live mirror of the issue — exactly like
+a native item's spec never changes after creation. An issue edited after
+its first dispatch keeps dispatching the original snapshot until a fresh
+request re-derives `work`... except `requestRun`'s "write once" rule means
+it never does, once set. This is a real, deliberate divergence from today's
+behavior (which always reads the current issue body) and is called out
+explicitly in the plan's self-review; it matches how every native item
+already behaves, and a maintainer who edits an issue mid-flight already
+has redispatch/reassign as the mechanism to pick up the edit (both mint a
+fresh run, but neither task carries a fresh `work` — a genuine gap, deferred
+rather than solved here, since fixing it means either abandoning "write
+once" for GitHub anchors specifically or adding an explicit "update work"
+route neither existing decision calls for).
+
+Once every GitHub-anchored run also carries `work`, the sub-project 4
+`GET /runs/{id}/brief` route (queue-executor runs) can serve GitHub-anchored
+runs the same way it serves native ones — a follow-up line, not a task
+here, since sub-project 4's queue executor has no GitHub-anchored consumer
+yet.
+
+### Projections: who writes the issue now
+
+Every issue-side write a human still sees moves from the agent/lane to the
+console, driven off the same two moments the orchestrator already
+transacts: dispatch confirmation and outcome settlement.
+
+| Event                                                               | GitHub write                                    | Writer before this sub-project                                                                                                                               | Writer after                                                                                                                                                                         |
+| ------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Dispatch confirmed (`orchestrator.confirmDispatch`)                 | 👀 eyes reaction on the issue body              | the agent itself, §2, while reading the thread                                                                                                               | `orchestrator-dispatch.ts`'s `handleDispatchRun`, right after `confirmDispatch` succeeds (GitHub anchors only)                                                                       |
+| Dispatch confirmed                                                  | fleet-login assignee claim                      | `dispatch-bootstrap`'s (or the legacy) "Claim the issue as the agent fleet" step, via `claim-issue`                                                          | same handler, same additive/idempotent `POST .../assignees` call `claim.sh` already makes today                                                                                      |
+| Run settles `finished, ok: false` or `lost` past `MAX_AUTO_RETRIES` | `status:needs-human` label + a park comment     | the agent itself, §4 (`gh issue edit --add-label ... --add-assignee jlapenna`), or `describeLostOutcome`'s budget-exhausted branch (label only, no assignee) | `orchestrator-dispatch.ts`'s `handleReportOutcome` — extended to set `needsHumanLabel: true` for the `finished, ok: false` case too, not only the retry-budget-exhausted `lost` case |
+| Run settles `finished, ok: true`                                    | outcome comment (already exists, unconditional) | `handleReportOutcome`'s `outcomeCommentBody`                                                                                                                 | unchanged                                                                                                                                                                            |
+
+The eyes reaction and the assignee claim are not, today, one call — dispatch-
+bootstrap's claim step only makes the assignee call (`claim.sh`); the eyes
+reaction is the agent's own §2 action, applied to the issue body and to
+every comment the agent has individually read. The console cannot replicate
+"every comment read" (it hasn't read any), so the projection posts one eyes
+reaction on the issue body alone at dispatch-confirm time — the same
+acknowledgement signal a human glancing at the issue looks for, not a
+byte-identical replay of what the agent used to do. This is the plan's one
+deliberate narrowing of decision 3's literal wording; the self-review
+records it.
+
+The park projection's comment body is modeled on the wording
+`agent-fallback-finalize.yml`'s own "Report and park bootstrap-independent
+failure" step already uses (marker + agent name + run link + explanation),
+adapted to the normal-path case this projection covers. That fallback step
+itself is **not** touched: it is the last-resort writer for the one case
+this sub-project's projection cannot cover — the completion callback never
+reaching the control plane at all, which means no projection ever ran
+either. Gating it behind `control-plane-projections` would silently drop
+the maintainer's only signal in exactly the failure mode it exists for; it
+stays unconditional. The literal "remove the finalizer's park comment/label
+step" instruction is satisfied instead by decision 4's protocol rewrite,
+which is what actually stops the agent from writing `status:needs-human` +
+a park comment itself under §4 today — there never was a separate
+workflow-YAML "park step" to delete for the normal case, only the agent's
+own protocol-directed `gh issue edit` call. See the plan's self-review.
+
+### The `control-plane-projections` lane flag and consumer migration
+
+A new `boolean` `workflow_call` input, `control-plane-projections`, default
+`false`, added to `agent-lane.yml` and threaded through the three published
+shims (`agent-lane-{claude,codex,opencode}.yml`) alongside the existing
+`dispatch-bootstrap` input it mirrors in shape. When `true`:
+
+- `dispatch-bootstrap/action.yml`'s "Claim the issue as the agent fleet"
+  step is skipped (`if: inputs.issue != '' && inputs.control-plane-projections != 'true'`).
+- `agent-lane.yml`'s own legacy (`!inputs.dispatch-bootstrap`) claim step is
+  skipped the same way, for a consumer that opts in without adopting
+  `dispatch-bootstrap`.
+- `prepare-agent-dispatch/action.yml` passes it through to `prepare.sh`,
+  which sets the brief's new `runtime.projections: true` field.
+
+`agent-lcars`'s own `.github/workflows/{claude,codex,opencode}.yml` pass
+`control-plane-projections: true` alongside their existing
+`dispatch-bootstrap: true`. Every other fleet consumer (homelab,
+supersprinklesracing) keeps the default `false`: their lane calls are
+unchanged, their agents keep writing the issue directly exactly as today,
+and their brief's `runtime.projections` is absent (falsy) so the protocol's
+legacy subsection (below) governs. A consumer migrates by flipping one
+input in its own workflow, once its maintainer has verified the console's
+projections are actually landing for its repository (the console's GitHub
+App must be installed and have `issues: write` there — already required for
+every existing issue-side write this sub-project moves).
+
+### Protocol collapse
+
+`agent-protocol.md` §1–§4 (takeover comment, eyes/claim, progress comment,
+parking) are rewritten as the **native rules for every anchor**, gated on
+`runtime.projections === true || anchor.type === 'work'`. The `anchor.type
+=== 'work'` half of that gate is load-bearing, not redundant: a native
+(issue-less) run's brief may reach the agent through sub-project 4's
+`GET /runs/{id}/brief` route rather than through `prepare.sh`, and that
+route has no obligation to stamp `runtime.projections` — a native run has
+no issue to write to either way, so the native rules must apply to it
+regardless of whether that field is present:
+
+| Section        | Native rule (`runtime.projections === true \|\| anchor.type === 'work'`)                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| §1 Takeover    | Skip. The console derives the takeover affordance from the session doc.                                                                                                                                                                          |
+| §2 Eyes/claim  | Skip. Dispatch confirmation posts the eyes reaction and claims the issue.                                                                                                                                                                        |
+| §3 Progress    | `lcars session title`/`status` — the existing channel §12 already requires.                                                                                                                                                                      |
+| §4 Parking     | End the response with `PARK <blocker>`. No issue-side write. The blocker reaches a human only through `lcars session status` and the run's log.                                                                                                  |
+| §5 Deliverable | Unchanged, with one branch: a `work`-anchor PR references `Work: work:<id>`; an `issue`-anchor PR (label-driven, with or without `work`) still references `Fixes #N` as today — the issue itself is real and stays the PR's natural link target. |
+
+This is exactly today's §5a table (native mode), promoted from "native
+anchor only" to "every anchor, when the brief says projections are on, or
+the anchor has no issue to begin with" — §5a itself is retired as a
+separate section once its content is the main text. The **existing §1–§4
+text becomes a clearly marked "Legacy (projections off)" subsection**,
+unchanged byte-for-byte, read only when `anchor.type` is `issue` and
+`runtime.projections` is absent or `false` — which is every consumer that
+has not opted in yet, and every GitHub-anchored task still dispatching
+through the pre-`work` brief path. `agent-protocol.md`'s own section-number/
+marker contract is pinned in `tools/contract-tests/
+worker-workflow-contract.test.ts`, which already `readFileSync`s this file
+(`lane-default-prompt.test.ts` never reads `agent-protocol.md` — it
+extracts and runs `agent-lane.yml`'s own prompt-rendering step). That
+rendering step's default prompt text is reworded in the same pass: its
+park clause ("park using the protocol's exact comment, label, and
+maintainer-assignee recipe") named the legacy issue-mode recipe by name,
+which was already wrong for a native dispatch before this sub-project —
+it becomes the flag-agnostic "park per the protocol's parking rule for
+this dispatch", pinned in `lane-default-prompt.test.ts` itself (closes
+#1528).
+
+### Quick Tasks
+
+Quick Tasks stay issue-backed: `createQuickTask` (`backend-actions.ts`)
+still creates a real GitHub issue, and that issue remains the evidence
+trail a human reviews (its claim-tag idempotency mechanism, evidence
+storage, and identity-marker format are all unrelated to this sub-project
+and untouched). What changes is decision 1's rule applying to it like any
+other label-driven task: once the created issue is admitted through the
+label webhook (a Quick Task issue is created with its pipeline's label
+already attached, so admission is the same `interpretIssuesEvent` path
+every other labeled issue takes), it gets a `work` payload derived from its
+own title/description exactly as above. The Quick Task UI's own state
+badge, which today infers state from label/comment scanning, instead shows
+the state `deriveItemState`-equivalent logic already exposes on the Bridge
+for GitHub-anchored tasks (`AuthoritativeTaskState`) — a smaller, more
+reliable read than re-deriving state from GitHub content client-side.
+**Quick Tasks are not converted to native items in this sub-project** — no
+`work:` anchor, no `/work/<id>` page, no `PUT /items` call. That conversion
+is explicitly deferred; Quick Tasks getting `work` here is only the
+ingress-unification side effect of decision 1 applying uniformly, not a
+step toward native Quick Tasks.
+
+### Console
+
+Kept minimal, per the binding decision: the task detail page
+(`apps/console/src/app/task/[owner]/[repo]/[issue]/page.tsx`) shows the
+`work.spec` title/description when the task carries one — a small addition
+to `AuthoritativeTaskState` (currently `task`/`storageRevision`/`updatedAt`/
+`activeRunId`/`runs`, read via `authoritative-task-state.ts`'s
+`readAuthoritativeTaskState`, which already calls `store.readTask` and
+therefore already has `task.work` in hand) surfaced as an optional
+`spec: WorkSpec` field, rendered only `if present`. No new page, no new
+filter/tab on `/work` (which stays native-items-only), no change to
+`deriveLogicalWork`/`classifyIssue`. The live issue's own title/body — not
+the snapshot — remains the page's primary display; the `work.spec` snapshot
+is a small supplementary note (what the agent's brief actually saw),
+visible only when it differs in a way worth a maintainer's attention (the
+UI decision itself, made in the plan, not the spec).
+
+### Testing
+
+- `spec.ts`/model persisted-shape fixtures: a GitHub-anchored `Task` with a
+  `work` payload round-trips through `taskSchema`/`workPayloadSchema`
+  exactly like a native one.
+- `orchestrator-ingest.ts` derivation tests: webhook payloads with/without
+  `sender`, with/without a body, produce the expected `WorkSpec`/`WorkOrigin`
+  (and a payload that fails `workSpecSchema` at read time — an overlong
+  title bypassing GitHub's own limit — degrades the same way a malformed
+  native spec already does at dispatch time, not a 500).
+- `orchestrator-dispatch.ts`: a GitHub-anchored run with `work` emits both
+  `issue` and `work` workflow inputs; the eyes/claim projection fires once
+  per confirmed dispatch and is idempotent on a drain retry; the park
+  projection sets the label for both the `finished, ok:false` and
+  `lost`-budget-exhausted cases with the pinned comment body.
+- `prepare.test.sh`: the new `WORK` + `ISSUE` branch builds the anchor from
+  `WORK.spec` with the issue's real `number`/`html_url`, and its `type`
+  keeps being inferred from the raw GitHub response (never hardcoded), so
+  a PR-backed anchor still resolves `pull-request`; the `WORK`-only branch
+  (native) and the no-`WORK` legacy branch are both unchanged (regression
+  pins).
+- Lane workflow contract tests (`tools/contract-tests/
+worker-workflow-contract.test.ts`): `control-plane-projections` declared on
+  the union lane and all three shims, default `false`, forwarded losslessly;
+  the claim step's `if:` gates on it in both `dispatch-bootstrap/action.yml`
+  and the legacy branch.
+- `published-actions.contract.test.mjs`: the three published lane shims'
+  surface still matches their manifest with the new input added.
+- `agent-protocol.md` contract test (`tools/contract-tests/
+worker-workflow-contract.test.ts`, which already reads this file): the
+  collapsed gate condition, the "Legacy (projections off)" marker text,
+  and the retired §5a heading are pinned.
+- `lane-default-prompt.test.ts`: the reworded, flag-agnostic park clause
+  in `agent-lane.yml`'s rendered default prompt is pinned (closes #1528).
+- No real git in unit tests, per house rule.
+
+### Real-path proof
+
+After rollout (agent-lcars's own workers passing `control-plane-projections:
+'true'`): one label-driven issue created on `jlapenna/agent-lcars` with a
+pipeline label, confirming (a) the eyes reaction and assignee came from the
+console, not the lane (the run's claim step conclusion shows `skipped`),
+(b) the item's `/task/<owner>/<repo>/<issue>` page shows the `work.spec`
+snapshot the brief was built from, (c) the PR carries the attempt-claim
+marker and `Fixes #N`, and (d) the outcome comment is posted by the
+projection. A second issue whose body asks the agent to `PARK` confirms the
+`status:needs-human` label and the park comment both came from the
+projection, not the agent. Both runs are appended to
+`docs/native-work-smoke-runbook.md` as a new "Sub-project 5: ingress
+unification" section, following the existing runbook's format (contract
+table, commands, source-evidence table). Consumers (homelab,
+supersprinklesracing) are not touched by the proof — their lane calls stay
+at the default `control-plane-projections: false` until each opts in
+separately.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant H as Maintainer (GitHub label)
+  participant WH as Webhook ingest
+  participant X as Orchestrator
+  participant D as Outbox drain
+  participant GH as GitHub Actions
+  participant A as Agent job (projections on)
+  participant F as Finalizer job
+
+  H->>WH: issues.labeled agent:claude
+  WH->>WH: derive work.spec from issue title and body
+  WH->>X: requestRun(taskId, pipeline, requestId, work)
+  X-->>WH: task plus run r1 pending plus dispatch-run entry
+  D->>GH: workflow_dispatch(issue, work, marker)
+  D->>GH: POST eyes reaction on the issue body
+  D->>GH: POST fleet-login assignee claim
+  A->>A: build the turn from work.spec, not the issue read
+  A->>A: lcars session title and status as progress
+  A-->>F: job outputs ok summary ref, no issue write
+  F->>X: completion runId ok summary ref (finalizer OIDC)
+  X-->>D: run finished, report-outcome entry
+  D->>GH: POST outcome comment referencing Fixes N
+```

@@ -67,7 +67,122 @@ target being approved. The comment is evidence that the trusted policy's
 condition was satisfied; it does not create a new exception, and a general or
 third-party approval cannot waive any hard limit.
 
-## 1. Takeover comment — your first action
+## 1. Takeover — your first action
+
+**When `runtime.projections === true || anchor.type === 'work'`** (check
+the dispatch brief's `runtime.projections` field, and its `anchor.type` —
+a native run has neither an issue to post to nor, sometimes, a
+`runtime.projections` field at all, so it always takes this branch): skip.
+The console posts the eyes reaction and claims the issue for the fleet the
+moment your dispatch is confirmed — before your turn starts — and derives
+the takeover affordance from your session doc. Post nothing.
+
+**Otherwise**, follow "Legacy (projections off)" below.
+
+## 2. Eyes reaction and assignee claim
+
+**When `runtime.projections === true || anchor.type === 'work'`**: skip —
+already done for you (see §1).
+
+**Otherwise**, follow "Legacy (projections off)" below.
+
+## 3. Progress
+
+**When `runtime.projections === true || anchor.type === 'work'`**:
+`lcars session title "<what you are doing>"` and `lcars session status
+"<state>"` — the channel §12 already requires, and now your only progress
+channel. No issue write.
+
+**Otherwise**, follow "Legacy (projections off)" below.
+
+## 4. Parking — blocked on a human
+
+**When `runtime.projections === true || anchor.type === 'work'`**: end
+your response with `PARK <blocker>`. The finalizer reports `ok: false`;
+the console applies the `status:needs-human` label and posts the park
+comment for you (for an issue anchor — a `work` anchor has no issue to
+label). Your blocker text reaches a human only through `lcars session
+status` (§12) and this run's log — set it there before you end your turn.
+Post nothing to GitHub.
+
+**Otherwise**, follow "Legacy (projections off)" below.
+
+## 5. Deliverable rule — silence is failure
+
+Unchanged for every anchor and every `runtime.projections` value: a run
+that reasons to a conclusion and never posts or acts on it is a failed
+run. Stamp your attempt's claim marker on the deliverable — the PR
+description, evidence comment, review body, or close comment (see below
+for the exact marker text). One branch on the reference format:
+
+- **Issue anchor** (`anchor.type` is `issue`, `anchor.number` set — every
+  label-driven or reply dispatch, with or without a `work` payload):
+  reference the anchor as `Fixes #<N>` in the PR body, as always. A no-op
+  is available: post the structured `<!-- agent-result:v1:no-op -->`
+  comment alongside your attempt-claim marker.
+- **Work anchor** (`anchor.type` is `work`, no issue): reference the item
+  as `Work: work:<id>` (never `Fixes #N`). No no-op is available: if the
+  request is already satisfied, `PARK` with that evidence instead (§4).
+
+A failed or cancelled worker is itself a machine-authored parking path. Its
+failure reporter must post the visible failure, add `status:needs-human`, and
+add the repository maintainer as an assignee. These updates are additive: keep
+the selected `agent:*` label for explicit redispatch, preserve an independent
+`status:blocked` label, and never remove an existing assignee.
+
+**Stamp the deliverable with your attempt's claim marker.** This is the only
+evidence the finalizer accepts: the fleet's earlier time-window/bot-login
+inference mode was removed, because it could not tell your run's own
+PR/comment/review apart from an unrelated one touched by the same identity
+during the same window. Include this exact hidden marker, literally,
+somewhere in the body of the specific artifact that fulfills this rule — the
+PR description, the evidence/summary comment, the review body, or the
+comment accompanying an issue close:
+
+```
+<!-- attempt-claim:$ATTEMPT_ID -->
+```
+
+Substitute your run's own `$ATTEMPT_ID` value (exported to your environment
+by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. Some
+dispatch harnesses stamp this marker onto the artifact for you at creation
+time, so you may find it already present — that is fine, and adding it twice
+is harmless. The shared fleet lane stamps supported artifacts. Every
+fleet dispatch exports `ATTEMPT_ID`; if yours is somehow unset, do not
+invent a value — the marker names one specific attempt, and a fabricated
+one claims work for an attempt that does not exist. There is no fallback: a
+run whose deliverable carries no exact marker fails its deliverable gate
+(the earlier time-window/bot-login inference that used to catch this case
+was removed once every consumer passed attempt identity). Stamp only the
+artifact that IS your deliverable, never your takeover or progress comment
+(see "Takeover comment — your first action" and "One edited progress
+comment" under Legacy — the native §1/§3 above post neither): the marker is
+a claim of authorship over one specific object, not a running commentary
+tag.
+
+When the requested result already exists before the run starts, finish with
+one evidence-backed structured no-op comment. Name the existing commit, PR,
+check, or live behavior that proves no new change is needed, and include both
+the attempt claim above and this exact result marker:
+
+```text
+<!-- agent-result:v1:no-op -->
+```
+
+The finalizer recognizes `no-op` only when both markers are on the same
+comment. A takeover/progress comment, a bare “already fixed” assertion, or a
+no-op marker without this run's exact attempt claim is not a completed
+deliverable.
+
+## Legacy (projections off)
+
+Read this section instead of §1–§4 above whenever `anchor.type` is
+`issue` and the dispatch brief's `runtime.projections` is absent or
+`false` — every consumer that has not opted into control-plane
+projections yet, and every GitHub-anchored task still dispatching through
+the pre-`work` brief path.
+
+### Takeover comment — your first action
 
 Before reading anything else, post a brief comment on the anchor
 (`gh issue comment`, or `gh pr comment` if the anchor is a pull request)
@@ -101,7 +216,7 @@ Posting a comment the scanner doesn't match is the correct, honest outcome
 for a CLI with no live-resume tooling; it is not a gap to paper over by
 borrowing a different CLI's command.
 
-## 2. Eyes-reaction acknowledgement
+### Eyes-reaction acknowledgement
 
 As you read the anchor's thread, add an eyes (👀) reaction to the body and to
 every comment you have processed, so the maintainer can see what you have
@@ -121,13 +236,14 @@ gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
   -f 'assignees[]=agent-lcars-bot' --silent
 ```
 
-## 3. One edited progress comment
+### One edited progress comment
 
 Keep ONE continuously edited status comment per run
 (`gh issue comment --edit-last`, or `gh pr comment --edit-last` on a PR
 anchor), updated at plan time and at each milestone — never a stream of new
-comments. Your takeover comment from §1 can serve as this same comment; edit
-it in place rather than starting a second one.
+comments. Your takeover comment from "Takeover comment — your first action"
+above can serve as this same comment; edit it in place rather than starting
+a second one.
 
 ### Dispatch mode
 
@@ -151,7 +267,7 @@ begin an unquoted line. Mentions and commands inside blockquotes or code are
 inert. End a parking comment with the trigger for the pipeline that should
 resume the work.
 
-## 4. Parking — blocked on a human
+### Parking — blocked on a human
 
 Whenever you are blocked on something only the maintainer can do (a
 decision, an approval, access you do not have), park before ending your
@@ -184,87 +300,6 @@ maintainer replied, or you found another way):
 gh issue edit <N> --remove-label status:needs-human 2>/dev/null \
   || gh pr edit <N> --remove-label status:needs-human
 ```
-
-## 5. Deliverable rule — silence is failure
-
-Every dispatch ends with a visible artifact on the anchor: a PR
-opened/updated, an evidence or summary comment, a close with comment, or a
-park per §4. **A run that reasons to a conclusion and never posts it or acts
-on it is a failed run, full stop** — internal reasoning that never reaches
-GitHub state does not count, no matter how correct it was. Consuming
-workflows should enforce this mechanically with a post-run
-deliverable-evidence check that fails the job when no such artifact exists;
-do not rely on the agent's own goodwill alone.
-
-A failed or cancelled worker is itself a machine-authored parking path. Its
-failure reporter must post the visible failure, add `status:needs-human`, and
-add the repository maintainer as an assignee. These updates are additive: keep
-the selected `agent:*` label for explicit redispatch, preserve an independent
-`status:blocked` label, and never remove an existing assignee.
-
-**Stamp the deliverable with your attempt's claim marker.** This is the only
-evidence the finalizer accepts: the fleet's earlier time-window/bot-login
-inference mode was removed, because it could not tell your run's own
-PR/comment/review apart from an unrelated one touched by the same identity
-during the same window. Include this exact hidden marker, literally,
-somewhere in the body of the specific artifact that fulfills this rule — the
-PR description, the evidence/summary comment, the review body, or the
-comment accompanying an issue close:
-
-```
-<!-- attempt-claim:$ATTEMPT_ID -->
-```
-
-Substitute your run's own `$ATTEMPT_ID` value (exported to your environment
-by your dispatch workflow) in place of the literal text `$ATTEMPT_ID`. Some
-dispatch harnesses stamp this marker onto the artifact for you at creation
-time, so you may find it already present — that is fine, and adding it twice
-is harmless. The shared fleet lane stamps supported artifacts. Every
-fleet dispatch exports `ATTEMPT_ID`; if yours is somehow unset, do not
-invent a value — the marker names one specific attempt, and a fabricated
-one claims work for an attempt that does not exist. There is no fallback: a
-run whose deliverable carries no exact marker fails its deliverable gate
-(the earlier time-window/bot-login inference that used to catch this case
-was removed once every consumer passed attempt identity). Stamp only the
-artifact that IS your deliverable, never your takeover or progress comment
-(§1, §3): the marker is a claim of authorship over one specific object, not
-a running commentary tag.
-
-When the requested result already exists before the run starts, finish with
-one evidence-backed structured no-op comment. Name the existing commit, PR,
-check, or live behavior that proves no new change is needed, and include both
-the attempt claim above and this exact result marker:
-
-```text
-<!-- agent-result:v1:no-op -->
-```
-
-The finalizer recognizes `no-op` only when both markers are on the same
-comment. A takeover/progress comment, a bare “already fixed” assertion, or a
-no-op marker without this run's exact attempt claim is not a completed
-deliverable.
-
-## 5a. Native work items (no issue anchor)
-
-When the dispatch brief's `anchor.type` is `work`, there is no GitHub
-issue or pull request anchoring the run. The brief carries the task:
-`anchor.title`, `anchor.body` (the requester's description),
-`anchor.target_repo`, and `anchor.html_url` (the console page for the
-item). Everything above still applies except the issue-side actions,
-which have no target:
-
-| Section                           | Issue mode                                                 | Native mode                                                                                                                                                                                                                                                                              |
-| --------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| §1 Takeover comment               | comment on the anchor                                      | **Skip.** The console derives the takeover affordance from your session doc.                                                                                                                                                                                                             |
-| §2 Eyes reaction + assignee claim | `gh api …/reactions`, `…/assignees`                        | **Skip.** The run is acknowledged when dispatch is confirmed.                                                                                                                                                                                                                            |
-| §3 One edited progress comment    | `gh issue comment --edit-last`                             | `lcars session title "<what you are doing>"` and `lcars session status "<state>"` — the same channel §12 already requires.                                                                                                                                                               |
-| §4 Parking                        | `status:needs-human` label + comment + assignee            | End your response with `PARK <blocker>`; the finalizer reports `ok: false` and the item reads **parked** in the console. Your blocker text reaches a human only through `lcars session status` (§12) and this run's log — set it there before you end your turn. Post nothing to GitHub. |
-| §5 Deliverable rule               | PR (or comment / review) carrying the attempt-claim marker | The PR carrying your exact `<!-- attempt-claim:<ATTEMPT_ID> -->` marker is the only accepted deliverable. Reference the item in the PR body as `Work: work:<id>` (never `Fixes #N`). A no-op is not available: if the request is already satisfied, `PARK` with that evidence.           |
-| §6–§12                            | unchanged                                                  | unchanged                                                                                                                                                                                                                                                                                |
-
-Do not "helpfully" open an issue to have something to comment on — the
-item's page is the record, and the control plane settles it from the
-finalizer's completion call.
 
 ## 6. Push early — never hold finished work locally
 

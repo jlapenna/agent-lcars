@@ -2555,3 +2555,14 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     display: inline;
   }
 }
+
+/* Dispatch brief snapshot (logical-work-card.tsx): what the agent's brief
+   actually saw, which may differ from the issue's current live title/body.
+   A left border + dimmed background is enough to read as a quoted-past-
+   state block, distinct from the live issue content below it. */
+.work-spec-snapshot {
+  border-left: 3px solid var(--mantine-color-dark-4);
+  background: color-mix(in srgb, var(--mantine-color-dark-8) 72%, transparent);
+  padding: 8px 12px;
+  border-radius: 4px;
+}

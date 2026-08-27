@@ -11,6 +11,7 @@ import {
 import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
+import { agentFleetLogin, controlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
 // Re-exported so `run-binding.ts` (and its tests) can depend on this
@@ -136,6 +137,21 @@ async function handleDispatchRun(
 
   const run = await store.readRun(entry.runId);
   if (run === undefined || run.state !== 'pending') {
+    // A run that is already `running` (not settled/canceled) got there via
+    // this same function's primary path below on some earlier attempt --
+    // but a crash between that path's `confirmDispatch` and its own
+    // `claimGithubAnchor`/`settleClaim` would otherwise lose the claim
+    // projection permanently: this reclaimed entry is the only remaining
+    // trigger for it. Re-attempt it here, best-effort (`claimGithubAnchor`
+    // never throws), for a GitHub anchor only -- a native run's `target`
+    // never carries an `issue` for it to project onto anyway.
+    if (
+      run?.state === 'running' &&
+      run.executor !== 'queue' &&
+      !isWorkAnchor(run.task)
+    ) {
+      await claimGithubAnchor(deps, anchorTarget(run));
+    }
     await settleClaim(deps, entry, 'done');
     return;
   }
@@ -148,9 +164,7 @@ async function handleDispatchRun(
     return;
   }
 
-  const task = isWorkAnchor(run.task)
-    ? (await store.readTask(run.task))?.task
-    : undefined;
+  const task = (await store.readTask(run.task))?.task;
   let target: AnchorTarget;
   try {
     target = anchorTarget(run, task);
@@ -189,8 +203,40 @@ async function handleDispatchRun(
       broker_dispatch_token: crypto.randomUUID(),
     };
   } else {
+    // A GitHub anchor's `work` (present once Tasks 1-3 have derived one for
+    // this task) carries no separate `id` -- the anchor already names the
+    // task via `issue`. `spec.parse` failing here (an overlong/malformed
+    // stored payload) is the same permanent-failure shape as the native
+    // branch above: settle done, do not retry a spec that can never parse.
+    //
+    // Only emit it for the control-plane repo, though: the webhook admits
+    // every repo in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`, but today
+    // only this repo's own `claude/codex/opencode.yml` declare a `work`
+    // `workflow_dispatch` input -- #1544 tracks adding it to the six
+    // consumer repos. Sending an undeclared input 422s the whole
+    // dispatch, and because `drainOutbox` treats any non-204 as a
+    // retryable failure and stops draining on the first one, that single
+    // poisoned entry would block every later outbox entry (dispatches
+    // *and* outcome comments) forever. Drop `work` for a non-control-plane
+    // target until the consumers have caught up.
+    let workInput: string | undefined;
+    if (task?.work !== undefined && target.repo === controlPlaneRepository()) {
+      try {
+        workInput = JSON.stringify({
+          spec: workSpecSchema.parse(task.work['spec']),
+        });
+      } catch (error) {
+        await settleClaim(deps, entry, 'done');
+        result.failed.push({
+          entryId: entry.entryId,
+          error: errorMessage(error),
+        });
+        return;
+      }
+    }
     inputs = {
       issue: String(target.issue),
+      ...(workInput === undefined ? {} : { work: workInput }),
       mode: run.params?.mode ?? 'implement',
       reply: run.params?.reply ?? '',
       runbook: run.params?.runbook ?? '',
@@ -226,8 +272,105 @@ async function handleDispatchRun(
   }
 
   await orchestrator.confirmDispatch(run.runId);
+  await claimGithubAnchor(deps, target);
   await settleClaim(deps, entry, 'done');
   result.dispatched.push(run.runId);
+}
+
+/** Additive, idempotent, best-effort -- projects the two claim effects that
+ *  today happen elsewhere for a GitHub anchor: the assignee call is
+ *  byte-identical to `.github/actions/claim-issue/claim.sh`'s own mutation
+ *  (`POST .../assignees` with `{assignees: [<fleet login>]}`); the eyes
+ *  reaction's endpoint/body (`POST .../reactions` with `{content: 'eyes'}`)
+ *  matches agent-protocol.md §2, which claim.sh itself does not post -- that
+ *  reaction is normally the dispatched agent's own first action, once it
+ *  starts reading the anchor's thread. Here it is posted once, on the issue
+ *  body only (not per-comment -- the console has not read any comments at
+ *  this point), as the single visible acknowledgement a human watching the
+ *  issue looks for right when the dispatch is confirmed. A failure here must
+ *  not cost the dispatch, which has already succeeded by the time this
+ *  runs. See the design spec's "Projections" note.
+ *
+ *  The two POSTs are independent, deliberately not sharing one `try`: both
+ *  are idempotent (a repeated reaction returns the existing one; assigning
+ *  an already-assigned login is a no-op), so a network-level failure on the
+ *  reactions call must not skip the assignees call. Only the token fetch,
+ *  which both calls need, is allowed to skip both. */
+async function claimGithubAnchor(
+  deps: DispatchDeps,
+  target: AnchorTarget,
+): Promise<void> {
+  if (target.issue === undefined) return;
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  const apiBaseUrl = githubApiBaseUrl(deps);
+  const { repo, issue } = target;
+
+  let token: string;
+  try {
+    token = await deps.tokens.tokenFor(repo);
+  } catch (error) {
+    console.error(
+      'agent-lcars: claim projection failed for %s#%s:',
+      repo,
+      issue,
+      error,
+    );
+    return;
+  }
+
+  try {
+    const response = await fetchImpl(
+      `${apiBaseUrl}/repos/${repo}/issues/${issue}/reactions`,
+      {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ content: 'eyes' }),
+      },
+    );
+    if (!response.ok) {
+      console.error(
+        'agent-lcars: claim projection (reaction) failed for %s#%s: %s %s',
+        repo,
+        issue,
+        response.status,
+        await response.text(),
+      );
+    }
+  } catch (error) {
+    console.error(
+      'agent-lcars: claim projection (reaction) failed for %s#%s:',
+      repo,
+      issue,
+      error,
+    );
+  }
+
+  try {
+    const response = await fetchImpl(
+      `${apiBaseUrl}/repos/${repo}/issues/${issue}/assignees`,
+      {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ assignees: [agentFleetLogin()] }),
+      },
+    );
+    if (!response.ok) {
+      console.error(
+        'agent-lcars: claim projection (assignee) failed for %s#%s: %s %s',
+        repo,
+        issue,
+        response.status,
+        await response.text(),
+      );
+    }
+  } catch (error) {
+    console.error(
+      'agent-lcars: claim projection (assignee) failed for %s#%s:',
+      repo,
+      issue,
+      error,
+    );
+  }
 }
 
 /** Posts the run's outcome onward as an issue comment. */
@@ -282,7 +425,10 @@ async function handleReportOutcome(
   const outcome =
     run.state === 'lost'
       ? await describeLostOutcome(store, run, task)
-      : { body: outcomeCommentBody(run), needsHumanLabel: false };
+      : {
+          body: outcomeCommentBody(run),
+          needsHumanLabel: run.state === 'finished' && run.result?.ok === false,
+        };
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
   let response: Response;
@@ -393,11 +539,14 @@ function lostCause(run: Run): string {
   return 'was lost (no report before its lease expired)';
 }
 
-/** Flags the issue for human attention once the auto-retry budget is
- *  exhausted. Best-effort: a failure here must not fail the outcome-comment
- *  entry, which has already been posted and is about to be settled --
- *  the operator already has the comment telling them what happened;
- *  a missing label is a cosmetic miss, not a functional one. */
+/** Flags the issue for human attention: once the auto-retry budget is
+ *  exhausted (the `lost` branch), or whenever a run settles `finished` with
+ *  `ok: false` (the run itself never called this a retryable loss, so no
+ *  auto-retry will follow it -- the task is parked either way). Best-effort:
+ *  a failure here must not fail the outcome-comment entry, which has already
+ *  been posted and is about to be settled -- the operator already has the
+ *  comment telling them what happened; a missing label is a cosmetic miss,
+ *  not a functional one. */
 async function addNeedsHumanLabelBestEffort(
   fetchImpl: typeof fetch,
   tokens: DispatchTokenProvider,
@@ -452,6 +601,16 @@ function outcomeCommentBody(run: Run): string {
         lines.push(run.result.ref);
       }
       if (run.result?.summary !== undefined) lines.push(run.result.summary);
+      if (run.result?.ok === false) {
+        // Mirrors `describeLostOutcome`'s exhausted-budget clause: the run
+        // itself never called this a retryable loss, so (unlike `lost`)
+        // no auto-retry will follow it -- the task is parked either way,
+        // and only a manual re-request moves it forward.
+        lines.push(
+          'No auto-retry will follow -- re-request manually (re-add the ' +
+            'agent label) when ready.',
+        );
+      }
       return lines.join('\n');
     }
     case 'canceled':

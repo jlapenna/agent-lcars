@@ -7,7 +7,11 @@ import {
   isRefusal,
   requestRun,
 } from './decide';
-import type { LeasedOutboxEntry, TaskId } from './model';
+import {
+  type LeasedOutboxEntry,
+  type TaskId,
+  WORK_PAYLOAD_MAX_BYTES,
+} from './model';
 import { type Clock, Orchestrator } from './orchestrator';
 import type { Schedule, ScheduleStore } from './schedule-store';
 import {
@@ -288,6 +292,43 @@ export function runOrchestratorStoreContract(
         origin: { principal: 'user:jlapenna' },
       });
       expect(read?.task.closedAt).toBe('2026-08-15T12:00:00.000Z');
+    });
+
+    // Missing fixture (final-review item 3/8): every other `work` fixture
+    // in this file is a native (work-anchored) task with a trivial
+    // payload. Nothing round-tripped a GITHUB-anchored task carrying a
+    // real `WorkPayload`-shaped `work` -- the exact document shape
+    // `work-from-github.ts`'s `workPayloadFromGithub` produces once a
+    // GitHub-anchored task has one (sub-project 5) -- through a real
+    // store (`MemoryStore` always; `FirestoreStore` too, when this
+    // contract runs against the emulator). Sized at the real byte bound
+    // `truncatedDescription`'s byte-aware clamp (item 3) exists to keep
+    // out of storage -- see model.spec.ts's matching fixture for the
+    // derivation of the exact character count.
+    it('round-trips a GitHub-anchored work payload sized at the real byte bound', async () => {
+      const { store, orchestrator } = await fixture();
+      const work = {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'Fix the thing',
+          description: '漢'.repeat(10_868),
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      };
+      expect(new TextEncoder().encode(JSON.stringify(work)).length).toBe(
+        WORK_PAYLOAD_MAX_BYTES,
+      );
+
+      await orchestrator.request({
+        taskId: TASK,
+        requestId: 'req-work-byte-bound',
+        pipeline: 'claude',
+        work,
+      });
+
+      const read = await store.readTask(TASK);
+      expect(read?.task.work).toEqual(work);
     });
 
     describe('the outbox', () => {

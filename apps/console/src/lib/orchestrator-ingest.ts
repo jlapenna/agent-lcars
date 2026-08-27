@@ -1,9 +1,12 @@
 import { REPLY_COMMANDS } from '@agent-lcars/dispatch-contracts';
 import { type TaskId, taskIdSchema } from '@agent-lcars/orchestrator';
+import { type WorkPayload } from '@agent-lcars/work';
 import { z } from 'zod';
 
 import { isControlPlaneRepository } from '@/lib/deployment';
 import { matchReplyTrigger } from '@/lib/reply-trigger';
+
+import { workPayloadFromGithub } from './work-from-github';
 
 /**
  * Interprets one GitHub webhook delivery and decides whether it is a
@@ -24,6 +27,12 @@ export interface IngestDecision {
   pipeline: Pipeline;
   /** Always includes `mode`; includes `reply` when `mode` is `'reply'`. */
   params: Record<string, string>;
+  /** Present when the anchor (issue or PR) carried a title -- absent for a
+   *  payload shape this parser could not read one from, which dispatches
+   *  exactly as it did before sub-project 5 (no `work` on the task, or the
+   *  task's already-set `work` carried forward -- see `decide.ts`'s
+   *  `baseTask`). */
+  work?: WorkPayload;
 }
 
 export interface IngestIgnore {
@@ -40,30 +49,48 @@ function ignore(reason: string): IngestIgnore {
 
 const repositorySchema = z.object({ full_name: z.string().min(1) });
 const labelSchema = z.object({ name: z.string().min(1) });
+/** GitHub always sends a top-level `sender` -- the actor who triggered
+ *  this specific delivery (whoever applied the label, whoever posted the
+ *  comment). Optional here only so a malformed/legacy-shaped test fixture
+ *  degrades to the label fallback instead of failing to parse. */
+const senderSchema = z.object({ login: z.string().min(1) }).optional();
+/** GitHub always sends `title`; `body` may be `null`. Both optional here
+ *  so a payload shape this parser has not seen before still admits the
+ *  dispatch -- it just derives no `work` for it (see the `issue.title`
+ *  guard in each `interpret*Event` below), matching how a legacy task
+ *  (pre-sub-project-5) already dispatches with no `work` payload. */
+const issueBodySchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string().min(1).optional(),
+  body: z.string().nullable().optional(),
+});
 
 const issuesEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
-  issue: z.object({ number: z.number().int().positive() }),
+  issue: issueBodySchema,
   label: labelSchema.optional(),
+  sender: senderSchema,
 });
 
 const pullRequestEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
-  pull_request: z.object({ number: z.number().int().positive() }),
+  pull_request: issueBodySchema,
   label: labelSchema.optional(),
+  sender: senderSchema,
 });
 
 const issueCommentEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
-  issue: z.object({ number: z.number().int().positive() }),
+  issue: issueBodySchema,
   comment: z.object({
     body: z.string(),
     author_association: z.string(),
     user: z.object({ type: z.string() }).optional(),
   }),
+  sender: senderSchema,
 });
 
 /** `issues`/`pull_request` `labeled` action, label `agent:<pipeline>` ->
@@ -99,10 +126,18 @@ function buildRequestDecision(
   requestId: string,
   pipeline: Pipeline,
   params: Record<string, string>,
+  work?: WorkPayload,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
-  return { kind: 'request', taskId: taskId.data, requestId, pipeline, params };
+  return {
+    kind: 'request',
+    taskId: taskId.data,
+    requestId,
+    pipeline,
+    params,
+    ...(work === undefined ? {} : { work }),
+  };
 }
 
 function interpretIssuesEvent(
@@ -111,7 +146,7 @@ function interpretIssuesEvent(
 ): IngestResult {
   const parsed = issuesEventSchema.safeParse(payload);
   if (!parsed.success) return ignore('malformed-payload');
-  const { action, repository, issue, label } = parsed.data;
+  const { action, repository, issue, label, sender } = parsed.data;
 
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
@@ -119,6 +154,17 @@ function interpretIssuesEvent(
 
   const pipeline = label && IMPLEMENT_LABELS[label.name];
   if (!pipeline) return ignore('no-trigger-label');
+
+  const work = issue.title
+    ? workPayloadFromGithub({
+        title: issue.title,
+        body: issue.body,
+        pipeline,
+        repo: repository.full_name,
+        actor: sender?.login,
+        label: label?.name,
+      })
+    : undefined;
 
   return buildRequestDecision(
     repository.full_name,
@@ -128,6 +174,7 @@ function interpretIssuesEvent(
     {
       mode: 'implement',
     },
+    work,
   );
 }
 
@@ -137,7 +184,13 @@ function interpretPullRequestEvent(
 ): IngestResult {
   const parsed = pullRequestEventSchema.safeParse(payload);
   if (!parsed.success) return ignore('malformed-payload');
-  const { action, repository, pull_request: pullRequest, label } = parsed.data;
+  const {
+    action,
+    repository,
+    pull_request: pullRequest,
+    label,
+    sender,
+  } = parsed.data;
 
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
@@ -146,23 +199,45 @@ function interpretPullRequestEvent(
   const labelName = label?.name;
   const implementPipeline = labelName && IMPLEMENT_LABELS[labelName];
   if (implementPipeline) {
+    const work = pullRequest.title
+      ? workPayloadFromGithub({
+          title: pullRequest.title,
+          body: pullRequest.body,
+          pipeline: implementPipeline,
+          repo: repository.full_name,
+          actor: sender?.login,
+          label: labelName,
+        })
+      : undefined;
     return buildRequestDecision(
       repository.full_name,
       pullRequest.number,
       deliveryId,
       implementPipeline,
       { mode: 'implement' },
+      work,
     );
   }
 
   const reviewPipeline = labelName && REVIEW_LABELS[labelName];
   if (reviewPipeline) {
+    const work = pullRequest.title
+      ? workPayloadFromGithub({
+          title: pullRequest.title,
+          body: pullRequest.body,
+          pipeline: reviewPipeline,
+          repo: repository.full_name,
+          actor: sender?.login,
+          label: labelName,
+        })
+      : undefined;
     return buildRequestDecision(
       repository.full_name,
       pullRequest.number,
       deliveryId,
       reviewPipeline,
       { mode: 'review' },
+      work,
     );
   }
 
@@ -175,7 +250,7 @@ function interpretIssueCommentEvent(
 ): IngestResult {
   const parsed = issueCommentEventSchema.safeParse(payload);
   if (!parsed.success) return ignore('malformed-payload');
-  const { action, repository, issue, comment } = parsed.data;
+  const { action, repository, issue, comment, sender } = parsed.data;
 
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
@@ -192,6 +267,20 @@ function interpretIssueCommentEvent(
     return ignore('untrusted-author');
   }
 
+  // Derived from the ISSUE being replied to, not the comment -- the
+  // comment text is already `params.reply`, a separate field the brief
+  // reads independently (see the design spec's "brief is built from
+  // work" note).
+  const work = issue.title
+    ? workPayloadFromGithub({
+        title: issue.title,
+        body: issue.body,
+        pipeline,
+        repo: repository.full_name,
+        actor: sender?.login,
+      })
+    : undefined;
+
   return buildRequestDecision(
     repository.full_name,
     issue.number,
@@ -201,6 +290,7 @@ function interpretIssueCommentEvent(
       mode: 'reply',
       reply: comment.body,
     },
+    work,
   );
 }
 

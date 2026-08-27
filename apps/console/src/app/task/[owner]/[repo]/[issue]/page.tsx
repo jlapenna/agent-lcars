@@ -47,6 +47,7 @@ function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
           work={detail.work}
           runs={detail.runs}
           anchorState={detail.anchorState}
+          spec={detail.spec}
         />
       )}
     </>

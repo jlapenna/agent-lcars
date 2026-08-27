@@ -1,4 +1,5 @@
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
+import type { WorkSpec } from '@agent-lcars/work';
 import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -79,10 +80,16 @@ function renderCard(
   work: LogicalWork = makeWork(),
   anchorState: 'open' | 'closed' = 'open',
   runs: OrchestratorRun[] = [],
+  spec?: WorkSpec,
 ) {
   render(
     <MantineProvider>
-      <LogicalWorkCard work={work} runs={runs} anchorState={anchorState} />
+      <LogicalWorkCard
+        work={work}
+        runs={runs}
+        anchorState={anchorState}
+        spec={spec}
+      />
     </MantineProvider>,
   );
 }
@@ -244,5 +251,21 @@ describe('LogicalWorkCard', () => {
     renderCard(makeWork(), 'open', []);
     expect(screen.queryByTestId('runs-section')).toBeNull();
     expect(screen.getByTestId('logical-work-attempts')).toBeTruthy();
+  });
+
+  it('renders the work.spec snapshot when present', () => {
+    renderCard(makeWork(), 'open', [], {
+      title: 'Snapshot title',
+      description: 'Snapshot body',
+      pipeline: 'claude',
+      target: { repo: 'jlapenna/agent-lcars' },
+    });
+    expect(screen.getByText('Snapshot title')).toBeInTheDocument();
+    expect(screen.getByText('Snapshot body')).toBeInTheDocument();
+  });
+
+  it('renders nothing extra when spec is absent', () => {
+    renderCard();
+    expect(screen.queryByTestId('work-spec-snapshot')).not.toBeInTheDocument();
   });
 });
