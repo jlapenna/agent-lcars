@@ -511,6 +511,19 @@ export function runScheduleStoreContract(
       );
     });
 
+    it('round-trips a schedule with all three optional fields set', async () => {
+      const store = await makeStore();
+      const withOptionals = schedule({
+        lastSlotAt: SCHEDULE_T0,
+        lastItemId: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
+        disabledReason: 'grant-revoked',
+      });
+      await store.writeSchedule(withOptionals);
+      expect(await store.readSchedule('01J5Z3K9QX8F0N2B4V6C8D1E3G')).toEqual(
+        withOptionals,
+      );
+    });
+
     it('reads undefined for an unknown schedule', async () => {
       const store = await makeStore();
       expect(await store.readSchedule('missing')).toBeUndefined();
