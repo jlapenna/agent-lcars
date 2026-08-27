@@ -4,11 +4,9 @@
 // below. A failing run means the surface changed - removing/renaming an
 // input or output, flipping optional->required, or changing a default is
 // a breaking change for any consumer repo that resolves these actions
-// cross-repo (all track `@main`; none pins a release tag today), and
-// must be a deliberate edit to this manifest, called out in review and
-// backed by the zero-consumer evidence docs/published-actions.md's
-// removal policy requires - a version bump is not the gate here, because
-// no consumer would ever pin it.
+// cross-repo (all track `@main`), and must be a deliberate edit to this
+// manifest, called out in review. Removing a deprecated surface outright
+// is fine once nothing references it - see docs/published-actions.md.
 //
 // Line-based parsing, no YAML dependency - the same convention
 // dispatch-broker/workflow-contract.test.mjs uses; action.yml files here

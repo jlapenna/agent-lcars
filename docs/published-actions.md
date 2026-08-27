@@ -74,23 +74,10 @@ jobs:
     uses: jlapenna/agent-lcars/.github/workflows/<workflow>.yml@main
 ```
 
-`@main` intentionally follows current fleet behavior. Consumers that require
-an immutable version may pin a release tag for it -- release tags remain a
-genuinely available mechanism -- but none is in active use today: no
-reference to any `agent-lcars` action or workflow anywhere in the fleet pins
-by tag, and this repository has cut no GitHub Release.
-
-Because no consumer relies on a release tag, a version bump cannot be the
-gate for a breaking change to a Published surface (removing it, or changing
-an input, output, default, or permission incompatibly) -- it would protect
-nobody and verify nothing. The gate instead is evidence: the author must
-verify and record, in the pull request, that the change has zero consumers
--- every fleet repository's workflows grepped for the surface, plus a
-GitHub-wide code search for it outside the fleet. That is a real, checkable
-bar in review; a major release nobody pins is not. This corrects the
-previous "requires a major release" wording to match actual practice, not to
-carve out an exception for any one change -- this repository has never
-operated the release process that wording described.
+`@main` intentionally follows current fleet behavior. A deprecated surface
+is removed outright once nothing references it, with that verification --
+every fleet repository grepped, plus a GitHub-wide code search -- recorded
+in the removing pull request.
 
 Reusable-workflow callers retain their triggers, workflow-level permissions,
 concurrency, repository-variable spellings, and any required fallback job.
