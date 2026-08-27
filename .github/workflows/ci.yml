@@ -163,6 +163,9 @@ jobs:
       - name: Test deliverable verification
         run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
 
+      - name: Test the GitHub attachment download helper
+        run: bash agents/shared/skills/agent-protocol/scripts/download-github-attachment.test.sh
+
       - name: Test failure reporting
         run: bash .github/actions/report-failure/report-failure.test.sh
 
