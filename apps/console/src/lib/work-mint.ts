@@ -20,7 +20,7 @@ import {
   toItemView,
 } from '@agent-lcars/work/derive';
 
-import { controlPlaneRepository } from './deployment';
+import { isControlPlaneRepository } from './deployment';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal } from './work-auth';
 import type { WorkGrant } from './work-grants';
@@ -90,21 +90,17 @@ export interface GrantsPrincipal {
  * repository list **as they stand now** -- see the design spec's
  * `redispatch` rationale, which applies identically to a tick.
  *
- * The repo check is deliberately `=== controlPlaneRepository()` -- the
- * single repo -- not `isControlPlaneRepository()`'s full
- * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` allow-list (seven repos in
- * production). That broader list exists to admit GitHub *webhook*
- * deliveries from every consumer repo; it says nothing about whether a
- * repo's own `claude/codex/opencode.yml` declares the `work`
- * `workflow_dispatch` input. A native (work-anchored) run has no `issue`
- * to fall back on -- its `work` input is not optional the way
- * `orchestrator-dispatch.ts`'s GitHub-anchor branch can gate it away, so a
- * native item targeting a repo that cannot accept `work` cannot be
- * dispatched at all, ever, once minted: it can only 422 forever and
- * head-of-line block the outbox behind it. Refuse it at creation instead
- * of minting a run that can never be delivered. #1544 tracks adding the
- * `work` input to every consumer repo; once every repo declares it, this
- * narrows back to `isControlPlaneRepository`.
+ * The repo check is `isControlPlaneRepository()` -- the full
+ * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` allow-list, not the single
+ * `controlPlaneRepository()` entry. Wave 1 of #1544 landed a `work`
+ * `workflow_dispatch` input, forwarded from a `control-plane-projections`
+ * flag, on every consumer repo's `claude/codex/opencode.yml` (six repos,
+ * all merged); a native (work-anchored) item targeting any admitted repo
+ * can now actually be delivered, so this narrowed from the single-repo
+ * equality check wave 1's own doc comment predicted it would. A target
+ * repo that is *not* on the allow-list at all still cannot be dispatched
+ * to -- refuse it at creation instead of minting a run that can never be
+ * delivered.
  */
 export function forbiddenReason(
   principal: GrantsPrincipal,
@@ -113,10 +109,10 @@ export function forbiddenReason(
   if (!principal.pipelines.includes(spec.pipeline)) {
     return `${principal.principal} may not request pipeline ${spec.pipeline}`;
   }
-  if (spec.target.repo !== controlPlaneRepository()) {
+  if (!isControlPlaneRepository(spec.target.repo)) {
     return (
-      `native work items can only target ${controlPlaneRepository()} until ` +
-      `every consumer declares the work input (#1544)`
+      `native work items can only target a control-plane repository ` +
+      `(${spec.target.repo} is not admitted)`
     );
   }
   return undefined;
