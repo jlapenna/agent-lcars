@@ -295,6 +295,8 @@ git push -u origin HEAD
 - Modify: `apps/console/src/lib/work-sessions.ts`
 - Modify: `apps/console/src/lib/work-router.ts`
 - Modify: `apps/console/src/lib/work-router.test.ts`
+- Modify: `apps/console/src/app/api/work/v1/[[...rest]]/route.ts`
+- Modify: `apps/console/src/app/work/context.ts`
 
 **Interfaces:**
 
@@ -304,8 +306,14 @@ git push -u origin HEAD
   `@agent-lcars/telemetry/server`.
 - Produces: `WorkContext.getSessionDoc: (sessionId: string) =>
 Promise<SessionDoc | undefined>`; `sessionForResume(sessionId):
-Promise<SessionDoc | undefined>`. Consumed by Task 4 (route/context
-  wiring).
+Promise<SessionDoc | undefined>`, wired as `getSessionDoc` at both
+  `WorkContext` construction sites in this same task (`route.ts`'s
+  `handle` and `context.ts`'s `context()`) — `WorkContext.getSessionDoc`
+  is a required field, so both sites must be updated in the same task
+  that adds it, or `./tools/nx typecheck @agent-lcars/console` fails on
+  every other `WorkContext` literal in the codebase, not just this task's
+  own test doubles. Task 8 (which also touches both files, for the OIDC
+  verifier) must not reintroduce this wiring — it is already done here.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -551,12 +559,53 @@ import { sessionAgent } from '@agent-lcars/telemetry';
   ),
 ```
 
-- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console -- work-router` → PASS; `./tools/nx typecheck @agent-lcars/console` → clean.
+`WorkContext.getSessionDoc` is a required field, so both places that
+construct a real `WorkContext` need it wired in this same task, or
+typechecking the console fails everywhere else a `WorkContext` literal is
+built:
+
+```ts
+// apps/console/src/app/api/work/v1/[[...rest]]/route.ts -- add the
+// import and the context field.
+import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
+// ...
+const { matched, response } = await handler.handle(request, {
+  prefix: PREFIX,
+  context: {
+    ...(principal === undefined ? {} : { principal }),
+    runtime: createOrchestratorRuntime(),
+    sessionsFor: sessionsForRuns,
+    getSessionDoc: sessionForResume,
+    maxLiveRuns: workMaxLiveRuns(),
+    scheduleStore: createScheduleStore(),
+    grants: workGrants,
+    now: () => new Date(),
+  },
+});
+```
+
+```ts
+// apps/console/src/app/work/context.ts -- add the import and the field.
+import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
+// ...
+return {
+  principal,
+  runtime: createOrchestratorRuntime(),
+  sessionsFor: sessionsForRuns,
+  getSessionDoc: sessionForResume,
+  maxLiveRuns: workMaxLiveRuns(),
+  scheduleStore: createScheduleStore(),
+  grants: workGrants,
+  now: () => new Date(),
+};
+```
+
+- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console -- work-router` → PASS; `./tools/nx typecheck @agent-lcars/console` → clean (this is the check that would have caught the missing wiring — both `WorkContext` construction sites now satisfy the widened interface).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/console/src/lib/work-mint.ts apps/console/src/lib/work-sessions.ts apps/console/src/lib/work-router.ts apps/console/src/lib/work-router.test.ts
+git add apps/console/src/lib/work-mint.ts apps/console/src/lib/work-sessions.ts apps/console/src/lib/work-router.ts apps/console/src/lib/work-router.test.ts apps/console/src/app/api/work/v1/\[\[...rest\]\]/route.ts apps/console/src/app/work/context.ts
 git commit -m "$(cat <<'EOF'
 feat(console): redispatch validates and threads resumeSessionId
 
@@ -1016,11 +1065,20 @@ git push
 
 - Consumes: `resumeTranscript` (Task 4).
 - Produces: `node sidecar.cjs runner resume --session-id <id>
---transcript-uri <gcsUri> --cwd <dir> [--projects-dir <dir>]` — prints the
-  written file path to stdout on success, nothing on failure or when
-  required flags are missing; always exits 0 (fail-soft, matching `runner
-sidecar`/`runner finalize`). Consumed by Task 6 (the lane's composite
-  action) and Task 7 (`direct-runner.sh`).
+--transcript-uri <gcsUri> --cwd <dir> [--projects-dir <dir>] [--project-id
+<id>]` — prints the written file path to stdout on success, nothing on
+  failure or when required flags are missing; always exits 0 (fail-soft,
+  matching `runner sidecar`/`runner finalize`). `--project-id` is
+  optional and falls back to the `AGENT_TELEMETRY_PROJECT_ID` env var —
+  the same variable `finalize.ts`'s `config.firestoreProjectId` is
+  already populated from (`runner-config.ts`'s `loadRunnerConfig` reads
+  it via `loadSharedConfig()`), so a caller that already exports it for
+  `runner sidecar`/`runner finalize` (as `sidecar-lifecycle.sh` does)
+  needs no extra flag. Consumed by Task 6 (the lane's composite action)
+  and Task 7 (`direct-runner.sh`), both of which export
+  `AGENT_TELEMETRY_PROJECT_ID=agent-lcars` on the `runner resume`
+  invocation itself, exactly as `sidecar-lifecycle.sh` already does for
+  `runner sidecar`/`runner finalize`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1066,6 +1124,60 @@ describe('runner resume subcommand', () => {
     expect(fs.readFileSync(expected, 'utf8')).toBe('{"line":1}\n');
   });
 
+  it('threads --project-id through to downloadTranscript', async () => {
+    const download = vi.fn().mockResolvedValue('{}\n');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resume-'));
+    await _runRunnerResumeForTesting(
+      [
+        '--session-id',
+        'sess_1',
+        '--transcript-uri',
+        'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+        '--cwd',
+        '/home/runner/work/repo/repo',
+        '--projects-dir',
+        path.join(tmp, 'projects'),
+        '--project-id',
+        'agent-lcars',
+      ],
+      { download },
+    );
+    expect(download).toHaveBeenCalledWith(
+      'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+      { projectId: 'agent-lcars' },
+    );
+  });
+
+  it('falls back to AGENT_TELEMETRY_PROJECT_ID when --project-id is omitted', async () => {
+    const previous = process.env['AGENT_TELEMETRY_PROJECT_ID'];
+    process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'agent-lcars';
+    try {
+      const download = vi.fn().mockResolvedValue('{}\n');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resume-'));
+      await _runRunnerResumeForTesting(
+        [
+          '--session-id',
+          'sess_1',
+          '--transcript-uri',
+          'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+          '--cwd',
+          '/home/runner/work/repo/repo',
+          '--projects-dir',
+          path.join(tmp, 'projects'),
+        ],
+        { download },
+      );
+      expect(download).toHaveBeenCalledWith(
+        'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+        { projectId: 'agent-lcars' },
+      );
+    } finally {
+      if (previous === undefined)
+        delete process.env['AGENT_TELEMETRY_PROJECT_ID'];
+      else process.env['AGENT_TELEMETRY_PROJECT_ID'] = previous;
+    }
+  });
+
   it('prints nothing and never throws when a required flag is missing', async () => {
     const printed = await _runRunnerResumeForTesting(
       ['--session-id', 'sess_1'],
@@ -1092,6 +1204,7 @@ interface RunnerResumeFlags {
   transcriptUri?: string;
   cwd?: string;
   projectsDir?: string;
+  projectId?: string;
 }
 
 function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
@@ -1112,6 +1225,9 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
     } else if (arg === '--projects-dir') {
       flags.projectsDir = next;
       i++;
+    } else if (arg === '--project-id') {
+      flags.projectId = next;
+      i++;
     }
   }
   return flags;
@@ -1119,16 +1235,22 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
 
 /**
  * `node sidecar.cjs runner resume --session-id <id> --transcript-uri
- * <gcsUri> --cwd <dir> [--projects-dir <dir>]` -- downloads a prior
- * session's transcript into Claude Code's local session store, so a
- * caller's own subsequent `claude --resume <sessionId>` (direct mode) or
- * `claude_args: --resume <sessionId>` (the lane) finds it (sub-project
- * 6). Prints the written path on success; prints nothing (never throws,
- * never exits nonzero) when a required flag is missing or the download
- * fails -- fail-soft, matching `runner sidecar`/`runner finalize`: a
- * broken resume must degrade to a fresh run, never fail the dispatch.
- * Exported for testing so a spec can exercise the real logic without
- * spawning `node` and without a real GCS call.
+ * <gcsUri> --cwd <dir> [--projects-dir <dir>] [--project-id <id>]` --
+ * downloads a prior session's transcript into Claude Code's local
+ * session store, so a caller's own subsequent `claude --resume
+ * <sessionId>` (direct mode) or `claude_args: --resume <sessionId>` (the
+ * lane) finds it (sub-project 6). Prints the written path on success;
+ * prints nothing (never throws, never exits nonzero) when a required
+ * flag is missing or the download fails -- fail-soft, matching `runner
+ * sidecar`/`runner finalize`: a broken resume must degrade to a fresh
+ * run, never fail the dispatch. `--project-id` falls back to
+ * `AGENT_TELEMETRY_PROJECT_ID` -- the same env var `runner-config.ts`'s
+ * `loadRunnerConfig` already reads into `RunnerConfig.firestoreProjectId`
+ * (`finalize.ts` passes that value as `uploadTranscript`'s own
+ * `projectId`), so a caller that already exports it for `runner
+ * sidecar`/`runner finalize` needs no extra flag here. Exported for
+ * testing so a spec can exercise the real logic without spawning `node`
+ * and without a real GCS call.
  */
 export async function _runRunnerResumeForTesting(
   argv: string[],
@@ -1141,12 +1263,15 @@ export async function _runRunnerResumeForTesting(
   if (!flags.sessionId || !flags.transcriptUri || !flags.cwd) {
     return undefined;
   }
+  const projectId =
+    flags.projectId ?? process.env['AGENT_TELEMETRY_PROJECT_ID'];
   const resume = deps.resumeTranscript ?? resumeTranscript;
   return resume({
     sessionId: flags.sessionId,
     transcriptGcsUri: flags.transcriptUri,
     cwd: flags.cwd,
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
+    ...(projectId && { projectId }),
     ...(deps.download && { download: deps.download }),
   });
 }
@@ -1275,7 +1400,10 @@ if [ -z "$session_id" ] || [ -z "$transcript_uri" ] || \
   exit 0
 fi
 
-resumed_path="$(node "$SIDECAR_BIN" runner resume \
+# AGENT_TELEMETRY_PROJECT_ID is exported inline exactly as
+# sidecar-lifecycle.sh already does for `runner sidecar`/`runner
+# finalize` -- the same GCS project the transcript was uploaded to.
+resumed_path="$(AGENT_TELEMETRY_PROJECT_ID=agent-lcars node "$SIDECAR_BIN" runner resume \
   --session-id "$session_id" --transcript-uri "$transcript_uri" --cwd "$PWD" \
   2>/dev/null || true)"
 
@@ -1416,7 +1544,12 @@ RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 # setup, before the PROMPT/sidecar-start block:
 RESUME_FLAG=()
 if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
+  # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
+  # exported inline exactly as sidecar-lifecycle.sh already does for
+  # `runner sidecar`/`runner finalize` -- the same telemetry-writer
+  # credential and GCS project the transcript was uploaded to/from.
   resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
+    AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
     node /usr/local/lib/agent-lcars/sidecar.cjs runner resume \
     --session-id "$RESUME_SESSION_ID" --transcript-uri "$RESUME_TRANSCRIPT_URI" \
     --cwd "$PWD" 2>/dev/null || true)"
@@ -1464,11 +1597,16 @@ git push
 - Modify: `apps/console/src/lib/work-auth.test.ts`
 - Modify: `apps/console/src/lib/work-router.ts`
 - Modify: `apps/console/src/lib/work-router.test.ts`
-- Modify: `apps/console/src/app/api/work/v1/[[...rest]]/route.ts`
-- Modify: `apps/console/src/app/work/context.ts`
+- Modify: `apps/console/src/app/api/work/v1/[[...rest]]/route.ts` (Task 2
+  already added `getSessionDoc: sessionForResume` here; this task's own
+  edit is additive — the `verifySessionPinTickOidcToken` wiring only)
+- Modify: `apps/console/src/app/work/context.ts` (same — Task 2's
+  `getSessionDoc` wiring already lands there; this task adds the OIDC
+  verifier only)
 - Modify: `libs/telemetry/src/server/store.ts`
-- Modify: `libs/telemetry/src/server/store.spec.ts` (or `.test.ts` —
-  check which of the two exists for this file before creating a second)
+- Modify: `libs/telemetry/src/server/store.spec.ts` (this file already
+  exists, using `firestore-jest-mock`'s `FakeFirestore` — no emulator, no
+  `skipIf` — see Step 1/Step 3 below for the exact convention to match)
 
 **Interfaces:**
 
@@ -1596,21 +1734,42 @@ describe('list/get accept work.reaper without work.operator', () => {
 ```
 
 ```ts
-// libs/telemetry/src/server/store.spec.ts -- add (against the Firestore
-// emulator, mirroring the file's existing upsertSession round-trip test).
-it('touchSessionExpiry rewrites only expireAt, leaving other fields untouched', async () => {
-  await upsertSession(
-    buildSessionWrite(summary(), 'ended', {
-      intentId: 'r1',
-      forceSource: 'issue-agent',
-    }),
-  );
-  const before = await getSessionDoc(firestore, summary().sessionId);
-  const future = new Date(Date.now() + 400 * 24 * 60 * 60 * 1000).toISOString();
-  await touchSessionExpiry(summary().sessionId, future);
-  const after = await getSessionDoc(firestore, summary().sessionId);
-  expect(after?.expireAt).toBe(future);
-  expect(after?.turns).toBe(before?.turns);
+// libs/telemetry/src/server/store.spec.ts -- this file has no emulator
+// and no `skipIf`: it mocks `firebase-admin/firestore` with
+// `firestore-jest-mock`'s `FakeFirestore` (see the file's existing
+// `describe('agent-telemetry store', ...)` block, `beforeEach`, and the
+// `sessionDoc`/`sessionWrite` helpers already defined there). Add
+// `touchSessionExpiry` to the `./store` import, and this describe block
+// alongside the existing `upsertSession` one, inside the same
+// `describe('agent-telemetry store', ...)`:
+describe('touchSessionExpiry', () => {
+  it('rewrites only expireAt, leaving other fields untouched', async () => {
+    await upsertSession(sessionWrite({ turns: 3 }));
+    const future = new Date('2027-08-27T00:00:00.000Z').toISOString();
+
+    await touchSessionExpiry('session-1', future);
+
+    const snap = await fakeFirestore
+      .collection('sessions')
+      .doc('session-1')
+      .get();
+    expect(snap.data()?.['expireAt']).toEqual(
+      Timestamp.fromDate(new Date(future)),
+    );
+    expect(snap.data()?.['turns']).toBe(3);
+  });
+
+  it('writes expireAt as a native Firestore Timestamp, not the ISO string', async () => {
+    await upsertSession(sessionWrite());
+
+    await touchSessionExpiry('session-1', '2027-01-01T00:00:00.000Z');
+
+    const snap = await fakeFirestore
+      .collection('sessions')
+      .doc('session-1')
+      .get();
+    expect(snap.data()?.['expireAt']).toBeInstanceOf(Timestamp);
+  });
 });
 ```
 
@@ -1754,7 +1913,11 @@ export const workRouter = os.router({
 
 ```ts
 // apps/console/src/app/api/work/v1/[[...rest]]/route.ts and
-// apps/console/src/app/work/context.ts -- both gain the same two edits:
+// apps/console/src/app/work/context.ts -- both gain the same edit. Note:
+// `getSessionDoc: sessionForResume` is NOT added here -- Task 2 already
+// wired it into both files' `WorkContext` object literals. This task's
+// diff against each file touches only the `authenticateWorkRequest` deps
+// object below.
 import {
   verifyScheduleTickOidcToken,
   verifySessionPinTickOidcToken,
@@ -1772,22 +1935,6 @@ const principal = await authenticateWorkRequest(
     grants: workGrants,
   },
 );
-```
-
-`route.ts`'s context also gains `getSessionDoc: sessionForResume` (Task 2's
-missed wiring — if Task 2 already wired this, skip; check before editing):
-
-```ts
-    context: {
-      ...(principal === undefined ? {} : { principal }),
-      runtime: createOrchestratorRuntime(),
-      sessionsFor: sessionsForRuns,
-      getSessionDoc: sessionForResume,
-      maxLiveRuns: workMaxLiveRuns(),
-      scheduleStore: createScheduleStore(),
-      grants: workGrants,
-      now: () => new Date(),
-    },
 ```
 
 ```ts
@@ -1815,7 +1962,7 @@ export async function touchSessionExpiry(
 }
 ```
 
-- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console -- github-actions-oidc work-auth work-router` and `./tools/nx test @agent-lcars/telemetry -- store` → PASS (the Firestore-emulator case runs in CI, `skipIf` locally without one); typecheck both clean.
+- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console -- github-actions-oidc work-auth work-router` and `./tools/nx test @agent-lcars/telemetry -- store` → PASS (the `store.spec.ts` run needs no emulator and nothing is `skipIf`-gated — `FakeFirestore` runs the same locally and in CI); typecheck both clean.
 
 - [ ] **Step 5: Commit**
 
@@ -2414,25 +2561,15 @@ git push
 
 - [ ] **Step 1: Land** — `pnpm verify` (or the fast layer per task,
       already run); open the PR with `--reviewer jlapenna`; watch CI
-      (Verify, the Firestore-emulator contract run covering
-      `touchSessionExpiry`, the OpenAPI drift check, the new shell/workflow
-      tests); resolve review threads; squash-merge (admin merge permitted
-      when the only block is the unattributed-changes approval rule).
-      Confirm `main`'s `Verify` is green and the App Hosting rollout for
-      the console completed.
+      (Verify, `@agent-lcars/telemetry`'s `FakeFirestore`-based
+      `store.spec.ts` covering `touchSessionExpiry` — no emulator
+      involved, per Task 8 — the OpenAPI drift check, and the new
+      shell/workflow tests); resolve review threads; squash-merge (admin
+      merge permitted when the only block is the unattributed-changes
+      approval rule). Confirm `main`'s `Verify` is green and the App
+      Hosting rollout for the console completed.
 
-- [ ] **Step 2: One-time maintainer config** — on a follow-up branch (this
-      land task, not a new sub-project), if `vars.GCP_TELEMETRY_WRITER_SA`
-      is not already a repository variable (`GCP_WIF_PROVIDER` almost
-      certainly already is, reused from `work-schedules-tick.yml`/
-      `dispatch-reconcile.yml`; `GCP_TELEMETRY_WRITER_SA` may need adding
-      — check `.github/actions/telemetry-start/action.yml`'s own callers
-      for how `service-account` is populated today, since this is the same
-      identity), add it as a plain (non-secret) repository variable naming
-      `telemetry-writer@<project>.iam.gserviceaccount.com` — a repository
-      variable is not Terraform, IAM, or a secret.
-
-- [ ] **Step 3: `work-create.yml` grows a `resume` input** on the
+- [ ] **Step 2: `work-create.yml` grows a `resume` input** on the
       `redispatch` action:
 
   ```yaml
@@ -2477,7 +2614,7 @@ git push
   `pnpm exec prettier --check .github/workflows/work-create.yml`; commit,
   push, open as its own small PR (touches only a workflow file already
   covered by `.github/actions/published-actions.contract.test.mjs` and
-  actionlint in CI); merge before Step 4.
+  actionlint in CI); merge before Step 3.
 
   ```bash
   git add .github/workflows/work-create.yml
@@ -2491,7 +2628,7 @@ git push
   git push
   ```
 
-- [ ] **Step 4: The proof**
+- [ ] **Step 3: The proof**
 
   1. Create the smoke item:
 
@@ -2592,12 +2729,17 @@ sdk-options.ts`'s generic `extraArgs` passthrough; the action's own
    prepended to the brief) is the retreat position, and Task 6 would need
    a follow-up task — not written here, since writing untested fallback
    code against an unconfirmed failure mode would itself be a guess.
-2. **`vars.GCP_TELEMETRY_WRITER_SA`** (Task 9's workflow, Task 11 Step 2)
-   is assumed to either already exist as a repository variable or need a
-   one-line addition; this plan did not trace every existing caller of
-   `.github/actions/telemetry-start/action.yml` to confirm which. A
-   repository variable is configuration, not Terraform/IAM/secrets, so
-   adding it (if missing) stays inside this plan's constraints regardless.
+2. **`vars.GCP_TELEMETRY_WRITER_SA`** — resolved during pre-execution
+   review: the coordinator confirmed this repository variable already
+   exists, so Task 11's original "one-time maintainer config" step (which
+   would have added it) was removed entirely; Task 9's workflow
+   (`work-session-pin-tick.yml`) references `vars.GCP_TELEMETRY_WRITER_SA`
+   directly, with no land-time prerequisite. The residual guess is
+   narrower than before: this plan still did not independently verify the
+   variable's exact spelling against `gh variable list` output or
+   `.github/actions/telemetry-start`'s actual callers — if the real name
+   differs, Task 9's workflow needs a one-line fix, not a new maintainer
+   step.
 3. **`resume-session`'s dual local/published step split.** `agent-lane.yml`
    wires `telemetry-start` as two steps (`telemetry-start`/
    `telemetry-start-published`) for a reason this plan did not fully
@@ -2619,12 +2761,23 @@ sdk-options.ts`'s generic `extraArgs` passthrough; the action's own
    workflow needs only ONE marketplace action (for the Google WIF
    exchange) rather than two overlapping OIDC-minting mechanisms. Not
    executed against a live workflow by this plan.
-5. **`repository variable` names** (`GCP_WIF_PROVIDER`,
-   `GCP_TELEMETRY_WRITER_SA`) are copied from the existing pattern
+5. **`GCP_WIF_PROVIDER`** is copied from the existing pattern
    `work-schedules-tick.yml`/`work-create.yml` already use for
-   `vars.GCP_WIF_PROVIDER`/`vars.GCP_CODEX_AGENT_SA` — the exact variable
-   name for the telemetry-writer service account was not independently
-   confirmed against `.github/actions/telemetry-start`'s actual callers.
+   `vars.GCP_WIF_PROVIDER` — reused, not newly guessed. (`GCP_TELEMETRY_
+WRITER_SA`'s existence is resolved per guess #2 above; its exact spelling
+   is the only piece still unverified.)
+6. **Task 8's landing order.** Task 8's `WorkScope` union
+   (`'work.operator' | 'work.cron' | 'work.executor' | 'work.reaper'`) is
+   written assuming `work.cron` (sub-project 3) and `work.executor`
+   (sub-project 4, `QueueExecutor` PR #1539) are both already on `main`'s
+   `work-auth.ts` by the time this task is implemented — true once PR
+   #1539 merges/rebases, per this plan's own "Requires sub-project 4 …
+   merged" header. If Task 8 is implemented before that merge lands, its
+   diff against the _current_ `work-auth.ts` (still only `'work.operator'
+| 'work.cron'`) needs `'work.executor'` dropped from the union and the
+   Google-ID-token/`work.executor` grant-check code Task 8's snippets
+   assume already exists — a sequencing risk to check at execution time,
+   not a design gap.
 
 **Type/shape consistency:** `WorkContext.getSessionDoc`'s return type
 (`SessionDoc | undefined`, Task 2) is what `sessionForResume` (Task 2)

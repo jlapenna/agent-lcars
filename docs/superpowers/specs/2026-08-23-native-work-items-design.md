@@ -1687,7 +1687,11 @@ deviation.)
 
 The drain (`orchestrator-dispatch.ts`'s `handleDispatchRun`) includes the
 resume in the `work` `workflow_dispatch` input — extending the existing
-JSON, not a new input (the workflows already declare 8 of GitHub's 10):
+JSON, not a new input (the dispatch workflows already declare 9 of
+GitHub's 10 allowed inputs — `issue`, `mode`, `reply`, `runbook`,
+`context`, `work`, `broker_intent_id`, `broker_generation`,
+`broker_dispatch_token` — one slot of headroom left, none of it spent
+here):
 
 ```ts
 inputs = {
