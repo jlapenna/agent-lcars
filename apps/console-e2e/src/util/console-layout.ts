@@ -98,7 +98,7 @@ export async function expectDesktopLcarsElbow(header: Locator) {
   expect(layout.elbowRight).toBe(layout.headerRight);
   expect(layout.commandRowBackground).toContain('linear-gradient');
   expect(layout.commandRowBackground).not.toContain('none');
-  expect(layout.modules).toHaveLength(6);
+  expect(layout.modules).toHaveLength(7);
   expect(
     new Set(layout.modules.map((module) => module.width)).size,
   ).toBeGreaterThan(2);

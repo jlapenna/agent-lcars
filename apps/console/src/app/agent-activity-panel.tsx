@@ -5,6 +5,7 @@ import type {
   SessionAgent,
   SessionSource,
 } from '@agent-lcars/telemetry';
+import { workIdFromIntentId } from '@agent-lcars/work';
 import {
   Alert,
   Anchor,
@@ -24,6 +25,7 @@ import type {
   FleetSummary,
 } from '../lib/agent-activity';
 import {
+  attemptMarkerFromDisplayTitle,
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
   groupLiveRunsByIssue,
@@ -122,8 +124,24 @@ type ActivityRowVariant = 'detail' | 'operations';
 
 function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
   const issueNumber = item?.number ?? run.issueNumber;
-  if (issueNumber === undefined) return undefined;
+  if (issueNumber === undefined) return workHrefForRun(run);
   return `/task/${run.repo.owner}/${run.repo.name}/${issueNumber}`;
+}
+
+/**
+ * A native work item's run has no `#<N>:` issue join key (see
+ * `issueNumberFromDisplayTitle`'s doc comment in agent-activity.ts) - its
+ * dispatch marker's `intentId` IS the orchestrator run id
+ * (`work:<ulid>/r<n>`) instead. Parsing the ULID back out of it links the
+ * run to its `/work/<id>` detail page the same way `taskHrefForRun`/
+ * `issueUrlForRun` link an issue-anchored run to its task or issue.
+ * Undefined for any run without a native marker - legacy issue-anchored
+ * runs, and runs dispatched by hand outside the fleet.
+ */
+function workHrefForRun(run: AgentRun): string | undefined {
+  const marker = attemptMarkerFromDisplayTitle(run.displayTitle);
+  const workId = marker ? workIdFromIntentId(marker.intentId) : undefined;
+  return workId ? `/work/${workId}` : undefined;
 }
 
 function operationsRunTitle(run: AgentRun): string {
@@ -408,7 +426,9 @@ export function LiveRunRow({
   return (
     <Stack gap={4}>
       <Anchor
-        href={item?.url ?? issueUrlForRun(run) ?? run.url}
+        href={
+          item?.url ?? issueUrlForRun(run) ?? workHrefForRun(run) ?? run.url
+        }
         target="_blank"
         rel="noreferrer"
         size="sm"
@@ -688,7 +708,7 @@ export function FinishedRunRow({
   return (
     <Stack gap={2} data-testid="finished-run-row">
       <Anchor
-        href={issueUrl ?? run.url}
+        href={issueUrl ?? workHrefForRun(run) ?? run.url}
         target="_blank"
         rel="noreferrer"
         size="sm"

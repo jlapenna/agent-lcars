@@ -11,6 +11,8 @@ import type { CliSession } from '../lib/cli-sessions';
 import {
   AgentActivityPanel,
   CliSessionRow,
+  FinishedRunRow,
+  LiveRunRow,
   type RunItemRef,
   SourceBadge,
 } from './agent-activity-panel';
@@ -32,18 +34,23 @@ vi.mock('./cancel-run-button', () => ({
 // import from it is type-only. The pure helpers are reimplemented here
 // rather than imported for real - agent-activity.test.ts is the source of
 // truth for their actual behavior; keep these in sync with it.
-// QUEUE_STALL_THRESHOLD_SECONDS itself is pulled from the real module
-// (importActual is safe here - it never touches the browser guard, see the
-// note above) so findStalledQueuedRun's reimplemented threshold can't
-// silently drift from production (#863).
+// QUEUE_STALL_THRESHOLD_SECONDS and attemptMarkerFromDisplayTitle are both
+// pulled from the real module (importActual is safe here - neither touches
+// the browser guard, see the note above; attemptMarkerFromDisplayTitle is
+// itself only a thin wrapper over @agent-lcars/dispatch-contracts'
+// parseDispatchMarker) so findStalledQueuedRun's reimplemented threshold,
+// and workHrefForRun's native-run marker parsing, can't silently drift from
+// production (#863).
 vi.mock('../lib/agent-activity', async () => {
-  const { QUEUE_STALL_THRESHOLD_SECONDS } = await vi.importActual<
-    typeof import('../lib/agent-activity')
-  >('../lib/agent-activity');
+  const { QUEUE_STALL_THRESHOLD_SECONDS, attemptMarkerFromDisplayTitle } =
+    await vi.importActual<typeof import('../lib/agent-activity')>(
+      '../lib/agent-activity',
+    );
   return {
     RECENT_RUN_LIMIT: 8,
     RUN_TIMEOUT_MINUTES: 90,
     MAX_TURNS_BUDGET: 200,
+    attemptMarkerFromDisplayTitle,
     QUEUE_STALL_THRESHOLD_SECONDS,
     findStalledQueuedRun: (liveRuns: AgentRun[]) =>
       liveRuns
@@ -637,6 +644,29 @@ describe('AgentActivityPanel live run links (#176)', () => {
     );
   });
 
+  // #1530: a native work item's run has no `#<N>:` join key at all - its
+  // displayTitle's dispatch marker carries the orchestrator runId
+  // (work:<ulid>/r<n>) instead of an issue anchor, so it opens the item's
+  // /work/<ulid> page rather than falling all the way to the raw run URL
+  // like the legacy-title case above.
+  it('opens a native work item on its /work/<id> route when issueNumber cannot be parsed', () => {
+    renderPanel([], {
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({
+          id: 35,
+          status: 'running',
+          issueNumber: undefined,
+          displayTitle:
+            'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+        }),
+      ],
+    });
+    const link = screen.getByTestId('current-run-primary-action');
+    expect(link.getAttribute('href')).toBe('/work/01M107KR3X6VDH7NZ4JDXZNSS2');
+    expect(link.textContent).toBe('Open task');
+  });
+
   it('does not add a session metadata link when telemetry is joined to a live run', () => {
     renderPanel(
       [],
@@ -656,6 +686,84 @@ describe('AgentActivityPanel live run links (#176)', () => {
       liveRuns: [makeAgentRun({ id: 34, status: 'running' })],
     });
     expect(screen.queryByTestId('live-run-session-link')).toBeNull();
+  });
+});
+
+// LiveRunRow's default 'detail' variant (used directly by the /agents
+// Active Agents section - see that section's own test file's isolation
+// comment) renders the run's title itself as the link, unlike the
+// 'operations' variant's separate "Open task"/"Inspect run" action tested
+// above - so this exercises the anchor `href` fallback chain at its other
+// call site.
+describe('LiveRunRow detail variant (used by the /agents Active Agents section) (#1530)', () => {
+  it('links a native work item run to its /work/<id> page', () => {
+    render(
+      <MantineProvider>
+        <LiveRunRow
+          run={makeAgentRun({
+            id: 40,
+            status: 'running',
+            issueNumber: undefined,
+            displayTitle:
+              'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+          })}
+        />
+      </MantineProvider>,
+    );
+
+    const link = screen.getByTestId('live-run-issue-link');
+    expect(link.getAttribute('href')).toBe('/work/01M107KR3X6VDH7NZ4JDXZNSS2');
+    expect(link.textContent).toBe(
+      'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+    );
+  });
+
+  it('still falls back to the raw run URL for a legacy run with neither an issue number nor a marker', () => {
+    render(
+      <MantineProvider>
+        <LiveRunRow
+          run={makeAgentRun({
+            id: 41,
+            status: 'running',
+            issueNumber: undefined,
+          })}
+        />
+      </MantineProvider>,
+    );
+
+    const link = screen.getByTestId('live-run-issue-link');
+    expect(link.getAttribute('href')).toBe(
+      'https://github.com/o/r/actions/runs/1',
+    );
+  });
+});
+
+// FinishedRunRow's default 'detail' variant is the one
+// recent-outcomes-section.tsx renders (unlike the AgentActivityPanel-driven
+// 'operations' variant tested above), so it needs the same href fallback
+// chain coverage LiveRunRow's detail variant got above.
+describe('FinishedRunRow detail variant (used by the /agents Recent Outcomes section) (#1530)', () => {
+  it('links a finished native work item run to its /work/<id> page', () => {
+    render(
+      <MantineProvider>
+        <FinishedRunRow
+          run={makeAgentRun({
+            id: 50,
+            status: 'completed',
+            conclusion: 'success',
+            issueNumber: undefined,
+            displayTitle:
+              'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+          })}
+        />
+      </MantineProvider>,
+    );
+
+    const link = screen.getByTestId('recent-run-issue-link');
+    expect(link.getAttribute('href')).toBe('/work/01M107KR3X6VDH7NZ4JDXZNSS2');
+    expect(link.textContent).toBe(
+      'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+    );
   });
 });
 

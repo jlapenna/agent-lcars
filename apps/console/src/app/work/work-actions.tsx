@@ -16,11 +16,11 @@ import { showErrorToast } from '../show-error-toast';
  * from a server component - a serializable reference, not the
  * component-as-prop trap) and a plain test double both satisfy it.
  */
-type WorkActionResult = readonly [
+export type WorkActionResult = readonly [
   { code: string; message: string } | null,
   unknown,
 ];
-type WorkAction = (input: { id: string }) => Promise<WorkActionResult>;
+export type WorkAction = (input: { id: string }) => Promise<WorkActionResult>;
 
 export function WorkActions({
   id,

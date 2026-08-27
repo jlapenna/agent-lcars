@@ -100,6 +100,7 @@ describe('ConsoleHeader nav rail', () => {
       ['Inbox', '/inbox'],
       ['Agents', '/agents'],
       ['Shuttlebay', '/shuttlebay'],
+      ['Work', '/work'],
       ['Sessions', '/sessions'],
       ['Costs', '/costs'],
     ]) {
@@ -107,6 +108,13 @@ describe('ConsoleHeader nav rail', () => {
         href,
       );
     }
+  });
+
+  it('marks Work as current on the work pages', () => {
+    renderHeader('work');
+    expect(
+      screen.getByRole('link', { name: 'Work' }).getAttribute('aria-current'),
+    ).toBe('page');
   });
 
   // Costs is a destination of its own since #192 ("a whole separate page,
@@ -180,7 +188,7 @@ describe('ConsoleNavRail (standalone)', () => {
     );
     const nav = screen.getByRole('navigation', { name: 'Console sections' });
     const links = within(nav).getAllByRole('link');
-    expect(links).toHaveLength(6);
+    expect(links).toHaveLength(7);
     expect(within(nav).getByRole('link', { name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',

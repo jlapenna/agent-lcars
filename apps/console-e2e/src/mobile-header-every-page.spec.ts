@@ -22,6 +22,7 @@ const AUTHENTICATED_VIEWS = [
   },
   { name: 'Agents', path: '/agents', current: 'agents' },
   { name: 'Shuttlebay', path: '/shuttlebay', current: 'shuttlebay' },
+  { name: 'Work', path: '/work', current: 'work' },
   {
     name: 'sessions by issue',
     path: '/sessions',

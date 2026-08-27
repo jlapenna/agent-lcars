@@ -32,14 +32,60 @@ import { DataFreshness } from './data-freshness';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { NavPageLoading, PageLoading } from './page-loading';
+import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 import { withConsolePageShell } from './with-console-page-shell';
+import { cancelItem, listItems, redispatchItem } from './work/actions';
 
 function toCard(item: ActionItem): BoardCard {
   return {
     item,
     primaryAction: derivePrimaryAction(item),
   };
+}
+
+/**
+ * Bridge slot: fetches through the same grant-checked server function the
+ * /work page uses; an admin without a work grant sees no panel. Lives here
+ * rather than alongside the pure `ParkedWorkPanel` - importing the
+ * `'use server'` `./work/actions` module into that file drags in
+ * `@orpc/next`'s Node-only `next/navigation` resolution, which vitest's
+ * jsdom environment can't load (see parked-work-panel.test.tsx, which only
+ * ever imports the pure component).
+ */
+async function ParkedWork() {
+  // `state: 'parked'` filters in the router (workRouter.list), before the
+  // per-item session join it does for every item that survives the filter
+  // - so that join only ever runs over parked items, not over every native
+  // task fetched. The `limit: 200` cap, though, is on the underlying
+  // `listNativeTasks` fetch itself - native tasks of *any* state, ordered
+  // by workId desc (ULIDs sort chronologically, so newest first) - and the
+  // state filter narrows within that already-limited window. A known
+  // limit, not a bug: if more than 200 native tasks in other states are
+  // newer than an old parked one, that parked item falls outside the
+  // window and simply doesn't show here.
+  try {
+    const [err, data] = await listItems({ limit: 200, state: 'parked' });
+    if (err) {
+      if (err.code === 'UNAUTHORIZED') return null;
+      console.error('agent-lcars: parked work panel unavailable:', err);
+      return null;
+    }
+    return (
+      <ParkedWorkPanel
+        items={data.items}
+        cancel={cancelItem}
+        redispatch={redispatchItem}
+      />
+    );
+  } catch (error) {
+    // The Bridge must never fall to error.tsx because this panel's fetch
+    // failed - matches runner-sessions.ts's defensive contract (degrade to
+    // nothing rendered, not a crashed page) rather than 500ing the whole
+    // Bridge over an optional slot.
+    console.error('agent-lcars: parked work panel unavailable:', error);
+    return null;
+  }
 }
 
 interface PageProps {
@@ -152,6 +198,10 @@ async function IndexBody({
             ?.inbox ?? '/inbox'
         }
       />
+
+      <Suspense fallback={null}>
+        <ParkedWork />
+      </Suspense>
 
       <AgentActivityPanel
         activity={filteredActivity}

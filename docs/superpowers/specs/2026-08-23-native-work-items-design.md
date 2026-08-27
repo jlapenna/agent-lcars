@@ -540,7 +540,9 @@ synchronous refusals besides validation.
    per-job pins and marker binding; generalized completion with marker binding and finalizer retry;
    `intentId` on session docs; native lane path; `lcars work`; two console pages; native-mode protocol
    section.
-2. **Notifications:** parked-work paging (Telegram) + console polish.
+2. **Parked-work visibility + console polish** (see the section below; the
+   Telegram paging originally listed here was dropped on 2026-08-27 — the
+   console is the notification surface).
 3. **Cron ingress:** a scheduler minting items from a schedule.
 4. **`QueueExecutor`:** direct runner mode + LCARS-minted run tokens +
    spec-fetch route.
@@ -564,6 +566,79 @@ Added when something needs them; nothing above precludes them:
 
 - Migrating GitHub-anchored tasks or Quick Tasks.
 - Targetless items; a review dispatch mode; a default pipeline.
-- Notifications for parked work.
+- External notifications (Telegram or otherwise) for parked work: the
+  console's own attention surfaces carry parked items (sub-project 2).
 - Any change to the dispatched-agent protocol for label-driven work.
 - Any issuer beyond Google (service-account identity) and GitHub Actions.
+
+## Sub-project 2: parked-work visibility and console polish
+
+Added 2026-08-27 after sub-project 1 shipped (#1527, #1531, #1532, #1534).
+Maintainer ruling: no Telegram (or any external) paging — the console is the
+place a maintainer already looks, so parked native work must be visible
+there without navigating to `/work`. Everything below is console-only; no
+new secrets, Terraform, or runtime env vars.
+
+### Parked work on the Bridge
+
+The Bridge (`/`) gains a **Parked work** panel above the agent activity
+panel, rendered only when at least one native item derives `parked`. It
+reads the same `listItems` server function the `/work` page uses (so it
+inherits the `work.operator` grant check: a signed-in admin without a grant
+sees no panel, not an error), filters `state === 'parked'`, and lists each
+item as a row: title (linking to `/work/<id>`), target repo, the latest
+run's `result.summary` (the outcome kind), how long it has been parked
+(`updatedAt`), and the existing `WorkActions` (redispatch / cancel). Sorted
+oldest-parked first. This is the "notification": a parked item is on the
+first page the maintainer opens until it is redispatched or canceled.
+
+### `/work` in the primary navigation
+
+`work` becomes a `CONSOLE_DESTINATIONS` entry (`/work`, label **Work**,
+accent `violet` — the one accent not yet used by a destination), between
+Shuttlebay and Sessions. The tablet-width constraint that kept it out in
+sub-project 1 (a 768 px viewport must not scroll horizontally on any page —
+`apps/console-e2e/src/mobile-header-every-page.spec.ts`) is met by the
+existing `.lcars-nav { flex-wrap: wrap }`; the E2E view list gains
+`/work`. The page-shell `current` value `'work'` already exists.
+
+### Creating items from the console
+
+`/work` gains a create form (title, description, target repo defaulting to
+the control-plane repository, pipeline select over `PIPELINES`). It calls a
+new `createItem` server function wrapping `workRouter.create` — the same
+handler the API uses, so grants, the live-run cap, and validation apply
+unchanged; `origin.channel` is `console`. The client generates the ULID
+(`libs/work/src/ulid.ts`, Crockford base32 over `crypto.getRandomValues`)
+so a retry of the same submission is idempotent. On `201` the page navigates
+to `/work/<id>`; `FORBIDDEN` and `TOO_MANY_REQUESTS` render inline as
+"no grant for that pipeline/repo" and "live-run cap reached".
+
+### Native runs on the existing surfaces (#1530)
+
+Two places derive a run's anchor from `#<n>:` in the Actions display title
+and get `undefined` for `native work: …` titles:
+
+- **Attribution.** `ExecutionAttempt` already carries `intentId` from the
+  dispatch marker. A `workIdFromIntentId(intentId)` helper
+  (`work:<ulid>/r<n>` → `<ulid>`) lets the agent activity panel link a native
+  attempt to `/work/<ulid>` instead of the bare Actions run URL; the
+  attempt stays in the "unattributed" group of `deriveLogicalWork` (that
+  grouping is by GitHub task and is out of scope), but it is no longer
+  anonymous.
+- **Cancel from the runs view.** `notifyReconcileForCancelledRun` resolves
+  the anchor from the marker when the title has no issue number: the marker's
+  `intentId` is the orchestrator run id, so `reflectCancelledRunInOrchestrator`
+  takes `{ issue }` or `{ runId }` and cancels by run id directly, then sweeps.
+
+### Testing
+
+Unit: nav destination list + header current-marking; `ulid()` shape and
+uniqueness; create form (submits `{ id, spec }`, renders the two refusal
+messages); parked panel (hidden at zero, rows sorted oldest first, actions
+wired); `workIdFromIntentId`; cancel path with a native display title
+(orchestrator `cancel` called with the intentId, no issue lookup). E2E:
+`/work` joins `mobile-header-every-page`. Real path: after rollout, one
+native item is created and driven to `parked` (its description asks the
+agent to `PARK`) and the Bridge is checked by the maintainer; `get` via
+`work-create.yml` shows `parked`; `redispatch` is exercised from the panel.
