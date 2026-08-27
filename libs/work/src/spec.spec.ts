@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PIPELINES,
   WORK_DESCRIPTION_MAX,
+  workOriginSchema,
   workPayloadSchema,
   workSpecSchema,
 } from './spec';
@@ -47,6 +48,17 @@ describe('workSpecSchema', () => {
 
   it('rejects unknown keys (strict)', () => {
     expect(() => workSpecSchema.parse({ ...spec, mode: 'review' })).toThrow();
+  });
+});
+
+describe('workOriginSchema', () => {
+  it('accepts the github channel', () => {
+    expect(
+      workOriginSchema.parse({
+        principal: 'github:jlapenna',
+        channel: 'github',
+      }).channel,
+    ).toBe('github');
   });
 });
 
