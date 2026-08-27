@@ -1,12 +1,15 @@
-import { Text } from '@mantine/core';
+import { PIPELINES } from '@agent-lcars/work';
+import { Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
 import { auth } from '@/auth';
+import { controlPlaneRepository } from '@/lib/deployment';
 
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
-import { listItems } from './actions';
+import { createItem, listItems } from './actions';
+import { WorkCreateForm } from './work-create-form';
 import { WorkList } from './work-list';
 
 /**
@@ -27,7 +30,16 @@ async function WorkBody() {
       </Text>
     );
   }
-  return <WorkList items={data.items} />;
+  return (
+    <Stack gap="lg">
+      <WorkCreateForm
+        create={createItem}
+        defaultRepo={controlPlaneRepository()}
+        pipelines={PIPELINES}
+      />
+      <WorkList items={data.items} />
+    </Stack>
+  );
 }
 
 function WorkViewContent() {
