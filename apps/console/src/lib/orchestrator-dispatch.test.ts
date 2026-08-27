@@ -927,4 +927,71 @@ describe('drainOutbox: report-outcome', () => {
     expect(calls.some((c) => c.url.endsWith('/labels'))).toBe(false);
     expect(result.reported).toEqual([run.runId]);
   });
+
+  it('a finished-not-ok outcome also gets the status:needs-human label', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const runId = decidedRun(requested).runId;
+    await orchestrator.confirmDispatch(runId);
+    await orchestrator.report(runId, { ok: false, summary: 'blocked' });
+
+    // routedFetch, not fakeFetch (which only ever takes one status): this
+    // one drainOutbox call settles two outbox entries -- the original
+    // dispatch-run entry, now stale since confirmDispatch was called
+    // directly above rather than through a drain (handleDispatchRun's own
+    // `run.state !== 'pending'` guard settles it `done` without ever
+    // calling fetch), and the report-outcome entry `report()` created,
+    // which needs both a comment (201) and a label (200) call to succeed.
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const labelCall = calls.find((c) => c.url.endsWith('/issues/42/labels'));
+    expect(labelCall).toBeDefined();
+    expect(JSON.parse(labelCall!.init.body as string)).toEqual({
+      labels: ['status:needs-human'],
+    });
+  });
+
+  it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {
+    const { store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+    });
+
+    const reportOutcome = await orchestrator.report(run.runId, {
+      ok: false,
+      summary: 'blocked',
+    });
+    if (isRefusal(reportOutcome)) {
+      throw new Error(`unexpected refusal: ${reportOutcome.reason}`);
+    }
+
+    const { fetchImpl, calls } = routedFetch({ labelStatus: 500 });
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls.some((c) => c.url.endsWith('/labels'))).toBe(true);
+    expect(result.failed).toEqual([]);
+    expect(result.reported).toEqual([run.runId]);
+
+    // Settled `done` despite the label failure: a later drain does not
+    // re-post the (already-delivered) comment.
+    const again = await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+    expect(again.reported).toEqual([]);
+    expect(calls.filter((c) => c.url.endsWith('/comments'))).toHaveLength(1);
+  });
 });

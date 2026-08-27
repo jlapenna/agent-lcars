@@ -346,7 +346,10 @@ async function handleReportOutcome(
   const outcome =
     run.state === 'lost'
       ? await describeLostOutcome(store, run, task)
-      : { body: outcomeCommentBody(run), needsHumanLabel: false };
+      : {
+          body: outcomeCommentBody(run),
+          needsHumanLabel: run.state === 'finished' && run.result?.ok === false,
+        };
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
   let response: Response;
@@ -457,11 +460,14 @@ function lostCause(run: Run): string {
   return 'was lost (no report before its lease expired)';
 }
 
-/** Flags the issue for human attention once the auto-retry budget is
- *  exhausted. Best-effort: a failure here must not fail the outcome-comment
- *  entry, which has already been posted and is about to be settled --
- *  the operator already has the comment telling them what happened;
- *  a missing label is a cosmetic miss, not a functional one. */
+/** Flags the issue for human attention: once the auto-retry budget is
+ *  exhausted (the `lost` branch), or whenever a run settles `finished` with
+ *  `ok: false` (the run itself never called this a retryable loss, so no
+ *  auto-retry will follow it -- the task is parked either way). Best-effort:
+ *  a failure here must not fail the outcome-comment entry, which has already
+ *  been posted and is about to be settled -- the operator already has the
+ *  comment telling them what happened; a missing label is a cosmetic miss,
+ *  not a functional one. */
 async function addNeedsHumanLabelBestEffort(
   fetchImpl: typeof fetch,
   tokens: DispatchTokenProvider,
