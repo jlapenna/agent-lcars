@@ -2,6 +2,7 @@ import {
   isLive,
   MAX_AUTO_RETRIES,
   type Run,
+  type RunExecutor,
   type Task,
 } from '@agent-lcars/orchestrator';
 
@@ -42,6 +43,8 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
+  executor?: RunExecutor;
+  queue?: { state: 'queued' | 'claimed'; claimedBy?: string };
 }
 
 export interface ItemSessionView {
@@ -93,6 +96,17 @@ export function toItemView(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.executor === undefined ? {} : { executor: r.executor }),
+      ...(r.queue === undefined
+        ? {}
+        : {
+            queue: {
+              state: r.queue.state,
+              ...(r.queue.claimedBy === undefined
+                ? {}
+                : { claimedBy: r.queue.claimedBy }),
+            },
+          }),
     })),
     sessions: [...(input.sessions ?? [])],
   };

@@ -385,6 +385,24 @@
                             },
                             "required": ["ok"],
                             "additionalProperties": false
+                          },
+                          "executor": {
+                            "type": "string",
+                            "enum": ["github-actions", "queue"]
+                          },
+                          "queue": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["queued", "claimed"]
+                              },
+                              "claimedBy": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["state"],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -643,6 +661,24 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "executor": {
+                            "type": "string",
+                            "enum": ["github-actions", "queue"]
+                          },
+                          "queue": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["queued", "claimed"]
+                              },
+                              "claimedBy": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["state"],
                             "additionalProperties": false
                           }
                         },
@@ -909,6 +945,24 @@
                                   },
                                   "required": ["ok"],
                                   "additionalProperties": false
+                                },
+                                "executor": {
+                                  "type": "string",
+                                  "enum": ["github-actions", "queue"]
+                                },
+                                "queue": {
+                                  "type": "object",
+                                  "properties": {
+                                    "state": {
+                                      "type": "string",
+                                      "enum": ["queued", "claimed"]
+                                    },
+                                    "claimedBy": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["state"],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -1133,6 +1187,24 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "executor": {
+                            "type": "string",
+                            "enum": ["github-actions", "queue"]
+                          },
+                          "queue": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["queued", "claimed"]
+                              },
+                              "claimedBy": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["state"],
                             "additionalProperties": false
                           }
                         },
@@ -1387,6 +1459,24 @@
                               }
                             },
                             "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "executor": {
+                            "type": "string",
+                            "enum": ["github-actions", "queue"]
+                          },
+                          "queue": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["queued", "claimed"]
+                              },
+                              "claimedBy": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["state"],
                             "additionalProperties": false
                           }
                         },
