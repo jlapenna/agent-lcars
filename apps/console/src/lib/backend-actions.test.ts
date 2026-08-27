@@ -802,6 +802,32 @@ describe('cancelWorkflowRun', () => {
     expect(run?.state).toBe('canceled');
   });
 
+  // A native work item's dispatch marker carries no leading `#<N>:` join
+  // key for issueNumberFromDisplayTitle to parse - its marker's intentId IS
+  // the orchestrator's own runId (see cancelAnchorFromDisplayTitle), so the
+  // console cancels it directly instead of looking up an issue's active run
+  // first (contrast with the two tests above, which both seed a task and go
+  // through store.readActiveRun).
+  it('cancels a native work item run directly from its dispatch marker, without an issue lookup', async () => {
+    const nativeRunId = 'work:01M107KR3X6VDH7NZ4JDXZNSS2/r1';
+    mockOctokit({
+      displayTitle: `native work: Claude issue agent [dispatch:g1:${nativeRunId}]`,
+    });
+    const { store, orchestrator } = fixtureOrchestratorRuntime();
+    const cancelSpy = vi.spyOn(orchestrator, 'cancel');
+    const readActiveRunSpy = vi.spyOn(store, 'readActiveRun');
+    const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
+
+    await cancelWorkflowRun(DEFAULT_REPO, 12345);
+
+    expect(cancelSpy).toHaveBeenCalledWith(
+      nativeRunId,
+      'canceled from console',
+    );
+    expect(readActiveRunSpy).not.toHaveBeenCalled();
+    expect(sweepSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('skips reflection and the sweep when the title carries no anchor number', async () => {
     mockOctokit({ displayTitle: 'Manually dispatched run' });
     const { orchestrator } = fixtureOrchestratorRuntime();

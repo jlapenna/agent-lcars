@@ -8,8 +8,12 @@ import {
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
 import { isRefusal } from '@agent-lcars/orchestrator';
+import { workIdFromIntentId } from '@agent-lcars/work';
 
-import { issueNumberFromDisplayTitle } from './agent-activity';
+import {
+  attemptMarkerFromDisplayTitle,
+  issueNumberFromDisplayTitle,
+} from './agent-activity';
 import { controlPlaneRepository } from './deployment';
 import { REPO_HEADER } from './github-app-tokens';
 import {
@@ -429,20 +433,25 @@ const DISPATCH_CALLER_ID_PATTERN =
 // the caller - a red toast over a best-effort follow-up sweep would be a
 // worse bug than the latency this exists to shrink; the scheduled sweep
 // remains the backstop either way.
-async function notifyReconcile(anchorNumber: number): Promise<void> {
+//
+// `anchor` is only ever a log-line label here (an issue/PR number for a
+// GitHub-anchored run, or a native orchestrator `runId` string for a
+// dispatch:g<gen>:work:<ulid>/r<n> run) - the actual sweep below is anchor-
+// agnostic (see the #1183 comment above).
+async function notifyReconcile(anchor: number | string): Promise<void> {
   try {
     const result = await handleReconcile(createOrchestratorRuntime());
     if (result.status !== 200) {
       console.error(
         'agent-lcars: orchestrator reconcile sweep failed after #%s:',
-        anchorNumber,
+        anchor,
         result.body,
       );
     }
   } catch (error) {
     console.error(
       'agent-lcars: failed to sweep the orchestrator after #%s:',
-      anchorNumber,
+      anchor,
       error,
     );
   }
@@ -454,12 +463,16 @@ async function notifyReconcile(anchorNumber: number): Promise<void> {
 // claude.yml/codex.yml/opencode.yml's `run-name` renders `#<N>: ...` into
 // the run's `display_title`, the same field agent-activity.ts's
 // issueNumberFromDisplayTitle already trusts to join a live run back to
-// its issue for the dashboard. A run whose title doesn't parse (predates
-// the run-name rollout, or was dispatched by hand outside the fleet) has no
-// anchor this console can identify from the run alone - reflection and the
-// sweep are both skipped for it and left to the scheduled sweep, the same
-// "don't guess" posture approveAndMergePr takes for a merge's linked-issue
-// anchor.
+// its issue for the dashboard. A native work item's run instead titles
+// itself `native work: <label> [dispatch:g<gen>:work:<ulid>/r<n>]` - no
+// leading `#<N>:` to parse, but its dispatch marker's `intentId` IS the
+// orchestrator's own `runId`, so that is used as the anchor directly
+// instead of an issue lookup (see `cancelAnchorFromDisplayTitle`). A run
+// whose title carries neither shape (predates the run-name rollout, or was
+// dispatched by hand outside the fleet) has no anchor this console can
+// identify from the run alone - reflection and the sweep are both skipped
+// for it and left to the scheduled sweep, the same "don't guess" posture
+// approveAndMergePr takes for a merge's linked-issue anchor.
 async function notifyReconcileForCancelledRun(
   repo: WatchedRepo,
   runId: number,
@@ -470,7 +483,7 @@ async function notifyReconcileForCancelledRun(
   // console action remains responsive, with the scheduled sweep as the
   // fallback when GitHub takes longer to finish cancellation.
   const pollDelaysMs = [0, 250, 500, 1000, 2000, 4000];
-  let anchorNumber: number | undefined;
+  let anchor: CancelAnchor | undefined;
   for (const delayMs of pollDelaysMs) {
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -482,7 +495,7 @@ async function notifyReconcileForCancelledRun(
         repo: repo.name,
         run_id: runId,
       });
-      anchorNumber ??= issueNumberFromDisplayTitle(run.display_title);
+      anchor ??= cancelAnchorFromDisplayTitle(run.display_title);
       if (run.status !== 'completed') continue;
     } catch (error) {
       console.error(
@@ -492,9 +505,9 @@ async function notifyReconcileForCancelledRun(
       );
       return;
     }
-    if (anchorNumber !== undefined) {
-      await reflectCancelledRunInOrchestrator(anchorNumber);
-      await notifyReconcile(anchorNumber);
+    if (anchor !== undefined) {
+      await reflectCancelledRunInOrchestrator(anchor);
+      await notifyReconcile('issue' in anchor ? anchor.issue : anchor.runId);
     }
     return;
   }
@@ -505,35 +518,63 @@ async function notifyReconcileForCancelledRun(
   );
 }
 
+// The anchor a cancelled GitHub Actions run's display_title resolves to -
+// either the issue/PR number a legacy dispatch worked, or the orchestrator's
+// own runId for a native work item's dispatch (its intentId, verbatim -
+// workIdFromIntentId only validates the `work:<ulid>/r<n>` shape, the
+// intentId itself IS the runId store.readRun/orchestrator.cancel expect).
+type CancelAnchor = { issue: number } | { runId: string };
+
+function cancelAnchorFromDisplayTitle(
+  displayTitle: string,
+): CancelAnchor | undefined {
+  const issue = issueNumberFromDisplayTitle(displayTitle);
+  if (issue !== undefined) return { issue };
+  const marker = attemptMarkerFromDisplayTitle(displayTitle);
+  return marker && workIdFromIntentId(marker.intentId)
+    ? { runId: marker.intentId }
+    : undefined;
+}
+
 // cancelWorkflowRun's own GitHub Actions run id has no orchestrator
 // equivalent recorded anywhere - a `Run` only ever carries the orchestrator's
 // own minted `runId`, never a GitHub Actions numeric run id (see model.ts's
-// runSchema). The anchor issue number resolved above is the only honest join
-// available: if the control-plane task for that anchor currently has a live
-// run, the orchestrator's own one-live-run-per-task invariant means that run
-// can only be the one this GitHub Actions cancellation was acting on, so its
-// lock is released now instead of waiting out its lease. When there is no
-// live run (already settled, or was never one to begin with - e.g. a
-// manually dispatched run outside the orchestrator), there is nothing to
-// reflect; the mismatch is simply left alone, same "don't guess" posture as
-// everywhere else in this file.
+// runSchema). For an issue-anchored run, the anchor issue number resolved
+// above is the only honest join available: if the control-plane task for
+// that anchor currently has a live run, the orchestrator's own
+// one-live-run-per-task invariant means that run can only be the one this
+// GitHub Actions cancellation was acting on, so its lock is released now
+// instead of waiting out its lease. A native work item's anchor is already
+// the runId itself (its dispatch marker's intentId - see
+// cancelAnchorFromDisplayTitle), so that case cancels directly without an
+// issue lookup. When there is no live run to find (already settled, or was
+// never one to begin with - e.g. a manually dispatched run outside the
+// orchestrator), there is nothing to reflect; the mismatch is simply left
+// alone, same "don't guess" posture as everywhere else in this file.
 async function reflectCancelledRunInOrchestrator(
-  anchorNumber: number,
+  anchor: CancelAnchor,
 ): Promise<void> {
   try {
     const { store, orchestrator } = createOrchestratorRuntime();
-    const taskId = { repo: controlPlaneRepository(), issue: anchorNumber };
-    const activeRun = await store.readActiveRun(taskId);
-    if (activeRun === undefined) return;
+    const runId =
+      'runId' in anchor
+        ? anchor.runId
+        : (
+            await store.readActiveRun({
+              repo: controlPlaneRepository(),
+              issue: anchor.issue,
+            })
+          )?.runId;
+    if (runId === undefined) return;
     // `cancel` only ever refuses `unknown-run`/`run-not-live` - both mean
     // the run already stopped being live between this read and the call,
     // which is exactly the outcome this reflection wants anyway (mirrors
     // reassignPipeline's identical guard elsewhere in this file).
-    await orchestrator.cancel(activeRun.runId, 'canceled from console');
+    await orchestrator.cancel(runId, 'canceled from console');
   } catch (error) {
     console.error(
-      'agent-lcars: failed to reflect the cancelled run into the orchestrator for #%s:',
-      anchorNumber,
+      'agent-lcars: failed to reflect the cancelled run into the orchestrator for %j:',
+      anchor,
       error,
     );
   }
