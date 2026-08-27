@@ -70,6 +70,20 @@ function principalFor(
   };
 }
 
+/** Extracts the raw bearer token from `Authorization: Bearer <token>`,
+ *  verbatim -- no verification. `route.ts` uses this to populate
+ *  `RunsContext.bearerToken` for the run-token routes, which hash and
+ *  compare it against a claimed run's own `queue.tokenHash` rather than
+ *  verifying it as a Google ID token the way `authenticateWorkRequest`
+ *  does below. Kept as a small, separately-testable duplicate of the same
+ *  regex `authenticateWorkRequest` uses inline, not a refactor of that
+ *  function's control flow. */
+export function rawBearerToken(request: Request): string | undefined {
+  const header = request.headers.get('authorization');
+  const match = header === null ? null : /^Bearer\s+(\S+)$/iu.exec(header);
+  return match?.[1];
+}
+
 /**
  * Bearer token first, tried against Google and then, on failure, against
  * the schedule-tick OIDC verifier; an Auth.js session only when no bearer

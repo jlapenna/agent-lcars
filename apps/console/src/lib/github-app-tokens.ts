@@ -76,6 +76,16 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   issues: 'write',
 };
 
+/** Permission set for a direct-mode checkout/push token -- broader than
+ *  the drain's `DEFAULT_PERMISSIONS` because there is no separate
+ *  `claude[bot]`-vending Action in direct mode: this one token both
+ *  checks out and pushes. */
+export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
+  contents: 'write',
+  'pull-requests': 'write',
+  issues: 'write',
+};
+
 export interface AppInstallationTokenProviderOptions {
   /** The GitHub App's client ID -- used as the JWT `iss` claim. */
   clientId: string;
@@ -184,6 +194,7 @@ export class AppInstallationTokenProvider implements DispatchTokenProvider {
  */
 export function createDispatchTokenProvider(
   env: Record<string, string | undefined>,
+  permissions?: Record<string, string>,
 ): DispatchTokenProvider {
   const clientId = env['AGENT_LCARS_APP_CLIENT_ID'];
   if (clientId === undefined) {
@@ -199,7 +210,11 @@ export function createDispatchTokenProvider(
   // first dispatch. See the doc comment above.
   parsePrivateKey(privateKeyPem);
 
-  return new AppInstallationTokenProvider({ clientId, privateKeyPem });
+  return new AppInstallationTokenProvider({
+    clientId,
+    privateKeyPem,
+    permissions,
+  });
 }
 
 /**
