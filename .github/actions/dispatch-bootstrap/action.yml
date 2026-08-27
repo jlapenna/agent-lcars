@@ -17,10 +17,11 @@ description: >-
   opencode.yml - the only callers that ever pass `dispatch-bootstrap: true`)
   also passed `control-plane-projections: true`, which made the gate always
   false: the console now claims the anchor itself at dispatch-confirm time
-  (`claimGithubAnchor` in the drain) instead. `.github/actions/claim-issue`
-  itself was not deleted - it is still called from agent-lane.yml's own
-  consumer-era claim step, kept until external fleet consumers opt into
-  `control-plane-projections` too.
+  (`claimGithubAnchor` in the drain) instead. agent-lane.yml's own
+  consumer-era claim step, and `.github/actions/claim-issue` itself, were
+  deleted outright in wave 3 of #1544 once a live consumer canary
+  (jlapenna/nx-cache-server#41, run 33105114357) confirmed the console-side
+  projection covers a real dispatch end to end.
 
   Thin executor (agent-lcars#1015): this action does NOT re-verify
   admission or bind state against any ledger. `workflow_dispatch` on this

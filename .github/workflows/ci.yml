@@ -157,9 +157,6 @@ jobs:
       - name: Check repository symlink integrity
         run: bash tools/check-repo-symlinks.sh
 
-      - name: Test issue claiming
-        run: bash .github/actions/claim-issue/claim.test.sh
-
       - name: Test workflows-permission grant verification (#868)
         run: bash .github/actions/mint-agent-token/verify-workflows-grant.test.sh
 

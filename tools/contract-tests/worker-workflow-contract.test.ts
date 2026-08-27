@@ -419,7 +419,7 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(localPrGuide).toContain('they do not request human');
   });
 
-  it('collapses §1-4 to native rules gated on runtime.projections or a work anchor, with a legacy subsection', () => {
+  it('states §1-4 as unconditional native rules with no legacy fallback (wave 3, #1544)', () => {
     const protocol = readFileSync(
       path.join(
         repoRoot,
@@ -427,19 +427,20 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
       ),
       'utf8',
     );
-    expect(protocol).toContain(
+    // The claim step / legacy fallback this gating used to select between
+    // was deleted in wave 3 of #1544 (canary: jlapenna/nx-cache-server#41,
+    // run 33105114357): §1-4 now state the native behavior directly,
+    // rather than branching on a condition that no longer has an
+    // "otherwise" to fall back to.
+    expect(protocol).not.toContain(
       "runtime.projections === true || anchor.type === 'work'",
     );
-    expect(protocol).toContain('## Legacy (projections off)');
+    expect(protocol).not.toContain('## Legacy (projections off)');
     expect(protocol).not.toContain('## 5a. Native work items');
-    const legacy = protocol.slice(
-      protocol.indexOf('## Legacy (projections off)'),
-    );
-    expect(legacy).toContain('eyes (👀) reaction');
-    expect(legacy).toContain('status:needs-human');
-    expect(legacy).toContain(
-      'gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna',
-    );
+    expect(protocol).toContain('## 1. Takeover — your first action');
+    expect(protocol).toContain('## 4. Parking — blocked on a human');
+    expect(protocol).toContain('status:needs-human');
+    expect(protocol).toContain('PARK <blocker>');
   });
 });
 

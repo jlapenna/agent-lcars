@@ -433,19 +433,21 @@ async function handleDispatchRun(
   result.dispatched.push(run.runId);
 }
 
-/** Additive, idempotent, best-effort -- projects the two claim effects that
- *  today happen elsewhere for a GitHub anchor: the assignee call is
- *  byte-identical to `.github/actions/claim-issue/claim.sh`'s own mutation
- *  (`POST .../assignees` with `{assignees: [<fleet login>]}`); the eyes
- *  reaction's endpoint/body (`POST .../reactions` with `{content: 'eyes'}`)
- *  matches agent-protocol.md §2, which claim.sh itself does not post -- that
- *  reaction is normally the dispatched agent's own first action, once it
- *  starts reading the anchor's thread. Here it is posted once, on the issue
- *  body only (not per-comment -- the console has not read any comments at
- *  this point), as the single visible acknowledgement a human watching the
- *  issue looks for right when the dispatch is confirmed. A failure here must
- *  not cost the dispatch, which has already succeeded by the time this
- *  runs. See the design spec's "Projections" note.
+/** Additive, idempotent, best-effort -- projects the two claim effects a
+ *  GitHub anchor used to get from elsewhere: the assignee call performs the
+ *  same mutation (`POST .../assignees` with `{assignees: [<fleet login>]}`)
+ *  the deleted `.github/actions/claim-issue` action's `claim.sh` used to
+ *  make (removed in wave 3 of #1544, once this projection covered every
+ *  admitted consumer dispatch); the eyes reaction's endpoint/body
+ *  (`POST .../reactions` with `{content: 'eyes'}`) matches
+ *  agent-protocol.md §2, which the dispatched agent no longer posts itself
+ *  -- this projected reaction is the only one the anchor gets now. Here it
+ *  is posted once, on the issue body only (not per-comment -- the console
+ *  has not read any comments at this point), as the single visible
+ *  acknowledgement a human watching the issue looks for right when the
+ *  dispatch is confirmed. A failure here must not cost the dispatch, which
+ *  has already succeeded by the time this runs. See the design spec's
+ *  "Projections" note.
  *
  *  The two POSTs are independent, deliberately not sharing one `try`: both
  *  are idempotent (a repeated reaction returns the existing one; assigning

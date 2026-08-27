@@ -69,49 +69,36 @@ third-party approval cannot waive any hard limit.
 
 ## 1. Takeover — your first action
 
-**When `runtime.projections === true || anchor.type === 'work'`** (check
-the dispatch brief's `runtime.projections` field, and its `anchor.type` —
-a native run has neither an issue to post to nor, sometimes, a
-`runtime.projections` field at all, so it always takes this branch): skip.
-The console posts the eyes reaction and claims the issue for the fleet the
-moment your dispatch is confirmed — before your turn starts — and derives
-the takeover affordance from your session doc. Post nothing.
-
-**Otherwise**, follow "Legacy (projections off)" below.
+Skip. The console posts the eyes reaction and claims the issue for the
+fleet the moment your dispatch is confirmed — before your turn starts —
+and derives the takeover affordance from your session doc. Post nothing.
 
 ## 2. Eyes reaction and assignee claim
 
-**When `runtime.projections === true || anchor.type === 'work'`**: skip —
-already done for you (see §1).
-
-**Otherwise**, follow "Legacy (projections off)" below.
+Skip — already done for you (see §1).
 
 ## 3. Progress
 
-**When `runtime.projections === true || anchor.type === 'work'`**:
 `lcars session title "<what you are doing>"` and `lcars session status
 "<state>"` — the channel §12 already requires, and now your only progress
 channel. No issue write.
 
-**Otherwise**, follow "Legacy (projections off)" below.
-
 ## 4. Parking — blocked on a human
 
-**When `runtime.projections === true || anchor.type === 'work'`**: end
-your response with `PARK <blocker>`. The finalizer reports `ok: false`;
+End your response with `PARK <blocker>`. The finalizer reports `ok: false`;
 the console applies the `status:needs-human` label and posts the park
 comment for you (for an issue anchor — a `work` anchor has no issue to
 label). Your blocker text reaches a human only through `lcars session
 status` (§12) and this run's log — set it there before you end your turn.
 Post nothing to GitHub.
 
-**Otherwise**, follow "Legacy (projections off)" below.
+Do NOT park just because a PR is open awaiting normal review — that is
+expected, not a block.
 
 ## 5. Deliverable rule — silence is failure
 
-Unchanged for every anchor and every `runtime.projections` value: a run
-that reasons to a conclusion and never posts or acts on it is a failed
-run. Stamp your attempt's claim marker on the deliverable — the PR
+A run that reasons to a conclusion and never posts or acts on it is a
+failed run. Stamp your attempt's claim marker on the deliverable — the PR
 description, evidence comment, review body, or close comment (see below
 for the exact marker text). One branch on the reference format:
 
@@ -123,6 +110,22 @@ for the exact marker text). One branch on the reference format:
 - **Work anchor** (`anchor.type` is `work`, no issue): reference the item
   as `Work: work:<id>` (never `Fixes #N`). No no-op is available: if the
   request is already satisfied, `PARK` with that evidence instead (§4).
+
+The dispatch brief's `mode` and `requested_results` fields are authoritative;
+do not infer the job from labels:
+
+| `mode`      | anchor       | deliverable                                                 |
+| ----------- | ------------ | ----------------------------------------------------------- |
+| `implement` | issue        | open a PR on a new branch                                   |
+| `implement` | pull request | take over and keep pushing to that PR's branch              |
+| `review`    | pull request | submit a real pull-request review with a body; push nothing |
+| `reply`     | either       | a comment may be the complete deliverable                   |
+
+Reply dispatches recognize `@claude`, the generic `@agent` alias for Claude,
+`/codex`, `/opencode`, and `/oc` in an owner or member's comment. GitHub-style
+`@claude`/`@agent` mentions may appear in ordinary prose; slash commands must
+begin an unquoted line. Mentions and commands inside blockquotes or code are
+inert.
 
 A failed or cancelled worker is itself a machine-authored parking path. Its
 failure reporter must post the visible failure, add `status:needs-human`, and
@@ -154,11 +157,9 @@ one claims work for an attempt that does not exist. There is no fallback: a
 run whose deliverable carries no exact marker fails its deliverable gate
 (the earlier time-window/bot-login inference that used to catch this case
 was removed once every consumer passed attempt identity). Stamp only the
-artifact that IS your deliverable, never your takeover or progress comment
-(see "Takeover comment — your first action" and "One edited progress
-comment" under Legacy — the native §1/§3 above post neither): the marker is
-a claim of authorship over one specific object, not a running commentary
-tag.
+artifact that IS your deliverable — never a takeover or progress note (§1
+and §3 post neither): the marker is a claim of authorship over one
+specific object, not a running commentary tag.
 
 When the requested result already exists before the run starts, finish with
 one evidence-backed structured no-op comment. Name the existing commit, PR,
@@ -173,133 +174,6 @@ The finalizer recognizes `no-op` only when both markers are on the same
 comment. A takeover/progress comment, a bare “already fixed” assertion, or a
 no-op marker without this run's exact attempt claim is not a completed
 deliverable.
-
-## Legacy (projections off)
-
-Read this section instead of §1–§4 above whenever `anchor.type` is
-`issue` and the dispatch brief's `runtime.projections` is absent or
-`false` — every consumer that has not opted into control-plane
-projections yet, and every GitHub-anchored task still dispatching through
-the pre-`work` brief path.
-
-### Takeover comment — your first action
-
-Before reading anything else, post a brief comment on the anchor
-(`gh issue comment`, or `gh pr comment` if the anchor is a pull request)
-acknowledging you have picked it up. It must carry a **provider-honest
-handoff line**, and which shape that takes depends on whether your own CLI
-has real live-resume tooling:
-
-- **Claude Code:** include `fleet-claude-agent-session resume <session-id>`,
-  where `<session-id>` is the basename of the newest transcript under
-  `~/.claude/projects/<slugified-repo-path>/*.jsonl`. Also mention
-  `fleet-claude-agent-session resume-archive <run-id>` for the durable
-  post-run handoff; live `resume` only works while the JIT runner remains.
-- **Codex:** say there is no live-resume command. Point to the pushed branch
-  or PR, and you may add that the completed run's JSONL transcript is archived
-  to GCS and can be read from its console-listed URI with `gcloud storage cat`.
-- **OpenCode:** say there is no live-resume command or archived transcript,
-  and point to the pushed branch or PR as the durable handoff.
-
-**Never post another CLI's resume command as your own.** A resume command
-only works for the exact tool it was built for — its own transcript
-format, its own auth, its own resume subcommand — so citing one CLI's
-script from a different CLI's takeover comment (e.g. a Codex or OpenCode
-run naming a Claude-only resume script) is not a harmless approximation:
-it is a false handoff that reads as real until the maintainer tries it and
-it fails. This still applies even when a fleet console's takeover-command
-scanner hard-codes a fixed substring to watch for (e.g. `apps/console/src/
-lib/action-items.ts`'s `TAKEOVER_COMMAND_RE` in `jlapenna/agent-lcars` —
-not necessarily the repo you're reading this file from) — that substring
-is only ever meaningful coming from the CLI it was actually built for.
-Posting a comment the scanner doesn't match is the correct, honest outcome
-for a CLI with no live-resume tooling; it is not a gap to paper over by
-borrowing a different CLI's command.
-
-### Eyes-reaction acknowledgement
-
-As you read the anchor's thread, add an eyes (👀) reaction to the body and to
-every comment you have processed, so the maintainer can see what you have
-seen:
-
-```bash
-gh api repos/$GITHUB_REPOSITORY/issues/<N>/reactions -f content=eyes
-gh api repos/$GITHUB_REPOSITORY/issues/comments/<comment-id>/reactions -f content=eyes
-```
-
-Claim the anchor for the fleet through the assignees REST endpoint. GitHub App
-identities are not assignable users, so the fleet uses the ordinary bot user
-`agent-lcars-bot` in every onboarded repository:
-
-```bash
-gh api "repos/$GITHUB_REPOSITORY/issues/<N>/assignees" \
-  -f 'assignees[]=agent-lcars-bot' --silent
-```
-
-### One edited progress comment
-
-Keep ONE continuously edited status comment per run
-(`gh issue comment --edit-last`, or `gh pr comment --edit-last` on a PR
-anchor), updated at plan time and at each milestone — never a stream of new
-comments. Your takeover comment from "Takeover comment — your first action"
-above can serve as this same comment; edit it in place rather than starting
-a second one.
-
-### Dispatch mode
-
-The dispatch brief's `mode` and `requested_results` fields are authoritative;
-do not infer the job from labels:
-
-| `mode`      | anchor       | deliverable                                                 |
-| ----------- | ------------ | ----------------------------------------------------------- |
-| `implement` | issue        | open a PR on a new branch                                   |
-| `implement` | pull request | take over and keep pushing to that PR's branch              |
-| `review`    | pull request | submit a real pull-request review with a body; push nothing |
-| `reply`     | either       | a comment may be the complete deliverable                   |
-
-The shared lane stamps the accepted PR, comment, or review artifact with the
-attempt marker required by §5. Do not remove it.
-
-Reply dispatches recognize `@claude`, the generic `@agent` alias for Claude,
-`/codex`, `/opencode`, and `/oc` in an owner or member's comment. GitHub-style
-`@claude`/`@agent` mentions may appear in ordinary prose; slash commands must
-begin an unquoted line. Mentions and commands inside blockquotes or code are
-inert. End a parking comment with the trigger for the pipeline that should
-resume the work.
-
-### Parking — blocked on a human
-
-Whenever you are blocked on something only the maintainer can do (a
-decision, an approval, access you do not have), park before ending your
-turn. All parts are mandatory:
-
-1. A comment saying exactly what you need, ending with a **bold reminder of
-   the exact reply trigger your pipeline listens for** (e.g. `@claude`, or
-   `/opencode`/`/oc` — check your own dispatch workflow's `if:` condition
-   for the real string; a plain reply with no trigger is silently ignored).
-2. The label **AND** the assignee — the assignee puts the ball visibly in
-   the maintainer's court:
-
-   ```bash
-   gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna 2>/dev/null \
-     || gh pr edit <N> --add-label status:needs-human --add-assignee jlapenna
-   ```
-
-   `status:needs-human` is **fixed protocol-level vocabulary, not a per-repo
-   parameter** — the fleet console parses this exact label name across every
-   watched repo to build its "needs a human" queue. Do not rename or
-   localize it per repo.
-
-3. Then stop — do not keep iterating on a parked item.
-
-Do NOT park just because a PR is open awaiting normal review — that is
-expected, not a block. Un-park yourself when you become unblocked (e.g. the
-maintainer replied, or you found another way):
-
-```bash
-gh issue edit <N> --remove-label status:needs-human 2>/dev/null \
-  || gh pr edit <N> --remove-label status:needs-human
-```
 
 ## 6. Push early — never hold finished work locally
 
