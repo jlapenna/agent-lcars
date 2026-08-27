@@ -18,6 +18,7 @@ import {
   AppInstallationTokenProvider,
   createDispatchTokenProvider,
   createGithubClientAuthStrategy,
+  DIRECT_RUNNER_PERMISSIONS,
   REPO_HEADER,
   resolveRequestRepo,
 } from './github-app-tokens';
@@ -220,6 +221,38 @@ describe('AppInstallationTokenProvider', () => {
         contents: 'write',
         issues: 'write',
         pull_requests: 'write',
+      },
+    });
+  });
+
+  it('mints DIRECT_RUNNER_PERMISSIONS with contents/issues/pull_requests write, correctly spelled', async () => {
+    // Pins the exact exported constant `route.ts`'s direct-mode checkout/
+    // push path actually passes to `createDispatchTokenProvider` -- not a
+    // hand-typed stand-in -- so a future edit cannot silently reintroduce
+    // the hyphenated `'pull-requests'` key this constant previously
+    // carried. That typo is an unrecognized property in the real
+    // `POST /app/installations/{id}/access_tokens` request body (GitHub's
+    // `app-permissions` schema spells it `pull_requests`, underscore), so
+    // it granted nothing: this token minted without `pull_requests` at
+    // all, silently, on the direct-runner checkout/push path -- the same
+    // class of bug as `DEFAULT_PERMISSIONS`'s, just on a different call
+    // site, and the one sub-project 4's queue-executor proof exercises.
+    const { fetchImpl, calls } = fakeAppFetch();
+    const provider = new AppInstallationTokenProvider({
+      clientId: CLIENT_ID,
+      privateKeyPem: PRIVATE_KEY_PEM,
+      fetchImpl,
+      permissions: DIRECT_RUNNER_PERMISSIONS,
+    });
+
+    await provider.tokenFor(REPO);
+
+    expect(calls[1]?.body).toEqual({
+      repositories: ['example'],
+      permissions: {
+        contents: 'write',
+        pull_requests: 'write',
+        issues: 'write',
       },
     });
   });

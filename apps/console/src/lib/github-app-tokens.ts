@@ -99,10 +99,23 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
 /** Permission set for a direct-mode checkout/push token -- broader than
  *  the drain's `DEFAULT_PERMISSIONS` because there is no separate
  *  `claude[bot]`-vending Action in direct mode: this one token both
- *  checks out and pushes. */
+ *  checks out and pushes.
+ *
+ *  `pull_requests` (underscore) is GitHub's own `app-permissions` schema
+ *  spelling -- see `DEFAULT_PERMISSIONS`'s doc comment above for the full
+ *  reasoning and the hyphenated `permission-pull-requests` Action-input
+ *  name it's easy to confuse this with. This key previously read
+ *  `'pull-requests'` (hyphen): an unrecognized property in the `POST
+ *  /app/installations/{id}/access_tokens` request body, so it granted
+ *  nothing and this token silently minted without `pull_requests` at all
+ *  -- the same class of bug `DEFAULT_PERMISSIONS` had, on the direct-mode
+ *  checkout/push path instead of the outbox drain's. Sub-project 4's
+ *  queue-executor proof exercises this exact token once the runner image
+ *  is rebuilt with it, so a wrong key here would have failed that proof
+ *  in a confusing way. */
 export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
   contents: 'write',
-  'pull-requests': 'write',
+  pull_requests: 'write',
   issues: 'write',
 };
 
