@@ -81,22 +81,33 @@ describe('transcriptObjectPath', () => {
 
 describe('claudeProjectSlugFor', () => {
   it.each([
+    // Dot-free cases: unaffected by fix round 1 (widening the rule from
+    // `/`-only to every non-alphanumeric character) — kept as originally
+    // written.
     ['/home/jlapenna/p/agent-lcars', '-home-jlapenna-p-agent-lcars'],
     ['/tmp/agent-lcars-direct/checkout', '-tmp-agent-lcars-direct-checkout'],
     ['/', '-'],
-    // A dotted path segment, matching `default-checkout.ts`'s
-    // `checkoutSlugGlobs` (`root.replace(/\//g, '-')`) exactly: only `/`
-    // is substituted, so a literal `.` in the cwd passes through
-    // unchanged.
-    [
-      '/home/jlapenna/p/agent-lcars.wiki/checkout',
-      '-home-jlapenna-p-agent-lcars.wiki-checkout',
-    ],
     // A trailing slash: no normalization happens here (that's
     // `default-checkout.ts`'s `normalizeRoot`'s job, one layer up), so a
     // trailing `/` becomes a trailing `-`.
     ['/home/jlapenna/p/agent-lcars/', '-home-jlapenna-p-agent-lcars-'],
-  ])('replaces every "/" with "-": %s -> %s', (cwd, expected) => {
-    expect(claudeProjectSlugFor(cwd)).toBe(expected);
-  });
+    // A dotted path segment, pinned against Claude Code's REAL on-disk
+    // encoding (verified empirically — see this function's own doc
+    // comment for how), not `checkoutSlugGlobs`'s looser `/`-only glob
+    // rule: `.` is also replaced, one dash per character, un-collapsed.
+    [
+      '/home/runner/work/agent-lcars.git/repo',
+      '-home-runner-work-agent-lcars-git-repo',
+    ],
+    // A dotted, hidden path segment (a leading `.`) — the double dash is
+    // `/` then `.`, each becoming its own `-`, matching the real
+    // `~/.claude/projects/` entry this was cross-checked against
+    // (`/home/jlapenna/.openclaw` -> `-home-jlapenna--openclaw`).
+    ['/home/jlapenna/.openclaw', '-home-jlapenna--openclaw'],
+  ])(
+    'replaces every non-alphanumeric character with "-": %s -> %s',
+    (cwd, expected) => {
+      expect(claudeProjectSlugFor(cwd)).toBe(expected);
+    },
+  );
 });

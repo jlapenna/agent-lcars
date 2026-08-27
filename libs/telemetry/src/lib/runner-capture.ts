@@ -112,14 +112,42 @@ export function transcriptObjectPath(options: {
 
 /**
  * Claude Code's own project-directory encoding for an absolute checkout
- * path: every `/` becomes `-`. Verified against the sidecar's own
- * privacy-allowlist code (`apps/telemetry-watcher/src/lib/
- * default-checkout.ts`'s `checkoutSlugGlobs`, which builds `<root>-*` globs
- * for exactly this substitution) rather than assumed. Inverted by
- * `resume-transcript.ts` (sub-project 6): given a checkout directory, this
- * names the subdirectory under `~/.claude/projects/` a resumed session's
- * transcript must be written to before Claude Code can `--resume` it.
+ * path: every character other than `[A-Za-z0-9]` becomes `-`, one-for-one
+ * (a run of two non-alphanumeric characters — e.g. `/.` — becomes two
+ * dashes, not one; nothing is collapsed). Verified empirically, not
+ * assumed: `CLAUDE_CONFIG_DIR=<tmp> claude -p ... --dangerously-skip-
+ * permissions` run from a scratch cwd containing `.`, `_`, and `+`
+ * (`repo.name_x+y`) produced `<tmp>/projects/` entries with those
+ * characters, and only those, turned into `-` (`repo-name-x-y`); cross-
+ * checked against this machine's real `~/.claude/projects/` entries for a
+ * `.`-containing cwd (`/home/jlapenna/.openclaw` → `
+ * -home-jlapenna--openclaw` — the double dash is `/` then `.`, each its own
+ * dash, proving no collapsing) and for the Claude binary's own bundled
+ * `k(t)` cache-directory-naming helper (`apps/telemetry-watcher` runner
+ * image ships Claude Code; `t.replace(/[^a-zA-Z0-9]/g,"-")`, found via
+ * `strings` on the installed CLI binary), which uses the identical rule
+ * for a sibling cwd-derived directory name. (`-` itself is `[^a-zA-Z0-9]`
+ * too, so replacing it with `-` is a no-op either way `-` is or isn't in
+ * the allowed set.)
+ *
+ * Deliberately DIFFERENT from and NOT a drop-in replacement for
+ * `apps/telemetry-watcher/src/lib/default-checkout.ts`'s
+ * `checkoutSlugGlobs` (`root.replace(/\//g, '-')` plus a trailing `*`
+ * wildcard): that function builds a discovery GLOB for the host watcher's
+ * privacy allowlist, where slash-only substitution plus a wildcard tail
+ * already matches every real project dir prefixed by the checkout root
+ * regardless of what Claude Code does to characters after the root's own
+ * path — correctness there never depended on getting the encoding
+ * byte-exact. This function instead has to name the exact directory a
+ * `claude --resume` will look in, so it has to reproduce Claude Code's
+ * real encoding, not the glob's looser one. `checkoutSlugGlobs` is
+ * unchanged and stays on its own, narrower rule.
+ *
+ * Inverted by `resume-transcript.ts` (sub-project 6): given a checkout
+ * directory, this names the subdirectory under `~/.claude/projects/` a
+ * resumed session's transcript must be written to before Claude Code can
+ * `--resume` it.
  */
 export function claudeProjectSlugFor(absoluteCwd: string): string {
-  return absoluteCwd.replace(/\//g, '-');
+  return absoluteCwd.replace(/[^a-zA-Z0-9]/g, '-');
 }
