@@ -65,6 +65,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     scheduleStore: new MemoryScheduleStore(),
     grants: () => GRANTS,
     now: () => NOW,
+    queuePipelines: [],
     ...over,
   };
 }
