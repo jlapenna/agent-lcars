@@ -11,6 +11,7 @@ import type { CliSession } from '../lib/cli-sessions';
 import {
   AgentActivityPanel,
   CliSessionRow,
+  FinishedRunRow,
   LiveRunRow,
   type RunItemRef,
   SourceBadge,
@@ -733,6 +734,35 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
     const link = screen.getByTestId('live-run-issue-link');
     expect(link.getAttribute('href')).toBe(
       'https://github.com/o/r/actions/runs/1',
+    );
+  });
+});
+
+// FinishedRunRow's default 'detail' variant is the one
+// recent-outcomes-section.tsx renders (unlike the AgentActivityPanel-driven
+// 'operations' variant tested above), so it needs the same href fallback
+// chain coverage LiveRunRow's detail variant got above.
+describe('FinishedRunRow detail variant (used by the /agents Recent Outcomes section) (#1530)', () => {
+  it('links a finished native work item run to its /work/<id> page', () => {
+    render(
+      <MantineProvider>
+        <FinishedRunRow
+          run={makeAgentRun({
+            id: 50,
+            status: 'completed',
+            conclusion: 'success',
+            issueNumber: undefined,
+            displayTitle:
+              'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+          })}
+        />
+      </MantineProvider>,
+    );
+
+    const link = screen.getByTestId('recent-run-issue-link');
+    expect(link.getAttribute('href')).toBe('/work/01M107KR3X6VDH7NZ4JDXZNSS2');
+    expect(link.textContent).toBe(
+      'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
     );
   });
 });

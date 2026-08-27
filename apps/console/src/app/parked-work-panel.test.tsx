@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ParkedWorkPanel } from './parked-work-panel';
@@ -17,6 +17,13 @@ function item(
     title: string;
     updatedAt: string;
     summary: string;
+    /** The latest run's own state - distinct from the item's `state`
+     *  above. Defaults to 'finished'; the #12 fixture below overrides it to
+     *  'lost' with no `result` to exercise the row's `?? 'lost'` fallback. */
+    latestRunState: string;
+    /** Whether the latest run carries a `result` at all - a run can be
+     *  'lost' before ever producing one. */
+    hasResult: boolean;
   }>,
 ) {
   const {
@@ -25,6 +32,8 @@ function item(
     title = 'T',
     updatedAt = '2026-08-27T04:30:00.000Z',
     summary = 'outcome-gate-failure',
+    latestRunState = 'finished',
+    hasResult = true,
   } = overrides;
   return {
     id,
@@ -41,27 +50,32 @@ function item(
     runs: [
       {
         runId: `work:${id}/r1`,
-        state: 'finished',
+        state: latestRunState,
         pipeline: 'claude',
         createdAt: updatedAt,
         updatedAt,
-        result: { ok: false, summary },
+        ...(hasResult ? { result: { ok: false, summary } } : {}),
       },
     ],
     sessions: [],
   };
 }
 
-function renderPanel(items: unknown[]) {
-  return render(
+function renderPanel(
+  items: unknown[],
+  cancel = vi.fn(async () => [null, undefined] as const),
+  redispatch = vi.fn(async () => [null, undefined] as const),
+) {
+  render(
     <MantineProvider>
       <ParkedWorkPanel
         items={items as never}
-        cancel={vi.fn()}
-        redispatch={vi.fn()}
+        cancel={cancel}
+        redispatch={redispatch}
       />
     </MantineProvider>,
   );
+  return { cancel, redispatch };
 }
 
 describe('ParkedWorkPanel', () => {
@@ -73,8 +87,8 @@ describe('ParkedWorkPanel', () => {
     expect(screen.queryByTestId('parked-work-panel')).toBeNull();
   });
 
-  it('lists parked items oldest first with a link, the outcome, and actions', () => {
-    renderPanel([
+  it('lists parked items oldest first with a link, the outcome, and actions', async () => {
+    const { cancel, redispatch } = renderPanel([
       item({
         id: '01M107KR3X6VDH7NZ4JDXZNSS3',
         title: 'newer',
@@ -94,11 +108,27 @@ describe('ParkedWorkPanel', () => {
       '/work/01M107KR3X6VDH7NZ4JDXZNSS2',
     );
     expect(screen.getAllByText('outcome-gate-failure')).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: /redispatch/i })).toHaveLength(
-      2,
-    );
+    const redispatchButtons = screen.getAllByRole('button', {
+      name: /redispatch/i,
+    });
+    expect(redispatchButtons).toHaveLength(2);
     expect(
       screen.getByRole('heading', { name: /Parked work \(2\)/ }),
     ).toBeInTheDocument();
+
+    // Rows render oldest-first (asserted above), so the first Redispatch
+    // button belongs to the older row.
+    fireEvent.click(redispatchButtons[0]);
+    await waitFor(() =>
+      expect(redispatch).toHaveBeenCalledWith({
+        id: '01M107KR3X6VDH7NZ4JDXZNSS2',
+      }),
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('shows "lost" when the latest run is lost with no result (#12)', () => {
+    renderPanel([item({ latestRunState: 'lost', hasResult: false })]);
+    expect(screen.getByText('lost')).toBeInTheDocument();
   });
 });

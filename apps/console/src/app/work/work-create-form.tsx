@@ -1,6 +1,11 @@
 'use client';
 
-import { PIPELINES, ulid } from '@agent-lcars/work';
+import {
+  PIPELINES,
+  ulid,
+  WORK_DESCRIPTION_MAX,
+  WORK_TITLE_MAX,
+} from '@agent-lcars/work';
 import {
   Button,
   Group,
@@ -11,7 +16,9 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
+
+import type { WorkActionResult } from './work-actions';
 
 /** Pipelines this console can dispatch — the same literal union
  *  `workRouter.create`'s `spec.pipeline` accepts (`workSpecSchema` in
@@ -20,19 +27,13 @@ import { useState, useTransition } from 'react';
 type Pipeline = (typeof PIPELINES)[number];
 
 /**
- * Deliberately looser than the exact `ProcedureServerFunction` type
- * `actions.ts` exports (same reasoning as `work-actions.tsx`'s
- * `WorkActionResult`): real oRPC server functions pair an error with
+ * Reuses `work-actions.tsx`'s `WorkActionResult` tuple shape rather than
+ * re-declaring it: real oRPC server functions pair an error with
  * `undefined` data, not `null` (`ServerFunctionResult` in `@orpc/next`),
  * and this component never reads the success payload — it navigates using
- * the id it minted itself — so `unknown` covers both the real
- * `createItem` and a plain test double.
+ * the id it minted itself — so `WorkActionResult`'s `unknown` data slot
+ * covers both the real `createItem` and a plain test double.
  */
-type CreateResult = readonly [
-  { code: string; message: string } | null,
-  unknown,
-];
-
 export type CreateItemAction = (input: {
   id: string;
   spec: {
@@ -41,19 +42,26 @@ export type CreateItemAction = (input: {
     pipeline: Pipeline;
     target: { repo: string };
   };
-}) => Promise<CreateResult>;
+}) => Promise<WorkActionResult>;
 
 const REFUSALS: Record<string, string> = {
-  FORBIDDEN:
-    'Your grant does not cover that pipeline or repository (no grant for that pipeline or repository).',
+  FORBIDDEN: 'Your grant does not cover that pipeline or repository.',
   TOO_MANY_REQUESTS:
-    'The live-run cap reached; redispatch or cancel a running item first.',
+    'The fleet is at its live-run cap — wait for a run to finish, or cancel one first.',
 };
 
 /**
- * The `/work` create form. The id is minted client-side so a retried
- * submission is idempotent (the API answers 201 with the existing item);
- * grants, the cap, and validation all live in `workRouter.create`.
+ * The `/work` create form. The id is minted client-side, lazily, on first
+ * submit and held for the life of that spec: a retried submission after a
+ * refusal (a fixable one - fix the field workRouter.create rejected and
+ * resubmit) reuses the same id so the API sees a replay of the same
+ * `{id, spec}` pair (idempotent - 201 with the existing item) rather than
+ * minting a second orphaned item for one logical request. Editing any spec
+ * field clears the held id: the next submit is then a genuinely new
+ * request, not a replay under a stale id paired with a changed spec (which
+ * `workRouter.create` would reject as a conflicting id - see `sameSpec` in
+ * `work-router.ts`). Grants, the cap, and validation all live in
+ * `workRouter.create`.
  */
 export function WorkCreateForm({
   create,
@@ -71,11 +79,24 @@ export function WorkCreateForm({
   const [repo, setRepo] = useState(defaultRepo);
   const [pipeline, setPipeline] = useState<Pipeline>(pipelines[0] ?? 'claude');
   const [error, setError] = useState<string | undefined>();
+  const idRef = useRef<string | undefined>(undefined);
+
+  function fieldChanged<T>(set: (value: T) => void) {
+    return (value: T) => {
+      idRef.current = undefined;
+      set(value);
+    };
+  }
+  const onTitleChange = fieldChanged(setTitle);
+  const onDescriptionChange = fieldChanged(setDescription);
+  const onRepoChange = fieldChanged(setRepo);
+  const onPipelineChange = fieldChanged(setPipeline);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     setError(undefined);
-    const id = ulid();
+    idRef.current ??= ulid();
+    const id = idRef.current;
     startTransition(async () => {
       const [err] = await create({
         id,
@@ -85,6 +106,7 @@ export function WorkCreateForm({
         setError(REFUSALS[err.code] ?? err.message);
         return;
       }
+      idRef.current = undefined;
       router.push(`/work/${id}`);
     });
   }
@@ -95,31 +117,31 @@ export function WorkCreateForm({
         <TextInput
           label="Title"
           required
-          maxLength={256}
+          maxLength={WORK_TITLE_MAX}
           value={title}
-          onChange={(e) => setTitle(e.currentTarget.value)}
+          onChange={(e) => onTitleChange(e.currentTarget.value)}
         />
         <Textarea
           label="Description"
           required
           autosize
           minRows={3}
-          maxLength={16_384}
+          maxLength={WORK_DESCRIPTION_MAX}
           value={description}
-          onChange={(e) => setDescription(e.currentTarget.value)}
+          onChange={(e) => onDescriptionChange(e.currentTarget.value)}
         />
         <Group grow>
           <TextInput
             label="Repository"
             required
             value={repo}
-            onChange={(e) => setRepo(e.currentTarget.value)}
+            onChange={(e) => onRepoChange(e.currentTarget.value)}
           />
           <Select
             label="Pipeline"
             data={[...pipelines]}
             value={pipeline}
-            onChange={(value) => value && setPipeline(value as Pipeline)}
+            onChange={(value) => value && onPipelineChange(value as Pipeline)}
             allowDeselect={false}
           />
         </Group>

@@ -52,12 +52,63 @@ describe('WorkCreateForm', () => {
   });
 
   it.each([
-    ['FORBIDDEN', 'no grant for that pipeline or repository'],
-    ['TOO_MANY_REQUESTS', 'live-run cap reached'],
+    ['FORBIDDEN', /does not cover that pipeline or repository/],
+    ['TOO_MANY_REQUESTS', /live-run cap/],
   ])('renders %s inline', async (code, text) => {
     renderForm(vi.fn().mockResolvedValue([{ code, message: 'x' }, null]));
     fillTitleAndDescription('T', 'D');
     fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
-    expect(await screen.findByText(new RegExp(text))).toBeInTheDocument();
+    expect(await screen.findByText(text)).toBeInTheDocument();
+  });
+
+  it('reuses the same id on a retry (same fields) after an error', async () => {
+    const create = renderForm(
+      vi
+        .fn()
+        .mockResolvedValue([{ code: 'TOO_MANY_REQUESTS', message: 'x' }, null]),
+    );
+    fillTitleAndDescription('Add healthz', 'Expose /healthz');
+    const submitButton = screen.getByRole('button', {
+      name: 'Create work item',
+    });
+
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    const firstId: string = create.mock.calls[0][0].id;
+    // The button's `disabled`/`data-loading` doesn't clear in the same
+    // commit as the refusal text: React 19 keeps an async transition
+    // pending until the whole callback's promise settles, one render
+    // *after* the `setError` that paints the message - so wait for the
+    // button itself, not just for the error to appear, or a fast retry
+    // click lands on a still-disabled button and never resubmits.
+    await waitFor(() => expect(submitButton).not.toBeDisabled());
+
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create.mock.calls[1][0].id).toBe(firstId);
+  });
+
+  it('mints a new id when the title changes after an error', async () => {
+    const create = renderForm(
+      vi
+        .fn()
+        .mockResolvedValue([{ code: 'TOO_MANY_REQUESTS', message: 'x' }, null]),
+    );
+    fillTitleAndDescription('Add healthz', 'Expose /healthz');
+    const submitButton = screen.getByRole('button', {
+      name: 'Create work item',
+    });
+
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    const firstId: string = create.mock.calls[0][0].id;
+    await waitFor(() => expect(submitButton).not.toBeDisabled());
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
+      target: { value: 'Add healthz v2' },
+    });
+    fireEvent.click(submitButton);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    expect(create.mock.calls[1][0].id).not.toBe(firstId);
   });
 });

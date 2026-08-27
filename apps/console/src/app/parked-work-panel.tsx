@@ -1,14 +1,8 @@
 import type { ItemView } from '@agent-lcars/work/derive';
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
-import type { ComponentProps } from 'react';
 
 import { formatRelativeTime } from './format';
-import { WorkActions } from './work/work-actions';
-
-// `WorkActions` doesn't export its `WorkAction` callback type - derive it
-// from the component's own props instead of duplicating the tuple shape it
-// declares locally, so this stays in sync with the real signature.
-type WorkAction = ComponentProps<typeof WorkActions>['cancel'];
+import { type WorkAction, WorkActions } from './work/work-actions';
 
 /** Pure renderer: hidden at zero parked items; oldest-parked first. */
 export function ParkedWorkPanel({

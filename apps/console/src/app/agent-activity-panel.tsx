@@ -708,7 +708,7 @@ export function FinishedRunRow({
   return (
     <Stack gap={2} data-testid="finished-run-row">
       <Anchor
-        href={issueUrl ?? run.url}
+        href={issueUrl ?? workHrefForRun(run) ?? run.url}
         target="_blank"
         rel="noreferrer"
         size="sm"
