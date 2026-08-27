@@ -75,4 +75,34 @@ describe('ScheduleCreateForm', () => {
       expect(await screen.findByText(new RegExp(text))).toBeInTheDocument();
     },
   );
+
+  it('renders a server BAD_REQUEST message inline (a syntactically valid cron client-side `parseCron` cannot itself catch, e.g. one that never fires)', async () => {
+    // Not in the `REFUSALS` lookup, so the raw server message is shown
+    // verbatim -- the exact message `schedule-router.ts`'s create handler
+    // throws for a cron expression that parses but has no due slot within
+    // a year (e.g. `0 0 31 2 *`, no February has a 31st).
+    const create = renderForm(
+      vi.fn().mockResolvedValue([
+        {
+          code: 'BAD_REQUEST',
+          message: 'cron expression never fires within a year',
+        },
+        null,
+      ]),
+    );
+    fireEvent.change(screen.getByLabelText(/^Title/), {
+      target: { value: 'T' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Description/), {
+      target: { value: 'D' },
+    });
+    fireEvent.change(screen.getByLabelText(/Cron/), {
+      target: { value: '0 0 31 2 *' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }));
+    expect(
+      await screen.findByText('cron expression never fires within a year'),
+    ).toBeInTheDocument();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
 });

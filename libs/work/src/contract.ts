@@ -68,6 +68,17 @@ const withBearer = <T extends object>(current: T) => ({
   ...bearer,
 });
 
+/** `tick` accepts only a GitHub Actions OIDC bearer -- `work-auth.ts` never
+ *  grants `work.cron` from a Google-authenticated principal, so declaring
+ *  `bearerAuth` here too would document an operator token as valid when it
+ *  is refused at runtime. This replaces (not adds to) `withBearer`'s
+ *  `security`. */
+const githubOidcSecurity = { security: [{ githubOidc: [] }] };
+const withGithubOidc = <T extends object>(current: T) => ({
+  ...current,
+  ...githubOidcSecurity,
+});
+
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
 export const itemsContract = {
@@ -205,7 +216,7 @@ const scheduleViewSchema = z.strictObject({
   updatedAt: z.string(),
   lastSlotAt: z.string().optional(),
   lastItemId: workIdSchema.optional(),
-  disabledReason: z.enum(['grant-revoked', 'operator']).optional(),
+  disabledReason: z.enum(['grant-revoked', 'operator', 'invalid']).optional(),
 });
 
 const scheduleBase = oc.meta(
@@ -306,6 +317,13 @@ export const schedulesContract = {
         operationId: 'tickSchedules',
         summary:
           "Mint items for every enabled schedule's latest due slot (GitHub Actions OIDC only)",
+        // Distinct presentation from the rest of `schedules`: this route
+        // has no human/service-account caller and a different security
+        // scheme (see `withGithubOidc` below), so it also carries the
+        // `cron` tag -- `openapi()`'s tags merge, so this becomes
+        // `['schedules', 'cron']` alongside `scheduleBase`'s own tag.
+        tags: ['cron'],
+        spec: withGithubOidc,
       }),
     )
     .input(z.strictObject({}))
@@ -317,6 +335,14 @@ export const schedulesContract = {
         ),
         skippedCap: z.array(workIdSchema),
         disabled: z.array(workIdSchema),
+        // One schedule's unexpected failure (a `mintItem` or store-write
+        // rejection -- anything not already handled by `disabled` or
+        // `skippedCap`) never aborts the rest of the tick; it lands here
+        // instead so the caller (and its logs) can see which schedule and
+        // why without the whole route failing closed.
+        errors: z.array(
+          z.strictObject({ scheduleId: workIdSchema, message: z.string() }),
+        ),
       }),
     ),
 };

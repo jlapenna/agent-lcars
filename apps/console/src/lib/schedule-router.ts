@@ -138,6 +138,10 @@ export const scheduleRouter = os.router({
   enable: operator.enable.handler(async ({ input, context, errors }) => {
     const schedule = await context.scheduleStore.readSchedule(input.id);
     if (schedule === undefined) throw errors.NOT_FOUND();
+    // Clears `disabledReason` unconditionally, regardless of which reason
+    // disabled it ('operator', 'grant-revoked', or 'invalid') -- the next
+    // tick re-validates the grant and re-parses the stored cron/spec from
+    // scratch, so there is nothing left here worth distinguishing.
     const { disabledReason: _disabledReason, ...rest } = schedule;
     const next: Schedule = {
       ...rest,
@@ -167,83 +171,126 @@ export const scheduleRouter = os.router({
     const minted: { scheduleId: string; itemId: string }[] = [];
     const skippedCap: string[] = [];
     const disabled: string[] = [];
+    const tickErrors: { scheduleId: string; message: string }[] = [];
 
     for (const schedule of schedules) {
-      const cron = parseCron(schedule.cron);
-      const lastSlotAt =
-        schedule.lastSlotAt === undefined
-          ? undefined
-          : new Date(schedule.lastSlotAt);
-      const slot = latestDueSlot(cron, now, lastSlotAt);
-      if (slot === undefined) continue;
-
-      const itemId = await slotItemId(schedule.scheduleId, slot);
-
-      // A stored `spec` is validated with `workSpecSchema` at create time
-      // (`view`/`sameSchedule` above), so a spec that no longer parses
-      // here is not a caller mistake -- it is a bug (a schema tightened
-      // out from under an already-stored schedule, or a hand-edited
-      // Firestore document). `schedulesContract`'s tick response has no
-      // field for "this schedule's stored data is corrupt" separate from
-      // "this schedule is disabled", so the closest fit it does support is
-      // the same `disabled` list a grant revocation uses, with the only
-      // other `disabledReason` the schema allows.
-      let spec: WorkSpec;
+      // Everything below is per-schedule work (parsing the stored cron,
+      // computing the due slot and item id, minting, writing the
+      // watermark back) inside one try/catch: one schedule's failure --
+      // an unexpected `mintItem` throw, a store write that rejects, ...
+      // -- must never abort the remaining schedules' ticks. It is logged
+      // with the scheduleId and reported in `errors` instead of thrown.
       try {
-        spec = workSpecSchema.parse(schedule.spec);
+        // A stored `cron` is validated by `cronExpressionSchema` at create
+        // time, so one that no longer parses here is not a caller mistake
+        // -- it is a bug (a grammar tightened out from under an
+        // already-stored schedule, or a hand-edited document). Disable
+        // with 'invalid' rather than letting `parseCron` throw and abort
+        // every other schedule's tick.
+        let cron: CronSpec;
+        try {
+          cron = parseCron(schedule.cron);
+        } catch (error) {
+          console.error(
+            'agent-lcars: schedule has a cron expression that no longer parses, disabling',
+            { scheduleId: schedule.scheduleId, error },
+          );
+          await context.scheduleStore.writeSchedule({
+            ...schedule,
+            enabled: false,
+            disabledReason: 'invalid',
+            updatedAt: now.toISOString(),
+          });
+          disabled.push(schedule.scheduleId);
+          continue;
+        }
+
+        const lastSlotAt =
+          schedule.lastSlotAt === undefined
+            ? undefined
+            : new Date(schedule.lastSlotAt);
+        const slot = latestDueSlot(cron, now, lastSlotAt);
+        if (slot === undefined) continue;
+
+        const itemId = await slotItemId(schedule.scheduleId, slot);
+
+        // Same reasoning as the cron case above: a stored `spec` is
+        // validated with `workSpecSchema` at create time, so one that no
+        // longer parses here is a bug in the stored data, disabled with
+        // the same 'invalid' reason.
+        let spec: WorkSpec;
+        try {
+          spec = workSpecSchema.parse(schedule.spec);
+        } catch (error) {
+          console.error(
+            'agent-lcars: schedule has a spec that no longer validates, disabling',
+            { scheduleId: schedule.scheduleId, error },
+          );
+          await context.scheduleStore.writeSchedule({
+            ...schedule,
+            enabled: false,
+            disabledReason: 'invalid',
+            updatedAt: now.toISOString(),
+          });
+          disabled.push(schedule.scheduleId);
+          continue;
+        }
+
+        const grant = grantForPrincipal(schedule.createdBy, context.grants());
+
+        const result = await mintItem(context, {
+          id: itemId,
+          spec,
+          origin: {
+            principal: `cron:${schedule.scheduleId}`,
+            channel: 'cron',
+          },
+          grantsPrincipal: {
+            principal: schedule.createdBy,
+            pipelines: grant?.pipelines ?? [],
+          },
+        });
+
+        if (result.kind === 'forbidden') {
+          await context.scheduleStore.writeSchedule({
+            ...schedule,
+            enabled: false,
+            disabledReason: 'grant-revoked',
+            updatedAt: now.toISOString(),
+          });
+          disabled.push(schedule.scheduleId);
+          continue;
+        }
+        if (result.kind === 'cap') {
+          skippedCap.push(schedule.scheduleId);
+          continue;
+        }
+        // 'conflict' cannot happen here: `itemId` is deterministic per
+        // (scheduleId, slot) -- see `slotItemId` -- so a same-slot re-tick
+        // always replays the identical spec `mintItem` already stored.
+        minted.push({ scheduleId: schedule.scheduleId, itemId });
+        await context.scheduleStore.writeSchedule({
+          ...schedule,
+          lastSlotAt: slot.toISOString(),
+          lastItemId: itemId,
+          updatedAt: now.toISOString(),
+        });
       } catch (error) {
-        console.error(
-          'agent-lcars: schedule has a spec that no longer validates, disabling',
-          { scheduleId: schedule.scheduleId, error },
-        );
-        await context.scheduleStore.writeSchedule({
-          ...schedule,
-          enabled: false,
-          disabledReason: 'operator',
-          updatedAt: now.toISOString(),
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('agent-lcars: schedule tick failed', {
+          scheduleId: schedule.scheduleId,
+          error,
         });
-        disabled.push(schedule.scheduleId);
-        continue;
+        tickErrors.push({ scheduleId: schedule.scheduleId, message });
       }
-
-      const grant = grantForPrincipal(schedule.createdBy, context.grants());
-
-      const result = await mintItem(context, {
-        id: itemId,
-        spec,
-        origin: { principal: `cron:${schedule.scheduleId}`, channel: 'cron' },
-        grantsPrincipal: {
-          principal: schedule.createdBy,
-          pipelines: grant?.pipelines ?? [],
-        },
-      });
-
-      if (result.kind === 'forbidden') {
-        await context.scheduleStore.writeSchedule({
-          ...schedule,
-          enabled: false,
-          disabledReason: 'grant-revoked',
-          updatedAt: now.toISOString(),
-        });
-        disabled.push(schedule.scheduleId);
-        continue;
-      }
-      if (result.kind === 'cap') {
-        skippedCap.push(schedule.scheduleId);
-        continue;
-      }
-      // 'conflict' cannot happen here: `itemId` is deterministic per
-      // (scheduleId, slot) -- see `slotItemId` -- so a same-slot re-tick
-      // always replays the identical spec `mintItem` already stored.
-      minted.push({ scheduleId: schedule.scheduleId, itemId });
-      await context.scheduleStore.writeSchedule({
-        ...schedule,
-        lastSlotAt: slot.toISOString(),
-        lastItemId: itemId,
-        updatedAt: now.toISOString(),
-      });
     }
 
-    return { ticked: schedules.length, minted, skippedCap, disabled };
+    return {
+      ticked: schedules.length,
+      minted,
+      skippedCap,
+      disabled,
+      errors: tickErrors,
+    };
   }),
 });

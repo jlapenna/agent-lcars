@@ -1,6 +1,6 @@
 'use client';
 
-import { parseCron, PIPELINES, type WorkSpec } from '@agent-lcars/work';
+import { parseCron, PIPELINES, ulid, type WorkSpec } from '@agent-lcars/work';
 import {
   Button,
   Group,
@@ -12,7 +12,6 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useState, useTransition } from 'react';
-import { ulid } from 'ulid';
 
 /**
  * Deliberately looser than the exact `ProcedureServerFunction` type
@@ -38,13 +37,12 @@ const REFUSALS: Record<string, string> = {
 };
 
 /**
- * The `/work/schedules` create form. The id is minted client-side (`ulid`,
- * imported directly from the `ulid` package the same way
- * `apps/telemetry-watcher`'s `work-command.ts` does -- `@agent-lcars/work`
- * does not re-export it) so a retried submission is idempotent -- the API
- * answers 201 with the existing schedule; the cron expression is checked
- * client-side with the same `parseCron` the server uses, so a typo is
- * caught before the round trip.
+ * The `/work/schedules` create form. The id is minted client-side (`ulid`
+ * from `@agent-lcars/work`, the same helper `work-create-form.tsx` uses) so
+ * a retried submission is idempotent -- the API answers 201 with the
+ * existing schedule; the cron expression is checked client-side with the
+ * same `parseCron` the server uses, so a typo is caught before the round
+ * trip.
  */
 export function ScheduleCreateForm({
   create,

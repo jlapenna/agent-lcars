@@ -17,6 +17,13 @@ export async function generateWorkOpenApi(): Promise<object> {
         components: {
           securitySchemes: {
             bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+            githubOidc: {
+              type: 'http',
+              scheme: 'bearer',
+              bearerFormat: 'JWT',
+              description:
+                'GitHub Actions OIDC token for work-schedules-tick.yml',
+            },
           },
         },
       },

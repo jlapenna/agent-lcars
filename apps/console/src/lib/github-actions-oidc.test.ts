@@ -2,7 +2,10 @@ import {
   COMPLETION_FINALIZER_WORKFLOW_PATH,
   COMPLETION_OIDC_AUDIENCE,
 } from '@agent-lcars/dispatch-contracts';
+import { errors as joseErrors } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const { JWTClaimValidationFailed, JWTExpired } = joseErrors;
 
 // `verifyCompletionOidcToken`'s allow-list gate (#1190) needs to be exercised
 // end-to-end -- including the jwtVerify call -- without a real GitHub OIDC
@@ -23,7 +26,9 @@ import {
   assertRequestOidcClaims,
   assertScheduleTickOidcClaims,
   verifyCompletionOidcToken,
+  verifyReconcileOidcToken,
   verifyRequestOidcToken,
+  verifyScheduleTickOidcToken,
 } from './github-actions-oidc';
 
 // Matches the constants inlined into github-actions-oidc.ts (formerly
@@ -90,6 +95,47 @@ describe('GitHub Actions reconciler OIDC claims', () => {
   });
 });
 
+// `verifyReconcileOidcToken` (and `verifyScheduleTickOidcToken` below) never
+// wrap `jwtVerify`'s own rejection -- these guard that a token jose itself
+// refuses (wrong audience, expired) propagates as a rejection rather than
+// being swallowed or mis-mapped. Real claim-shape enforcement (repository,
+// ref, event_name, ...) is exercised directly against `assertReconcileOidcClaims`
+// above; jose's own audience/expiry checks are its own library's concern, not
+// this repo's.
+describe('verifyReconcileOidcToken', () => {
+  afterEach(() => {
+    jwtVerify.mockReset();
+  });
+
+  it('rejects a token bearing the wrong audience', async () => {
+    jwtVerify.mockRejectedValue(
+      new JWTClaimValidationFailed(
+        'unexpected "aud" claim value',
+        validClaims,
+        'aud',
+        'check_failed',
+      ),
+    );
+    await expect(verifyReconcileOidcToken('token', repository)).rejects.toThrow(
+      'aud',
+    );
+  });
+
+  it('rejects an expired token', async () => {
+    jwtVerify.mockRejectedValue(
+      new JWTExpired(
+        '"exp" claim timestamp check failed',
+        validClaims,
+        'exp',
+        'check_failed',
+      ),
+    );
+    await expect(verifyReconcileOidcToken('token', repository)).rejects.toThrow(
+      'exp',
+    );
+  });
+});
+
 // #1502 sub-project 3: the scheduled tick trigger for cron-ingressed work.
 // One canonical caller, like the reconciler -- pinned to the control-plane
 // home via `job_workflow_ref`, not the request path's allow-list.
@@ -144,6 +190,52 @@ describe('GitHub Actions schedule-tick OIDC claims', () => {
     expect(() => assertScheduleTickOidcClaims(claims, repository)).toThrow(
       field,
     );
+  });
+});
+
+describe('verifyScheduleTickOidcToken', () => {
+  afterEach(() => {
+    jwtVerify.mockReset();
+  });
+
+  it('requests the schedule-tick audience, not the reconciler or completion one', async () => {
+    jwtVerify.mockResolvedValue({ payload: scheduleTickClaims });
+
+    await verifyScheduleTickOidcToken('token', repository);
+
+    expect(jwtVerify).toHaveBeenCalledWith(
+      'token',
+      expect.anything(),
+      expect.objectContaining({ audience: SCHEDULE_TICK_OIDC_AUDIENCE }),
+    );
+  });
+
+  it('rejects a token bearing the wrong audience', async () => {
+    jwtVerify.mockRejectedValue(
+      new JWTClaimValidationFailed(
+        'unexpected "aud" claim value',
+        scheduleTickClaims,
+        'aud',
+        'check_failed',
+      ),
+    );
+    await expect(
+      verifyScheduleTickOidcToken('token', repository),
+    ).rejects.toThrow('aud');
+  });
+
+  it('rejects an expired token', async () => {
+    jwtVerify.mockRejectedValue(
+      new JWTExpired(
+        '"exp" claim timestamp check failed',
+        scheduleTickClaims,
+        'exp',
+        'check_failed',
+      ),
+    );
+    await expect(
+      verifyScheduleTickOidcToken('token', repository),
+    ).rejects.toThrow('exp');
   });
 });
 

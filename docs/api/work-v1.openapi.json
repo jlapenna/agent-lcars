@@ -14,6 +14,12 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT"
+      },
+      "githubOidc": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "GitHub Actions OIDC token for work-schedules-tick.yml"
       }
     },
     "schemas": {
@@ -1637,7 +1643,7 @@
                     },
                     "disabledReason": {
                       "type": "string",
-                      "enum": ["grant-revoked", "operator"]
+                      "enum": ["grant-revoked", "operator", "invalid"]
                     }
                   },
                   "required": [
@@ -1800,7 +1806,7 @@
                     },
                     "disabledReason": {
                       "type": "string",
-                      "enum": ["grant-revoked", "operator"]
+                      "enum": ["grant-revoked", "operator", "invalid"]
                     }
                   },
                   "required": [
@@ -1939,7 +1945,7 @@
                           },
                           "disabledReason": {
                             "type": "string",
-                            "enum": ["grant-revoked", "operator"]
+                            "enum": ["grant-revoked", "operator", "invalid"]
                           }
                         },
                         "required": [
@@ -2068,7 +2074,7 @@
                     },
                     "disabledReason": {
                       "type": "string",
-                      "enum": ["grant-revoked", "operator"]
+                      "enum": ["grant-revoked", "operator", "invalid"]
                     }
                   },
                   "required": [
@@ -2209,7 +2215,7 @@
                     },
                     "disabledReason": {
                       "type": "string",
-                      "enum": ["grant-revoked", "operator"]
+                      "enum": ["grant-revoked", "operator", "invalid"]
                     }
                   },
                   "required": [
@@ -2255,7 +2261,7 @@
       "post": {
         "operationId": "tickSchedules",
         "summary": "Mint items for every enabled schedule's latest due slot (GitHub Actions OIDC only)",
-        "tags": ["schedules"],
+        "tags": ["schedules", "cron"],
         "requestBody": {
           "required": true,
           "content": {
@@ -2310,9 +2316,32 @@
                         "type": "string",
                         "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                       }
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "scheduleId": {
+                            "type": "string",
+                            "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["scheduleId", "message"],
+                        "additionalProperties": false
+                      }
                     }
                   },
-                  "required": ["ticked", "minted", "skippedCap", "disabled"],
+                  "required": [
+                    "ticked",
+                    "minted",
+                    "skippedCap",
+                    "disabled",
+                    "errors"
+                  ],
                   "additionalProperties": false
                 }
               }
@@ -2321,7 +2350,7 @@
         },
         "security": [
           {
-            "bearerAuth": []
+            "githubOidc": []
           }
         ]
       }

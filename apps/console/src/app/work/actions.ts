@@ -2,52 +2,9 @@
 
 import { createServerFunctionable } from '@orpc/next';
 
-import { auth } from '@/auth';
-import { controlPlaneRepository } from '@/lib/deployment';
-import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
-import {
-  createOrchestratorRuntime,
-  createScheduleStore,
-} from '@/lib/orchestrator-runtime';
-import {
-  authenticateWorkRequest,
-  googleIdTokenVerifier,
-} from '@/lib/work-auth';
-import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
-import { type WorkContext, workRouter } from '@/lib/work-router';
-import { sessionsForRuns } from '@/lib/work-sessions';
+import { workRouter } from '@/lib/work-router';
 
-/**
- * Builds the router's context from the console session rather than a bearer
- * header - a server function always runs on behalf of the signed-in
- * console user, the same way `queue-workspace.tsx`'s server actions do, so
- * `authenticateWorkRequest` is handed a header-less request and only its
- * session fallback path (`work-auth.ts`) ever runs. The Google ID token
- * verifier and the schedule-tick OIDC verifier are still required by
- * `WorkAuthDeps`'s shape but neither is ever invoked on this path.
- */
-async function context(): Promise<WorkContext> {
-  const principal = await authenticateWorkRequest(
-    new Request('https://console.local/'),
-    {
-      verifyGoogleIdToken: googleIdTokenVerifier('unused'),
-      verifyScheduleTickOidcToken: (token) =>
-        verifyScheduleTickOidcToken(token, controlPlaneRepository()),
-      session: async () =>
-        (await auth()) as { user?: { login?: string } } | null,
-      grants: workGrants,
-    },
-  );
-  return {
-    principal,
-    runtime: createOrchestratorRuntime(),
-    sessionsFor: sessionsForRuns,
-    maxLiveRuns: workMaxLiveRuns(),
-    scheduleStore: createScheduleStore(),
-    grants: workGrants,
-    now: () => new Date(),
-  };
-}
+import { context } from './context';
 
 const functionable = createServerFunctionable({ context });
 

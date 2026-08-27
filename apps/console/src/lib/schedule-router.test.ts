@@ -4,7 +4,7 @@ import {
   Orchestrator,
 } from '@agent-lcars/orchestrator';
 import { latestDueSlot, parseCron, slotItemId } from '@agent-lcars/work';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkContext } from './work-mint';
 import { createWorkHandler } from './work-router';
@@ -114,6 +114,19 @@ describe('schedules routes', () => {
     );
   });
 
+  it('refuses schedule CRUD for a cron:tick principal, which carries no work.operator scope', async () => {
+    const ctx = withPrincipal(context(), cronTick);
+    for (const [m, p, b] of [
+      ['PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec }],
+      ['GET', `/schedules/${ID}`],
+      ['GET', '/schedules'],
+      ['POST', `/schedules/${ID}/enable`],
+      ['POST', `/schedules/${ID}/disable`],
+    ] as const) {
+      expect((await call(ctx, m, p, b)).status, `${m} ${p}`).toBe(401);
+    }
+  });
+
   it('creates a schedule and replays it idempotently', async () => {
     const ctx = context();
     const body = { cron: '0 * * * *', spec, enabled: true };
@@ -219,6 +232,7 @@ describe('tick', () => {
       minted: [],
       skippedCap: [],
       disabled: [],
+      errors: [],
     });
   });
 
@@ -252,6 +266,7 @@ describe('tick', () => {
       minted: [],
       skippedCap: [],
       disabled: [],
+      errors: [],
     });
     const gotAfterSecond = await call(ctx, 'GET', `/schedules/${ID}`);
     expect(gotAfterSecond.json.lastSlotAt).toBe(gotAfterFirst.json.lastSlotAt);
@@ -337,5 +352,117 @@ describe('tick', () => {
     expect(await call(ctx, 'GET', `/schedules/${ID}`)).toMatchObject({
       json: { enabled: false, disabledReason: 'grant-revoked' },
     });
+  });
+
+  it('mints the same deterministic slot id on a later tick once under the live-run cap', async () => {
+    const cronExpr = '* * * * *';
+    const slot = latestDueSlot(parseCron(cronExpr), NOW);
+    if (slot === undefined) throw new Error('expected a due slot at NOW');
+    const expectedItemId = await slotItemId(ID, slot);
+
+    const capped = context({ maxLiveRuns: 0 });
+    await call(capped, 'PUT', `/schedules/${ID}`, { cron: cronExpr, spec });
+    const first = await call(
+      withPrincipal(capped, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(first.json).toMatchObject({ minted: [], skippedCap: [ID] });
+
+    // Same clock and store, but no longer at the live-run cap: the
+    // schedule's `lastSlotAt` never advanced while skipped, so
+    // `latestDueSlot` still resolves to the identical slot, and
+    // `slotItemId` is deterministic per (scheduleId, slot) -- the retried
+    // tick mints the exact same item id the capped tick could not.
+    const uncapped = { ...capped, maxLiveRuns: 4 };
+    const second = await call(
+      withPrincipal(uncapped, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(second.json.minted).toEqual([
+      { scheduleId: ID, itemId: expectedItemId },
+    ]);
+    expect(second.json.skippedCap).toEqual([]);
+  });
+
+  it('disables a schedule whose stored spec no longer parses (invalid) and a healthy schedule still mints in the same tick', async () => {
+    const ctx = context();
+    // Written directly to the store, bypassing the `workSpecSchema`
+    // validation `create`'s handler runs at the API boundary -- simulates
+    // a schema tightened out from under an already-stored schedule, or a
+    // hand-edited document (the exact case the router's tick handler
+    // guards against).
+    await ctx.scheduleStore.writeSchedule({
+      scheduleId: ID,
+      cron: '* * * * *',
+      spec: { title: 't' },
+      enabled: true,
+      createdBy: 'user:jlapenna',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      updatedAt: '2026-08-27T09:00:00.000Z',
+    });
+    await call(ctx, 'PUT', `/schedules/${OTHER_ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+
+    const r = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(r.json.disabled).toEqual([ID]);
+    expect(r.json.errors).toEqual([]);
+    expect(r.json.minted).toHaveLength(1);
+    expect(r.json.minted[0].scheduleId).toBe(OTHER_ID);
+
+    // Read the store directly rather than through `GET /schedules/{id}`:
+    // that route's `view()` re-parses `spec` with `workSpecSchema` too, so
+    // it would throw on this same corrupt document.
+    const stored = await ctx.scheduleStore.readSchedule(ID);
+    expect(stored).toMatchObject({
+      enabled: false,
+      disabledReason: 'invalid',
+    });
+  });
+
+  it("lands a schedule's unexpected mintItem failure in errors and the next schedule still mints", async () => {
+    const ctx = context();
+    const cronExpr = '* * * * *';
+    const slot = latestDueSlot(parseCron(cronExpr), NOW);
+    if (slot === undefined) throw new Error('expected a due slot at NOW');
+    const failingItemId = await slotItemId(ID, slot);
+
+    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: cronExpr, spec });
+    await call(ctx, 'PUT', `/schedules/${OTHER_ID}`, { cron: cronExpr, spec });
+
+    // `mintItem`'s first store call is `readTask` -- stubbed to throw once,
+    // for exactly the failing schedule's deterministic item id, so the
+    // other schedule's mint is unaffected.
+    const realReadTask = ctx.runtime.store.readTask.bind(ctx.runtime.store);
+    vi.spyOn(ctx.runtime.store, 'readTask').mockImplementation((id) => {
+      if ('workId' in id && id.workId === failingItemId) {
+        throw new Error('store unavailable');
+      }
+      return realReadTask(id);
+    });
+
+    const r = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(r.json.errors).toEqual([
+      { scheduleId: ID, message: 'store unavailable' },
+    ]);
+    expect(r.json.disabled).toEqual([]);
+    expect(r.json.skippedCap).toEqual([]);
+    expect(r.json.minted).toHaveLength(1);
+    expect(r.json.minted[0].scheduleId).toBe(OTHER_ID);
   });
 });

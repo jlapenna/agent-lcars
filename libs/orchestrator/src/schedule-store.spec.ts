@@ -17,7 +17,7 @@ const base = {
 };
 
 describe('scheduleSchema', () => {
-  it.each(['grant-revoked', 'operator'] as const)(
+  it.each(['grant-revoked', 'operator', 'invalid'] as const)(
     'parses a full document with all optionals set (disabledReason: %s)',
     (disabledReason) => {
       const doc = {

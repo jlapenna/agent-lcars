@@ -39,9 +39,11 @@ export const scheduleSchema = z.strictObject({
   lastSlotAt: isoUtc.optional(),
   lastItemId: z.string().regex(WORK_ID_RE).optional(),
   /** Set by a tick that auto-disables the schedule once its creator's
-   *  grant no longer covers it ('grant-revoked'), or by the operator
-   *  disable route ('operator'). */
-  disabledReason: z.enum(['grant-revoked', 'operator']).optional(),
+   *  grant no longer covers it ('grant-revoked'), by a tick that finds the
+   *  stored `cron` or `spec` no longer parses ('invalid' -- a schema
+   *  tightened out from under an already-stored schedule, or a hand-edited
+   *  document), or by the operator disable route ('operator'). */
+  disabledReason: z.enum(['grant-revoked', 'operator', 'invalid']).optional(),
 });
 export type Schedule = z.infer<typeof scheduleSchema>;
 
