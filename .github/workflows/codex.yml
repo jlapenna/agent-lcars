@@ -111,7 +111,40 @@ jobs:
       # fleet claim, and park label/comment, so the lane skips its own
       # claim step. Every other consumer omits this and keeps today's
       # behavior.
-      control-plane-projections: true
+      #
+      # Derived from provenance, not hardcoded (found by review on
+      # jlapenna/homelab#906): this workflow is also runnable by hand via
+      # workflow_dispatch from the Actions UI, and a hand-run dispatch
+      # projects nothing -- no eyes reaction, no fleet assignee. A literal
+      # `true` here made the lane skip its own claim step unconditionally,
+      # silently leaving a manually-dispatched issue unclaimed.
+      #
+      # `broker_intent_id` cannot be that signal: it is declared
+      # `required: true` above, so the Actions UI forces an operator to
+      # supply *some* value on a hand-run dispatch too, and the condition
+      # can never be false. `work` is the correct signal instead --
+      # `required: false` with a `''` default above, and
+      # `orchestrator-dispatch.ts`'s `handleDispatchRun` sends a
+      # `work: JSON.stringify({...})` payload on every dispatch it makes,
+      # for a native work-anchored run and a GitHub-anchored one alike
+      # (sub-project 5: every anchor carries a work payload). A manual
+      # `workflow_dispatch` leaves `work` at its declared `''` default, so
+      # non-empty `work` is true console provenance -- "this dispatch
+      # carries a control-plane work payload" is the same statement as
+      # "the control plane made this dispatch."
+      #
+      # Consumer-repo caveat: the console currently gates the `work`
+      # input to the control-plane repository only (same guard in
+      # `orchestrator-dispatch.ts`, pending #1544 wave 2), so until that
+      # gate comes out, this evaluates to `false` in consumer repos even
+      # for a console-dispatched run -- their lane keeps claiming the
+      # issue itself while the console also projects a claim. Both claim
+      # effects are idempotent (`claimGithubAnchor`'s doc comment: a
+      # repeated reaction returns the existing one, assigning an
+      # already-assigned login is a no-op), so the double-claim is
+      # harmless, and rollout is self-sequencing -- consumer projections
+      # switch on by themselves once the wave-2 gate is removed.
+      control-plane-projections: ${{ inputs.work != '' }}
       protected-snapshot: true
       gcp-workload-identity-provider: ${{ vars.GCP_WIF_PROVIDER }}
       gcp-service-account: ${{ vars.GCP_CODEX_AGENT_SA }}

@@ -814,7 +814,7 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
   });
 
   it.each(DISPATCH_PIPELINES)(
-    '%s.yml: opts into the dispatch-bootstrap and control-plane-projections era',
+    '%s.yml: opts into the dispatch-bootstrap era and derives control-plane-projections from provenance',
     (pipeline) => {
       const contract = PIPELINE_CONTRACTS[pipeline];
       const { doc } = loadWorkflow(contract.workflowFile);
@@ -823,10 +823,21 @@ describe('shim -> unified lane forwarding (#1340 A-R1)', () => {
         callerJob?.with?.['dispatch-bootstrap'],
         `${contract.workflowFile} must pass dispatch-bootstrap: true to its shim`,
       ).toBe(true);
+      // Not a literal `true` (found by review on jlapenna/homelab#906): this
+      // workflow is also runnable by hand via workflow_dispatch, where the
+      // console has projected nothing. `broker_intent_id` cannot be the
+      // signal -- it is `required: true`, so a hand-run dispatch always
+      // supplies a value and the condition can never be false. `work` is
+      // the correct signal: `required: false` with a `''` default, sent by
+      // `orchestrator-dispatch.ts`'s `handleDispatchRun` on every dispatch
+      // the console makes (native and GitHub-anchored alike, sub-project
+      // 5), and left at `''` on a manual run -- see the
+      // `control-plane-projections:` comment in the workflow file itself
+      // for the full account.
       expect(
         callerJob?.with?.['control-plane-projections'],
-        `${contract.workflowFile} must pass control-plane-projections: true to its shim (sub-project 5)`,
-      ).toBe(true);
+        `${contract.workflowFile} must derive control-plane-projections from work provenance, not hardcode true or key off broker_intent_id (sub-project 5, homelab#906)`,
+      ).toBe("${{ inputs.work != '' }}");
     },
   );
 });
