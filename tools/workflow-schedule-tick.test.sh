@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 fail=0
 f=.github/workflows/work-schedules-tick.yml
 [ -f "$f" ] || { echo "$f: missing"; exit 1; }
-grep -q "cron: '\*/5 \* \* \* \*'" "$f" || { echo "$f: expected a 5-minute schedule"; fail=1; }
+grep -q "cron: '2-59/5 \* \* \* \*'" "$f" || { echo "$f: expected a 5-minute schedule offset from :00/:05"; fail=1; }
 grep -q "workflow_dispatch:" "$f" || { echo "$f: missing workflow_dispatch trigger"; fail=1; }
 grep -q "^permissions: {}$" "$f" || { echo "$f: top-level permissions must be {}"; fail=1; }
 grep -q "id-token: write" "$f" || { echo "$f: job must grant id-token: write"; fail=1; }

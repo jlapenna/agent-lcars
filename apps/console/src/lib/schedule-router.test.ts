@@ -39,6 +39,13 @@ const GRANTS = [
   },
 ];
 const NOW = new Date('2026-08-27T10:22:00.000Z');
+// One minute before `NOW`: since `create` now seeds `lastSlotAt` to the
+// creation instant (Task 2), a test that creates a schedule and ticks it
+// in the same breath must create it slightly earlier than the tick's
+// `now` -- otherwise `latestDueSlot` never finds a slot strictly after
+// creation, and the tick is a no-op before it even reaches the behaviour
+// under test.
+const CREATE_NOW = new Date(NOW.getTime() - 60_000);
 
 function context(over: Partial<WorkContext> = {}): WorkContext {
   const store = new MemoryStore();
@@ -67,6 +74,10 @@ function withPrincipal(
   principal: WorkContext['principal'],
 ): WorkContext {
   return { ...ctx, principal };
+}
+
+function withNow(ctx: WorkContext, now: Date): WorkContext {
+  return { ...ctx, now: () => now };
 }
 
 async function call(
@@ -206,6 +217,73 @@ describe('schedules routes', () => {
       (await call(context(), 'POST', `/schedules/${ID}/disable`)).status,
     ).toBe(404);
   });
+
+  it('a corrupt stored spec is omitted, not thrown, by list/get, and disable on it still succeeds', async () => {
+    const ctx = context();
+    // Written directly to the store, bypassing the `workSpecSchema`
+    // validation `create`'s handler runs at the API boundary -- the same
+    // "schema tightened out from under an already-stored schedule, or a
+    // hand-edited document" case the tick handler already guards against
+    // (see `viewSafe`, `schedule-router.ts`).
+    await ctx.scheduleStore.writeSchedule({
+      scheduleId: ID,
+      cron: '0 * * * *',
+      spec: { title: 't' },
+      enabled: true,
+      createdBy: 'user:jlapenna',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      updatedAt: '2026-08-27T09:00:00.000Z',
+    });
+    await call(ctx, 'PUT', `/schedules/${OTHER_ID}`, {
+      cron: '0 * * * *',
+      spec,
+    });
+
+    const listed = await call(ctx, 'GET', '/schedules');
+    expect(listed.status).toBe(200);
+    const rows = listed.json.schedules as { id: string; spec?: unknown }[];
+    expect(rows.map((s) => s.id).sort()).toEqual([ID, OTHER_ID].sort());
+    expect(rows.find((s) => s.id === ID)?.spec).toBeUndefined();
+    expect(rows.find((s) => s.id === OTHER_ID)?.spec).toEqual(spec);
+
+    const got = await call(ctx, 'GET', `/schedules/${ID}`);
+    expect(got.status).toBe(200);
+    expect(got.json.spec).toBeUndefined();
+    expect(got.json.cron).toBe('0 * * * *');
+
+    const disabled = await call(ctx, 'POST', `/schedules/${ID}/disable`);
+    expect(disabled.status).toBe(200);
+    expect(disabled.json).toMatchObject({
+      enabled: false,
+      disabledReason: 'operator',
+    });
+    expect(disabled.json.spec).toBeUndefined();
+  });
+
+  it('seeds lastSlotAt at creation so the first tick only mints a boundary strictly after it', async () => {
+    const createdAt = new Date('2026-08-27T10:22:00.000Z');
+    const ctx = context({ now: () => createdAt });
+    const created = await call(ctx, 'PUT', `/schedules/${ID}`, {
+      cron: '0 0 * * *',
+      spec,
+    });
+    expect(created.json.lastSlotAt).toBe(createdAt.toISOString());
+
+    const tickTooSoon = withPrincipal(
+      withNow(ctx, new Date('2026-08-27T10:23:00.000Z')),
+      cronTick,
+    );
+    expect(
+      (await call(tickTooSoon, 'POST', '/schedules/tick', {})).json,
+    ).toMatchObject({ minted: [] });
+
+    const tickNextDay = withPrincipal(
+      withNow(ctx, new Date('2026-08-28T00:01:00.000Z')),
+      cronTick,
+    );
+    const r = await call(tickNextDay, 'POST', '/schedules/tick', {});
+    expect(r.json.minted).toHaveLength(1);
+  });
 });
 
 describe('tick', () => {
@@ -238,7 +316,10 @@ describe('tick', () => {
 
   it('mints the latest due slot, advances lastSlotAt, and a re-tick in the same minute is a no-op', async () => {
     const ctx = context();
-    await call(ctx, 'PUT', `/schedules/${ID}`, {
+    // Created a minute before the tick's frozen `now`: `create` seeds
+    // `lastSlotAt` to the creation instant (Task 2), so ticking at the
+    // exact same instant would never find a slot strictly after it.
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
       cron: '* * * * *',
       spec,
     });
@@ -322,7 +403,10 @@ describe('tick', () => {
 
   it('skips a schedule at the live-run cap and does not advance lastSlotAt', async () => {
     const ctx = context({ maxLiveRuns: 0 });
-    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '* * * * *', spec });
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
     const r = await call(
       withPrincipal(ctx, cronTick),
       'POST',
@@ -334,14 +418,19 @@ describe('tick', () => {
       skippedCap: [ID],
       disabled: [],
     });
-    expect(
-      (await call(ctx, 'GET', `/schedules/${ID}`)).json.lastSlotAt,
-    ).toBeUndefined();
+    // Unmoved from its create-time seed (Task 2), not undefined: the cap
+    // skip must not advance the watermark past where creation left it.
+    expect((await call(ctx, 'GET', `/schedules/${ID}`)).json.lastSlotAt).toBe(
+      CREATE_NOW.toISOString(),
+    );
   });
 
   it("disables a schedule whose creator's grant no longer covers its pipeline", async () => {
     const ctx = context();
-    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: '* * * * *', spec });
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
     const tickCtx = withPrincipal({ ...ctx, grants: () => [] }, cronTick);
     const r = await call(tickCtx, 'POST', '/schedules/tick', {});
     expect(r.json).toMatchObject({
@@ -361,7 +450,10 @@ describe('tick', () => {
     const expectedItemId = await slotItemId(ID, slot);
 
     const capped = context({ maxLiveRuns: 0 });
-    await call(capped, 'PUT', `/schedules/${ID}`, { cron: cronExpr, spec });
+    await call(withNow(capped, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: cronExpr,
+      spec,
+    });
     const first = await call(
       withPrincipal(capped, cronTick),
       'POST',
@@ -404,7 +496,7 @@ describe('tick', () => {
       createdAt: '2026-08-27T09:00:00.000Z',
       updatedAt: '2026-08-27T09:00:00.000Z',
     });
-    await call(ctx, 'PUT', `/schedules/${OTHER_ID}`, {
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${OTHER_ID}`, {
       cron: '* * * * *',
       spec,
     });
@@ -421,8 +513,9 @@ describe('tick', () => {
     expect(r.json.minted[0].scheduleId).toBe(OTHER_ID);
 
     // Read the store directly rather than through `GET /schedules/{id}`:
-    // that route's `view()` re-parses `spec` with `workSpecSchema` too, so
-    // it would throw on this same corrupt document.
+    // simpler than re-deriving the same assertion through `viewSafe`'s
+    // schema round-trip (Task 1's lenient view would succeed on this
+    // corrupt document with `spec` omitted, not throw).
     const stored = await ctx.scheduleStore.readSchedule(ID);
     expect(stored).toMatchObject({
       enabled: false,
@@ -437,8 +530,12 @@ describe('tick', () => {
     if (slot === undefined) throw new Error('expected a due slot at NOW');
     const failingItemId = await slotItemId(ID, slot);
 
-    await call(ctx, 'PUT', `/schedules/${ID}`, { cron: cronExpr, spec });
-    await call(ctx, 'PUT', `/schedules/${OTHER_ID}`, { cron: cronExpr, spec });
+    const createCtx = withNow(ctx, CREATE_NOW);
+    await call(createCtx, 'PUT', `/schedules/${ID}`, { cron: cronExpr, spec });
+    await call(createCtx, 'PUT', `/schedules/${OTHER_ID}`, {
+      cron: cronExpr,
+      spec,
+    });
 
     // `mintItem`'s first store call is `readTask` -- stubbed to throw once,
     // for exactly the failing schedule's deterministic item id, so the
@@ -464,5 +561,74 @@ describe('tick', () => {
     expect(r.json.skippedCap).toEqual([]);
     expect(r.json.minted).toHaveLength(1);
     expect(r.json.minted[0].scheduleId).toBe(OTHER_ID);
+  });
+
+  it('disables a schedule whose stored cron no longer parses (invalid)', async () => {
+    const ctx = context();
+    // Written directly to the store, bypassing the `cronExpressionSchema`
+    // validation `create`'s input schema runs at the API boundary --
+    // simulates a grammar tightened out from under an already-stored
+    // schedule, or a hand-edited document.
+    await ctx.scheduleStore.writeSchedule({
+      scheduleId: ID,
+      cron: 'not a cron',
+      spec,
+      enabled: true,
+      createdBy: 'user:jlapenna',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      updatedAt: '2026-08-27T09:00:00.000Z',
+    });
+
+    const r = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(r.json.disabled).toEqual([ID]);
+    expect(r.json.errors).toEqual([]);
+    expect(r.json.minted).toEqual([]);
+
+    const stored = await ctx.scheduleStore.readSchedule(ID);
+    expect(stored).toMatchObject({
+      enabled: false,
+      disabledReason: 'invalid',
+    });
+  });
+
+  it('a tick write-back loses a race to an operator disable: re-reads and skips the write, recording nothing', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+
+    // Simulate an operator's `disable` landing between the tick's
+    // `listEnabledSchedules()` snapshot and its write-back: every
+    // `readSchedule` from here on reports the schedule disabled, exactly
+    // as a concurrent `POST /schedules/{id}/disable` would leave it.
+    vi.spyOn(ctx.scheduleStore, 'readSchedule').mockImplementation(
+      async () => ({
+        scheduleId: ID,
+        cron: '* * * * *',
+        spec,
+        enabled: false,
+        disabledReason: 'operator',
+        createdBy: 'user:jlapenna',
+        createdAt: CREATE_NOW.toISOString(),
+        updatedAt: NOW.toISOString(),
+      }),
+    );
+    const writeSpy = vi.spyOn(ctx.scheduleStore, 'writeSchedule');
+
+    const r = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(r.json.minted).toEqual([]);
+    expect(r.json.disabled).toEqual([]);
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 });

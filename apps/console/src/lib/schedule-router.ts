@@ -59,6 +59,58 @@ function view(schedule: Schedule) {
   };
 }
 
+/**
+ * `view`, but for a caller that must survive a schedule whose stored
+ * `spec` no longer validates -- mirrors `toItemViewSafe`
+ * (`libs/work/src/derive.ts`). A `spec` tightened out from under an
+ * already-stored schedule, or a hand-edited document, is exactly the
+ * "invalid" case the tick handler already disables a schedule for; a
+ * listing or a single `get`/`enable`/`disable` must not 500 over it the
+ * way the strict `view` above would. Unlike `toItemViewSafe` (which omits
+ * the whole item), this omits only `spec` -- the rest of the schedule
+ * (id, cron, enabled, watermark) is still meaningful, and the operator
+ * needs it to find and fix -- or simply disable -- the broken row.
+ */
+function viewSafe(schedule: Schedule) {
+  const parsed = workSpecSchema.safeParse(schedule.spec);
+  return {
+    id: schedule.scheduleId,
+    cron: schedule.cron,
+    ...(parsed.success ? { spec: parsed.data } : {}),
+    enabled: schedule.enabled,
+    createdBy: schedule.createdBy,
+    createdAt: schedule.createdAt,
+    updatedAt: schedule.updatedAt,
+    ...(schedule.lastSlotAt === undefined
+      ? {}
+      : { lastSlotAt: schedule.lastSlotAt }),
+    ...(schedule.lastItemId === undefined
+      ? {}
+      : { lastItemId: schedule.lastItemId }),
+    ...(schedule.disabledReason === undefined
+      ? {}
+      : { disabledReason: schedule.disabledReason }),
+  };
+}
+
+/**
+ * Re-reads a schedule immediately before a tick writes back to it (a
+ * success watermark or an auto-disable): an operator's `disable` (or a
+ * delete) landing between this schedule's `listEnabledSchedules()`
+ * snapshot at the top of `tick` and now must win the race. Returns
+ * `undefined` when it did -- gone, or no longer enabled -- so the caller
+ * skips the write instead of resurrecting a disabled/deleted schedule
+ * with a stale watermark; otherwise returns the fresh record, which the
+ * write spreads onto instead of the loop's now-possibly-stale snapshot.
+ */
+async function freshEnabledOrSkip(
+  context: WorkContext,
+  scheduleId: string,
+): Promise<Schedule | undefined> {
+  const fresh = await context.scheduleStore.readSchedule(scheduleId);
+  return fresh === undefined || !fresh.enabled ? undefined : fresh;
+}
+
 function sameSchedule(
   a: Schedule,
   b: { cron: string; spec: unknown },
@@ -119,6 +171,13 @@ export const scheduleRouter = os.router({
       createdBy: principal.principal,
       createdAt: now,
       updatedAt: now,
+      // Seeded to the creation instant, not left `undefined`: `tick`'s
+      // `latestDueSlot(cron, now, lastSlotAt)` only ever mints a boundary
+      // strictly AFTER `lastSlotAt`, so a schedule's first slot is the
+      // first boundary after its creation -- never one already in the
+      // past at the moment it was created (see the spec's "Tick
+      // semantics" section).
+      lastSlotAt: now,
     };
     await context.scheduleStore.writeSchedule(schedule);
     return view(schedule);
@@ -127,12 +186,12 @@ export const scheduleRouter = os.router({
   get: operator.get.handler(async ({ input, context, errors }) => {
     const schedule = await context.scheduleStore.readSchedule(input.id);
     if (schedule === undefined) throw errors.NOT_FOUND();
-    return view(schedule);
+    return viewSafe(schedule);
   }),
 
   list: operator.list.handler(async ({ input, context }) => {
     const schedules = await context.scheduleStore.listSchedules(input.limit);
-    return { schedules: schedules.map(view) };
+    return { schedules: schedules.map(viewSafe) };
   }),
 
   enable: operator.enable.handler(async ({ input, context, errors }) => {
@@ -149,7 +208,7 @@ export const scheduleRouter = os.router({
       updatedAt: context.now().toISOString(),
     };
     await context.scheduleStore.writeSchedule(next);
-    return view(next);
+    return viewSafe(next);
   }),
 
   disable: operator.disable.handler(async ({ input, context, errors }) => {
@@ -162,7 +221,7 @@ export const scheduleRouter = os.router({
       updatedAt: context.now().toISOString(),
     };
     await context.scheduleStore.writeSchedule(next);
-    return view(next);
+    return viewSafe(next);
   }),
 
   tick: cronTick.tick.handler(async ({ context }) => {
@@ -195,8 +254,10 @@ export const scheduleRouter = os.router({
             'agent-lcars: schedule has a cron expression that no longer parses, disabling',
             { scheduleId: schedule.scheduleId, error },
           );
+          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
+          if (fresh === undefined) continue;
           await context.scheduleStore.writeSchedule({
-            ...schedule,
+            ...fresh,
             enabled: false,
             disabledReason: 'invalid',
             updatedAt: now.toISOString(),
@@ -226,8 +287,10 @@ export const scheduleRouter = os.router({
             'agent-lcars: schedule has a spec that no longer validates, disabling',
             { scheduleId: schedule.scheduleId, error },
           );
+          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
+          if (fresh === undefined) continue;
           await context.scheduleStore.writeSchedule({
-            ...schedule,
+            ...fresh,
             enabled: false,
             disabledReason: 'invalid',
             updatedAt: now.toISOString(),
@@ -252,8 +315,10 @@ export const scheduleRouter = os.router({
         });
 
         if (result.kind === 'forbidden') {
+          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
+          if (fresh === undefined) continue;
           await context.scheduleStore.writeSchedule({
-            ...schedule,
+            ...fresh,
             enabled: false,
             disabledReason: 'grant-revoked',
             updatedAt: now.toISOString(),
@@ -265,16 +330,38 @@ export const scheduleRouter = os.router({
           skippedCap.push(schedule.scheduleId);
           continue;
         }
-        // 'conflict' cannot happen here: `itemId` is deterministic per
-        // (scheduleId, slot) -- see `slotItemId` -- so a same-slot re-tick
-        // always replays the identical spec `mintItem` already stored.
-        minted.push({ scheduleId: schedule.scheduleId, itemId });
-        await context.scheduleStore.writeSchedule({
-          ...schedule,
-          lastSlotAt: slot.toISOString(),
-          lastItemId: itemId,
-          updatedAt: now.toISOString(),
-        });
+        // `result.kind === 'conflict'` is reachable here for exactly one
+        // reason: `mintItem`'s own "existing item with a different spec"
+        // conflict can never trigger -- `itemId` is deterministic per
+        // (scheduleId, slot) (`slotItemId`), always paired with the same
+        // `spec`, so a same-slot re-tick always replays the identical spec
+        // `mintItem` already stored. What CAN: two ticks racing the
+        // identical due slot both call `orchestrator.request` for the same
+        // requestId, and the loser gets back the orchestrator's own
+        // idempotency refusal, `reason: 'duplicate-request'`. Either way
+        // the item already exists exactly as an uncontested mint would
+        // have left it, so 'conflict' shares this write-back with
+        // 'existing' (idempotent replay) and 'minted' (a fresh mint) --
+        // every one of `MintOutcome`'s five kinds is matched explicitly by
+        // a branch in this function.
+        if (
+          result.kind === 'conflict' ||
+          result.kind === 'existing' ||
+          result.kind === 'minted'
+        ) {
+          // Checked -- and, on a lost race, skipped -- BEFORE `minted` is
+          // touched: an operator win here means this tick reports nothing,
+          // not a phantom entry for a watermark it never wrote.
+          const fresh = await freshEnabledOrSkip(context, schedule.scheduleId);
+          if (fresh === undefined) continue;
+          minted.push({ scheduleId: schedule.scheduleId, itemId });
+          await context.scheduleStore.writeSchedule({
+            ...fresh,
+            lastSlotAt: slot.toISOString(),
+            lastItemId: itemId,
+            updatedAt: now.toISOString(),
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('agent-lcars: schedule tick failed', {

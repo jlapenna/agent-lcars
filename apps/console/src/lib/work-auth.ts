@@ -90,6 +90,12 @@ export async function authenticateWorkRequest(
       if (emailVerified && email !== '') {
         return principalFor(email, 'google', deps.grants());
       }
+      // Verified as a Google token for our audience, but carrying no
+      // confirmed identity (unverified or empty email) -- refused outright,
+      // never retried against the schedule-tick OIDC verifier below. A
+      // caller that presented a credential is judged on it; this is not
+      // the "not a Google token at all" case the catch below is for.
+      return undefined;
     } catch {
       // Not a Google-issued token for our audience -- fall through to the
       // GitHub Actions schedule-tick branch below.

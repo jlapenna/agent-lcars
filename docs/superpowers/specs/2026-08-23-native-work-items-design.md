@@ -710,7 +710,9 @@ forever.
 ### Tick semantics
 
 `work-schedules-tick.yml` calls `POST /schedules/tick` every 5 minutes
-with an empty JSON body. For each enabled schedule:
+with an empty JSON body. Creation seeds `lastSlotAt` to the creation
+instant, so a schedule's first slot is the first boundary after its
+creation. For each enabled schedule:
 
 1. `slot = latestDueSlot(cron, now, schedule.lastSlotAt)`. No slot → skip;
    `lastSlotAt` untouched.

@@ -22,6 +22,13 @@ const operator = {
   pipelines: ['claude'],
   via: 'session' as const,
 };
+const cronTick = {
+  principal: 'cron:tick',
+  subject: 'cron:tick',
+  scopes: new Set(['work.cron'] as const),
+  pipelines: [],
+  via: 'oidc' as const,
+};
 
 function context(over: Partial<WorkContext> = {}): WorkContext {
   const store = new MemoryStore();
@@ -96,6 +103,20 @@ describe('items routes', () => {
     });
 
     expect((await call(ctx, 'GET', '/items')).status).toBe(401);
+  });
+
+  it('refuses every items route for a work.cron-only principal, which carries no work.operator scope', async () => {
+    const ctx = context({ principal: cronTick });
+    for (const [m, p, b] of [
+      ['PUT', `/items/${ID}`, { spec }],
+      ['GET', `/items/${ID}`],
+      ['GET', '/items'],
+      ['POST', `/items/${ID}/cancel`],
+      ['POST', `/items/${ID}/redispatch`],
+    ] as const) {
+      const r = await call(ctx, m, p, b);
+      expect(r.status, `${m} ${p}`).toBe(401);
+    }
   });
 
   it('creates an item, replays it idempotently, and derives running', async () => {

@@ -15,7 +15,11 @@ import { type ScheduleAction, ScheduleActions } from './schedule-actions';
 export interface ScheduleView {
   id: string;
   cron: string;
-  spec: WorkSpec;
+  // Optional: a stored spec that no longer validates (see `viewSafe`,
+  // `schedule-router.ts`) is omitted by the server rather than 500ing the
+  // whole page -- the row below still renders the rest of the schedule so
+  // an operator can find and disable it.
+  spec?: WorkSpec;
   enabled: boolean;
   lastItemId?: string;
 }
@@ -55,12 +59,12 @@ export function ScheduleList({
       <TableTbody>
         {schedules.map((schedule) => (
           <TableTr key={schedule.id}>
-            <TableTd>{schedule.spec.title}</TableTd>
+            <TableTd>{schedule.spec?.title ?? '—'}</TableTd>
             <TableTd>
               <code>{schedule.cron}</code>
             </TableTd>
-            <TableTd>{schedule.spec.pipeline}</TableTd>
-            <TableTd>{schedule.spec.target.repo}</TableTd>
+            <TableTd>{schedule.spec?.pipeline ?? '—'}</TableTd>
+            <TableTd>{schedule.spec?.target.repo ?? '—'}</TableTd>
             <TableTd>{schedule.enabled ? 'yes' : 'no'}</TableTd>
             <TableTd>
               {schedule.lastItemId ? (

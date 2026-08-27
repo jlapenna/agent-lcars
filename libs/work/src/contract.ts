@@ -209,7 +209,13 @@ const cronExpressionSchema = z
 const scheduleViewSchema = z.strictObject({
   id: workIdSchema,
   cron: z.string(),
-  spec: workSpecSchema,
+  // Optional, not required: a stored `spec` that no longer validates
+  // (a schema tightened out from under an already-stored schedule, or a
+  // hand-edited document -- the same case the tick handler's own
+  // `workSpecSchema.parse` guards against) must not 500 `list`/`get`, or
+  // block `enable`/`disable` on a schedule an operator needs to touch
+  // precisely because it is broken. See `viewSafe` (`schedule-router.ts`).
+  spec: workSpecSchema.optional(),
   enabled: z.boolean(),
   createdBy: z.string(),
   createdAt: z.string(),

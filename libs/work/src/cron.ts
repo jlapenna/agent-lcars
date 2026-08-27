@@ -146,10 +146,13 @@ const DEFAULT_HORIZON_DAYS = 366;
 /**
  * The earliest minute boundary `>= from` that matches `spec`, searching
  * forward up to `horizonDays` days (default {@link DEFAULT_HORIZON_DAYS}).
- * Used only at schedule-create time to reject a cron expression that can
- * never fire -- e.g. `0 0 31 2 *` (no February has a 31st) parses cleanly
- * under this grammar's field-by-field validation but never matches any
- * real date. Returns `undefined` when nothing matches within the horizon.
+ * `from` is truncated to the minute (seconds and milliseconds zeroed)
+ * before the search begins, the same way {@link latestDueSlot} truncates
+ * `now`. Used only at schedule-create time to reject a cron expression
+ * that can never fire -- e.g. `0 0 31 2 *` (no February has a 31st) parses
+ * cleanly under this grammar's field-by-field validation but never matches
+ * any real date. Returns `undefined` when nothing matches within the
+ * horizon.
  */
 export function nextDueSlot(
   spec: CronSpec,

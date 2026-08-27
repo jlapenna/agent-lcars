@@ -1649,7 +1649,6 @@
                   "required": [
                     "id",
                     "cron",
-                    "spec",
                     "enabled",
                     "createdBy",
                     "createdAt",
@@ -1812,7 +1811,6 @@
                   "required": [
                     "id",
                     "cron",
-                    "spec",
                     "enabled",
                     "createdBy",
                     "createdAt",
@@ -1951,7 +1949,6 @@
                         "required": [
                           "id",
                           "cron",
-                          "spec",
                           "enabled",
                           "createdBy",
                           "createdAt",
@@ -2080,7 +2077,6 @@
                   "required": [
                     "id",
                     "cron",
-                    "spec",
                     "enabled",
                     "createdBy",
                     "createdAt",
@@ -2221,7 +2217,6 @@
                   "required": [
                     "id",
                     "cron",
-                    "spec",
                     "enabled",
                     "createdBy",
                     "createdAt",

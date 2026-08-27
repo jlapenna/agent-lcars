@@ -83,6 +83,14 @@ describe('latestDueSlot', () => {
       '2026-08-27T11:00:00.000Z',
     );
   });
+
+  it('returns undefined for an expression that can never fire, rather than walking forever (pins MAX_LOOKBACK_MINUTES)', () => {
+    // No February has a 31st -- dom=31 and month=2 can never both hold, so
+    // the backward walk exhausts its bound and gives up instead of looping.
+    const spec = parseCron('0 0 31 2 *');
+    const now = new Date('2026-08-27T10:00:00.000Z');
+    expect(latestDueSlot(spec, now)).toBeUndefined();
+  });
 });
 
 describe('slotItemId', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { authenticateWorkRequest, type WorkAuthDeps } from './work-auth';
 import { parseWorkGrants } from './work-grants';
@@ -65,6 +65,20 @@ describe('authenticateWorkRequest', () => {
         }),
       ),
     ).toBeUndefined();
+  });
+  it('does not fall through to the schedule-tick verifier once the Google verifier itself has ruled on the token (unverified/empty email)', async () => {
+    const oidcSpy = vi.fn(async () => {
+      throw new Error('should never be called');
+    });
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => ({ email: '', emailVerified: false }),
+        verifyScheduleTickOidcToken: oidcSpy,
+      }),
+    );
+    expect(p).toBeUndefined();
+    expect(oidcSpy).not.toHaveBeenCalled();
   });
   it('returns undefined when the token fails verification', async () => {
     expect(
