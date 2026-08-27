@@ -18,7 +18,6 @@ their operating constraints.
 | Action                         | Purpose                                                          |
 | ------------------------------ | ---------------------------------------------------------------- |
 | `mint-agent-token`             | Mint a scoped Agent LCARS App installation token.                |
-| `claim-issue`                  | Claim an issue and optionally post its pickup comment.           |
 | `agent-setup`                  | Configure agent Git identity, timestamps, and optional Nx cache. |
 | `verify-agent-identity`        | Verify the minted App identity and push credential.              |
 | `prepare-agent-dispatch`       | Write routed issue context for a headless agent.                 |

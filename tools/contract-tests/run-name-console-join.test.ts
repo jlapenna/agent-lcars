@@ -30,10 +30,10 @@ const repoRoot = path.resolve(
  * substitute at render time. Every one of these workflows' worker jobs only
  * ever runs via `workflow_dispatch` (see each file's job-level `if:` -
  * gated on `github.event_name == 'workflow_dispatch'`), dispatched by the
- * serialized dispatch broker (#327, `.github/actions/dispatch-broker`):
+ * hosted orchestrator (`apps/console`'s `orchestrator-dispatch.ts`):
  * `issue` is the field the console joins on; `broker_generation` and
- * `broker_intent_id` are the broker's own reconciliation markers, appended
- * to the title after the join key and irrelevant to parsing it.
+ * `broker_intent_id` are the orchestrator's own reconciliation markers,
+ * appended to the title after the join key and irrelevant to parsing it.
  */
 const EXPRESSION_VALUES: Record<string, string> = {
   'inputs.issue': '123',

@@ -78,11 +78,6 @@ on:
         required: false
         default: false
         type: boolean
-      control-plane-projections:
-        description: 'Console owns issue-side claim/eyes/park for this dispatch (see agent-lane.yml)'
-        required: false
-        default: false
-        type: boolean
       protected-snapshot:
         description: 'Upload the dispatch brief as a run artifact for evaluation'
         required: false
@@ -219,7 +214,6 @@ jobs:
       job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
       agent-timeout-minutes: ${{ inputs.agent-timeout-minutes }}
       dispatch-bootstrap: ${{ inputs.dispatch-bootstrap }}
-      control-plane-projections: ${{ inputs.control-plane-projections }}
       protected-snapshot: ${{ inputs.protected-snapshot }}
       trajectory-export: ${{ inputs.trajectory-export }}
       install-workspace-deps: ${{ inputs.install-workspace-deps }}
