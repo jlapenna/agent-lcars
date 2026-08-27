@@ -1,6 +1,6 @@
 import type { Decision } from './decide';
 import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
-import { isLive, isWorkAnchor, taskKey } from './model';
+import { byOutboxClaimFairness, isLive, isWorkAnchor, taskKey } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -76,14 +76,19 @@ export class MemoryStore implements OrchestratorStore {
       // #1548 follow-up: a pending entry still backing off from its last
       // delivery failure (`nextAttemptAt` in the future) is skipped here,
       // the same as an explicitly excluded one -- see
-      // `OrchestratorStore.claimPendingOutbox`'s doc comment.
-      ...entries.filter(
-        (entry) =>
-          entry.state === 'pending' &&
-          !(excluded?.has(entry.entryId) ?? false) &&
-          (entry.nextAttemptAt === undefined ||
-            Date.parse(entry.nextAttemptAt) <= now),
-      ),
+      // `OrchestratorStore.claimPendingOutbox`'s doc comment. Sorted by
+      // `byOutboxClaimFairness` (starvation fix) so a never-attempted
+      // entry is never stuck behind an arbitrarily larger due-again,
+      // already-failing set -- see that function's doc comment.
+      ...entries
+        .filter(
+          (entry) =>
+            entry.state === 'pending' &&
+            !(excluded?.has(entry.entryId) ?? false) &&
+            (entry.nextAttemptAt === undefined ||
+              Date.parse(entry.nextAttemptAt) <= now),
+        )
+        .sort(byOutboxClaimFairness),
     ].slice(0, input.limit);
 
     const claimed = eligible.map((entry): LeasedOutboxEntry => {

@@ -281,3 +281,41 @@ export const outboxEntrySchema = z.discriminatedUnion('state', [
 ]);
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;
+
+/**
+ * Claim order for due, pending outbox entries -- shared by `MemoryStore`
+ * and `FirestoreStore` so both `claimPendingOutbox` implementations agree
+ * (see their contract in `store-contract.ts`).
+ *
+ * Ascending by `attempts`, so an entry that has never been handed to a
+ * worker always outranks one that has, however many already-attempted
+ * entries are also due; ties (most commonly two entries that have never
+ * been attempted) break ascending by `createdAt`, oldest first, for a
+ * deterministic order rather than an incidental one.
+ *
+ * #1553 stopped one persistently-failing entry from blocking every *other*
+ * entry within a single drain invocation (`excludeEntryIds`), but neither
+ * store's claim query was ordered at all: a large recurring set of
+ * due-again, already-failing entries (e.g. every PR-anchored
+ * `report-outcome` entry before the permission fix in `github-app-tokens
+ * .ts`) can still occupy the entire claim `limit` on every invocation,
+ * forever, crowding out entries that have never been claimed even once --
+ * exactly the production shape measured: 60 pending entries untouched
+ * across 20 reconcile passes, 40 of them over 72 hours old with
+ * `attempts: 0`. Sorting by `attempts` first fixes that: every entry gets
+ * its first attempt before any entry gets a second, so a due entry can
+ * never be starved indefinitely by a smaller or larger set of entries that
+ * keep failing and coming back due.
+ *
+ * Deliberately a client-side sort of an already-fetched, equality-filtered
+ * page rather than a Firestore `orderBy` -- `attempts` combined with the
+ * existing `state == 'pending'` equality filter would need a new composite
+ * index, and the pending population this sorts is already read in full
+ * client-side for the same reason (see `FirestoreStore.claimPendingOutbox`'s
+ * own comment on `pendingSnapshot`).
+ */
+export function byOutboxClaimFairness(a: OutboxEntry, b: OutboxEntry): number {
+  return (
+    a.attempts - b.attempts || Date.parse(a.createdAt) - Date.parse(b.createdAt)
+  );
+}

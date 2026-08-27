@@ -409,6 +409,51 @@ export function runOrchestratorStoreContract(
         expect(retry.claimId).not.toBe(first.claimId);
         expect(retry.attempts).toBe(2);
       });
+
+      it('claims a never-attempted entry over a larger set of already-attempted, due entries (starvation)', async () => {
+        const { clock, store, orchestrator } = await fixture();
+
+        // Three already-attempted entries -- claimed once, then released
+        // back to `pending` (immediately due again, no backoff at the
+        // store layer) -- created first, so a claim order blind to
+        // `attempts` (creation order, or any other order incidental to
+        // storage) keeps re-selecting them ahead of anything created
+        // later. This is the production shape: a recurring set of
+        // already-failing entries crowding out ones that have never been
+        // claimed even once.
+        for (let issue = 101; issue <= 103; issue += 1) {
+          const outcome = await orchestrator.request({
+            taskId: { repo: 'octo/example', issue },
+            requestId: `req-${issue}`,
+            pipeline: 'claude',
+          });
+          if (isRefusal(outcome)) throw new Error('unexpected refusal');
+          const claim = onlyClaim(await claimOutbox(store, clock.now(), 1));
+          expect(
+            await store.settleOutbox({
+              entryId: claim.entryId,
+              claimId: claim.claimId,
+              state: 'pending',
+              now: clock.now(),
+            }),
+          ).toBe(true);
+        }
+
+        // A fourth task's dispatch entry, created only now -- after all
+        // three already-attempted ones -- and never yet claimed.
+        const freshOutcome = await orchestrator.request({
+          taskId: { repo: 'octo/example', issue: 104 },
+          requestId: 'req-104',
+          pipeline: 'claude',
+        });
+        if (isRefusal(freshOutcome)) throw new Error('unexpected refusal');
+
+        // All four entries are due; the never-attempted one must win a
+        // single claim, not lose to creation order.
+        const claimed = onlyClaim(await claimOutbox(store, clock.now(), 1));
+        expect(claimed.runId).toBe(decidedRun(freshOutcome).runId);
+        expect(claimed.attempts).toBe(1);
+      });
     });
 
     describe('expired-run listing', () => {

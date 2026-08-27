@@ -1,3 +1,17 @@
+// The PR-anchored-permission test below mints a token through a real
+// `AppInstallationTokenProvider` -- real WebCrypto RS256 signing (via
+// jose's `SignJWT`), the same as `github-app-tokens.test.ts`. Under the
+// workspace-default jsdom environment that fails with "payload must be an
+// instance of Uint8Array" (jsdom's window is torn down and rebuilt between
+// Vitest's collection and run phases, so jose's module-scoped
+// `TextEncoder` produces `Uint8Array` instances from a different realm
+// than the one active when signing actually runs); running this whole
+// file in the real `node` environment sidesteps it -- everything else here
+// is pure library logic with no DOM dependency.
+// @vitest-environment node
+
+import { generateKeyPairSync } from 'node:crypto';
+
 import {
   decidedRun,
   expireLease,
@@ -10,7 +24,10 @@ import {
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { DispatchTokenProvider } from './github-app-tokens';
+import {
+  AppInstallationTokenProvider,
+  type DispatchTokenProvider,
+} from './github-app-tokens';
 import {
   drainOutbox,
   OUTBOX_BACKOFF_BASE_MS,
@@ -1663,6 +1680,115 @@ describe('drainOutbox: report-outcome', () => {
   });
 });
 
+// Production incident: every `report-outcome` entry anchored on a pull
+// request 403'd at the issue-comment call, forever -- 37 pending entries
+// stuck across jlapenna/homelab, supersprinklesracing/sprinkles, and
+// jlapenna/sync-padd, while every issue-anchored entry delivered fine.
+// Root cause: `github-app-tokens.ts`'s `DEFAULT_PERMISSIONS` (what
+// `createDispatchTokenProvider` mints the drain's tokens with) requested
+// `issues: write` but not `pull_requests: write`. GitHub's issue-comment
+// endpoint (`POST /repos/{owner}/{repo}/issues/{issue_number}/comments`)
+// serves both issues and PRs, but a GitHub App token is authorized against
+// whichever permission actually matches the target -- so a token missing
+// `pull_requests` 403s on exactly a PR-anchored `issue_number`, and only
+// there. `orchestrator-dispatch.ts` cannot tell the two apart itself (it
+// posts to the same endpoint either way, see `target.issue` in
+// `handleReportOutcome`), and this suite's `tokens` stub never exercised
+// real token minting at all -- so this test wires in a real
+// `AppInstallationTokenProvider` instead of the fixed-token stub, and
+// asserts on the minted token's own `permissions` request: a fetch mock
+// cannot reproduce GitHub's real 403 authorization decision, so this pins
+// the thing that was actually wrong (the request never carrying
+// `pull_requests`) rather than a symptom a mock would have to fake anyway.
+describe('drainOutbox: report-outcome to a PR anchor (github-app-tokens permission fix)', () => {
+  it('delivers successfully once the minted installation token requests pull_requests: write', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const { run } = await started(orchestrator);
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: fakeFetch(204).fetchImpl,
+    });
+
+    // `target.issue` is the same field, and the same endpoint, whether the
+    // anchor is a plain issue or a pull request -- GitHub only tells them
+    // apart when authorizing the request against the token's permissions,
+    // which is exactly what this test pins. `ref` names a PR URL to make
+    // the scenario concrete, matching this suite's own convention above.
+    const reportOutcome = await orchestrator.report(run.runId, {
+      ok: true,
+      ref: 'https://github.com/octo/example/pull/7',
+    });
+    if (isRefusal(reportOutcome)) {
+      throw new Error(`unexpected refusal: ${reportOutcome.reason}`);
+    }
+
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    });
+
+    const calls: FetchCall[] = [];
+    const mintCalls: FetchCall[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const call = { url, init: init ?? {} };
+      calls.push(call);
+      if (url.endsWith('/installation')) {
+        return new Response(JSON.stringify({ id: 987 }), { status: 200 });
+      }
+      if (url.endsWith('/access_tokens')) {
+        mintCalls.push(call);
+        return new Response(
+          JSON.stringify({
+            token: 'ghs_minted-pr-token',
+            expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          }),
+          { status: 201 },
+        );
+      }
+      // The GitHub call this drain exists to make: posting the outcome
+      // comment against the (in production, PR-anchored) issue number.
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+
+    // Real token minting -- see this describe block's own comment for why
+    // the fixed-token stub every other test in this file uses cannot pin
+    // this bug.
+    const realTokens = new AppInstallationTokenProvider({
+      clientId: 'Iv1.test0123456789ab',
+      privateKeyPem: privateKey,
+      fetchImpl,
+      // No explicit `permissions` -- exercises the exact same default
+      // (`DEFAULT_PERMISSIONS`) `orchestrator-runtime.ts`'s production
+      // `createDispatchTokenProvider(env)` call relies on.
+    });
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens: realTokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.reported).toEqual([run.runId]);
+
+    expect(mintCalls).toHaveLength(1);
+    expect(callBody(mintCalls[0]!)).toEqual({
+      repositories: ['example'],
+      permissions: {
+        actions: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+      },
+    });
+  });
+});
+
 // #1548: the outbox drain was found stuck fleet-wide -- 162 pending
 // `report-outcome` entries, some up to six days old, with `reported: []`
 // from a manual reconcile. Root cause: `claimPendingOutbox`'s pending query
@@ -1768,6 +1894,114 @@ describe('drainOutbox: fairness and retirement across entries (#1548)', () => {
       now: () => clock.now(),
     });
     expect(retry.reported).toEqual([badRunId]);
+  });
+});
+
+// #1553 stopped one persistently-failing entry from blocking every *other*
+// entry within a single drain invocation (the describe block above), but
+// left the claim query itself unordered: a large recurring set of
+// due-again, already-failing entries can still occupy an entire invocation's
+// claim `limit` every time, forever, crowding out entries that have never
+// been claimed even once. Production shape this measures: 37 pending
+// entries retrying on a short backoff (permanently, until the permission
+// fix above), consuming the drain's budget every invocation, while 60
+// pending entries -- 40 of them over 72h old with `attempts: 0` -- were
+// never claimed even once across 20 manual reconcile passes.
+describe('drainOutbox: claim fairness across invocations (starvation)', () => {
+  /** Requests a GitHub-anchored run for `issue` and drains just its own
+   *  dispatch-run entry (`drainOutbox`'s own second, positional `limit`
+   *  argument -- 1, so it cannot also reach some other already-pending
+   *  report-outcome entry), confirming the run so `report()` accepts it.
+   *  Same pattern as the sibling `dispatchedRun` helper in #1548's own
+   *  describe block above. */
+  async function dispatchedRun(
+    orchestrator: Orchestrator,
+    store: MemoryStore,
+    issue: number,
+    now: () => string,
+  ): Promise<string> {
+    const requested = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue },
+      requestId: `req-${issue}`,
+      pipeline: 'claude',
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+    const run = decidedRun(requested);
+    await drainOutbox(
+      { store, orchestrator, tokens, fetchImpl: fakeFetch(204).fetchImpl, now },
+      1,
+    );
+    return run.runId;
+  }
+
+  it('claims a never-attempted entry even when a larger set of recently-failed entries is also due', async () => {
+    const { clock, store, orchestrator } = fixture();
+
+    // Three tasks, dispatched (and only dispatched) first, so no
+    // report-outcome entry exists yet while any dispatch-run entry is
+    // being drained.
+    const badRunIds: string[] = [];
+    for (const issue of [901, 902, 903]) {
+      badRunIds.push(
+        await dispatchedRun(orchestrator, store, issue, () => clock.now()),
+      );
+    }
+
+    // *Now* report all three outcomes -- sequentially, so their
+    // report-outcome entries are created in this same fixed order: a
+    // claim order blind to `attempts` (creation order, or any other order
+    // incidental to storage) is fixed ahead of anything created later.
+    for (const runId of badRunIds) {
+      const reportOutcome = await orchestrator.report(runId, { ok: true });
+      if (isRefusal(reportOutcome)) throw new Error('unexpected refusal');
+    }
+
+    const failFetch = (async () =>
+      new Response('server exploded', { status: 500 })) as typeof fetch;
+    // `limit: 3` is `drainOutbox`'s own second, positional argument (its
+    // budget for this invocation), not a `DispatchDeps` field -- exactly
+    // the size of the recently-failed backlog below.
+    const firstPass = await drainOutbox(
+      {
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl: failFetch,
+        now: () => clock.now(),
+      },
+      3,
+    );
+    expect(firstPass.failed).toHaveLength(3);
+
+    // A fourth task, dispatched and reported only now -- after all three
+    // bad ones -- and never yet attempted (`attempts: 0`).
+    const goodRunId = await dispatchedRun(orchestrator, store, 904, () =>
+      clock.now(),
+    );
+    const goodReport = await orchestrator.report(goodRunId, { ok: true });
+    if (isRefusal(goodReport)) throw new Error('unexpected refusal');
+
+    // Clear the three bad entries' backoff so they are due again, exactly
+    // like a later reconcile pass finding the same backlog still due.
+    clock.advanceMinutes(2);
+
+    // Budget-limited to exactly the size of the recently-failed backlog
+    // (3): today's ordering hands every one of this invocation's three
+    // claims to a due-again bad entry, so the never-attempted good entry
+    // is never even reached.
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/issues/904/')) {
+        return new Response(null, { status: 201 });
+      }
+      return new Response('server exploded', { status: 500 });
+    }) as typeof fetch;
+    const secondPass = await drainOutbox(
+      { store, orchestrator, tokens, fetchImpl, now: () => clock.now() },
+      3,
+    );
+
+    expect(secondPass.reported).toContain(goodRunId);
   });
 });
 
