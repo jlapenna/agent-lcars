@@ -1307,7 +1307,7 @@ task text or the place the agent writes progress.
 is anchor-specific — `mintRun`'s `baseTask` carries `work` forward once set
 and accepts it on the first request that supplies it, for either anchor
 shape. `libs/work/src/spec.ts`'s `workOriginSchema.channel` gains
-`'github'` alongside `'api' | 'cron' | 'console'`. The three sites that call
+`'github'` alongside `'api' | 'cron' | 'console'`. The four sites that call
 `orchestrator.request()` for a GitHub anchor each derive a `WorkPayload`
 before calling it:
 
@@ -1316,6 +1316,7 @@ before calling it:
 | Label webhook (`issues`/`pull_request`) | `orchestrator-ingest.ts`'s `interpretIssuesEvent`/`interpretPullRequestEvent`, threaded through `orchestrator-routes.ts`'s `handleWebhookDelivery` | the webhook payload's own `issue.title`/`body` or `pull_request.title`/`body`                                              | `github:<sender.login>` when the payload carries a `sender`, else `github:<label.name>` |
 | Reply comment (`issue_comment`)         | `orchestrator-ingest.ts`'s `interpretIssueCommentEvent`                                                                                            | the commented-on issue's `title`/`body` (not the comment itself — the comment is `params.reply`, already a separate field) | `github:<comment.user.login>`                                                           |
 | Console retrigger                       | `backend-actions.ts`'s `retriggerIssue`                                                                                                            | a fresh `octokit.rest.issues.get` read at retrigger time (the issue may have been edited since the original request)       | `github:<the console session's github-login>`                                           |
+| Console pipeline reassignment           | `backend-actions.ts`'s `reassignPipeline`                                                                                                          | the issue it already reads for its own label swap — no extra GitHub call                                                   | `github:<the console session's github-login>`                                           |
 
 `spec.description` is the issue/PR body, truncated to `WORK_DESCRIPTION_MAX`
 (16,384 bytes) with the same clamp-and-marker shape `prepare.sh` already
@@ -1325,11 +1326,12 @@ uses for the brief's `anchor.body`; an empty body becomes the literal string
 characters) already equals `WORK_TITLE_MAX`, though the derivation clamps
 defensively rather than trusting that GitHub's API never returns a longer
 value. `spec.pipeline` is the already-resolved pipeline (`IMPLEMENT_LABELS`/
-`REVIEW_LABELS`/`REPLY_COMMANDS`, or the retrigger's own resolved pipeline —
-`retriggerIssue` already computes one before this change).
+`REVIEW_LABELS`/`REPLY_COMMANDS`, the retrigger's own resolved pipeline —
+`retriggerIssue` already computes one before this change — or the target
+pipeline `reassignPipeline`'s caller names).
 `spec.target.repo` is the task's own repository — always the control-plane
-repository for these three call sites, so no new lookup. `origin.channel`
-is `'github'` for all three.
+repository for these four call sites, so no new lookup. `origin.channel`
+is `'github'` for all four.
 
 **Reconcile and retries need nothing new.** `decide.ts`'s `requestRun`
 already carries `task.work` forward on every subsequent request against the
@@ -1340,21 +1342,22 @@ spread). `Orchestrator`'s auto-retry request (`#settleAndRetry`, driven by
 run's own `taskId`, and `requestRun` reads that task's already-stored `work`
 back out — no `work` argument needs to flow through the retry path at all.
 A task created before this sub-project (no `work` yet) is backfilled the
-next time any of the three sites above requests it, not only at creation;
+next time any of the four sites above requests it, not only at creation;
 until then it dispatches through the legacy issue-reading brief path
 (decision below), which stays exactly as it is today.
 
 `handleDispatchRequest` (`/api/control-plane/request`, the OIDC-gated
 internal-automation path used by pr-heal/playbook-unstick-prs/
-visual-refresh/post-deploy-verify) is **not** one of the three derivation
+visual-refresh/post-deploy-verify) is **not** one of the four derivation
 sites: its callers send `{issue, mode, runbook, context}` with no issue
 title/body, and deriving `work` there would mean an extra GitHub read on
 every internal-automation dispatch for a caller this sub-project's proof
 doesn't exercise. A task first created through that path stays legacy
-(brief built by reading the issue) until one of the three sites above
-requests it — which happens on the very next human label or reply, since
-that path is used for already-labeled issues, not fresh ones. This is
-scope discipline, not an oversight: see the plan's self-review.
+(brief built by reading the issue) until one of the four sites above
+requests it — which happens on the very next human label, reply, or
+console action, since that path is used for already-labeled issues, not
+fresh ones. This is scope discipline, not an oversight: see the plan's
+self-review.
 
 ### The brief is built from `work`
 
@@ -1471,9 +1474,15 @@ every existing issue-side write this sub-project moves).
 
 `agent-protocol.md` §1–§4 (takeover comment, eyes/claim, progress comment,
 parking) are rewritten as the **native rules for every anchor**, gated on
-the brief's `runtime.projections === true`:
+`runtime.projections === true || anchor.type === 'work'`. The `anchor.type
+=== 'work'` half of that gate is load-bearing, not redundant: a native
+(issue-less) run's brief may reach the agent through sub-project 4's
+`GET /runs/{id}/brief` route rather than through `prepare.sh`, and that
+route has no obligation to stamp `runtime.projections` — a native run has
+no issue to write to either way, so the native rules must apply to it
+regardless of whether that field is present:
 
-| Section        | Native rule (projections on)                                                                                                                                                                                                                     |
+| Section        | Native rule (`runtime.projections === true \|\| anchor.type === 'work'`)                                                                                                                                                                         |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | §1 Takeover    | Skip. The console derives the takeover affordance from the session doc.                                                                                                                                                                          |
 | §2 Eyes/claim  | Skip. Dispatch confirmation posts the eyes reaction and claims the issue.                                                                                                                                                                        |
@@ -1482,16 +1491,25 @@ the brief's `runtime.projections === true`:
 | §5 Deliverable | Unchanged, with one branch: a `work`-anchor PR references `Work: work:<id>`; an `issue`-anchor PR (label-driven, with or without `work`) still references `Fixes #N` as today — the issue itself is real and stays the PR's natural link target. |
 
 This is exactly today's §5a table (native mode), promoted from "native
-anchor only" to "every anchor, when the brief says projections are on" —
-§5a itself is retired as a separate section once its content is the main
-text. The **existing §1–§4 text becomes a clearly marked "Legacy (projections
-off)" subsection**, unchanged byte-for-byte, read only when
+anchor only" to "every anchor, when the brief says projections are on, or
+the anchor has no issue to begin with" — §5a itself is retired as a
+separate section once its content is the main text. The **existing §1–§4
+text becomes a clearly marked "Legacy (projections off)" subsection**,
+unchanged byte-for-byte, read only when `anchor.type` is `issue` and
 `runtime.projections` is absent or `false` — which is every consumer that
 has not opted in yet, and every GitHub-anchored task still dispatching
-through the pre-`work` brief path. `lane-default-prompt` (the fleet default
-prompt template) and its contract test (`tools/contract-tests/
-lane-default-prompt.test.ts`) are updated to reference the collapsed
-section numbering.
+through the pre-`work` brief path. `agent-protocol.md`'s own section-number/
+marker contract is pinned in `tools/contract-tests/
+worker-workflow-contract.test.ts`, which already `readFileSync`s this file
+(`lane-default-prompt.test.ts` never reads `agent-protocol.md` — it
+extracts and runs `agent-lane.yml`'s own prompt-rendering step). That
+rendering step's default prompt text is reworded in the same pass: its
+park clause ("park using the protocol's exact comment, label, and
+maintainer-assignee recipe") named the legacy issue-mode recipe by name,
+which was already wrong for a native dispatch before this sub-project —
+it becomes the flag-agnostic "park per the protocol's parking rule for
+this dispatch", pinned in `lane-default-prompt.test.ts` itself (closes
+#1528).
 
 ### Quick Tasks
 
@@ -1547,10 +1565,12 @@ UI decision itself, made in the plan, not the spec).
   per confirmed dispatch and is idempotent on a drain retry; the park
   projection sets the label for both the `finished, ok:false` and
   `lost`-budget-exhausted cases with the pinned comment body.
-- `prepare.test.sh`: the new `WORK` + `ISSUE` branch builds `anchor.type:
-'issue'` from `WORK.spec` with the issue's real `number`/`html_url`; the
-  `WORK`-only branch (native) and the no-`WORK` legacy branch are both
-  unchanged (regression pins).
+- `prepare.test.sh`: the new `WORK` + `ISSUE` branch builds the anchor from
+  `WORK.spec` with the issue's real `number`/`html_url`, and its `type`
+  keeps being inferred from the raw GitHub response (never hardcoded), so
+  a PR-backed anchor still resolves `pull-request`; the `WORK`-only branch
+  (native) and the no-`WORK` legacy branch are both unchanged (regression
+  pins).
 - Lane workflow contract tests (`tools/contract-tests/
 worker-workflow-contract.test.ts`): `control-plane-projections` declared on
   the union lane and all three shims, default `false`, forwarded losslessly;
@@ -1558,9 +1578,12 @@ worker-workflow-contract.test.ts`): `control-plane-projections` declared on
   and the legacy branch.
 - `published-actions.contract.test.mjs`: the three published lane shims'
   surface still matches their manifest with the new input added.
-- `agent-protocol.md` contract test (`lane-default-prompt.test.ts`):
-  section numbering and the "Legacy (projections off)" marker text are
-  pinned.
+- `agent-protocol.md` contract test (`tools/contract-tests/
+worker-workflow-contract.test.ts`, which already reads this file): the
+  collapsed gate condition, the "Legacy (projections off)" marker text,
+  and the retired §5a heading are pinned.
+- `lane-default-prompt.test.ts`: the reworded, flag-agnostic park clause
+  in `agent-lane.yml`'s rendered default prompt is pinned (closes #1528).
 - No real git in unit tests, per house rule.
 
 ### Real-path proof

@@ -3,7 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Every GitHub-anchored task (label webhook, reply, console
-retrigger) gets a `Task.work` payload the same way a native item does; the
+retrigger, console pipeline reassignment) gets a `Task.work` payload the
+same way a native item does; the
 dispatch brief is always built from `work`, not a live issue read; the
 console becomes the sole writer of the issue-side acknowledgements a human
 still watches for (eyes reaction, fleet-assignee claim, park label); and the
@@ -14,24 +15,27 @@ real dispatched issues.
 
 **Architecture:** `libs/work/src/spec.ts`'s `workOriginSchema.channel` gains
 `'github'`; a new `apps/console/src/lib/work-from-github.ts` derives a
-`WorkPayload` from a GitHub issue/PR's title+body, reused by the three
+`WorkPayload` from a GitHub issue/PR's title+body, reused by the four
 sites that call `orchestrator.request()` for a GitHub anchor (the label
-webhook, the reply-comment webhook, and the console's own retrigger
-action). `orchestrator-dispatch.ts`'s drain emits the same `work` JSON
-`workflow_dispatch` input for a GitHub-anchored run that already carries
-`work` as it does for a native one, and — right after `confirmDispatch` —
-posts the eyes reaction and the fleet-assignee claim itself instead of
-leaving them to the lane. `handleReportOutcome` gains the
-`status:needs-human` label on the `finished, ok: false` case it was
-previously missing. `prepare.sh` (`prepare-agent-dispatch`) gains a third
-branch: `WORK` and `ISSUE` both present builds the brief from `WORK.spec`
-with the issue's real number/URL for linking. A new `control-plane-projections`
+webhook, the reply-comment webhook, the console's own retrigger action,
+and console pipeline reassignment). `orchestrator-dispatch.ts`'s drain
+emits the same `work` JSON `workflow_dispatch` input for a GitHub-anchored
+run that already carries `work` as it does for a native one, and — right
+after `confirmDispatch` — posts the eyes reaction and the fleet-assignee
+claim itself instead of leaving them to the lane. `handleReportOutcome`
+gains the `status:needs-human` label on the `finished, ok: false` case it
+was previously missing. `prepare.sh` (`prepare-agent-dispatch`) gains a
+third branch: `WORK` and `ISSUE` both present builds the brief from
+`WORK.spec` with the issue's real number/URL/type for linking (never
+hardcoding `pull-request` vs `issue`). A new `control-plane-projections`
 lane input threads through `agent-lane.yml`, the three published shims, and
 `dispatch-bootstrap/action.yml`'s claim step, landing in the brief as
 `runtime.projections`. `agent-protocol.md`'s §1–§4 become the native rules
-for every anchor when that flag is set, with the current issue-mode text
-kept verbatim as a "Legacy (projections off)" subsection every consumer
-still on the default reads.
+for every anchor whenever `runtime.projections === true || anchor.type ===
+'work'` — the latter half covers a native run's brief arriving through
+sub-project 4's own route, which has no obligation to set the flag — with
+the current issue-mode text kept verbatim as a "Legacy (projections off)"
+subsection every consumer still on the default reads.
 
 **Tech Stack:** TypeScript/Zod (`libs/work`, `apps/console/src/lib`),
 Vitest, GitHub Actions composite/reusable workflow YAML, bash
@@ -95,22 +99,23 @@ https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD`.
 | File                                                                                          | Responsibility                                                                                                                                                  |
 | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `libs/work/src/spec.ts`, `spec.spec.ts` (modify)                                              | `workOriginSchema.channel` gains `'github'`                                                                                                                     |
+| `libs/orchestrator/src/model.ts` (modify)                                                     | `taskSchema.work` doc comment, made anchor-agnostic (doc-only)                                                                                                  |
 | `apps/console/src/lib/work-from-github.ts`, `.test.ts` (create)                               | `workPayloadFromGithub`, `githubOrigin`, `truncatedDescription` — pure GitHub→`WorkPayload` derivation                                                          |
 | `apps/console/src/lib/orchestrator-ingest.ts`, `.test.ts` (modify)                            | webhook schemas gain `title`/`body`/`sender`; `IngestDecision.work?`                                                                                            |
 | `apps/console/src/lib/orchestrator-routes.ts`, `.test.ts` (modify)                            | `handleWebhookDelivery` forwards `work` to `orchestrator.request`                                                                                               |
-| `apps/console/src/lib/backend-actions.ts`, `.test.ts` (modify)                                | `retriggerIssue` derives and forwards `work` when the task doesn't already carry one                                                                            |
-| `apps/console/src/app/actions.ts` (modify)                                                    | threads the session's github login into `retriggerIssue`                                                                                                        |
+| `apps/console/src/lib/backend-actions.ts`, `.test.ts` (modify)                                | `retriggerIssue`/`reassignPipeline` derive and forward `work` when the task doesn't already carry one                                                           |
+| `apps/console/src/app/actions.ts` (modify)                                                    | threads the session's github login into `retriggerIssue`/`reassignPipeline`                                                                                     |
 | `apps/console/src/lib/orchestrator-dispatch.ts`, `.test.ts` (modify)                          | `handleDispatchRun` emits `work` for a GitHub anchor and posts the eyes/claim projection; `handleReportOutcome` sets `needsHumanLabel` for `finished, ok:false` |
 | `.github/actions/prepare-agent-dispatch/prepare.sh`, `prepare.test.sh`, `action.yml` (modify) | `WORK`+`ISSUE` branch; `control-plane-projections` input → `runtime.projections`                                                                                |
-| `.github/workflows/agent-lane.yml` (modify)                                                   | `control-plane-projections` input; gates both claim steps; forwards to `prepare-agent-dispatch`                                                                 |
+| `.github/workflows/agent-lane.yml` (modify)                                                   | `control-plane-projections` input; gates both claim steps; forwards to `prepare-agent-dispatch`; reword the default-prompt park clause (#1528)                  |
 | `.github/actions/dispatch-bootstrap/action.yml` (modify)                                      | `control-plane-projections` input gates its claim step                                                                                                          |
 | `.github/workflows/agent-lane-{claude,codex,opencode}.yml` (modify)                           | forward the new input                                                                                                                                           |
 | `.github/workflows/{claude,codex,opencode}.yml` (modify)                                      | pass `control-plane-projections: true`                                                                                                                          |
-| `tools/contract-tests/worker-workflow-contract.test.ts` (modify)                              | manifest + forwarding assertions for the new input                                                                                                              |
+| `tools/contract-tests/worker-workflow-contract.test.ts` (modify)                              | manifest + forwarding assertions for the new input; `agent-protocol.md`'s section-number/marker pins (it already reads this file)                               |
 | `.github/actions/published-actions.contract.test.mjs` (modify)                                | `prepare-agent-dispatch`'s new input                                                                                                                            |
-| `.github/actions/prepare-agent-dispatch/prepare.test.sh` (modify)                             | `WORK`+`ISSUE` branch; `CONTROL_PLANE_PROJECTIONS` → `runtime.projections`                                                                                      |
-| `agents/shared/skills/agent-protocol/reference/agent-protocol.md` (modify)                    | §1–§4 collapse to native rules under `runtime.projections`; legacy subsection retained                                                                          |
-| `tools/contract-tests/lane-default-prompt.test.ts` (modify)                                   | pins the collapsed section numbering                                                                                                                            |
+| `.github/actions/prepare-agent-dispatch/prepare.test.sh` (modify)                             | `WORK`+`ISSUE` branch (including a PR-backed anchor case); `CONTROL_PLANE_PROJECTIONS` → `runtime.projections`                                                  |
+| `agents/shared/skills/agent-protocol/reference/agent-protocol.md` (modify)                    | §1–§4 collapse to native rules under `runtime.projections === true \|\| anchor.type === 'work'`; legacy subsection retained                                     |
+| `tools/contract-tests/lane-default-prompt.test.ts` (modify)                                   | pins the reworded, flag-agnostic park clause in `agent-lane.yml`'s default prompt (#1528)                                                                       |
 | `apps/console/src/lib/authoritative-task-state.ts`, `.test.ts` (modify)                       | `AuthoritativeTaskState.spec?: WorkSpec`                                                                                                                        |
 | `apps/console/src/lib/task-detail.ts`, `.test.ts` (modify)                                    | threads `spec` into `TaskDetailResult`                                                                                                                          |
 | `apps/console/src/app/task/logical-work-card.tsx`, `.test.tsx` (modify)                       | renders the `work.spec` snapshot when present                                                                                                                   |
@@ -125,6 +130,7 @@ https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD`.
 
 - Modify: `libs/work/src/spec.ts`
 - Modify: `libs/work/src/spec.spec.ts`
+- Modify: `libs/orchestrator/src/model.ts` (doc comment only)
 - Create: `apps/console/src/lib/work-from-github.ts`
 - Create: `apps/console/src/lib/work-from-github.test.ts`
 
@@ -345,15 +351,34 @@ export function workPayloadFromGithub(source: GithubWorkSource): WorkPayload {
 }
 ```
 
+`libs/orchestrator/src/model.ts`'s `taskSchema.work` doc comment is
+anchor-specific text left over from before this sub-project — a one-line
+doc-only fix, no schema/behavior change:
+
+```ts
+// libs/orchestrator/src/model.ts -- replace taskSchema's `work` doc
+// comment (the field declaration itself, `work: workPayloadSchema.
+// optional(),`, is unchanged)
+  /** The work item's payload, written once when the task is created by
+   *  its first request and never modified by the orchestrator afterward.
+   *  A native anchor always carries one; a GitHub anchor carries one once
+   *  console-side derivation has populated it (sub-project 5's `work` for
+   *  every anchor) and is absent otherwise -- a legacy task, or one
+   *  requested through a path that does not derive it
+   *  (`handleDispatchRequest`; see the design spec). */
+  work: workPayloadSchema.optional(),
+```
+
 - [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/work -- spec` and
       `./tools/nx test @agent-lcars/console -- work-from-github` → PASS;
-      typecheck both projects; `pnpm exec prettier --check
+      typecheck all three touched projects; `pnpm exec prettier --check
 libs/work/src/spec.ts apps/console/src/lib/work-from-github.ts`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add libs/work/src/spec.ts libs/work/src/spec.spec.ts \
+  libs/orchestrator/src/model.ts \
   apps/console/src/lib/work-from-github.ts \
   apps/console/src/lib/work-from-github.test.ts
 git commit -m "feat(work): github origin channel and a GitHub->WorkPayload derivation helper
@@ -727,7 +752,7 @@ Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
 
 ---
 
-### Task 3: Console retrigger derives and forwards `work`
+### Task 3: Console retrigger and pipeline reassignment derive and forward `work`
 
 **Files:**
 
@@ -739,10 +764,13 @@ Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
 
 - Consumes: `workPayloadFromGithub` (Task 1).
 - Produces: `retriggerIssue(repo, issueNumber, callerId, note?,
-actorLogin?)` — `actorLogin` is a new, optional trailing parameter (kept
-  optional and appended last so every existing call site/test that omits
-  it is unaffected). When the task has no `work` yet, retrigger reads the
-  live issue and derives one.
+actorLogin?)` and `reassignPipeline(repo, issueNumber, targetPipeline,
+callerId, actorLogin?)` — `actorLogin` is a new, optional trailing
+  parameter on both (kept optional and appended last so every existing
+  call site/test that omits it is unaffected). When the task has no
+  `work` yet, each reads the issue (`reassignPipeline` reuses the read it
+  already makes for its own label swap; `retriggerIssue` has no other
+  reason to read it and adds one) and derives `work`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -913,16 +941,176 @@ export async function retriggerIssue(
 }
 ```
 
-- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console --
+- [ ] **Step 4: Extend `reassignPipeline` the same way**
+
+`reassignPipeline` already fetches the live issue for its own label swap
+(`octokit.rest.issues.get`), so deriving `work` there costs no extra
+GitHub call. Write the failing test first:
+
+```ts
+// apps/console/src/lib/backend-actions.test.ts -- new case in the
+// existing `reassignPipeline` describe block
+it('derives and forwards work from the already-fetched issue when the task has none yet', async () => {
+  githubMock.rest.issues.get.mockResolvedValue({
+    data: { title: 'Live title', body: 'Live body', labels: [] },
+  });
+  const requestSpy = vi.spyOn(orchestrator, 'request');
+  await reassignPipeline(repo, 42, 'codex', VALID_CALLER_ID, 'jlapenna');
+  // Not a second read: the label swap's own issues.get is the only one.
+  expect(githubMock.rest.issues.get).toHaveBeenCalledTimes(1);
+  expect(requestSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'Live title',
+          description: 'Live body',
+          pipeline: 'codex',
+          target: { repo: 'jlapenna/agent-lcars' },
+        },
+      },
+    }),
+  );
+});
+
+it('does not forward work when the task already carries one', async () => {
+  // store.readTask stubbed to return a task with `work` already set
+  const requestSpy = vi.spyOn(orchestrator, 'request');
+  await reassignPipeline(repo, 42, 'codex', VALID_CALLER_ID, 'jlapenna');
+  expect(requestSpy).toHaveBeenCalledWith(
+    expect.not.objectContaining({ work: expect.anything() }),
+  );
+});
+```
+
+Run to verify it fails (`./tools/nx test @agent-lcars/console --
+backend-actions` → FAIL: `work` never forwarded, `actorLogin` param does
+not exist), then implement — `reassignPipeline` gains the same optional
+trailing `actorLogin?: string` parameter as `retriggerIssue`, and reads
+`store.readTask(taskId)` alongside its existing `store.readActiveRun(taskId)`
+read (`Promise.all`, mirroring Step 3 above):
+
+```ts
+export async function reassignPipeline(
+  repo: WatchedRepo,
+  issueNumber: number,
+  targetPipeline: Pipeline,
+  callerId: string,
+  actorLogin?: string,
+): Promise<void> {
+  if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
+    throw new ActionError('A valid dispatch caller ID is required', 400);
+  }
+  const targetIntegration = requireAgentIntegration(repo, targetPipeline);
+  const pipelineLabels = supportedAgentPipelines(repo)
+    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
+    .filter((label): label is string => Boolean(label));
+
+  const octokit = getGithubClient();
+  const { data: issue } = await octokit.rest.issues.get({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+  });
+  const labels = issue.labels.map((label) =>
+    typeof label === 'string' ? label : (label.name ?? ''),
+  );
+  await octokit.rest.issues.setLabels({
+    owner: repo.owner,
+    repo: repo.name,
+    issue_number: issueNumber,
+    labels: labels
+      .filter(
+        (label) =>
+          !pipelineLabels.includes(label) && label !== 'status:needs-human',
+      )
+      .concat(targetIntegration.label),
+  });
+
+  const { store, orchestrator, drain } = createOrchestratorRuntime();
+  const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
+  const [activeRun, existingTask] = await Promise.all([
+    store.readActiveRun(taskId),
+    store.readTask(taskId),
+  ]);
+  if (activeRun) {
+    await orchestrator.cancel(
+      activeRun.runId,
+      `reassigned to ${targetPipeline} from console`,
+    );
+  }
+
+  // Reuses the issue already read above for the label swap -- no second
+  // GitHub call, unlike retriggerIssue (Step 3), which has no other
+  // reason to read the issue.
+  const work =
+    existingTask?.task.work === undefined
+      ? workPayloadFromGithub({
+          title: issue.title,
+          body: issue.body,
+          pipeline: targetPipeline,
+          repo: repoKey(repo),
+          actor: actorLogin,
+        })
+      : undefined;
+
+  const outcome = await orchestrator.request({
+    taskId,
+    requestId: `console-reassign:${randomUUID()}`,
+    pipeline: targetPipeline,
+    params:
+      activeRun?.params?.mode !== undefined
+        ? { mode: activeRun.params.mode }
+        : { mode: 'implement' },
+    ...(work === undefined ? {} : { work }),
+  });
+  if (isRefusal(outcome)) {
+    if (outcome.reason === 'task-busy') {
+      throw new ActionError('A run is already active for this task', 409);
+    }
+    throw new ActionError('Reassignment could not be processed', 500);
+  }
+  await drain();
+}
+```
+
+`app/actions.ts`'s `reassignPipeline` wrapper threads the session login
+through the same way Step 3's `retriggerIssue` wrapper does:
+
+```ts
+export async function reassignPipeline(
+  repo: WatchedRepo,
+  number: number,
+  pipeline: Pipeline,
+  callerId: string,
+): Promise<ActionResult> {
+  const session = await requireAdmin();
+  try {
+    await reassignPipelineLib(
+      resolveWatchedRepo(repo),
+      number,
+      pipeline,
+      callerId,
+      session.user.login,
+    );
+    revalidateDashboard();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toUserErrorMessage(error) };
+  }
+}
+```
+
+- [ ] **Step 5: Run** — `./tools/nx test @agent-lcars/console --
 backend-actions` → PASS; typecheck; prettier.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add apps/console/src/lib/backend-actions.ts \
   apps/console/src/lib/backend-actions.test.ts \
   apps/console/src/app/actions.ts
-git commit -m "feat(console): retrigger derives work from the live issue when none is set
+git commit -m "feat(console): retrigger and pipeline reassignment derive work from the live issue
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
@@ -1101,43 +1289,112 @@ Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
 
 - Consumes: the `work` workflow input a GitHub-anchored dispatch now
   carries (Task 4).
-- Produces: the brief's `anchor.type` is `'issue'` (not `'work'`) whenever
-  `ISSUE` is set, regardless of whether `WORK` is also set; `anchor.title`/
-  `anchor.body` come from `WORK.spec` when `WORK` is present, from the live
-  issue read otherwise (unchanged legacy behavior). Consumed by Task 6
-  (adds `runtime.projections` to the same brief) and the protocol rewrite
-  (Task 9), which assumes this brief shape.
+- Produces: the brief's `anchor.type` for a GitHub anchor keeps being
+  _inferred_ from the raw GitHub response — never hardcoded — whenever
+  `ISSUE` is set, regardless of whether `WORK` is also set: a plain issue
+  still resolves `issue`, a PR-backed anchor still resolves `pull-request`,
+  exactly as the legacy (no-`WORK`) branch already relies on. Only
+  `anchor.title`/`anchor.body` change: they come from `WORK.spec` when
+  `WORK` is present, from the live issue/PR read otherwise (unchanged
+  legacy behavior). Consumed by Task 6 (adds `runtime.projections` to the
+  same brief) and the protocol rewrite (Task 9), which assumes this brief
+  shape.
 
 - [ ] **Step 1: Write the failing test**
 
 ```bash
-# .github/actions/prepare-agent-dispatch/prepare.test.sh -- add a new case
-# alongside the existing WORK-only (native) and no-WORK (legacy) cases.
-# Match this file's existing fixture/assertion style (it already stubs `gh`
-# and captures $GITHUB_OUTPUT/$context_path -- see its WORK-only case for
-# the exact harness to reuse).
-test_work_and_issue_anchor_uses_work_spec_with_issue_metadata() {
-  # Stub `gh api repos/.../issues/42` to return a live issue whose
-  # title/body DIFFER from WORK.spec -- proves the brief uses WORK's
-  # snapshot, not the live read, while still using the issue's own
-  # number/html_url for linking.
-  export WORK='{"spec":{"title":"Snapshot title","description":"Snapshot body","pipeline":"claude","target":{"repo":"jlapenna/agent-lcars"}}}'
-  export ISSUE='42'
-  # ... existing gh-stub / prepare.sh invocation harness ...
-  run_prepare_sh
+# .github/actions/prepare-agent-dispatch/prepare.test.sh -- append two new
+# sections after the existing native_root section and before the
+# malformed_root section, in this file's own flat fixture style (no helper
+# functions -- every other section in this file inlines its own fake `gh`
+# script, fixture files, env exports, and `jq -e` assertions; do the same
+# here rather than inventing `assert_json_field`/`run_prepare_sh` helpers
+# the file does not have).
 
-  assert_json_field "$context_path" '.anchor.type' 'issue'
-  assert_json_field "$context_path" '.anchor.number' '42'
-  assert_json_field "$context_path" '.anchor.title' 'Snapshot title'
-  assert_json_field "$context_path" '.anchor.body' 'Snapshot body'
-  assert_json_field "$context_path" '.anchor.html_url' "$(gh_stub_issue_html_url)"
-}
+# A GitHub-anchored task that carries a work payload (WORK and ISSUE both
+# set, sub-project 5): the brief's title/body come from WORK.spec, but its
+# number/html_url/labels/assignees/state still come from the live issue --
+# and, critically, `type` is not hardcoded here, so a PR-backed anchor
+# still resolves "pull-request" through the same fallback the legacy
+# (no-WORK) branch already relies on.
+work_and_issue_root="$test_root/work-and-issue"
+mkdir -p "$work_and_issue_root/runner-temp" "$work_and_issue_root/consumer"
+
+wi_bin="$work_and_issue_root/bin"
+mkdir -p "$wi_bin"
+WI_ANCHOR="$work_and_issue_root/anchor.json"
+WI_COMMENTS="$work_and_issue_root/comments.json"
+cat > "$wi_bin/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = api
+case "$2" in
+  */comments*) cat "$WI_COMMENTS" ;;
+  */issues/42) cat "$WI_ANCHOR" ;;
+  *) echo "unexpected gh api path: $2" >&2; exit 64 ;;
+esac
+FAKE_GH
+chmod +x "$wi_bin/gh"
+
+# The live issue's own title/body deliberately DIFFER from WORK.spec, to
+# prove the brief uses the WORK snapshot, not this live read.
+cat > "$WI_ANCHOR" <<'JSON'
+{"number":42,"state":"open","state_reason":null,"title":"Live title (stale)","body":"Live body (stale)","labels":[{"name":"agent:claude"}],"assignees":[{"login":"agent-lcars-bot"}],"html_url":"https://github.com/jlapenna/agent-lcars/issues/42"}
+JSON
+echo '[]' > "$WI_COMMENTS"
+
+WORK='{"spec":{"title":"Snapshot title","description":"Snapshot body","pipeline":"claude","target":{"repo":"jlapenna/agent-lcars"}}}'
+ISSUE="42"
+MODE="implement"
+REPLY=""
+CONTEXT=""
+RUNNER_TEMP="$work_and_issue_root/runner-temp"
+GITHUB_ENV="$work_and_issue_root/github-env"
+GITHUB_OUTPUT="$work_and_issue_root/github-output"
+GITHUB_REPOSITORY="jlapenna/agent-lcars"
+export WORK ISSUE MODE REPLY CONTEXT RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT \
+  GITHUB_REPOSITORY WI_ANCHOR WI_COMMENTS
+
+(
+  cd "$work_and_issue_root/consumer"
+  GITHUB_WORKSPACE="$work_and_issue_root/consumer" PATH="$wi_bin:$PATH" \
+    bash "$action_dir/prepare.sh"
+)
+
+wi_context_path="$RUNNER_TEMP/agent-dispatch/context.json"
+jq -e '
+  .anchor.type == "issue" and
+  .anchor.number == 42 and
+  .anchor.title == "Snapshot title" and
+  .anchor.body == "Snapshot body" and
+  .anchor.labels == ["agent:claude"] and
+  .anchor.assignees == ["agent-lcars-bot"] and
+  .anchor.html_url == "https://github.com/jlapenna/agent-lcars/issues/42" and
+  .anchor.id == null' "$wi_context_path" >/dev/null
+
+# Same fixture, but the live issue IS a pull request (`pull_request` key
+# present): the brief must still resolve "pull-request", proving the new
+# branch does not hardcode `type: "issue"`.
+cat > "$WI_ANCHOR" <<'JSON'
+{"number":42,"state":"open","state_reason":null,"title":"Live title (stale)","body":"Live body (stale)","labels":[],"assignees":[],"html_url":"https://github.com/jlapenna/agent-lcars/pull/42","pull_request":{"url":"https://api.github.com/repos/jlapenna/agent-lcars/pulls/42"}}
+JSON
+
+(
+  cd "$work_and_issue_root/consumer"
+  GITHUB_WORKSPACE="$work_and_issue_root/consumer" PATH="$wi_bin:$PATH" \
+    bash "$action_dir/prepare.sh"
+)
+
+jq -e '.anchor.type == "pull-request"' "$wi_context_path" >/dev/null
+
+echo "prepare.test.sh: work-and-issue anchor cases passed"
 ```
 
 - [ ] **Step 2: Run to verify it fails** — `bash
 .github/actions/prepare-agent-dispatch/prepare.test.sh` → FAIL (today's
       script either ignores `WORK` when `ISSUE` is set, or the native branch's
-      `anchor.type: 'work'` wins and drops the issue metadata).
+      `anchor.type: 'work'` wins and drops the issue metadata and the
+      `pull_request` field entirely).
 
 - [ ] **Step 3: Implement**
 
@@ -1166,7 +1423,8 @@ if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
 elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   # Sub-project 5: a GitHub-anchored task that carries a work payload.
   # The task text comes from WORK.spec -- the issue is evidence for
-  # linking (number, html_url, labels, assignees, state) and, in reply
+  # linking (number, html_url, labels, assignees, state, and -- via the
+  # merge below -- whether this anchor is actually a PR) and, in reply
   # mode, for the comment thread; it is not the source of the brief's
   # title/body.
   if ! jq -e '.spec.title and .spec.target.repo' <<<"$WORK" >/dev/null 2>&1; then
@@ -1176,16 +1434,17 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   work_json="$(jq -c . <<<"$WORK")"
   issue_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
   comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
-  anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" '{
-    type: "issue",
-    number: $i.number,
-    title: $w.spec.title,
-    body: $w.spec.description,
-    labels: $i.labels, assignees: $i.assignees,
-    state: $i.state, state_reason: $i.state_reason,
-    html_url: $i.html_url,
-    pull_request: $i.pull_request
-  }')"
+  # Merge, right side wins: every field the raw issue/PR response carries
+  # (number, labels, assignees, state, state_reason, html_url, and --
+  # load-bearing -- pull_request) survives untouched, with only
+  # title/body overridden from WORK.spec. No `type` is set here on
+  # purpose -- the downstream anchor.type fallback ($anchor.type // (if
+  # $anchor.pull_request then "pull-request" else "issue" end)) infers it
+  # from the merged $anchor.pull_request exactly as the legacy (no-WORK)
+  # branch below already relies on, so a PR-backed anchor keeps its
+  # "pull-request" type instead of being hardcoded to "issue".
+  anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
+    '$i + { title: $w.spec.title, body: $w.spec.description }')"
 else
   # Legacy: no work payload yet on this task (pre-sub-project-5, or a task
   # created through the internal-request path -- see the design spec's
@@ -1197,11 +1456,13 @@ fi
 
 The downstream `jq -n` assembly's `anchor.type` line already reads
 `($anchor.type // (if $anchor.pull_request then "pull-request" else "issue"
-end))` — the new middle branch sets `type: "issue"` explicitly, so this is
-unaffected; the `id`/`target_repo` gate (`if $anchor.type == "work" then
-... else null end`) also needs no change, since those fields stay `null`
-for the `type: "issue"` branch exactly as they already are for a plain
-issue dispatch today.
+end))` — the new middle branch never sets `type` itself, so a plain issue
+still infers `"issue"` and a PR-backed anchor still infers `"pull-request"`,
+exactly like the legacy (no-`WORK`) branch, which passes the raw GitHub
+response straight through; the `id`/`target_repo` gate (`if $anchor.type ==
+"work" then ... else null end`) also needs no change, since both `"issue"`
+and `"pull-request"` leave those fields `null` exactly as they already are
+today.
 
 `action.yml` — update the `work` input's own doc string (no longer
 mutually exclusive with `issue`) and add the new
@@ -1213,11 +1474,12 @@ work:
     JSON dispatch payload: `{"spec":{"title","description","pipeline","target":{"repo"}}}`
     for a GitHub-anchored task that carries one (sub-project 5), or
     `{"id","spec":{...}}` for a native work item with no issue anchor. When
-    `issue` is also set, the brief's `anchor` is `type: "issue"` built from
-    this input's `spec` plus the issue's own number/labels/assignees/state
-    for linking. When `issue` is empty, the brief's `anchor` is `type:
-    "work"` built from this input alone, with no GitHub read. Empty for a
-    legacy issue-anchored dispatch with no work payload yet.
+    `issue` is also set, the brief's `anchor.title`/`anchor.body` come from
+    this input's `spec`, merged over the issue's own number/labels/
+    assignees/state/pull_request for linking and type inference. When
+    `issue` is empty, the brief's `anchor` is `type: "work"` built from
+    this input alone, with no GitHub read. Empty for a legacy issue-anchored
+    dispatch with no work payload yet.
   required: false
   default: ''
 ```
@@ -1227,9 +1489,9 @@ also updates this file — do not add it here to keep this task's diff
 scoped to the WORK/ISSUE branch.)
 
 - [ ] **Step 4: Run** — `bash
-.github/actions/prepare-agent-dispatch/prepare.test.sh` → PASS (all three
-      branches); confirm the existing WORK-only and no-WORK cases are
-      untouched (regression pins).
+.github/actions/prepare-agent-dispatch/prepare.test.sh` → PASS (native,
+      legacy, work-and-issue, and work-and-pull-request cases); confirm the
+      existing WORK-only and no-WORK cases are untouched (regression pins).
 
 - [ ] **Step 5: Update the published-actions manifest**
 
@@ -1680,7 +1942,14 @@ it('a finished-not-ok outcome also gets the status:needs-human label', async () 
   await orchestrator.confirmDispatch(runId);
   await orchestrator.report(runId, { ok: false, summary: 'blocked' });
 
-  const { fetchImpl, calls } = fakeFetch(204, 201);
+  // routedFetch, not fakeFetch (which only ever takes one status): this
+  // one drainOutbox call settles two outbox entries -- the original
+  // dispatch-run entry, now stale since confirmDispatch was called
+  // directly above rather than through a drain (handleDispatchRun's own
+  // `run.state !== 'pending'` guard settles it `done` without ever
+  // calling fetch), and the report-outcome entry `report()` created,
+  // which needs both a comment (201) and a label (200) call to succeed.
+  const { fetchImpl, calls } = routedFetch();
   await drainOutbox({ store, orchestrator, tokens, fetchImpl });
 
   const labelCall = calls.find((c) => c.url.endsWith('/issues/42/labels'));
@@ -1691,11 +1960,12 @@ it('a finished-not-ok outcome also gets the status:needs-human label', async () 
 });
 ```
 
-(Match this file's existing `fakeFetch` signature — the existing
-budget-exhausted `lost` case already exercises the label call today; this
-test just proves the same call now also fires for the `finished, ok:
-false` case, which the existing tests already prove it did NOT before this
-task.)
+(`routedFetch` is this file's existing URL-routed fixture — dispatch calls
+204, label calls 200, everything else 201 — already used by the file's
+other mixed dispatch-plus-report tests; the existing budget-exhausted
+`lost` case already exercises the label call today, and this test just
+proves the same call now also fires for the `finished, ok: false` case,
+which the existing tests already prove it did NOT before this task.)
 
 - [ ] **Step 2: Run to verify it fails** — `./tools/nx test
 @agent-lcars/console -- orchestrator-dispatch` → FAIL (no label call for
@@ -1742,6 +2012,8 @@ Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
 **Files:**
 
 - Modify: `agents/shared/skills/agent-protocol/reference/agent-protocol.md`
+- Modify: `tools/contract-tests/worker-workflow-contract.test.ts`
+- Modify: `.github/workflows/agent-lane.yml` (default-prompt park clause)
 - Modify: `tools/contract-tests/lane-default-prompt.test.ts`
 
 **Interfaces:**
@@ -1751,24 +2023,46 @@ Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
   §1–§5 are preserved (their _content_ changes); §5a is removed as a
   separate section, its table promoted into §1–§4's own rows; a new
   "Legacy (projections off)" subsection holds the byte-identical former
-  §1–§4 text.
+  §1–§4 text. The native rules apply whenever `runtime.projections ===
+true || anchor.type === 'work'` — the `anchor.type === 'work'` half
+  matters because a native run's brief may arrive through sub-project 4's
+  `GET /runs/{id}/brief` route rather than through `prepare.sh`, and that
+  route has no obligation to stamp `runtime.projections`; a native anchor
+  has no issue to write to either way, so it must get the native rules
+  regardless of that field's presence.
 
 - [ ] **Step 1: Write the failing contract-test assertions**
 
-```ts
-// tools/contract-tests/lane-default-prompt.test.ts -- add near this
-// file's existing section-number/marker pins (match its established
-// pattern of reading agent-protocol.md's raw text and asserting on
-// specific headings/strings)
-it('agent-protocol.md gates the native rules on runtime.projections', () => {
-  expect(protocolText).toMatch(/runtime\.projections === true/);
-  expect(protocolText).toMatch(/## Legacy \(projections off\)/);
-  expect(protocolText).not.toMatch(/## 5a\. Native work items/);
-});
+`tools/contract-tests/lane-default-prompt.test.ts` extracts and _runs_
+`agent-lane.yml`'s own prompt-rendering step (see this file's own top
+comment) — it never reads `agent-protocol.md` at all, so the protocol
+doc's own section-number/marker pins belong in `tools/contract-tests/
+worker-workflow-contract.test.ts` instead, which already `readFileSync`s
+`.agents/skills/agent-protocol/reference/agent-protocol.md` for its
+existing `'headless handoff forbids review requests and requires verified
+auto-merge'` test (that path resolves through the `.agents/skills/...`
+symlink to the same file this task edits). Add a sibling `it` in the same
+describe block:
 
-it('the legacy subsection still documents the eyes reaction and the exact park label/comment sequence', () => {
-  const legacy = protocolText.slice(
-    protocolText.indexOf('## Legacy (projections off)'),
+```ts
+// tools/contract-tests/worker-workflow-contract.test.ts -- new case,
+// alongside the existing 'headless handoff forbids review requests...'
+// test that already reads this same file the same way
+it('collapses §1-4 to native rules gated on runtime.projections or a work anchor, with a legacy subsection', () => {
+  const protocol = readFileSync(
+    path.join(
+      repoRoot,
+      '.agents/skills/agent-protocol/reference/agent-protocol.md',
+    ),
+    'utf8',
+  );
+  expect(protocol).toContain(
+    "runtime.projections === true || anchor.type === 'work'",
+  );
+  expect(protocol).toContain('## Legacy (projections off)');
+  expect(protocol).not.toContain('## 5a. Native work items');
+  const legacy = protocol.slice(
+    protocol.indexOf('## Legacy (projections off)'),
   );
   expect(legacy).toContain('eyes (👀) reaction');
   expect(legacy).toContain('status:needs-human');
@@ -1778,13 +2072,28 @@ it('the legacy subsection still documents the eyes reaction and the exact park l
 });
 ```
 
-(Reuse this file's existing helper for reading `agent-protocol.md` into
-`protocolText` — it already loads this file for its other section-numbering
-pins.)
+Separately, `agent-lane.yml`'s own rendered default prompt names the
+legacy issue-mode park recipe by name ("park using the protocol's exact
+comment, label, and maintainer-assignee recipe") — already wrong for a
+native (issue-less) dispatch even before this sub-project, since a native
+run's parking is `PARK <blocker>`, not a label/comment/assignee. Reword it
+to be flag-agnostic and pin the new wording (closes #1528):
 
-- [ ] **Step 2: Run to verify it fails** — `./tools/nx test
-@agent-lcars/console -- lane-default-prompt` (or wherever this
-      contract-tests project runs from) → FAIL.
+```ts
+// tools/contract-tests/lane-default-prompt.test.ts -- new case, alongside
+// this file's other AGENT_PROMPT content assertions (see renderLaneDefaults)
+it('describes parking as flag-agnostic (#1528) rather than naming the issue-mode label/comment recipe', () => {
+  const { AGENT_PROMPT } = renderLaneDefaults({ pipeline: 'claude' });
+  expect(AGENT_PROMPT).toContain(
+    "park per the protocol's parking rule for this dispatch",
+  );
+  expect(AGENT_PROMPT).not.toContain('maintainer-assignee recipe');
+});
+```
+
+- [ ] **Step 2: Run to verify both fail** — `./tools/nx test
+@agent-lcars/console -- worker-workflow-contract lane-default-prompt` (or
+      wherever these two contract-tests projects run from) → FAIL.
 
 - [ ] **Step 3: Rewrite `agent-protocol.md` §1–§5a**
 
@@ -1795,37 +2104,41 @@ unchanged):
 ```markdown
 ## 1. Takeover — your first action
 
-**When `runtime.projections === true`** (check the dispatch brief's
-`runtime.projections` field): skip. The console posts the eyes reaction
-and claims the issue for the fleet the moment your dispatch is confirmed —
-before your turn starts — and derives the takeover affordance from your
-session doc. Post nothing.
+**When `runtime.projections === true || anchor.type === 'work'`** (check
+the dispatch brief's `runtime.projections` field, and its `anchor.type` —
+a native run has neither an issue to post to nor, sometimes, a
+`runtime.projections` field at all, so it always takes this branch): skip.
+The console posts the eyes reaction and claims the issue for the fleet the
+moment your dispatch is confirmed — before your turn starts — and derives
+the takeover affordance from your session doc. Post nothing.
 
 **Otherwise**, follow "Legacy (projections off)" below.
 
 ## 2. Eyes reaction and assignee claim
 
-**When `runtime.projections === true`**: skip — already done for you (see
-§1).
+**When `runtime.projections === true || anchor.type === 'work'`**: skip —
+already done for you (see §1).
 
 **Otherwise**, follow "Legacy (projections off)" below.
 
 ## 3. Progress
 
-**When `runtime.projections === true`**: `lcars session title "<what you
-are doing>"` and `lcars session status "<state>"` — the channel §12
-already requires, and now your only progress channel. No issue write.
+**When `runtime.projections === true || anchor.type === 'work'`**:
+`lcars session title "<what you are doing>"` and `lcars session status
+"<state>"` — the channel §12 already requires, and now your only progress
+channel. No issue write.
 
 **Otherwise**, follow "Legacy (projections off)" below.
 
 ## 4. Parking — blocked on a human
 
-**When `runtime.projections === true`**: end your response with `PARK
-<blocker>`. The finalizer reports `ok: false`; the console applies the
-`status:needs-human` label and posts the park comment for you. Your
-blocker text reaches a human only through `lcars session status` (§12)
-and this run's log — set it there before you end your turn. Post nothing
-to GitHub.
+**When `runtime.projections === true || anchor.type === 'work'`**: end
+your response with `PARK <blocker>`. The finalizer reports `ok: false`;
+the console applies the `status:needs-human` label and posts the park
+comment for you (for an issue anchor — a `work` anchor has no issue to
+label). Your blocker text reaches a human only through `lcars session
+status` (§12) and this run's log — set it there before you end your turn.
+Post nothing to GitHub.
 
 **Otherwise**, follow "Legacy (projections off)" below.
 
@@ -1850,10 +2163,11 @@ for the exact marker text). One branch on the reference format:
 
 ## Legacy (projections off)
 
-Read this section instead of §1–§4 above whenever the dispatch brief's
-`runtime.projections` is absent or `false` — every consumer that has not
-opted into control-plane projections yet, and every GitHub-anchored task
-still dispatching through the pre-`work` brief path.
+Read this section instead of §1–§4 above whenever `anchor.type` is
+`issue` and the dispatch brief's `runtime.projections` is absent or
+`false` — every consumer that has not opted into control-plane
+projections yet, and every GitHub-anchored task still dispatching through
+the pre-`work` brief path.
 
 ### Takeover comment — your first action
 
@@ -1874,20 +2188,37 @@ mode table ...]
 ```
 
 Delete the standalone "## 5a. Native work items (no issue anchor)" section
-and its table entirely — its content is now §1–§4's own `runtime.projections
-=== true` branches above, plus §5's anchor-type branch for the
-deliverable's reference format.
+and its table entirely — its content is now §1–§4's own gated branches
+above, plus §5's anchor-type branch for the deliverable's reference
+format.
 
-- [ ] **Step 4: Update `lane-default-prompt`**
+- [ ] **Step 4: Reword `agent-lane.yml`'s default-prompt park clause**
 
-Find and update whatever this repo's `lane-default-prompt` (the fleet
-default prompt template referenced by `tools/contract-tests/
-lane-default-prompt.test.ts`) says about section numbers or §5a by name —
-grep it for `5a` and any literal `§1`/`§2`/`§3`/`§4` cross-references before
-editing, and update each to the collapsed structure above.
+In the "Resolve the canonical dispatch prompt" step's `default_body`
+heredoc (`.github/workflows/agent-lane.yml`), change:
 
-- [ ] **Step 5: Run** — the `lane-default-prompt` contract test suite →
-      PASS; re-read the whole rewritten protocol file once for internal
+```
+for a real blocker, park
+using the protocol's exact comment, label, and maintainer-assignee
+recipe; for an already-resolved request, post the evidence-backed
+no-op.
+```
+
+to:
+
+```
+for a real blocker, park
+per the protocol's parking rule for this dispatch; for an
+already-resolved request, post the evidence-backed no-op.
+```
+
+(This prompt is rendered identically regardless of `control-plane-
+projections` or anchor type — it points the agent at the protocol's own
+§4, which is itself now the thing that branches, rather than describing
+one specific recipe that was already wrong for a native dispatch.)
+
+- [ ] **Step 5: Run** — both contract-test files from Step 1/2 → PASS;
+      re-read the whole rewritten protocol file once for internal
       consistency (no dangling `§5a` cross-reference anywhere in this repo
       — `grep -rn '§5a\|section 5a' agents/ .github/ tools/` should return
       nothing after this task).
@@ -1896,8 +2227,12 @@ editing, and update each to the collapsed structure above.
 
 ```bash
 git add agents/shared/skills/agent-protocol/reference/agent-protocol.md \
+  tools/contract-tests/worker-workflow-contract.test.ts \
+  .github/workflows/agent-lane.yml \
   tools/contract-tests/lane-default-prompt.test.ts
-git commit -m "docs(agent-protocol): collapse to native rules under runtime.projections
+git commit -m "docs(agent-protocol): collapse to native rules under runtime.projections or a work anchor
+
+Closes #1528.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
@@ -2370,17 +2705,20 @@ git push
 **1. Spec coverage.**
 
 - Decision 1 (`Task.work` for every anchor) → Tasks 1–3. `workOriginSchema.
-channel` gains `'github'`. The webhook, reply, and console-retrigger sites
-  are covered; `handleDispatchRequest` (the internal-automation `/api/
-control-plane/request` route) is deliberately **not** covered — the spec
-  section and Global Constraints both call this out as the plan's one
-  scoped-out derivation site, since its callers carry no issue title/body
-  and adding a GitHub read there was not part of the binding decisions'
-  named list ("label webhook, reconcile, console retrigger"). "Reconcile"
-  in the decision's own wording is satisfied by `decide.ts`'s existing
-  carry-forward behavior (no new code — documented in the spec section),
-  not by `handleReconcile`/`/api/control-plane/reconcile` itself, which
-  never derives a fresh `work` payload for anything.
+channel` gains `'github'`. The webhook, reply, console-retrigger, and
+  console pipeline-reassignment sites are covered (the last added in
+  review — `reassignPipeline` already reads the issue for its own label
+  swap, so it costs nothing extra); `handleDispatchRequest` (the
+  internal-automation `/api/control-plane/request` route) is deliberately
+  **not** covered — the spec section and Global Constraints both call this
+  out as the plan's one scoped-out derivation site, since its callers
+  carry no issue title/body and adding a GitHub read there was not part of
+  the binding decisions' named list ("label webhook, reconcile, console
+  retrigger"). "Reconcile" in the decision's own wording is satisfied by
+  `decide.ts`'s existing carry-forward behavior (no new code — documented
+  in the spec section), not by `handleReconcile`/`/api/control-plane/
+reconcile` itself, which never derives a fresh `work` payload for
+  anything.
 - Decision 2 (brief from `work` for every anchor) → Tasks 4–5.
   `GET /runs/{id}/brief` serving GitHub anchors is explicitly deferred as
   a follow-up line, not a task, matching the decision's own "unless
@@ -2407,7 +2745,22 @@ finalize.yml`'s "Report and park bootstrap-independent failure" step is
 - Decision 4 (protocol collapse; Quick Task ruling) → Task 9 (protocol),
   Task 11 (Quick Task UI + the free-derivation regression). Quick Tasks
   are explicitly not converted to native items (Global Constraints, spec
-  section, Task 11's scope note).
+  section, Task 11's scope note). Fixed in review: the gate is
+  `runtime.projections === true || anchor.type === 'work'`, not
+  `runtime.projections === true` alone, because a native run's brief may
+  reach the agent through sub-project 4's `GET /runs/{id}/brief` route
+  instead of `prepare.sh`, and that route has no obligation to stamp
+  `runtime.projections`. Also fixed in review: `lane-default-prompt.
+test.ts` never reads `agent-protocol.md` at all (it extracts and runs
+  `agent-lane.yml`'s own prompt-rendering step), so the protocol doc's own
+  section-number/marker pins moved to `tools/contract-tests/
+worker-workflow-contract.test.ts`, which already reads that file for an
+  unrelated auto-merge-wording assertion; `lane-default-prompt.test.ts`
+  instead gained its own, correctly-scoped assertion — the reworded,
+  flag-agnostic park clause in `agent-lane.yml`'s rendered default prompt
+  (closes #1528, a pre-existing bug the review surfaced: that prompt named
+  the issue-mode label/comment/assignee recipe unconditionally, which was
+  already wrong for a native dispatch before this sub-project).
 - Decision 5 (console minimal; task detail shows `work.spec`) → Task 10.
   No new `/work` filter/tab added, matching "out of scope."
 - Decision 6 (no Terraform/IAM/secrets; existing GitHub App client) → every
@@ -2469,13 +2822,14 @@ instruction):**
   wants that path covered too, it needs either an extra GitHub read per
   internal-automation dispatch or a design change to what that route's
   callers send.
-- **`retriggerIssue`'s new `actorLogin` parameter.** Appended as the last,
-  optional parameter rather than inserted earlier, specifically so every
-  existing call site and test that constructs a call without it keeps
-  compiling and passing unchanged — a guess about minimizing blast radius
-  over API tidiness, consistent with this codebase's general pattern of
-  additive-only signature changes (e.g. `WorkGrant.scopes?` in the
-  sub-project 4 plan this one was modeled against).
+- **`retriggerIssue`/`reassignPipeline`'s new `actorLogin` parameter.**
+  Appended as the last, optional parameter on both rather than inserted
+  earlier, specifically so every existing call site and test that
+  constructs a call without it keeps compiling and passing unchanged — a
+  guess about minimizing blast radius over API tidiness, consistent with
+  this codebase's general pattern of additive-only signature changes (e.g.
+  `WorkGrant.scopes?` in the sub-project 4 plan this one was modeled
+  against).
 - **Task 10's `LogicalWorkCard` exact markup/copy** ("Dispatch brief
   snapshot" label, `lineClamp={3}`) is this plan's own UI judgment call,
   not something the spec or binding decisions specify — the binding
