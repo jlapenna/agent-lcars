@@ -3,7 +3,10 @@ import 'server-only';
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
-import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
+import {
+  createOrchestratorRuntime,
+  createScheduleStore,
+} from '@/lib/orchestrator-runtime';
 import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
@@ -51,6 +54,9 @@ async function handle(request: Request): Promise<Response> {
       runtime: createOrchestratorRuntime(),
       sessionsFor: sessionsForRuns,
       maxLiveRuns: workMaxLiveRuns(),
+      scheduleStore: createScheduleStore(),
+      grants: workGrants,
+      now: () => new Date(),
     },
   });
   return matched && response !== undefined

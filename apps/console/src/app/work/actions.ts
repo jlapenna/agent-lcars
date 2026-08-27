@@ -3,7 +3,12 @@
 import { createServerFunctionable } from '@orpc/next';
 
 import { auth } from '@/auth';
-import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
+import { controlPlaneRepository } from '@/lib/deployment';
+import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
+import {
+  createOrchestratorRuntime,
+  createScheduleStore,
+} from '@/lib/orchestrator-runtime';
 import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
@@ -26,9 +31,8 @@ async function context(): Promise<WorkContext> {
     new Request('https://console.local/'),
     {
       verifyGoogleIdToken: googleIdTokenVerifier('unused'),
-      verifyScheduleTickOidcToken: () => {
-        throw new Error('unused');
-      },
+      verifyScheduleTickOidcToken: (token) =>
+        verifyScheduleTickOidcToken(token, controlPlaneRepository()),
       session: async () =>
         (await auth()) as { user?: { login?: string } } | null,
       grants: workGrants,
@@ -39,6 +43,9 @@ async function context(): Promise<WorkContext> {
     runtime: createOrchestratorRuntime(),
     sessionsFor: sessionsForRuns,
     maxLiveRuns: workMaxLiveRuns(),
+    scheduleStore: createScheduleStore(),
+    grants: workGrants,
+    now: () => new Date(),
   };
 }
 

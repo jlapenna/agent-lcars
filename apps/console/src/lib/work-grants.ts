@@ -31,6 +31,18 @@ export function resolvePrincipal(
   return grants.find((g) => g.subjects.some((s) => s.toLowerCase() === needle));
 }
 
+/** Looks up a grant by its canonical LCARS principal (`user:jlapenna`,
+ *  `svc:lcars-admin`) rather than by subject -- what a schedule's
+ *  `createdBy` field already stores. Used only by the schedule tick, which
+ *  must re-check the schedule creator's grant, never the tick caller's own
+ *  (`cron:tick` has no grant of its own). */
+export function grantForPrincipal(
+  principal: string,
+  grants: WorkGrant[] = workGrants(),
+): WorkGrant | undefined {
+  return grants.find((g) => g.principal === principal);
+}
+
 export function workMaxLiveRuns(): number {
   const raw = process.env['AGENT_LCARS_WORK_MAX_LIVE_RUNS'];
   if (raw === undefined || raw === '') return 4;

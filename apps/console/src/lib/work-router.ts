@@ -5,42 +5,24 @@ import {
   isLive,
   isRefusal,
   isWorkAnchor,
-  type Task,
 } from '@agent-lcars/orchestrator';
-import {
-  itemsContract,
-  workPayloadSchema,
-  type WorkSpec,
-  workSpecSchema,
-} from '@agent-lcars/work';
-import {
-  deriveItemState,
-  type ItemSessionView,
-  type ItemView,
-  toItemView,
-  toItemViewSafe,
-} from '@agent-lcars/work/derive';
+import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
+import type { ItemView } from '@agent-lcars/work/derive';
+import { deriveItemState, toItemViewSafe } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
-import { isControlPlaneRepository } from './deployment';
-import type { OrchestratorRouteDeps } from './orchestrator-routes';
-import type { WorkPrincipal } from './work-auth';
+import { scheduleRouter } from './schedule-router';
+import {
+  forbiddenReason,
+  liveNativeRunCount,
+  mintItem,
+  RETRY_AFTER_SECONDS,
+  view,
+  type WorkContext,
+} from './work-mint';
 
-/** How long a caller turned away by the live-run cap should wait. Sent both
- *  as the error payload the contract declares and as a `Retry-After`
- *  response header (see `createWorkHandler`). */
-const RETRY_AFTER_SECONDS = 60;
-
-export interface WorkContext {
-  /** Resolved by the route from the request's bearer token or session;
-   *  `undefined` means "no recognized principal", which every procedure
-   *  turns into a 401 through the `operator` gate below. */
-  principal?: WorkPrincipal;
-  runtime: OrchestratorRouteDeps;
-  sessionsFor: (runIds: string[]) => Promise<ItemSessionView[]>;
-  maxLiveRuns: number;
-}
+export type { WorkContext } from './work-mint';
 
 const os = implement(itemsContract).$context<WorkContext>();
 
@@ -67,109 +49,30 @@ const operator = os.use(async ({ context, next }) => {
   return next({ context: { principal } });
 });
 
-async function view(
-  context: WorkContext,
-  workId: string,
-  task: Task,
-): Promise<ItemView> {
-  const runs = await context.runtime.store.listRuns({ workId });
-  const sessions = await context.sessionsFor(runs.map((run) => run.runId));
-  return toItemView({ workId, task, runs, sessions });
-}
-
-/** The cap is a fleet-wide budget on *native* work, not on the orchestrator:
- *  GitHub-anchored runs are driven by issues someone already opened and are
- *  not this API's to throttle. */
-async function liveNativeRunCount(context: WorkContext): Promise<number> {
-  const live = await context.runtime.store.listLiveRuns();
-  return live.filter((run) => isWorkAnchor(run.task)).length;
-}
-
-/**
- * The two capability checks every run-minting procedure must clear:
- * invoking a pipeline is granted per principal, and the target repository
- * must be one this control plane admits.
- *
- * Both `create` and `redispatch` run it, and both evaluate it against the
- * grants and the repository list **as they stand now**. That is the point
- * for `redispatch`: an item parked back when its repo was in
- * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` must not become a way to
- * dispatch a workflow into that repo after it was removed from the list.
- *
- * Returns the refusal message rather than throwing, so each handler raises
- * its own contract-declared `errors.FORBIDDEN` -- a bare `ORPCError` would
- * still map to 403 at runtime but would leave 403 undocumented for the
- * path in the generated OpenAPI document.
- */
-function forbiddenReason(
-  principal: WorkPrincipal,
-  spec: WorkSpec,
-): string | undefined {
-  if (!principal.pipelines.includes(spec.pipeline)) {
-    return `${principal.principal} may not request pipeline ${spec.pipeline}`;
-  }
-  if (!isControlPlaneRepository(spec.target.repo)) {
-    return `${spec.target.repo} is not a control-plane repository`;
-  }
-  return undefined;
-}
-
-/** Both sides go through the same schema first, so the comparison is over
- *  normalized values (identical key order, coercions applied) rather than
- *  over whatever shape the caller happened to send. */
-function sameSpec(a: WorkSpec, b: WorkSpec): boolean {
-  return (
-    JSON.stringify(workSpecSchema.parse(a)) ===
-    JSON.stringify(workSpecSchema.parse(b))
-  );
-}
-
 export const workRouter = os.router({
   create: operator.create.handler(async ({ input, context, errors }) => {
     const { principal } = context;
-    const forbidden = forbiddenReason(principal, input.spec);
-    if (forbidden !== undefined) throw errors.FORBIDDEN({ message: forbidden });
-
-    // Idempotency by client ULID: the same id and spec replays to the item
-    // that already exists (still 201 -- see the contract's successStatus),
-    // a different spec is a client bug and is refused rather than silently
-    // ignored.
-    const existing = await context.runtime.store.readTask({
-      workId: input.id,
+    const result = await mintItem(context, {
+      id: input.id,
+      spec: input.spec,
+      origin: {
+        principal: principal.principal,
+        channel: principal.via === 'session' ? 'console' : 'api',
+      },
+      grantsPrincipal: principal,
     });
-    if (existing !== undefined) {
-      const stored = workPayloadSchema.parse(existing.task.work);
-      if (!sameSpec(stored.spec, input.spec)) {
-        throw errors.CONFLICT({
-          message: `item ${input.id} already exists with a different spec`,
-        });
-      }
-      return view(context, input.id, existing.task);
+    if (result.kind === 'forbidden') {
+      throw errors.FORBIDDEN({ message: result.message });
     }
-
-    if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
+    if (result.kind === 'conflict') {
+      throw errors.CONFLICT({ message: result.message });
+    }
+    if (result.kind === 'cap') {
       throw errors.TOO_MANY_REQUESTS({
         data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
       });
     }
-
-    const outcome = await context.runtime.orchestrator.request({
-      taskId: { workId: input.id },
-      requestId: input.id,
-      pipeline: input.spec.pipeline,
-      work: {
-        origin: {
-          principal: principal.principal,
-          channel: principal.via === 'session' ? 'console' : 'api',
-        },
-        spec: input.spec,
-      },
-    });
-    if (isRefusal(outcome)) {
-      throw errors.CONFLICT({ message: outcome.reason });
-    }
-    await context.runtime.drain();
-    return view(context, input.id, outcome.task);
+    return view(context, input.id, result.task);
   }),
 
   get: operator.get.handler(async ({ input, context, errors }) => {
@@ -313,27 +216,35 @@ export const workRouter = os.router({
 });
 
 /**
- * The OpenAPI (RESTful) adapter for {@link workRouter}. Error codes map to
- * HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP`
- * (`UNAUTHORIZED` 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
- * `TOO_MANY_REQUESTS` 429), which is exactly what this API wants -- so no
- * `errorStatusMap` override.
+ * The OpenAPI (RESTful) adapter serving both {@link workRouter} (`/items`)
+ * and {@link scheduleRouter} (`/schedules`) under one handler -- their
+ * contracts already carry the full path (`itemsContract`/
+ * `schedulesContract`), so nesting them under `items`/`schedules` keys here
+ * is purely organizational, not a URL prefix. Error codes map to HTTP
+ * status through oRPC's own `COMMON_ERROR_STATUS_MAP` (`UNAUTHORIZED` 401,
+ * `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409, `TOO_MANY_REQUESTS`
+ * 429), which is exactly what this API wants -- so no `errorStatusMap`
+ * override.
  */
 export function createWorkHandler(): OpenAPIHandler<WorkContext> {
-  return new OpenAPIHandler(workRouter, {
-    routingInterceptors: [
-      // `Retry-After` is the standard way to say what the 429 body's
-      // `retryAfterSeconds` says, and generic HTTP clients honour it.
-      // A routing interceptor is the only hook that sees the *encoded*
-      // error response: `interceptors` run inside the try block, before
-      // the codec turns a thrown ORPCError into a status and body.
-      async (options) => {
-        const result = await options.next();
-        if (result.matched && result.response.status === 429) {
-          result.response.headers['retry-after'] = String(RETRY_AFTER_SECONDS);
-        }
-        return result;
-      },
-    ],
-  });
+  return new OpenAPIHandler(
+    { items: workRouter, schedules: scheduleRouter },
+    {
+      routingInterceptors: [
+        // `Retry-After` is the standard way to say what the 429 body's
+        // `retryAfterSeconds` says, and generic HTTP clients honour it.
+        // A routing interceptor is the only hook that sees the *encoded*
+        // error response: `interceptors` run inside the try block, before
+        // the codec turns a thrown ORPCError into a status and body.
+        async (options) => {
+          const result = await options.next();
+          if (result.matched && result.response.status === 429) {
+            result.response.headers['retry-after'] =
+              String(RETRY_AFTER_SECONDS);
+          }
+          return result;
+        },
+      ],
+    },
+  );
 }

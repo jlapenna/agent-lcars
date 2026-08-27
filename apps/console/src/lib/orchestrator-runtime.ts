@@ -2,8 +2,10 @@ import 'server-only';
 
 import {
   type Clock,
+  FirestoreScheduleStore,
   FirestoreStore,
   Orchestrator,
+  type ScheduleStore,
 } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 
@@ -38,6 +40,19 @@ import { bindCompletionToRun } from '@/lib/run-binding';
 const utcClock: Clock = { now: () => new Date().toISOString() };
 
 let cached: OrchestratorRouteDeps | undefined;
+let cachedScheduleStore: ScheduleStore | undefined;
+
+/** Same memoization pattern as {@link createOrchestratorRuntime}: one
+ *  Firestore-backed schedule store per running server instance. A separate
+ *  cache -- not folded into `OrchestratorRouteDeps` -- because a schedule
+ *  is not a `Task` (see `schedule-store.ts`). */
+export function createScheduleStore(): ScheduleStore {
+  cachedScheduleStore ??= new FirestoreScheduleStore({
+    projectId: required('PROJECT_ID'),
+    databaseId: required('DISPATCH_FIRESTORE_DATABASE_ID'),
+  });
+  return cachedScheduleStore;
+}
 
 interface OrchestratorGithubRuntimeDeps {
   tokens: DispatchTokenProvider;

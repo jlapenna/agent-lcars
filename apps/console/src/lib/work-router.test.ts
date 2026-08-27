@@ -1,4 +1,8 @@
-import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
+import {
+  MemoryScheduleStore,
+  MemoryStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -34,6 +38,9 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     } as unknown as WorkContext['runtime'],
     sessionsFor: async () => [],
     maxLiveRuns: 4,
+    scheduleStore: new MemoryScheduleStore(),
+    grants: () => [],
+    now: () => new Date('2026-08-26T10:00:00.000Z'),
     ...over,
   };
 }
