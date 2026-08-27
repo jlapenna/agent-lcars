@@ -1,4 +1,5 @@
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
+import type { WorkSpec } from '@agent-lcars/work';
 import {
   Alert,
   Anchor,
@@ -105,6 +106,7 @@ export function LogicalWorkCard({
   work,
   runs,
   anchorState,
+  spec,
 }: {
   work: LogicalWork;
   /** This task's own `@agent-lcars/orchestrator` run history (#1015),
@@ -115,6 +117,11 @@ export function LogicalWorkCard({
    * before #1015. */
   runs: OrchestratorRun[];
   anchorState: 'open' | 'closed';
+  /** The dispatch brief's `work.spec` snapshot, when this task carries one
+   *  (sub-project 5) -- what the agent's brief actually saw, which may
+   *  differ from the issue's current live title/body if it was edited
+   *  after the first dispatch. */
+  spec?: WorkSpec;
 }) {
   return (
     <Card
@@ -126,6 +133,19 @@ export function LogicalWorkCard({
       data-testid="logical-work-card"
     >
       <Stack gap="sm">
+        {spec !== undefined && (
+          <div data-testid="work-spec-snapshot" className="work-spec-snapshot">
+            <Text size="xs" c="dimmed">
+              Dispatch brief snapshot
+            </Text>
+            <Text size="sm" fw={600}>
+              {spec.title}
+            </Text>
+            <Text size="sm" c="dimmed" lineClamp={3}>
+              {spec.description}
+            </Text>
+          </div>
+        )}
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <Stack gap={4}>
             <Title order={2} size="h4">

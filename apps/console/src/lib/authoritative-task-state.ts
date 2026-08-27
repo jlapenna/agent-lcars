@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
+import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { repoItemKey, repoKey } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -33,6 +34,13 @@ export interface AuthoritativeTaskState {
   /** Set iff a run is currently live (see `Task.activeRunId`). */
   activeRunId?: string;
   runs: OrchestratorRun[];
+  /** The `work.spec` snapshot this task's brief was (or will be) built
+   *  from, when Tasks 1-3 have derived one for it -- absent for a task
+   *  still on the legacy issue-reading brief path. Parsed defensively:
+   *  a malformed stored payload (should not happen; `mintItem`/the
+   *  derivation helpers only ever write a `workSpecSchema`-valid value)
+   *  omits `spec` rather than failing this whole read. */
+  spec?: WorkSpec;
 }
 
 export interface AuthoritativeTaskStateSet {
@@ -62,6 +70,9 @@ export async function readAuthoritativeTaskState({
   const versioned = await store.readTask(taskId);
   if (!versioned) return undefined;
   const runs = await store.listRuns(taskId);
+  const parsedSpec = workSpecSchema.safeParse(
+    (versioned.task.work as Record<string, unknown> | undefined)?.['spec'],
+  );
   return {
     schema: AUTHORITATIVE_TASK_STATE_SCHEMA,
     task: taskId,
@@ -71,6 +82,7 @@ export async function readAuthoritativeTaskState({
       ? {}
       : { activeRunId: versioned.task.activeRunId }),
     runs,
+    ...(parsedSpec.success ? { spec: parsedSpec.data } : {}),
   };
 }
 

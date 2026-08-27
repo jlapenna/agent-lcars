@@ -1,6 +1,7 @@
 import { type DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { isE2eTesting } from '@agent-lcars/util-server';
+import type { WorkSpec } from '@agent-lcars/work';
 import { cacheLife, cacheTag } from 'next/cache';
 
 import { type ActionItem, classifyIssue } from './action-items';
@@ -54,6 +55,9 @@ export type TaskDetailResult =
        * time, so a cache hit up to `DASHBOARD_CACHE_LIFE` old doesn't
        * misreport itself as "just now". */
       generatedAt: string;
+      /** The task's `work.spec` snapshot, when one has been derived
+       *  (sub-project 5) -- see `AuthoritativeTaskState.spec`. */
+      spec?: WorkSpec;
     }
   | { status: 'not-found' }
   | { status: 'error'; warning: string };
@@ -262,10 +266,11 @@ export async function getTaskDetail(
     itemEnrichment,
   );
 
+  const state = authoritative.states.get(key);
   return {
     status: 'ok',
     work: task,
-    runs: authoritative.states.get(key)?.runs ?? [],
+    runs: state?.runs ?? [],
     item,
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',
@@ -273,6 +278,7 @@ export async function getTaskDetail(
     // two is the honest staleness figure (see `oldestFetchedAt`'s own doc
     // comment).
     generatedAt: oldestFetchedAt(sourceFetchedAt, activityFetchedAt),
+    ...(state?.spec === undefined ? {} : { spec: state.spec }),
   };
 }
 
