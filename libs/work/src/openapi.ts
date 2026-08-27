@@ -1,7 +1,7 @@
 import { OpenAPIGenerator } from '@orpc/openapi';
 import { ZodToJsonSchemaConverter } from '@orpc/zod';
 
-import { itemsContract, schedulesContract } from './contract';
+import { itemsContract, runsContract, schedulesContract } from './contract';
 
 /** The document `docs/api/work-v1.openapi.json` is generated from. */
 export async function generateWorkOpenApi(): Promise<object> {
@@ -9,7 +9,7 @@ export async function generateWorkOpenApi(): Promise<object> {
     converters: [new ZodToJsonSchemaConverter()],
   });
   return generator.generate(
-    { items: itemsContract, schedules: schedulesContract },
+    { items: itemsContract, schedules: schedulesContract, runs: runsContract },
     {
       base: {
         info: { title: 'Agent LCARS work items', version: '1' },
@@ -23,6 +23,11 @@ export async function generateWorkOpenApi(): Promise<object> {
               bearerFormat: 'JWT',
               description:
                 'GitHub Actions OIDC token for work-schedules-tick.yml',
+            },
+            runToken: {
+              type: 'http',
+              scheme: 'bearer',
+              description: 'A run claim token minted by POST /runs/claim.',
             },
           },
         },

@@ -353,3 +353,147 @@ export const schedulesContract = {
     ),
 };
 export type SchedulesContract = typeof schedulesContract;
+
+/**
+ * A native run id: `taskKey(anchor)/r<n>` (`libs/orchestrator/src/decide.ts`'s
+ * `runId` minting). Kept as a bounded string here rather than a regex-pinned
+ * shape -- a queue-executor run is always native-anchored in practice (see
+ * the design spec's Plan 6), but this contract has no reason to reject a
+ * GitHub-anchored run id's `repo#issue/r<n>` shape either; the orchestrator
+ * alone owns what a valid run id looks like.
+ */
+const runIdSchema = z.string().min(1).max(64);
+
+export const runClaimResponseSchema = z.strictObject({
+  runId: runIdSchema,
+  workId: workIdSchema,
+  pipeline: z.string(),
+  token: z.string(),
+  expiresAt: z.string(),
+});
+
+export const runBriefSchema = z.strictObject({
+  id: workIdSchema,
+  spec: workSpecSchema,
+  anchor: z.strictObject({
+    type: z.literal('work'),
+    id: workIdSchema,
+    title: z.string(),
+    body: z.string(),
+    target_repo: z.string(),
+    html_url: z.string(),
+  }),
+  attemptId: z.string(),
+  generation: z.number().int().positive(),
+  intentId: z.string(),
+});
+
+/** `claim` is called by a runner authenticating with its own console
+ *  bearer token (the same `bearerAuth` scheme `itemsContract` uses) --
+ *  there is no run token yet, since claiming a run is what mints one. The
+ *  other four routes are called by the runner presenting the token
+ *  `claim` returned, hence the distinct `runToken` scheme. */
+const runToken = { security: [{ runToken: [] }] };
+const withRunToken = <T extends object>(current: T) => ({
+  ...current,
+  ...runToken,
+});
+
+const runBase = oc.meta(openapi({ tags: ['runs'] }));
+
+export const runsContract = {
+  claim: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/claim',
+        operationId: 'claimRun',
+        summary: 'Claim the oldest queued run for one of the given pipelines',
+        successStatus: 200,
+        spec: withBearer,
+      }),
+    )
+    // oRPC's OpenAPI *doc generator* (unlike its runtime error encoder)
+    // only documents a status for an error the contract names explicitly
+    // -- it does not fall back to `COMMON_ERROR_STATUS_MAP` the way the
+    // request-time handler does. `claim`'s 401 comes from the router-level
+    // `executor` middleware (Task 7), which throws a bare
+    // `ORPCError('UNAUTHORIZED')`; naming it here is what makes the
+    // published document list 401 for this route at all.
+    .errors({
+      UNAUTHORIZED: { message: 'work.executor scope required' },
+    })
+    .input(
+      z.strictObject({
+        runner: z.string().min(1).max(256),
+        pipelines: z.array(z.string().min(1).max(64)).min(1),
+      }),
+    )
+    .output(runClaimResponseSchema.optional()),
+  brief: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/brief',
+        operationId: 'getRunBrief',
+        summary: "Fetch a claimed run's dispatch brief",
+        spec: withRunToken,
+      }),
+    )
+    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(runBriefSchema),
+  heartbeat: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/heartbeat',
+        operationId: 'heartbeatRun',
+        summary: "Renew a claimed run's lease",
+        spec: withRunToken,
+      }),
+    )
+    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(z.strictObject({ runId: runIdSchema, expiresAt: z.string() })),
+  complete: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/complete',
+        operationId: 'completeRun',
+        summary: "Report a claimed run's outcome",
+        spec: withRunToken,
+      }),
+    )
+    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        outcome: z.unknown(),
+        outcomeReference: z.unknown().optional(),
+      }),
+    )
+    .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
+  checkoutToken: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/checkout-token',
+        operationId: 'getRunCheckoutToken',
+        summary:
+          "Mint a short-lived GitHub token for a claimed run's target repo",
+        spec: withRunToken,
+      }),
+    )
+    .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(
+      z.strictObject({
+        token: z.string(),
+        expiresAt: z.string(),
+        repository: z.string(),
+      }),
+    ),
+};
+export type RunsContract = typeof runsContract;
