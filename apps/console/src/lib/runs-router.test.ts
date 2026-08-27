@@ -1,32 +1,144 @@
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
-import { describe, expect, it } from 'vitest';
+import { deriveItemState } from '@agent-lcars/work/derive';
+import { describe, expect, it, vi } from 'vitest';
 
+import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 
-const NOW = '2026-08-27T10:00:00.000Z';
+/**
+ * Every "this run's token/lease is still good" assertion below needs a
+ * `leaseExpiresAt` safely ahead of the REAL wall clock, not just ahead of
+ * the fixture's own injected clock. `requireRunToken`
+ * (`runs-router.ts`) checks lease expiry with its own default
+ * `now = () => new Date().toISOString()` -- `Orchestrator`'s `clock` is a
+ * private field with no accessor, so there is no way to hand it the
+ * fixture's clock instead. Task 7's own smoke tests fixed their clock at
+ * "today" and never noticed, because none of them reach a run-token
+ * route's success path (every case there is a 401). This suite does reach
+ * that path, so its clock is pinned years in the future instead -- the
+ * outcome then doesn't depend on the hour this suite happens to run.
+ */
+const FUTURE_NOW = '2030-01-01T00:00:00.000Z';
 
-const executorPrincipal = {
-  principal: 'runner:queue',
-  subject: 'google:queue-runner@example.iam.gserviceaccount.com',
-  scopes: new Set(['work.executor'] as const),
-  pipelines: ['claude'],
-  via: 'google' as const,
-};
+/** `claim`'s and `brief`'s output schemas both pin `workId` to
+ *  `workIdSchema` -- a strict 26-character Crockford-base32 pattern (see
+ *  `libs/work/src/contract.ts`'s `WORK_ID_PATTERN`), not just "some
+ *  string". A readable label like `'work-a'` fails that regex and 500s
+ *  ("Output validation failed") the moment a test's flow reaches one of
+ *  those routes -- so every `workId` this suite seeds is produced through
+ *  this helper instead of a literal, deterministically turning a readable
+ *  label into a 26-character id built only from the pattern's allowed
+ *  alphabet (digits plus A-Z minus I/L/O/U). */
+function wid(label: string): string {
+  const upper = label
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/gu, '')
+    .replace(/[ILOU]/gu, 'X');
+  return (upper + '0'.repeat(26)).slice(0, 26);
+}
 
-function context(over: Partial<RunsContext> = {}): RunsContext {
+function fixture(initialNow: string = FUTURE_NOW) {
   const store = new MemoryStore();
-  const orchestrator = new Orchestrator(store, { now: () => NOW });
+  let now = initialNow;
+  const orchestrator = new Orchestrator(store, { now: () => now });
   return {
     store,
     orchestrator,
-    tokens: { tokenFor: async () => 'ambient-token' },
-    checkoutTokens: { tokenFor: async () => 'checkout-token' },
-    ...over,
+    /** Advances the fixture's own (fictional) clock -- used to prove a
+     *  renewed lease actually moved forward, independent of the real-wall-
+     *  clock check `requireRunToken` performs separately. */
+    setNow: (next: string) => {
+      now = next;
+    },
   };
 }
 
+async function seedQueuedRun(
+  store: MemoryStore,
+  orchestrator: Orchestrator,
+  opts: { workId: string; pipeline?: string; now: string },
+): Promise<string> {
+  const pipeline = opts.pipeline ?? 'claude';
+  const outcome = await orchestrator.request({
+    taskId: { workId: opts.workId },
+    requestId: opts.workId,
+    pipeline,
+    executor: 'queue',
+    work: {
+      origin: { principal: 'user:jlapenna', channel: 'api' },
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline,
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    },
+  });
+  if ('refused' in outcome) {
+    throw new Error(`unexpected refusal seeding ${opts.workId}`);
+  }
+  const runId = outcome.run!.runId;
+  await store.enqueueRun({ runId, now: opts.now });
+  await orchestrator.confirmDispatch(runId);
+  return runId;
+}
+
+/** Forces `run.leaseExpiresAt` into the past directly on the store,
+ *  simulating a runner that claimed and then went silent past its lease --
+ *  no route exists to do this, so the test reaches under the router. */
+async function forceLeaseExpired(
+  store: MemoryStore,
+  runId: string,
+): Promise<void> {
+  const run = await store.readRun(runId);
+  if (run === undefined) throw new Error(`missing run ${runId}`);
+  const versioned = await store.readTask(run.task);
+  if (versioned === undefined) throw new Error(`missing task for ${runId}`);
+  await store.apply({
+    decision: {
+      task: versioned.task,
+      run: { ...run, leaseExpiresAt: '2000-01-01T00:00:00.000Z' },
+      outbox: [],
+    },
+    expectedRevision: versioned.revision,
+  });
+}
+
+function executorPrincipal(pipelines: readonly string[] = ['claude']) {
+  return {
+    principal: 'svc:autoscaler',
+    subject: 'google:autoscaler@example.iam.gserviceaccount.com',
+    scopes: new Set(['work.executor'] as const),
+    pipelines,
+    via: 'google' as const,
+  };
+}
+
+function operatorPrincipal() {
+  return {
+    principal: 'user:jlapenna',
+    subject: 'github:jlapenna',
+    scopes: new Set(['work.operator'] as const),
+    pipelines: ['claude'],
+    via: 'session' as const,
+  };
+}
+
+/** A real native run id (`work:<workId>/r<n>`) contains a `/`, which the
+ *  oRPC OpenAPI router's single `{runId}` path segment does not accept
+ *  literally -- confirmed empirically: an unencoded slash makes the whole
+ *  request fail to match any route at all (`handle()`'s `matched: false`),
+ *  not a 404. Percent-encoding the slash (`%2F`) round-trips correctly --
+ *  oRPC decodes it back to the literal run id before the handler ever sees
+ *  it. Every path built below goes through this helper for that reason;
+ *  Task 7's own smoke tests sidestepped the question entirely by using a
+ *  run id with no `/` in it (see that file's own comment). */
+function runPath(runId: string, suffix: string): string {
+  return `/runs/${encodeURIComponent(runId)}${suffix}`;
+}
+
 async function call(
-  ctx: RunsContext,
+  context: RunsContext,
   method: string,
   path: string,
   body?: unknown,
@@ -38,8 +150,7 @@ async function call(
       // Only set a content type when there IS a body: a POST carrying
       // `content-type: application/json` with an empty body is a malformed
       // JSON request, and oRPC (correctly) answers 400 rather than reaching
-      // the procedure at all -- see work-router.test.ts's `call` helper,
-      // which this mirrors.
+      // the procedure at all -- mirrors work-router.test.ts's `call`.
       ...(body === undefined
         ? {}
         : {
@@ -47,64 +158,550 @@ async function call(
             body: JSON.stringify(body),
           }),
     }),
-    { prefix: '/api/work/v1', context: ctx },
+    { prefix: '/api/work/v1', context },
   );
+  // `claim` answers 200 with a genuinely EMPTY body when nothing is
+  // claimed (not 204 -- confirmed empirically; oRPC's OpenAPI codec keeps
+  // the contract's declared `successStatus: 200` even for an `undefined`
+  // handler return). `Response.json()` throws on an empty string, so the
+  // empty-body case is handled explicitly rather than assumed away.
+  const text = response === undefined ? undefined : await response.text();
   return {
     status: response?.status,
-    json: response ? await response.json() : undefined,
+    json:
+      text === undefined || text === ''
+        ? undefined
+        : (JSON.parse(text) as unknown),
   };
 }
 
-/** Every run-token-secured route, method + path + a schema-valid body
- *  (where the method takes one). A run id with no `/` in it is enough for
- *  this smoke suite -- whether a real native run id (`work:<ulid>/r<n>`,
- *  which DOES contain a `/`) round-trips through a single `{runId}` path
- *  segment is a routing question for Task 8's full behavior matrix, not
- *  this task's "does each route exist and gate its token" smoke check. */
-const RUN_TOKEN_ROUTES = [
-  ['GET', '/runs/testrun1/brief'],
-  ['POST', '/runs/testrun1/heartbeat'],
-  ['POST', '/runs/testrun1/complete', { outcome: 'pull-request' }],
-  ['GET', '/runs/testrun1/checkout-token'],
-] as const;
+const context = {
+  tokens: { tokenFor: async () => 'ambient-token' },
+  checkoutTokens: { tokenFor: async () => 'checkout-token' },
+};
 
-describe('runs routes', () => {
-  it('claim exists and refuses a request with no principal', async () => {
-    const ctx = context({ principal: undefined });
-    const r = await call(ctx, 'POST', '/runs/claim', {
-      runner: 'runner-1',
-      pipelines: ['claude'],
-    });
+describe('claim', () => {
+  it('refuses a request with no principal', async () => {
+    const { store, orchestrator } = fixture();
+    const r = await call(
+      { store, orchestrator, ...context, principal: undefined },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude'] },
+    );
     expect(r.status).toBe(401);
   });
 
-  it('claim refuses a principal missing the work.executor scope', async () => {
-    const ctx = context({
-      principal: {
-        ...executorPrincipal,
-        scopes: new Set(['work.operator'] as const),
+  it('refuses an operator-scoped principal (no work.executor scope)', async () => {
+    const { store, orchestrator } = fixture();
+    const r = await call(
+      { store, orchestrator, ...context, principal: operatorPrincipal() },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude'] },
+    );
+    expect(r.status).toBe(401);
+  });
+
+  it('returns 200 with an empty body when nothing is queued', async () => {
+    const { store, orchestrator } = fixture();
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        ...context,
+        principal: executorPrincipal(['claude']),
       },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude'] },
+    );
+    expect(r.status).toBe(200);
+    expect(r.json).toBeUndefined();
+  });
+
+  // Critical fix (flagged in review of Task 7): the handler used to pass
+  // `input.pipelines` straight to `store.claimQueuedRun` with no check
+  // against the calling principal's own `pipelines` grant -- any
+  // `work.executor` principal could claim (and then mint a real GitHub
+  // write token for) a pipeline it was never granted. `claim` now
+  // intersects `input.pipelines` with `context.principal.pipelines`
+  // before ever touching the store.
+  it('claims nothing for a pipeline outside the principal grant, without calling the store', async () => {
+    const { store, orchestrator } = fixture();
+    await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex'),
+      pipeline: 'codex',
+      now: FUTURE_NOW,
     });
-    const r = await call(ctx, 'POST', '/runs/claim', {
+    const claimSpy = vi.spyOn(store, 'claimQueuedRun');
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['codex'] },
+    );
+    expect(r.status).toBe(200);
+    expect(r.json).toBeUndefined();
+    expect(claimSpy).not.toHaveBeenCalled();
+  });
+
+  it('claims only the grant-allowed pipeline even when an older, ungranted pipeline is queued', async () => {
+    const { store, orchestrator } = fixture();
+    const codexRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex-older'),
+      pipeline: 'codex',
+      now: FUTURE_NOW,
+    });
+    const claudeRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-claude-newer'),
+      pipeline: 'claude',
+      now: FUTURE_NOW,
+    });
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude', 'codex'] },
+    );
+    expect(r.status).toBe(200);
+    const claimed = r.json as { runId: string; pipeline: string };
+    expect(claimed.runId).toBe(claudeRunId);
+    expect(claimed.pipeline).toBe('claude');
+    // The codex run was never even a candidate -- still untouched.
+    expect((await store.readRun(codexRunId))?.queue?.state).toBe('queued');
+  });
+
+  it('skips a non-live queued run and returns the next live one', async () => {
+    const { store, orchestrator } = fixture();
+    const staleRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-stale'),
+      now: FUTURE_NOW,
+    });
+    // Cancellation settles the run without touching `Run.queue` (Task 7's
+    // own report, deviation 2) -- so this run stays `queue.state: 'queued'`
+    // while `run.state` is no longer live.
+    const canceled = await orchestrator.cancel(staleRunId);
+    expect('refused' in canceled).toBe(false);
+    const liveRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-live'),
+      now: FUTURE_NOW,
+    });
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude'] },
+    );
+    expect(r.status).toBe(200);
+    expect((r.json as { runId: string }).runId).toBe(liveRunId);
+  });
+
+  it('grants only one token on a double claim of the same run', async () => {
+    const { store, orchestrator } = fixture();
+    await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-single'),
+      now: FUTURE_NOW,
+    });
+    const ctx: RunsContext = {
+      store,
+      orchestrator,
+      ...context,
+      principal: executorPrincipal(['claude']),
+    };
+    const first = await call(ctx, 'POST', '/runs/claim', {
       runner: 'runner-1',
       pipelines: ['claude'],
     });
+    const second = await call(ctx, 'POST', '/runs/claim', {
+      runner: 'runner-2',
+      pipelines: ['claude'],
+    });
+    expect(first.status).toBe(200);
+    expect(first.json).toBeDefined();
+    expect(second.status).toBe(200);
+    expect(second.json).toBeUndefined();
+  });
+
+  it('gives two claimers two different queued runs', async () => {
+    const { store, orchestrator } = fixture();
+    const runA = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-a'),
+      now: FUTURE_NOW,
+    });
+    const runB = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-b'),
+      now: FUTURE_NOW,
+    });
+    const ctx: RunsContext = {
+      store,
+      orchestrator,
+      ...context,
+      principal: executorPrincipal(['claude']),
+    };
+    const first = await call(ctx, 'POST', '/runs/claim', {
+      runner: 'runner-1',
+      pipelines: ['claude'],
+    });
+    const second = await call(ctx, 'POST', '/runs/claim', {
+      runner: 'runner-2',
+      pipelines: ['claude'],
+    });
+    expect((first.json as { runId: string }).runId).toBe(runA);
+    expect((second.json as { runId: string }).runId).toBe(runB);
+  });
+});
+
+describe('claim -> brief -> heartbeat -> complete', () => {
+  it('settles the run finished/ok and the item derives done', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-happy-path'),
+      now: FUTURE_NOW,
+    });
+
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude'] },
+    );
+    expect(claimed.status).toBe(200);
+    const {
+      runId: claimedRunId,
+      token,
+      workId,
+      pipeline,
+    } = claimed.json as {
+      runId: string;
+      token: string;
+      workId: string;
+      pipeline: string;
+    };
+    expect(claimedRunId).toBe(runId);
+    expect(workId).toBe(wid('work-happy-path'));
+    expect(pipeline).toBe('claude');
+
+    const runCtx: RunsContext = {
+      store,
+      orchestrator,
+      ...context,
+      bearerToken: token,
+    };
+
+    const brief = await call(runCtx, 'GET', runPath(runId, '/brief'));
+    expect(brief.status).toBe(200);
+    expect((brief.json as { intentId: string; id: string }).intentId).toBe(
+      runId,
+    );
+    expect((brief.json as { id: string }).id).toBe(workId);
+
+    const heartbeat = await call(runCtx, 'POST', runPath(runId, '/heartbeat'));
+    expect(heartbeat.status).toBe(200);
+
+    const complete = await call(runCtx, 'POST', runPath(runId, '/complete'), {
+      outcome: 'pull-request',
+      outcomeReference: { kind: 'pull-request', number: 12 },
+    });
+    expect(complete.status).toBe(200);
+    expect((complete.json as { state: string }).state).toBe('finished');
+
+    const settled = await store.readRun(runId);
+    expect(settled?.state).toBe('finished');
+    expect(settled?.result?.ok).toBe(true);
+    expect(settled?.result?.ref).toBe(
+      'https://github.com/jlapenna/agent-lcars/pull/12',
+    );
+
+    const task = await store.readTask({ workId });
+    const runs = await store.listRuns({ workId });
+    expect(task).toBeDefined();
+    expect(deriveItemState(task!.task, runs)).toBe('done');
+  });
+});
+
+describe('run-token gate', () => {
+  it('refuses every run-token route on a missing bearer', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-missing-bearer'),
+      now: FUTURE_NOW,
+    });
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(mintRunToken()),
+    });
+    const ctx: RunsContext = { store, orchestrator, ...context };
+    for (const [method, suffix, body] of [
+      ['GET', '/brief', undefined],
+      ['POST', '/heartbeat', undefined],
+      ['POST', '/complete', { outcome: 'pull-request' }],
+      ['GET', '/checkout-token', undefined],
+    ] as const) {
+      const r = await call(ctx, method, runPath(runId, suffix), body);
+      expect(r.status, `${method} ${suffix}`).toBe(401);
+    }
+  });
+
+  it('refuses every run-token route on a wrong bearer', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-wrong-bearer'),
+      now: FUTURE_NOW,
+    });
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(mintRunToken()),
+    });
+    const ctx: RunsContext = {
+      store,
+      orchestrator,
+      ...context,
+      bearerToken: 'definitely-the-wrong-token',
+    };
+    for (const [method, suffix, body] of [
+      ['GET', '/brief', undefined],
+      ['POST', '/heartbeat', undefined],
+      ['POST', '/complete', { outcome: 'pull-request' }],
+      ['GET', '/checkout-token', undefined],
+    ] as const) {
+      const r = await call(ctx, method, runPath(runId, suffix), body);
+      expect(r.status, `${method} ${suffix}`).toBe(401);
+    }
+  });
+
+  it('refuses a token whose lease has already expired', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-expired-lease'),
+      now: FUTURE_NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    await forceLeaseExpired(store, runId);
+    const r = await call(
+      { store, orchestrator, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/heartbeat'),
+    );
     expect(r.status).toBe(401);
   });
 
-  it('every run-token route exists and refuses a missing bearer token', async () => {
-    const ctx = context();
-    for (const [method, path, body] of RUN_TOKEN_ROUTES) {
-      const r = await call(ctx, method, path, body);
-      expect(r.status, `${method} ${path}`).toBe(401);
-    }
+  it('refuses a completed run its own token on every run route', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-already-complete'),
+      now: FUTURE_NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const ctx: RunsContext = {
+      store,
+      orchestrator,
+      ...context,
+      bearerToken: token,
+    };
+    const completed = await call(ctx, 'POST', runPath(runId, '/complete'), {
+      outcome: 'pull-request',
+      outcomeReference: { kind: 'pull-request', number: 1 },
+    });
+    expect(completed.status).toBe(200);
+
+    const brief = await call(ctx, 'GET', runPath(runId, '/brief'));
+    expect(brief.status).toBe(401);
+    const heartbeat = await call(ctx, 'POST', runPath(runId, '/heartbeat'));
+    expect(heartbeat.status).toBe(401);
+    const checkoutToken = await call(
+      ctx,
+      'GET',
+      runPath(runId, '/checkout-token'),
+    );
+    expect(checkoutToken.status).toBe(401);
   });
 
-  it('every run-token route refuses a bearer that matches no run', async () => {
-    const ctx = context({ bearerToken: 'not-a-real-token' });
-    for (const [method, path, body] of RUN_TOKEN_ROUTES) {
-      const r = await call(ctx, method, path, body);
-      expect(r.status, `${method} ${path}`).toBe(401);
-    }
+  it("refuses run A's token on run B's routes", async () => {
+    const { store, orchestrator } = fixture();
+    const runA = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-run-a'),
+      now: FUTURE_NOW,
+    });
+    const runB = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-run-b'),
+      now: FUTURE_NOW,
+    });
+    const tokenA = mintRunToken();
+    const tokenB = mintRunToken();
+    // Oldest queued run claims first, so this claims runA then runB.
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(tokenA),
+    });
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-2',
+      tokenHash: hashRunToken(tokenB),
+    });
+    const r = await call(
+      { store, orchestrator, ...context, bearerToken: tokenA },
+      'GET',
+      runPath(runB, '/brief'),
+    );
+    expect(r.status).toBe(401);
+    // Sanity: tokenA is genuinely valid on its own run.
+    const own = await call(
+      { store, orchestrator, ...context, bearerToken: tokenA },
+      'GET',
+      runPath(runA, '/brief'),
+    );
+    expect(own.status).toBe(200);
+  });
+});
+
+describe('heartbeat', () => {
+  it("extends the run's leaseExpiresAt", async () => {
+    const { store, orchestrator, setNow } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-heartbeat'),
+      now: FUTURE_NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const before = (await store.readRun(runId))!.leaseExpiresAt;
+
+    setNow('2030-01-01T01:00:00.000Z');
+    const r = await call(
+      { store, orchestrator, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/heartbeat'),
+    );
+    expect(r.status).toBe(200);
+    const after = (r.json as { expiresAt: string }).expiresAt;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+    expect((await store.readRun(runId))!.leaseExpiresAt).toBe(after);
+  });
+});
+
+describe('complete', () => {
+  it('refuses a malformed body with 400 and leaves the run state unchanged', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-malformed-complete'),
+      now: FUTURE_NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const handler = createRunsHandler();
+    const { response } = await handler.handle(
+      new Request(
+        `https://lcars.test/api/work/v1${runPath(runId, '/complete')}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          // Unparseable JSON -- oRPC refuses this before the handler is
+          // ever reached (`complete`'s own `outcome: z.unknown()` cannot
+          // reject a well-formed-but-wrong outcome value; only a body that
+          // fails to parse at all triggers 400 here).
+          body: '{not valid json',
+        },
+      ),
+      {
+        prefix: '/api/work/v1',
+        context: { store, orchestrator, ...context, bearerToken: token },
+      },
+    );
+    expect(response?.status).toBe(400);
+    expect((await store.readRun(runId))?.state).toBe('running');
+  });
+});
+
+describe('checkoutToken', () => {
+  it("mints a token for the spec's target repo without leaking the run token", async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-checkout-token'),
+      now: FUTURE_NOW,
+    });
+    const runToken = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: FUTURE_NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(runToken),
+    });
+    const tokenFor = vi.fn(async (repo: string) => `ghs_secret-for-${repo}`);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        tokens: context.tokens,
+        checkoutTokens: { tokenFor },
+        bearerToken: runToken,
+      },
+      'GET',
+      runPath(runId, '/checkout-token'),
+    );
+    expect(r.status).toBe(200);
+    expect(tokenFor).toHaveBeenCalledWith('jlapenna/agent-lcars');
+    expect(tokenFor).toHaveBeenCalledTimes(1);
+
+    const body = r.json as {
+      token: string;
+      expiresAt: string;
+      repository: string;
+    };
+    expect(body.repository).toBe('jlapenna/agent-lcars');
+    expect(body.token).toBe('ghs_secret-for-jlapenna/agent-lcars');
+    expect(typeof body.expiresAt).toBe('string');
+    // The run's own bearer credential must never surface here -- a mix-up
+    // would hand the caller the wrong secret entirely.
+    expect(body.token).not.toBe(runToken);
+    expect(JSON.stringify(body)).not.toContain(runToken);
   });
 });

@@ -94,6 +94,22 @@ const MAX_CLAIM_ATTEMPTS = 5;
 
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
+    // A `work.executor` principal may only claim pipelines its own grant
+    // lists -- the same rule `work-router.ts`'s `forbiddenReason` applies
+    // to `create`/`redispatch`, just answering "nothing claimed" instead
+    // of a 403 (there is no caller-actionable error to report here: an
+    // executor's grant is an infra concern, not something a claim request
+    // can be retried its way around). Intersecting BEFORE the store call,
+    // rather than filtering `claimQueuedRun`'s result afterward, is what
+    // matters: a claim outside the grant must never reach `claimed` --
+    // and therefore never reach `checkoutToken`, which would otherwise
+    // mint a real GitHub write token for a repo this principal was never
+    // trusted with.
+    const allowedPipelines = input.pipelines.filter((pipeline) =>
+      context.principal.pipelines.includes(pipeline),
+    );
+    if (allowedPipelines.length === 0) return undefined;
+
     // `claimQueuedRun` claims by `queue.state === 'queued'` alone; it says
     // nothing about whether the run itself is still live. Cancellation and
     // the lease-expiry sweep both settle a run (and release its task's
@@ -116,7 +132,7 @@ export const runsRouter = os.router({
       // One call, one transaction, no store signature change.
       const token = mintRunToken();
       const claimed = await context.store.claimQueuedRun({
-        pipelines: input.pipelines,
+        pipelines: allowedPipelines,
         now: new Date().toISOString(),
         claimedBy: input.runner,
         tokenHash: hashRunToken(token),
