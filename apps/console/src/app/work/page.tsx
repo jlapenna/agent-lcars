@@ -1,5 +1,5 @@
 import { PIPELINES } from '@agent-lcars/work';
-import { Stack, Text } from '@mantine/core';
+import { Anchor, Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -44,9 +44,14 @@ async function WorkBody() {
 
 function WorkViewContent() {
   return (
-    <Suspense fallback={<PageLoading rows={4} header={false} />}>
-      <WorkBody />
-    </Suspense>
+    <>
+      <Anchor href="/work/schedules" size="sm">
+        Schedules →
+      </Anchor>
+      <Suspense fallback={<PageLoading rows={4} header={false} />}>
+        <WorkBody />
+      </Suspense>
+    </>
   );
 }
 
