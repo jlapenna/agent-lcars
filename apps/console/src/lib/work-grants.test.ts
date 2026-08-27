@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseWorkGrants, resolvePrincipal } from './work-grants';
+import {
+  grantForPrincipal,
+  parseWorkGrants,
+  resolvePrincipal,
+} from './work-grants';
 
 const raw = JSON.stringify([
   {
@@ -47,5 +51,17 @@ describe('resolvePrincipal', () => {
       'user:jlapenna',
     );
     expect(resolvePrincipal('nobody@example.com', grants)).toBeUndefined();
+  });
+});
+
+describe('grantForPrincipal', () => {
+  const grants = parseWorkGrants(raw);
+  it('finds a grant by its canonical principal, not a subject', () => {
+    expect(grantForPrincipal('user:jlapenna', grants)?.pipelines).toEqual([
+      'claude',
+      'codex',
+    ]);
+    expect(grantForPrincipal('github:jlapenna', grants)).toBeUndefined();
+    expect(grantForPrincipal('user:nobody', grants)).toBeUndefined();
   });
 });

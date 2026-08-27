@@ -1,5 +1,10 @@
 export * from './decide';
+export {
+  FirestoreScheduleStore,
+  type FirestoreScheduleStoreOptions,
+} from './firestore-schedule-store';
 export { FirestoreStore, type FirestoreStoreOptions } from './firestore-store';
+export { MemoryScheduleStore } from './memory-schedule-store';
 export { MemoryStore } from './memory-store';
 export * from './model';
 export {
@@ -10,4 +15,5 @@ export {
   type TerminalRunEntry,
   type TerminalSettleResult,
 } from './orchestrator';
+export * from './schedule-store';
 export * from './store';

@@ -127,6 +127,9 @@ jobs:
       - name: Test worker workflow anchor gates
         run: bash tools/workflow-anchor-gates.test.sh
 
+      - name: Test the work-schedules-tick workflow
+        run: bash tools/workflow-schedule-tick.test.sh
+
       - name: Test layer-1 skill install (#1269)
         run: bash .github/actions/prepare-agent-dispatch/install-skills.test.sh
 

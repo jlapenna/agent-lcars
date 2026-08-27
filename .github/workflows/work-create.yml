@@ -13,11 +13,15 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: create (needs title+description), get, cancel, or redispatch (need id)
+        description: >-
+          create (needs title+description), get, cancel, redispatch (need
+          id), schedule-create (needs title+description+cron),
+          schedule-disable (needs id)
         required: false
         default: create
         type: choice
-        options: [create, get, cancel, redispatch]
+        options:
+          [create, get, cancel, redispatch, schedule-create, schedule-disable]
       title:
         description: create — item title (≤256 chars)
         required: false
@@ -39,7 +43,12 @@ on:
         default: claude
         type: string
       id:
-        description: Item id (26-char Crockford ULID); generated for create when empty
+        description: Item/schedule id (26-char Crockford ULID); generated when empty for create/schedule-create
+        required: false
+        default: ''
+        type: string
+      cron:
+        description: schedule-create — 5-field UTC cron expression (min hour dom mon dow)
         required: false
         default: ''
         type: string
@@ -78,9 +87,11 @@ jobs:
           DESCRIPTION: ${{ inputs.description }}
           REPO: ${{ inputs.repo }}
           PIPELINE: ${{ inputs.pipeline }}
+          CRON: ${{ inputs.cron }}
         run: |
           set -euo pipefail
           api="$CONSOLE_URL/api/work/v1/items"
+          schedules_api="$CONSOLE_URL/api/work/v1/schedules"
           response="$(mktemp)"
           call() { # method url [body]
             if [ "$#" -ge 3 ]; then
@@ -92,10 +103,14 @@ jobs:
             fi
           }
           show() { jq . "$response" 2>/dev/null || cat "$response"; echo; }
-          if [ "$ACTION" != "create" ] && [ -z "$ITEM_ID" ]; then
+          case "$ACTION" in
+            create | schedule-create) needs_id=false ;;
+            *) needs_id=true ;;
+          esac
+          if [ "$needs_id" = true ] && [ -z "$ITEM_ID" ]; then
             echo "::error::$ACTION needs an id"; exit 1
           fi
-          if [ "$ACTION" = "create" ] && [ -z "$ITEM_ID" ]; then
+          if [ "$needs_id" = false ] && [ -z "$ITEM_ID" ]; then
             ITEM_ID="$(node -e '
               const A = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
               let t = Date.now(), s = "";
@@ -153,6 +168,31 @@ jobs:
               echo "POST /api/work/v1/items/$ITEM_ID/redispatch -> $status"; show
               case "$status" in
                 200|409) echo "- redispatch $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
+                *) echo "::error::work API returned $status"; exit 1 ;;
+              esac
+              ;;
+            schedule-create)
+              if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ] || [ -z "$CRON" ]; then
+                echo "::error::schedule-create needs title, description, and cron"; exit 1
+              fi
+              body="$(jq -cn --arg c "$CRON" --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" \
+                '{cron: $c, spec: {title: $t, description: $d, pipeline: $p, target: {repo: $r}}}')"
+              status="$(call PUT "$schedules_api/$ITEM_ID" "$body")"
+              echo "PUT /api/work/v1/schedules/$ITEM_ID -> $status"; show
+              [ "$status" = "201" ] || { echo "::error::work API returned $status"; exit 1; }
+              {
+                echo "## Schedule created"
+                echo
+                echo "- id: \`$ITEM_ID\`"
+                echo "- cron: \`$CRON\`"
+                echo "- page: $CONSOLE_URL/work/schedules"
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            schedule-disable)
+              status="$(call POST "$schedules_api/$ITEM_ID/disable")"
+              echo "POST /api/work/v1/schedules/$ITEM_ID/disable -> $status"; show
+              case "$status" in
+                200|409) echo "- schedule-disable $ITEM_ID -> $status" >> "$GITHUB_STEP_SUMMARY" ;;
                 *) echo "::error::work API returned $status"; exit 1 ;;
               esac
               ;;

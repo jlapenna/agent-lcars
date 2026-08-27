@@ -1,7 +1,12 @@
 import { WORK_ID_RE } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
-import { itemsContract, WORK_ID_PATTERN, workIdSchema } from './contract';
+import {
+  itemsContract,
+  schedulesContract,
+  WORK_ID_PATTERN,
+  workIdSchema,
+} from './contract';
 import { generateWorkOpenApi } from './openapi';
 
 describe('WORK_ID_PATTERN', () => {
@@ -26,8 +31,21 @@ describe('itemsContract', () => {
   });
 });
 
+describe('schedulesContract', () => {
+  it('declares the six schedule procedures', () => {
+    expect(Object.keys(schedulesContract).sort()).toEqual([
+      'create',
+      'disable',
+      'enable',
+      'get',
+      'list',
+      'tick',
+    ]);
+  });
+});
+
 describe('generateWorkOpenApi', () => {
-  it('emits the five REST routes under /items with bearer security', async () => {
+  it('emits both the items and schedules REST routes with bearer security', async () => {
     const doc = (await generateWorkOpenApi()) as {
       openapi: string;
       paths: Record<string, Record<string, unknown>>;
@@ -39,12 +57,40 @@ describe('generateWorkOpenApi', () => {
       '/items/{id}',
       '/items/{id}/cancel',
       '/items/{id}/redispatch',
-    ]);
-    expect(Object.keys(doc.paths['/items/{id}'] ?? {}).sort()).toEqual([
-      'get',
-      'put',
+      '/schedules',
+      '/schedules/tick',
+      '/schedules/{id}',
+      '/schedules/{id}/disable',
+      '/schedules/{id}/enable',
     ]);
     expect(doc.components.securitySchemes).toHaveProperty('bearerAuth');
+  });
+
+  it('gives tick a distinct presentation: the cron tag and GitHub Actions OIDC security', async () => {
+    // `tick` has no human/service-account caller and never accepts the
+    // operator `bearerAuth` a Google-authenticated principal presents
+    // elsewhere in this document -- `work-auth.ts` never grants
+    // `work.cron` from that path -- so it is documented with its own tag
+    // and its own (not additive) security requirement.
+    const doc = (await generateWorkOpenApi()) as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          { tags?: string[]; security?: Record<string, unknown>[] }
+        >
+      >;
+      components: { securitySchemes?: Record<string, unknown> };
+    };
+    const tick = doc.paths['/schedules/tick']?.post;
+    expect(tick?.tags).toEqual(['schedules', 'cron']);
+    expect(tick?.security).toEqual([{ githubOidc: [] }]);
+    expect(doc.components.securitySchemes).toHaveProperty('githubOidc', {
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      description: 'GitHub Actions OIDC token for work-schedules-tick.yml',
+    });
   });
 
   it('documents every status each route can actually answer with', async () => {
@@ -78,6 +124,12 @@ describe('generateWorkOpenApi', () => {
       'GET /items': ['200'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '403', '404', '409', '429'],
+      'PUT /schedules/{id}': ['201', '400', '403', '409'],
+      'GET /schedules/{id}': ['200', '404'],
+      'GET /schedules': ['200'],
+      'POST /schedules/{id}/enable': ['200', '404'],
+      'POST /schedules/{id}/disable': ['200', '404'],
+      'POST /schedules/tick': ['200'],
     });
   });
 });

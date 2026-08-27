@@ -1,7 +1,12 @@
 import 'server-only';
 
 import { auth } from '@/auth';
-import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
+import { controlPlaneRepository } from '@/lib/deployment';
+import { verifyScheduleTickOidcToken } from '@/lib/github-actions-oidc';
+import {
+  createOrchestratorRuntime,
+  createScheduleStore,
+} from '@/lib/orchestrator-runtime';
 import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
@@ -34,6 +39,11 @@ const verifyGoogleIdToken = googleIdTokenVerifier(
 async function handle(request: Request): Promise<Response> {
   const principal = await authenticateWorkRequest(request, {
     verifyGoogleIdToken,
+    // #1502 sub-project 3: the scheduled tick trigger, like the reconciler,
+    // is pinned to the control-plane home -- not the request path's
+    // allow-list. See github-actions-oidc.ts's schedule-tick section.
+    verifyScheduleTickOidcToken: (token) =>
+      verifyScheduleTickOidcToken(token, controlPlaneRepository()),
     session: async () => (await auth()) as { user?: { login?: string } } | null,
     grants: workGrants,
   });
@@ -44,6 +54,9 @@ async function handle(request: Request): Promise<Response> {
       runtime: createOrchestratorRuntime(),
       sessionsFor: sessionsForRuns,
       maxLiveRuns: workMaxLiveRuns(),
+      scheduleStore: createScheduleStore(),
+      grants: workGrants,
+      now: () => new Date(),
     },
   });
   return matched && response !== undefined

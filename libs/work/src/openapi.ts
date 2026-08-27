@@ -1,22 +1,32 @@
 import { OpenAPIGenerator } from '@orpc/openapi';
 import { ZodToJsonSchemaConverter } from '@orpc/zod';
 
-import { itemsContract } from './contract';
+import { itemsContract, schedulesContract } from './contract';
 
 /** The document `docs/api/work-v1.openapi.json` is generated from. */
 export async function generateWorkOpenApi(): Promise<object> {
   const generator = new OpenAPIGenerator({
     converters: [new ZodToJsonSchemaConverter()],
   });
-  return generator.generate(itemsContract, {
-    base: {
-      info: { title: 'Agent LCARS work items', version: '1' },
-      servers: [{ url: '/api/work/v1' }],
-      components: {
-        securitySchemes: {
-          bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+  return generator.generate(
+    { items: itemsContract, schedules: schedulesContract },
+    {
+      base: {
+        info: { title: 'Agent LCARS work items', version: '1' },
+        servers: [{ url: '/api/work/v1' }],
+        components: {
+          securitySchemes: {
+            bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+            githubOidc: {
+              type: 'http',
+              scheme: 'bearer',
+              bearerFormat: 'JWT',
+              description:
+                'GitHub Actions OIDC token for work-schedules-tick.yml',
+            },
+          },
         },
       },
     },
-  });
+  );
 }

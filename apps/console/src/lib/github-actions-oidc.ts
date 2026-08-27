@@ -114,6 +114,63 @@ export async function verifyReconcileOidcToken(
   return assertReconcileOidcClaims(payload, repository);
 }
 
+// #1502 sub-project 3: the scheduled tick trigger for cron-ingressed work
+// (docs/superpowers/specs/2026-08-23-native-work-items-design.md,
+// "Sub-project 3: cron ingress"). One canonical caller, like the
+// reconciler -- pinned to the control-plane home, not the allow-list.
+const SCHEDULE_TICK_OIDC_AUDIENCE = 'agent-lcars-work-schedules';
+const SCHEDULE_TICK_WORKFLOW_PATH = '.github/workflows/work-schedules-tick.yml';
+
+export interface ScheduleTickOidcIdentity {
+  repository: string;
+  repositoryId: number;
+  runId: number;
+}
+
+export function assertScheduleTickOidcClaims(
+  claims: JWTPayload,
+  repository: string,
+): ScheduleTickOidcIdentity {
+  const expectedJobWorkflowRef = `${repository}/${SCHEDULE_TICK_WORKFLOW_PATH}@refs/heads/main`;
+  if (claims['repository'] !== repository) {
+    throw new Error('OIDC repository claim does not match the control plane');
+  }
+  if (claims['job_workflow_ref'] !== expectedJobWorkflowRef) {
+    throw new Error(
+      'OIDC job_workflow_ref claim is not the schedule tick workflow on main',
+    );
+  }
+  if (claims['ref'] !== 'refs/heads/main') {
+    throw new Error('OIDC ref claim is not main');
+  }
+  if (
+    !['schedule', 'workflow_dispatch'].includes(String(claims['event_name']))
+  ) {
+    throw new Error(
+      'OIDC event_name claim is not an allowed schedule-tick event',
+    );
+  }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+  };
+}
+
+export async function verifyScheduleTickOidcToken(
+  token: string,
+  repository: string,
+): Promise<ScheduleTickOidcIdentity> {
+  const { payload } = await jwtVerify(token, githubActionsJwks, {
+    issuer: GITHUB_ACTIONS_ISSUER,
+    audience: SCHEDULE_TICK_OIDC_AUDIENCE,
+  });
+  return assertScheduleTickOidcClaims(payload, repository);
+}
+
 /**
  * The one shared, GitHub-hosted completion finalizer every onboarded repo's
  * worker calls as a reusable workflow (`workflow_call`) -- there is no
