@@ -418,6 +418,29 @@ describe('worker workflow <-> dispatch-contracts registry', () => {
     expect(localPrGuide).toContain('interactive, human-driven change');
     expect(localPrGuide).toContain('they do not request human');
   });
+
+  it('collapses §1-4 to native rules gated on runtime.projections or a work anchor, with a legacy subsection', () => {
+    const protocol = readFileSync(
+      path.join(
+        repoRoot,
+        '.agents/skills/agent-protocol/reference/agent-protocol.md',
+      ),
+      'utf8',
+    );
+    expect(protocol).toContain(
+      "runtime.projections === true || anchor.type === 'work'",
+    );
+    expect(protocol).toContain('## Legacy (projections off)');
+    expect(protocol).not.toContain('## 5a. Native work items');
+    const legacy = protocol.slice(
+      protocol.indexOf('## Legacy (projections off)'),
+    );
+    expect(legacy).toContain('eyes (👀) reaction');
+    expect(legacy).toContain('status:needs-human');
+    expect(legacy).toContain(
+      'gh issue edit <N> --add-label status:needs-human --add-assignee jlapenna',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

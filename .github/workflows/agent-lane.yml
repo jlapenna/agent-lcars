@@ -474,10 +474,10 @@ jobs:
           Every dispatch must end with visible GitHub state; a summary in the
           model response alone is not a deliverable. For implement work, push
           the focused change and open or update the PR; for review work,
-          submit the required pull-request review; for a real blocker, park
-          using the protocol's exact comment, label, and maintainer-assignee
-          recipe; for an already-resolved request, post the evidence-backed
-          no-op. End your response with exactly one of: PR <url>, REVIEW
+          submit the required pull-request review; for a real blocker,
+          park per the protocol's parking rule for this dispatch; for an
+          already-resolved request, post the evidence-backed no-op. End your
+          response with exactly one of: PR <url>, REVIEW
           <evidence>, PARK <blocker and resume trigger>, or NO-OP <evidence>.
           PROMPT
           )"
