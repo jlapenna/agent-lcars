@@ -65,3 +65,32 @@ describe('grantForPrincipal', () => {
     expect(grantForPrincipal('user:nobody', grants)).toBeUndefined();
   });
 });
+
+describe('grant scopes', () => {
+  it('defaults scopes to work.operator when absent', () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'user:jlapenna',
+          subjects: ['github:jlapenna'],
+          pipelines: ['claude'],
+        },
+      ]),
+    );
+    expect(grants[0]?.scopes).toBeUndefined();
+  });
+
+  it('accepts an explicit work.executor scope', () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:telemetry-writer',
+          subjects: ['telemetry-writer@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude'],
+          scopes: ['work.executor'],
+        },
+      ]),
+    );
+    expect(grants[0]?.scopes).toEqual(['work.executor']);
+  });
+});

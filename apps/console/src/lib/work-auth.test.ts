@@ -166,4 +166,28 @@ describe('authenticateWorkRequest', () => {
     );
     expect(p?.scopes.has('work.operator')).toBe(false);
   });
+  it('maps a grant with an explicit scopes list onto the principal', async () => {
+    const executorGrants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:telemetry-writer',
+          subjects: ['telemetry-writer@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude'],
+          scopes: ['work.executor'],
+        },
+      ]),
+    );
+    const principal = await authenticateWorkRequest(
+      req({ authorization: 'Bearer tok' }),
+      deps({
+        verifyGoogleIdToken: async () => ({
+          email: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
+          emailVerified: true,
+        }),
+        grants: () => executorGrants,
+      }),
+    );
+    expect(principal?.scopes.has('work.executor')).toBe(true);
+    expect(principal?.scopes.has('work.operator')).toBe(false);
+  });
 });

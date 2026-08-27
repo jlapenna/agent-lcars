@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 import { resolvePrincipal, type WorkGrant } from './work-grants';
 
-export type WorkScope = 'work.operator' | 'work.cron';
+export type WorkScope = 'work.operator' | 'work.executor' | 'work.cron';
 
 export interface WorkPrincipal {
   principal: string;
@@ -64,7 +64,7 @@ function principalFor(
   return {
     principal: grant.principal,
     subject,
-    scopes: new Set<WorkScope>(['work.operator']),
+    scopes: new Set<WorkScope>(grant.scopes ?? ['work.operator']),
     pipelines: grant.pipelines,
     via,
   };

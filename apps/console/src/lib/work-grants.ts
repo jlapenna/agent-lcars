@@ -2,10 +2,15 @@ import 'server-only';
 
 import { z } from 'zod';
 
+const workScopeSchema = z.enum(['work.operator', 'work.executor']);
+
 const grantSchema = z.strictObject({
   principal: z.string().min(1).max(128),
   subjects: z.array(z.string().min(1).max(256)).min(1),
   pipelines: z.array(z.string().min(1).max(64)).min(1),
+  /** Absent means `['work.operator']` -- every grant written before this
+   *  field existed keeps its exact current meaning. */
+  scopes: z.array(workScopeSchema).optional(),
 });
 const grantsSchema = z.array(grantSchema);
 
