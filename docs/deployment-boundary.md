@@ -34,6 +34,7 @@ else asks it:
 | artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net` |
 | control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `jlapenna/agent-lcars`           |
 | watched repos            | `AGENT_LCARS_WATCHED_REPOS`            | see `github-client.ts`           |
+| this console's own URL   | `AGENT_LCARS_CONSOLE_URL`              | `https://lcars.jlapenna.net`     |
 
 Each falls back to this deployment's value, so nothing breaks when a var is
 unset. `apphosting.yaml` sets them explicitly anyway, so what production

@@ -90,5 +90,28 @@ describe('GET /api/work/v1/items', () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ items: [] });
+    // Matches every `api/control-plane/*` route's own header: per-caller
+    // data, never safe for a shared cache to reuse across callers.
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+});
+
+describe('GET /api/work/v1/runs/{runId}/brief', () => {
+  it('answers Cache-Control: no-store even on the runs router branch', async () => {
+    // No run-token bearer (`rawBearerToken` is mocked to always return
+    // `undefined`), so `requireRunToken` refuses this before it ever reads
+    // a run -- proving the header is set on every response this route
+    // answers with, not just the items/schedules branch's 200s. The slash
+    // in the run id is percent-encoded (encodeURIComponent), matching
+    // runs-router.test.ts's own `runPath` helper -- the OpenAPI router's
+    // single `{runId}` path segment does not accept a literal one.
+    const runId = 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1';
+    const response = await GET(
+      new Request(
+        `https://lcars.test/api/work/v1/runs/${encodeURIComponent(runId)}/brief`,
+      ),
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
 });

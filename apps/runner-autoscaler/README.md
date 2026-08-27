@@ -85,6 +85,7 @@ into `AGENT_LCARS_QUEUE_PIPELINES` on the console side:
 LCARS_QUEUE_POLL=1
 LCARS_QUEUE_PIPELINES=claude
 LCARS_CONSOLE_URL=https://lcars.jlapenna.net
+LCARS_WORK_AUDIENCE=agent-lcars-work
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
 LCARS_QUEUE_MAX_CONCURRENT=1
@@ -93,7 +94,22 @@ LCARS_QUEUE_MAX_CONCURRENT=1
 The console claim call is authenticated with a Google ID token minted
 directly from the telemetry-writer service-account key (self-signed, no
 metadata server, no new IAM grant -- this fleet does not run on GCE/Cloud
-Run).
+Run), for the audience `LCARS_WORK_AUDIENCE` names (default
+`agent-lcars-work`, the same default the console's own
+`AGENT_LCARS_WORK_AUDIENCE` falls back to -- see `docs/deployment-
+boundary.md`'s work-grants table). Set both sides together if either ever
+changes; a mismatch fails every claim with 401, not a helpful error naming
+the audience.
+
+**None of this reloads on `SIGHUP`.** Every `LCARS_QUEUE_*`/
+`LCARS_CONSOLE_URL`/`LCARS_WORK_AUDIENCE` value above, and the Docker hosts
+pool `launchDirectRunner` places containers on, is read once at process
+startup inside `runOrchestrator` and closed over by the poller goroutine for
+its whole lifetime -- unlike scale-set limits, images, and fleet hosts
+(see "Live configuration reload" below), a live config reload never touches
+the queue executor at all, whether or not it changed anything queue-related.
+Changing any of them, or turning the queue executor on or off, needs a full
+daemon restart, not a config-file replace-and-`SIGHUP`.
 
 `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` is the telemetry-writer key's path
 **on the Docker host**, not this process's own
@@ -113,12 +129,37 @@ simplification for this first cut.
 
 **A failed launch leaves the run claimed on the control plane.** There is no
 callback here to un-claim it -- by design, see the design spec's "Autoscaler
-change". Recovery is passive: the failure is logged and the poller moves on;
-the claim's lease eventually expires, the control plane falls the run back
-to queued, and its own auto-retry logic requeues it for a later poll (from
-this host or another) to claim again. A launch failure therefore costs one
-lease window of latency, not a stuck run, but it is not instantaneous --
+change". Recovery is passive, and mints a NEW run rather than reusing the
+dead one: the failure is logged and the poller moves on; the claim's lease
+eventually expires (`LEASE_MS`, 2h), the dead run settles to `lost` --
+its `queue.state` stays `claimed` forever, nothing ever moves it back to
+`queued` -- and the orchestrator's bounded auto-retry (`MAX_AUTO_RETRIES`,
+then parked) mints a fresh `queue`-executor run for the same task, which a
+later poll (from this host or another) claims instead. A launch failure
+therefore costs roughly one lease window of latency, not a stuck run, but
+it is not instantaneous, and it is not the same run id claimed again --
 don't expect a retry within the poll interval.
+
+**A global drain (`SIGUSR1`) also stops the queue poller from claiming.**
+The same signal that calls `BeginDrain` on every GitHub-mode `Scaler` also
+flips an in-process flag the poller checks before every claim call, cleared
+again on `EndDrain`/self-heal -- a claim minted moments before this instance
+is replaced would just be another launch failure to recover from, so the
+drain skips it instead. This is a separate, in-memory switch from the
+`queue.state` machine above: it has no effect on runs already claimed, and
+nothing else in this repo (a redeploy that never signals `SIGUSR1`, a plain
+restart) touches it.
+
+**Exited direct-runner containers are not swept.** Direct-mode containers
+run with `AutoRemove: false` (not `true`, unlike the comment near
+`launchDirectRunnerOnHost` in an earlier revision): capturing a non-zero-exit
+container's logs before Docker reaps them needs a live `ContainerLogs`
+follow stream started before the container exits, plus a `ContainerWait`/
+manual-remove goroutine -- more than a small change, so this cut ships
+without it and a container just sits there, exited, until something removes
+it. There is no sweeper for these yet, unlike `cleanupOrphans` for
+GitHub-mode runners; `docker container prune` (or an equivalent scheduled
+job) on each fleet host is the operator-side stopgap until one exists.
 
 ### The one credential this code does not deliver
 
@@ -409,3 +450,9 @@ the _old_ file while the configuration claimed otherwise, and a subsequent
 restart would then adopt from a path nothing had written since the reload.
 A reload that moves it is rejected outright, leaving the current
 configuration running.
+
+The queue executor (see "Queue executor" above) is process-lifetime too, for
+the same reason, though it is not one of `validateReloadCompatibility`'s
+rejections: `LCARS_QUEUE_POLL` is not part of `orchestrator.yml` at all, so
+there is nothing for a reload to reject -- the poller goroutine (if started)
+simply never learns a reload happened.

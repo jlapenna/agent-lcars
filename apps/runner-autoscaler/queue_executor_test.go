@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -71,9 +72,51 @@ func TestPollOnceClaimsAndLaunches(t *testing.T) {
 	}
 }
 
+// TestPollOnceNoQueuedRunLaunchesNothing covers both shapes the console
+// answers "nothing queued for these pipelines" with: a 200 with an empty
+// body (what it actually sends today) and a bare 204 (still tolerated, in
+// case that ever changes back).
 func TestPollOnceNoQueuedRunLaunchesNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"200 with an empty body", http.StatusOK},
+		{"204", http.StatusNoContent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+
+			launchCount := 0
+			cfg := queueExecutorConfig{
+				consoleURL: server.URL,
+				pipelines:  []string{"claude"},
+				runnerName: "test-runner",
+				idToken:    func() (string, error) { return "fake-id-token", nil },
+				launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+			}
+			if err := pollOnce(cfg); err != nil {
+				t.Fatalf("pollOnce: %v", err)
+			}
+			if launchCount != 0 {
+				t.Fatalf("expected no launch, got %d", launchCount)
+			}
+		})
+	}
+}
+
+// TestPollOnceMissingRequiredFieldsLaunchesNothing proves a 200 that
+// decodes fine but is missing runId/token (e.g. a stray `{}`, or a future
+// console bug) is treated the same as "nothing queued" -- pollOnce must
+// never hand launch() a directRunnerLaunch with an empty run id or token.
+func TestPollOnceMissingRequiredFieldsLaunchesNothing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 
@@ -89,7 +132,40 @@ func TestPollOnceNoQueuedRunLaunchesNothing(t *testing.T) {
 		t.Fatalf("pollOnce: %v", err)
 	}
 	if launchCount != 0 {
-		t.Fatalf("expected no launch on 204, got %d", launchCount)
+		t.Fatalf("expected no launch for a claim response missing runId/token, got %d", launchCount)
+	}
+}
+
+// TestPollOnceDrainingSkipsClaim proves pollOnce short-circuits before ever
+// making the claim HTTP call while cfg.draining reports true -- the
+// SIGUSR1-drain gate (Task's final-review fix). A nil draining (every
+// other test in this file) must keep behaving exactly as before; see those
+// tests for that coverage.
+func TestPollOnceDrainingSkipsClaim(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	launchCount := 0
+	cfg := queueExecutorConfig{
+		consoleURL: server.URL,
+		pipelines:  []string{"claude"},
+		runnerName: "test-runner",
+		idToken:    func() (string, error) { return "fake-id-token", nil },
+		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
+		draining:   func() bool { return true },
+	}
+	if err := pollOnce(cfg); err != nil {
+		t.Fatalf("pollOnce: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected pollOnce to skip the claim request entirely while draining, got %d calls", calls)
+	}
+	if launchCount != 0 {
+		t.Fatalf("expected no launch while draining, got %d", launchCount)
 	}
 }
 
@@ -295,6 +371,92 @@ func TestParseQueuePipelines(t *testing.T) {
 				if got[i] != tc.want[i] {
 					t.Fatalf("parseQueuePipelines(%q) = %v, want %v", tc.raw, got, tc.want)
 				}
+			}
+		})
+	}
+}
+
+// TestQueueExecutorStartupDecision pins the misconfiguration Task 5's own
+// final-review fix guards against: LCARS_QUEUE_POLL=1 with nothing usable
+// in LCARS_QUEUE_PIPELINES must refuse to start the poller and say why,
+// rather than starting a poller that can never claim anything.
+func TestQueueExecutorStartupDecision(t *testing.T) {
+	cases := []struct {
+		name          string
+		pollRaw       string
+		pipelinesRaw  string
+		wantPipelines []string
+		wantStart     bool
+		wantReason    bool
+	}{
+		{"poll unset", "", "claude", nil, false, false},
+		{"poll not 1", "0", "claude", nil, false, false},
+		{"poll 1, no pipelines configured", "1", "", nil, false, true},
+		{"poll 1, only blank pipeline entries", "1", " , ,", nil, false, true},
+		{"poll 1, pipelines configured", "1", "claude,codex", []string{"claude", "codex"}, true, false},
+		{"poll 1 case-insensitive/whitespace", " 1 ", "claude", []string{"claude"}, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipelines, start, reason := queueExecutorStartupDecision(tc.pollRaw, tc.pipelinesRaw)
+			if start != tc.wantStart {
+				t.Errorf("start = %v, want %v", start, tc.wantStart)
+			}
+			if (reason != "") != tc.wantReason {
+				t.Errorf("reason = %q, want non-empty: %v", reason, tc.wantReason)
+			}
+			if len(pipelines) != len(tc.wantPipelines) {
+				t.Fatalf("pipelines = %v, want %v", pipelines, tc.wantPipelines)
+			}
+			for i := range pipelines {
+				if pipelines[i] != tc.wantPipelines[i] {
+					t.Fatalf("pipelines = %v, want %v", pipelines, tc.wantPipelines)
+				}
+			}
+		})
+	}
+}
+
+// TestQueueExecutorAudience pins LCARS_WORK_AUDIENCE's default, matching
+// the console's own AGENT_LCARS_WORK_AUDIENCE fallback (route.ts).
+func TestQueueExecutorAudience(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"unset defaults to agent-lcars-work", "", "agent-lcars-work"},
+		{"whitespace only defaults to agent-lcars-work", "   ", "agent-lcars-work"},
+		{"configured value passes through", "custom-audience", "custom-audience"},
+		{"configured value is trimmed", "  custom-audience  ", "custom-audience"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := queueExecutorAudience(tc.raw); got != tc.want {
+				t.Errorf("queueExecutorAudience(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestQueueExecutorRunnerName pins the os.Hostname failure fallback: a
+// hostname lookup that errors (or somehow returns "") must not crash or
+// disable the queue executor, just fall back to a fixed name.
+func TestQueueExecutorRunnerName(t *testing.T) {
+	cases := []struct {
+		name     string
+		hostname string
+		err      error
+		want     string
+	}{
+		{"hostname resolved", "runner-1", nil, "runner-1"},
+		{"hostname lookup errored", "", errors.New("boom"), "autoscaler"},
+		{"empty hostname with no error", "", nil, "autoscaler"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := queueExecutorRunnerName(tc.hostname, tc.err); got != tc.want {
+				t.Errorf("queueExecutorRunnerName(%q, %v) = %q, want %q", tc.hostname, tc.err, got, tc.want)
 			}
 		})
 	}

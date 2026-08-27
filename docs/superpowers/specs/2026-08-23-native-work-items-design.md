@@ -851,12 +851,22 @@ orchestrator/src/decide.ts`) gains an optional `executor`, threaded from
 only two callers that decide it, both the same way:
 
 ```ts
-function executorFor(spec: WorkSpec, queuePipelines: readonly string[]) {
-  return queuePipelines.includes(spec.pipeline) ? 'queue' : 'github-actions';
+function executorFor(
+  spec: WorkSpec,
+  queuePipelines: readonly string[],
+): RunExecutor | undefined {
+  return queuePipelines.includes(spec.pipeline) ? 'queue' : undefined;
 }
 ```
 
-evaluated **at request time**, against the config as it stands _then_ —
+Returns `undefined`, not the literal `'github-actions'`, when the pipeline
+is not in the list: `executor` is optional and "absent means
+`github-actions`" (see the field's own definition just above), so this
+keeps the field genuinely absent on the minted `Run` rather than writing out
+its own default value explicitly — the same "don't persist a value equal to
+the default" discipline as leaving any other optional field unset.
+
+Evaluated **at request time**, against the config as it stands _then_ —
 identical in spirit to `forbiddenReason`'s existing "re-checked against
 grants and the repository list as they stand now" rule for `redispatch`.
 A GitHub-anchored task (`handleWebhookDelivery`, `handleDispatchRequest`)

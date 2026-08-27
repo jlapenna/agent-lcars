@@ -233,6 +233,38 @@ describe('claim', () => {
     expect(r.json).toBeUndefined();
   });
 
+  // Final-review fix: `claim` used to stamp `claimedAt` from the real wall
+  // clock (`new Date().toISOString()`) rather than `context.now()`, the
+  // same injected clock `requireRunToken`'s lease-expiry check and the
+  // `Orchestrator` instance already share -- making this exact value
+  // untestable without a wall-clock-sensitive assertion. NOW is a fixed
+  // fixture instant with no relation to whatever day this suite actually
+  // runs on, so this only passes if `claimedAt` came from the injected
+  // clock.
+  it('stamps claimedAt from context.now(), not the wall clock', async () => {
+    const { store, orchestrator, now } = fixture();
+    await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-claimed-at'),
+      now: NOW,
+    });
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1', pipelines: ['claude'] },
+    );
+    expect(r.status).toBe(200);
+    const claimed = r.json as { runId: string };
+    const run = await store.readRun(claimed.runId);
+    expect(run?.queue?.claimedAt).toBe(NOW);
+  });
+
   // Critical fix (flagged in review of Task 7): the handler used to pass
   // `input.pipelines` straight to `store.claimQueuedRun` with no check
   // against the calling principal's own `pipelines` grant -- any
@@ -809,7 +841,13 @@ describe('checkoutToken', () => {
     };
     expect(body.repository).toBe('jlapenna/agent-lcars');
     expect(body.token).toBe('ghs_secret-for-jlapenna/agent-lcars');
-    expect(typeof body.expiresAt).toBe('string');
+    // Final-review fix: `expiresAt` used to be computed from the real wall
+    // clock (`Date.now()`) rather than `context.now()`, so this exact value
+    // was untestable. NOW + 45 minutes, exactly, only holds if it came from
+    // the injected clock.
+    expect(body.expiresAt).toBe(
+      new Date(Date.parse(NOW) + 45 * 60_000).toISOString(),
+    );
     // The run's own bearer credential must never surface here -- a mix-up
     // would hand the caller the wrong secret entirely.
     expect(body.token).not.toBe(runToken);

@@ -122,11 +122,7 @@ describe('generateWorkOpenApi', () => {
     // it, so a client generated from this file has no branch for it.
     // `redispatch` shipped exactly that way -- it re-checks the pipeline
     // grant and the target repo's control-plane membership, both 403,
-    // with no FORBIDDEN in its errors map. The run routes' 401s are the
-    // same case in miniature: `claim` declares no `.errors()` at all, so
-    // its 401 -- if present -- comes entirely from oRPC's
-    // COMMON_ERROR_STATUS_MAP fallback for `UNAUTHORIZED`, not from a
-    // contract-declared error.
+    // with no FORBIDDEN in its errors map.
     const doc = (await generateWorkOpenApi()) as {
       paths: Record<
         string,

@@ -12,6 +12,7 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
+import { consoleUrl } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { toRunResult } from './orchestrator-routes';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
@@ -31,13 +32,15 @@ export interface RunsContext {
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
   checkoutTokens: DispatchTokenProvider;
-  /** Injected clock: `requireRunToken`'s lease-expiry check must be
-   *  deterministic under test, not tied to wall-clock `Date.now()` --
-   *  mirrors `WorkContext.now` (`work-mint.ts`). The `Orchestrator`
-   *  instance above owns the clock that actually stamps `leaseExpiresAt`
-   *  (its own private `Clock`, not this field), so production wires both
-   *  to the same `() => new Date()` source; a test fixture wires both to
-   *  the same fictional clock instead. */
+  /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
+   *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
+   *  `expiresAt`) must be deterministic under test, not tied to wall-clock
+   *  `Date.now()`/`new Date()` -- mirrors `WorkContext.now` (`work-
+   *  mint.ts`). The `Orchestrator` instance above owns the clock that
+   *  actually stamps `leaseExpiresAt` (its own private `Clock`, not this
+   *  field), so production wires both to the same `() => new Date()`
+   *  source; a test fixture wires both to the same fictional clock
+   *  instead. */
   now: () => Date;
 }
 
@@ -140,7 +143,7 @@ export const runsRouter = os.router({
       const token = mintRunToken();
       const claimed = await context.store.claimQueuedRun({
         pipelines: allowedPipelines,
-        now: new Date().toISOString(),
+        now: context.now().toISOString(),
         claimedBy: input.runner,
         tokenHash: hashRunToken(token),
       });
@@ -199,7 +202,7 @@ export const runsRouter = os.router({
         title: spec.title,
         body: spec.description,
         target_repo: target.repo,
-        html_url: `${process.env['AGENT_LCARS_CONSOLE_URL'] ?? 'https://lcars.jlapenna.net'}/work/${run.task.workId}`,
+        html_url: `${consoleUrl()}/work/${run.task.workId}`,
       },
       attemptId: `g${generation}:${run.runId}`,
       generation,
@@ -258,8 +261,10 @@ export const runsRouter = os.router({
       // `AppInstallationTokenProvider`) but does not expose that instant;
       // installation tokens are always valid ~1h, so a conservative fixed
       // window is honest here rather than fabricating precision the
-      // provider does not return.
-      expiresAt: new Date(Date.now() + 45 * 60_000).toISOString(),
+      // provider does not return. `context.now()`, not `Date.now()`,
+      // matches `requireRunToken`'s own injected clock -- deterministic
+      // under test.
+      expiresAt: new Date(context.now().getTime() + 45 * 60_000).toISOString(),
     };
   }),
 });

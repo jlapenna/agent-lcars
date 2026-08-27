@@ -95,14 +95,29 @@ if [ ! -d "$workspace/.git" ]; then
   # `.git/config` (that file gets its OWN copy of the same header below,
   # once the repo exists, for the agent's later pushes -- expected data at
   # rest, the same shape actions/checkout's persist-credentials leaves).
+  # --filter=blob:none (not --depth=1): a shallow clone has no history at
+  # all, which is fine for reading files but breaks anything that needs to
+  # walk commits (blame, log, a merge base) -- the partial-clone filter
+  # keeps full history/metadata and only defers fetching blob contents
+  # until something asks for them, at comparable cost for this bootstrap's
+  # single-branch checkout.
   git -c http.extraheader="$CHECKOUT_AUTH_HEADER" \
-    clone --depth=1 "https://github.com/${TARGET_REPO}.git" "$workspace"
+    clone --filter=blob:none "https://github.com/${TARGET_REPO}.git" "$workspace"
 fi
 cd "$workspace"
 # Same persisted-credential shape actions/checkout leaves behind with
 # persist-credentials: true -- the agent's own git pushes authenticate
 # without a second token hand-off.
 git config --local "http.https://github.com/.extraheader" "$CHECKOUT_AUTH_HEADER"
+
+# Same git identity .github/actions/agent-setup/action.yml's own "Configure
+# git identity" step sets for every GitHub-Actions-mode agent commit (final-
+# review fix): direct mode runs no such composite action, so nothing else in
+# this bootstrap configures it, and an agent commit with no identity set
+# fails outright.
+GIT_LOGIN="${LCARS_GIT_LOGIN:-agent-lcars[bot]}"
+git config --local user.name "$GIT_LOGIN"
+git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
 
 export GITHUB_ACTION_PATH="$PREPARE_DISPATCH_DIR"
 export GITHUB_WORKSPACE="$workspace"

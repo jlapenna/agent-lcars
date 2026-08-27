@@ -246,6 +246,26 @@ describe('items routes', () => {
     expect(r.json.state).toBe('running');
   });
 
+  it('redispatch under queuePipelines: [claude] mints executor: queue', async () => {
+    const ctx = context();
+    await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+      ok: false,
+      summary: 'blocked',
+    });
+    const before = await ctx.runtime.store.readRun(`work:${ID}/r1`);
+    expect(before?.executor).toBeUndefined();
+
+    // Only the redispatch call itself is under the queue config -- proves
+    // `redispatch`'s own `executorFor(spec.pipeline, context.queuePipelines)`
+    // call (work-router.ts), not just `create`'s (already covered above).
+    ctx.queuePipelines = ['claude'];
+    const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
+    expect(r.status).toBe(200);
+    const after = await ctx.runtime.store.readRun(`work:${ID}/r2`);
+    expect(after?.executor).toBe('queue');
+  });
+
   it('refuses to redispatch an item whose repo left the control plane, with 403', async () => {
     const ctx = context();
     // Seeded straight through the orchestrator, because `create` would

@@ -511,23 +511,48 @@ export function runOrchestratorStoreContract(
         });
       });
 
-      it('a claimed run is never returned by a second claim', async () => {
+      it('gives exactly one of two concurrent claimants the queued run', async () => {
         const { store, orchestrator } = await fixture();
         const run = await queuedRun(orchestrator, 'q1');
         await store.enqueueRun({ runId: run.runId, now: T0 });
-        await store.claimQueuedRun({
-          pipelines: ['claude'],
-          now: T0,
-          claimedBy: 'runner-1',
-          tokenHash: 'c'.repeat(64),
-        });
-        const second = await store.claimQueuedRun({
-          pipelines: ['claude'],
-          now: T0,
-          claimedBy: 'runner-2',
-          tokenHash: 'd'.repeat(64),
-        });
-        expect(second).toBeUndefined();
+
+        // Concurrent, not sequential (final-review fix): two claims fired
+        // via Promise.all, the same shape as the outbox's own "gives
+        // exactly one of two concurrent claimants each entry" test above.
+        // A sequential await-then-await pair only proves the SECOND call
+        // sees the FIRST call's already-committed write; it says nothing
+        // about whether the store's own compare-and-set actually
+        // serializes two in-flight claims against each other, which is
+        // exactly what a real race between two runner hosts polling at
+        // once needs -- and exactly what FirestoreStore's transaction
+        // retry is for (this contract also runs against a live emulator;
+        // see store-contract.spec.ts).
+        const [first, second] = await Promise.all([
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: 'runner-1',
+            tokenHash: 'c'.repeat(64),
+          }),
+          store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: T0,
+            claimedBy: 'runner-2',
+            tokenHash: 'd'.repeat(64),
+          }),
+        ]);
+        const winners = [first, second].filter((r) => r !== undefined);
+        expect(winners).toHaveLength(1);
+        const winner = winners[0];
+        expect(winner?.runId).toBe(run.runId);
+        // Whichever claimant won, ITS OWN tokenHash landed -- proves the
+        // store committed one claimant's write atomically rather than
+        // merging fields from both racing calls.
+        const expectedTokenHash =
+          winner?.queue?.claimedBy === 'runner-1'
+            ? 'c'.repeat(64)
+            : 'd'.repeat(64);
+        expect(winner?.queue?.tokenHash).toBe(expectedTokenHash);
       });
 
       it('claimQueuedRun ignores a non-matching pipeline', async () => {

@@ -96,7 +96,7 @@ async function handle(request: Request): Promise<Response> {
     },
   });
   if (runsResult.matched && runsResult.response !== undefined) {
-    return runsResult.response;
+    return withNoStore(runsResult.response);
   }
 
   const { matched, response } = await handler.handle(request, {
@@ -112,9 +112,24 @@ async function handle(request: Request): Promise<Response> {
       queuePipelines: queuePipelines(),
     },
   });
-  return matched && response !== undefined
-    ? response
-    : Response.json({ error: 'Not found' }, { status: 404 });
+  return withNoStore(
+    matched && response !== undefined
+      ? response
+      : Response.json({ error: 'Not found' }, { status: 404 }),
+  );
+}
+
+/** Every response this route answers with is per-caller, credential-gated
+ *  data (an item's live state, a run-token secret, a 401) -- never safe for
+ *  a shared HTTP cache to reuse across callers. Matches every `api/control-
+ *  plane/*` route's own `Cache-Control: no-store` header. Wrapping the
+ *  final `Response` here (both the runs-router and items/schedules
+ *  branches) is simpler than threading a header through oRPC's own
+ *  `OpenAPIHandler`, which has no hook for adding one to every response it
+ *  produces. */
+function withNoStore(response: Response): Response {
+  response.headers.set('Cache-Control', 'no-store');
+  return response;
 }
 
 export const GET = handle;

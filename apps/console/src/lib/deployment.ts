@@ -84,6 +84,20 @@ export function consoleRepositoryUrl(): string {
   return 'https://github.com/jlapenna/agent-lcars';
 }
 
+/**
+ * This console deployment's own public base URL -- used to build a link
+ * back to itself for something that has no other way to know its own
+ * origin (`runs-router.ts`'s `brief` handler embeds it in
+ * `anchor.html_url`, the same URL a `queue`-executor direct-mode container
+ * would follow to view a native work item). Final-review fix: this used to
+ * be an inline, unregistered `process.env['AGENT_LCARS_CONSOLE_URL']` read
+ * in `runs-router.ts` itself -- moved here to match every other instance-
+ * identity value's home, per this file's own doc comment above.
+ */
+export function consoleUrl(): string {
+  return optional('AGENT_LCARS_CONSOLE_URL') ?? 'https://lcars.jlapenna.net';
+}
+
 /** Repository whose controller this backend hosts. GitHub Actions OIDC
  * callers must carry this exact repository claim, and reconciliation only
  * scans this repository. */

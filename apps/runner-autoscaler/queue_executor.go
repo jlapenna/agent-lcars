@@ -53,13 +53,28 @@ type queueExecutorConfig struct {
 	//
 	// A launch failure here leaves the run claimed on the control plane --
 	// there is no callback to un-claim it, by design (see the design spec's
-	// "Autoscaler change"). Recovery is passive: runQueueExecutorPoller logs
-	// the error and moves on, the claim's lease eventually expires, the
-	// control plane falls the run back to queued, and its own auto-retry
-	// logic requeues it for a later poll (from this host or another) to
-	// claim again. Nothing in this file attempts to un-claim or retry a
-	// failed launch directly.
+	// "Autoscaler change"). Recovery is passive, and NOT a return to
+	// `queued`: runQueueExecutorPoller logs the error and moves on, the
+	// claim's lease eventually expires (`LEASE_MS`, 2h), `expireLease`
+	// settles this exact run to `lost` -- its `queue.state` stays `claimed`
+	// forever, nothing ever un-claims it or moves it back to `queued` -- and
+	// the orchestrator's own bounded auto-retry (`Orchestrator.sweepExpired`,
+	// `MAX_AUTO_RETRIES`, then parked) mints a BRAND NEW `queue`-executor run
+	// for the same task, which a later poll (from this host or another)
+	// claims instead. Nothing in this file attempts to un-claim or retry a
+	// failed launch directly -- the retry is a different run entirely.
 	launch func(directRunnerLaunch) error
+	// draining reports whether this instance is mid-SIGUSR1 drain (set in
+	// runOrchestrator's own select loop, via an atomic.Bool the poller
+	// goroutine reads -- see runOrchestrator's "Native work items,
+	// queue-executor sub-project" comment). pollOnce short-circuits to a
+	// no-op while true: a drain already means "stop accepting new work" for
+	// every GitHub-mode scale set (Scaler.BeginDrain), and a claim minted
+	// moments before this instance is replaced would just be another
+	// launch failure to recover from. nil (every existing test's zero
+	// value) means "never draining" -- pollOnce treats a nil draining the
+	// same as one that always returns false.
+	draining func() bool
 }
 
 type claimResponse struct {
@@ -78,10 +93,15 @@ type claimResponse struct {
 // (run id, work id, pipeline name, token, timestamp).
 const claimResponseBodyLimit = 64 << 10
 
-// pollOnce claims at most one run and, on success, launches it. A 204 (no
-// queued run for these pipelines) is not an error -- the caller's loop
-// simply tries again on the next tick.
+// pollOnce claims at most one run and, on success, launches it. "Nothing
+// queued for these pipelines" is not an error -- the caller's loop simply
+// tries again on the next tick -- and the console answers it two ways this
+// function must both tolerate: a bare 204, or (what it actually sends today)
+// 200 with an empty body.
 func pollOnce(cfg queueExecutorConfig) error {
+	if cfg.draining != nil && cfg.draining() {
+		return nil
+	}
 	client := cfg.httpClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
@@ -116,9 +136,27 @@ func pollOnce(cfg queueExecutorConfig) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("claim returned %d", resp.StatusCode)
 	}
+	// Read the whole (bounded) body up front, rather than handing
+	// resp.Body straight to json.NewDecoder: an empty or whitespace-only
+	// 200 body is a valid "nothing queued" answer, not a decode error, and
+	// json.Decoder has no clean way to distinguish "empty" from "the first
+	// token was invalid" without this same read-first shape.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, claimResponseBodyLimit))
+	if err != nil {
+		return fmt.Errorf("reading claim response: %w", err)
+	}
+	if len(bytes.TrimSpace(respBody)) == 0 {
+		return nil
+	}
 	var claimed claimResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, claimResponseBodyLimit)).Decode(&claimed); err != nil {
+	if err := json.Unmarshal(respBody, &claimed); err != nil {
 		return fmt.Errorf("decoding claim response: %w", err)
+	}
+	if claimed.RunID == "" || claimed.Token == "" {
+		// A parseable-but-incomplete claim response (e.g. a stray `{}`) is
+		// exactly as unlaunchable as no body at all -- never start a
+		// container with a missing run id or token.
+		return nil
 	}
 	return cfg.launch(directRunnerLaunch{
 		runID:      claimed.RunID,
@@ -169,8 +207,9 @@ func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 // level-triggered, keep-trying-next-tick discipline HandleDesiredRunnerCount
 // already uses for a failed scale-up. This is also the only handling a
 // failed launch gets: see queueExecutorConfig.launch's doc comment for how
-// a claimed-but-never-launched run recovers (lease expiry -> requeue), since
-// there is no un-claim callback to call here instead.
+// a claimed-but-never-launched run recovers (lease expiry -> lost -> a
+// brand new run minted by auto-retry), since there is no un-claim callback
+// to call here instead.
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -204,6 +243,57 @@ func parseQueuePipelines(raw string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// queueExecutorStartupDecision resolves LCARS_QUEUE_POLL/LCARS_QUEUE_PIPELINES
+// into whether runOrchestrator should start the queue-executor poller at
+// all -- pulled out of runOrchestrator's own inline logic so this exact
+// misconfiguration is directly testable without a full runOrchestrator
+// fixture (config, Docker hosts, GitHub credentials). LCARS_QUEUE_POLL=1
+// with nothing (or only blank/whitespace entries) in LCARS_QUEUE_PIPELINES
+// is treated as a misconfiguration -- not a silently-inert poller -- because
+// a poller with no pipelines to claim for would only ever have wasted the
+// ID-token-source setup and every 15s tick for nothing; reason is empty
+// exactly when the caller should log nothing. Production always resolves
+// this from os.Getenv; tests call it directly with fixed inputs.
+func queueExecutorStartupDecision(pollRaw, pipelinesRaw string) (pipelines []string, start bool, reason string) {
+	if !strings.EqualFold(strings.TrimSpace(pollRaw), "1") {
+		return nil, false, ""
+	}
+	pipelines = parseQueuePipelines(pipelinesRaw)
+	if len(pipelines) == 0 {
+		return nil, false, "LCARS_QUEUE_POLL=1 but LCARS_QUEUE_PIPELINES is empty"
+	}
+	return pipelines, true, ""
+}
+
+// queueExecutorAudience resolves the Google ID token audience the queue
+// executor's claim calls are minted for: LCARS_WORK_AUDIENCE if set,
+// else the same "agent-lcars-work" default the console's own
+// AGENT_LCARS_WORK_AUDIENCE (route.ts's googleIdTokenVerifier) falls back
+// to, so an unconfigured deployment's autoscaler and console agree without
+// either side setting anything.
+func queueExecutorAudience(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "agent-lcars-work"
+	}
+	return trimmed
+}
+
+// queueExecutorRunnerName resolves the claim body's `runner` identity: the
+// process's own hostname, or "autoscaler" if os.Hostname failed (e.g. a
+// container without a resolvable hostname) or returned an empty string.
+// runQueueExecutorPoller still needs SOME stable-ish runner name to claim
+// with -- a hostname lookup failure at startup should not also take down
+// the queue executor, the same "degrade, don't crash" posture
+// runListenerSupervisor's own os.Hostname fallback (a random uuid) takes
+// for its GitHub message-session owner.
+func queueExecutorRunnerName(hostname string, err error) string {
+	if err != nil || hostname == "" {
+		return "autoscaler"
+	}
+	return hostname
 }
 
 // Direct-mode containers are launched outside any Scaler's runner-tracking
@@ -369,11 +459,18 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 	}
 	hostConfig := &container.HostConfig{
 		Binds: []string{writerKeyHostPath + ":" + directRunnerTelemetryWriterMountPath + ":ro"},
-		// Direct-mode containers are one-shot and untracked by any Scaler --
-		// there is no orphan sweeper for them the way cleanupOrphans covers
-		// GitHub-mode runners. AutoRemove keeps a host from silently
-		// accumulating exited containers between polls.
-		AutoRemove: true,
+		// Deliberately NOT AutoRemove (final-review fix): AutoRemove reaps
+		// the container -- logs included -- the instant it exits, which
+		// would erase a non-zero-exit direct-runner's own stdout/stderr
+		// before anything here ever reads it. Capturing that output
+		// properly needs a live ContainerLogs follow stream started before
+		// exit plus a ContainerWait/manual-remove goroutine, which is well
+		// past a small change; see the README's "Queue executor" section
+		// ("Exited direct-runner containers are not swept") for the
+		// resulting gap this leaves -- exited containers now accumulate on
+		// the host until something removes them, and nothing in this repo
+		// does that yet.
+		AutoRemove: false,
 	}
 
 	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)

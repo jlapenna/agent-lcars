@@ -235,6 +235,14 @@ if grep -q "$FAKE_TOKEN" "$GIT_CLONE_ARGV_LOG" 2>/dev/null; then
   fail "happy path: raw checkout token leaked into git clone argv ($(cat "$GIT_CLONE_ARGV_LOG"))"
 fi
 
+# Final-review fix: direct mode configures its own commit identity (no
+# agent-setup/action.yml composite action to do it, unlike GitHub-Actions
+# mode) -- assert it actually landed in the checkout's own git config, not
+# just that direct-runner.sh ran the config command without erroring.
+if ! grep -q "user.email" "$workspace/.git/config" 2>/dev/null; then
+  fail "happy path: git commit identity (user.email) was not configured in $workspace/.git/config"
+fi
+
 echo "scenario happy-path: OK"
 
 # --- Scenario 2: no-deliverable ---------------------------------------------
