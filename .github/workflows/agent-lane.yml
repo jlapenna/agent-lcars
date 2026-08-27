@@ -167,17 +167,11 @@ on:
         type: boolean
       control-plane-projections:
         description: >-
-          Accepted, no longer used to gate a claim step: this lane's own
-          claim step, which this input used to skip, was deleted in wave 3
-          of #1544 once the console's own issue-side eyes reaction, fleet
-          assignee claim, and park label/comment (sub-project 5) covered a
-          real consumer dispatch end to end (canary:
-          jlapenna/nx-cache-server#41, run 33105114357). Still forwarded
-          into the dispatch brief's `runtime.projections` field
-          (prepare-agent-dispatch), which the agent protocol no longer
-          branches on either. Kept, unremoved, only because six external
-          repos still pass it at `@main` -- removing the declared input
-          outright is tracked as a follow-up (#1557).
+          When true, the console owns the issue-side eyes reaction, fleet
+          assignee claim, and park label/comment for this dispatch (sub-project
+          5) -- this lane skips its own claim step and the agent follows the
+          protocol's native rules instead of writing the issue directly. Default
+          false: every consumer's lane call is unchanged until it opts in.
         required: false
         default: false
         type: boolean
@@ -594,17 +588,24 @@ jobs:
           permission-metadata: read
           permission-pull-requests: write
 
-      # The lane used to claim the anchor issue/PR for the agent fleet here
-      # (the "Claim the issue as the agent fleet" step, via
-      # `.github/actions/claim-issue`), gated on
-      # `inputs.issue != '' && !inputs.control-plane-projections`. That step
-      # was deleted in wave 3 of #1544, once the canary
-      # (jlapenna/nx-cache-server#41, run 33105114357) confirmed the
-      # console's own claim/eyes/park projection (sub-project 5) covers a
-      # real consumer dispatch end to end: the console claims the anchor at
-      # dispatch-confirm time instead. `.github/actions/claim-issue` itself
-      # was deleted in the same wave, having no other caller.
-      #
+      # Claim the anchor issue/PR for the agent fleet the moment the run
+      # starts. Before checkout on purpose — a cross-repo action needs no
+      # local checkout, so the claim still lands even if workspace setup
+      # fails. Additive and idempotent: never removes a human assignee.
+      # The pickup comment is opencode's recorded divergence: its lane has
+      # always posted one; the other lanes never have.
+      - name: Claim the issue as the agent fleet
+        if: ${{ !inputs.dispatch-bootstrap && inputs.issue != '' && !inputs.control-plane-projections }}
+        id: claim
+        uses: jlapenna/agent-lcars/.github/actions/claim-issue@main # latest
+        with:
+          token: ${{ steps.agent-lcars-token.outputs.token }}
+          issue: ${{ inputs.issue }}
+          claim-login: ${{ inputs.agent-fleet-login }}
+          post-pickup-comment: ${{ inputs.pipeline == 'opencode' && 'true' || 'false' }}
+          agent: ${{ env.AGENT_NAME }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       # The only consumer-era checkout, now that the App token exists. For
       # codex/opencode it carries fetch-depth: 0 and the minted token, so
       # the agent's eventual raw `git push` authenticates as
@@ -1555,15 +1556,8 @@ jobs:
       # pass the baton, or one bad issue strands everything behind it.
       # Self-healing by construction: a dispatched run that is itself
       # cancelled leaves its issue unclaimed for the next completing run.
-      # `steps.claim.outputs.claimed == 'true'` used to gate this (a
-      # successful claim of THIS run's own issue as a health signal before
-      # handing off the baton): the claim step it read was deleted in wave 3
-      # of #1544, so this now falls back to its precondition instead
-      # (`inputs.issue != ''`, the same guard the deleted step itself used)
-      # -- queue-drain only ever applies to an issue-anchored codex burst,
-      # never a native work item.
       - name: Dispatch the next queued Codex issue
-        if: always() && inputs.pipeline == 'codex' && inputs.queue-drain && inputs.issue != ''
+        if: always() && inputs.pipeline == 'codex' && inputs.queue-drain && steps.claim.outputs.claimed == 'true'
         env:
           # The job's own GITHUB_TOKEN, NOT the minted App token — the
           # mint can be hours expired by now.

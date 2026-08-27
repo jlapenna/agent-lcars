@@ -1,0 +1,59 @@
+name: Claim issue
+description: >-
+  Assign the anchor issue or PR to the agent fleet login and report whether
+  the claim succeeded. Optionally posts a pickup comment naming the agent
+  and linking this run (opencode.yml's behavior; off by default).
+
+inputs:
+  token:
+    description: Token used for the claim (and pickup comment, if requested).
+    required: true
+  issue:
+    description: Issue or pull request number to claim.
+    required: true
+  claim-login:
+    description: Login to assign as the agent fleet claimant.
+    required: true
+  post-pickup-comment:
+    description: When 'true', also post a pickup comment naming the agent and linking this run.
+    required: false
+    default: 'false'
+  agent:
+    description: Agent name used in the pickup comment text. Required when post-pickup-comment is 'true'.
+    required: false
+    default: ''
+  run-url:
+    description: URL of this run, linked from the pickup comment. Required when post-pickup-comment is 'true'.
+    required: false
+    default: ''
+
+outputs:
+  claimed:
+    description: "'true' if the assignee claim succeeded, else 'false'."
+    value: ${{ steps.claim.outputs.claimed }}
+  pickup-comment-id:
+    description: ID of the posted pickup comment, when post-pickup-comment was 'true' and posting succeeded.
+    value: ${{ steps.claim.outputs['pickup-comment-id'] }}
+
+runs:
+  using: composite
+  steps:
+    # Claim the anchor issue/PR for the agent fleet the moment the run
+    # starts, so ownership is visible at a glance (and filterable via `gh
+    # issue list --assignee <claim-login>`). The REST endpoint is used (not
+    # `gh issue edit`) because the anchor can also be a PR (issue_comment on
+    # a PR thread) and PRs share the issue number space. Additive and
+    # idempotent: this never removes a human assignee. Non-blocking: a
+    # failed claim must not cost the run.
+    - name: Claim the issue as the agent fleet
+      id: claim
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        NUM: ${{ inputs.issue }}
+        CLAIM_LOGIN: ${{ inputs.claim-login }}
+        POST_PICKUP_COMMENT: ${{ inputs.post-pickup-comment }}
+        AGENT: ${{ inputs.agent }}
+        RUN_URL: ${{ inputs.run-url }}
+      run: bash "$GITHUB_ACTION_PATH/claim.sh"

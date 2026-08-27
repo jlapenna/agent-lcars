@@ -79,7 +79,7 @@ on:
         default: false
         type: boolean
       control-plane-projections:
-        description: 'Accepted, no longer used to gate a claim step (removed in wave 3 of #1544; kept for consumer compat, see agent-lane.yml and #1557)'
+        description: 'Console owns issue-side claim/eyes/park for this dispatch (see agent-lane.yml)'
         required: false
         default: false
         type: boolean

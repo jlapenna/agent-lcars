@@ -16,19 +16,13 @@ for wf in claude codex opencode; do
 done
 grep -q "inputs.work" ".github/workflows/agent-fallback-finalize.yml" || { echo "finalizer must receive work"; fail=1; }
 
-# agent-lane.yml's own issue-reading steps (Task 3): both prepare-agent-
-# dispatch calls and the sidecar's INTENT_ID passthrough must admit a
-# work-anchored (native) run alongside an issue-anchored one.
+# agent-lane.yml's own issue-reading steps (Task 3): the claim step, both
+# prepare-agent-dispatch calls, and the sidecar's INTENT_ID passthrough must
+# all admit a work-anchored (native) run alongside an issue-anchored one.
 lane=.github/workflows/agent-lane.yml
 grep -q "work: \${{ inputs.work }}" "$lane" || { echo "lane: prepare-agent-dispatch must receive work"; fail=1; }
+grep -Pzo "Claim the issue as the agent fleet\n(\s+#[^\n]*\n)*\s+if: [^\n]*inputs\.issue != ''" "$lane" >/dev/null || { echo "lane: claim step must be gated on issue"; fail=1; }
 grep -q "INTENT_ID: \${{ inputs.broker-intent-id }}" "$lane" || { echo "lane: sidecar must receive INTENT_ID"; fail=1; }
-
-# agent-lane.yml's own consumer-era claim step was deleted in wave 3 of
-# #1544, once a live consumer canary (jlapenna/nx-cache-server#41, run
-# 33105114357) confirmed the console's own claim/eyes/park projection
-# covers a real dispatch end to end -- assert it stays gone, mirroring
-# dispatch-bootstrap's own claim step below.
-grep -q "^      - name: Claim the issue as the agent fleet$" "$lane" && { echo "lane: claim step should stay deleted (console projects the claim)"; fail=1; }
 
 # dispatch-bootstrap's own claim step was deleted (agent-lcars own workers
 # always pass control-plane-projections: true alongside dispatch-bootstrap:

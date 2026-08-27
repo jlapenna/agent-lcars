@@ -50,6 +50,17 @@ const PUBLISHED = {
     // unaffected by an output it never asked for.
     outputs: ['token', 'app-slug', 'installation-id'],
   },
+  'claim-issue': {
+    inputs: {
+      token: { required: true },
+      issue: { required: true },
+      'claim-login': { required: true },
+      'post-pickup-comment': { required: false, default: 'false' },
+      agent: { required: false, default: '' },
+      'run-url': { required: false, default: '' },
+    },
+    outputs: ['claimed', 'pickup-comment-id'],
+  },
   'agent-setup': {
     inputs: {
       'agent-login': { required: true },
