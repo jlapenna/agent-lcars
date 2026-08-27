@@ -292,6 +292,20 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
+  it('temporarily opts only claude into the queue executor live proof', async () => {
+    const config = parseYaml(
+      await readFile('apps/console/apphosting.yaml', 'utf8'),
+    ) as {
+      env?: Array<{ variable?: string; value?: string }>;
+    };
+
+    expect(
+      config.env?.find(
+        ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
+      )?.value,
+    ).toBe('["claude"]');
+  });
+
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {
     const fixtureRoot = await mkdtemp(
       path.join(os.tmpdir(), 'agent-lcars-cloud-build-prebuild-'),

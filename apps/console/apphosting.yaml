@@ -98,6 +98,22 @@ env:
     availability:
       - RUNTIME
 
+  # Not sensitive - which pipelines mint queue-executor runs instead of
+  # dispatching through GitHub Actions (work-mint.ts's executorFor). Empty
+  # ([]) keeps every pipeline on github-actions; this is a DELIBERATELY
+  # TEMPORARY opt-in for the sub-project 4 live proof (#1502) and must be
+  # set back to '[]' immediately after, this variable first (see
+  # docs/deployment-boundary.md's "Queue executor live-proof"). Opened only
+  # once the runner-autoscaler's queue poller is confirmed live and polling
+  # cleanly against the svc:telemetry-writer grant (jlapenna/homelab#911) --
+  # the poller's 15s interval then claims a newly-minted item almost
+  # immediately, rather than leaving it queued for however long this flag
+  # and the poller going live are apart.
+  - variable: AGENT_LCARS_QUEUE_PIPELINES
+    value: '["claude"]'
+    availability:
+      - RUNTIME
+
   # Not sensitive - the audience the work API requires on Google ID tokens.
   - variable: AGENT_LCARS_WORK_AUDIENCE
     value: 'agent-lcars-work'
