@@ -695,9 +695,17 @@ already uses.
 5-field (`min hour dom mon dow`), UTC only, `*`, lists, ranges, `*/n`
 steps, minute granularity — no third-party dependency
 (`libs/work/src/cron.ts`; third-party deps are root-only and need
-Renovate). `parseCron(expr)` throws on anything malformed.
-`latestDueSlot(spec, now, after?)` returns the latest minute boundary
-`<= now` that matches and is strictly after `after`, or `undefined`.
+Renovate). All five fields are ANDed (deliberately not POSIX's
+dom-OR-dow special case, where restricting both day-of-month and
+day-of-week ORs them instead). `parseCron(expr)` throws on anything
+malformed. `latestDueSlot(spec, now, after?)` returns the latest minute
+boundary `<= now` that matches and is strictly after `after`, or
+`undefined`. `nextDueSlot(spec, from, horizonDays = 366)` searches
+forward instead, and is what schedule creation uses: a syntactically
+valid expression that can never actually fire (e.g. `0 0 31 2 *`, since
+no February has a 31st) is rejected at create time with `400`, rather
+than sitting enabled and costing a full lookback walk on every tick
+forever.
 
 ### Tick semantics
 

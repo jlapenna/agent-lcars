@@ -71,7 +71,7 @@ https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD`.
 
 | File                                                                                                                                 | Responsibility                                                                  |
 | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `libs/work/src/cron.ts` (create)                                                                                                     | `parseCron`, `latestDueSlot`, `slotItemId` — pure, no dependency                |
+| `libs/work/src/cron.ts` (create)                                                                                                     | `parseCron`, `latestDueSlot`, `nextDueSlot`, `slotItemId` — pure, no dependency |
 | `libs/orchestrator/src/schedule-store.ts`, `memory-schedule-store.ts`, `firestore-schedule-store.ts` (create)                        | `Schedule` schema, `ScheduleStore` interface, both implementations              |
 | `libs/orchestrator/src/store-contract.ts`, `store-contract.spec.ts` (modify)                                                         | `runScheduleStoreContract`, wired for both stores                               |
 | `libs/work/src/contract.ts`, `openapi.ts` (modify)                                                                                   | `schedulesContract`; combined OpenAPI generation                                |
@@ -106,9 +106,13 @@ https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD`.
 
 - Produces: `parseCron(expr: string): CronSpec` (throws `Error` on a
   malformed expression); `latestDueSlot(spec: CronSpec, now: Date, after?:
-Date): Date | undefined`; `slotItemId(scheduleId: string, slot: Date):
-Promise<string>` (26-char, `WORK_ID_RE`-valid). Consumed by Task 3
-  (contract's `cron` input validation) and Task 5 (the tick handler).
+Date): Date | undefined`; `nextDueSlot(spec: CronSpec, from: Date,
+horizonDays?: number): Date | undefined` (the earliest matching boundary
+  `>= from`, searched forward up to `horizonDays` days, default 366);
+  `slotItemId(scheduleId: string, slot: Date): Promise<string>` (26-char,
+  `WORK_ID_RE`-valid). Consumed by Task 3 (contract's `cron` input
+  validation) and Task 5 (`nextDueSlot` rejects a never-firing cron at
+  create time; `latestDueSlot`/`slotItemId` drive the tick handler).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -116,7 +120,7 @@ Promise<string>` (26-char, `WORK_ID_RE`-valid). Consumed by Task 3
 // libs/work/src/cron.spec.ts
 import { describe, expect, it } from 'vitest';
 
-import { latestDueSlot, parseCron, slotItemId } from './cron';
+import { latestDueSlot, nextDueSlot, parseCron, slotItemId } from './cron';
 
 const WORK_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
@@ -234,6 +238,53 @@ describe('slotItemId', () => {
     expect(id.slice(0, 10)).toBe(prefix);
   });
 });
+
+describe('field combination is ANDed, not POSIX dom-OR-dow', () => {
+  it('matches only when day-of-month AND day-of-week both hold (pinning test)', () => {
+    const spec = parseCron('0 0 1 * 1'); // the 1st, only when it is a Monday
+    // 2026-06-01 is a Monday: dom=1 and dow=Monday both hold.
+    expect(
+      latestDueSlot(spec, new Date('2026-06-01T00:10:00.000Z'))?.toISOString(),
+    ).toBe('2026-06-01T00:00:00.000Z');
+    // Every day in (2026-08-01, 2026-09-02] either has dom=1 (2026-09-01,
+    // a Tuesday) or dow=Monday (2026-08-03/10/17/24/31), never both. POSIX
+    // cron ORs dom and dow when both are restricted, so it would fire on
+    // any of them; this grammar ANDs every field, so none matches.
+    expect(
+      latestDueSlot(
+        spec,
+        new Date('2026-09-02T00:00:00.000Z'),
+        new Date('2026-08-01T00:00:00.000Z'),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe('nextDueSlot', () => {
+  it('returns the earliest matching boundary at or after `from`', () => {
+    const spec = parseCron('*/15 * * * *');
+    const from = new Date('2026-08-27T10:22:30.000Z');
+    expect(nextDueSlot(spec, from)?.toISOString()).toBe(
+      '2026-08-27T10:30:00.000Z',
+    );
+  });
+
+  it('returns `from` itself when it already matches', () => {
+    const spec = parseCron('0 * * * *');
+    const from = new Date('2026-08-27T11:00:00.000Z');
+    expect(nextDueSlot(spec, from)?.toISOString()).toBe(
+      '2026-08-27T11:00:00.000Z',
+    );
+  });
+
+  it('returns undefined for an expression that can never fire within the horizon', () => {
+    // No February has a 31st -- dom=31 and month=2 can never both hold.
+    const spec = parseCron('0 0 31 2 *');
+    expect(
+      nextDueSlot(spec, new Date('2026-08-27T10:00:00.000Z')),
+    ).toBeUndefined();
+  });
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails** — `./tools/nx test @agent-lcars/work -- cron` → FAIL (module not found).
@@ -331,6 +382,14 @@ export function parseCron(expr: string): CronSpec {
   };
 }
 
+/** All five fields are ANDed: a date matches only when minute, hour,
+ *  day-of-month, month, AND day-of-week all hold simultaneously. This is
+ *  deliberately not POSIX cron's special case, where restricting both
+ *  day-of-month and day-of-week ORs them instead ("the 1st, OR any
+ *  Friday"). ANDing is simpler to reason about and to test (see
+ *  `cron.spec.ts`'s "field combination is ANDed" pinning test), at the
+ *  cost of the rare intentionally-POSIX expression not being
+ *  expressible -- acceptable for a fleet-internal scheduler. */
 function matchesSpec(spec: CronSpec, date: Date): boolean {
   return (
     spec.minute.has(date.getUTCMinutes()) &&
@@ -369,6 +428,36 @@ export function latestDueSlot(
     }
     if (matchesSpec(spec, cursor)) return new Date(cursor);
     cursor.setUTCMinutes(cursor.getUTCMinutes() - 1);
+  }
+  return undefined;
+}
+
+/** Default horizon for {@link nextDueSlot}: a year of forward search is
+ *  enough to catch every legitimate low-frequency cron (monthly, yearly)
+ *  while still bounding an impossible expression's cost to one walk, done
+ *  once at create time rather than paid by every tick forever. */
+const DEFAULT_HORIZON_DAYS = 366;
+
+/**
+ * The earliest minute boundary `>= from` that matches `spec`, searching
+ * forward up to `horizonDays` days (default {@link DEFAULT_HORIZON_DAYS}).
+ * Used only at schedule-create time to reject a cron expression that can
+ * never fire -- e.g. `0 0 31 2 *` (no February has a 31st) parses cleanly
+ * under this grammar's field-by-field validation but never matches any
+ * real date. Returns `undefined` when nothing matches within the horizon.
+ */
+export function nextDueSlot(
+  spec: CronSpec,
+  from: Date,
+  horizonDays = DEFAULT_HORIZON_DAYS,
+): Date | undefined {
+  const cursor = new Date(from);
+  cursor.setUTCSeconds(0, 0);
+  const maxSteps = horizonDays * 24 * 60;
+
+  for (let step = 0; step < maxSteps; step += 1) {
+    if (matchesSpec(spec, cursor)) return new Date(cursor);
+    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
   }
   return undefined;
 }
@@ -462,8 +551,7 @@ Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
 // libs/orchestrator/src/store-contract.ts -- append, after the existing
 // `runOrchestratorStoreContract` function and its imports. Add to the
 // import list at the top of the file:
-//   import type { Schedule } from './schedule-store';
-//   import type { ScheduleStore } from './schedule-store';
+//   import type { Schedule, ScheduleStore } from './schedule-store';
 
 const SCHEDULE_T0 = '2026-08-15T12:00:00.000Z';
 
@@ -935,6 +1023,13 @@ export const schedulesContract = {
       CONFLICT: {
         message: 'Schedule exists with a different cron or spec',
       },
+      // Declared explicitly (rather than left to oRPC's automatic 400 on
+      // a zod input-validation failure) so the generated OpenAPI document
+      // lists 400 for this route -- see `contract.spec.ts`'s "documents
+      // every status" test. The router's create handler (Task 5) also
+      // throws this explicitly for the one case zod's `cronExpressionSchema`
+      // cannot catch: a syntactically valid cron that never fires.
+      BAD_REQUEST: { message: 'Malformed cron expression' },
     })
     .input(
       z.strictObject({
@@ -1383,10 +1478,10 @@ git push
 
 **Interfaces:**
 
-- Consumes: `parseCron`/`latestDueSlot`/`slotItemId`/`schedulesContract`
-  (Task 1, 3); `Schedule`/`ScheduleStore`/`MemoryScheduleStore`/
-  `FirestoreScheduleStore` (Task 2); `WorkScope`/`WorkPrincipal`/
-  `verifyScheduleTickOidcToken` (Task 4).
+- Consumes: `parseCron`/`latestDueSlot`/`nextDueSlot`/`slotItemId`/
+  `schedulesContract` (Task 1, 3); `Schedule`/`ScheduleStore`/
+  `MemoryScheduleStore`/`FirestoreScheduleStore` (Task 2); `WorkScope`/
+  `WorkPrincipal`/`verifyScheduleTickOidcToken` (Task 4).
 - Produces: `apps/console/src/lib/work-mint.ts` exports `WorkContext`
   (gains `scheduleStore: ScheduleStore`, `grants: () => WorkGrant[]`,
   `now: () => Date`), `mintItem(context, {id, spec, origin,
@@ -1425,6 +1520,7 @@ import {
   MemoryStore,
   Orchestrator,
 } from '@agent-lcars/orchestrator';
+import { latestDueSlot, parseCron, slotItemId } from '@agent-lcars/work';
 import { describe, expect, it } from 'vitest';
 
 import { createWorkHandler } from './work-router';
@@ -1643,7 +1739,7 @@ describe('tick', () => {
     });
   });
 
-  it('mints the latest due slot, advances lastSlotAt, and a re-tick of the same slot is idempotent', async () => {
+  it('mints the latest due slot, advances lastSlotAt, and a re-tick in the same minute is a no-op', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/schedules/${ID}`, {
       cron: '* * * * *',
@@ -1657,14 +1753,69 @@ describe('tick', () => {
     expect(first.json.minted).toHaveLength(1);
     const itemId = first.json.minted[0].itemId;
 
-    expect((await call(ctx, 'GET', `/schedules/${ID}`)).json.lastItemId).toBe(
-      itemId,
-    );
+    const gotAfterFirst = await call(ctx, 'GET', `/schedules/${ID}`);
+    expect(gotAfterFirst.json.lastItemId).toBe(itemId);
+    expect(gotAfterFirst.json.lastSlotAt).toBe(NOW.toISOString());
 
+    // The clock is frozen at NOW: a second tick asks `latestDueSlot` for a
+    // slot strictly AFTER `lastSlotAt`, which is also NOW -- there isn't
+    // one yet, so nothing mints and the watermark does not move. (This is
+    // a different case from idempotent replay -- see the next test for
+    // that: a re-tick of an ALREADY-PASSED slot, where `mintItem` finds
+    // the task `slotItemId` already names.)
     const second = await call(tickCtx, 'POST', '/schedules/tick', {});
-    expect(second.json.minted).toEqual([{ scheduleId: ID, itemId }]);
+    expect(second.json).toEqual({
+      ticked: 1,
+      minted: [],
+      skippedCap: [],
+      disabled: [],
+    });
+    const gotAfterSecond = await call(ctx, 'GET', `/schedules/${ID}`);
+    expect(gotAfterSecond.json.lastSlotAt).toBe(gotAfterFirst.json.lastSlotAt);
+    expect(gotAfterSecond.json.lastItemId).toBe(itemId);
+  });
+
+  it("replays mintItem's idempotent-create path when the deterministic slot item already exists", async () => {
+    const ctx = context();
+    const cronExpr = '* * * * *';
+    const slot = latestDueSlot(parseCron(cronExpr), NOW);
+    if (slot === undefined) throw new Error('expected a due slot at NOW');
+    const itemId = await slotItemId(ID, slot);
+
+    // Pre-seed the task directly through the orchestrator, at the exact
+    // id and spec a tick would mint -- proving a cron mint goes through
+    // `mintItem`'s existing-item branch (idempotent-create), not a second
+    // `requestRun`, when the deterministic id already names a task. This
+    // is the actual re-tick-of-the-same-slot idempotency guarantee
+    // `slotItemId` is designed around (see Task 1); a frozen-clock re-tick
+    // in the same minute (previous test) never reaches this branch at all,
+    // because `latestDueSlot` finds no new slot to try.
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: itemId },
+      requestId: itemId,
+      pipeline: spec.pipeline,
+      work: { origin: { principal: `cron:${ID}`, channel: 'cron' }, spec },
+    });
+    await ctx.scheduleStore.writeSchedule({
+      scheduleId: ID,
+      cron: cronExpr,
+      spec,
+      enabled: true,
+      createdBy: 'user:jlapenna',
+      createdAt: '2026-08-27T09:00:00.000Z',
+      updatedAt: '2026-08-27T09:00:00.000Z',
+    });
+
+    const r = await call(
+      withPrincipal(ctx, cronTick),
+      'POST',
+      '/schedules/tick',
+      {},
+    );
+    expect(r.json.minted).toEqual([{ scheduleId: ID, itemId }]);
+
     const item = await call(ctx, 'GET', `/items/${itemId}`);
-    expect(item.json.runs).toHaveLength(1);
+    expect(item.json.runs).toHaveLength(1); // still just the pre-seeded run
     expect(item.json.origin).toEqual({
       principal: `cron:${ID}`,
       channel: 'cron',
@@ -1906,12 +2057,10 @@ import {
   isRefusal,
   isWorkAnchor,
 } from '@agent-lcars/orchestrator';
-import { workPayloadSchema, workSpecSchema } from '@agent-lcars/work';
+import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
-
-import { itemsContract } from '@agent-lcars/work';
 
 import { scheduleRouter } from './schedule-router';
 import {
@@ -2002,7 +2151,9 @@ import 'server-only';
 
 import type { Schedule } from '@agent-lcars/orchestrator';
 import {
+  type CronSpec,
   latestDueSlot,
+  nextDueSlot,
   parseCron,
   schedulesContract,
   slotItemId,
@@ -2011,7 +2162,7 @@ import {
 import { implement, ORPCError } from '@orpc/server';
 
 import { grantForPrincipal } from './work-grants';
-import { mintItem, type WorkContext } from './work-mint';
+import { forbiddenReason, mintItem, type WorkContext } from './work-mint';
 
 const os = implement(schedulesContract).$context<WorkContext>();
 
@@ -2070,8 +2221,32 @@ function sameSchedule(
 export const scheduleRouter = os.router({
   create: operator.create.handler(async ({ input, context, errors }) => {
     const { principal } = context;
-    const forbidden = forbiddenReasonFor(principal, input);
+    // The same check `items.create` runs: pipeline grant + control-plane
+    // repo admission. One ruling, one function -- `schedule-router.ts`
+    // does not fork it.
+    const forbidden = forbiddenReason(principal, input.spec);
     if (forbidden !== undefined) throw errors.FORBIDDEN({ message: forbidden });
+
+    // `cronExpressionSchema` (Task 3) already refuses a malformed
+    // expression before the handler runs; re-parsing here is what lets
+    // this throw the exact documented BAD_REQUEST message rather than
+    // trusting zod's own refine message. It also produces the `CronSpec`
+    // `nextDueSlot` needs next.
+    let cron: CronSpec;
+    try {
+      cron = parseCron(input.cron);
+    } catch {
+      throw errors.BAD_REQUEST({ message: 'Malformed cron expression' });
+    }
+    // A syntactically valid expression that can never actually fire (e.g.
+    // `0 0 31 2 *` -- no February has a 31st) would otherwise sit enabled
+    // forever, costing a full `MAX_LOOKBACK_MINUTES` walk on every tick
+    // for nothing. Reject it once, here, instead.
+    if (nextDueSlot(cron, context.now()) === undefined) {
+      throw errors.BAD_REQUEST({
+        message: 'cron expression never fires within a year',
+      });
+    }
 
     const existing = await context.scheduleStore.readSchedule(input.id);
     if (existing !== undefined) {
@@ -2193,29 +2368,14 @@ export const scheduleRouter = os.router({
     return { ticked: schedules.length, minted, skippedCap, disabled };
   }),
 });
-
-function forbiddenReasonFor(
-  principal: WorkContext['principal'],
-  input: { spec: { pipeline: string; target: { repo: string } } },
-): string | undefined {
-  if (principal === undefined) return 'no principal';
-  if (!principal.pipelines.includes(input.spec.pipeline)) {
-    return `${principal.principal} may not request pipeline ${input.spec.pipeline}`;
-  }
-  return undefined;
-}
 ```
 
-(`forbiddenReasonFor` duplicates only the pipeline half of `work-mint.ts`'s
-`forbiddenReason` because the control-plane-repository check already runs
-inside `mintItem` for `tick`, and `create`'s own repo is unchecked here on
-purpose -- a schedule may target any repo `mintItem` will itself refuse
-at tick time if the repo leaves the control plane later, exactly the
-`redispatch` re-check rationale. If this reads as a wart during
-implementation, prefer importing and reusing `forbiddenReason` from
-`work-mint.ts` directly with `{ principal: principal.principal, pipelines:
-principal.pipelines }` -- functionally identical, one fewer local
-function.)
+`schedule-router.ts`'s `create` deliberately checks the target repo too
+(via the shared `forbiddenReason`), even though `mintItem` will re-check
+it again at tick time regardless -- the same double-check `redispatch`
+already accepts, so a schedule for a repo that has since left the control
+plane is refused at the point a human is looking at the response, not
+silently deferred to the next tick's `disabled` list.
 
 `apps/console/src/lib/orchestrator-runtime.ts` -- add:
 
@@ -3230,14 +3390,15 @@ git push
 
   ```bash
   git add .github/workflows/work-create.yml
-  git commit -m "ci(work): schedule-create and schedule-disable actions on work-create.yml
+  git commit -m "$(cat <<'EOF'
+  ci(work): schedule-create and schedule-disable actions on work-create.yml
+
+  Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+  Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD
+  EOF
+  )"
+  git push
   ```
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD"
-git push
-
-````
 
 Open this as its own small PR (touches only a workflow file already
 covered by `.github/actions/published-actions.contract.test.mjs` and
@@ -3310,14 +3471,14 @@ OpenAPI regeneration (Task 3), proxy needs no change (documented in the
 spec section; no proxy file touched), testing list (each task's Step 1;
 workflow test in Task 7), real-path proof (Task 8).
 
-**Placeholder scan:** Task 5's `schedule-router.ts` includes a documented
-alternative (`forbiddenReasonFor` vs. reusing `work-mint.ts`'s
-`forbiddenReason`) with both options fully specified in code, not a
-"figure it out" gap. Task 5's `work-router.ts` step says "unchanged from
-the current file" for `get`/`list`/`cancel`/`redispatch` — those bodies
-already exist verbatim in the repository today and are not being edited,
-only their free functions' import source; nothing about their logic is
-left undefined.
+**Placeholder scan:** Task 5's `schedule-router.ts` calls the single
+shared `forbiddenReason` from `work-mint.ts` directly (no fork, per the
+pre-execution review ruling) -- `create`'s pipeline-and-repo check and
+`tick`'s per-schedule check are the same function, not two copies. Task
+5's `work-router.ts` step says "unchanged from the current file" for
+`get`/`list`/`cancel`/`redispatch` — those bodies already exist verbatim
+in the repository today and are not being edited, only their free
+functions' import source; nothing about their logic is left undefined.
 
 **Type/shape consistency:** `WorkContext` (Task 5's `work-mint.ts`) is the
 one definition both `work-router.ts` and `schedule-router.ts` import;
@@ -3326,5 +3487,7 @@ one definition both `work-router.ts` and `schedule-router.ts` import;
 `schedules.tick` (Task 5); `Schedule`'s fields (Task 2) match
 `scheduleViewSchema` (Task 3) and the router's `view()`/`writeSchedule`
 calls (Task 5) field-for-field; `slotItemId`'s `Promise<string>` (Task 1)
-is `await`ed at its one call site (Task 5's tick handler).
-````
+is `await`ed at its one call site (Task 5's tick handler); `nextDueSlot`
+(Task 1) is called with the same `CronSpec` `parseCron` just produced
+(Task 5's `create` handler), and its `BAD_REQUEST` message matches the
+one declared in `schedulesContract.create.errors` (Task 3).
