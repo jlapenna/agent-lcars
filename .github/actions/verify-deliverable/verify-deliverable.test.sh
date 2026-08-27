@@ -262,6 +262,24 @@ JSON
   grep -q '^NO_DELIVERABLE=1$' "$GITHUB_ENV" || fail "must be a genuine (not errored) no-deliverable"
 )
 
+# --- Case 3b: a structured park is recognized the same way a structured
+# no-op is - agent-protocol.md #4's issue-anchor park path. ---
+(
+  base_env
+  case_dir="$test_root/structured-park"
+  mkdir -p "$case_dir"
+  cat > "$case_dir/comments.json" <<'JSON'
+[{"id":704,"user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"PARK: cannot fetch the issue's attached zip; no signed URL is exposed for a /files/ attachment. Resume once a human links the asset directly.\n<!-- agent-result:v1:park -->\n<!-- attempt-claim:g1:test-intent -->"}]
+JSON
+  run_case structured-park
+  test "$status" = 0 || fail "an evidence-backed park should pass"
+  case "$output" in
+    *"evidence-backed park"*) ;;
+    *) fail "expected park evidence" ;;
+  esac
+  test ! -s "$GITHUB_OUTPUT" || fail "the verifier must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
+)
+
 # --- Case 4: an exact attempt-claim marker on a PR review passes in review
 # mode. ---
 (

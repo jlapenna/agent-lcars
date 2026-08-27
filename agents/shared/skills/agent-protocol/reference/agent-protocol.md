@@ -86,35 +86,61 @@ channel. No issue write.
 
 ## 4. Parking — blocked on a human
 
-End your response with `PARK <blocker>`. The finalizer reports `ok: false`;
-the console applies the `status:needs-human` label and posts the park
-comment for you (for an issue anchor — a `work` anchor has no issue to
-label). Your blocker text reaches a human only through `lcars session
-status` (§12) and this run's log — set it there before you end your turn.
-Post nothing to GitHub.
+End your response with `PARK <blocker and resume trigger>`. A park is a
+real outcome, not silence: it must leave the same kind of durable,
+marker-stamped evidence any other outcome does (§5), or it is
+indistinguishable — to the gate, and to the human it is meant to reach —
+from a run that reasoned to nothing and produced nothing.
+
+- **Issue anchor**: before you end your turn, post ONE comment on the
+  issue carrying your attempt-claim marker (§5) plus this exact
+  structured marker:
+
+  ```text
+  <!-- agent-result:v1:park -->
+  ```
+
+  Put the blocker and its resume trigger in that same comment, in plain
+  language a human can act on without opening this run's log or its
+  session status — the markers are what make the comment your
+  deliverable (§5); the words are what make it useful. This is the one
+  case where posting a comment is the deliverable even in `implement`
+  mode. The console still applies the `status:needs-human` label for you
+  from this marker; you do not add it yourself.
+
+- **Work anchor**: unchanged — there is no issue to comment on. Post
+  nothing to GitHub; the orchestrator's own `parked` state is the durable
+  record. Your blocker text reaches a human only through `lcars session
+status` (§12) and this run's log — set it there before you end your
+  turn.
 
 ## 5. Deliverable rule — silence is failure
 
 Unchanged for every anchor: a run that reasons to a conclusion and never
 posts or acts on it is a failed run. Stamp your attempt's claim marker on
-the deliverable — the PR description, evidence comment, review body, or
-close comment (see below for the exact marker text). One branch on the
-reference format:
+the deliverable — the PR description, evidence comment, review body, park
+comment, or close comment (see below for the exact marker text). One
+branch on the reference format:
 
 - **Issue anchor** (`anchor.type` is `issue`, `anchor.number` set — every
   label-driven or reply dispatch, with or without a `work` payload):
   reference the anchor as `Fixes #<N>` in the PR body, as always. A no-op
   is available: post the structured `<!-- agent-result:v1:no-op -->`
-  comment alongside your attempt-claim marker.
+  comment alongside your attempt-claim marker. A blocked run parks the
+  same way, with the structured `<!-- agent-result:v1:park -->` marker
+  instead (§4).
 - **Work anchor** (`anchor.type` is `work`, no issue): reference the item
-  as `Work: work:<id>` (never `Fixes #N`). No no-op is available: if the
-  request is already satisfied, `PARK` with that evidence instead (§4).
+  as `Work: work:<id>` (never `Fixes #N`). No no-op or park comment is
+  available — there is no issue to post either to (§4): if the request is
+  already satisfied or you are blocked, `PARK` with that evidence instead.
 
-A failed or cancelled worker is itself a machine-authored parking path. Its
-failure reporter must post the visible failure, add `status:needs-human`, and
-add the repository maintainer as an assignee. These updates are additive: keep
-the selected `agent:*` label for explicit redispatch, preserve an independent
-`status:blocked` label, and never remove an existing assignee.
+A run whose own worker crashed or was cancelled outright — never reached its
+own turn end, so it never had the chance to park itself per §4 — is a
+machine-authored parking path instead. Its failure reporter must post the
+visible failure, add `status:needs-human`, and add the repository maintainer
+as an assignee. These updates are additive: keep the selected `agent:*` label
+for explicit redispatch, preserve an independent `status:blocked` label, and
+never remove an existing assignee.
 
 **Stamp the deliverable with your attempt's claim marker.** This is the only
 evidence the finalizer accepts: the fleet's earlier time-window/bot-login
@@ -156,7 +182,9 @@ the attempt claim above and this exact result marker:
 The finalizer recognizes `no-op` only when both markers are on the same
 comment. A takeover/progress comment, a bare “already fixed” assertion, or a
 no-op marker without this run's exact attempt claim is not a completed
-deliverable.
+deliverable. On an issue anchor, a genuine blocker follows the same shape
+with `<!-- agent-result:v1:park -->` instead — see §4 for exactly what that
+comment must say.
 
 ### Dispatch mode
 

@@ -240,13 +240,19 @@ export async function handleDispatchRequest(
   }
 }
 
-/** Outcomes the executor reports that count as the run having succeeded. */
+/** Outcomes the executor reports that count as the run having succeeded.
+ *  `park` (agent-protocol.md #4's issue-anchor path) belongs here too: the
+ *  agent left real, marker-stamped evidence -- a genuine blocker, not
+ *  silence -- so the *run* succeeded even though the *task* still needs a
+ *  human. `orchestrator-dispatch.ts`'s `needsHumanLabel` check reads this
+ *  same 'park' string to flag the issue despite `ok: true`. */
 const OK_OUTCOMES: ReadonlySet<string> = new Set([
   'pull-request',
   'merged-deliverable',
   'comment',
   'review',
   'no-op',
+  'park',
   'unknown-success',
 ]);
 

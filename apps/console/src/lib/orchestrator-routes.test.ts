@@ -476,6 +476,24 @@ describe('handleCompletion', () => {
     expect(body.body).toContain(run.runId);
   });
 
+  it('treats a park outcome as a successful run (agent-protocol.md #4: a marker-stamped park comment IS the deliverable)', async () => {
+    const { deps, seedRun } = completionFixture();
+    const run = await seedRun();
+
+    const result = await handleCompletion(
+      deps,
+      completionBody(run, { outcome: 'park', outcomeReference: undefined }),
+      IDENTITY,
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      body: { runId: run.runId, state: 'finished' },
+    });
+    const settled = await deps.store.readRun(run.runId);
+    expect(settled?.result).toEqual({ ok: true, summary: 'park' });
+  });
+
   it('ignores a completion for an unknown intentId', async () => {
     const { deps } = completionFixture();
     const result = await handleCompletion(

@@ -238,8 +238,21 @@ jobs:
                 no_op_hits="$(jq -r --arg marker "$claim_marker" \
                   '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:no-op -->"))) | .id' \
                   <<<"$comments_json")"
+                park_hits="$(jq -r --arg marker "$claim_marker" \
+                  '.[][] | select(((.body // "") | contains($marker)) and ((.body // "") | contains("<!-- agent-result:v1:park -->"))) | .id' \
+                  <<<"$comments_json")"
                 if [ -n "$no_op_hits" ]; then
                   outcome_kind='no-op'
+                elif [ -n "$park_hits" ]; then
+                  # agent-protocol.md #4's issue-anchor park path: a
+                  # structured, marker-stamped comment IS the deliverable,
+                  # same shape as no-op above, but this run still needs a
+                  # human, so it is kept distinct rather than folded into
+                  # 'comment' -- see toRunResult/needsHumanLabel in
+                  # apps/console/src/lib/orchestrator-dispatch.ts and
+                  # orchestrator-routes.ts, which key off this exact string
+                  # to still flag the issue even though the run succeeded.
+                  outcome_kind='park'
                 fi
               fi
             else

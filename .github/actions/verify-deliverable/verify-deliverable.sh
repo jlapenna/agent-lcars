@@ -108,6 +108,10 @@ if [ -n "$NUM" ] && [ -z "$found" ]; then
         --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id" 2>/dev/null) && \
         [ -n "$claim_no_op_hits" ]; then
         found="evidence-backed structured no-op carrying this run's attempt-claim marker ($ATTEMPT_ID)"
+      elif claim_park_hits=$(gh api "repos/$REPO/issues/$NUM/comments?per_page=100" --paginate \
+        --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:park -->\")) | .id" 2>/dev/null) && \
+        [ -n "$claim_park_hits" ]; then
+        found="evidence-backed park carrying this run's attempt-claim marker ($ATTEMPT_ID)"
       fi
     fi
   else
