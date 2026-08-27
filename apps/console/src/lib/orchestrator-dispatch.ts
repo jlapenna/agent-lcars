@@ -11,6 +11,7 @@ import {
 import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
+import { agentFleetLogin } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
 // Re-exported so `run-binding.ts` (and its tests) can depend on this
@@ -245,8 +246,52 @@ async function handleDispatchRun(
   }
 
   await orchestrator.confirmDispatch(run.runId);
+  await claimGithubAnchor(deps, target);
   await settleClaim(deps, entry, 'done');
   result.dispatched.push(run.runId);
+}
+
+/** Additive, idempotent, best-effort -- projects the two claim effects that
+ *  today happen elsewhere for a GitHub anchor: the assignee call is
+ *  byte-identical to `.github/actions/claim-issue/claim.sh`'s own mutation
+ *  (`POST .../assignees` with `{assignees: [<fleet login>]}`); the eyes
+ *  reaction's endpoint/body (`POST .../reactions` with `{content: 'eyes'}`)
+ *  matches agent-protocol.md §2, which claim.sh itself does not post -- that
+ *  reaction is normally the dispatched agent's own first action, once it
+ *  starts reading the anchor's thread. Here it is posted once, on the issue
+ *  body only (not per-comment -- the console has not read any comments at
+ *  this point), as the single visible acknowledgement a human watching the
+ *  issue looks for right when the dispatch is confirmed. A failure here must
+ *  not cost the dispatch, which has already succeeded by the time this
+ *  runs. See the design spec's "Projections" note. */
+async function claimGithubAnchor(
+  deps: DispatchDeps,
+  target: AnchorTarget,
+): Promise<void> {
+  if (target.issue === undefined) return;
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  const apiBaseUrl = githubApiBaseUrl(deps);
+  try {
+    const token = await deps.tokens.tokenFor(target.repo);
+    await fetchImpl(
+      `${apiBaseUrl}/repos/${target.repo}/issues/${target.issue}/reactions`,
+      {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ content: 'eyes' }),
+      },
+    );
+    await fetchImpl(
+      `${apiBaseUrl}/repos/${target.repo}/issues/${target.issue}/assignees`,
+      {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ assignees: [agentFleetLogin()] }),
+      },
+    );
+  } catch {
+    // Swallowed deliberately -- see the doc comment above.
+  }
 }
 
 /** Posts the run's outcome onward as an issue comment. */

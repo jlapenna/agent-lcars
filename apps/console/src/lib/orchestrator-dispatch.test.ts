@@ -123,7 +123,9 @@ describe('drainOutbox: dispatch-run', () => {
       fetchImpl,
     });
 
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // projection (see the dedicated tests below).
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.url).toBe(
       'https://api.github.com/repos/octo/example/actions/workflows/claude.yml/dispatches',
     );
@@ -169,7 +171,7 @@ describe('drainOutbox: dispatch-run', () => {
       fetchImpl,
     });
     expect(second.dispatched).toEqual([]);
-    expect(calls).toHaveLength(1); // no additional fetch call
+    expect(calls).toHaveLength(3); // no additional fetch call
   });
 
   it('dispatches against an injected GitHub API root', async () => {
@@ -230,7 +232,10 @@ describe('drainOutbox: dispatch-run', () => {
     releaseFetch();
     const firstResult = await firstDrain;
     expect(firstResult.dispatched).toEqual([run.runId]);
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // projection, all unblocked once `releaseFetch()` resolves the shared
+    // `fetchReleased` promise.
+    expect(calls).toHaveLength(3);
   });
 
   it('does not pre-lease later entries while an earlier delivery is slow', async () => {
@@ -241,7 +246,14 @@ describe('drainOutbox: dispatch-run', () => {
     const claimSpy = vi.spyOn(store, 'claimPendingOutbox');
     const fetchImpl = (async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/actions/workflows/')) {
+      // The workflow_dispatch call and its confirmed-dispatch eyes-reaction/
+      // assignee projection all resolve instantly, matching the dispatch
+      // path above -- only the outcome-comment delivery below is slow.
+      if (
+        url.includes('/actions/workflows/') ||
+        url.endsWith('/reactions') ||
+        url.endsWith('/assignees')
+      ) {
         return new Response(null, { status: 204 });
       }
       // Simulate a slow-but-successful earlier delivery. The next entry's
@@ -518,7 +530,9 @@ describe('drainOutbox: dispatch-run', () => {
       fetchImpl,
     });
 
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // projection (see the dedicated tests below).
+    expect(calls).toHaveLength(3);
     const inputs = callBody(calls[0]!).inputs as Record<string, string>;
     // A GitHub anchor is already named by `issue` -- `work` carries only
     // `spec`, no `id` (unlike the native-anchor `work` input above).
@@ -545,6 +559,88 @@ describe('drainOutbox: dispatch-run', () => {
       },
     });
     expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+  });
+
+  it('posts an eyes reaction and claims the fleet assignee after confirming a GitHub-anchored dispatch', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    const reactionCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/reactions'),
+    );
+    expect(reactionCall).toBeDefined();
+    expect(JSON.parse(reactionCall!.init.body as string)).toEqual({
+      content: 'eyes',
+    });
+
+    const assigneeCall = calls.find((c) =>
+      c.url.endsWith('/issues/42/assignees'),
+    );
+    expect(assigneeCall).toBeDefined();
+    expect(JSON.parse(assigneeCall!.init.body as string)).toEqual({
+      assignees: ['agent-lcars-bot'],
+    });
+  });
+
+  it('a native anchor posts no eyes reaction or claim', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { workId: '01PROJECTIONTESTFIXTUREX01' },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 't',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    const { fetchImpl, calls } = fakeFetch(204);
+    await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+    expect(calls.some((c) => c.url.includes('/reactions'))).toBe(false);
+    expect(calls.some((c) => c.url.includes('/assignees'))).toBe(false);
+  });
+
+  it('a failed claim/reaction call does not fail the dispatch', async () => {
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'req-1',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+    // First call (workflow_dispatch) succeeds; reaction/assignee calls fail.
+    let call = 0;
+    const fetchImpl = (async () => {
+      call += 1;
+      return new Response(null, { status: call === 1 ? 204 : 500 });
+    }) as typeof fetch;
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(result.dispatched).toHaveLength(1);
+    expect(result.failed).toHaveLength(0);
   });
 
   it('a queue-executor run is enqueued and confirmed without calling GitHub', async () => {
@@ -688,7 +784,9 @@ describe('drainOutbox: report-outcome', () => {
       githubApiBaseUrl: 'https://fixture.invalid/github',
     });
 
-    expect(calls).toHaveLength(2); // the retry's dispatch + the lost comment
+    // the retry's dispatch + its eyes-reaction/assignee projection, and the
+    // lost comment.
+    expect(calls).toHaveLength(4);
     const commentCall = calls.find((c) => c.url.endsWith('/comments'));
     expect(commentCall?.url).toBe(
       'https://fixture.invalid/github/repos/octo/example/issues/7/comments',
