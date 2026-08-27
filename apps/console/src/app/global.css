@@ -318,6 +318,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   --pill-outline: var(--mantine-color-violet-3);
 }
 
+.lcars-nav-pill[data-accent='violet'] {
+  --pill-fill: var(--mantine-color-violet-5);
+  --pill-ink: var(--mantine-color-white);
+  --pill-outline: var(--mantine-color-violet-5);
+}
+
+[data-mantine-color-scheme='dark'] .lcars-nav-pill[data-accent='violet'] {
+  --pill-outline: var(--mantine-color-violet-3);
+}
+
 .lcars-nav-pill[data-accent='teal'] {
   --pill-fill: var(--mantine-color-teal-6);
   --pill-ink: var(--mantine-color-black);
@@ -1519,6 +1529,17 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
     background: var(--mantine-color-blue-5) !important;
   }
 
+  .console-header[data-current='work'] {
+    --lcars-header-accent: var(--mantine-color-violet-5);
+  }
+
+  .console-header[data-current='work']
+    .lcars-nav-pill[data-accent='violet'][data-active] {
+    border-color: var(--mantine-color-violet-5) !important;
+    color: var(--mantine-color-white) !important;
+    background: var(--mantine-color-violet-5) !important;
+  }
+
   .console-header[data-current='sessions'] {
     --lcars-header-accent: var(--mantine-color-cyan-5);
   }
@@ -1578,6 +1599,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   .console-header[data-current] .lcars-nav-pill[data-destination='shuttlebay'] {
     min-width: 6.25rem;
+  }
+
+  .console-header[data-current] .lcars-nav-pill[data-destination='work'] {
+    min-width: 3.75rem;
   }
 
   .console-header[data-current] .lcars-nav-pill[data-destination='sessions'] {
