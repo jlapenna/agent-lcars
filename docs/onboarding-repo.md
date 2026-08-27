@@ -54,23 +54,61 @@ without the specific maintainer approval those operations require. Never
 print, commit, or paste a credential value into an issue, PR, terminal log,
 or chat.
 
-## 1. Add the repository to Agent LCARS
+**Order matters: bootstrap the target repository (step 1) before admitting
+it to the control plane (step 4).** `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`
+admission is what lets the console start turning the repository's webhook
+events into dispatch-worthy tasks, including ones that carry a `work`
+payload; the target repository's thin workflow callers are what declare the
+`work` `workflow_dispatch` input those tasks need. Admitting the repository
+before its callers declare `work` opens a window where an admitted webhook
+mints a task the not-yet-updated workflow can't accept. The dispatcher
+tolerates that GitHub 422 by retrying once without `work` on the legacy
+issue-anchored path (`apps/console/src/lib/orchestrator-dispatch.ts`), so
+following the old order no longer poisons the outbox — but that is defence
+in depth, not a reason to rely on it. Land the callers first regardless.
 
-Open one PR in this repository to make the control plane recognize the new
-repository:
+## 1. Bootstrap the target repository
 
-- Add the repository’s label manifest to `config/github-labels.json`, using
-  the fleet’s standard `type:*`, `status:*`, `agent:*`, and `review:*` labels.
-- Add it to both console settings in `apps/console/apphosting.yaml`:
-  `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` and
-  `AGENT_LCARS_WATCHED_REPOS`. Use the repository name as its console alias
-  unless a distinct human-facing alias is needed.
-- Add it to the matrix in `.github/workflows/label-contract-audit.yml`; a
-  manifest entry without this matrix entry will not be reconciled.
-- Update the consumer list in `docs/published-actions.md`.
+Open a target-repository PR that consumes the fleet’s published artifacts;
+do not vendor copies of their implementation.
 
-The normal deployment path deploys the console after green CI on `main`.
-Do not run a direct deploy merely to accelerate this step.
+- Add thin callers for the enabled Claude, Codex, and/or OpenCode lanes. They
+  call the reusable workflows from `jlapenna/agent-lcars@main` and retain only
+  repository-specific triggers, permissions, concurrency, inputs, and
+  configuration.
+- Add the coupled `agent-fallback-finalize.yml@main` job on GitHub-hosted
+  infrastructure to each enabled lane caller. It records the completion
+  observation when a self-hosted worker fails before its reporting steps;
+  omitting it leaves an otherwise completed attempt without a durable outcome.
+- Add the thin `agent-automerge` and `repo-validation` callers. Keep
+  repository validation runnable on GitHub-hosted runners so it can establish
+  a baseline before self-hosted capacity is healthy.
+- Add `.github/workflows/gitleaks.yml` before making the `gitleaks` context
+  required. Start from homelab's pinned, full-history scanner shape: read-only
+  `contents` and `pull-requests` permissions, `fetch-depth: 0`, a named
+  `gitleaks` job, and a bounded timeout. Its workflow must run on pull
+  requests and pushes to `main`; retain every `main` scan while cancelling
+  superseded pull-request scans. Use the repository's approved runner and
+  scanner integration, then prove the check appears on this bootstrap PR.
+- Add the issue-workflow guardrail hook to `.claude/settings.json` and
+  `.codex/hooks.json`, and the `repo-require-worktree` check to the
+  repository’s Git hook mechanism. The published workflow documentation owns
+  the exact supported caller shapes.
+- Add or refresh `AGENTS.md`. It should link to the shared fleet protocol and
+  distinguish fleet-specific commands from public `repo-tools` commands; it
+  must not copy either instruction set into the repository.
+- Do not add a project `opencode.json` unless a setting is genuinely local to
+  that repository. The shared runner image already supplies its fleet-wide
+  OpenCode configuration.
+
+For Claude telemetry, follow the separate [console and telemetry
+onboarding](onboarding-console-and-telemetry.md) runbook. Telemetry is
+currently Claude-only; do not wire its fail-soft sidecar into Codex or
+OpenCode workflows expecting transcript data.
+
+Merge this PR — and confirm the target repository's `main` branch actually
+carries the merged callers — before doing step 4. That is what closes the
+onboarding-order gap described above.
 
 ## 2. Give it runner capacity
 
@@ -111,44 +149,25 @@ than assuming that an account-wide installation includes it. The exact App
 identifiers and installation guidance live in
 [fleet credentials](fleet-credentials.md).
 
-## 4. Bootstrap the target repository
+## 4. Add the repository to Agent LCARS
 
-Open a target-repository PR that consumes the fleet’s published artifacts;
-do not vendor copies of their implementation.
+Open one PR in this repository to make the control plane recognize the new
+repository:
 
-- Add thin callers for the enabled Claude, Codex, and/or OpenCode lanes. They
-  call the reusable workflows from `jlapenna/agent-lcars@main` and retain only
-  repository-specific triggers, permissions, concurrency, inputs, and
-  configuration.
-- Add the coupled `agent-fallback-finalize.yml@main` job on GitHub-hosted
-  infrastructure to each enabled lane caller. It records the completion
-  observation when a self-hosted worker fails before its reporting steps;
-  omitting it leaves an otherwise completed attempt without a durable outcome.
-- Add the thin `agent-automerge` and `repo-validation` callers. Keep
-  repository validation runnable on GitHub-hosted runners so it can establish
-  a baseline before self-hosted capacity is healthy.
-- Add `.github/workflows/gitleaks.yml` before making the `gitleaks` context
-  required. Start from homelab's pinned, full-history scanner shape: read-only
-  `contents` and `pull-requests` permissions, `fetch-depth: 0`, a named
-  `gitleaks` job, and a bounded timeout. Its workflow must run on pull
-  requests and pushes to `main`; retain every `main` scan while cancelling
-  superseded pull-request scans. Use the repository's approved runner and
-  scanner integration, then prove the check appears on this bootstrap PR.
-- Add the issue-workflow guardrail hook to `.claude/settings.json` and
-  `.codex/hooks.json`, and the `repo-require-worktree` check to the
-  repository’s Git hook mechanism. The published workflow documentation owns
-  the exact supported caller shapes.
-- Add or refresh `AGENTS.md`. It should link to the shared fleet protocol and
-  distinguish fleet-specific commands from public `repo-tools` commands; it
-  must not copy either instruction set into the repository.
-- Do not add a project `opencode.json` unless a setting is genuinely local to
-  that repository. The shared runner image already supplies its fleet-wide
-  OpenCode configuration.
+- Add the repository’s label manifest to `config/github-labels.json`, using
+  the fleet’s standard `type:*`, `status:*`, `agent:*`, and `review:*` labels.
+- Add it to both console settings in `apps/console/apphosting.yaml`:
+  `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` and
+  `AGENT_LCARS_WATCHED_REPOS`. Use the repository name as its console alias
+  unless a distinct human-facing alias is needed.
+- Add it to the matrix in `.github/workflows/label-contract-audit.yml`; a
+  manifest entry without this matrix entry will not be reconciled.
+- Update the consumer list in `docs/published-actions.md`.
 
-For Claude telemetry, follow the separate [console and telemetry
-onboarding](onboarding-console-and-telemetry.md) runbook. Telemetry is
-currently Claude-only; do not wire its fail-soft sidecar into Codex or
-OpenCode workflows expecting transcript data.
+The normal deployment path deploys the console after green CI on `main`.
+Do not run a direct deploy merely to accelerate this step. Do this step only
+after step 1's callers have merged and landed on the target repository's
+`main` — see "Order matters" above.
 
 ## 5. Configure repository variables and secrets
 

@@ -110,6 +110,47 @@ function routedFetch(
   return { fetchImpl, calls };
 }
 
+/** A fake fetch for the `work`-input-onboarding-gap retry (#1554 review,
+ *  `PRRT_kwDOTemFxc6c7KaP`): its first call returns GitHub's real 422 shape
+ *  for an undeclared `workflow_dispatch` input (see
+ *  `unexpectedDispatchInputs`'s doc comment in orchestrator-dispatch.ts for
+ *  where that wording is confirmed), and every call after that succeeds. */
+function fetch422ThenSucceed(unexpectedInputs: string[]): {
+  fetchImpl: typeof fetch;
+  calls: FetchCall[];
+} {
+  const calls: FetchCall[] = [];
+  let call = 0;
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init: init ?? {} });
+    call += 1;
+    if (call === 1) {
+      return new Response(
+        JSON.stringify({
+          message: `Unexpected inputs provided: ${JSON.stringify(unexpectedInputs)}`,
+        }),
+        { status: 422 },
+      );
+    }
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+function workTaskParams() {
+  return {
+    work: {
+      origin: { principal: 'github:jlapenna', channel: 'github' },
+      spec: {
+        title: 'T',
+        description: 'D',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+    },
+  };
+}
+
 describe('drainOutbox: dispatch-run', () => {
   it('dispatches a pending run and confirms it', async () => {
     const { store, orchestrator } = fixture();
@@ -702,6 +743,179 @@ describe('drainOutbox: dispatch-run', () => {
     } finally {
       delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
     }
+  });
+
+  // #1554 review (PRRT_kwDOTemFxc6c7KaP): the onboarding sequence in
+  // docs/onboarding-repo.md admits a repository to
+  // AGENT_LCARS_CONTROL_PLANE_REPOSITORIES (step 1) before that repo's own
+  // workflow callers declare the `work` input (step 4). A webhook landing
+  // in that gap mints a GitHub-anchored task with `work`, and GitHub 422s
+  // the dispatch. These four tests cover the degrade-and-retry fix.
+  describe('workflow_dispatch 422 for an undeclared `work` input', () => {
+    it('retries exactly once without `work` and dispatches on the legacy issue-anchored path', async () => {
+      const { store, orchestrator } = fixture();
+      const requested = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'req-1',
+        pipeline: 'claude',
+        ...workTaskParams(),
+      });
+      if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+      const { fetchImpl, calls } = fetch422ThenSucceed(['work']);
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      const dispatchCalls = calls.filter((c) =>
+        c.url.includes('/actions/workflows/'),
+      );
+      // Exactly one retry: the first (422'd) call plus one retry, no loop.
+      expect(dispatchCalls).toHaveLength(2);
+
+      const firstInputs = callBody(dispatchCalls[0]!).inputs as Record<
+        string,
+        string
+      >;
+      expect(firstInputs.work).toBeDefined();
+      expect(firstInputs.issue).toBe('7');
+
+      const retryInputs = callBody(dispatchCalls[1]!).inputs as Record<
+        string,
+        string
+      >;
+      expect(retryInputs.work).toBeUndefined();
+      expect(Object.keys(retryInputs).sort()).toEqual(
+        [
+          'broker_dispatch_token',
+          'broker_generation',
+          'broker_intent_id',
+          'context',
+          'issue',
+          'mode',
+          'reply',
+          'runbook',
+        ].sort(),
+      );
+      expect(retryInputs.issue).toBe('7');
+
+      expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+      expect(result.failed).toEqual([]);
+      expect((await store.readRun(decidedRun(requested).runId))?.state).toBe(
+        'running',
+      );
+    });
+
+    it('logs that the retry happened, at a visible level (console.error)', async () => {
+      const { store, orchestrator } = fixture();
+      const requested = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'req-1',
+        pipeline: 'claude',
+        ...workTaskParams(),
+      });
+      if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+      const { fetchImpl } = fetch422ThenSucceed(['work']);
+      const errorSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+      try {
+        await drainOutbox({ store, orchestrator, tokens, fetchImpl });
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          'agent-lcars: dispatch to %s#%s named unexpected input(s) [%s] ' +
+            '(422) -- retrying once without `work` on the legacy ' +
+            'issue-anchored path',
+          'octo/example',
+          7,
+          'work',
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('does NOT retry a 422 for an unrelated reason, and fails the entry as before', async () => {
+      const { store, orchestrator } = fixture();
+      const requested = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'req-1',
+        pipeline: 'claude',
+        ...workTaskParams(),
+      });
+      if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+      const calls: FetchCall[] = [];
+      const fetchImpl = (async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        calls.push({ url: String(input), init: init ?? {} });
+        // A real GitHub 422 shape unrelated to unexpected inputs (e.g. an
+        // optional boolean input with no default) -- must not be mistaken
+        // for the unexpected-`work`-input case.
+        return new Response(
+          JSON.stringify({
+            message:
+              "Provided value '' for input 'debug' not in the list of allowed values",
+          }),
+          { status: 422 },
+        );
+      }) as typeof fetch;
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      const dispatchCalls = calls.filter((c) =>
+        c.url.includes('/actions/workflows/'),
+      );
+      expect(dispatchCalls).toHaveLength(1);
+      expect(result.dispatched).toEqual([]);
+      expect(result.failed).toEqual([
+        {
+          entryId: `dispatch/${decidedRun(requested).runId}`,
+          error: 'workflow_dispatch returned 422',
+        },
+      ]);
+      expect((await store.readRun(decidedRun(requested).runId))?.state).toBe(
+        'pending',
+      );
+    });
+
+    it('makes exactly one dispatch call when the first attempt succeeds', async () => {
+      const { store, orchestrator } = fixture();
+      const requested = await orchestrator.request({
+        taskId: TASK,
+        requestId: 'req-1',
+        pipeline: 'claude',
+        ...workTaskParams(),
+      });
+      if (isRefusal(requested)) throw new Error('unexpected refusal');
+
+      const { fetchImpl, calls } = fakeFetch(204);
+
+      const result = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+      });
+
+      const dispatchCalls = calls.filter((c) =>
+        c.url.includes('/actions/workflows/'),
+      );
+      expect(dispatchCalls).toHaveLength(1);
+      expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+    });
   });
 
   it('posts an eyes reaction and claims the fleet assignee after confirming a GitHub-anchored dispatch', async () => {

@@ -283,6 +283,54 @@ async function handleDispatchRun(
     return;
   }
 
+  // #1544 wave 2 review (PRRT_kwDOTemFxc6c7KaP): `docs/onboarding-repo.md`
+  // admits a repo to `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (step 1)
+  // before that repo's own workflow callers declare the `work` input
+  // (step 4). A webhook landing in that window mints a GitHub-anchored
+  // task with `work`, and GitHub 422s this dispatch because the
+  // not-yet-updated workflow doesn't declare it. Rather than re-add a
+  // repo allow-list here (which just recreates this failure for every
+  // *future* onboarding, forever), degrade: drop `work` and retry once so
+  // the run proceeds on the legacy issue-anchored path instead of poisoning
+  // the outbox entry. Only applies when there is a legacy path to fall
+  // back to (`target.issue !== undefined`, i.e. not a native work-anchor
+  // run, whose only content *is* `work`) and only for the specific 422
+  // shape GitHub uses for an undeclared input -- any other 422 reason
+  // fails exactly as before.
+  if (
+    response.status === 422 &&
+    inputs['work'] !== undefined &&
+    target.issue !== undefined
+  ) {
+    const unexpected = await unexpectedDispatchInputs(response);
+    if (unexpected?.includes('work')) {
+      console.error(
+        'agent-lcars: dispatch to %s#%s named unexpected input(s) [%s] ' +
+          '(422) -- retrying once without `work` on the legacy ' +
+          'issue-anchored path',
+        target.repo,
+        target.issue,
+        unexpected.join(', '),
+      );
+      const { work: _work, ...retryInputs } = inputs;
+      try {
+        const token = await tokens.tokenFor(target.repo);
+        response = await fetchImpl(url, {
+          method: 'POST',
+          headers: githubHeaders(token),
+          body: JSON.stringify({ ref: 'main', inputs: retryInputs }),
+        });
+      } catch (error) {
+        await settleClaim(deps, entry, 'pending');
+        result.failed.push({
+          entryId: entry.entryId,
+          error: errorMessage(error),
+        });
+        return;
+      }
+    }
+  }
+
   if (response.status !== 204) {
     await settleClaim(deps, entry, 'pending');
     result.failed.push({
@@ -654,6 +702,47 @@ function outcomeCommentBody(run: Run): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** GitHub's `workflow_dispatch` 422 for an input the target workflow
+ *  doesn't declare names the offending input(s) in its `message` field as
+ *  `Unexpected inputs provided: ["name", ...]` -- confirmed against
+ *  independent third-party reports of the live API response (not just its
+ *  docs): backstage/backstage#20023 (`message` reproduced verbatim as
+ *  `Unexpected inputs provided: ["instanceName", "projectId", ...]`) and
+ *  benc-uk/workflow-dispatch#80 (`Unexpected inputs provided: ["action",
+ *  "arg", "customer"] - https://docs.github.com/rest/actions/workflows#
+ *  create-a-workflow-dispatch-event`). Returns the named inputs, or
+ *  `undefined` if the body isn't that shape -- a 422 for any other reason
+ *  (bad ref, disallowed value, etc.) must not be mistaken for this one. */
+async function unexpectedDispatchInputs(
+  response: Response,
+): Promise<string[] | undefined> {
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return undefined;
+  }
+  const message =
+    typeof body === 'object' && body !== null && 'message' in body
+      ? (body as { message: unknown }).message
+      : undefined;
+  if (typeof message !== 'string') return undefined;
+
+  const match = /^Unexpected inputs provided: (\[.*\])/u.exec(message);
+  if (match === null) return undefined;
+
+  try {
+    const names: unknown = JSON.parse(match[1]);
+    if (Array.isArray(names) && names.every((n) => typeof n === 'string')) {
+      return names as string[];
+    }
+  } catch {
+    // Matched the prefix but the bracketed list didn't parse as JSON --
+    // treat as not-this-shape rather than throwing out of a failure path.
+  }
+  return undefined;
 }
 
 function githubApiBaseUrl(
