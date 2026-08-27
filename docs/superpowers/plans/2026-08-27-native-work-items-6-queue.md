@@ -30,12 +30,12 @@
 
 - Modify: `libs/orchestrator/src/model.ts` (`runSchema`, new `runQueueSchema`)
 - Modify: `libs/orchestrator/src/decide.ts` (`RequestRunInput`, `requestRun`, `mintRun`)
-- Modify: `libs/orchestrator/src/orchestrator.ts` (`RequestInput`, `Orchestrator.request`)
+- Modify: `libs/orchestrator/src/orchestrator.ts` (`RequestInput`, `Orchestrator.request`, `#settleAndRetry`)
 - Test: `libs/orchestrator/src/model.spec.ts`, `libs/orchestrator/src/orchestrator.spec.ts`
 
 **Interfaces:**
 
-- Produces: `RunExecutor = 'github-actions' | 'queue'` (exported from `model.ts`); `Run.executor?: RunExecutor`; `Run.queue?: { state: 'queued' | 'claimed'; claimedAt?: string; claimedBy?: string; tokenHash?: string }`; `RequestRunInput.executor?: RunExecutor` (`decide.ts`); `RequestInput.executor?: RunExecutor` (`orchestrator.ts`). Task 4 (`work-router.ts`) is the only caller that ever sets it to `'queue'`.
+- Produces: `RunExecutor = 'github-actions' | 'queue'` (exported from `model.ts`); `Run.executor?: RunExecutor`; `Run.queue?: { state: 'queued' | 'claimed'; claimedAt?: string; claimedBy?: string; tokenHash?: string }`; `RequestRunInput.executor?: RunExecutor` (`decide.ts`); `RequestInput.executor?: RunExecutor` (`orchestrator.ts`). Task 4 (`work-router.ts`) is the only caller that ever sets it to `'queue'` on a fresh request; `#settleAndRetry`'s own auto-retry request (below) is the one other caller, and it must carry the lost run's own `executor` forward -- a lost `queue`-executor run must retry as `queue`, not silently fall back to `github-actions`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -109,9 +109,27 @@ it('threads executor onto the minted run, defaulting to undefined', async () => 
   });
   expect(decidedRun(defaulted).executor).toBeUndefined();
 });
+
+it('a lost queue-executor run auto-retries as queue, not github-actions', async () => {
+  const { store, orchestrator, clock } = fixture();
+  const requested = await orchestrator.request({
+    taskId: { workId: '01SETTLEANDRETRYTESTFIXTURE' },
+    requestId: 'req-1',
+    pipeline: 'claude',
+    executor: 'queue',
+  });
+  const runId = decidedRun(requested).runId;
+  await orchestrator.confirmDispatch(runId);
+  // Past LEASE_MS (2h) so sweepExpired treats it as lost.
+  clock.advanceMinutes(121);
+  const swept = await orchestrator.sweepExpired();
+  expect(swept.retried).toHaveLength(1);
+  const retriedRun = await store.readRun(swept.retried[0]!.newRunId);
+  expect(retriedRun?.executor).toBe('queue');
+});
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `./tools/nx test @agent-lcars/orchestrator -- model orchestrator` → FAIL (`executor`/`queue` not recognized, `runQueueSchema` not exported).
+- [ ] **Step 2: Run to verify they fail** — `./tools/nx test @agent-lcars/orchestrator -- model orchestrator` → FAIL (`executor`/`queue` not recognized, `runQueueSchema` not exported; the retry test fails because `#settleAndRetry`'s request doesn't forward `executor` yet).
 
 - [ ] **Step 3: Implement**
 
@@ -154,6 +172,22 @@ In `runSchema`, after `params`:
 `decide.ts`'s `RequestRunInput` gains `executor?: RunExecutor` (import `type RunExecutor` from `./model`); `requestRun` forwards it into `mintRun`'s input; `mintRun`'s own parameter object gains `executor?: RunExecutor`, and its returned `run` object gains `...(executor === undefined ? {} : { executor })` alongside the existing `...(params === undefined ? {} : { params })` line.
 
 `orchestrator.ts`'s `RequestInput` gains `executor?: RunExecutor` (import alongside `Run`/`RunResult`/`TaskId`/`WorkPayload`); `Orchestrator.request` forwards it: `...(input.executor === undefined ? {} : { executor: input.executor })` alongside the existing `work`/`params` spreads.
+
+`#settleAndRetry`'s own retry request (the auto-retry `sweepExpired`/`settleTerminalRuns` mint for a lost run, `requestId: retry:<lostRunId>`) must forward the lost run's `executor` the same way it already forwards `pipeline`/`params`, or a lost `queue`-executor run would silently retry as `github-actions`:
+
+```ts
+const retry = await this.request({
+  taskId: settledRun.task,
+  requestId: `retry:${settledRun.runId}`,
+  pipeline: settledRun.pipeline,
+  ...(settledRun.params === undefined ? {} : { params: settledRun.params }),
+  ...(settledRun.executor === undefined
+    ? {}
+    : { executor: settledRun.executor }),
+});
+```
+
+(one new spread line in the existing call inside `#settleAndRetry`, immediately after the `params` spread; `settledRun` is already in scope there.) The new orchestrator.spec.ts test above needs `fixture()`'s `Clock` to expose an `advanceMinutes` method the way `store-contract.ts`'s own `TestClock` already does -- if `orchestrator.spec.ts`'s existing fixture's clock does not have one, add it (mirroring `TestClock.advanceMinutes` in `store-contract.ts`) rather than inventing a second clock double.
 
 - [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/orchestrator -- model orchestrator` → PASS; `./tools/nx typecheck @agent-lcars/orchestrator` → clean.
 
@@ -757,7 +791,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Files:**
 
 - Modify: `libs/work/src/contract.ts`
-- Create: `libs/work/src/contract.spec.ts` additions (same file, existing)
+- Modify: `libs/work/src/contract.spec.ts` (existing file — new assertions, not a new one)
+- Modify: `libs/work/src/openapi.ts` (generate from `{ items, runs }`)
+- Modify: `docs/api/work-v1.openapi.json` (regenerated, checked in)
 - Create: `apps/console/src/lib/run-token.ts`, `apps/console/src/lib/run-token.test.ts`
 
 **Interfaces:**
@@ -767,7 +803,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// libs/work/src/contract.spec.ts (new describe block)
+// libs/work/src/contract.spec.ts -- new import (add `runsContract` to the
+// existing `import { itemsContract, ... } from './contract'` line) and a
+// new describe block
 import { runsContract } from './contract';
 
 describe('runsContract', () => {
@@ -778,7 +816,59 @@ describe('runsContract', () => {
     );
   });
 });
+
+// Extends the EXISTING `generateWorkOpenApi` describe block's two tests
+// (both already read `doc.paths`) rather than adding a third: one
+// document, one set of assertions about everything in it.
+describe('generateWorkOpenApi (runs)', () => {
+  it('emits the five REST routes under /runs alongside /items', async () => {
+    const doc = (await generateWorkOpenApi()) as {
+      paths: Record<string, Record<string, unknown>>;
+    };
+    expect(Object.keys(doc.paths).sort()).toEqual(
+      [
+        '/items',
+        '/items/{id}',
+        '/items/{id}/cancel',
+        '/items/{id}/redispatch',
+        '/runs/claim',
+        '/runs/{runId}/brief',
+        '/runs/{runId}/heartbeat',
+        '/runs/{runId}/complete',
+        '/runs/{runId}/checkout-token',
+      ].sort(),
+    );
+  });
+
+  it('documents every status the run routes can actually answer with', async () => {
+    const doc = (await generateWorkOpenApi()) as {
+      paths: Record<
+        string,
+        Record<string, { responses: Record<string, unknown> }>
+      >;
+    };
+    const statuses = Object.fromEntries(
+      Object.entries(doc.paths)
+        .filter(([path]) => path.startsWith('/runs'))
+        .flatMap(([path, methods]) =>
+          Object.entries(methods).map(([method, operation]) => [
+            `${method.toUpperCase()} ${path}`,
+            Object.keys(operation.responses).sort(),
+          ]),
+        ),
+    );
+    expect(statuses).toEqual({
+      'POST /runs/claim': ['200', '401'],
+      'GET /runs/{runId}/brief': ['200', '401'],
+      'POST /runs/{runId}/heartbeat': ['200', '401'],
+      'POST /runs/{runId}/complete': ['200', '401'],
+      'GET /runs/{runId}/checkout-token': ['200', '401'],
+    });
+  });
+});
 ```
+
+(`claim`'s own `.errors({...})` map is currently empty — its 401 comes from the router-level `executor` middleware in Task 7, which throws a bare `ORPCError('UNAUTHORIZED')` rather than a contract-declared error. oRPC's generator documents `UNAUTHORIZED` for every procedure regardless of whether `.errors()` names it, via `COMMON_ERROR_STATUS_MAP` -- if the actual generated document does not include `401` for `POST /runs/claim` once this is implemented, add `.errors({ UNAUTHORIZED: { message: 'work.executor scope required' } })` to `claim`'s contract definition in Step 3 to make it explicit rather than relying on the fallback.)
 
 ```ts
 // apps/console/src/lib/run-token.test.ts
@@ -810,7 +900,7 @@ describe('run-token', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `./tools/nx test @agent-lcars/work -- contract` and `./tools/nx test @agent-lcars/console -- run-token` → FAIL.
+- [ ] **Step 2: Run to verify they fail** — `./tools/nx test @agent-lcars/work -- contract` and `./tools/nx test @agent-lcars/console -- run-token` → FAIL (`runsContract` undefined; the `generateWorkOpenApi (runs)` block fails the same way once `runsContract` exists but `openapi.ts` still only generates `itemsContract`).
 
 - [ ] **Step 3: Implement**
 
@@ -869,7 +959,7 @@ export const runsContract = {
         method: 'GET',
         path: '/runs/{runId}/brief',
         operationId: 'getRunBrief',
-        summary: 'Fetch a claimed run's dispatch brief',
+        summary: "Fetch a claimed run's dispatch brief",
       }),
     )
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
@@ -893,7 +983,7 @@ export const runsContract = {
         method: 'POST',
         path: '/runs/{runId}/complete',
         operationId: 'completeRun',
-        summary: 'Report a claimed run's outcome',
+        summary: "Report a claimed run's outcome",
       }),
     )
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
@@ -911,7 +1001,8 @@ export const runsContract = {
         method: 'GET',
         path: '/runs/{runId}/checkout-token',
         operationId: 'getRunCheckoutToken',
-        summary: "Mint a short-lived GitHub token for a claimed run's target repo",
+        summary:
+          "Mint a short-lived GitHub token for a claimed run's target repo",
       }),
     )
     .errors({ UNAUTHORIZED: { message: 'Invalid or expired run token' } })
@@ -957,13 +1048,45 @@ export function runTokenMatches(token: string, storedHash: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/work -- contract` and `./tools/nx test @agent-lcars/console -- run-token` → PASS; typecheck both projects.
+`libs/work/src/openapi.ts` — generate from both contracts, exactly the shape the cron branch already proved works (`git show origin/feat/native-work-items-5-cron:libs/work/src/openapi.ts`: `{ items: itemsContract, schedules: schedulesContract }`) -- here `{ items, runs }`:
+
+```ts
+import { OpenAPIGenerator } from '@orpc/openapi';
+import { ZodToJsonSchemaConverter } from '@orpc/zod';
+
+import { itemsContract, runsContract } from './contract';
+
+/** The document `docs/api/work-v1.openapi.json` is generated from. */
+export async function generateWorkOpenApi(): Promise<object> {
+  const generator = new OpenAPIGenerator({
+    converters: [new ZodToJsonSchemaConverter()],
+  });
+  return generator.generate(
+    { items: itemsContract, runs: runsContract },
+    {
+      base: {
+        info: { title: 'Agent LCARS work items', version: '1' },
+        servers: [{ url: '/api/work/v1' }],
+        components: {
+          securitySchemes: {
+            bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+          },
+        },
+      },
+    },
+  );
+}
+```
+
+(The `{ items, runs }` object key is an oRPC router-composition label only -- it does not appear in any generated path; every route's actual URL still comes from that procedure's own `openapi({ path: ... })` meta, which is why the existing `/items/...` paths are unaffected by this change.)
+
+- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/work -- contract` and `./tools/nx test @agent-lcars/console -- run-token` → PASS; typecheck both projects; `pnpm work:openapi` to regenerate `docs/api/work-v1.openapi.json`, then `pnpm exec tsx tools/work-openapi.mts --check` to confirm it is current (CI runs the `--check` form; a stale checked-in document fails that job).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add libs/work/src/contract.ts libs/work/src/contract.spec.ts apps/console/src/lib/run-token.ts apps/console/src/lib/run-token.test.ts
-git commit -m "feat(work): runsContract and the run-token mint/hash helpers
+git add libs/work/src/contract.ts libs/work/src/contract.spec.ts libs/work/src/openapi.ts docs/api/work-v1.openapi.json apps/console/src/lib/run-token.ts apps/console/src/lib/run-token.test.ts
+git commit -m "feat(work): runsContract, the run-token mint/hash helpers, and the regenerated OpenAPI document
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -978,10 +1101,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `apps/console/src/lib/github-app-tokens.ts` (a checkout-scoped permission constant)
 - Modify: `apps/console/src/app/api/work/v1/[[...rest]]/route.ts` (merge `runsRouter` in, extract the raw bearer)
 - Modify: `apps/console/src/lib/work-auth.ts` (export the raw-bearer extraction so the route can reuse it)
+- Modify: `apps/console/src/lib/orchestrator-routes.ts` (export `toRunResult` so `complete` reuses it)
 
 **Interfaces:**
 
-- Consumes: `runsContract` (Task 6), `runTokenMatches`/`mintRunToken`/`hashRunToken` (Task 6), `store.claimQueuedRun`/`listQueuedRuns` (Task 2), `orchestrator.renew`/`orchestrator.report` (existing), `DispatchTokenProvider.tokenFor` (existing, `github-app-tokens.ts`), `anchorTarget` (existing).
+- Consumes: `runsContract` (Task 6), `runTokenMatches`/`mintRunToken`/`hashRunToken` (Task 6), `store.claimQueuedRun`/`listQueuedRuns` (Task 2), `orchestrator.renew`/`orchestrator.report` (existing), `DispatchTokenProvider.tokenFor` (existing, `github-app-tokens.ts`), `anchorTarget` (existing), `toRunResult` (`orchestrator-routes.ts`, newly exported by this task).
 - Produces: `runsRouter` and `createRunsHandler(): OpenAPIHandler<RunsContext>` (`runs-router.ts`); `RunsContext { bearerToken?: string; principal?: WorkPrincipal; runtime: OrchestratorRouteDeps; tokens: DispatchTokenProvider }`. Task 8 consumes `createRunsHandler`.
 
 - [ ] **Step 1: This task is wiring; its test is Task 8's route-behavior suite.** No new failing-test step here — writing `runs-router.test.ts` before this file exists would fail on an unresolved import, which Task 8 exercises directly. (This is the one task in this plan whose own Step 1 is "write the implementation, prove it with the next task's tests" rather than TDD red-green in isolation, because the router and its test are two halves of one review-sized change; Task 8 is deliberately small enough to review on its own.)
@@ -992,6 +1116,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 import 'server-only';
 
 import {
+  isLive,
   isRefusal,
   type Orchestrator,
   type OrchestratorStore,
@@ -1003,6 +1128,7 @@ import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
 import type { DispatchTokenProvider } from './github-app-tokens';
+import { toRunResult } from './orchestrator-routes';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
@@ -1019,14 +1145,21 @@ export interface RunsContext {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
+  checkoutTokens: DispatchTokenProvider;
 }
 
 const os = implement(runsContract).$context<RunsContext>();
 
 /** `claim`'s gate: a Google-ID-token principal carrying `work.executor`.
- *  Structurally identical to `work-router.ts`'s `operator` middleware,
- *  scoped to the one procedure that has a principal at all. */
-const executor = os.claim.use(async ({ context, next }) => {
+ *  Structurally identical to `work-router.ts`'s `operator` middleware.
+ *  Built with `os.use(...)`, NOT `os.claim.use(...)` -- `@orpc/server`
+ *  2.0.0-beta.31's `ProcedureImplementer.use` returns an implementer for
+ *  that SAME procedure, not a reusable builder, so `os.claim.use(mw)`
+ *  cannot be chained into `.claim.handler(...)` the way this looked at
+ *  first. `os.use(mw)` returns a router-level implementer instead, whose
+ *  own `.claim` accessor carries the middleware -- applied below to
+ *  exactly the one procedure that needs it. */
+const executor = os.use(async ({ context, next }) => {
   if (!context.principal?.scopes.has('work.executor')) {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'work.executor scope required',
@@ -1036,13 +1169,17 @@ const executor = os.claim.use(async ({ context, next }) => {
 });
 
 /** Loads the run named by the path, verifies the bearer's hash against
- *  `run.queue.tokenHash` in constant time, and that the run's lease has
- *  not already expired -- the "expired token" case answers 401
- *  synchronously rather than waiting for the sweep to settle the run
- *  `lost`. Every non-`claim` route calls this first, by hand (not
- *  middleware: the runId lives in the validated input, which middleware
- *  registered via `.use` cannot see -- see this plan's Global
- *  Constraints). */
+ *  `run.queue.tokenHash` in constant time, that the run is still live
+ *  (`isLive(run.state)`), and that its lease has not already expired --
+ *  in that order, so a completed run's leaked token is refused even if
+ *  its `leaseExpiresAt` (never advanced past settlement) happens to still
+ *  read as "in the future". This is the token-invalidation mechanism the
+ *  design spec's "Token model" describes as emergent from liveness: it is
+ *  emergent only because THIS check enforces it, on every run-token
+ *  route, not because `report`/`cancel` clear anything extra. Every
+ *  non-`claim` route calls this first, by hand (not middleware: the runId
+ *  lives in the validated input, which middleware registered via `.use`
+ *  cannot see -- see this plan's Global Constraints). */
 async function requireRunToken(
   context: RunsContext,
   runId: string,
@@ -1057,46 +1194,33 @@ async function requireRunToken(
   ) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Invalid run token' });
   }
+  if (!isLive(run.state)) {
+    throw new ORPCError('UNAUTHORIZED', { message: 'Run is no longer live' });
+  }
   if (Date.parse(run.leaseExpiresAt) <= Date.parse(now())) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
   return run;
 }
 
-/** Same outcome-vocabulary mapping `orchestrator-routes.ts`'s
- *  `toRunResult` applies for GitHub-Actions completions -- kept local
- *  rather than imported, since `runId` there is bound by OIDC + marker,
- *  and importing across that boundary would make it look shared when the
- *  auth model underneath it is deliberately not. */
-const OK_OUTCOMES: ReadonlySet<string> = new Set([
-  'pull-request',
-  'no-op',
-  'unknown-success',
-]);
-
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
+    // Mint the token BEFORE the one claimQueuedRun call: minting is a
+    // local crypto.randomBytes call, not a network round trip, so the
+    // "wasted mint on a claim that turns out already taken" cost of
+    // minting speculatively is negligible next to the alternative --
+    // claiming first with a placeholder hash, then overwriting it -- which
+    // would need a second store round trip that Task 2's `claimQueuedRun`
+    // was never designed to compose safely with a race. One call, one
+    // transaction, no store signature change.
+    const token = mintRunToken();
     const claimed = await context.store.claimQueuedRun({
       pipelines: input.pipelines,
       now: new Date().toISOString(),
       claimedBy: input.runner,
-      // Placeholder hash, overwritten below once the real token is
-      // minted -- claimQueuedRun's transaction needs a hash to write
-      // atomically with the claim, and the token itself must never be
-      // computed before the claim actually wins (minting one for a run
-      // that turns out already claimed would be wasted work, not a
-      // correctness issue, but this ordering keeps mint-then-store-once
-      // as the only path).
-      tokenHash: '',
-    });
-    if (claimed === undefined) return undefined;
-    const token = mintRunToken();
-    await context.store.claimQueuedRun({
-      pipelines: [claimed.pipeline],
-      now: new Date().toISOString(),
-      claimedBy: input.runner,
       tokenHash: hashRunToken(token),
     });
+    if (claimed === undefined) return undefined;
     const renewed = await context.orchestrator.renew(claimed.runId);
     const expiresAt = isRefusal(renewed)
       ? claimed.leaseExpiresAt
@@ -1158,20 +1282,25 @@ export const runsRouter = os.router({
 
   complete: os.complete.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
-    const outcome =
-      typeof input.outcome === 'string' ? input.outcome : undefined;
-    const ref =
-      input.outcomeReference !== undefined &&
-      typeof input.outcomeReference === 'object' &&
-      input.outcomeReference !== null &&
-      'number' in input.outcomeReference
-        ? `https://github.com/${anchorTarget(run).repo}/pull/${(input.outcomeReference as { number: number }).number}`
+    // Same task fetch checkoutToken already needs below: a native run's
+    // anchorTarget cannot resolve spec.target.repo from the run alone.
+    // Omitting this (an earlier draft did) throws UnresolvableAnchor for
+    // every native completion -- caught by Task 8's route test, fixed
+    // here before that test is ever written.
+    const task =
+      'workId' in run.task
+        ? (await context.store.readTask(run.task))?.task
         : undefined;
-    const settled = await context.orchestrator.report(run.runId, {
-      ok: outcome !== undefined && OK_OUTCOMES.has(outcome),
-      ...(outcome === undefined ? {} : { summary: outcome }),
-      ...(ref === undefined ? {} : { ref }),
-    });
+    const target = anchorTarget(run, task);
+    // Reuses orchestrator-routes.ts's own outcome-vocabulary mapping
+    // (OK_OUTCOMES, the pull-request ref shape) rather than a smaller
+    // local reimplementation -- one mapping, one place it can drift.
+    const result = toRunResult(
+      target.repo,
+      input.outcome,
+      input.outcomeReference,
+    );
+    const settled = await context.orchestrator.report(run.runId, result);
     return {
       runId: run.runId,
       state: isRefusal(settled) ? settled.reason : 'finished',
@@ -1185,7 +1314,7 @@ export const runsRouter = os.router({
         ? (await context.store.readTask(run.task))?.task
         : undefined;
     const target = anchorTarget(run, task);
-    const token = await context.tokens.tokenFor(target.repo);
+    const token = await context.checkoutTokens.tokenFor(target.repo);
     return {
       token,
       // The provider caches per-repo until close to expiry (see
@@ -1203,7 +1332,15 @@ export function createRunsHandler(): OpenAPIHandler<RunsContext> {
 }
 ```
 
-**Known rough edge, flagged rather than hidden:** `claim`'s two-call `claimQueuedRun` (first with a throwaway `tokenHash: ''`, then a second call to overwrite it once the real token exists) is not what the store contract in Task 2 tested — `claimQueuedRun` claims _one specific run_ transactionally, and calling it twice for "the same claim" only works because the second call is scoped to `claimed.pipeline` and nothing else raced the same run in between (extremely unlikely in single-claimer-at-a-time practice, but not transactionally guaranteed). The correct fix is a store method that claims _and_ accepts the already-minted token in one transaction; Task 2 as written does not have that shape because the token does not exist until after Task 6. **Self-review flags this**; the clean fix is to change `claimQueuedRun`'s signature to accept a `tokenHash` supplier callback invoked only once the winning candidate is known, inside the same transaction — left as a one-line note for whoever implements this task to apply before merging, not deferred past this plan.
+`orchestrator-routes.ts` -- add `export` to its existing `toRunResult` function (it is private today; nothing else about its body changes):
+
+```ts
+export function toRunResult(
+  repo: string,
+  outcome: unknown,
+  outcomeReference: unknown,
+): RunResult {
+```
 
 `github-app-tokens.ts` — add beside `DEFAULT_PERMISSIONS`:
 
@@ -1219,7 +1356,7 @@ export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
 };
 ```
 
-`runs-router.ts`'s `checkoutToken` handler needs a token provider constructed with these permissions, not the drain's default one — thread a second `DispatchTokenProvider` (e.g. `checkoutTokens`) into `RunsContext` rather than reusing `tokens`, constructed in `route.ts` via `new AppInstallationTokenProvider({ clientId, privateKeyPem, permissions: DIRECT_RUNNER_PERMISSIONS })` alongside the existing `createDispatchTokenProvider` call. Update the `checkoutToken` handler above to read `context.checkoutTokens.tokenFor(target.repo)` and add `checkoutTokens: DispatchTokenProvider` to `RunsContext`.
+`runs-router.ts`'s `checkoutToken` handler needs a token provider constructed with these permissions, not the drain's default one — thread a second `DispatchTokenProvider` (`checkoutTokens`) into `RunsContext` rather than reusing `tokens`, as already shown above (`context.checkoutTokens.tokenFor(target.repo)`, `RunsContext.checkoutTokens: DispatchTokenProvider`). `route.ts` (below) constructs it via `createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS)` — the same factory the drain's own `tokens` already uses, called a second time with the broader permission set.
 
 `work-auth.ts` — export the raw-bearer extraction so `route.ts` can populate `bearerToken` without re-implementing the regex:
 
@@ -1288,7 +1425,7 @@ async function handle(request: Request): Promise<Response> {
 
 `createDispatchTokenProvider` needs a second optional `permissions` parameter forwarded to `AppInstallationTokenProvider`'s constructor — a small, additive signature change in `github-app-tokens.ts`: `export function createDispatchTokenProvider(env: Record<string, string | undefined>, permissions?: Record<string, string>): DispatchTokenProvider`, passing `permissions` through to `new AppInstallationTokenProvider({ clientId, privateKeyPem, permissions })`.
 
-`OpenAPIHandler.handle`'s exact "did this handler match this path" contract (whether trying two handlers in sequence against one `Request` object is safe — a `Request` body can only be read once) needs verification against oRPC 2's actual runtime behavior before this lands; **flagged as unverified** in the self-review. If the body-consumption concern is real, the fix is cloning the request (`request.clone()`) before the first `.handle()` call, which Next.js's `Request` supports natively.
+**Verified, not just assumed:** trying two handlers in sequence against one `Request` object is safe. `@orpc/openapi`'s `OpenAPIHandler` extends `@orpc/server`'s `FetchHandler` (`node_modules/@orpc/server/dist/adapters/fetch/index.mjs`), which wraps the incoming `Request` with `@standardserver/fetch`'s `toStandardLazyRequest` — `headers` is a lazy getter and `resolveBody` is a function, not an eagerly-read value (`node_modules/@standardserver/fetch/dist/index.mjs`). A `.handle()` call that returns `{ matched: false }` never calls `resolveBody`, so `runsHandler.handle(request, ...)` failing to match leaves the body stream untouched for `handler.handle(request, ...)` to read next. No `request.clone()` needed.
 
 - [ ] **Step 3: Run** — `./tools/nx typecheck @agent-lcars/console` → clean (this task adds no new tests of its own; Task 8 exercises the behavior).
 
@@ -1569,10 +1706,47 @@ describe('runs routes', () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(204);
   });
+
+  it('a completed run refuses its own token on every run route (brief and checkout-token included)', async () => {
+    const { store, orchestrator } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator);
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: '2026-08-27T00:00:00.000Z',
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const ctx = {
+      store,
+      orchestrator,
+      tokens: { tokenFor: async () => 't' },
+      checkoutTokens: { tokenFor: async () => 't' },
+      bearerToken: token,
+    };
+    const completed = await call(ctx, 'POST', `/runs/${runId}/complete`, {
+      body: {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 1 },
+      },
+    });
+    expect(completed.status).toBe(200);
+
+    const brief = await call(ctx, 'GET', `/runs/${runId}/brief`);
+    expect(brief.status).toBe(401);
+    const checkoutToken = await call(
+      ctx,
+      'GET',
+      `/runs/${runId}/checkout-token`,
+    );
+    expect(checkoutToken.status).toBe(401);
+    const heartbeat = await call(ctx, 'POST', `/runs/${runId}/heartbeat`);
+    expect(heartbeat.status).toBe(401);
+  });
 });
 ```
 
-- [ ] **Step 2: Run to verify pass/fail as appropriate** — `./tools/nx test @agent-lcars/console -- runs-router` → these exercise Task 7's implementation directly; if the "double claim" or "expired lease" case fails, fix `runs-router.ts` (most likely the two-call `claimQueuedRun` rough edge Task 7 flagged) before proceeding, not by weakening the test.
+- [ ] **Step 2: Run to verify pass/fail as appropriate** — `./tools/nx test @agent-lcars/console -- runs-router` → these exercise Task 7's implementation directly; fix `runs-router.ts` if any case fails, not by weakening the test.
 
 - [ ] **Step 3: Run full suite** — `./tools/nx test @agent-lcars/console -- runs-router` → PASS; typecheck; prettier.
 
@@ -1816,6 +1990,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$here/../../.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -1852,10 +2027,29 @@ esac
 FAKE
 chmod +x "$tmp/bin/curl"
 
-# --- fake gh: prepare.sh's assert-consumer-boundaries.sh and
-# verify-deliverable.sh both shell out to gh; a bot-authored PR carrying
-# the attempt-claim marker is what verify-deliverable.sh's own PR-listing
-# lookup must find.
+# --- fake git: direct-runner.sh's `git clone`/`git config --local` calls
+# must never touch the network or a real GitHub credential ("no real git
+# in unit tests" -- house rule). `clone`'s last argument is the target
+# directory; creating it (with a `.git` marker so the "already cloned"
+# guard is exercised too) is all the rest of the script needs from it.
+cat > "$tmp/bin/git" <<'FAKE'
+#!/usr/bin/env bash
+case "$1" in
+  clone)
+    target="${@: -1}"
+    mkdir -p "$target/.git"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+FAKE
+chmod +x "$tmp/bin/git"
+
+# --- fake gh: verify-deliverable.sh's PR-marker lookup and
+# direct-runner.sh's own outcome-derivation both shell out to gh; a
+# bot-authored PR carrying the attempt-claim marker is what both need to
+# find.
 cat > "$tmp/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 if [[ "$*" == *"pulls?state=all"* ]]; then
@@ -1868,7 +2062,9 @@ chmod +x "$tmp/bin/gh"
 
 # --- fake claude: a headless run that "opens" the marked PR (nothing to
 # actually push in this fixture -- verify-deliverable.sh's fake gh above
-# is what proves the marker, not a real git state).
+# is what proves the marker, not a real git state). Ignores every flag,
+# including the real --dangerously-skip-permissions/--allowedTools/
+# --disallowedTools direct-runner.sh passes.
 cat > "$tmp/bin/claude" <<'FAKE'
 #!/usr/bin/env bash
 exit 0
@@ -1882,6 +2078,17 @@ export LCARS_CONSOLE_URL="https://lcars.test"
 export RUNNER_TEMP="$tmp/runner-temp"
 export HOME="$tmp/home"
 mkdir -p "$RUNNER_TEMP" "$HOME"
+
+# Every baked-tool path is env-overridable (see direct-runner.sh); point
+# them at this repo's own checked-in scripts so this test exercises the
+# REAL prepare.sh/verify-deliverable.sh/sidecar-lifecycle.sh, not a hedge
+# that quietly no-ops when the baked image path is absent. `TARGET_REPO`
+# in the fake brief above is `octo/example`, not `jlapenna/agent-lcars`,
+# so prepare.sh's own `assert-consumer-boundaries.sh` call takes its
+# "any other repository" branch and returns immediately.
+export PREPARE_DISPATCH_DIR="$repo_root/.github/actions/prepare-agent-dispatch"
+export VERIFY_DELIVERABLE="$repo_root/.github/actions/verify-deliverable/verify-deliverable.sh"
+export SIDECAR_LIFECYCLE="$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh"
 
 bash "$here/direct-runner.sh"
 
@@ -1923,7 +2130,9 @@ fi
 # .github/workflows/agent-lane.yml against the run-token-authenticated
 # /api/work/v1/runs/* routes instead of workflow_dispatch inputs and the
 # GitHub-OIDC completion route. codex/opencode are not covered -- see the
-# design spec's "Direct runner mode" section.
+# design spec's "Direct runner mode" section. Exact claude-code-action /
+# Agent SDK parity (its internal max_turns enforcement, MCP wiring) is out
+# of scope for this sub-project -- ruling, recorded in the design spec.
 set -euo pipefail
 
 : "${LCARS_RUN_ID:?LCARS_RUN_ID is required}"
@@ -1931,6 +2140,15 @@ set -euo pipefail
 CONSOLE_URL="${LCARS_CONSOLE_URL:-https://lcars.jlapenna.net}"
 RUNS_API="$CONSOLE_URL/api/work/v1/runs/$LCARS_RUN_ID"
 AUTH_HEADER="Authorization: Bearer $LCARS_RUN_TOKEN"
+
+# Every baked-tool path is env-overridable, defaulting to where the
+# Dockerfile bakes it in the real image -- so direct-runner.test.sh can
+# point these at this repo's own checked-in scripts and exercise them for
+# real, instead of only faking curl/gh/claude around a script that never
+# actually ran them.
+PREPARE_DISPATCH_DIR="${PREPARE_DISPATCH_DIR:-/usr/local/lib/agent-lcars/prepare-agent-dispatch}"
+VERIFY_DELIVERABLE="${VERIFY_DELIVERABLE:-/usr/local/lib/agent-lcars/verify-deliverable.sh}"
+SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifecycle.sh}"
 
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp/agent-lcars-direct}"
 mkdir -p "$RUNNER_TEMP"
@@ -1945,6 +2163,13 @@ export GITHUB_REPOSITORY="$TARGET_REPO"
 
 checkout="$(curl -sf -H "$AUTH_HEADER" "$RUNS_API/checkout-token")"
 CHECKOUT_TOKEN="$(jq -r '.token' <<<"$checkout")"
+# Ruling (design spec, "Direct runner mode"): direct mode uses this ONE
+# agent-lcars[bot] installation token, minted by checkout-token, for BOTH
+# checkout and the agent's own push -- the codex/opencode lane's pattern,
+# not claude's. The claude lane's own claude[bot]-push boundary (#645)
+# exists because the claude-code-action vends its own separate push
+# credential internally; direct mode never runs that Action, so there is
+# no second credential to vend. Accepted deliberately, not an oversight.
 export GH_TOKEN="$CHECKOUT_TOKEN"
 
 workspace="$RUNNER_TEMP/checkout"
@@ -1959,9 +2184,7 @@ cd "$workspace"
 git config --local "http.https://github.com/.extraheader" \
   "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$CHECKOUT_TOKEN" | base64 -w0)"
 
-export GITHUB_ACTION_PATH="$RUNNER_TEMP/prepare-agent-dispatch"
-mkdir -p "$GITHUB_ACTION_PATH"
-cp -r /usr/local/lib/agent-lcars/prepare-agent-dispatch/. "$GITHUB_ACTION_PATH/" 2>/dev/null || true
+export GITHUB_ACTION_PATH="$PREPARE_DISPATCH_DIR"
 export GITHUB_WORKSPACE="$workspace"
 export GITHUB_OUTPUT="$RUNNER_TEMP/github-output"
 export GITHUB_ENV="$RUNNER_TEMP/github-env"
@@ -2007,23 +2230,37 @@ PROMPT
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
-  /usr/local/lib/agent-lcars/sidecar-lifecycle.sh start
+  "$SIDECAR_LIFECYCLE" start
 
 set +e
-claude --print "$AGENT_PROMPT"
+# --dangerously-skip-permissions: this container is dedicated to one
+# claimed run, the same trust boundary the claude-code-action's own
+# headless invocation already relies on inside a GitHub Actions runner
+# (see agent-lane.yml: "the runner is dedicated to this agent workload").
+# --allowedTools/--disallowedTools are copied verbatim from agent-lane.yml's
+# "Run Claude Code" step. VERIFY AT IMPLEMENTATION TIME against
+# `claude --help` -- both flags were confirmed present (`--dangerously-
+# skip-permissions`, `--allowedTools`, `--disallowedTools`) as of this
+# design pass (`claude --help` on the local install), but this repo has no
+# automated check pinning the installed `claude` CLI's flag surface.
+claude \
+  --dangerously-skip-permissions \
+  --allowedTools "Bash,Edit,Write,MultiEdit" \
+  --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
+  --print "$AGENT_PROMPT"
 CLAUDE_EXIT=$?
 set -e
 
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
-  /usr/local/lib/agent-lcars/sidecar-lifecycle.sh finalize
+  "$SIDECAR_LIFECYCLE" finalize
 
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
 if [ "$CLAUDE_EXIT" -eq 0 ] &&
   AGENT=Claude REPO="$TARGET_REPO" NUM='' MODE=implement ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
-  bash /usr/local/lib/agent-lcars/verify-deliverable.sh; then
+  bash "$VERIFY_DELIVERABLE"; then
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
   pr_number="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
     --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number" | head -1)"
@@ -2039,14 +2276,20 @@ curl -sf -X POST -H "$AUTH_HEADER" -H 'content-type: application/json' \
   "$RUNS_API/complete"
 ```
 
-`Dockerfile` — beside the existing `lcars.sh`/`sidecar-lifecycle.sh` COPY block:
+`Dockerfile` — the build context here is narrow (`runner-image/` itself); `.github/` is NOT in it. The existing `telemetry-watcher-build` stage already solves exactly this problem for `sidecar.cjs`/`job-daemon.sh`/`sidecar-lifecycle.sh` (a fresh `git fetch --depth 1 origin main` into `/repo` inside that stage, then `COPY --from=telemetry-watcher-build /repo/<path>`; see the Dockerfile's own comment on that `RUN git init ...` block). `prepare-agent-dispatch/` and `verify-deliverable.sh` are baked the same way, beside that existing `COPY --from=telemetry-watcher-build --chown=runner:runner /repo/apps/telemetry-watcher/bin/sidecar-lifecycle.sh ...` block (NOT via `/tmp/fleet-repo-github/.github` a few lines above it -- that copy is `rm -rf`'d right after populating the action-archive cache, so nothing downstream can depend on it surviving):
 
 ```dockerfile
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/.github/actions/prepare-agent-dispatch \
+    /usr/local/lib/agent-lcars/prepare-agent-dispatch
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/.github/actions/verify-deliverable/verify-deliverable.sh \
+    /usr/local/lib/agent-lcars/verify-deliverable.sh
+RUN chmod +x /usr/local/lib/agent-lcars/prepare-agent-dispatch/*.sh \
+    /usr/local/lib/agent-lcars/verify-deliverable.sh
 COPY direct-runner.sh /usr/local/lib/agent-lcars/direct-runner.sh
 RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh
 ```
-
-(Placed after the block that already bakes `prepare-agent-dispatch`'s scripts into the image, if one exists — if `prepare.sh`/`assert-consumer-boundaries.sh`/`install-skills.sh` are not already baked in today, add a `COPY .github/actions/prepare-agent-dispatch /usr/local/lib/agent-lcars/prepare-agent-dispatch` line too; check the Dockerfile for an existing copy of that directory before assuming one is needed.)
 
 `.github/workflows/ci.yml` — add, immediately after the existing `externals-health.test.sh` step (the "unwired-test" lesson: nothing runs a `*.test.sh` file that is not an explicit step here):
 
@@ -2365,12 +2608,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Placeholder scan, named honestly rather than hidden:**
 
-1. **T7's `claim` handler** double-calls `store.claimQueuedRun` (once to win the claim with a throwaway `tokenHash`, once more to overwrite it with the real one) because the token cannot be minted before the claim is known to have won, and Task 2's `claimQueuedRun` signature — designed before Task 6's token existed — has no "claim, then supply the hash once you have it" shape. Flagged inline in T7 with the concrete fix (a callback-shaped `tokenHash` parameter); T8's "double claim" test is the forcing function that catches it if left unfixed.
-2. **T11's `launchDirectRunner` body** (the actual `docker run` call) is deliberately not written out — reproducing `scaler.go`'s `startRunner` Docker-API plumbing here would be copy-paste, not design, and the Docker SDK's exact `ContainerCreate` call shape used elsewhere was not re-read line-by-line for this pass. Its signature, behavior contract, and test obligation are specified; T12 Step 1 makes finishing it an explicit precondition of landing, not a silent gap.
-3. **T10's `claude --print "$AGENT_PROMPT"` invocation** is a best-effort guess at the CLI's non-interactive flags, not verified against `anthropics/claude-code-action`'s actual internal invocation (`max_turns`, `allowed_bots`, `additional_permissions` have no stated raw-CLI equivalent here). Stated explicitly in the spec section and in T10's own step.
-4. **T10's prompt template** is a hand-copy of `agent-lane.yml`'s inline "Resolve the canonical dispatch prompt" step, because that step is workflow YAML, not an extractable script. A drift risk, called out in both the spec and the script's own comment, not resolved by this plan (extracting it into a shared script both the workflow and `direct-runner.sh` could `source` is real follow-up work, out of scope here).
-5. **T7's two-handler-in-sequence route wiring** (`runsHandler.handle` then, if unmatched, `handler.handle`, both against the same `Request`) assumes oRPC 2's `OpenAPIHandler.handle` does not consume the request body destructively when it does not match — not independently verified against the installed `@orpc/openapi` version's source. Flagged inline; the fallback (`request.clone()`) is named as the fix if this assumption is wrong.
+1. **T11's `launchDirectRunner` body** (the actual `docker run` call) is deliberately not written out — reproducing `scaler.go`'s `startRunner` Docker-API plumbing here would be copy-paste, not design, and the Docker SDK's exact `ContainerCreate` call shape used elsewhere was not re-read line-by-line for this pass. Its signature, behavior contract, and test obligation are specified; T12 Step 1 makes finishing it an explicit precondition of landing, not a silent gap.
+2. **T10's prompt template** is a hand-copy of `agent-lane.yml`'s inline "Resolve the canonical dispatch prompt" step, because that step is workflow YAML, not an extractable script. A drift risk, called out in both the spec and the script's own comment, not resolved by this plan (extracting it into a shared script both the workflow and `direct-runner.sh` could `source` is real follow-up work, out of scope here).
+3. **T10's `claude` flag names** (`--dangerously-skip-permissions`, `--allowedTools`, `--disallowedTools`) were confirmed present against a local `claude --help` during this review pass, but this repo has no automated check pinning the installed CLI's flag surface — a future `claude` release renaming or removing one of them would silently break `direct-runner.sh` with no test catching it before a real dispatch does. Left as a known gap; T10's own step names it as something to re-verify at implementation time.
 
-**Where the code forced a different shape than the prompt's decisions assumed:** the prompt's decision #3 states the autoscaler "already runs as a GCP service account" and can mint metadata-server ID tokens "if it runs on Cloud Run/GCE." It does not run on Cloud Run/GCE — `apps/runner-autoscaler` is a homelab Go daemon over SSH/Docker, with its only GCP identity being a downloaded `telemetry_writer` service-account key file. The closest option, and what this plan implements, is minting the claim ID token directly from that same key file (`idtoken.WithCredentialsFile`), which needs no metadata server and no new IAM grant — functionally equivalent to the decision's intent ("no IAM change"), reached by a different mechanism than the decision described. This is called out in its own spec subsection ("Claim authentication: what the autoscaler actually is") rather than silently substituted.
+**Resolved in the pre-execution review pass** (previously listed here as open gaps; fixed, not just re-described):
+
+- **Token liveness enforcement.** `requireRunToken` (T7) now checks `isLive(run.state)` explicitly, before the lease-expiry check — a completed run's leaked token is refused even though nothing about settlement itself clears `queue.tokenHash`. T8 gained a dedicated test (complete, then `brief`/`heartbeat`/`checkout-token` with the same token → 401). The spec's "Token model" section is corrected to describe this as the actual mechanism, not an already-guaranteed side effect of `report`/`cancel`.
+- **`complete`'s missing task fetch.** Every native run's `anchorTarget` needs the task's `spec.target.repo`, which `complete` (T7) did not fetch — every native completion would have thrown `UnresolvableAnchor`. Fixed to fetch the task first, exactly as `checkoutToken` already did.
+- **Invalid router construction.** `os.claim.use(mw)` is not a valid way to scope middleware to one procedure in `@orpc/server` 2.0.0-beta.31 (`ProcedureImplementer.use` returns an implementer for that same procedure, not a chainable builder). T7 now builds `const executor = os.use(mw)` at the router level and applies it to exactly one procedure (`executor.claim.handler(...)`), leaving the other four as plain `os.<name>.handler(...)`.
+- **`claim`'s double `claimQueuedRun` call.** Replaced with minting the token first (a local `crypto.randomBytes` call, not a network round trip) and passing its hash into the single `claimQueuedRun` call — no store signature change, no race window between "claim" and "attach the real hash". The callback-shaped store signature this section previously proposed as the fix is no longer needed and is not part of this plan.
+- **`complete`'s local outcome mapping.** Replaced with the newly-exported `toRunResult` from `orchestrator-routes.ts` (T7), so the run-token completion path and the OIDC completion path share one outcome vocabulary (`OK_OUTCOMES`, the pull-request ref shape) instead of two that could drift.
+- **The body-consumption assumption behind T7's two-handler-in-sequence route wiring is verified, not assumed.** `@orpc/openapi`'s `OpenAPIHandler` extends `@orpc/server`'s `FetchHandler`, which wraps the incoming `Request` via `@standardserver/fetch`'s `toStandardLazyRequest` — confirmed by reading the installed packages directly (`node_modules/@orpc/server/dist/adapters/fetch/index.mjs`, `node_modules/@standardserver/fetch/dist/index.mjs`): `headers` is a lazy getter and `resolveBody` is an uninvoked function on the object `FetchHandler.handle` builds, read only once a specific procedure has actually matched. A `.handle()` call that returns `{ matched: false }` never touches the body, so trying `runsHandler.handle(request, ...)` before `handler.handle(request, ...)` is safe with no `request.clone()`.
+- **`idtoken.WithCredentialsFile` (T11) is confirmed to exist**, not just asserted: `google.golang.org/api@v0.287.1`'s `idtoken` package (present in the local Go module cache, `~/.go/pkg/mod/google.golang.org/api@v0.287.1/idtoken/idtoken.go`) exports both `NewTokenSource` and `WithCredentialsFile` with exactly the signatures T11's code uses.
+- **T6's `runsContract` was never wired into the generated OpenAPI document or `contract.spec.ts`'s assertions** — `openapi.ts` only ever generated `itemsContract`. Fixed: `generateWorkOpenApi` now generates `{ items: itemsContract, runs: runsContract }` (the exact shape `origin/feat/native-work-items-5-cron`'s `openapi.ts` already proved works for `{ items, schedules }` — the object key is a router-composition label, invisible in the generated paths, which still come from each procedure's own `openapi({ path })` meta), `docs/api/work-v1.openapi.json` is regenerated as part of T6, and `contract.spec.ts` gained path/status assertions for all five `/runs` routes.
+- **Two contract `summary` strings used a single-quoted TS string containing an unescaped apostrophe** (`'Fetch a claimed run's dispatch brief'`, `'Report a claimed run's outcome'`) — invalid syntax. Both switched to double quotes, matching the two `summary` strings in the same object that were already written that way.
+
+**Where the code forced a different shape than the prompt's decisions assumed:** the prompt's decision #3 states the autoscaler "already runs as a GCP service account" and can mint metadata-server ID tokens "if it runs on Cloud Run/GCE." It does not run on Cloud Run/GCE — `apps/runner-autoscaler` is a homelab Go daemon over SSH/Docker, with its only GCP identity being a downloaded `telemetry_writer` service-account key file. The closest option, and what this plan implements, is minting the claim ID token directly from that same key file (`idtoken.WithCredentialsFile`, confirmed present — see above), which needs no metadata server and no new IAM grant — functionally equivalent to the decision's intent ("no IAM change"), reached by a different mechanism than the decision described. This is called out in its own spec subsection ("Claim authentication: what the autoscaler actually is") rather than silently substituted.
+
+A second, smaller instance of the same pattern: decision #5's directive to bake `.github/actions/prepare-agent-dispatch/` and `.github/actions/verify-deliverable/verify-deliverable.sh` into the runner image (T10) cannot be a plain `COPY` from the Docker build context — that context is `runner-image/` alone and does not include `.github/`. The actual mechanism (verified against the real Dockerfile) is `COPY --from=telemetry-watcher-build /repo/<path> ...`, reusing the existing stage that already does a fresh `git fetch --depth 1 origin main` for exactly this reason (`sidecar.cjs`/`job-daemon.sh`/`sidecar-lifecycle.sh` are baked the identical way). T10 specifies this correctly now; an earlier draft of this plan left the sourcing mechanism as a vague "check the Dockerfile" note, which this pass resolved by reading it.
 
 **Type consistency:** `Run.executor`/`Run.queue` (T1) are read the same way by T5 (drain), T7 (`runs-router.ts`), and T9 (`derive.ts`) — same field names, same optionality. `runsContract`'s `runId` path parameter (T6) matches `requireRunToken`'s `runId: string` parameter (T7) and `direct-runner.sh`'s `$LCARS_RUN_ID` (T10) and `directRunnerLaunch.runID` (T11) — one identifier, four representations, no renaming across the boundary. `mintRunToken`/`hashRunToken`/`runTokenMatches` (T6) are the only token primitives; T7 and T8 both import them rather than re-implementing hashing.

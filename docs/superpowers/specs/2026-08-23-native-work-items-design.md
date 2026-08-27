@@ -981,10 +981,17 @@ compares against it with `crypto.timingSafeEqual`. No signing secret, no
 JWT, no new Secret Manager entry — a stolen `tokenHash` is useless without
 the token, and a stolen token is scoped to exactly one run and dies with
 its lease. Invalidation on completion/cancel is **emergent**, not a
-separate mechanism: `orchestrator.report`/`orchestrator.cancel` settle the
-run out of `isLive`, and every run-token route's own liveness check
-already refuses a non-live run (`run-not-live`) — there is nothing extra
-to clear.
+separate mechanism, but it is not automatic either: `orchestrator.report`/
+`orchestrator.cancel` settle the run out of `isLive`, and it is
+`requireRunToken` — the one gate every run-token route (`brief`,
+`heartbeat`, `complete`, `checkout-token`) calls before doing anything
+else — that turns that fact into a refusal, by checking `isLive(run.
+state)` explicitly alongside the hash match and the lease-expiry check.
+Skipping that check would leave a completed run's leaked token usable
+against `brief`/`checkout-token` for as long as its (no-longer-advancing)
+`leaseExpiresAt` still reads as future — a real gap the first draft of
+this design left open and the implementation plan's Task 7/Task 8 close
+with a dedicated test.
 
 ### Claim authentication: what the autoscaler actually is
 
@@ -1092,6 +1099,15 @@ Concretely, `direct-runner.sh`:
    it persisted as the git credential (the same `http.extraheader` shape
    `actions/checkout persist-credentials: true` leaves behind), and
    exports it as `GH_TOKEN` for the deliverable gate's `gh` calls.
+   **Ruling:** this one `agent-lcars[bot]` installation token is used for
+   BOTH checkout AND the agent's own push — the codex/opencode lane's
+   pattern (`agent-lane.yml`: `token: steps.dispatch-bootstrap.outputs.token`
+   for both), not the `claude` lane's, which deliberately checks out with
+   the job's own `github.token` and lets `anthropics/claude-code-action`
+   vend a separate `claude[bot]` push credential internally (#645's
+   boundary). Direct mode never runs that Action, so there is no second
+   credential to vend — a single App-token boundary for checkout and push
+   is the accepted departure from `claude`'s own lane, not an oversight.
 3. `export GITHUB_REPOSITORY="$(jq -r '.spec.target.repo' <<<"$brief")"`
    — the sidecar's `--repo` flag falls back to this env var
    (`runner-config.ts`'s `loadRunnerConfig`), so `sidecar-lifecycle.sh`
@@ -1111,12 +1127,20 @@ Concretely, `direct-runner.sh`:
    delivered into the container the way `Config.FileMounts` already
    delivers host secret files into any runner container, homelab#101 —
    `RUN_ID="$LCARS_RUN_ID"`, `INTENT_ID` from the brief).
-7. Runs `claude` headless (`claude --print ...`) with the resolved
-   prompt. **Flagged guess:** the exact non-interactive flag set that
-   reproduces `anthropics/claude-code-action`'s internal invocation
-   (`max_turns`, `allowed_bots`, `additional_permissions`) was not
-   verified against the CLI's own reference during this design pass; the
-   plan's task for this step names the gap explicitly.
+7. Runs `claude --dangerously-skip-permissions --allowedTools
+"Bash,Edit,Write,MultiEdit" --disallowedTools
+"ScheduleWakeup,SendMessage,Monitor,Task" --print "$AGENT_PROMPT"` —
+   the tool-permission flags copied verbatim from `agent-lane.yml`'s own
+   "Run Claude Code" step; `--dangerously-skip-permissions` because this
+   container, like the GitHub-Actions runner it replaces, is dedicated to
+   exactly one claimed run. **Ruling:** exact parity with `anthropics/
+claude-code-action`'s internal invocation (its own `max_turns`
+   enforcement, `allowed_bots`, `additional_permissions`, MCP wiring) is
+   out of scope for this sub-project — the Action is a GitHub-Actions-only
+   wrapper direct mode cannot run at all, so "parity" has no single target
+   to match; a materially different headless surface (raw CLI flags
+   instead of an Action's own orchestration) is the accepted shape of
+   direct mode, not a gap to close later.
 8. `verify-deliverable.sh` (`GH_TOKEN`=checkout token, `NUM=''`,
    `MODE=implement`, `ATTEMPT_ID`) — unmodified, already anchor-agnostic.
 9. On a pass, re-derives `{outcome: 'pull-request', outcomeReference:
