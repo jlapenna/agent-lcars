@@ -212,6 +212,97 @@ OIDC pin backing `work-schedules-tick.yml` accepts `workflow_dispatch` from
 `main`, which is the manual fallback used above and the one to reach for
 whenever a cron smoke can't wait out GitHub's schedule-activation lag.
 
+## Sub-project 5: ingress unification — issue-side claim/park projections (2026-08-27)
+
+Sub-project 5 landed as [PR #1545](https://github.com/jlapenna/agent-lcars/pull/1545)
+(`cfbb0e77`): every anchor now carries a `work` payload
+(`apps/console/src/lib/work-from-github.ts`), the lane's own claim step
+(`.github/actions/claim-issue`) is skipped whenever a caller passes
+`control-plane-projections: true`, and the console's outbox drain projects
+the 👀 reaction + fleet assignee on dispatch and the park label + comment on
+a no-deliverable completion instead
+(`apps/console/src/lib/orchestrator-dispatch.ts`'s `claimGithubAnchor` and
+`handleReportOutcome`), shipped by
+[deploy-console run 33091025926](https://github.com/jlapenna/agent-lcars/actions/runs/33091025926).
+Unlike sub-projects 1-3, this smoke drives the **real GitHub-issue trigger**
+(the `agent:claude` label webhook), not `work-create.yml`, because the thing
+under test is what happens to an ordinary issue-anchored dispatch now that
+the agent lane no longer claims it itself.
+
+| Step             | Expected                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Label the issue  | `issues.labeled` webhook → console `request()` → `drain()` dispatches `claude.yml` with a derived `work` input, same request                                             |
+| Claim projection | 👀 reaction and fleet assignee appear on the issue without the lane's own claim step running                                                                             |
+| Lane             | "Claim the issue as the agent fleet" step present but `skipped`                                                                                                          |
+| Work payload     | the run's `work` input `spec.title`/`spec.description` trace verbatim to the issue's title/body                                                                          |
+| Park projection  | on a no-deliverable finish, the console posts the failure/park comment (with the "No auto-retry will follow" clause) and applies `status:needs-human`, not the finalizer |
+
+Commands used:
+
+```bash
+gh issue create --repo jlapenna/agent-lcars \
+  --title "[infra proof] #1502 sub-project 5: claim/park projection smoke (DO NOT IMPLEMENT)" \
+  --body-file proof-issue-body.md            # -> #1547
+gh issue edit 1547 --repo jlapenna/agent-lcars --add-assignee agent-lcars-bot
+gh issue edit 1547 --repo jlapenna/agent-lcars --add-label agent:claude   # the real trigger
+gh run list --repo jlapenna/agent-lcars --workflow claude.yml --limit 3
+gh api repos/jlapenna/agent-lcars/issues/1547/reactions
+gh api repos/jlapenna/agent-lcars/issues/1547/timeline
+```
+
+### Source evidence
+
+| What                      | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy                    | [deploy-console run 33091025926](https://github.com/jlapenna/agent-lcars/actions/runs/33091025926) shipped PR #1545 (`cfbb0e77`), console revision deployed 16:08:03Z                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Issue                     | [#1547](https://github.com/jlapenna/agent-lcars/issues/1547) — pre-assigned `agent-lcars-bot` at issue-claim time (16:14:05Z, before the label trigger — see note below), no reactions yet                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Trigger                   | `gh issue edit 1547 --add-label agent:claude` at 16:14:14-16Z (timeline `labeled` event 16:14:15Z, actor `jlapenna`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **1. Claim projection**   | 👀 reaction by `agent-lcars[bot]` at **16:14:21Z** — 6-7s after the label — via `gh api .../issues/1547/reactions`. **PASS** (reaction only — see note; the assignee half was unmeasured on this issue and was verified separately by the #1550 run below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Dispatch                  | [claude.yml run 33092172953](https://github.com/jlapenna/agent-lcars/actions/runs/33092172953) created 16:14:20Z, titled `#1547: Claude issue agent [dispatch:g1:jlapenna/agent-lcars#1547/r1]`; Cloud Run log: `orchestrator webhook delivery processed {status:200, body:{runId:'jlapenna/agent-lcars#1547/r1', dispatched:true}}` at 16:14:22.660Z                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **2. Lane claim skipped** | job 98587617433, step **"Claim the issue as the agent fleet"** → `status: completed`, `conclusion: skipped` (`gh api .../actions/jobs/98587617433`). **PASS**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **3. Work payload**       | run logs: `work: {"spec":{"title":"[infra proof] #1502 sub-project 5: claim/park projection smoke (DO NOT IMPLEMENT)","description":"## Infrastructure proof — not a work request\n\n...","pipeline":"claude","target":{"repo":"jlapenna/agent-lcars"}}}` — title/description byte-for-byte the issue's own; no truncation marker (well under the 16,384-char/32,768-byte budget). **PASS**                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Agent run                 | "Run Claude Code" succeeded; agent ended `PARK ...` per the issue's own instructions; "Run post-agent gates" failed (no deliverable, by design, matching sub-project 2's park shape); workflow conclusion `failure`; `fallback-finalize / finalize` job: "Derive trusted completion evidence" → `outcome-kind=outcome-gate-failure`, "Return completion observation to the broker" succeeded, "Report and park bootstrap-independent failure" **skipped** (control-plane projects it instead)                                                                                                                                                                                                                                                                                                                                     |
+| Run doc after             | Firestore `orchestrator-runs/jlapenna%2Fagent-lcars%231547%2Fr1`: `state: finished`, `result: {ok: false, summary: "outcome-gate-failure"}`, `updatedAt: 16:16:11.289Z`; Cloud Run log: `orchestrator completion processed {status:200, body:{runId, state:'finished'}}` at 16:16:12.560Z                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **4. Park projection**    | **FAIL.** No comment, no `status:needs-human` label, ever appeared on #1547 — confirmed by `gh api .../issues/1547` and `.../timeline` repeatedly through 16:23Z, and again after a manual `dispatch-reconcile.yml` run ([33092838874](https://github.com/jlapenna/agent-lcars/actions/runs/33092838874)) whose own `/api/control-plane/reconcile` call logged `{reported: []}`. Root-caused via a direct Firestore read: the run's `report-outcome` outbox entry (`orchestrator-outbox/outcome%2Fjlapenna%2Fagent-lcars%231547%2Fr1`) sat `state: pending, attempts: 0` — never claimed, alongside **162 other pending `report-outcome` entries fleet-wide**, oldest from 2026-08-21T04:08:14Z. Filed as [#1548](https://github.com/jlapenna/agent-lcars/issues/1548) with full evidence and a head-of-line-blocking hypothesis. |
+| **5. Cleanup**            | [#1547 closed](https://github.com/jlapenna/agent-lcars/issues/1547#issuecomment-5442090551) with a summary comment recording the PASS/FAIL split and linking #1548; no PR was produced (by design — the issue asked the agent to park, not implement).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+
+Note on the assignee measurement: this run's throwaway issue was
+pre-assigned `agent-lcars-bot` at issue-claim time, per this repo's own
+claim-before-work convention — before the label trigger fired, not after.
+That makes `claimGithubAnchor`'s assignee POST idempotent on this issue
+(GitHub does not emit a second `assigned` timeline event for a no-op
+reassignment), so no clean before/after timing exists for the assignee half
+of item 1 the way it does for the 👀 reaction. `claimGithubAnchor` posts the
+reaction and the assignment as independent best-effort calls, so the
+reaction succeeding here says nothing about whether the assignment call
+would have; item 1 above proves only the reaction.
+
+A second, separate proof run closed that gap: [#1550](https://github.com/jlapenna/agent-lcars/issues/1550),
+created deliberately unassigned (`assignees: []` confirmed at
+2026-08-27T16:31:42Z). The `agent:claude` label — the dispatch trigger —
+was applied at **16:31:51Z**; the 👀 reaction by `agent-lcars[bot]` landed
+at **16:31:56Z** (+5s) and `agent-lcars-bot` was added as assignee at
+**16:31:57Z** (+6s). The dispatched run,
+[33093692127](https://github.com/jlapenna/agent-lcars/actions/runs/33093692127),
+has its lane step "Claim the issue as the agent fleet" at
+`conclusion: skipped`, so the assignment provably came from the console's
+projection and not from the lane's own claim step (`AGENT_FLEET_LOGIN`
+resolves to `agent-lcars-bot`). Together, #1547 proves the reaction half
+and #1550 proves the assignee half; a future smoke that wants both from a
+single run should leave the throwaway issue unassigned until after the
+label triggers the dispatch.
+
+Not directly observed from outside the runner, same as sub-project 1: the
+brief's `anchor.html_url`. The run's own `work` log line is direct
+confirmation the brief carried a `work` payload derived from the issue.
+
+Residual/known: the park-projection failure (item 4) is **not** a
+sub-project 5 regression as such — the oldest stuck outbox entry predates
+`cfbb0e77` by six days, and the claim-side projection (item 1-3) works
+correctly. It does mean sub-project 5's park projection has never actually
+delivered in production for any run, including this one, until #1548 is
+fixed. See #1548 for the live incident and root-cause evidence.
+
 ## Sub-project 6: session resume and reaper (2026-08-27)
 
 Sub-project 6 (session resume and persistence) adds a `resume-session`
