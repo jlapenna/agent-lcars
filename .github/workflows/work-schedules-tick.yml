@@ -1,0 +1,32 @@
+name: Work Schedules Tick
+
+# Mints a native work item for every enabled cron schedule's latest due
+# slot. See
+# docs/superpowers/specs/2026-08-23-native-work-items-design.md,
+# "Sub-project 3: cron ingress".
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: work-schedules-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - name: Invoke the schedule tick with GitHub Actions OIDC
+        uses: jlapenna/agent-lcars/.github/actions/request-control-plane@main # latest
+        with:
+          endpoint: https://lcars.jlapenna.net/api/work/v1/schedules/tick
+          audience: agent-lcars-work-schedules
+          payload: '{}'
+          timeout-seconds: '60'
