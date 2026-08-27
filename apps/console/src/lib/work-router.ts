@@ -102,10 +102,27 @@ export const workRouter = os.router({
   }),
 
   list: reader.list.handler(async ({ input, context }) => {
-    const tasks = await context.runtime.store.listNativeTasks(input.limit);
+    const tasks = await context.runtime.store.listNativeTasks(
+      input.limit,
+      input.cursor,
+    );
     const native = tasks.flatMap(({ task }) =>
       isWorkAnchor(task.task) ? [{ workId: task.task.workId, task }] : [],
     );
+    // Cursor for the *next* raw store page, not the filtered one below:
+    // walking pages by the store's own newest-first `workId` order is what
+    // guarantees every native task is eventually visited exactly once,
+    // regardless of how many of them survive the state/principal/repo
+    // filters on any given page (issue #1546 -- the bug this replaces was
+    // exactly a filter applied AFTER a single unpaginated, limit-bounded
+    // read, which silently dropped anything past the newest `limit`
+    // items). A full-length page (`=== input.limit`) may or may not have
+    // more behind it; the boundary case where it doesn't costs one extra
+    // page that comes back empty with no `nextCursor`, not an off-by-one.
+    const nextCursor =
+      tasks.length === input.limit
+        ? native[native.length - 1]?.workId
+        : undefined;
 
     // Two passes on purpose. Filtering needs derived state, which needs
     // each item's runs -- but the session join reads a *different*
@@ -158,6 +175,7 @@ export const workRouter = os.router({
           ),
         })),
       ),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
     };
   }),
 

@@ -66,9 +66,16 @@ export interface OrchestratorStore {
    *
    * `limit` bounds the read at the store, not just what the caller renders
    * -- default 200, so an unbounded caller still can't force a full table
-   * scan.
+   * scan. `before`, when given, is a `workId` from a previous page's last
+   * entry: the read starts strictly after it in the same newest-first
+   * order, so repeatedly calling with the previous page's last `workId`
+   * walks every native task exactly once, oldest page last -- the cursor
+   * `work-router.ts`'s `list` exposes as `nextCursor` (issue #1546: the
+   * single `limit`-bounded read this replaced silently dropped any native
+   * task past the newest `limit`, however that page's items were later
+   * filtered).
    */
-  listNativeTasks(limit?: number): Promise<VersionedTask[]>;
+  listNativeTasks(limit?: number, before?: string): Promise<VersionedTask[]>;
 
   /** Every live (`pending`/`running`) run, lease or no lease. The feed for
    *  settling runs whose *executor* is already terminal -- a fact only

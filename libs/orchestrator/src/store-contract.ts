@@ -497,6 +497,50 @@ export function runOrchestratorStoreContract(
           { workId: workB },
         ]);
       });
+
+      it('pages past `limit` via `before`, reaching an item the first page cannot see', async () => {
+        // Issue #1546: `work-router.ts`'s `list` used to call this with
+        // only `limit`, so anything past the newest `limit` native tasks
+        // was invisible to every caller no matter how it filtered --
+        // including a caller (sub-project 6's session-pin tick) looking
+        // for a specific still-open item that happened to predate a busy
+        // stretch of newer ones. `before` is the fix: page by the last
+        // `workId` of the previous page until the store itself is
+        // exhausted.
+        const { store, orchestrator } = await fixture();
+        const workA = '01J5Z3K9QX8F0N2B4V6C8D1E3A';
+        const workB = '01J5Z3K9QX8F0N2B4V6C8D1E3B';
+        const workC = '01J5Z3K9QX8F0N2B4V6C8D1E3C';
+        for (const workId of [workA, workB, workC]) {
+          await orchestrator.request({
+            taskId: { workId },
+            requestId: workId,
+            pipeline: 'claude',
+            work: { origin: { principal: 'user:jlapenna' } },
+          });
+        }
+
+        // A `limit`-only read never reaches `workA`: it is the oldest of
+        // three, and a page of 2 is entirely `workC`/`workB`.
+        const firstPage = await store.listNativeTasks(2);
+        expect(firstPage.map((entry) => entry.task.task)).toEqual([
+          { workId: workC },
+          { workId: workB },
+        ]);
+
+        // Paging with `before` set to the first page's last `workId`
+        // reaches the item a single bounded read drops.
+        const secondPage = await store.listNativeTasks(2, workB);
+        expect(secondPage.map((entry) => entry.task.task)).toEqual([
+          { workId: workA },
+        ]);
+
+        // The store is now exhausted: one more page, one more cursor,
+        // comes back empty -- the signal a paginating caller uses to stop
+        // rather than loop forever.
+        const thirdPage = await store.listNativeTasks(2, workA);
+        expect(thirdPage).toEqual([]);
+      });
     });
 
     describe('the queue claim state', () => {

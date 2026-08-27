@@ -557,4 +557,49 @@ describe('items routes', () => {
     const capped = await call(ctx, 'GET', '/items?limit=1');
     expect(capped.json.items).toHaveLength(1);
   });
+
+  // Issue #1546: `list` reads a `limit`-bounded page of native tasks
+  // (newest-first by workId) and filters by state AFTERWARD, so an item
+  // that is still running but was created before a run of newer,
+  // already-settled ones is entirely absent from a page sized smaller
+  // than the fleet's native-task history -- no matter what `state` asks
+  // for. `nextCursor` is the fix: a caller who keeps paging with it
+  // reaches every native task, not just the newest `limit` of them.
+  it('reaches a running item beyond the first page only via nextCursor', async () => {
+    const ctx = context();
+    const OLDEST = '01J5Z3K9QX8F0N2B4V6C8D1E3A';
+    const NEWER1 = '01J5Z3K9QX8F0N2B4V6C8D1E3B';
+    const NEWER2 = '01J5Z3K9QX8F0N2B4V6C8D1E3C';
+
+    // OLDEST is created first and stays running. NEWER1/NEWER2 are
+    // created after it (greater workId = newer in creation order) and
+    // then settled -- so the two newest native tasks are both canceled,
+    // and OLDEST, the only running one, sits on the page behind them.
+    await call(ctx, 'PUT', `/items/${OLDEST}`, { spec });
+    await call(ctx, 'PUT', `/items/${NEWER1}`, { spec });
+    await call(ctx, 'POST', `/items/${NEWER1}/cancel`);
+    await call(ctx, 'PUT', `/items/${NEWER2}`, { spec });
+    await call(ctx, 'POST', `/items/${NEWER2}/cancel`);
+
+    // A page of the 2 newest native tasks (NEWER2, NEWER1) is entirely
+    // canceled, so filtering it by state=running finds nothing on this
+    // page -- even though a running item (OLDEST) exists in the store.
+    const firstPage = await call(ctx, 'GET', '/items?state=running&limit=2');
+    expect(firstPage.json.items).toEqual([]);
+    // The raw page was full (2 native tasks read for a limit of 2), so
+    // more may exist behind it -- a caller must keep paging, not treat
+    // an empty `items` array as "nothing left to find".
+    expect(firstPage.json.nextCursor).toBe(NEWER1);
+
+    const secondPage = await call(
+      ctx,
+      'GET',
+      `/items?state=running&limit=2&cursor=${firstPage.json.nextCursor}`,
+    );
+    expect(secondPage.json.items.map((i: { id: string }) => i.id)).toEqual([
+      OLDEST,
+    ]);
+    // The store is exhausted: no more native tasks behind OLDEST.
+    expect(secondPage.json.nextCursor).toBeUndefined();
+  });
 });
