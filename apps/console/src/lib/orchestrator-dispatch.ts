@@ -11,7 +11,7 @@ import {
 import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
-import { agentFleetLogin } from './deployment';
+import { agentFleetLogin, controlPlaneRepository } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
 // Re-exported so `run-binding.ts` (and its tests) can depend on this
@@ -204,8 +204,19 @@ async function handleDispatchRun(
     // task via `issue`. `spec.parse` failing here (an overlong/malformed
     // stored payload) is the same permanent-failure shape as the native
     // branch above: settle done, do not retry a spec that can never parse.
+    //
+    // Only emit it for the control-plane repo, though: the webhook admits
+    // every repo in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`, but today
+    // only this repo's own `claude/codex/opencode.yml` declare a `work`
+    // `workflow_dispatch` input -- #1544 tracks adding it to the six
+    // consumer repos. Sending an undeclared input 422s the whole
+    // dispatch, and because `drainOutbox` treats any non-204 as a
+    // retryable failure and stops draining on the first one, that single
+    // poisoned entry would block every later outbox entry (dispatches
+    // *and* outcome comments) forever. Drop `work` for a non-control-plane
+    // target until the consumers have caught up.
     let workInput: string | undefined;
-    if (task?.work !== undefined) {
+    if (task?.work !== undefined && target.repo === controlPlaneRepository()) {
       try {
         workInput = JSON.stringify({
           spec: workSpecSchema.parse(task.work['spec']),
@@ -304,14 +315,26 @@ async function claimGithubAnchor(
   }
 
   try {
-    await fetchImpl(`${apiBaseUrl}/repos/${repo}/issues/${issue}/reactions`, {
-      method: 'POST',
-      headers: githubHeaders(token),
-      body: JSON.stringify({ content: 'eyes' }),
-    });
+    const response = await fetchImpl(
+      `${apiBaseUrl}/repos/${repo}/issues/${issue}/reactions`,
+      {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ content: 'eyes' }),
+      },
+    );
+    if (!response.ok) {
+      console.error(
+        'agent-lcars: claim projection (reaction) failed for %s#%s: %s %s',
+        repo,
+        issue,
+        response.status,
+        await response.text(),
+      );
+    }
   } catch (error) {
     console.error(
-      'agent-lcars: claim projection failed for %s#%s:',
+      'agent-lcars: claim projection (reaction) failed for %s#%s:',
       repo,
       issue,
       error,
@@ -319,14 +342,26 @@ async function claimGithubAnchor(
   }
 
   try {
-    await fetchImpl(`${apiBaseUrl}/repos/${repo}/issues/${issue}/assignees`, {
-      method: 'POST',
-      headers: githubHeaders(token),
-      body: JSON.stringify({ assignees: [agentFleetLogin()] }),
-    });
+    const response = await fetchImpl(
+      `${apiBaseUrl}/repos/${repo}/issues/${issue}/assignees`,
+      {
+        method: 'POST',
+        headers: githubHeaders(token),
+        body: JSON.stringify({ assignees: [agentFleetLogin()] }),
+      },
+    );
+    if (!response.ok) {
+      console.error(
+        'agent-lcars: claim projection (assignee) failed for %s#%s: %s %s',
+        repo,
+        issue,
+        response.status,
+        await response.text(),
+      );
+    }
   } catch (error) {
     console.error(
-      'agent-lcars: claim projection failed for %s#%s:',
+      'agent-lcars: claim projection (assignee) failed for %s#%s:',
       repo,
       issue,
       error,

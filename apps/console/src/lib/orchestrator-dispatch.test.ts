@@ -502,10 +502,18 @@ describe('drainOutbox: dispatch-run', () => {
     expect(neverCalled).not.toHaveBeenCalled();
   });
 
-  it('a GitHub-anchored run with a work payload emits both issue and work inputs', async () => {
+  it('a control-plane GitHub-anchored run with a work payload emits both issue and work inputs', async () => {
+    // Only this repo's own worker/shim workflows declare a `work`
+    // workflow_dispatch input today (#1544 tracks adding it to the six
+    // consumer repos) -- so the gate in orchestrator-dispatch.ts only
+    // allows `work` through when the anchor's own repo (not the spec's
+    // `target.repo`, which is independent -- see anchor-target.ts) is the
+    // control plane. `controlPlaneRepository()` falls back to
+    // `jlapenna/agent-lcars` with no env var set (see deployment.test.ts).
     const { store, orchestrator } = fixture();
+    const controlPlaneTask: TaskId = { repo: 'jlapenna/agent-lcars', issue: 7 };
     const requested = await orchestrator.request({
-      taskId: TASK,
+      taskId: controlPlaneTask,
       requestId: 'req-1',
       pipeline: 'claude',
       work: {
@@ -558,6 +566,61 @@ describe('drainOutbox: dispatch-run', () => {
         target: { repo: 'octo/example' },
       },
     });
+    expect(result.dispatched).toEqual([decidedRun(requested).runId]);
+  });
+
+  it('a NON-control-plane GitHub-anchored run with a work payload omits the work input (#1544)', async () => {
+    // The webhook admits every repo in AGENT_LCARS_CONTROL_PLANE_REPOSITORIES,
+    // but only this repo's own worker/shim workflows declare `work` as a
+    // workflow_dispatch input today -- sending it to a consumer repo 422s
+    // and, because `drainOutbox` treats a non-204 response as retryable and
+    // stops draining on the first failure, that one poisoned entry would
+    // block every later outbox entry forever. `TASK` (octo/example) is not
+    // the control-plane repo, so `work` must be dropped, leaving exactly
+    // the pre-existing input set.
+    const { store, orchestrator } = fixture();
+    const requested = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'req-1',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'T',
+          description: 'D',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if (isRefusal(requested)) {
+      throw new Error(`unexpected refusal: ${requested.reason}`);
+    }
+    const { fetchImpl, calls } = fakeFetch(204);
+
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+    });
+
+    expect(calls).toHaveLength(3);
+    const inputs = callBody(calls[0]!).inputs as Record<string, string>;
+    expect(Object.keys(inputs).sort()).toEqual(
+      [
+        'broker_dispatch_token',
+        'broker_generation',
+        'broker_intent_id',
+        'context',
+        'issue',
+        'mode',
+        'reply',
+        'runbook',
+      ].sort(),
+    );
+    expect(inputs.issue).toBe('7');
+    expect(inputs.work).toBeUndefined();
     expect(result.dispatched).toEqual([decidedRun(requested).runId]);
   });
 

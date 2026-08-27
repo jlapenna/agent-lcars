@@ -232,9 +232,17 @@ describe('handleWebhookDelivery', () => {
     expect(runId).toBe(`${REPO}#42/r1`);
     expect(result.body['dispatched']).toBe(true);
 
-    expect(calls).toHaveLength(1);
+    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
+    // claim projection (`claimGithubAnchor` in orchestrator-dispatch.ts).
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.url).toBe(
       `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
+    );
+    expect(calls.some((c) => c.url.endsWith(`/issues/42/reactions`))).toBe(
+      true,
+    );
+    expect(calls.some((c) => c.url.endsWith(`/issues/42/assignees`))).toBe(
+      true,
     );
 
     const run = await store.readRun(runId);
@@ -616,16 +624,19 @@ describe('handleReconcile', () => {
     expect(newRun?.requestId).toBe(`retry:${runId}`);
     expect(newRun?.pipeline).toBe('claude');
 
-    // Three calls: the terminal probe's workflow-runs listing (which found
+    // Five calls: the terminal probe's workflow-runs listing (which found
     // nothing terminal here, so the lease sweep did the settling), then the
-    // retry's dispatch and the lost run's outcome comment.
-    expect(calls).toHaveLength(3);
+    // retry's dispatch, the retry's confirmed-dispatch eyes-reaction/
+    // assignee claim projection, and the lost run's outcome comment.
+    expect(calls).toHaveLength(5);
     expect(calls.map((c) => c.url).sort()).toEqual(
       [
         `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
         `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/runs` +
           `?event=workflow_dispatch&per_page=100`,
         `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
+        `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/reactions`,
+        `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/assignees`,
       ].sort(),
     );
     const commentCall = calls.find((c) => c.url.includes('/comments'));

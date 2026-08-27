@@ -104,6 +104,43 @@ describe('persisted-shape fixtures', () => {
       }),
     ).not.toThrow();
   });
+
+  // Missing fixture (final-review item 3/8): every other fixture above is
+  // GitHub-anchored with no `work`, or (below) native-anchored with a
+  // trivial `work`. Nothing here exercised a GITHUB-anchored task
+  // carrying a real `WorkPayload`-shaped `work` -- the exact document
+  // shape `work-from-github.ts`'s `workPayloadFromGithub` produces once a
+  // GitHub-anchored task has one (sub-project 5). Sized right at the real
+  // byte bound `truncatedDescription`'s byte-aware clamp (item 3) exists
+  // to keep out of storage: a 3-bytes-per-character description (CJK)
+  // packed with this fixture's other fields to land exactly on
+  // WORK_PAYLOAD_MAX_BYTES (32,768) when serialized.
+  it('parses a GitHub-anchored task carrying a work payload exactly at the real byte bound', () => {
+    // '漢' is 3 bytes in UTF-8; 10,868 characters is the largest count
+    // that, together with this fixture's origin/title/pipeline/target and
+    // JSON structure, serializes to exactly 32,768 bytes -- one more
+    // character would overflow WORK_PAYLOAD_MAX_BYTES.
+    const description = '漢'.repeat(10_868);
+    const work = {
+      origin: { principal: 'github:jlapenna', channel: 'github' },
+      spec: {
+        title: 'Fix the thing',
+        description,
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(work)).length;
+    expect(bytes).toBe(WORK_PAYLOAD_MAX_BYTES);
+
+    const parsed = taskSchema.parse({
+      task: { repo: 'octo/example', issue: 7 },
+      runCount: 1,
+      updatedAt: T,
+      work,
+    });
+    expect(parsed.work).toEqual(work);
+  });
 });
 
 describe('taskSchema work payload', () => {

@@ -26,7 +26,7 @@ on:
         required: true
         type: string
       work:
-        description: 'Native work item JSON {id, spec} (mutually exclusive with issue)'
+        description: 'Native work item JSON: {id, spec} for a work-anchored dispatch, or {spec} merged onto issue context for a GitHub anchor (see prepare-agent-dispatch/action.yml)'
         required: false
         default: ''
         type: string

@@ -61,7 +61,8 @@ set -uo pipefail
 : "${REPO:?REPO is required}"
 # Empty for a native work-item run: there is no issue or pull request
 # number to anchor a comment/review lookup against. The PR-marker lookup
-# below is the only one that ever runs in that case (agent-protocol.md 5a).
+# below is the only one that ever runs in that case (agent-protocol.md
+# §5, "Work anchor").
 NUM="${NUM:-}"
 # MODE stays load-bearing even in exact-only validation: only MODE=review
 # additionally checks pull request reviews for the marker - the reviews

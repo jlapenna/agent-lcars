@@ -229,7 +229,8 @@ jq -n \
     requested_results: (
       # A native work item has no issue to comment on or park via a label,
       # and no-op has no evidence surface without an anchor thread -- the
-      # only accepted deliverable is a PR (agent-protocol.md 5a).
+      # only accepted deliverable is a PR (agent-protocol.md §5,
+      # "Work anchor").
       if $anchor.type == "work" then ["pull-request"]
       elif $mode == "review" then ["review", "park", "no-op"]
       elif $mode == "reply" then ["comment", "pull-request", "park", "no-op"]

@@ -53,9 +53,6 @@ description: >-
   difference, not scaffolding, and stays in each lane's own workflow file.
 
 inputs:
-  issue:
-    description: Issue number to run against (the worker workflow's own `inputs.issue`).
-    required: true
   broker-generation:
     description: Monotonic broker generation (the worker workflow's own `inputs.broker_generation`).
     required: true
