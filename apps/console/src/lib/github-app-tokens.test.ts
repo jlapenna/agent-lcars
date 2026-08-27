@@ -172,7 +172,7 @@ describe('AppInstallationTokenProvider', () => {
     expect(calls[1]?.method).toBe('POST');
   });
 
-  it('mints an access token scoped to just this repo with actions/issues write', async () => {
+  it('mints an access token scoped to just this repo with actions/issues/pull_requests write', async () => {
     const { fetchImpl, calls } = fakeAppFetch();
     const provider = new AppInstallationTokenProvider({
       clientId: CLIENT_ID,
@@ -182,9 +182,18 @@ describe('AppInstallationTokenProvider', () => {
 
     await provider.tokenFor(REPO);
 
+    // `pull_requests` (alongside `issues`) is required: GitHub's
+    // issue-comment endpoint authorizes a PR-anchored comment against
+    // `pull_requests`, not `issues` -- see `DEFAULT_PERMISSIONS`'s doc
+    // comment in github-app-tokens.ts for the production incident this
+    // pins (every PR-anchored outcome report 403ing).
     expect(calls[1]?.body).toEqual({
       repositories: ['example'],
-      permissions: { actions: 'write', issues: 'write' },
+      permissions: {
+        actions: 'write',
+        issues: 'write',
+        pull_requests: 'write',
+      },
     });
   });
 

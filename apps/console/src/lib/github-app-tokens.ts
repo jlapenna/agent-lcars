@@ -64,16 +64,36 @@ export interface DispatchTokenProvider {
 
 /** The permission set `AppInstallationTokenProvider` requests when minting
  * a repo's installation token, absent an explicit `permissions` option --
- * exactly what the outbox drain needs (`workflow_dispatch`, issue
+ * exactly what the outbox drain needs (`workflow_dispatch`, issue and PR
  * comments, the `needs-human` label) and nothing more. `github-client.ts`
  * passes its own, broader set instead (see `createGithubClientAuthStrategy`
  * below): a token's `permissions` is a request for a *subset* of the App's
  * own granted permissions, never a way to exceed them, so each caller
  * requesting only what it actually uses keeps every minted token as
- * narrowly scoped as its purpose allows. */
+ * narrowly scoped as its purpose allows.
+ *
+ * `pull_requests` is required alongside `issues`: GitHub's issue-comment
+ * endpoint (`POST /repos/{owner}/{repo}/issues/{issue_number}/comments`,
+ * used by `orchestrator-dispatch.ts`'s `handleReportOutcome` for every
+ * `report-outcome` entry) serves both issues and pull requests, but a
+ * GitHub App token is authorized against whichever permission actually
+ * matches the target -- `issues` when `issue_number` names a plain issue,
+ * `pull_requests` when it names a PR. Without this, every PR-anchored
+ * outcome report 403s while every issue-anchored one succeeds silently --
+ * exactly the split measured in production (37 pending entries, all
+ * PR-anchored, across jlapenna/homelab, supersprinklesracing/sprinkles,
+ * and jlapenna/sync-padd; every delivered entry was issue-anchored). The
+ * key is `pull_requests` (underscore), matching GitHub's own
+ * `app-permissions` schema for `POST
+ * /app/installations/{id}/access_tokens` -- not the hyphenated
+ * `permission-pull-requests` input name some GitHub Actions
+ * (`actions/create-github-app-token`, this repo's own
+ * `mint-agent-token`) use, which is only an input-naming convention that
+ * gets translated before it reaches GitHub. */
 const DEFAULT_PERMISSIONS: Record<string, string> = {
   actions: 'write',
   issues: 'write',
+  pull_requests: 'write',
 };
 
 /** Permission set for a direct-mode checkout/push token -- broader than

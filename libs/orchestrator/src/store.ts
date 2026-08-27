@@ -43,9 +43,12 @@ export interface OrchestratorStore {
    * choosing which *pending* entries to claim -- it does not affect expired-
    * lease recovery. A caller draining entries one at a time uses this to
    * keep a persistently-failing entry it already tried this invocation from
-   * being reclaimed ahead of every other pending entry: without it, an
-   * unordered pending query has no way to make forward progress past a
-   * single entry that keeps losing the race back to the front of the queue.
+   * being reclaimed ahead of every other pending entry: an implementation's
+   * claim order (see `byOutboxClaimFairness` in `model.ts`) favors an
+   * entry's `attempts` count over anything else, but two due entries tied
+   * on `attempts` -- e.g. a batch that just failed together -- would
+   * otherwise still let the same one win the tie every time, indefinitely,
+   * without this exclusion.
    *
    * A *pending* entry whose `nextAttemptAt` is still in the future (#1548
    * follow-up: backoff after a delivery failure) is likewise skipped --

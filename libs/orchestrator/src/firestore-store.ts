@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import type { Decision } from './decide';
 import {
+  byOutboxClaimFairness,
   isLive,
   isWorkAnchor,
   type LeasedOutboxEntry,
@@ -182,15 +183,25 @@ export class FirestoreStore implements OrchestratorStore {
       // the same as an explicitly excluded one -- it never affects expired-
       // lease recovery above, since a lease can only be outstanding on an
       // entry that was itself already eligible to be claimed. See
-      // `OrchestratorStore.claimPendingOutbox`'s doc comment.
-      const pendingCandidates = pendingSnapshot.docs.filter((doc) => {
-        const entry = outboxEntrySchema.parse(doc.data());
-        return (
-          !(excluded?.has(entry.entryId) ?? false) &&
-          (entry.nextAttemptAt === undefined ||
-            Date.parse(entry.nextAttemptAt) <= cutoff)
+      // `OrchestratorStore.claimPendingOutbox`'s doc comment. Sorted by
+      // `byOutboxClaimFairness` (starvation fix) so a never-attempted entry
+      // is never stuck behind an arbitrarily larger due-again,
+      // already-failing set -- see that function's doc comment.
+      const pendingCandidates = pendingSnapshot.docs
+        .filter((doc) => {
+          const entry = outboxEntrySchema.parse(doc.data());
+          return (
+            !(excluded?.has(entry.entryId) ?? false) &&
+            (entry.nextAttemptAt === undefined ||
+              Date.parse(entry.nextAttemptAt) <= cutoff)
+          );
+        })
+        .sort((a, b) =>
+          byOutboxClaimFairness(
+            outboxEntrySchema.parse(a.data()),
+            outboxEntrySchema.parse(b.data()),
+          ),
         );
-      });
       const eligible = [...expired, ...pendingCandidates].slice(0, input.limit);
 
       return eligible.map((doc): LeasedOutboxEntry => {
