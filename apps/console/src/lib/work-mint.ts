@@ -7,6 +7,7 @@ import {
   type ScheduleStore,
   type Task,
 } from '@agent-lcars/orchestrator';
+import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   type WorkOrigin,
   workPayloadSchema,
@@ -36,6 +37,10 @@ export interface WorkContext {
   principal?: WorkPrincipal;
   runtime: OrchestratorRouteDeps;
   sessionsFor: (runIds: string[]) => Promise<ItemSessionView[]>;
+  /** Reads one session doc by id, for `redispatch`'s `resumeSessionId`
+   *  validation (sub-project 6) -- the same read-only telemetry accessor
+   *  `sessionsFor` uses, scoped to a single session. */
+  getSessionDoc: (sessionId: string) => Promise<SessionDoc | undefined>;
   maxLiveRuns: number;
   /** Schedule storage -- separate from `OrchestratorRouteDeps` on purpose:
    *  a schedule is not a `Task` (see `schedule-store.ts`). */

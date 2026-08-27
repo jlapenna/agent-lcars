@@ -6,6 +6,7 @@ import {
   isRefusal,
   isWorkAnchor,
 } from '@agent-lcars/orchestrator';
+import { sessionAgent } from '@agent-lcars/telemetry';
 import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
 import type { ItemView } from '@agent-lcars/work/derive';
 import { deriveItemState, toItemViewSafe } from '@agent-lcars/work/derive';
@@ -194,6 +195,38 @@ export const workRouter = os.router({
         throw errors.FORBIDDEN({ message: forbidden });
       }
 
+      // Sub-project 6: `resumeSessionId` names a session to resume, not just
+      // reference -- so it must be validated for OWNERSHIP, not mere
+      // existence: it has to be a claude-code session whose `intentId`
+      // names a run of THIS item, and it has to carry an archived
+      // transcript for the new run to actually resume from.
+      let resumeParams: Record<string, string> | undefined;
+      if (input.resumeSessionId !== undefined) {
+        const session = await context.getSessionDoc(input.resumeSessionId);
+        const runIds = new Set(runs.map((run) => run.runId));
+        if (
+          session === undefined ||
+          session.source !== 'issue-agent' ||
+          session.intentId === undefined ||
+          !runIds.has(session.intentId) ||
+          sessionAgent(session) !== 'claude-code'
+        ) {
+          throw errors.BAD_REQUEST({
+            message:
+              'resumeSessionId must name a claude-code session belonging to a run of this item',
+          });
+        }
+        if (session.transcriptGcsUri === undefined) {
+          throw errors.CONFLICT({
+            message: 'session has no archived transcript to resume from',
+          });
+        }
+        resumeParams = {
+          resumeSessionId: input.resumeSessionId,
+          resumeTranscriptGcsUri: session.transcriptGcsUri,
+        };
+      }
+
       if ((await liveNativeRunCount(context)) >= context.maxLiveRuns) {
         throw errors.TOO_MANY_REQUESTS({
           data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
@@ -205,6 +238,7 @@ export const workRouter = os.router({
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
         executor: executorFor(spec.pipeline, context.queuePipelines),
+        ...(resumeParams === undefined ? {} : { params: resumeParams }),
       });
       if (isRefusal(outcome)) {
         throw errors.CONFLICT({ message: outcome.reason });

@@ -1,7 +1,9 @@
 import 'server-only';
 
+import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
+  getSessionDoc,
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 import type { ItemSessionView } from '@agent-lcars/work/derive';
@@ -58,5 +60,23 @@ export async function sessionsForRuns(
   } catch (error) {
     console.error('agent-lcars: failed to list work item sessions:', error);
     return [];
+  }
+}
+
+/**
+ * Reads one session doc by id, for `redispatch`'s `resumeSessionId`
+ * validation (sub-project 6). Read-only, the same accessor `sessionsForRuns`
+ * uses; degrades to `undefined` on any failure rather than throwing -- a
+ * lookup failure here becomes the handler's own BAD_REQUEST, not a 500.
+ */
+export async function sessionForResume(
+  sessionId: string,
+): Promise<SessionDoc | undefined> {
+  try {
+    const firestore = await getAgentTelemetryReaderFirestore();
+    return await getSessionDoc(firestore, sessionId);
+  } catch (error) {
+    console.error('agent-lcars: failed to read session for resume:', error);
+    return undefined;
   }
 }
