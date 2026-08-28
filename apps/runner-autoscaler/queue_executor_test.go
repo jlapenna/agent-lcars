@@ -775,6 +775,122 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 	}
 }
 
+func TestCleanupExitedDirectRunnersRetainsMalformedOrChangedExitState(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	ownedExit := func(id string) container.Summary {
+		return container.Summary{
+			ID:      id,
+			Created: now.Add(-48 * time.Hour).Unix(),
+			State:   container.StateExited,
+			Labels:  map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:" + id + "/r1"},
+		}
+	}
+	cases := []struct {
+		name       string
+		inspect    *container.State
+		wantErr    bool
+		wantRemove bool
+	}{
+		{
+			name:    "malformed FinishedAt is retained",
+			inspect: &container.State{Status: container.StateExited, FinishedAt: "not-a-timestamp"},
+			wantErr: true,
+		},
+		{
+			name:    "state changed after list is retained",
+			inspect: &container.State{Status: container.StateRunning},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeDockerServer(t)
+			f.setContainers([]container.Summary{ownedExit("candidate")})
+			f.setInspect("candidate", http.StatusOK, tc.inspect)
+			newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+			err := cleanupExitedDirectRunners(context.Background(), resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}, newClient, now)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("cleanup error = %v, want error=%v", err, tc.wantErr)
+			}
+			if got := len(f.removedIDs()) > 0; got != tc.wantRemove {
+				t.Fatalf("removed=%v, want removed=%v", f.removedIDs(), tc.wantRemove)
+			}
+		})
+	}
+}
+
+func TestCleanupExitedDirectRunnersDeadlineBoundsStalledInspect(t *testing.T) {
+	f := newFakeDockerServer(t)
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	f.setContainers([]container.Summary{{
+		ID:      "stalled",
+		Created: now.Add(-48 * time.Hour).Unix(),
+		State:   container.StateExited,
+		Labels:  map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:stalled/r1"},
+	}})
+	f.setInspect("stalled", http.StatusOK, &container.State{Status: container.StateExited, FinishedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)})
+	f.setInspectDelay(100 * time.Millisecond)
+	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := cleanupExitedDirectRunners(ctx, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}, newClient, now)
+	if err == nil {
+		t.Fatal("expected stalled inspection to hit the sweep deadline")
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("cleanup took %s after a 15ms deadline; inspection must be deadline-bounded", elapsed)
+	}
+	if removed := f.removedIDs(); len(removed) != 0 {
+		t.Fatalf("stalled inspection removed %v; uncertain exits must be retained", removed)
+	}
+}
+
+func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cleanupStarted := make(chan struct{})
+	cleanupDone := make(chan struct{})
+	claimObserved := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case claimObserved <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	go runQueueExecutorPoller(ctx, queueExecutorConfig{
+		consoleURL: server.URL,
+		runnerName: "test-runner",
+		idToken:    func() (string, error) { return "token", nil },
+		launch:     func(directRunnerLaunch) error { return nil },
+		cleanup: func(cleanupCtx context.Context) error {
+			close(cleanupStarted)
+			<-cleanupCtx.Done()
+			close(cleanupDone)
+			return cleanupCtx.Err()
+		},
+	}, 5*time.Millisecond, discardLogger())
+
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start")
+	}
+	select {
+	case <-claimObserved:
+	case <-time.After(time.Second):
+		t.Fatal("claim polling was blocked behind cleanup")
+	}
+	cancel()
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not stop with the poller context")
+	}
+}
+
 // TestLaunchDirectRunnerRoundRobinsPastAFullHost exercises the whole
 // launchDirectRunner round-robin: the first configured host is at capacity,
 // so the container must land on the second.

@@ -41,6 +41,7 @@ type fakeDockerServer struct {
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
 	listDelay        time.Duration
+	inspectDelay     time.Duration
 	imagePresent     bool
 	imagePulls       int
 	pullStreamError  bool
@@ -131,6 +132,12 @@ func (f *fakeDockerServer) setListDelay(d time.Duration) {
 	f.mu.Unlock()
 }
 
+func (f *fakeDockerServer) setInspectDelay(d time.Duration) {
+	f.mu.Lock()
+	f.inspectDelay = d
+	f.mu.Unlock()
+}
+
 // setContainers configures the full ContainerList response.
 func (f *fakeDockerServer) setContainers(cs []container.Summary) {
 	f.mu.Lock()
@@ -198,7 +205,11 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.inspectCalls[id]++
 		stub, ok := f.inspect[id]
+		delay := f.inspectDelay
 		f.mu.Unlock()
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		if !ok || stub.status == http.StatusNotFound {
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such container: " + id})
