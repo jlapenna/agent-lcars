@@ -31,7 +31,7 @@ if ! [[ "$opencode_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 if ! grep -Fqx 'COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version' "$dockerfile" ||
   ! grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$dockerfile" ||
-  ! grep -Fq 'HOME=/root bash /usr/local/lib/agent-lcars/install-opencode.sh' "$dockerfile" ||
+  ! grep -Fq 'OPENCODE_VERSION="$OPENCODE_VERSION" HOME=/root' "$dockerfile" ||
   ! grep -Fq 'install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode' "$dockerfile" ||
   ! grep -Fq '/usr/local/bin/opencode --version' "$dockerfile"; then
   echo "runner image must install and smoke-check the exact root-owned OpenCode CLI" >&2

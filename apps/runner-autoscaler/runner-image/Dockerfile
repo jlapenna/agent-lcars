@@ -267,7 +267,8 @@ COPY --from=telemetry-watcher-build \
 RUN set -eux; \
     OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)"; \
     printf '%s\n' "$OPENCODE_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; \
-    HOME=/root bash /usr/local/lib/agent-lcars/install-opencode.sh; \
+    OPENCODE_VERSION="$OPENCODE_VERSION" HOME=/root \
+      bash /usr/local/lib/agent-lcars/install-opencode.sh; \
     install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode; \
     rm -rf /root/.opencode; \
     /usr/local/bin/opencode --version
