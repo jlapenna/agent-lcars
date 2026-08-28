@@ -80,7 +80,6 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     scheduleStore: new MemoryScheduleStore(),
     grants: () => GRANTS,
     now: () => NOW,
-    queuePipelines: [],
     ...over,
   };
 }
@@ -471,13 +470,11 @@ describe('tick', () => {
     expect(gotAfterSecond.json.lastItemId).toBe(itemId);
   });
 
-  it("honours AGENT_LCARS_QUEUE_PIPELINES on a minted tick run, same as items.create: executor 'queue' for a configured pipeline", async () => {
-    // Both `items.create` and the schedule tick route through `mintItem`
-    // (`work-mint.ts`), which is where `executorFor(spec.pipeline,
-    // context.queuePipelines)` is called -- proving it here proves the
-    // cron path gets the same executor selection as `items.create`
-    // without duplicating it.
-    const ctx = context({ queuePipelines: ['claude'] });
+  it('uses the global queue executor on a minted tick run, same as items.create', async () => {
+    // Both `items.create` and the schedule tick route through `mintItem`.
+    // The runtime's one provider-neutral decision must reach both paths.
+    const ctx = context();
+    ctx.runtime.dispatchExecutor = 'queue';
     await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
       cron: '* * * * *',
       spec,

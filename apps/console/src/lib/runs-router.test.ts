@@ -21,7 +21,7 @@ import { createRunsHandler, type RunsContext } from './runs-router';
  */
 const NOW = '2026-08-26T10:00:00.000Z';
 
-/** `claim`'s and `brief`'s output schemas both pin `workId` to
+/** Native `claim` and `brief` output schemas pin `workId` to
  *  `workIdSchema` -- a strict 26-character Crockford-base32 pattern (see
  *  `libs/work/src/contract.ts`'s `WORK_ID_PATTERN`), not just "some
  *  string". A readable label like `'work-a'` fails that regex and 500s
@@ -535,6 +535,58 @@ describe('claim -> brief -> heartbeat -> complete', () => {
 });
 
 describe('brief', () => {
+  it('serves a GitHub issue or pull-request anchor with all direct-runner metadata', async () => {
+    const { store, orchestrator, now } = fixture();
+    const outcome = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue: 42 },
+      requestId: 'github-brief',
+      pipeline: 'opencode',
+      executor: 'queue',
+      params: {
+        mode: 'review',
+        reply: '/opencode review this',
+        runbook: 'pr-heal',
+        context: 'nightly sweep',
+      },
+    });
+    if ('refused' in outcome || outcome.run === undefined) {
+      throw new Error('expected a queued GitHub run');
+    }
+    const runId = outcome.run.runId;
+    await store.enqueueRun({ runId, now: NOW });
+    await orchestrator.confirmDispatch(runId);
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['opencode'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({
+      anchor: {
+        type: 'github',
+        repo: 'octo/example',
+        issue: 42,
+        html_url: 'https://github.com/octo/example/issues/42',
+      },
+      pipeline: 'opencode',
+      mode: 'review',
+      reply: '/opencode review this',
+      runbook: 'pr-heal',
+      context: 'nightly sweep',
+      intentId: runId,
+    });
+    expect((r.json as { work?: unknown }).work).toBeUndefined();
+  });
+
   it('500s on a stored spec that no longer parses as workSpecSchema, without leaking it', async () => {
     // No real request path can produce this -- `mintItem` always validates
     // through `workSpecSchema` first (`work-mint.ts`) -- so this reaches

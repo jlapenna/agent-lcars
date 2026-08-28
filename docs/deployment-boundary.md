@@ -75,21 +75,22 @@ Google service-account ID token or an Auth.js session to a principal by
 looking it up here — an unlisted subject gets no access at all, regardless
 of how it authenticated.
 
-| Value                    | Env var                          | This deployment                                                                                  |
-| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`        | current operators: `claude`, `codex`, `opencode`; `svc:telemetry-writer` executor: `claude` only |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                              |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                               |
-| queue-executor pipelines | `AGENT_LCARS_QUEUE_PIPELINES`    | `["claude"]` (Claude direct queue executor; Codex and OpenCode use GitHub Actions)               |
+| Value                    | Env var                             | This deployment                                                                                                          |
+| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators: `claude`, `codex`, `opencode`; `svc:telemetry-writer` executor: `claude` only                         |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                                                      |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                                                       |
+| unified queue cutover    | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `false` until the direct runner supports all three providers; `true` routes every admitted request through QueueExecutor |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
-operate the API), not a default principal. `AGENT_LCARS_QUEUE_PIPELINES`
-decides the executor per pipeline at request time
-(`work-mint.ts`'s `executorFor`, called from inside `mintItem` so both
-`items.create` and the schedule tick honour it), never the item's own spec,
-and this deployment routes native Claude work to the queue executor. Codex
-and OpenCode retain the GitHub Actions executor.
+operate the API), not a default principal. The global
+`AGENT_LCARS_UNIFIED_QUEUE_ENABLED` flag is the sole executor decision:
+when it is `true`, every admitted run uses QueueExecutor, regardless of its
+provider or whether it came from GitHub, the console, an internal request,
+native Work, a schedule tick, or redispatch. `false` is the temporary staged
+rollout state and keeps the legacy hosted executor until all direct runners
+are ready; callers and work specifications never choose a route.
 
 The autoscaler's own `work.executor` claim identity needs its own grant row
 in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
@@ -119,28 +120,25 @@ The current operator grants list all three supported pipelines (`claude`,
 `codex`, `opencode`), including the maintainer, repository-bounded
 `workflow:work-create`, and Sprinkles' App Hosting service principal. The
 published `work-create.yml` workflow is contract-tested against that list,
-so its provider canaries cannot fail at API admission. This does **not**
-enable queue execution for Codex or OpenCode: executor routing remains
-solely governed by `AGENT_LCARS_QUEUE_PIPELINES`. The telemetry-writer
-identity remains a Claude-only `work.executor`, a distinct role from an
-operator.
+so its provider canaries cannot fail at API admission. The telemetry-writer
+identity remains a provider-scoped `work.executor`, a distinct role from an
+operator. Before enabling the global queue cutover, its executor grant and
+the direct runner's claim support must both cover every admitted provider.
 
 #### Queue executor routing
 
-Claude is a supported queue-executor pipeline. The App Hosting configuration
-routes native Claude work to the queue, and the autoscaler's matching
-console URL and credential configuration claims and runs it directly. The
-durable credential mounts and runner image are documented in
-`apps/runner-autoscaler/README.md`. This repository owns the server routing
-and executor grant; Homelab owns its autoscaler deployment.
+QueueExecutor is the normal server route after the global cutover. The App
+Hosting flag makes that one decision before any request enters the
+orchestrator, and the same selected executor reaches every entry point. The
+autoscaler's matching console URL and credentials claim and run the durable
+queue; its image and mounts are documented in
+`apps/runner-autoscaler/README.md`. This repository owns server routing and
+executor grants; Homelab owns autoscaler deployment.
 
-Codex and OpenCode are admitted by the same operator grants but presently
-remain on the GitHub Actions executor. The direct runner has an optional Codex
-provider implementation, but it remains disabled until its separate
-repository-prefix-preserving IAM grant and single-run canary are approved.
-Routing is chosen by the server configuration, not by a caller or an item
-specification; a repository that does not use a given provider is a normal
-routing outcome, not a failed dispatch.
+The checked-in App Hosting setting stays `false` until Claude, Codex, and
+OpenCode direct runners have passed their readiness/canary checks and the
+executor grant covers all three. Enabling it is a single deployment-only
+change; it must not reintroduce provider-specific server routing.
 
 ### 4. Workflows — repo variables
 

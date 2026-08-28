@@ -74,15 +74,14 @@ env:
   # apps/console/src/lib/work-grants.ts). Maps a Google service-account
   # email or a `github:<login>` session subject to a principal and the
   # pipelines it may operate. The current operator grants each list every
-  # supported pipeline. That admission grant does not opt a
-  # pipeline into the queue executor; AGENT_LCARS_QUEUE_PIPELINES remains
-  # the separate, explicit execution-routing control. svc:telemetry-writer
+  # supported pipeline. That admission grant does not select an executor;
+  # the one global cutover below does. svc:telemetry-writer
   # is the runner-autoscaler's queue executor claim identity
   # (native-work-items sub-project 4,
   # #1502): scoped to work.executor only, never work.operator -- see
   # docs/deployment-boundary.md's work-grants table. Its executor grant is
-  # separate from the routing control below: it may claim only the Claude
-  # work that the queue route creates.
+  # separate from the routing control below: it is still staged to claim
+  # Claude only until all direct runners and grants are ready.
   #
   # The Firebase App Hosting default compute service account is Sprinkles'
   # current ambient backend identity. Its ID token's raw `email` is the
@@ -95,18 +94,17 @@ env:
     availability:
       - RUNTIME
 
-  # Durable server-controlled execution routing for native work. Claude uses
-  # the direct queue executor; Codex and OpenCode continue through their
-  # existing GitHub Actions workers. This is independent of who may operate
-  # a pipeline through AGENT_LCARS_WORK_GRANTS.
-  - variable: AGENT_LCARS_QUEUE_PIPELINES
-    value: '["claude"]'
+  # Staged, provider-neutral cutover to the direct queue executor. When true,
+  # every admitted request uses the same queue path; it is intentionally
+  # false until the runner supports Claude, Codex, and OpenCode equally.
+  - variable: AGENT_LCARS_UNIFIED_QUEUE_ENABLED
+    value: 'false'
     availability:
       - RUNTIME
 
   # Shared Codex subscription-lease authority is staged only. Keep this
-  # explicit so direct Codex cannot be claimed before the central IAM,
-  # executor grant, and queue-routing activation are all in place.
+  # explicit so direct Codex cannot be claimed before the central IAM and
+  # all-provider queue cutover are in place.
   - variable: LCARS_CODEX_SHARED_LEASE_ENABLED
     value: 'false'
     availability:

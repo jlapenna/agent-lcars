@@ -262,6 +262,29 @@ describe('handleWebhookDelivery', () => {
     expect(run?.state).toBe('running'); // confirmed by the drain
   });
 
+  it('uses the deployment-selected queue executor for webhook and internal requests', async () => {
+    const { deps, store } = fixture();
+    deps.dispatchExecutor = 'queue';
+
+    const webhook = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'queue-webhook',
+      payload: labeledIssuePayload(),
+    });
+    const internal = await handleDispatchRequest(deps, {
+      repository: REPO,
+      callerRunId: 999,
+      body: { issue: 99, pipeline: 'codex' },
+    });
+
+    expect(
+      (await store.readRun(webhook.body['runId'] as string))?.executor,
+    ).toBe('queue');
+    expect(
+      (await store.readRun(internal.body['runId'] as string))?.executor,
+    ).toBe('queue');
+  });
+
   it('treats a redelivery of the same deliveryId as a duplicate, no second run', async () => {
     const { deps, calls } = fixture();
     const first = await handleWebhookDelivery(deps, {

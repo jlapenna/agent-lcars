@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import {
   isLive,
   isRefusal,
+  isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
   type Run,
@@ -322,7 +323,7 @@ export const runsRouter = os.router({
         : (renewed.run?.leaseExpiresAt ?? claimed.leaseExpiresAt);
       return {
         runId: claimed.runId,
-        workId: 'workId' in claimed.task ? claimed.task.workId : '',
+        ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),
         pipeline: claimed.pipeline,
         token,
         expiresAt,
@@ -333,8 +334,46 @@ export const runsRouter = os.router({
 
   brief: os.brief.handler(async ({ input, context, errors }) => {
     const run = await requireRunToken(context, input.runId);
-    if (!('workId' in run.task)) throw errors.UNAUTHORIZED();
     const task = await context.store.readTask(run.task);
+    const params = {
+      mode: run.params?.['mode'] ?? 'implement',
+      reply: run.params?.['reply'] ?? '',
+      runbook: run.params?.['runbook'] ?? '',
+      context: run.params?.['context'] ?? '',
+    };
+    const generationMatch = /\/r(\d+)$/u.exec(run.runId);
+    const generation = generationMatch ? Number(generationMatch[1]) : 1;
+    const shared = {
+      pipeline: run.pipeline,
+      ...params,
+      attemptId: `g${generation}:${run.runId}`,
+      generation,
+      intentId: run.runId,
+      ...(run.params?.['resumeSessionId'] !== undefined &&
+      run.params?.['resumeTranscriptGcsUri'] !== undefined
+        ? {
+            resume: {
+              sessionId: run.params['resumeSessionId'],
+              transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
+            },
+          }
+        : {}),
+    };
+
+    if (!isWorkAnchor(run.task)) {
+      const parsed = workSpecSchema.safeParse(task?.task.work?.['spec']);
+      return {
+        anchor: {
+          type: 'github' as const,
+          repo: run.task.repo,
+          issue: run.task.issue,
+          html_url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
+        },
+        ...(parsed.success ? { work: { spec: parsed.data } } : {}),
+        ...shared,
+      };
+    }
+
     const work = task?.task.work;
     if (work === undefined || task === undefined) {
       throw errors.UNAUTHORIZED({ message: 'run has no dispatchable spec' });
@@ -358,8 +397,6 @@ export const runsRouter = os.router({
     }
     const spec = parsed.data;
     const target = anchorTarget(run, task.task);
-    const generationMatch = /\/r(\d+)$/u.exec(run.runId);
-    const generation = generationMatch ? Number(generationMatch[1]) : 1;
     return {
       id: run.task.workId,
       spec,
@@ -371,23 +408,7 @@ export const runsRouter = os.router({
         target_repo: target.repo,
         html_url: `${consoleUrl()}/work/${run.task.workId}`,
       },
-      attemptId: `g${generation}:${run.runId}`,
-      generation,
-      intentId: run.runId,
-      // Sub-project 6: mirrors the drain's `work` input `resume` field
-      // (`orchestrator-dispatch.ts`) -- same params, same both-fields-
-      // present guard, same reasoning: `redispatch` (Task 2) already
-      // resolved and stored both together, so no further lookup is needed
-      // here either.
-      ...(run.params?.['resumeSessionId'] !== undefined &&
-      run.params?.['resumeTranscriptGcsUri'] !== undefined
-        ? {
-            resume: {
-              sessionId: run.params['resumeSessionId'],
-              transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
-            },
-          }
-        : {}),
+      ...shared,
     };
   }),
 

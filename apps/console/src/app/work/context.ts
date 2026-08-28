@@ -12,7 +12,7 @@ import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
 } from '@/lib/work-auth';
-import { queuePipelines, workGrants, workMaxLiveRuns } from '@/lib/work-grants';
+import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
 import type { WorkContext } from '@/lib/work-mint';
 import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
 
@@ -55,6 +55,5 @@ export async function context(): Promise<WorkContext> {
     scheduleStore: createScheduleStore(),
     grants: workGrants,
     now: () => new Date(),
-    queuePipelines: queuePipelines(),
   };
 }

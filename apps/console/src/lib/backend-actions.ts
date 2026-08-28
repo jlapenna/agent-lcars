@@ -664,7 +664,8 @@ export async function retriggerIssue(
     throw new ActionError('A valid dispatch caller ID is required', 400);
   }
 
-  const { store, orchestrator, drain } = createOrchestratorRuntime();
+  const runtime = createOrchestratorRuntime();
+  const { store, orchestrator, drain } = runtime;
   const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
   const [runs, existingTask] = await Promise.all([
     store.listRuns(taskId),
@@ -722,6 +723,9 @@ export async function retriggerIssue(
     pipeline,
     params: { mode: 'implement' },
     ...(work === undefined ? {} : { work }),
+    ...(runtime.dispatchExecutor === undefined
+      ? {}
+      : { executor: runtime.dispatchExecutor }),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'task-busy') {
@@ -802,7 +806,8 @@ export async function reassignPipeline(
       .concat(targetIntegration.label),
   });
 
-  const { store, orchestrator, drain } = createOrchestratorRuntime();
+  const runtime = createOrchestratorRuntime();
+  const { store, orchestrator, drain } = runtime;
   const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
   const [activeRun, existingTask] = await Promise.all([
     store.readActiveRun(taskId),
@@ -842,6 +847,9 @@ export async function reassignPipeline(
         ? { mode: activeRun.params.mode }
         : { mode: 'implement' },
     ...(work === undefined ? {} : { work }),
+    ...(runtime.dispatchExecutor === undefined
+      ? {}
+      : { executor: runtime.dispatchExecutor }),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'task-busy') {

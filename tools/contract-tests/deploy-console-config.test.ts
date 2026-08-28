@@ -304,18 +304,23 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('routes only Claude native work through the durable queue executor and keeps shared Codex authority disabled', async () => {
+  it('keeps the provider-neutral queue cutover staged off until every direct runner is ready', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
       env?: Array<{ variable?: string; value?: string }>;
     };
 
-    const queuePipelines = config.env?.find(
-      ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
+    const unifiedQueueEnabled = config.env?.find(
+      ({ variable }) => variable === 'AGENT_LCARS_UNIFIED_QUEUE_ENABLED',
     )?.value;
 
-    expect(JSON.parse(queuePipelines ?? 'null')).toEqual(['claude']);
+    expect(unifiedQueueEnabled).toBe('false');
+    expect(
+      config.env?.some(
+        ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
+      ),
+    ).toBe(false);
     expect(
       config.env?.find(
         ({ variable }) => variable === 'LCARS_CODEX_SHARED_LEASE_ENABLED',
