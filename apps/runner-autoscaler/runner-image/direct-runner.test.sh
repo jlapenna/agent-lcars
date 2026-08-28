@@ -219,9 +219,21 @@ run_scenario() {
   export LCARS_RUN_ID="work:01DIRECTRUNNERTESTFIXTURE1/r1"
   export LCARS_RUN_TOKEN="test-token"
   export LCARS_CONSOLE_URL="https://lcars.test"
-  export RUNNER_TEMP="$dir/runner-temp"
+  if [ "${FAKE_MISSING_RUNNER_TEMP:-}" = "1" ]; then
+    # Direct-mode Docker launches do not inherit GitHub Actions' RUNNER_TEMP.
+    # Put the script's fallback under this scenario's private directory so
+    # this regression test exercises that real container contract without
+    # touching a shared /tmp path.
+    unset RUNNER_TEMP
+    export TMPDIR="$dir/tmp"
+    scenario_runner_temp="$TMPDIR/agent-lcars-direct"
+  else
+    unset TMPDIR
+    export RUNNER_TEMP="$dir/runner-temp"
+    scenario_runner_temp="$RUNNER_TEMP"
+  fi
   export HOME="$dir/home"
-  mkdir -p "$RUNNER_TEMP" "$HOME"
+  mkdir -p "$scenario_runner_temp" "$HOME"
 
   export COMPLETE_LOG="$dir/complete-calls.log"
   export GIT_CLONE_ARGV_LOG="$dir/git-clone-argv.log"
@@ -261,7 +273,7 @@ run_scenario() {
   bash "$here/direct-runner.sh"
   rc=$?
   set -e
-  workspace="$RUNNER_TEMP/checkout"
+  workspace="$scenario_runner_temp/checkout"
 }
 
 fail() {
@@ -323,6 +335,25 @@ if [ "$(cat "$CLAUDE_ENV_TOKEN_LOG")" != "$FAKE_CLAUDE_OAUTH_TOKEN" ]; then
 fi
 
 echo "scenario happy-path: OK"
+
+# --- Scenario 1a: GitHub-Actions temp environment absent -------------------
+# A direct-mode container is started by Docker rather than GitHub Actions, so
+# it has no inherited RUNNER_TEMP. Its own fallback must be exported before
+# prepare-agent-dispatch runs; otherwise prepare.sh fails after clone with
+# "RUNNER_TEMP is required" and leaves the claimed work item to time out.
+export FAKE_MISSING_RUNNER_TEMP=1
+run_scenario missing-runner-temp
+unset FAKE_MISSING_RUNNER_TEMP
+
+[ "$rc" -eq 0 ] || fail "missing-runner-temp: expected exit 0, got $rc"
+[ -f "$scenario_runner_temp/agent-dispatch/context.json" ] ||
+  fail "missing-runner-temp: prepare-agent-dispatch did not create its context"
+[ -f "$COMPLETE_LOG" ] ||
+  fail "missing-runner-temp: direct-runner.sh never called POST .../complete"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "missing-runner-temp: complete call did not report outcome: pull-request ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario missing-runner-temp: OK"
 
 # --- Scenario 1b: no resume in the brief -------------------------------------
 # A brief with no `resume` field must leave direct-runner.sh byte-identical
