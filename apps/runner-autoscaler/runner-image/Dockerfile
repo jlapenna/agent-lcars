@@ -254,6 +254,24 @@ COPY --from=ci-tooling-build /out/actionlint /usr/local/bin/actionlint
 COPY actionlint-version /usr/local/share/agent-lcars-tooling/actionlint-version
 ENV PATH=/usr/local/go/bin:${PATH}
 
+# OpenCode's own installer selects the correct Linux binary for the target
+# architecture. The version is explicit and reviewed with this image rather
+# than resolved at runner boot, so every process holding the telemetry writer
+# credential runs the same root-owned executable. The composite action below
+# and the consumer workflow share its installation script; only this image
+# promotes the resulting root-owned binary to the trusted absolute path.
+COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version
+COPY --from=telemetry-watcher-build \
+    /repo/.github/actions/setup-opencode/install.sh \
+    /usr/local/lib/agent-lcars/install-opencode.sh
+RUN set -eux; \
+    OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)"; \
+    printf '%s\n' "$OPENCODE_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; \
+    HOME=/root bash /usr/local/lib/agent-lcars/install-opencode.sh; \
+    install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode; \
+    rm -rf /root/.opencode; \
+    /usr/local/bin/opencode --version
+
 # Keep Corepack's selected pnpm version tied to this repo's one
 # packageManager declaration instead of introducing a Dockerfile pin that can
 # drift. The build stage already checked out the exact publishing revision,

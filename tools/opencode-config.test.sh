@@ -12,6 +12,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config="$repo_root/agents/opencode/opencode.json"
 runner_dockerfile="$repo_root/apps/runner-autoscaler/runner-image/Dockerfile"
 setup_action="$repo_root/.github/actions/setup-opencode/action.yml"
+setup_installer="$repo_root/.github/actions/setup-opencode/install.sh"
+agent_lane="$repo_root/.github/workflows/agent-lane.yml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -85,6 +87,24 @@ grep -Fq '/home/runner/.config/opencode/instructions.md' "$runner_dockerfile" ||
 if grep -Fq 'Install OpenCode config' "$setup_action" ||
   grep -Fq 'agents/opencode/opencode.json' "$setup_action"; then
   fail "setup-opencode must install the CLI only; runner configuration is managed by the image"
+fi
+test -x "$setup_installer" ||
+  fail "setup-opencode must retain its shared executable installer"
+bash -n "$setup_installer" ||
+  fail "setup-opencode shared installer must be valid bash"
+if OPENCODE_VERSION=latest "$setup_installer" >/dev/null 2>&1; then
+  fail "setup-opencode shared installer accepted a floating release"
+fi
+grep -Fq "run: '\$GITHUB_ACTION_PATH/install.sh'" "$setup_action" ||
+  fail "setup-opencode must invoke the shared OpenCode installer"
+grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$runner_dockerfile" ||
+  fail "runner image must use setup-opencode's shared installer"
+grep -Fq 'install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode' "$runner_dockerfile" ||
+  fail "runner image must promote OpenCode to the trusted root-owned path"
+grep -Fq 'run: /usr/local/bin/opencode github run' "$agent_lane" ||
+  fail "dispatch-bootstrap OpenCode must invoke the trusted image executable"
+if grep -Fq 'uses: anomalyco/opencode/github@' "$agent_lane"; then
+  fail "dispatch-bootstrap must not install an action-owned OpenCode CLI that telemetry rejects"
 fi
 
 echo "opencode-config: ok"

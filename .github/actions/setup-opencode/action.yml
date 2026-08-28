@@ -32,11 +32,7 @@ runs:
       shell: bash
       env:
         OPENCODE_VERSION: ${{ steps.version.outputs.version }}
-      run: |
-        set -euo pipefail
-        timeout -k 30s 10m bash -o pipefail -c \
-          'curl --connect-timeout 30 --max-time 570 -fsSL https://opencode.ai/install |
-            bash -s -- --version "$OPENCODE_VERSION" --no-modify-path'
+      run: '$GITHUB_ACTION_PATH/install.sh'
 
     - name: Add OpenCode to PATH
       shell: bash

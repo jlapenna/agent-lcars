@@ -44,11 +44,10 @@
 #   every GitHub-anchored dispatch itself (orchestrator-dispatch.ts's
 #   claimGithubAnchor), so neither era runs a lane-owned claim step
 #   anymore (#1544/#1557). The opencode
-#   agent step is also era-split: agent-lcars runs the SHA-pinned
-#   anomalyco/opencode published action (plus its authenticated-release
-#   curl wrapper), while consumers run the published setup-opencode
-#   composite and the same `opencode github run` entry point as a plain
-#   step.
+#   agent step is also era-split: agent-lcars invokes the root-owned
+#   `/usr/local/bin/opencode` baked into the shared runner image, while
+#   consumers run the published setup-opencode composite and the same
+#   `opencode github run` entry point as a plain step.
 # - protected-snapshot: agent-lcars preserves the dispatch brief as a run
 #   artifact for trajectory evaluation; consumers run no evaluation.
 # - trajectory-export (opencode): agent-lcars exports sanitized OpenCode
@@ -1016,29 +1015,6 @@ jobs:
           echo "restored-generation=$restored_generation" >> "$GITHUB_OUTPUT"
           echo "auth-store=gcs" >> "$GITHUB_OUTPUT"
 
-      # The published action resolves its cache key with an unauthenticated
-      # GitHub Releases API request. Shared runners can exhaust that
-      # IP-based limit even when this job has a valid token, so scope
-      # authentication to that one URL without putting the token in a
-      # process-wide curl config.
-      - name: Authenticate published OpenCode action API calls
-        if: ${{ inputs.pipeline == 'opencode' && inputs.dispatch-bootstrap }}
-        run: |
-          umask 077
-          mkdir -p "$RUNNER_TEMP/opencode-curl-bin"
-          cat > "$RUNNER_TEMP/opencode-curl-bin/curl" <<'CURL_WRAPPER'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          for argument in "$@"; do
-            if [[ "$argument" == 'https://api.github.com/repos/anomalyco/opencode/releases/latest' ]]; then
-              exec /usr/bin/curl -H "Authorization: Bearer ${GITHUB_TOKEN:?}" "$@"
-            fi
-          done
-          exec /usr/bin/curl "$@"
-          CURL_WRAPPER
-          chmod 700 "$RUNNER_TEMP/opencode-curl-bin/curl"
-          echo "$RUNNER_TEMP/opencode-curl-bin" >> "$GITHUB_PATH"
-
       # A second, narrower mint — deliberately not the App token above and
       # not github.token. The App token is the agent's own working
       # identity; github.token is this job's control-plane credential, and
@@ -1420,13 +1396,10 @@ jobs:
           # The CI-rerun affordance (agent-protocol.md §8): a classic PAT
           # at public_repo scope — NOT github.token (#645).
           ACTIONS_RERUN_TOKEN: ${{ secrets.AGENT_CI_RERUN_TOKEN }}
-        uses: anomalyco/opencode/github@def7220bfc65b84046e597e9be772eae81f663ff # published action source, pinned
-        with:
-          model: ${{ inputs.opencode-model }}
-          agent: build
-          variant: minimal
-          use_github_token: 'true'
-          prompt: ${{ env.AGENT_PROMPT }}
+          MODEL: ${{ inputs.opencode-model }}
+          USE_GITHUB_TOKEN: 'true'
+          PROMPT: ${{ env.AGENT_PROMPT }}
+        run: /usr/local/bin/opencode github run
 
       - name: Run OpenCode (CLI)
         id: agent-opencode-cli

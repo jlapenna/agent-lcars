@@ -34,3 +34,11 @@ java_21_runs() (
   esac
   [ "$java_major" -ge 21 ]
 )
+
+# The telemetry watcher intentionally invokes this exact image-owned binary,
+# never PATH or an agent-writable action install. Keep the command parameter
+# only as a shell-test seam; runner boot always passes the literal path.
+trusted_opencode_runs() {
+  local opencode_command="${1:-/usr/local/bin/opencode}"
+  [ -x "$opencode_command" ] && "$opencode_command" --version >/dev/null 2>&1
+}

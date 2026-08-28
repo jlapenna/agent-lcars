@@ -79,11 +79,12 @@ archive has no timeline renderer or resume command. Telemetry steps are
 deliberately fail-soft, so verify the expected provider-specific result rather
 than treating a green workflow as proof that session data arrived.
 
-OpenCode live/GCS capture is currently deferred: the privileged telemetry
-process rejects the GitHub action's runner-writable CLI and will activate only
-when the shared runner image supplies a root-owned `/usr/local/bin/opencode`.
-The separate post-agent trajectory artifact remains available because it does
-not run with the telemetry writer credential.
+OpenCode live/GCS capture uses the root-owned `/usr/local/bin/opencode` baked
+into the shared runner image. The privileged telemetry process deliberately
+rejects PATH and the runner-writable CLI a consumer setup action installs; the
+bootstrap lane invokes the same image binary directly. The separate post-agent
+trajectory artifact remains available because it does not run with the
+telemetry writer credential.
 
 The shared lane owns the standard WIF provider and telemetry-writer service
 account. A new repo therefore needs no duplicated workflow steps or repository
