@@ -8422,6 +8422,7 @@ function main() {
     try {
       source = fs.readFileSync(file, 'utf8');
     } catch (error) {
+      if (error && error.code === 'ENOENT') continue;
       errors.push(`${relativeFile}: ${error.message}`);
       continue;
     }
@@ -8446,7 +8447,7 @@ function main() {
     return;
   }
   process.stdout.write(
-    'Validated Claude, Codex, and OpenCode issue/native-work workflow contracts.\n',
+    'Validated every present Claude, Codex, and OpenCode issue/native-work workflow contract.\n',
   );
 }
 main();

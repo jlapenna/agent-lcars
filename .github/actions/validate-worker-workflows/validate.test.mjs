@@ -20,13 +20,13 @@ const sourceValidator = path.join(actionDirectory, 'validate.cjs');
 const bundledValidator = path.join(actionDirectory, 'dist/validate.cjs');
 const providers = ['claude', 'codex', 'opencode'];
 
-function fixture() {
+function fixture(selectedProviders = providers) {
   const directory = mkdtempSync(
     path.join(os.tmpdir(), 'validate-worker-workflows-'),
   );
   const workflows = path.join(directory, '.github/workflows');
   mkdirSync(workflows, { recursive: true });
-  for (const provider of providers) {
+  for (const provider of selectedProviders) {
     copyFileSync(
       path.join(repository, `.github/workflows/${provider}.yml`),
       path.join(workflows, `${provider}.yml`),
@@ -74,6 +74,47 @@ function expectFailure(name, provider, change, expected) {
     }
     process.stdout.write(
       'ok - real provider workflows pass source and bundle\n',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+for (const [name, selectedProviders] of [
+  ['one present provider workflow', ['claude']],
+  ['a provider subset', ['claude', 'opencode']],
+  ['no provider workflows', []],
+]) {
+  const directory = fixture(selectedProviders);
+  try {
+    for (const validator of [sourceValidator, bundledValidator]) {
+      const result = runValidator(validator, directory);
+      assert.equal(result.status, 0, result.stderr);
+    }
+    process.stdout.write(`ok - ${name} passes source and bundle\n`);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+{
+  const directory = fixture(['claude']);
+  try {
+    writeFileSync(
+      path.join(directory, '.github/workflows/claude.yml'),
+      'on: [workflow_dispatch\n',
+    );
+    for (const validator of [sourceValidator, bundledValidator]) {
+      const result = runValidator(validator, directory);
+      assert.notEqual(result.status, 0, 'malformed present workflow must fail');
+      assert.match(
+        result.stderr,
+        /\.github\/workflows\/claude\.yml: invalid YAML:/u,
+        'malformed present workflow must report the malformed file',
+      );
+    }
+    process.stdout.write(
+      'ok - malformed present workflow fails source and bundle\n',
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 name: Validate worker workflows
 description: >-
-  Validate the shared issue-or-native-work anchor contract in the caller's
-  Claude, Codex, and OpenCode worker workflows while leaving provider-specific
+  Validate the shared issue-or-native-work anchor contract in every present
+  Claude, Codex, and OpenCode worker workflow while leaving provider-specific
   lane configuration unconstrained.
 
 runs:
