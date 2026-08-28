@@ -66,3 +66,6 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/repo" \
             --workdir /repo \
             "rhysd/actionlint:${ACTIONLINT_VERSION}" -color
+
+      - name: Validate worker workflow anchor contracts
+        uses: jlapenna/agent-lcars/.github/actions/validate-worker-workflows@main

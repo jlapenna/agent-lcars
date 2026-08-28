@@ -1,0 +1,12 @@
+name: Validate worker workflows
+description: >-
+  Validate the shared issue-or-native-work anchor contract in the caller's
+  Claude, Codex, and OpenCode worker workflows while leaving provider-specific
+  lane configuration unconstrained.
+
+runs:
+  using: composite
+  steps:
+    - name: Validate worker workflow anchor contracts
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/dist/validate.cjs" "$GITHUB_WORKSPACE"

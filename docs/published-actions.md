@@ -30,16 +30,17 @@ their operating constraints.
 | `setup-nx-remote-cache`        | Configure trusted Nx jobs for the shared L2 cache.               |
 | `deploy-verify`                | Poll a deployed URL and optionally annotate deployment status.   |
 | `request-control-plane`        | Send an OIDC-authenticated request to a control-plane endpoint.  |
+| `validate-worker-workflows`    | Validate worker issue/native-work anchor-union contracts.        |
 
 ## Published reusable workflows
 
-| Workflow                                 | Purpose                                            |
-| ---------------------------------------- | -------------------------------------------------- |
-| `renovate-auto-approve.yml`              | Approve a Renovate PR with a minted App token.     |
-| `agent-automerge-reusable.yml`           | Arm auto-merge and restore the post-merge chain.   |
-| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts.              |
-| `repo-validation.yml`                    | Run actionlint against the caller's workflow tree. |
-| `codeql-reusable.yml`                    | Run the caller-configured CodeQL analysis job.     |
+| Workflow                                 | Purpose                                          |
+| ---------------------------------------- | ------------------------------------------------ |
+| `renovate-auto-approve.yml`              | Approve a Renovate PR with a minted App token.   |
+| `agent-automerge-reusable.yml`           | Arm auto-merge and restore the post-merge chain. |
+| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts.            |
+| `repo-validation.yml`                    | Run actionlint and worker-anchor contracts.      |
+| `codeql-reusable.yml`                    | Run the caller-configured CodeQL analysis job.   |
 
 The lane shims are the published interface. They delegate to the internal
 parameterized `agent-lane.yml`; callers must not call that internal workflow
@@ -84,6 +85,19 @@ concurrency, repository-variable spellings, and any required fallback job.
 Each workflow's `workflow_call` declaration is authoritative for required
 inputs and secrets; add a `with:` block only for inputs that declaration
 accepts.
+
+`validate-worker-workflows` takes no inputs. It reads the caller checkout's
+`.github/workflows/{claude,codex,opencode}.yml` files and protects the common
+dispatch boundary: the nine-input surface, optional empty `issue` and `work`
+anchors, the canonical issue-or-work admission and forwarding for both worker
+and fallback, and a native-aware run name. A workflow-level concurrency group,
+when present, must interpolate `inputs.work`, `inputs.broker_intent_id`, or the
+canonical `inputs.issue || <native identifier>` fallback; the explicit
+`inputs.issue != '' && inputs.issue || <native identifier>` equivalent is also
+accepted. Caller-supplied `prompt` overrides are rejected so the shared lane
+owns canonical prompt construction.
+Provider-specific credentials, timeouts, lane plumbing, and job-level
+concurrency remain caller-owned.
 
 ## Security invariants
 

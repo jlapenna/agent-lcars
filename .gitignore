@@ -14,6 +14,8 @@ e2e.log
 
 # compiled output
 dist
+!/.github/actions/validate-worker-workflows/dist/
+!/.github/actions/validate-worker-workflows/dist/validate.cjs
 out-tsc
 __pycache__/
 
