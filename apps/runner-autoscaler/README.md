@@ -221,8 +221,8 @@ this script reads and exports at runtime is not.
 `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` is that file's path **on the Docker
 host** -- the same "cannot be inferred, so it is required and fails loudly"
 reasoning as `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` immediately above,
-and every pipeline the queue executor launches today is `claude`, so it is
-unconditionally required whenever the queue executor runs.
+and it is required only when the executor grant permits `claude`; a
+Codex-only executor neither resolves nor mounts this file.
 
 **Placing the secret's value on the Docker host is still a one-time,
 maintainer-gated action this repo's own code cannot perform**: a maintainer
@@ -234,6 +234,25 @@ not something any workflow in this repo performs -- but the bind mount and
 the in-container read-and-export it feeds are wired code. See
 `docs/deployment-boundary.md`'s "Queue executor routing" section for the
 ownership boundary.
+
+### Delivering Codex subscription authentication
+
+Codex direct mode receives no host-mounted subscription credential and no
+GCS-capable key. A live run token fetches repository-scoped `auth.json` from
+the console's Codex-auth broker and later writes a rotated credential back only
+with the exact restored GCS generation. The broker rejects known burned
+refresh lineages and treats a generation conflict as terminal, so a stale
+runner cannot overwrite a newer rotation.
+
+Codex session files remain only in the runner's volatile filesystem until the
+telemetry sidecar has finalized and archived them; cleanup then removes the
+per-run directory. A retained Docker container therefore holds neither the
+subscription credential nor its session transcript.
+
+This implementation remains disabled until a separately reviewed,
+repository-prefix-preserving runtime grant on `agent-lcars-codex-auth` and a
+single-run canary are complete. This repository does not make that IAM change
+or alter queue routing.
 
 ## Host telemetry timeout
 

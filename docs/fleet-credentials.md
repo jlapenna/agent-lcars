@@ -110,10 +110,13 @@ it; if you are changing this step, keep the explicit access token.
 
 ## Codex `auth.json` lineage (codex lane)
 
-The codex lane restores `~/.codex/auth.json` from its repository-scoped GCS
-object. Codex can refresh the credential during a run; the lane persists a
+The GitHub Actions Codex lane and the QueueExecutor's run-token-authenticated
+Codex broker restore `~/.codex/auth.json` from its repository-scoped GCS
+object. Codex can refresh the credential during a run; either path persists a
 changed file only with that exact restored object's generation as its
-precondition. That makes each repository's object a _lineage_, not a value:
+precondition. The broker additionally binds access to a live Codex run and its
+target repository; a direct container never receives bucket credentials. That
+makes each repository's object a _lineage_, not a value:
 
 > **Never copy the blob from another repo's object.** Two repos sharing one
 > lineage invalidate each other on every run (the lane's own comment block
@@ -161,8 +164,8 @@ provisioned (#1354), so only the mint is left.
    two `supersprinklesracing` ones: the shared `github` pool that admits them
    lives there, and the bucket IAM condition confines each identity to its own
    prefix. The lane reads one exact generation and persists only with that
-   generation as `--if-generation-match`; a conflict is terminal and must not
-   be retried.
+   generation as `--if-generation-match`; the direct broker uses the same GCS
+   precondition. A conflict is terminal and must not be retried.
 
 3. Infrastructure, for a repo Terraform does **not** yet cover: add its
    existing runtime service account to `local.codex_auth_runtime_identities`

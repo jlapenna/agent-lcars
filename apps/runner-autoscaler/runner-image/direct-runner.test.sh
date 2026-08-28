@@ -102,12 +102,12 @@ case "$url" in
       exit 22
     fi
     if [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
-      cat <<'JSON'
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"claude","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
+      cat <<JSON
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
     else
-      cat <<'JSON'
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"claude","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+      cat <<JSON
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
 JSON
     fi
     ;;
@@ -117,6 +117,17 @@ JSON
       exit 22
     fi
     echo "{\"token\":\"$FAKE_TOKEN\",\"expiresAt\":\"2026-08-27T01:00:00.000Z\"}"
+    ;;
+  */codex-auth)
+    if printf '%s\n' "$config_body" | grep -qF 'request = "PUT"'; then
+      [ -n "$data_binary_file" ] && cat "$data_binary_file" >> "$CODEX_AUTH_PERSIST_LOG"
+      echo '{"status":"updated"}'
+    else
+      auth='{"tokens":{"access":"old"}}'
+      auth_b64="$(printf '%s' "$auth" | base64 -w0)"
+      auth_sha="$(printf '%s' "$auth" | sha256sum | awk '{print $1}')"
+      printf '{"authBase64":"%s","generation":"7","sha256":"%s"}\n' "$auth_b64" "$auth_sha"
+    fi
     ;;
   */heartbeat)
     echo '{"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","expiresAt":"2026-08-27T01:00:00.000Z"}'
@@ -192,6 +203,22 @@ exit 0
 FAKE
   chmod +x "$bindir/claude"
 
+  cat > "$bindir/codex" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
+  exit 0
+fi
+echo "$@" >> "$CODEX_ARGS_LOG"
+printf '%s' '{"tokens":{"access":"rotated"}}' > "$HOME/.codex/auth.json"
+if [ "${FAKE_CODEX_BURNED:-}" = "1" ]; then
+  echo '{"type":"turn.failed","error":{"message":"refresh token was already used"}}'
+  exit 1
+fi
+echo '{"type":"turn.completed"}'
+exit 0
+FAKE
+  chmod +x "$bindir/codex"
+
   # Mirrors .github/actions/resume-session/resume.test.sh's own fake node:
   # records its argv (proving direct-runner.sh's `runner resume` call site
   # passes the right session id/transcript uri/cwd) and either prints a
@@ -211,6 +238,7 @@ FAKE
 
 run_scenario() {
   name="$1"
+  export FAKE_PIPELINE="${2:-claude}"
   dir="$tmp/$name"
   mkdir -p "$dir/bin"
   make_fake_bins "$dir/bin"
@@ -240,6 +268,8 @@ run_scenario() {
   export CLAUDE_ARGS_LOG="$dir/claude-args.log"
   export NODE_ARGS_LOG="$dir/node-args.log"
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
+  export CODEX_ARGS_LOG="$dir/codex-args.log"
+  export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
   # real bind mount produces -- a plain-text file holding just the token --
@@ -336,7 +366,57 @@ fi
 
 echo "scenario happy-path: OK"
 
-# --- Scenario 1a: GitHub-Actions temp environment absent -------------------
+# --- Scenario 1a: Codex provider dispatch and auth broker -------------------
+# Codex must run without the Claude host-token mount, restore only through the
+# run-token broker, and persist the changed auth.json with the exact restored
+# generation/hash. A resume object is deliberately present in the brief: Codex
+# has archived telemetry but no live-resume implementation, so runner resume
+# must remain Claude-only.
+export FAKE_MISSING_CLAUDE_TOKEN=1
+run_scenario codex-happy codex
+unset FAKE_MISSING_CLAUDE_TOKEN
+
+[ "$rc" -eq 0 ] || fail "codex happy path: expected exit 0, got $rc"
+[ -s "$CODEX_ARGS_LOG" ] || fail "codex happy path: codex was not invoked"
+grep -q -- 'exec --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
+  fail "codex happy path: wrong invocation ($(cat "$CODEX_ARGS_LOG"))"
+[ ! -f "$CLAUDE_ARGS_LOG" ] || fail "codex happy path: claude was invoked"
+[ ! -f "$NODE_ARGS_LOG" ] || fail "codex happy path: Claude resume helper was invoked"
+[ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "codex happy path: auth.json was not persisted"
+jq -e '.generation == "7" and (.restoredSha256 | test("^[0-9a-f]{64}$")) and (.authBase64 | length > 0) and (has("authFailure") | not)' \
+  "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
+  fail "codex happy path: persistence payload lost its CAS binding ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "codex happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario codex-happy: OK"
+
+# A positive #1192 refresh-failure signature must reach the broker as the
+# narrow enum that makes persistence an authoritative no-write. The agent run
+# itself still fails and reports no-deliverable.
+export FAKE_CODEX_BURNED=1
+run_scenario codex-burned codex
+unset FAKE_CODEX_BURNED
+
+[ "$rc" -ne 0 ] || fail "codex burned auth: expected a non-zero exit"
+jq -e '.authFailure == "refresh-token-reused"' "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
+  fail "codex burned auth: broker payload did not carry the exact failure enum ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "codex burned auth: completion did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario codex-burned: OK"
+
+# Provider expansion is explicit. OpenCode remains outside this PR and must
+# fail before checkout while still settling the already-claimed run.
+run_scenario opencode-unsupported opencode
+[ "$rc" -ne 0 ] || fail "unsupported OpenCode: expected a non-zero exit"
+[ ! -f "$GIT_CLONE_ARGV_LOG" ] || fail "unsupported OpenCode: checkout ran"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "unsupported OpenCode: claimed run was not settled ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-unsupported: OK"
+
+# --- Scenario 1b: GitHub-Actions temp environment absent -------------------
 # A direct-mode container is started by Docker rather than GitHub Actions, so
 # it has no inherited RUNNER_TEMP. Its own fallback must be exported before
 # prepare-agent-dispatch runs; otherwise prepare.sh fails after clone with
@@ -355,7 +435,7 @@ grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
 
 echo "scenario missing-runner-temp: OK"
 
-# --- Scenario 1b: no resume in the brief -------------------------------------
+# --- Scenario 1c: no resume in the brief -------------------------------------
 # A brief with no `resume` field must leave direct-runner.sh byte-identical
 # to today: no `runner resume` invocation, and claude receives no --resume
 # flag at all.
@@ -373,7 +453,7 @@ fi
 
 echo "scenario no-resume: OK"
 
-# --- Scenario 1c: resume present but the restore fails -----------------------
+# --- Scenario 1d: resume present but the restore fails -----------------------
 # `runner resume` fails closed (simulating a missing/expired transcript);
 # direct-runner.sh's restore is fail-soft -- the run must still proceed to
 # a normal pull-request outcome, just without --resume on the claude

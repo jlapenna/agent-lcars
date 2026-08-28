@@ -1,5 +1,7 @@
 import 'server-only';
 
+import crypto from 'node:crypto';
+
 import {
   isLive,
   isRefusal,
@@ -12,6 +14,7 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
+import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { toRunResult } from './orchestrator-routes';
@@ -32,6 +35,7 @@ export interface RunsContext {
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
   checkoutTokens: DispatchTokenProvider;
+  codexAuth: CodexAuthStore;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -96,6 +100,46 @@ async function requireRunToken(
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
   return run;
+}
+
+async function requireCodexRun(
+  context: RunsContext,
+  runId: string,
+): Promise<{ run: Run; repository: string }> {
+  const run = await requireRunToken(context, runId);
+  if (run.pipeline !== 'codex') {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'Codex authentication is only available to Codex runs',
+    });
+  }
+  const task =
+    'workId' in run.task
+      ? (await context.store.readTask(run.task))?.task
+      : undefined;
+  return { run, repository: anchorTarget(run, task).repo };
+}
+
+function codexAuthError(
+  error: unknown,
+  errors: {
+    NOT_FOUND?: (options?: { message?: string }) => Error;
+    BAD_REQUEST?: (options?: { message?: string }) => Error;
+    CONFLICT?: (options?: { message?: string }) => Error;
+    INTERNAL_SERVER_ERROR: (options?: { message?: string }) => Error;
+  },
+): never {
+  if (error instanceof CodexAuthStoreError) {
+    if (error.kind === 'not-found' && errors.NOT_FOUND) {
+      throw errors.NOT_FOUND();
+    }
+    if (error.kind === 'invalid' && errors.BAD_REQUEST) {
+      throw errors.BAD_REQUEST();
+    }
+    if (error.kind === 'conflict' && errors.CONFLICT) {
+      throw errors.CONFLICT();
+    }
+  }
+  throw errors.INTERNAL_SERVER_ERROR();
 }
 
 /** `claim` retry budget for a stale queue entry -- see the loop's own
@@ -275,6 +319,47 @@ export const runsRouter = os.router({
       expiresAt: new Date(context.now().getTime() + 45 * 60_000).toISOString(),
     };
   }),
+
+  codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
+    const { repository } = await requireCodexRun(context, input.runId);
+    try {
+      return await context.codexAuth.read(repository);
+    } catch (error) {
+      return codexAuthError(error, errors);
+    }
+  }),
+
+  persistCodexAuth: os.persistCodexAuth.handler(
+    async ({ input, context, errors }) => {
+      const { repository } = await requireCodexRun(context, input.runId);
+
+      // #1192: a Codex process that positively reported one of the three
+      // known refresh-failure signatures must never advance the stored
+      // lineage. The direct runner derives this narrow enum from Codex's
+      // captured JSONL; the broker makes the refusal authoritative before
+      // any GCS call.
+      if (input.authFailure !== undefined) {
+        return { status: 'skipped-burned' as const };
+      }
+
+      const bytes = Buffer.from(input.authBase64, 'base64');
+      const endSha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (endSha256 === input.restoredSha256) {
+        return { status: 'unchanged' as const };
+      }
+
+      try {
+        await context.codexAuth.replace({
+          repository,
+          expectedGeneration: input.generation,
+          authBase64: input.authBase64,
+        });
+        return { status: 'updated' as const };
+      } catch (error) {
+        return codexAuthError(error, errors);
+      }
+    },
+  ),
 });
 
 export function createRunsHandler(): OpenAPIHandler<RunsContext> {

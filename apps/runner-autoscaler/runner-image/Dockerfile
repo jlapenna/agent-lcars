@@ -503,7 +503,7 @@ RUN chmod +x /usr/local/bin/lcars
 # before switching to the unprivileged runner user, then install the plugin
 # into that user's state below. This deliberately tracks the current CLI: the
 # runner is an integrated first-party delivery surface, not a pinned artifact.
-RUN npm install -g @openai/codex
+RUN npm install -g @openai/codex && codex --version
 
 # QueueExecutor direct mode invokes `claude` itself instead of the GitHub
 # Action that normally provisions that CLI. Keep it in the shared runner image

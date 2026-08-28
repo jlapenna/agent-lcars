@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { auth } from '@/auth';
+import { codexAuthStore } from '@/lib/codex-auth-store';
 import { controlPlaneRepository } from '@/lib/deployment';
 import {
   verifyScheduleTickOidcToken,
@@ -98,6 +99,7 @@ async function handle(request: Request): Promise<Response> {
       checkoutTokens: lazyDispatchTokenProvider(() =>
         createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
       ),
+      codexAuth: codexAuthStore('agent-lcars-codex-auth'),
     },
   });
   if (runsResult.matched && runsResult.response !== undefined) {

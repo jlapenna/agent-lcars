@@ -435,7 +435,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	if err != nil {
 		return err
 	}
-	claudeTokenHostPath, err := directRunnerClaudeTokenHostPath()
+	pipelineSecretBinds, err := directRunnerPipelineSecretBinds(l.pipeline)
 	if err != nil {
 		return err
 	}
@@ -445,7 +445,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, claudeTokenHostPath, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, pipelineSecretBinds, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -535,6 +535,27 @@ func directRunnerClaudeTokenHostPath() (string, error) {
 		return "", fmt.Errorf("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH is required to launch a direct-mode runner (Docker-host path of a file holding the current CLAUDE_CODE_OAUTH_TOKEN value, bind-mounted read-only to %s)", directRunnerClaudeTokenMountPath)
 	}
 	return path, nil
+}
+
+// directRunnerPipelineSecretBinds returns only the provider credential
+// mounts the claimed pipeline needs. Claude consumes its host-staged OAuth
+// token file. Codex deliberately receives no bucket or long-lived credential:
+// direct-runner.sh restores and conditionally persists the target repository's
+// auth.json through the run-token-authenticated console broker instead.
+// OpenCode remains unsupported and fails before a container is created.
+func directRunnerPipelineSecretBinds(pipeline string) ([]string, error) {
+	switch strings.ToLower(strings.TrimSpace(pipeline)) {
+	case "claude":
+		path, err := directRunnerClaudeTokenHostPath()
+		if err != nil {
+			return nil, err
+		}
+		return []string{path + ":" + directRunnerClaudeTokenMountPath + ":ro"}, nil
+	case "codex":
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("direct-mode runner does not support pipeline %q", pipeline)
+	}
 }
 
 // cleanupExitedDirectRunners sweeps only containers this queue executor owns:
@@ -653,7 +674,7 @@ func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target
 // uses for GitHub-mode runners), and on capacity, creates and starts the
 // container. Returns an error (never fatal to the caller's round-robin) if
 // this host is unreachable, full, or the create/start call fails.
-func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath, claudeTokenHostPath string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
+func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, pipelineSecretBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("host %q: connecting: %w", host, err)
@@ -681,16 +702,23 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 	if l.consoleURL != "" {
 		env = append(env, "LCARS_CONSOLE_URL="+l.consoleURL)
 	}
+	var tmpfs map[string]string
+	if strings.EqualFold(strings.TrimSpace(l.pipeline), "codex") {
+		env = append(env, "LCARS_CODEX_VOLATILE_DIR="+directRunnerCodexVolatileMountPath)
+		tmpfs = map[string]string{
+			directRunnerCodexVolatileMountPath: "rw,noexec,nosuid,nodev,mode=1777,size=64m",
+		}
+	}
 	hostConfig := &container.HostConfig{
 		// The claude-token bind is deliberately the only path that puts
 		// CLAUDE_CODE_OAUTH_TOKEN anywhere near this container: it never
 		// appears in the env list below, only as a file direct-runner.sh
 		// reads and exports into its own process just before invoking
 		// `claude` (see directRunnerClaudeTokenMountPath's comment).
-		Binds: []string{
+		Binds: append([]string{
 			writerKeyHostPath + ":" + directRunnerTelemetryWriterMountPath + ":ro",
-			claudeTokenHostPath + ":" + directRunnerClaudeTokenMountPath + ":ro",
-		},
+		}, pipelineSecretBinds...),
+		Tmpfs: tmpfs,
 		// Deliberately NOT AutoRemove: AutoRemove would reap the container
 		// and its non-zero-exit stdout/stderr before an operator could
 		// inspect them. The queue worker's label-scoped retention sweep keeps
