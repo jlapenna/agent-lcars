@@ -261,9 +261,32 @@ Commit and push before you end your turn.
 PROMPT
 )"
 
+if [ "$PIPELINE" = "codex" ]; then
+  # The sidecar starts before the agent invocation so it can emit live state.
+  # Allocate the per-run tmpfs home first, then pass its eventual session root
+  # to both sidecar phases. Auth is restored below, after this setup but before
+  # Codex executes; nothing from a previous run is visible in this directory.
+  : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
+  if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
+    echo "FATAL: Codex volatile directory is missing" >&2
+    exit 1
+  fi
+  CODEX_RUNTIME_DIR="$(mktemp -d "$LCARS_CODEX_VOLATILE_DIR/run.XXXXXX")"
+  export CODEX_HOME="$CODEX_RUNTIME_DIR/home"
+  mkdir -m 700 "$CODEX_HOME"
+  if [ -e "$HOME/.codex/auth.json" ]; then
+    echo "FATAL: runner image must not contain Codex authentication" >&2
+    exit 1
+  fi
+  if [ -d "$HOME/.codex" ]; then
+    cp -a "$HOME/.codex/." "$CODEX_HOME/"
+  fi
+fi
+
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
+  CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
   "$SIDECAR_LIFECYCLE" start
 
 # Best-effort lease renewal for the duration of the agent's own run. A
@@ -325,25 +348,6 @@ else
   # The broker exposes only this run's target-repository lineage and only
   # to this live run token. The direct container receives no GCS credential
   # capable of reading another repository's auth.json.
-  : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
-  if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
-    echo "FATAL: Codex volatile directory is missing" >&2
-    exit 1
-  fi
-  CODEX_RUNTIME_DIR="$(mktemp -d "$LCARS_CODEX_VOLATILE_DIR/run.XXXXXX")"
-  export CODEX_HOME="$CODEX_RUNTIME_DIR/home"
-  mkdir -m 700 "$CODEX_HOME"
-  # Preserve the runner image's reviewed Codex plugins/configuration without
-  # letting any pre-existing auth credential enter the run. All subsequent
-  # Codex writes land in the tmpfs-backed copy.
-  if [ -e "$HOME/.codex/auth.json" ]; then
-    echo "FATAL: runner image must not contain Codex authentication" >&2
-    exit 1
-  fi
-  if [ -d "$HOME/.codex" ]; then
-    cp -a "$HOME/.codex/." "$CODEX_HOME/"
-  fi
-
   codex_auth="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/codex-auth"
 header = "$AUTH_HEADER"
@@ -382,7 +386,7 @@ CURLCFG
   CODEX_STDERR_TEE_PID=$!
   set +e
   timeout --signal=TERM --kill-after=30s "${CODEX_TIMEOUT_SECONDS}s" \
-    codex exec --json --ephemeral --dangerously-bypass-approvals-and-sandbox \
+    codex exec --json --dangerously-bypass-approvals-and-sandbox \
     "$AGENT_PROMPT" 2> "$CODEX_STDERR_PIPE" |
     while IFS= read -r codex_event; do
       printf '%s\n' "$codex_event"
@@ -443,7 +447,6 @@ CURLCFG
       AGENT_EXIT=1
     fi
   fi
-  cleanup_codex_material
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
@@ -451,7 +454,12 @@ kill "$HEARTBEAT_PID" 2>/dev/null || true
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
+  CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
   "$SIDECAR_LIFECYCLE" finalize
+
+# Finalization has synchronously archived every Codex session it found. Only
+# now can the tmpfs-backed session/auth directory be erased.
+cleanup_codex_material
 
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null

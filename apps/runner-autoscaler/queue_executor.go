@@ -381,6 +381,10 @@ const (
 	// `docker inspect` the container on this host. Matches the
 	// telemetry-writer.json pattern immediately above, not a new one.
 	directRunnerClaudeTokenMountPath = "/run/secrets/claude-code-oauth-token"
+	// Codex writes its rotating auth.json, transcript, and persistence payload
+	// only below this tmpfs. Direct-runner containers remain inspectable after
+	// exit, but Docker discards tmpfs contents when the container stops.
+	directRunnerCodexVolatileMountPath = "/run/agent-lcars-codex"
 	// directRunnerExitedRetentionAge keeps an exited direct-runner's logs
 	// available for a full day. The direct runner remains one-shot, so this
 	// retention does not alter execution or the Work API's lease recovery.
@@ -524,11 +528,9 @@ func directRunnerTelemetryWriterHostPath() (string, error) {
 // deployment knowledge -- where the operator staged the secret on the
 // specific Docker host that will perform the bind mount -- this repo cannot
 // infer, so it is required, explicit, and fails loudly rather than guessing
-// a path that could silently mount the wrong file or nothing. Every
-// pipeline the queue executor launches today is `claude` (README's own
-// "codex/opencode are not covered" caveat), so this is unconditionally
-// required whenever a direct-mode runner launches at all, exactly like the
-// telemetry-writer path above.
+// a path that could silently mount the wrong file or nothing. Only the Claude
+// provider resolves this value; Codex restores its credential through the
+// run-token-authenticated broker and receives no provider-secret bind.
 func directRunnerClaudeTokenHostPath() (string, error) {
 	path := strings.TrimSpace(os.Getenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH"))
 	if path == "" {

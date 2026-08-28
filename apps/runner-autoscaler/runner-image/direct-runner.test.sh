@@ -38,7 +38,15 @@ cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
 
 BAKED_PREPARE_DISPATCH_DIR="$baked/.github/actions/prepare-agent-dispatch"
 BAKED_VERIFY_DELIVERABLE="$baked/.github/actions/verify-deliverable/verify-deliverable.sh"
-BAKED_SIDECAR_LIFECYCLE="$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh"
+# sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
+# delegates to the fake `node` below. Keep it separate from the source tree:
+# the real runner image contains the compiled bundle, while this shell harness
+# deliberately verifies the lifecycle arguments without starting Firestore.
+cp "$repo_root/apps/telemetry-watcher/bin/sidecar-lifecycle.sh" "$baked/sidecar-lifecycle.sh"
+cp "$repo_root/apps/telemetry-watcher/bin/job-daemon.sh" "$baked/job-daemon.sh"
+chmod +x "$baked/sidecar-lifecycle.sh" "$baked/job-daemon.sh"
+BAKED_SIDECAR_LIFECYCLE="$baked/sidecar-lifecycle.sh"
+printf '%s\n' '// fake baked telemetry sidecar' > "$baked/sidecar.cjs"
 
 # A distinctive value (not a real secret) asserted absent from every place
 # a leaked credential could land -- $workspace/.git/config and the fake
@@ -209,6 +217,9 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+printf '%s' "$CODEX_HOME/sessions" > "$CODEX_SESSIONS_DIR_LOG"
+mkdir -p "$CODEX_HOME/sessions/2026/08/28"
+printf '%s\n' '{"type":"session_meta","payload":{"id":"sess-codex-test"}}' > "$CODEX_HOME/sessions/2026/08/28/sess-codex-test.jsonl"
 printf '%s' '{"tokens":{"access":"rotated"}}' > "$CODEX_HOME/auth.json"
 if [ "${FAKE_CODEX_BURNED:-}" = "1" ]; then
   echo '{"type":"turn.failed","error":{"message":"refresh token was already used"}}'
@@ -278,6 +289,7 @@ run_scenario() {
   export NODE_ARGS_LOG="$dir/node-args.log"
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
+  export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
@@ -387,10 +399,22 @@ unset FAKE_MISSING_CLAUDE_TOKEN
 
 [ "$rc" -eq 0 ] || fail "codex happy path: expected exit 0, got $rc"
 [ -s "$CODEX_ARGS_LOG" ] || fail "codex happy path: codex was not invoked"
-grep -q -- 'exec --json --ephemeral --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
+grep -q -- 'exec --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
   fail "codex happy path: wrong invocation ($(cat "$CODEX_ARGS_LOG"))"
+if grep -q -- '--ephemeral' "$CODEX_ARGS_LOG"; then
+  fail "codex happy path: ephemeral execution suppresses telemetry sessions"
+fi
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "codex happy path: claude was invoked"
-[ ! -f "$NODE_ARGS_LOG" ] || fail "codex happy path: Claude resume helper was invoked"
+[ -s "$CODEX_SESSIONS_DIR_LOG" ] || fail "codex happy path: fake Codex did not receive its session root"
+codex_sessions_dir="$(cat "$CODEX_SESSIONS_DIR_LOG")"
+if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
+  fail "codex happy path: Claude resume helper was invoked"
+fi
+[ -f "$NODE_ARGS_LOG" ] || fail "codex happy path: sidecar never invoked node"
+sidecar_session_calls="$(grep -Fc -- "--codex-sessions-dir $codex_sessions_dir" "$NODE_ARGS_LOG" || true)"
+if [ "$sidecar_session_calls" -lt 2 ]; then
+  fail "codex happy path: sidecar start/finalize did not both receive Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
+fi
 [ -s "$CODEX_AUTH_PERSIST_LOG" ] || fail "codex happy path: auth.json was not persisted"
 jq -e '.generation == "7" and (.restoredSha256 | test("^[0-9a-f]{64}$")) and (.authBase64 | length > 0) and (has("authFailure") | not)' \
   "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
@@ -485,7 +509,7 @@ run_scenario no-resume
 unset FAKE_BRIEF_NO_RESUME
 
 [ "$rc" -eq 0 ] || fail "no-resume: expected exit 0, got $rc"
-if [ -s "$NODE_ARGS_LOG" ]; then
+if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
   fail "no-resume: runner resume was invoked despite no resume field in the brief ($(cat "$NODE_ARGS_LOG"))"
 fi
 if grep -q -- '--resume' "$CLAUDE_ARGS_LOG" 2>/dev/null; then

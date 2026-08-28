@@ -730,6 +730,20 @@ func TestLaunchCodexDirectRunnerMountsNoProviderCredential(t *testing.T) {
 	if len(created.HostConfig.Binds) != 1 || created.HostConfig.Binds[0] != want {
 		t.Fatalf("codex binds = %v, want only %q", created.HostConfig.Binds, want)
 	}
+	if got := created.HostConfig.Tmpfs[directRunnerCodexVolatileMountPath]; got != "rw,noexec,nosuid,nodev,mode=1777,size=64m" {
+		t.Fatalf("codex tmpfs = %q, want hardened volatile mount", got)
+	}
+	volatileEnv := "LCARS_CODEX_VOLATILE_DIR=" + directRunnerCodexVolatileMountPath
+	volatileEnvFound := false
+	for _, env := range created.Env {
+		if env == volatileEnv {
+			volatileEnvFound = true
+			break
+		}
+	}
+	if !volatileEnvFound {
+		t.Fatalf("codex volatile dir was not passed to the container: %v", created.Env)
+	}
 	for _, env := range created.Env {
 		if strings.Contains(strings.ToLower(env), "codex") && strings.Contains(strings.ToLower(env), "auth") {
 			t.Fatalf("Codex auth must not appear in container env: %q", env)
