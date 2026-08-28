@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	dockerclient "github.com/docker/docker/client"
@@ -555,23 +556,51 @@ func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target
 		return fmt.Errorf("host %q: listing direct-runner containers for cleanup: %w", host, err)
 	}
 
-	exited := make([]container.Summary, 0, len(containers))
+	type exitedDirectRunner struct {
+		container.Summary
+		finishedAt time.Time
+	}
+	exited := make([]exitedDirectRunner, 0, len(containers))
+	var errs []error
 	for _, c := range containers {
 		if c.Labels[directRunnerLabelKey] != "1" || c.Labels[directRunnerRunIDLabelKey] == "" || c.State != container.StateExited {
 			continue
 		}
-		exited = append(exited, c)
+		// Created is when a container was allocated, not when its one-shot
+		// direct runner exited. A long-running failure must receive the same
+		// evidence window as a short one, so inspect its authoritative
+		// FinishedAt value before deciding retention or sort order.
+		inspectCtx, cancelInspect := context.WithTimeout(ctx, dockerInspectTimeout)
+		inspected, inspectErr := client.ContainerInspect(inspectCtx, c.ID)
+		cancelInspect()
+		if inspectErr != nil {
+			if !cerrdefs.IsNotFound(inspectErr) {
+				errs = append(errs, fmt.Errorf("host %q: inspecting exited direct-runner container %q: %w", host, c.ID, inspectErr))
+			}
+			continue
+		}
+		// A container can change state between the list and inspect. Retain
+		// it unless Docker still confirms it exited; no direct runner is ever
+		// deleted merely because a stale list said so.
+		if inspected.State == nil || inspected.State.Status != container.StateExited {
+			continue
+		}
+		finishedAt, parseErr := time.Parse(time.RFC3339Nano, inspected.State.FinishedAt)
+		if parseErr != nil {
+			errs = append(errs, fmt.Errorf("host %q: parsing exit time for direct-runner container %q: %w", host, c.ID, parseErr))
+			continue
+		}
+		exited = append(exited, exitedDirectRunner{Summary: c, finishedAt: finishedAt})
 	}
 	sort.Slice(exited, func(i, j int) bool {
-		if exited[i].Created == exited[j].Created {
+		if exited[i].finishedAt.Equal(exited[j].finishedAt) {
 			return exited[i].ID < exited[j].ID
 		}
-		return exited[i].Created > exited[j].Created
+		return exited[i].finishedAt.After(exited[j].finishedAt)
 	})
 
-	var errs []error
 	for i, c := range exited {
-		age := now.Sub(time.Unix(c.Created, 0))
+		age := now.Sub(c.finishedAt)
 		if i < directRunnerExitedRetentionLimit && age < directRunnerExitedRetentionAge {
 			continue
 		}
