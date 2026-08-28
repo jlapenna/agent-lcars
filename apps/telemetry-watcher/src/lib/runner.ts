@@ -2,6 +2,11 @@ import { logger } from '@agent-lcars/logging';
 import { runnerWatchRoots } from '@agent-lcars/telemetry';
 
 import { WatcherDaemon } from './daemon';
+import {
+  captureOpenCodeExports as defaultCaptureOpenCodeExports,
+  CaptureOpenCodeExportsOptions,
+  CaptureOpenCodeExportsResult,
+} from './opencode-export-capture';
 import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
 
@@ -25,6 +30,9 @@ export interface StartSidecarOptions {
    * tick `start()` kicks off. Defaults to `true` (real usage always starts
    * the loop). */
   autoStart?: boolean;
+  captureOpenCodeExports?: (
+    options: CaptureOpenCodeExportsOptions,
+  ) => CaptureOpenCodeExportsResult | Promise<CaptureOpenCodeExportsResult>;
 }
 
 /**
@@ -32,8 +40,9 @@ export interface StartSidecarOptions {
  * turn (issue #3107 follow-up 5): on a fixed interval
  * (`config.heartbeatIntervalMs`, ~10s by default), discovers every
  * transcript under the runner's `$HOME/.claude/projects` and
- * `$HOME/.codex/sessions`, reduces it, and upserts a session doc tagged
- * with `runId`/`issueNumber`. This is what
+ * `$HOME/.codex/sessions`, plus bounded sanitized OpenCode exports
+ * materialized from the native session store, reduces it, and upserts a
+ * session doc tagged with `runId`/`issueNumber`. This is what
  * lights up the Agent LCARS's In-Flight UI (#3092) mid-run instead of
  * only after the job ends — that UI already renders gauges whenever a live
  * session doc exists, so shipping docs mid-run needs zero console changes.
@@ -63,6 +72,22 @@ export interface StartSidecarOptions {
  */
 export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   const { config, store } = options;
+  const captureOpenCodeExports =
+    options.captureOpenCodeExports ?? defaultCaptureOpenCodeExports;
+  let openCodeCaptureUnavailable = false;
+  const beforeDiscover =
+    // Existing tests inject virtual transcript discovery and must not reach
+    // the workstation's real OpenCode store. A capture injection opts back in.
+    options.discover && !options.captureOpenCodeExports
+      ? undefined
+      : async () => {
+          if (openCodeCaptureUnavailable) return;
+          const result = await captureOpenCodeExports({
+            workspaceDir: config.opencodeWorkspaceDir,
+            exportsDir: config.opencodeExportsDir,
+          });
+          openCodeCaptureUnavailable = result.status === 'cli-unavailable';
+        };
 
   const daemon = new WatcherDaemon({
     // The single runner-mode watch-root contract (@agent-lcars/telemetry,
@@ -78,6 +103,7 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
     watchRoots: runnerWatchRoots({
       claudeProjectsDir: config.claudeProjectsDir,
       codexSessionsDir: config.codexSessionsDir,
+      opencodeExportsDir: config.opencodeExportsDir,
     }),
     // Every transcript on a dispatch runner belongs to that job's agent
     // run, whatever the transcript itself claims — see
@@ -111,10 +137,11 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
     resolveGitBranch: options.resolveGitBranch,
     resolveGitRepo: options.resolveGitRepo,
     now: options.now,
+    beforeDiscover,
   });
 
   logger.info(
-    `agent-lcars-telemetry-watcher: runner sidecar starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir} and ${config.codexSessionsDir} every ${config.heartbeatIntervalMs}ms`,
+    `agent-lcars-telemetry-watcher: runner sidecar starting (run ${config.runId ?? 'unknown'}, issue #${config.issueNumber ?? 'unknown'}); watching ${config.claudeProjectsDir}, ${config.codexSessionsDir}, and bounded OpenCode exports under ${config.opencodeExportsDir} every ${config.heartbeatIntervalMs}ms`,
   );
 
   if (options.autoStart ?? true) {

@@ -233,17 +233,12 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
    * there is no runner-container-destroyed-on-exit problem to solve for
    * them.
    *
-   * Not necessarily a single Claude Code `.jsonl` object forever: an
-   * archive-first strategy for agents with no `TranscriptAdapter` at all
-   * (raw local session storage uploaded as-is under a `runs/<run-id>/<agent>/`
-   * GCS *prefix*, not one file) was the intended shape for such agents as of
-   * #3123 phase 2, but as of #645 no pipeline actually ships one yet —
-   * OpenCode (the one agent this would currently apply to) archives nothing
-   * today; see `RUNNER_CAPTURE_AGENTS` (`runner-capture.ts`) and
-   * `finalize.ts`'s zero-sessions-shipped warning. Do not assume this is a
-   * fetchable single transcript object without checking
-   * {@link IssueAgentSessionDoc.renderable} first — that flag, not
-   * `sessionAgent(doc)`, is the one the console reads. */
+   * OpenCode's SQLite-backed store is materialized through the CLI's export
+   * contract into one JSONL object per session before upload, while Claude
+   * Code and Codex already write per-session files. Do not assume an archived
+   * object is console-renderable without checking
+   * {@link IssueAgentSessionDoc.renderable} first — OpenCode archives are
+   * durable but intentionally remain summary-only in the console. */
   transcriptGcsUri?: string;
   /**
    * Whether `transcriptGcsUri` (when set) points at a raw transcript

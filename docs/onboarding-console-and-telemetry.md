@@ -71,12 +71,13 @@ dispatch-workflow work, following a file this repo publishes.
 
 ## 2. Telemetry
 
-Provider coverage differs: Claude Code reports live session data and archived
-transcripts; Codex reports session telemetry and archives raw JSONL to GCS but
-does not expose a live-resume command; OpenCode currently has no transcript
-adapter or archive. Telemetry steps are deliberately fail-soft, so verify the
-expected provider-specific result rather than treating a green workflow as
-proof that session data arrived.
+Provider coverage differs: Claude Code reports live session data, archives raw
+JSONL, and exposes its resume tooling; Codex reports session telemetry and
+archives raw JSONL but has no live-resume command; OpenCode reports summary
+telemetry and archives a bounded sanitized CLI export, but that archive has no
+timeline renderer or resume command. Telemetry steps are deliberately fail-soft, so
+verify the expected provider-specific result rather than treating a green
+workflow as proof that session data arrived.
 
 The shared lane owns the standard WIF provider and telemetry-writer service
 account. A new repo therefore needs no duplicated workflow steps or repository

@@ -8,10 +8,11 @@ import {
 } from './runner-capture';
 
 describe('runnerWatchRoots', () => {
-  it('declares both captured agents unconditionally, allowlist-free', () => {
+  it('declares all captured agents unconditionally', () => {
     const roots = runnerWatchRoots({
       claudeProjectsDir: '/home/runner/.claude/projects',
       codexSessionsDir: '/home/runner/.codex/sessions',
+      opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',
     });
 
     expect(roots).toEqual([
@@ -26,6 +27,11 @@ describe('runnerWatchRoots', () => {
         recursive: true,
         cwdAllowlist: ['*'],
       },
+      {
+        path: '/tmp/agent-lcars-opencode-exports',
+        adapter: 'opencode',
+        projectDirAllowlist: ['sessions'],
+      },
     ]);
   });
 
@@ -33,15 +39,17 @@ describe('runnerWatchRoots', () => {
     const roots = runnerWatchRoots({
       claudeProjectsDir: '/tmp/a',
       codexSessionsDir: '/tmp/b',
+      opencodeExportsDir: '/tmp/c',
     });
     expect(roots[0].path).toBe('/tmp/a');
     expect(roots[1].path).toBe('/tmp/b');
+    expect(roots[2].path).toBe('/tmp/c');
   });
 });
 
 describe('RUNNER_CAPTURE_AGENTS', () => {
-  it('names exactly the two agents runnerWatchRoots declares a root for', () => {
-    expect(RUNNER_CAPTURE_AGENTS).toEqual(['claude-code', 'codex']);
+  it('names exactly the agents runnerWatchRoots declares a root for', () => {
+    expect(RUNNER_CAPTURE_AGENTS).toEqual(['claude-code', 'codex', 'opencode']);
   });
 });
 
@@ -66,6 +74,14 @@ describe('transcriptObjectPath', () => {
         sessionId: 'session-b',
       }),
     ).toBe('runs/42/codex/session-b.jsonl');
+
+    expect(
+      transcriptObjectPath({
+        runId: '42',
+        adapter: 'opencode',
+        sessionId: 'ses_open_1',
+      }),
+    ).toBe('runs/42/opencode/ses_open_1.jsonl');
   });
 
   it('falls back to "unknown" when runId is absent, matching the old literal path', () => {

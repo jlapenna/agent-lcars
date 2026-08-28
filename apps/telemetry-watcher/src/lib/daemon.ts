@@ -119,6 +119,9 @@ export interface WatcherDaemonOptions {
    */
   readTranscriptLines?: (filePath: string) => Iterable<string>;
   readFile?: (filePath: string) => string;
+  /** Runner-mode hook that materializes non-file-backed sessions before
+   * discovery. It is fail-soft: an exception skips only this tick. */
+  beforeDiscover?: () => void | Promise<void>;
   statFile?: (filePath: string) => FileStat;
   discover?: (rootPath: string, allowlist: string[]) => string[];
   isProcessAliveForCwd?: (cwd: string) => boolean;
@@ -301,6 +304,14 @@ export class WatcherDaemon {
     const discoverArtifacts =
       this.options.discoverArtifacts ?? defaultDiscoverArtifacts;
 
+    try {
+      await this.options.beforeDiscover?.();
+    } catch (error) {
+      logger.warn(
+        'agent-lcars-telemetry-watcher: pre-discovery capture failed, continuing with existing transcript files',
+        error,
+      );
+    }
     const discovered = discoverAcrossRoots(this.options.watchRoots, discover);
 
     // Transcript filenames are `<sessionId>.jsonl` — a file that hasn't

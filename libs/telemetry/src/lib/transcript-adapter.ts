@@ -1,10 +1,12 @@
 import { codexAdapter } from './codex-transcript-adapter';
+import { opencodeAdapter } from './opencode-transcript-adapter';
 import { reduceTranscriptLines } from './reducer';
 import { TranscriptAdapter } from './transcript-adapter-types';
 import { SessionAgent, SessionSummary } from './types';
 import { asRecord } from './unknown-value';
 
 export { codexAdapter } from './codex-transcript-adapter';
+export { opencodeAdapter } from './opencode-transcript-adapter';
 export type { TranscriptAdapter } from './transcript-adapter-types';
 
 /**
@@ -64,12 +66,11 @@ export const claudeCodeAdapter: TranscriptAdapter = {
 };
 
 /** Every registered adapter, in priority order (earliest match wins in
- * {@link adapterFor}). Claude Code is the only one implemented as of #3123
- * phase 1 — see {@link SessionAgent}'s doc comment for the others this
- * registry is expected to grow. */
+ * {@link adapterFor}). */
 export const TRANSCRIPT_ADAPTERS: TranscriptAdapter[] = [
   claudeCodeAdapter,
   codexAdapter,
+  opencodeAdapter,
 ];
 
 /**

@@ -1,6 +1,7 @@
 export * from './lib/agent';
 export * from './lib/codex-transcript-adapter';
 export * from './lib/liveness';
+export * from './lib/opencode-transcript-adapter';
 export * from './lib/reducer';
 export * from './lib/run-status-classifier';
 export * from './lib/runner-capture';

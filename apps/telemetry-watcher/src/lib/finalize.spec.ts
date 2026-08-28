@@ -38,6 +38,18 @@ const CODEX_TRANSCRIPT = [
   }),
 ].join('\n');
 
+const OPENCODE_TRANSCRIPT = JSON.stringify({
+  info: {
+    id: 'ses_opencode_final',
+    directory: '/home/runner/_work/agent-lcars/agent-lcars',
+    title: 'Finalize OpenCode telemetry',
+    model: { providerID: 'homelab', id: 'default' },
+    time: { created: 1787052570554, updated: 1787052721363 },
+    tokens: { input: 10, output: 5, cache: { read: 2, write: 0 } },
+  },
+  messages: [],
+});
+
 /** Same fixture shape as runner.spec.ts's ISSUE_AGENT_TRANSCRIPT — the
  * `entrypoint: 'claude-code-github-action'` marker is what the reducer keys
  * off of to tag `source: 'issue-agent'`. */
@@ -103,6 +115,8 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
+    opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',
+    opencodeWorkspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
     sessionStateDir: NO_OVERLAY_STATE_DIR,
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
@@ -221,6 +235,54 @@ describe('finalizeSidecar', () => {
       transcriptGcsUri:
         'gs://agent-lcars-session-transcripts/runs/42/codex/codex-runner-session.jsonl',
     });
+  });
+
+  it('captures and archives an OpenCode export under the opencode prefix', async () => {
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript, uploads } = createFakeUploader();
+    const file =
+      '/tmp/agent-lcars-opencode-exports/sessions/ses_opencode_final.jsonl';
+    const files = { [file]: OPENCODE_TRANSCRIPT };
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: '42',
+        transcriptsBucket: 'agent-lcars-session-transcripts',
+      }),
+      store,
+      captureOpenCodeExports: () => ({
+        status: 'ok',
+        selected: 1,
+        exported: 1,
+        failed: 0,
+      }),
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((candidate) =>
+          candidate.startsWith(rootPath),
+        ),
+      readFile: (candidate) => files[candidate as keyof typeof files],
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(uploads).toEqual([
+      {
+        projectId: undefined,
+        bucket: 'agent-lcars-session-transcripts',
+        object: 'runs/42/opencode/ses_opencode_final.jsonl',
+        contents: OPENCODE_TRANSCRIPT,
+      },
+    ]);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_opencode_final',
+        agent: 'opencode',
+        renderable: false,
+        transcriptGcsUri:
+          'gs://agent-lcars-session-transcripts/runs/42/opencode/ses_opencode_final.jsonl',
+      }),
+    ]);
   });
 
   it('reports a zero-session finalize pass loudly instead of shipping nothing silently (Bug 2, #645)', async () => {
@@ -496,8 +558,8 @@ describe('finalizeSidecar', () => {
     await finalizeSidecar({
       config: baseConfig(),
       store,
-      discover: (_dir: string, allowlist: string[]) => {
-        seenAllowlist = allowlist;
+      discover: (rootPath: string, allowlist: string[]) => {
+        if (rootPath.includes('.claude')) seenAllowlist = allowlist;
         return Object.keys(files);
       },
       readFile: (p: string) => files[p as keyof typeof files],

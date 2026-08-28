@@ -84,6 +84,31 @@ const CODEX_TRANSCRIPT = [
   }),
 ].join('\n');
 
+const OPENCODE_TRANSCRIPT = JSON.stringify({
+  info: {
+    id: 'ses_opencode_runner',
+    directory: '/home/runner/_work/agent-lcars/agent-lcars',
+    title: 'Run OpenCode in queue mode',
+    model: { providerID: 'homelab', id: 'default' },
+    time: { created: 1787052570554, updated: 1787052721363 },
+    tokens: {
+      input: 20,
+      output: 7,
+      cache: { read: 40, write: 0 },
+    },
+  },
+  messages: [
+    {
+      info: {
+        id: 'msg_user',
+        role: 'user',
+        time: { created: 1787052570573 },
+      },
+      parts: [{ type: 'text', text: 'go' }],
+    },
+  ],
+});
+
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
   const store: SessionStore = {
@@ -108,6 +133,8 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
+    opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',
+    opencodeWorkspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
     sessionStateDir: NO_OVERLAY_STATE_DIR,
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
@@ -310,6 +337,57 @@ describe('startSidecar', () => {
     // match the host default of `/home/developer/p/members*`.
     expect(codexAllowlist).toEqual(['*']);
     expect(upserts).toHaveLength(1);
+  });
+
+  it('captures and discovers OpenCode exports during a live runner tick', async () => {
+    const { store, upserts } = createFakeStore();
+    const opencodeFile =
+      '/tmp/agent-lcars-opencode-exports/sessions/ses_opencode_runner.jsonl';
+    const files = { [opencodeFile]: OPENCODE_TRANSCRIPT };
+    const captureCalls: Array<{ workspaceDir: string; exportsDir: string }> =
+      [];
+
+    const daemon = startSidecar({
+      config: baseConfig({ runId: '6160', issueNumber: 1502 }),
+      store,
+      autoStart: false,
+      now: () => '2026-08-18T11:32:02.000Z',
+      captureOpenCodeExports: (options) => {
+        captureCalls.push(options);
+        return { status: 'ok', selected: 1, exported: 1, failed: 0 };
+      },
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((file) => file.startsWith(rootPath)),
+      readFile: (file) => files[file as keyof typeof files],
+      statFile: () => ({ mtimeMs: 1, size: OPENCODE_TRANSCRIPT.length }),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+    });
+
+    await daemon.tick();
+
+    expect(captureCalls).toEqual([
+      {
+        workspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
+        exportsDir: '/tmp/agent-lcars-opencode-exports',
+      },
+    ]);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_opencode_runner',
+        source: 'issue-agent',
+        agent: 'opencode',
+        runId: '6160',
+        issueNumber: 1502,
+        tokens: {
+          inputTokens: 20,
+          outputTokens: 7,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 40,
+        },
+      }),
+    ]);
   });
 
   it('does not start the daemon interval when autoStart is false', async () => {

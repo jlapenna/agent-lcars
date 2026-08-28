@@ -7,6 +7,7 @@ import {
   claudeCodeAdapter,
   codexAdapter,
   getTranscriptAdapter,
+  opencodeAdapter,
   TRANSCRIPT_ADAPTERS,
 } from './transcript-adapter';
 
@@ -85,6 +86,11 @@ describe('adapterFor', () => {
     expect(adapterFor(lines, '/some/rollout.jsonl')).toBe(codexAdapter);
   });
 
+  it('resolves the opencode adapter by its export envelope', () => {
+    const lines = readFixtureLines('opencode-session.json');
+    expect(adapterFor(lines, '/some/session.jsonl')).toBe(opencodeAdapter);
+  });
+
   it('returns undefined when no adapter recognizes the content', () => {
     expect(adapterFor(['not a transcript line'], 'x.jsonl')).toBeUndefined();
   });
@@ -99,8 +105,11 @@ describe('getTranscriptAdapter', () => {
     expect(getTranscriptAdapter('codex')).toBe(codexAdapter);
   });
 
+  it('resolves opencode by name', () => {
+    expect(getTranscriptAdapter('opencode')).toBe(opencodeAdapter);
+  });
+
   it('returns undefined for an agent with no registered adapter yet', () => {
-    expect(getTranscriptAdapter('opencode')).toBeUndefined();
     expect(getTranscriptAdapter('gemini')).toBeUndefined();
     expect(getTranscriptAdapter('antigravity')).toBeUndefined();
   });

@@ -16,6 +16,11 @@ import { discoverAcrossRoots, discoverTranscriptFiles } from './discover';
 import { resolveGitBranch as defaultResolveGitBranch } from './git-branch';
 import { applyGitContext } from './git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from './git-repo';
+import {
+  captureOpenCodeExports as defaultCaptureOpenCodeExports,
+  CaptureOpenCodeExportsOptions,
+  CaptureOpenCodeExportsResult,
+} from './opencode-export-capture';
 import { RunnerConfig } from './runner-config';
 import {
   readSessionStatusOverlay as defaultReadSessionStatusOverlay,
@@ -63,6 +68,9 @@ export interface FinalizeSidecarOptions {
     cwd: string,
   ) => Promise<{ owner: string; name: string } | undefined>;
   uploadTranscript?: (options: UploadTranscriptOptions) => Promise<void>;
+  captureOpenCodeExports?: (
+    options: CaptureOpenCodeExportsOptions,
+  ) => CaptureOpenCodeExportsResult | Promise<CaptureOpenCodeExportsResult>;
   /** Test-only injection point, mirrored from `daemon.ts`'s own seam of the
    * same name — production callers (main.ts) never set this; finalize uses
    * the real `readSessionStatusOverlay` (real `fs`) by default. */
@@ -146,6 +154,21 @@ export async function finalizeSidecar(
   // never needs its own try/catch.
   const readTitleOverlay =
     options.readSessionTitleOverlay ?? defaultReadSessionTitleOverlay;
+  if (!options.discover || options.captureOpenCodeExports) {
+    const captureOpenCodeExports =
+      options.captureOpenCodeExports ?? defaultCaptureOpenCodeExports;
+    try {
+      await captureOpenCodeExports({
+        workspaceDir: config.opencodeWorkspaceDir,
+        exportsDir: config.opencodeExportsDir,
+      });
+    } catch (error) {
+      logger.warn(
+        'agent-lcars-telemetry-watcher: final OpenCode capture failed; continuing with existing transcript files',
+        error,
+      );
+    }
+  }
   // The single runner-mode watch-root contract (@agent-lcars/telemetry,
   // #645) — the same function `startSidecar` (runner.ts) calls. Before
   // #645 this was a second, hand-copied array with a comment admitting it
@@ -159,6 +182,7 @@ export async function finalizeSidecar(
     runnerWatchRoots({
       claudeProjectsDir: config.claudeProjectsDir,
       codexSessionsDir: config.codexSessionsDir,
+      opencodeExportsDir: config.opencodeExportsDir,
     }),
     discover,
   );
@@ -233,7 +257,7 @@ export async function finalizeSidecar(
     // positive (see annotateWarning above).
     const message =
       `agent-lcars-telemetry-watcher: finalize discovered zero sessions across every configured watch root (run ${config.runId ?? 'unknown'}) — this run's telemetry did not ship. ` +
-      `Runner mode only has a watch root for ${RUNNER_CAPTURE_AGENTS.join(', ')}; expected when this run's agent isn't one of those (e.g. OpenCode, whose local session store is a single SQLite database rather than a per-session file this pass can discover), a real gap otherwise.`;
+      `Runner mode has capture paths for ${RUNNER_CAPTURE_AGENTS.join(', ')}; a zero-session pass means no supported session was materialized or discovered.`;
     logger.warn(message);
     annotateWarning(message);
   }

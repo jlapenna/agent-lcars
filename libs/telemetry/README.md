@@ -36,7 +36,7 @@ reducer was the only one that ever existed.
 
 `reduceTranscript`/`reduceTranscripts` remain Claude-Code-only and always
 stamp `agent: 'claude-code'`. `TranscriptAdapter` (`transcript-adapter.ts`)
-is a parallel seam for future agents: an adapter pairs a cheap
+is the parallel multi-agent seam: an adapter pairs a cheap
 content-sniffing `detect()` with a `reduce()` that turns one file's lines
 into summaries. `claudeCodeAdapter` wraps the existing reducer; new agents
 register their own adapter in `TRANSCRIPT_ADAPTERS`. Consumers resolve an
@@ -53,6 +53,13 @@ Whether a given session's archived transcript can be rendered is captured once b
 `buildSessionDoc` as `SessionDoc.renderable` (see `isRenderableTranscriptAgent`)
 and read — never re-derived — by the console via `isSessionRenderable`
 (`agent.ts`).
+
+OpenCode's native store is one SQLite database, so the watcher first uses the
+supported `opencode session list`/sanitized `opencode export` CLI surface to
+materialize at most 20 exact-workspace sessions as compact one-record JSONL.
+Command time and output sizes are bounded; failures are fail-soft. The adapter
+then reduces those exports through the same path as the agents that already
+write JSONL.
 
 The watch roots a runner-mode telemetry pass actually discovers transcripts
 under (as opposed to the host daemon's own `watchRoots` config) are defined

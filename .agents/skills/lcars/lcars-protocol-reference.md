@@ -135,12 +135,12 @@ as identical for both:
   GCS, not that it is "viewable in the console" — `gcloud storage cat` on that
   URI prints the raw JSONL, the same tool `resume-archive` uses. No
   `resume-archive` equivalent exists for Codex today.
-- **OpenCode:** nothing is archived at all. The telemetry sidecar's watch
-  roots are `~/.claude/projects` and `~/.codex/sessions`
-  (`apps/telemetry-watcher/src/lib/runner.ts`'s `startSidecar`) — OpenCode
-  writes to neither, and no OpenCode transcript adapter exists
-  (`libs/telemetry/src/lib/transcript-adapter.ts`'s `TRANSCRIPT_ADAPTERS`), so
-  an OpenCode run ships no transcript and no session doc at all.
+- **OpenCode:** no live-resume command exists, but the runner sidecar uses
+  OpenCode's supported `session list`/sanitized `export` CLI surface to
+  materialize a bounded set of exact-workspace sessions from its SQLite-backed
+  store. The OpenCode adapter ships summary telemetry and finalize archives each
+  export under `runs/<run-id>/opencode/<session-id>.jsonl`. The archive is
+  durable but not timeline-renderable in the console (`renderable: false`).
 
 **Why this section is written so defensively:** it used to say the script did
 not exist in this repo at all, and stayed that way long after it landed. Every
