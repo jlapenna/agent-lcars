@@ -28,16 +28,26 @@ export interface CodexAuthSnapshot {
 export interface CodexAuthLease {
   runId: string;
   repository: string;
+  /**
+   * Absolute expiry shared with the hosted lane. A holder that cannot renew
+   * this record is no longer allowed to keep the single-use refresh token.
+   */
+  expiresAt: string;
   generation: string;
 }
 
 export interface CodexAuthStore {
   read(repository: string): Promise<CodexAuthSnapshot>;
   readLease(): Promise<CodexAuthLease | undefined>;
-  createLease(input: { runId: string; repository: string }): Promise<void>;
+  createLease(input: {
+    runId: string;
+    repository: string;
+    expiresAt: string;
+  }): Promise<void>;
   takeLease(input: {
     runId: string;
     repository: string;
+    expiresAt: string;
     expectedGeneration: string;
   }): Promise<void>;
   releaseLease(runId: string): Promise<void>;
@@ -48,9 +58,17 @@ export interface CodexAuthStore {
   }): Promise<void>;
 }
 
-function leaseBytes(input: { runId: string; repository: string }): Buffer {
+function leaseBytes(input: {
+  runId: string;
+  repository: string;
+  expiresAt: string;
+}): Buffer {
   return Buffer.from(
-    JSON.stringify({ runId: input.runId, repository: input.repository }),
+    JSON.stringify({
+      runId: input.runId,
+      repository: input.repository,
+      expiresAt: input.expiresAt,
+    }),
   );
 }
 
@@ -158,7 +176,10 @@ export class GcsCodexAuthStore implements CodexAuthStore {
         parsed.runId === '' ||
         !('repository' in parsed) ||
         typeof parsed.repository !== 'string' ||
-        parsed.repository === ''
+        parsed.repository === '' ||
+        !('expiresAt' in parsed) ||
+        typeof parsed.expiresAt !== 'string' ||
+        !Number.isFinite(Date.parse(parsed.expiresAt))
       ) {
         throw new CodexAuthStoreError(
           'invalid',
@@ -168,6 +189,7 @@ export class GcsCodexAuthStore implements CodexAuthStore {
       return {
         runId: parsed.runId,
         repository: parsed.repository,
+        expiresAt: parsed.expiresAt,
         generation: String(generation),
       };
     } catch (error) {
@@ -183,6 +205,7 @@ export class GcsCodexAuthStore implements CodexAuthStore {
   async createLease(input: {
     runId: string;
     repository: string;
+    expiresAt: string;
   }): Promise<void> {
     await this.saveLease(input, '0');
   }
@@ -190,6 +213,7 @@ export class GcsCodexAuthStore implements CodexAuthStore {
   async takeLease(input: {
     runId: string;
     repository: string;
+    expiresAt: string;
     expectedGeneration: string;
   }): Promise<void> {
     await this.saveLease(input, input.expectedGeneration);
@@ -212,7 +236,7 @@ export class GcsCodexAuthStore implements CodexAuthStore {
   }
 
   private async saveLease(
-    input: { runId: string; repository: string },
+    input: { runId: string; repository: string; expiresAt: string },
     expectedGeneration: string,
   ): Promise<void> {
     try {

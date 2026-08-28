@@ -564,6 +564,11 @@ const LANE_SURFACES: Record<
     inputs: {
       ...COMMON_LANE_INPUTS,
       'queue-drain': { required: false, type: 'boolean', default: false },
+      'codex-shared-lease': {
+        required: false,
+        type: 'boolean',
+        default: false,
+      },
       'gcp-workload-identity-provider': { required: true, type: 'string' },
       'gcp-service-account': { required: true, type: 'string' },
       'gcp-project-id': { required: true, type: 'string' },

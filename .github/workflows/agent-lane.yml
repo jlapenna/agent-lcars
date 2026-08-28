@@ -182,6 +182,11 @@ on:
         required: false
         default: false
         type: boolean
+      codex-shared-lease:
+        description: 'Codex: opt into the cross-executor subscription lease after shared GCS authority is granted'
+        required: false
+        default: false
+        type: boolean
       install-workspace-deps:
         description: 'pnpm-install the primary checkout (sprinkles#4003)'
         required: false
@@ -756,6 +761,102 @@ jobs:
       - name: Setup gcloud
         if: ${{ inputs.pipeline == 'codex' }}
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # A Codex refresh token is single-use across the fleet, even though
+      # each repository keeps its own auth.json lineage. This is the same
+      # generation-CAS record the direct queue executor owns; GitHub's job
+      # concurrency serializes hosted work only and cannot protect that
+      # lineage from a direct runner.
+      - name: Acquire Codex subscription lease
+        id: codex-auth-lease
+        if: ${{ inputs.pipeline == 'codex' && inputs.codex-shared-lease }}
+        env:
+          CODEX_AUTH_LEASE_OBJECT: gs://agent-lcars-codex-auth/_leases/codex-subscription.json
+          CODEX_AUTH_LEASE_RUN_ID: github:${{ github.repository }}:${{ github.run_id }}:${{ github.run_attempt }}
+          CODEX_AUTH_LEASE_REPOSITORY: ${{ github.repository }}
+          CODEX_AUTH_LEASE_DURATION_MINUTES: ${{ inputs.job-timeout-minutes }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          lease_file="$RUNNER_TEMP/codex-subscription-lease.json"
+          current_file="$lease_file.current"
+          trap 'rm -f "$lease_file" "$current_file"' EXIT
+          case "$CODEX_AUTH_LEASE_DURATION_MINUTES" in
+            ''|*[!0-9]*)
+              echo "::error::Codex lease duration must be a whole number of minutes."
+              exit 1
+              ;;
+          esac
+          # `github` context has no run_started_at field. Read the Actions
+          # run resource's immutable timestamp instead, then anchor expiry
+          # to that fixed job deadline rather than this step's start time.
+          run_started_at="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            | python3 -c 'import json, sys; value = json.load(sys.stdin).get("run_started_at"); assert isinstance(value, str) and value; print(value)')" || {
+              echo "::error::Could not read the GitHub workflow run start time for the Codex lease deadline."
+              exit 1
+            }
+          expires_at="$(python3 - "$run_started_at" "$CODEX_AUTH_LEASE_DURATION_MINUTES" <<'PY'
+          import datetime
+          import sys
+          try:
+              started = datetime.datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00'))
+              minutes = int(sys.argv[2])
+          except (TypeError, ValueError):
+              sys.exit('Invalid GitHub run start time or Codex lease duration')
+          print((started + datetime.timedelta(minutes=minutes)).isoformat(timespec='milliseconds').replace('+00:00', 'Z'))
+          PY
+          )"
+          python3 - "$lease_file" "$CODEX_AUTH_LEASE_RUN_ID" "$CODEX_AUTH_LEASE_REPOSITORY" "$expires_at" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], 'w', encoding='utf-8') as out:
+              json.dump({"runId": sys.argv[2], "repository": sys.argv[3], "expiresAt": sys.argv[4]}, out)
+          PY
+
+          for _ in 1 2 3 4 5; do
+            if gcloud storage cp "$lease_file" "$CODEX_AUTH_LEASE_OBJECT" --if-generation-match=0; then
+              echo "expires-at=$expires_at" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            generation="$(gcloud storage objects describe "$CODEX_AUTH_LEASE_OBJECT" --format='value(generation)')" || {
+              echo "::error::Unable to read the shared Codex subscription lease after create contention."
+              exit 1
+            }
+            gcloud storage cp "${CODEX_AUTH_LEASE_OBJECT}#${generation}" "$current_file" || continue
+            set +e
+            python3 - "$current_file" <<'PY'
+          import datetime
+          import json
+          import sys
+          try:
+              expires_at = json.load(open(sys.argv[1], encoding='utf-8'))['expiresAt']
+              expiry = datetime.datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+          except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+              sys.exit(2)
+          if expiry > datetime.datetime.now(datetime.timezone.utc):
+              sys.exit(0)
+          sys.exit(1)
+          PY
+            lease_state=$?
+            set -e
+            if [ "$lease_state" -eq 0 ]; then
+              echo "::error::Codex subscription authentication is already in use by a live executor."
+              exit 1
+            fi
+            if [ "$lease_state" -eq 2 ]; then
+              echo "::error::The shared Codex subscription lease is invalid; refusing to race its credential lineage."
+              exit 1
+            fi
+            if gcloud storage cp "$lease_file" "$CODEX_AUTH_LEASE_OBJECT" --if-generation-match="$generation"; then
+              echo "expires-at=$expires_at" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::The shared Codex subscription lease changed concurrently too often."
+          exit 1
 
       # Fail before starting a costly agent turn if the runner image, WIF
       # credential, or any cross-project viewer grant has regressed
@@ -1383,6 +1484,41 @@ jobs:
             echo "::error::Codex auth persistence failed its generation precondition: another run already rotated this repository's credential. Refusing to overwrite it; do not retry this write."
             exit 1
           fi
+
+      - name: Release Codex subscription lease
+        # Best effort after the authenticated turn: durable credential
+        # persistence is never reclassified as a failed deliverable merely
+        # because a compare-and-delete cleanup races or the bucket blips.
+        if: always() && inputs.pipeline == 'codex' && inputs.codex-shared-lease && steps.codex-auth-lease.outcome == 'success'
+        env:
+          CODEX_AUTH_LEASE_OBJECT: gs://agent-lcars-codex-auth/_leases/codex-subscription.json
+          CODEX_AUTH_LEASE_RUN_ID: github:${{ github.repository }}:${{ github.run_id }}:${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          lease_file="$RUNNER_TEMP/codex-subscription-lease-release.json"
+          trap 'rm -f "$lease_file"' EXIT
+          generation="$(gcloud storage objects describe "$CODEX_AUTH_LEASE_OBJECT" --format='value(generation)')" || {
+            echo "::warning::Could not read the Codex subscription lease for cleanup."
+            exit 0
+          }
+          gcloud storage cp "${CODEX_AUTH_LEASE_OBJECT}#${generation}" "$lease_file" || {
+            echo "::warning::Could not read the exact Codex subscription lease generation for cleanup."
+            exit 0
+          }
+          if ! python3 - "$lease_file" "$CODEX_AUTH_LEASE_RUN_ID" <<'PY'
+          import json
+          import sys
+          try:
+              sys.exit(0 if json.load(open(sys.argv[1], encoding='utf-8')).get('runId') == sys.argv[2] else 1)
+          except (OSError, ValueError, json.JSONDecodeError):
+              sys.exit(1)
+          PY
+          then
+            echo "::notice::Codex subscription lease changed owner before cleanup."
+            exit 0
+          fi
+          gcloud storage rm "$CODEX_AUTH_LEASE_OBJECT" --if-generation-match="$generation" || \
+            echo "::warning::Could not release the Codex subscription lease; it expires automatically."
 
       # ---- Era-split opencode agent step (see header). #51: two
       # dispatches retried a persistent LiteLLM 429 with a backoff growing

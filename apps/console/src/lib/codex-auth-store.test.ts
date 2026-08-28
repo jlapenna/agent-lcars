@@ -78,6 +78,7 @@ describe('GcsCodexAuthStore', () => {
         JSON.stringify({
           runId: 'work:01CODEXLEASE0000000000000/r1',
           repository: 'jlapenna/agent-lcars',
+          expiresAt: '2026-08-28T12:00:00.000Z',
         }),
       ),
     ]);
@@ -87,6 +88,7 @@ describe('GcsCodexAuthStore', () => {
     await expect(store.readLease()).resolves.toEqual({
       runId: 'work:01CODEXLEASE0000000000000/r1',
       repository: 'jlapenna/agent-lcars',
+      expiresAt: '2026-08-28T12:00:00.000Z',
       generation: '41',
     });
     expect(file).toHaveBeenNthCalledWith(1, CODEX_GLOBAL_LEASE_OBJECT);
@@ -104,6 +106,7 @@ describe('GcsCodexAuthStore', () => {
         JSON.stringify({
           runId: 'work:01CODEXLEASE0000000000000/r1',
           repository: 'jlapenna/agent-lcars',
+          expiresAt: '2026-08-28T12:00:00.000Z',
         }),
       ),
     ]);
@@ -117,6 +120,7 @@ describe('GcsCodexAuthStore', () => {
     const input = {
       runId: 'work:01CODEXLEASE0000000000000/r1',
       repository: 'jlapenna/agent-lcars',
+      expiresAt: '2026-08-28T12:00:00.000Z',
     };
 
     await store.createLease(input);
