@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Direct-mode bootstrap for one claimed queue-executor run (native work
-# items sub-project 4). Reproduces the `claude` and `codex` pipeline slices of
+# Direct-mode bootstrap for one claimed queue-executor run. Reproduces the
+# `claude`, `codex`, and `opencode` pipeline slices of
 # .github/workflows/agent-lane.yml against the run-token-authenticated
 # /api/work/v1/runs/* routes instead of workflow_dispatch inputs and the
-# GitHub-OIDC completion route. OpenCode is not covered. Exact claude-code-action /
+# GitHub-OIDC completion route. Exact claude-code-action /
 # Agent SDK parity (its internal max_turns enforcement, MCP wiring) is out
 # of scope for this sub-project -- ruling, recorded in the design spec.
 set -euo pipefail
@@ -60,17 +60,42 @@ header = "$AUTH_HEADER"
 $CURL_TIMEOUT_CONFIG
 CURLCFG
 )"
-WORK="$(jq -c '{id, spec}' <<<"$brief")"
-export WORK
-TARGET_REPO="$(jq -r '.spec.target.repo' <<<"$brief")"
-PIPELINE="$(jq -r '.spec.pipeline' <<<"$brief")"
+ANCHOR_TYPE="$(jq -r '.anchor.type' <<<"$brief")"
+PIPELINE="$(jq -r '.pipeline // .spec.pipeline // empty' <<<"$brief")"
+case "$ANCHOR_TYPE" in
+  work)
+    WORK="$(jq -c '{id, spec}' <<<"$brief")"
+    TARGET_REPO="$(jq -r '.anchor.target_repo // .spec.target.repo' <<<"$brief")"
+    ISSUE=''
+    ;;
+  github)
+    # A GitHub anchor may carry the server-derived Work spec, but the
+    # dispatch still remains valid without one: prepare.sh then fetches the
+    # anchor in the normal legacy path. The queue never makes this a routing
+    # distinction; it is only the brief's task-text representation.
+    WORK="$(jq -c '.work // empty' <<<"$brief")"
+    TARGET_REPO="$(jq -r '.anchor.repo' <<<"$brief")"
+    ISSUE="$(jq -r '.anchor.issue' <<<"$brief")"
+    ;;
+  *)
+    echo "FATAL: direct runner received unsupported brief anchor type '$ANCHOR_TYPE'" >&2
+    exit 1
+    ;;
+esac
+export WORK ISSUE
 case "$PIPELINE" in
   claude) AGENT_NAME=Claude ;;
   codex) AGENT_NAME=Codex ;;
+  opencode) AGENT_NAME=OpenCode ;;
   *) AGENT_NAME=Unknown ;;
 esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
+MODE="$(jq -r '.mode // "implement"' <<<"$brief")"
+REPLY="$(jq -r '.reply // ""' <<<"$brief")"
+RUNBOOK="$(jq -r '.runbook // ""' <<<"$brief")"
+CONTEXT="$(jq -r '.context // ""' <<<"$brief")"
+export MODE REPLY RUNBOOK CONTEXT
 export GITHUB_REPOSITORY="$TARGET_REPO"
 # Native work items sub-project 8: a claimed run may carry a resume request
 # (populated by the console's own drain input -- Task 3) for a prior
@@ -224,7 +249,6 @@ export GITHUB_OUTPUT="$RUNNER_TEMP/github-output"
 export GITHUB_ENV="$RUNNER_TEMP/github-env"
 : > "$GITHUB_OUTPUT"
 : > "$GITHUB_ENV"
-export ISSUE='' MODE=implement REPLY='' RUNBOOK='' CONTEXT=''
 export PRIOR_TERMINAL_STATE=null
 export BUDGET_MINUTES=80 ARTIFACT_CHECKPOINT_MINUTES=15 FINALIZE_CHECKPOINT_MINUTES=70
 export AGENT="$AGENT_NAME"
@@ -344,7 +368,7 @@ if [ "$PIPELINE" = "claude" ]; then
     --print "$AGENT_PROMPT"
   AGENT_EXIT=$?
   set -e
-else
+elif [ "$PIPELINE" = "codex" ]; then
   # The broker exposes only this run's target-repository lineage and only
   # to this live run token. The direct container receives no GCS credential
   # capable of reading another repository's auth.json.
@@ -447,6 +471,31 @@ CURLCFG
       AGENT_EXIT=1
     fi
   fi
+else
+  # OpenCode's LiteLLM virtual key follows the same file-mounted credential
+  # boundary as Claude. It is exported only for the trusted OpenCode process,
+  # never placed in Docker's inspectable environment at container creation.
+  OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
+  if [ ! -r "$OPENCODE_TOKEN_FILE" ]; then
+    echo "FATAL: $OPENCODE_TOKEN_FILE is required (OPENCODE_LLM_API_KEY source) but is missing or unreadable" >&2
+    exit 1
+  fi
+  OPENCODE_BIN="${OPENCODE_BIN:-/usr/local/bin/opencode}"
+  if [ ! -x "$OPENCODE_BIN" ]; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
+    exit 1
+  fi
+  OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
+
+  set +e
+  OPENCODE_LLM_API_KEY="$(cat "$OPENCODE_TOKEN_FILE")" \
+    MODEL="$OPENCODE_MODEL" \
+    USE_GITHUB_TOKEN=true \
+    GITHUB_TOKEN="$CHECKOUT_TOKEN" \
+    PROMPT="$AGENT_PROMPT" \
+    "$OPENCODE_BIN" github run
+  AGENT_EXIT=$?
+  set -e
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
@@ -464,20 +513,14 @@ cleanup_codex_material
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
 if [ "$AGENT_EXIT" -eq 0 ] &&
-  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM='' MODE=implement ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
+  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
   bash "$VERIFY_DELIVERABLE"; then
-  # verify-deliverable.sh just proved (via its own equivalent gh api
-  # lookup, moments ago) that some bot-authored PR on $TARGET_REPO carries
-  # this run's exact attempt-claim marker -- a native work-item run has no
-  # other evidence surface at all (no ISSUE, so no comment/review path;
-  # see prepare.sh's own note on this). OUTCOME is therefore always
-  # "pull-request" past this point. The only open question below is
-  # whether THIS follow-up lookup can also cite the exact PR number: a
-  # transient `gh api` failure or an ambiguous (more than one) match here
-  # must not regress the already-proven outcome back to no-deliverable --
-  # mirrors agent-fallback-finalize.yml's own pr_hits handling exactly
-  # (pull-request with no reference unless the hit list is exactly one
-  # line).
+  # verify-deliverable.sh just proved an exact marker-bound deliverable. A
+  # native work item can only use a PR; a GitHub anchor can also use a
+  # comment or review. The completion protocol's successful outcome remains
+  # `pull-request` today, with an optional reference only when a unique PR
+  # marker lookup succeeds. A transient or ambiguous lookup must never
+  # regress the already-proven success back to no-deliverable.
   OUTCOME=pull-request
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
   if ! pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \

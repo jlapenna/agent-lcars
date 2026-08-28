@@ -581,10 +581,30 @@ func TestDirectRunnerClaudeTokenHostPath(t *testing.T) {
 	})
 }
 
-func TestDirectRunnerPipelineSecretBinds(t *testing.T) {
-	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
+func TestDirectRunnerOpenCodeTokenHostPath(t *testing.T) {
+	t.Run("required", func(t *testing.T) {
+		t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "")
+		if _, err := directRunnerOpenCodeTokenHostPath(); err == nil {
+			t.Fatalf("expected an error when the host path env var is unset")
+		}
+	})
+	t.Run("passes through a configured path", func(t *testing.T) {
+		t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "/secrets/opencode-llm-api-key")
+		got, err := directRunnerOpenCodeTokenHostPath()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "/secrets/opencode-llm-api-key" {
+			t.Errorf("got %q", got)
+		}
+	})
+}
 
-	claude, err := directRunnerPipelineSecretBinds("claude")
+func TestDirectRunnerProviderCredentialBinds(t *testing.T) {
+	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
+	t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "/secrets/opencode-llm-api-key")
+
+	claude, err := directRunnerProviderCredentialBinds("claude")
 	if err != nil {
 		t.Fatalf("claude binds: %v", err)
 	}
@@ -593,7 +613,7 @@ func TestDirectRunnerPipelineSecretBinds(t *testing.T) {
 		t.Fatalf("claude binds = %v, want [%s]", claude, wantClaude)
 	}
 
-	codex, err := directRunnerPipelineSecretBinds("codex")
+	codex, err := directRunnerProviderCredentialBinds("codex")
 	if err != nil {
 		t.Fatalf("codex binds: %v", err)
 	}
@@ -601,8 +621,17 @@ func TestDirectRunnerPipelineSecretBinds(t *testing.T) {
 		t.Fatalf("codex must receive no provider credential mounts, got %v", codex)
 	}
 
-	if _, err := directRunnerPipelineSecretBinds("opencode"); err == nil {
-		t.Fatal("expected unsupported OpenCode pipeline to fail closed")
+	opencode, err := directRunnerProviderCredentialBinds("opencode")
+	if err != nil {
+		t.Fatalf("opencode binds: %v", err)
+	}
+	wantOpenCode := "/secrets/opencode-llm-api-key:" + directRunnerOpenCodeTokenMountPath + ":ro"
+	if len(opencode) != 1 || opencode[0] != wantOpenCode {
+		t.Fatalf("opencode binds = %v, want [%s]", opencode, wantOpenCode)
+	}
+
+	if _, err := directRunnerProviderCredentialBinds("unknown"); err == nil {
+		t.Fatal("expected an unknown provider adapter to fail closed")
 	}
 }
 
@@ -758,6 +787,44 @@ func TestLaunchCodexDirectRunnerMountsNoProviderCredential(t *testing.T) {
 	for _, env := range created.Env {
 		if strings.Contains(strings.ToLower(env), "codex") && strings.Contains(strings.ToLower(env), "auth") {
 			t.Fatalf("Codex auth must not appear in container env: %q", env)
+		}
+	}
+}
+
+func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
+	f := newFakeDockerServer(t)
+	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+
+	l := directRunnerLaunch{
+		runID:      "work:01QUEUEEXECUTORTESTOPENCODE1/r1",
+		runToken:   "super-secret-run-token",
+		pipeline:   "opencode",
+		consoleURL: "https://lcars.test",
+	}
+	opencodeBind := "/secrets/opencode-llm-api-key:" + directRunnerOpenCodeTokenMountPath + ":ro"
+	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/opencode-image:latest", "/secrets/telemetry-writer.json", []string{opencodeBind}, 1, l, discardLogger()); err != nil {
+		t.Fatalf("launchDirectRunnerOnHost: %v", err)
+	}
+
+	created := f.getLastCreate()
+	wantBinds := map[string]bool{
+		"/secrets/telemetry-writer.json:" + directRunnerTelemetryWriterMountPath + ":ro": true,
+		opencodeBind: true,
+	}
+	if len(created.HostConfig.Binds) != len(wantBinds) {
+		t.Fatalf("opencode binds = %v, want %v", created.HostConfig.Binds, wantBinds)
+	}
+	for _, bind := range created.HostConfig.Binds {
+		if !wantBinds[bind] {
+			t.Fatalf("unexpected OpenCode bind %q", bind)
+		}
+	}
+	if len(created.HostConfig.Tmpfs) != 0 {
+		t.Fatalf("opencode must not receive Codex's auth tmpfs, got %v", created.HostConfig.Tmpfs)
+	}
+	for _, env := range created.Env {
+		if strings.Contains(env, "OPENCODE_LLM_API_KEY") {
+			t.Fatalf("OpenCode credential must not appear in Docker env: %q", env)
 		}
 	}
 }

@@ -60,7 +60,7 @@ export FAKE_TOKEN="fake-checkout-token-xyz789"
 export FAKE_CLAUDE_OAUTH_TOKEN="fake-claude-oauth-token-abc123"
 
 # --- Fake binary factory ----------------------------------------------------
-# Installs curl/git/gh/claude fakes into "$1/bin". Every curl call in
+# Installs curl/git/gh/provider fakes into "$1/bin". Every curl call in
 # direct-runner.sh sends its bearer/url/timeouts via `--config -` (stdin),
 # never `-H`/argv (fix round 1: agent-fallback-finalize.yml's own completion
 # callback does the same, to keep a bearer token out of `ps aux`/cmdline),
@@ -109,7 +109,11 @@ case "$url" in
       echo "fake curl: simulated brief failure (expired/invalid run token)" >&2
       exit 22
     fi
-    if [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
+    if [ "${FAKE_ANCHOR:-work}" = "github" ]; then
+      cat <<JSON
+{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"pipeline":"${FAKE_PIPELINE:-claude}","mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
+JSON
+    elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
 {"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
@@ -190,6 +194,30 @@ if [[ "$*" == *"pulls?state=all"* ]]; then
   fi
   exit 0
 fi
+if [[ "$*" == *"issues/42/comments"* ]]; then
+  if [ "${FAKE_GH_MARKER_COMMENT:-}" = "1" ]; then
+    printf '[{"user":{"type":"Bot"},"body":"<!-- attempt-claim:%s -->"}]\n' "$ATTEMPT_ID"
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"pulls/42/reviews"* ]]; then
+  if [ "${FAKE_GH_MARKER_REVIEW:-}" = "1" ]; then
+    printf '[{"user":{"type":"Bot"},"body":"<!-- attempt-claim:%s -->"}]\n' "$ATTEMPT_ID"
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"issues/42"* ]]; then
+  if [ "${FAKE_GITHUB_PR:-}" = "1" ]; then
+    echo '{"number":42,"title":"GitHub anchor","body":"Anchor body","html_url":"https://github.test/octo/example/pull/42","state":"open","labels":[],"assignees":[],"pull_request":{}}'
+  else
+    echo '{"number":42,"title":"GitHub anchor","body":"Anchor body","html_url":"https://github.test/octo/example/issues/42","state":"open","labels":[],"assignees":[]}'
+  fi
+  exit 0
+fi
 echo '[]'
 FAKE
   chmod +x "$bindir/gh"
@@ -237,6 +265,14 @@ echo '{"type":"turn.completed"}'
 exit 0
 FAKE
   chmod +x "$bindir/codex"
+
+  cat > "$bindir/opencode" <<'FAKE'
+#!/usr/bin/env bash
+echo "$@" >> "$OPENCODE_ARGS_LOG"
+printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${MODEL:-}|${GITHUB_TOKEN:-}|${USE_GITHUB_TOKEN:-}" > "$OPENCODE_ENV_LOG"
+exit 0
+FAKE
+  chmod +x "$bindir/opencode"
 
   # Mirrors .github/actions/resume-session/resume.test.sh's own fake node:
   # records its argv (proving direct-runner.sh's `runner resume` call site
@@ -291,6 +327,8 @@ run_scenario() {
   export CODEX_ARGS_LOG="$dir/codex-args.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
+  export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
+  export OPENCODE_ENV_LOG="$dir/opencode-env.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
   # real bind mount produces -- a plain-text file holding just the token --
@@ -304,6 +342,11 @@ run_scenario() {
     printf '%s' "$FAKE_CLAUDE_OAUTH_TOKEN" > "$dir/claude-code-oauth-token"
     export CLAUDE_TOKEN_FILE="$dir/claude-code-oauth-token"
   fi
+
+  printf '%s' 'fake-opencode-llm-key' > "$dir/opencode-llm-api-key"
+  export OPENCODE_TOKEN_FILE="$dir/opencode-llm-api-key"
+  export OPENCODE_BIN="$dir/bin/opencode"
+  export OPENCODE_MODEL='homelab/default-nothink'
 
   # Bounds the background heartbeat loop's orphaned-sleep lifetime to
   # ~1 second instead of the production 300s default: fake `claude` returns
@@ -471,15 +514,66 @@ fi
 
 echo "scenario codex-burned-stderr: OK"
 
-# Provider expansion is explicit. OpenCode remains outside this PR and must
-# fail before checkout while still settling the already-claimed run.
-run_scenario opencode-unsupported opencode
-[ "$rc" -ne 0 ] || fail "unsupported OpenCode: expected a non-zero exit"
-[ ! -f "$GIT_CLONE_ARGV_LOG" ] || fail "unsupported OpenCode: checkout ran"
-grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
-  fail "unsupported OpenCode: claimed run was not settled ($(cat "$COMPLETE_LOG"))"
+# OpenCode follows the same queue bootstrap and completion path. Its provider
+# key is read only from the adapter's file mount and is supplied to the trusted
+# CLI process, together with the standard direct-runner checkout credential.
+run_scenario opencode-happy opencode
+[ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
+[ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
+grep -q -- 'github run' "$OPENCODE_ARGS_LOG" ||
+  fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
+[ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|homelab/default-nothink|$FAKE_TOKEN|true" ] ||
+  fail "opencode happy path: adapter environment mismatch ($(cat "$OPENCODE_ENV_LOG"))"
+[ ! -f "$CLAUDE_ARGS_LOG" ] || fail "opencode happy path: claude was invoked"
+[ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "opencode happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
 
-echo "scenario opencode-unsupported: OK"
+echo "scenario opencode-happy: OK"
+
+# A GitHub reply keeps its anchor, mode, reply/runbook/context, and exact
+# marker lookup when it travels through the same direct runner. The marker is
+# deliberately a comment rather than a PR here, proving verify-deliverable
+# receives NUM and MODE rather than the native-work defaults.
+export FAKE_ANCHOR=github
+export FAKE_MODE=reply
+export FAKE_REPLY='/opencode report the current status'
+export FAKE_RUNBOOK='status-runbook'
+export FAKE_CONTEXT='from a GitHub comment'
+export FAKE_GH_NO_MATCH=1
+export FAKE_GH_MARKER_COMMENT=1
+run_scenario github-reply opencode
+unset FAKE_ANCHOR FAKE_MODE FAKE_REPLY FAKE_RUNBOOK FAKE_CONTEXT FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT
+
+[ "$rc" -eq 0 ] || fail "github reply: expected exit 0, got $rc"
+context_path="$scenario_runner_temp/agent-dispatch/context.json"
+jq -e '.anchor.type == "issue" and .anchor.number == 42 and .mode == "reply" and .reply == "/opencode report the current status" and .runbook == "status-runbook" and .context == "from a GitHub comment"' \
+  "$context_path" >/dev/null ||
+  fail "github reply: prepare context lost the anchor or dispatch parameters ($(cat "$context_path"))"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "github reply: marker-bound comment was not accepted ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario github-reply: OK"
+
+# Review mode must preserve the pull-request anchor and query its review
+# evidence after the shared PR/comment lookup finds nothing.
+export FAKE_ANCHOR=github
+export FAKE_MODE=review
+export FAKE_GITHUB_PR=1
+export FAKE_GH_NO_MATCH=1
+export FAKE_GH_MARKER_REVIEW=1
+run_scenario github-review opencode
+unset FAKE_ANCHOR FAKE_MODE FAKE_GITHUB_PR FAKE_GH_NO_MATCH FAKE_GH_MARKER_REVIEW
+
+[ "$rc" -eq 0 ] || fail "github review: expected exit 0, got $rc"
+context_path="$scenario_runner_temp/agent-dispatch/context.json"
+jq -e '.anchor.type == "pull-request" and .anchor.number == 42 and .mode == "review"' \
+  "$context_path" >/dev/null ||
+  fail "github review: prepare context lost the PR anchor or review mode ($(cat "$context_path"))"
+grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
+  fail "github review: marker-bound review was not accepted ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario github-review: OK"
 
 # --- Scenario 1b: GitHub-Actions temp environment absent -------------------
 # A direct-mode container is started by Docker rather than GitHub Actions, so

@@ -380,6 +380,11 @@ const (
 	// `docker inspect` the container on this host. Matches the
 	// telemetry-writer.json pattern immediately above, not a new one.
 	directRunnerClaudeTokenMountPath = "/run/secrets/claude-code-oauth-token"
+	// directRunnerOpenCodeTokenMountPath is the fixed in-container path for
+	// OpenCode's LiteLLM virtual key. Like Claude's token, it is a read-only
+	// file mount rather than a Docker Config.Env value, so Docker inspection
+	// never exposes the credential.
+	directRunnerOpenCodeTokenMountPath = "/run/secrets/opencode-llm-api-key"
 	// Codex writes its rotating auth.json, transcript, and persistence payload
 	// only below this tmpfs. Direct-runner containers remain inspectable after
 	// exit, but Docker discards tmpfs contents when the container stops.
@@ -438,7 +443,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	if err != nil {
 		return err
 	}
-	pipelineSecretBinds, err := directRunnerPipelineSecretBinds(l.pipeline)
+	providerCredentialBinds, err := directRunnerProviderCredentialBinds(l.pipeline)
 	if err != nil {
 		return err
 	}
@@ -448,7 +453,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, pipelineSecretBinds, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -538,13 +543,25 @@ func directRunnerClaudeTokenHostPath() (string, error) {
 	return path, nil
 }
 
-// directRunnerPipelineSecretBinds returns only the provider credential
-// mounts the claimed pipeline needs. Claude consumes its host-staged OAuth
-// token file. Codex deliberately receives no bucket or long-lived credential:
-// direct-runner.sh restores and conditionally persists the target repository's
-// auth.json through the run-token-authenticated console broker instead.
-// OpenCode remains unsupported and fails before a container is created.
-func directRunnerPipelineSecretBinds(pipeline string) ([]string, error) {
+// directRunnerOpenCodeTokenHostPath returns the Docker-host-side path of the
+// LiteLLM virtual-key file the OpenCode adapter reads. The operator supplies
+// this explicit host path because a path inside the autoscaler process cannot
+// be assumed to exist on every Docker host.
+func directRunnerOpenCodeTokenHostPath() (string, error) {
+	path := strings.TrimSpace(os.Getenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH"))
+	if path == "" {
+		return "", fmt.Errorf("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH is required to launch an OpenCode direct-mode runner (Docker-host path of a file holding OPENCODE_LLM_API_KEY, bind-mounted read-only to %s)", directRunnerOpenCodeTokenMountPath)
+	}
+	return path, nil
+}
+
+// directRunnerProviderCredentialBinds is the generic provider-adapter
+// credential boundary. Routing and admission never consult it: the queue has
+// already claimed an authorized run, and this function only supplies that
+// provider's runtime material. Codex deliberately receives no host credential;
+// its adapter restores and conditionally persists auth.json through the
+// run-token-authenticated console broker.
+func directRunnerProviderCredentialBinds(pipeline string) ([]string, error) {
 	switch strings.ToLower(strings.TrimSpace(pipeline)) {
 	case "claude":
 		path, err := directRunnerClaudeTokenHostPath()
@@ -554,8 +571,14 @@ func directRunnerPipelineSecretBinds(pipeline string) ([]string, error) {
 		return []string{path + ":" + directRunnerClaudeTokenMountPath + ":ro"}, nil
 	case "codex":
 		return nil, nil
+	case "opencode":
+		path, err := directRunnerOpenCodeTokenHostPath()
+		if err != nil {
+			return nil, err
+		}
+		return []string{path + ":" + directRunnerOpenCodeTokenMountPath + ":ro"}, nil
 	default:
-		return nil, fmt.Errorf("direct-mode runner does not support pipeline %q", pipeline)
+		return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", pipeline)
 	}
 }
 
@@ -675,7 +698,7 @@ func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target
 // uses for GitHub-mode runners), and on capacity, creates and starts the
 // container. Returns an error (never fatal to the caller's round-robin) if
 // this host is unreachable, full, or the create/start call fails.
-func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, pipelineSecretBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
+func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, providerCredentialBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("host %q: connecting: %w", host, err)
@@ -711,14 +734,12 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 		}
 	}
 	hostConfig := &container.HostConfig{
-		// The claude-token bind is deliberately the only path that puts
-		// CLAUDE_CODE_OAUTH_TOKEN anywhere near this container: it never
-		// appears in the env list below, only as a file direct-runner.sh
-		// reads and exports into its own process just before invoking
-		// `claude` (see directRunnerClaudeTokenMountPath's comment).
+		// Provider credentials are mounted as files rather than Docker env:
+		// each adapter reads its own file immediately before invocation, so a
+		// Docker inspect cannot expose a provider token.
 		Binds: append([]string{
 			writerKeyHostPath + ":" + directRunnerTelemetryWriterMountPath + ":ro",
-		}, pipelineSecretBinds...),
+		}, providerCredentialBinds...),
 		Tmpfs: tmpfs,
 		// Deliberately NOT AutoRemove: AutoRemove would reap the container
 		// and its non-zero-exit stdout/stderr before an operator could
