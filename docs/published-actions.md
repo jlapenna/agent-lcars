@@ -34,13 +34,13 @@ their operating constraints.
 
 ## Published reusable workflows
 
-| Workflow                                 | Purpose                                            |
-| ---------------------------------------- | -------------------------------------------------- |
-| `renovate-auto-approve.yml`              | Approve a Renovate PR with a minted App token.     |
-| `agent-automerge-reusable.yml`           | Arm auto-merge and restore the post-merge chain.   |
-| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts.              |
-| `repo-validation.yml`                    | Run actionlint against the caller's workflow tree. |
-| `codeql-reusable.yml`                    | Run the caller-configured CodeQL analysis job.     |
+| Workflow                                 | Purpose                                          |
+| ---------------------------------------- | ------------------------------------------------ |
+| `renovate-auto-approve.yml`              | Approve a Renovate PR with a minted App token.   |
+| `agent-automerge-reusable.yml`           | Arm auto-merge and restore the post-merge chain. |
+| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts.            |
+| `repo-validation.yml`                    | Run actionlint and worker-anchor contracts.      |
+| `codeql-reusable.yml`                    | Run the caller-configured CodeQL analysis job.   |
 
 The lane shims are the published interface. They delegate to the internal
 parameterized `agent-lane.yml`; callers must not call that internal workflow
@@ -89,11 +89,12 @@ accepts.
 `validate-worker-workflows` takes no inputs. It reads the caller checkout's
 `.github/workflows/{claude,codex,opencode}.yml` files and protects the common
 dispatch boundary: the nine-input surface, optional empty `issue` and `work`
-anchors, issue-or-work admission and forwarding for both worker and fallback,
-a native-aware run name, and a native-unique key in any workflow-level
-concurrency group. Caller-supplied `prompt` overrides are rejected so the
-shared lane owns canonical prompt construction. Provider-specific credentials,
-timeouts, lane plumbing, and job-level concurrency remain caller-owned.
+anchors, the canonical issue-or-work admission and forwarding for both worker
+and fallback, a native-aware run name, and an evaluated native input in any
+workflow-level concurrency group. Caller-supplied `prompt` overrides are
+rejected so the shared lane owns canonical prompt construction.
+Provider-specific credentials, timeouts, lane plumbing, and job-level
+concurrency remain caller-owned.
 
 ## Security invariants
 

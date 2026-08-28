@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
-import { format } from 'prettier';
+import { format, resolveConfig } from 'prettier';
 
 const actionDirectory = path.dirname(fileURLToPath(import.meta.url));
 const outfile = path.resolve(
@@ -20,4 +20,9 @@ await build({
 });
 
 const bundled = await readFile(outfile, 'utf8');
-await writeFile(outfile, await format(bundled, { parser: 'babel' }));
+const prettierConfig =
+  (await resolveConfig(path.join(actionDirectory, 'validate.cjs'))) ?? {};
+await writeFile(
+  outfile,
+  await format(bundled, { ...prettierConfig, parser: 'babel' }),
+);

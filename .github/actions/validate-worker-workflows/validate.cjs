@@ -17,6 +17,11 @@ const EXPECTED_INPUTS = [
   'broker_generation',
   'broker_dispatch_token',
 ];
+const ANCHOR_UNION = "(inputs.issue!=''||inputs.work!='')";
+const WORKER_ADMISSION = `github.event_name=='workflow_dispatch'&&${ANCHOR_UNION}`;
+const FALLBACK_ADMISSION = `always()&&${WORKER_ADMISSION}`;
+const RUN_NAME_ANCHOR_PREFIX =
+  "${{inputs.issue!=''&&format('#{0}',inputs.issue)||'nativework'}}:";
 
 function normalizeExpression(value) {
   return typeof value === 'string'
@@ -27,11 +32,10 @@ function normalizeExpression(value) {
     : '';
 }
 
-function hasAnchorUnion(value) {
-  const expression = normalizeExpression(value);
+function hasAnchorUnion(value, fallback) {
   return (
-    expression.includes("inputs.issue!=''||inputs.work!=''") ||
-    expression.includes("inputs.work!=''||inputs.issue!=''")
+    normalizeExpression(value) ===
+    (fallback ? FALLBACK_ADMISSION : WORKER_ADMISSION)
   );
 }
 
@@ -40,11 +44,7 @@ function forwardsWork(value) {
 }
 
 function hasNativeRunName(value) {
-  const expression = normalizeExpression(value);
-  return (
-    expression.includes("inputs.issue!=''") &&
-    /\|\|['"]nativework['"]/u.test(expression)
-  );
+  return normalizeExpression(value).startsWith(RUN_NAME_ANCHOR_PREFIX);
 }
 
 function concurrencyGroup(concurrency) {
@@ -56,10 +56,17 @@ function concurrencyGroup(concurrency) {
 }
 
 function hasNativeUniqueConcurrencyKey(value) {
-  const expression = normalizeExpression(value);
-  return /inputs(?:\.|\[['"])(?:broker_intent_id|work)(?:['"]\])?/u.test(
-    expression,
-  );
+  if (typeof value !== 'string') return false;
+
+  // A plain group containing the text `inputs.work` is still one constant
+  // group, as is an interpolation whose only occurrence is inside a quoted
+  // string. Require an actual input dereference inside a GitHub expression.
+  for (const match of value.matchAll(/\$\{\{([\s\S]*?)\}\}/gu)) {
+    const expression = match[1].replaceAll('github.event.inputs', 'inputs');
+    const code = expression.replace(/'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"/gu, '');
+    if (/\binputs\.(?:broker_intent_id|work)\b/u.test(code)) return true;
+  }
+  return false;
 }
 
 function validateWorkflow(provider, file, document) {
@@ -114,17 +121,17 @@ function validateWorkflow(provider, file, document) {
   const jobs = document.jobs;
   const worker = jobs?.[provider];
   const fallback = jobs?.['fallback-finalize'];
-  for (const [name, job] of [
-    [provider, worker],
-    ['fallback-finalize', fallback],
+  for (const [name, job, isFallback] of [
+    [provider, worker, false],
+    ['fallback-finalize', fallback, true],
   ]) {
     if (!job || typeof job !== 'object') {
       errors.push(`${file}: jobs.${name} must exist`);
       continue;
     }
-    if (!hasAnchorUnion(job.if)) {
+    if (!hasAnchorUnion(job.if, isFallback)) {
       errors.push(
-        `${file}: jobs.${name}.if must admit an issue or a native work item`,
+        `${file}: jobs.${name}.if must use the canonical issue-or-work admission`,
       );
     }
     if (!forwardsWork(job.with?.work)) {

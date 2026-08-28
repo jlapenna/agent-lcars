@@ -119,7 +119,7 @@ expectFailure(
     document.jobs.codex.if =
       "github.event_name == 'workflow_dispatch' && inputs.issue != ''";
   },
-  /jobs\.codex\.if must admit an issue or a native work item/u,
+  /jobs\.codex\.if must use the canonical issue-or-work admission/u,
 );
 expectFailure(
   'issue-only fallback admission',
@@ -127,7 +127,25 @@ expectFailure(
   (document) => {
     document.jobs['fallback-finalize'].if = "always() && inputs.issue != ''";
   },
-  /jobs\.fallback-finalize\.if must admit an issue or a native work item/u,
+  /jobs\.fallback-finalize\.if must use the canonical issue-or-work admission/u,
+);
+expectFailure(
+  'worker anchor union narrowed by an extra issue condition',
+  'claude',
+  (document) => {
+    document.jobs.claude.if =
+      "github.event_name == 'workflow_dispatch' && (inputs.issue != '' || inputs.work != '') && inputs.issue != ''";
+  },
+  /jobs\.claude\.if must use the canonical issue-or-work admission/u,
+);
+expectFailure(
+  'fallback anchor union widened to empty dispatches',
+  'codex',
+  (document) => {
+    document.jobs['fallback-finalize'].if =
+      "always() && github.event_name == 'workflow_dispatch' && ((inputs.issue != '' || inputs.work != '') || true)";
+  },
+  /jobs\.fallback-finalize\.if must use the canonical issue-or-work admission/u,
 );
 expectFailure(
   'worker drops work forwarding',
@@ -163,11 +181,42 @@ expectFailure(
   /run-name must select a native work label/u,
 );
 expectFailure(
+  'run name renders a boolean instead of the issue anchor',
+  'claude',
+  (document) => {
+    document['run-name'] =
+      "${{ inputs.issue != '' || 'native work' }}: Claude issue agent";
+  },
+  /run-name must select a native work label/u,
+);
+expectFailure(
   'workflow concurrency collapses native runs',
   'claude',
   (document) => {
     document.concurrency = {
       group: 'claude-issue-${{ inputs.issue }}',
+      'cancel-in-progress': false,
+    };
+  },
+  /workflow-level concurrency\.group must include/u,
+);
+expectFailure(
+  'workflow concurrency uses a literal input name',
+  'codex',
+  (document) => {
+    document.concurrency = {
+      group: 'codex-inputs.broker_intent_id',
+      'cancel-in-progress': false,
+    };
+  },
+  /workflow-level concurrency\.group must include/u,
+);
+expectFailure(
+  'workflow concurrency quotes an input name inside an expression',
+  'opencode',
+  (document) => {
+    document.concurrency = {
+      group: "opencode-${{ 'inputs.work' }}",
       'cancel-in-progress': false,
     };
   },
