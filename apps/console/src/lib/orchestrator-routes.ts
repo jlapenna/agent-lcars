@@ -5,7 +5,9 @@ import {
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
+  type Run,
   type RunResult,
+  type TaskId,
 } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
 
@@ -84,6 +86,58 @@ export type HostedDispatchRequestBody = ReturnType<
 
 type RouteResult = { status: number; body: Record<string, unknown> };
 
+/**
+ * A label re-request has no reply text of its own.  Put this opaque marker
+ * into the already-published `context` dispatch input so
+ * prepare-agent-dispatch can select the GitHub comments that appeared after
+ * the previous attempt.  Adding a new workflow_dispatch input here would
+ * require every fleet consumer to update in lockstep; `context` already
+ * reaches every supported lane and is deliberately bounded by that action.
+ *
+ * This is intentionally a timestamp rather than copied comment prose.  The
+ * worker's existing authenticated GitHub read remains the source of the
+ * thread, so a webhook never needs to persist unbounded, untrusted comments
+ * in a Run.params value.
+ */
+export const GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX =
+  'agent-lcars:github-comments-since:v1:';
+
+export function githubCommentWindowContext(since: string): string {
+  return `${GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX}${since}`;
+}
+
+function newestRunCreatedAt(runs: Run[]): string | undefined {
+  return runs.reduce<string | undefined>(
+    (newest, run) =>
+      newest === undefined || run.createdAt > newest ? run.createdAt : newest,
+    undefined,
+  );
+}
+
+/** Label-triggered implement and review requests have no explicit reply body.
+ * First dispatches deliberately carry no extra field; only a later label
+ * request gets the bounded comment window. */
+async function labelRedispatchParams(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; taskId: TaskId; params: Record<string, string> },
+): Promise<Record<string, string>> {
+  if (
+    (input.event !== 'issues' && input.event !== 'pull_request') ||
+    (input.params['mode'] !== 'implement' && input.params['mode'] !== 'review')
+  ) {
+    return input.params;
+  }
+  const previousRunAt = newestRunCreatedAt(
+    await deps.store.listRuns(input.taskId),
+  );
+  return previousRunAt === undefined
+    ? input.params
+    : {
+        ...input.params,
+        context: githubCommentWindowContext(previousRunAt),
+      };
+}
+
 function internalError(context: string, error: unknown): RouteResult {
   console.error(`agent-lcars: orchestrator ${context} handling failed`, error);
   return { status: 500, body: { error: 'internal' } };
@@ -99,11 +153,21 @@ export async function handleWebhookDelivery(
       return { status: 200, body: { ignored: interpreted.reason } };
     }
 
+    // The first label-triggered run stays byte-for-byte on its existing
+    // prompt path. On a later label request, carry only the previous run's
+    // timestamp; prepare-agent-dispatch uses it to expose a bounded,
+    // author-attributed comment window in the brief.
+    const params = await labelRedispatchParams(deps, {
+      event: input.event,
+      taskId: interpreted.taskId,
+      params: interpreted.params,
+    });
+
     const outcome = await deps.orchestrator.request({
       taskId: interpreted.taskId,
       requestId: interpreted.requestId,
       pipeline: interpreted.pipeline,
-      params: interpreted.params,
+      params,
       ...(interpreted.work === undefined ? {} : { work: interpreted.work }),
     });
 

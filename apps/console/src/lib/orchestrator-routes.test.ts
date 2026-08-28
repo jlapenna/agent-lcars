@@ -12,6 +12,7 @@ import type { CompletionOidcIdentity } from './github-actions-oidc';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
+  GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX,
   handleCompletion,
   handleDispatchRequest,
   handleReconcile,
@@ -327,6 +328,97 @@ describe('handleWebhookDelivery', () => {
             pipeline: 'claude',
             target: { repo: 'jlapenna/agent-lcars' },
           },
+        },
+      }),
+    );
+  });
+
+  it('gives a later label redispatch a comment window beginning at the previous run', async () => {
+    const { clock, deps, store } = fixture();
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'first-delivery',
+      payload: labeledIssuePayload(),
+    });
+    const firstRun = await store.readRun(first.body['runId'] as string);
+    expect(firstRun?.params).toEqual({ mode: 'implement' });
+
+    await deps.orchestrator.report(firstRun?.runId ?? '', { ok: true });
+    clock.advanceMinutes(3);
+    const requestSpy = vi.spyOn(deps.orchestrator, 'request');
+    await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'second-delivery',
+      payload: labeledIssuePayload(),
+    });
+
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: {
+          mode: 'implement',
+          context: `${GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX}${T0}`,
+        },
+      }),
+    );
+  });
+
+  it('does not add a comment window to an initial label dispatch or a reply command', async () => {
+    const { deps } = fixture();
+    const requestSpy = vi.spyOn(deps.orchestrator, 'request');
+    await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'reply-delivery',
+      payload: {
+        action: 'created',
+        repository: { full_name: REPO },
+        issue: { number: ISSUE.issue },
+        comment: {
+          body: '@claude continue with the new detail',
+          author_association: 'OWNER',
+        },
+      },
+    });
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: {
+          mode: 'reply',
+          reply: '@claude continue with the new detail',
+        },
+      }),
+    );
+  });
+
+  it('gives a later review-label redispatch the same comment window', async () => {
+    const { clock, deps, store } = fixture();
+    const reviewPayload = {
+      action: 'labeled',
+      repository: { full_name: REPO },
+      pull_request: { number: ISSUE.issue },
+      label: { name: 'review:codex' },
+    };
+    const first = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'first-review-delivery',
+      payload: reviewPayload,
+    });
+    const firstRun = await store.readRun(first.body['runId'] as string);
+    expect(firstRun?.params).toEqual({ mode: 'review' });
+
+    await deps.orchestrator.report(firstRun?.runId ?? '', { ok: true });
+    clock.advanceMinutes(3);
+    const requestSpy = vi.spyOn(deps.orchestrator, 'request');
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'second-review-delivery',
+      payload: reviewPayload,
+    });
+
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: {
+          mode: 'review',
+          context: `${GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX}${T0}`,
         },
       }),
     );

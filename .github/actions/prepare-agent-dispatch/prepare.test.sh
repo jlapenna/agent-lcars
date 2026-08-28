@@ -111,6 +111,89 @@ case "$protocol_path" in
     ;;
 esac
 
+# A label re-request carries only the preceding run timestamp through the
+# existing context input. The action reads the normal GitHub thread and puts
+# exactly the later, author-attributed comments into a separate bounded field;
+# its opaque marker must not leak into the visible `context` prose.
+comment_window_root="$test_root/comment-window"
+mkdir -p "$comment_window_root/runner-temp" "$comment_window_root/consumer"
+FAKE_ANCHOR="$comment_window_root/anchor.json"
+FAKE_COMMENTS="$comment_window_root/comments.json"
+export FAKE_ANCHOR FAKE_COMMENTS
+cp "$test_root/anchor.json" "$FAKE_ANCHOR"
+cat > "$FAKE_COMMENTS" <<'JSON'
+[
+  {"id":1,"html_url":"https://example.test/comments/1","created_at":"2026-08-08T00:00:00.000Z","updated_at":"2026-08-08T00:00:00.000Z","user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"old result"},
+  {"id":2,"html_url":"https://example.test/comments/2","created_at":"2026-08-08T00:01:00.000Z","updated_at":"2026-08-08T00:01:00.000Z","user":{"login":"agent-lcars[bot]","type":"Bot"},"body":"parked awaiting assets"},
+  {"id":3,"html_url":"https://example.test/comments/3","created_at":"2026-08-08T00:02:00.000Z","updated_at":"2026-08-08T00:02:00.000Z","user":{"login":"jlapenna","type":"User"},"body":"Here are the requested wordmarks."}
+]
+JSON
+
+RUNNER_TEMP="$comment_window_root/runner-temp"
+GITHUB_ENV="$comment_window_root/github-env"
+GITHUB_OUTPUT="$comment_window_root/github-output"
+REPLY=''
+CONTEXT='agent-lcars:github-comments-since:v1:2026-08-08T00:00:00.000Z'
+export RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT REPLY CONTEXT
+
+(
+  cd "$comment_window_root/consumer"
+  GITHUB_WORKSPACE="$comment_window_root/consumer" bash "$action_dir/prepare.sh"
+)
+
+comment_window_path="$RUNNER_TEMP/agent-dispatch/context.json"
+jq -e '
+  .context == "" and
+  .new_comments_since == "2026-08-08T00:00:00.000Z" and
+  [.new_comments[].id] == [2, 3] and
+  .new_comments[0].author == "agent-lcars[bot]" and
+  .new_comments[0].author_type == "Bot" and
+  .new_comments[1].author == "jlapenna" and
+  .new_comments[1].author_type == "User" and
+  .truncated == []' "$comment_window_path" >/dev/null
+
+# The comment delta is a real prompt-size boundary, not merely presentation:
+# retain the first five new comments, visibly clamp each body, and name the
+# aggregate truncation so a worker knows to fetch the rest of the thread.
+bounded_comments_root="$test_root/bounded-comments"
+mkdir -p "$bounded_comments_root/runner-temp" "$bounded_comments_root/consumer"
+FAKE_ANCHOR="$bounded_comments_root/anchor.json"
+FAKE_COMMENTS="$bounded_comments_root/comments.json"
+export FAKE_ANCHOR FAKE_COMMENTS
+cp "$test_root/anchor.json" "$FAKE_ANCHOR"
+oversized_new_comment="$(printf 'n%.0s' $(seq 1 1500))"
+jq -n --arg body "$oversized_new_comment" '
+  [range(0; 6) | {
+    id: (. + 10),
+    html_url: ("https://example.test/comments/" + ((. + 10) | tostring)),
+    created_at: ("2026-08-08T00:0" + ((. + 1) | tostring) + ":00.000Z"),
+    updated_at: ("2026-08-08T00:0" + ((. + 1) | tostring) + ":00.000Z"),
+    user: {login: "maintainer", type: "User"},
+    body: $body
+  }]' > "$FAKE_COMMENTS"
+
+RUNNER_TEMP="$bounded_comments_root/runner-temp"
+GITHUB_ENV="$bounded_comments_root/github-env"
+GITHUB_OUTPUT="$bounded_comments_root/github-output"
+CONTEXT='agent-lcars:github-comments-since:v1:2026-08-08T00:00:00.000Z'
+export RUNNER_TEMP GITHUB_ENV GITHUB_OUTPUT CONTEXT
+
+(
+  cd "$bounded_comments_root/consumer"
+  GITHUB_WORKSPACE="$bounded_comments_root/consumer" bash "$action_dir/prepare.sh"
+)
+
+bounded_comments_path="$RUNNER_TEMP/agent-dispatch/context.json"
+jq -e '
+  (.new_comments | length) == 5 and
+  [.new_comments[].id] == [11, 12, 13, 14, 15] and
+  (.new_comments[0].body | contains("[dispatch-brief: truncated to 1000 of 1500 characters.")) and
+  .truncated == ["new_comments"]' "$bounded_comments_path" >/dev/null
+if [ "$(wc -c < "$bounded_comments_path")" -gt 10000 ]; then
+  echo "bounded new-comment brief exceeded its size ceiling" >&2
+  exit 1
+fi
+
 # A brief built from oversized GitHub content must stay bounded. The budgets
 # are constants in prepare.sh, so this exercises the real shipped values
 # rather than a lowered test-only limit: the fixtures below are sized against
