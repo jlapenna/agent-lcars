@@ -132,6 +132,44 @@ round-robin over the same `--docker-hosts` pool used for GitHub-mode
 runners -- deliberately not `Scaler`'s load-aware host scoring, a stated
 simplification for this first cut.
 
+### Readiness and claim outcomes
+
+The metrics endpoint exposes the queue worker independently of the GitHub
+scale-set listeners:
+
+- `github_runner_autoscaler_queue_executor_ready` is `1` only after the
+  queue executor has all required deployment configuration and a claim-token
+  source; it is `0` when disabled or misconfigured.
+- `github_runner_autoscaler_queue_executor_state{state}` is a one-hot state
+  (`disabled`, `misconfigured`, or `ready`). An absent `LCARS_CONSOLE_URL`
+  is disabled; a console URL with a missing required credential or host-path
+  setting is misconfigured.
+- `github_runner_autoscaler_queue_executor_polls_total{outcome}` separates a
+  healthy empty queue (`idle_204` or `idle_empty`) from `poll_error` and the
+  intentional `draining` skip.
+- `github_runner_autoscaler_queue_executor_claims_total` counts valid claims
+  returned by the server. `github_runner_autoscaler_queue_executor_launches_total{outcome}`
+  then records whether that claim launched a direct runner (`success` or
+  `error`). A launch error therefore remains visible as a successful claim
+  followed by a failed launch, rather than looking like an idle poll.
+
+### Exited direct-runner retention
+
+Direct-mode containers use `AutoRemove: false` so their exit logs remain
+available for diagnosis. The queue worker now performs a label-scoped sweep
+on startup and every 15 minutes. It considers only containers whose
+`agent-lcars.direct-runner=1` **and**
+`agent-lcars.direct-runner.run-id` labels were set by this launcher, and only
+after Docker reports them `exited`. It never lists or removes GitHub Actions
+runner containers, other application containers, or running direct runners.
+
+Per Docker host, the five most recent exited direct runners are retained for
+up to 24 hours; any older exit or any exit beyond those five is removed. This
+keeps enough recent failure logs for investigation while bounding retained
+containers even during a failure burst. Removal is non-forcing: if a
+container races back to running, Docker refuses the deletion rather than
+ending an active run.
+
 **A failed launch leaves the run claimed on the control plane.** There is no
 callback here to un-claim it -- by design, see the design spec's "Autoscaler
 change". Recovery is passive, and mints a NEW run rather than reusing the
@@ -154,17 +192,6 @@ drain skips it instead. This is a separate, in-memory switch from the
 `queue.state` machine above: it has no effect on runs already claimed, and
 nothing else in this repo (a redeploy that never signals `SIGUSR1`, a plain
 restart) touches it.
-
-**Exited direct-runner containers are not swept.** Direct-mode containers
-run with `AutoRemove: false` (not `true`, unlike the comment near
-`launchDirectRunnerOnHost` in an earlier revision): capturing a non-zero-exit
-container's logs before Docker reaps them needs a live `ContainerLogs`
-follow stream started before the container exits, plus a `ContainerWait`/
-manual-remove goroutine -- more than a small change, so this cut ships
-without it and a container just sits there, exited, until something removes
-it. There is no sweeper for these yet, unlike `cleanupOrphans` for
-GitHub-mode runners; `docker container prune` (or an equivalent scheduled
-job) on each fleet host is the operator-side stopgap until one exists.
 
 ### Delivering the claude CLI's own credential
 

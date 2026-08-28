@@ -291,7 +291,57 @@ var (
 		Name: "github_runner_autoscaler_checkpoint_restore_status",
 		Help: "One-hot checkpoint restore outcome at boot, by status: restored, absent, or unreadable.",
 	}, []string{"status"})
+	queueExecutorReadyGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_queue_executor_ready",
+		Help: "1 when the direct-runner queue executor has a complete configuration and a usable claim token source; 0 when disabled or misconfigured.",
+	})
+	queueExecutorStateGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_queue_executor_state",
+		Help: "One-hot queue executor startup state: disabled, misconfigured, or ready.",
+	}, []string{"state"})
+	queueExecutorPollsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_polls_total",
+		Help: "Queue executor claim polls by non-claim outcome: draining, idle_204, idle_empty, or poll_error.",
+	}, []string{"outcome"})
+	queueExecutorClaimsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_claims_total",
+		Help: "Successful queue claims returned by the control plane before direct-runner launch.",
+	})
+	queueExecutorLaunchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_launches_total",
+		Help: "Direct-runner launch attempts after a successful claim, by outcome: success or error.",
+	}, []string{"outcome"})
 )
+
+func setQueueExecutorStartupState(state queueExecutorStartupState) {
+	for _, candidate := range []queueExecutorStartupState{
+		queueExecutorStateDisabled,
+		queueExecutorStateMisconfigured,
+		queueExecutorStateReady,
+	} {
+		value := 0.0
+		if candidate == state {
+			value = 1
+		}
+		queueExecutorStateGauge.WithLabelValues(string(candidate)).Set(value)
+	}
+	if state == queueExecutorStateReady {
+		queueExecutorReadyGauge.Set(1)
+		return
+	}
+	queueExecutorReadyGauge.Set(0)
+}
+
+func recordQueueExecutorPollOutcome(outcome queuePollOutcome) {
+	switch outcome {
+	case queuePollOutcomeClaimed:
+		queueExecutorLaunchesTotal.WithLabelValues("success").Inc()
+	case queuePollOutcomeLaunchErr:
+		queueExecutorLaunchesTotal.WithLabelValues("error").Inc()
+	case queuePollOutcomeDraining, queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty, queuePollOutcomePollError:
+		queueExecutorPollsTotal.WithLabelValues(string(outcome)).Inc()
+	}
+}
 
 func setCheckpointRestoreStatus(status string) {
 	for _, candidate := range []string{checkpointRestoreRestored, checkpointRestoreAbsent, checkpointRestoreUnreadable} {
@@ -345,6 +395,11 @@ func registerMetrics() {
 			checkpointWriteFailures,
 			checkpointLastWriteTimestamp,
 			checkpointRestoreStatus,
+			queueExecutorReadyGauge,
+			queueExecutorStateGauge,
+			queueExecutorPollsTotal,
+			queueExecutorClaimsTotal,
+			queueExecutorLaunchesTotal,
 		)
 	})
 }
