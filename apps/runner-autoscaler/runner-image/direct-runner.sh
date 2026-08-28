@@ -47,7 +47,12 @@ PREPARE_DISPATCH_DIR="${PREPARE_DISPATCH_DIR:-/usr/local/lib/agent-lcars/.github
 VERIFY_DELIVERABLE="${VERIFY_DELIVERABLE:-/usr/local/lib/agent-lcars/.github/actions/verify-deliverable/verify-deliverable.sh}"
 SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifecycle.sh}"
 
-RUNNER_TEMP="${RUNNER_TEMP:-/tmp/agent-lcars-direct}"
+# prepare-agent-dispatch requires RUNNER_TEMP in its child environment. A
+# direct-mode container is not a GitHub Actions runner, so it does not supply
+# that variable for us; export the private fallback before invoking the
+# composite's prepare.sh below. Respecting TMPDIR also keeps local callers'
+# temporary state isolated without changing the production default (/tmp).
+export RUNNER_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}/agent-lcars-direct}"
 mkdir -p "$RUNNER_TEMP"
 
 brief="$(curl -sf --config - <<CURLCFG
