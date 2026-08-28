@@ -139,6 +139,15 @@ expectFailure(
   /jobs\.claude\.if must use the canonical issue-or-work admission/u,
 );
 expectFailure(
+  'worker admission compares the issue anchor with a space',
+  'opencode',
+  (document) => {
+    document.jobs.opencode.if =
+      "github.event_name == 'workflow_dispatch' && (inputs.issue != ' ' || inputs.work != '')";
+  },
+  /jobs\.opencode\.if must use the canonical issue-or-work admission/u,
+);
+expectFailure(
   'fallback anchor union widened to empty dispatches',
   'codex',
   (document) => {
@@ -198,7 +207,7 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must include/u,
+  /workflow-level concurrency\.group must return/u,
 );
 expectFailure(
   'workflow concurrency uses a literal input name',
@@ -209,7 +218,7 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must include/u,
+  /workflow-level concurrency\.group must return/u,
 );
 expectFailure(
   'workflow concurrency quotes an input name inside an expression',
@@ -220,7 +229,18 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must include/u,
+  /workflow-level concurrency\.group must return/u,
+);
+expectFailure(
+  'workflow concurrency reduces work to a boolean',
+  'claude',
+  (document) => {
+    document.concurrency = {
+      group: "claude-${{ inputs.work != '' }}",
+      'cancel-in-progress': false,
+    };
+  },
+  /workflow-level concurrency\.group must return/u,
 );
 
 {

@@ -21,14 +21,56 @@ const ANCHOR_UNION = "(inputs.issue!=''||inputs.work!='')";
 const WORKER_ADMISSION = `github.event_name=='workflow_dispatch'&&${ANCHOR_UNION}`;
 const FALLBACK_ADMISSION = `always()&&${WORKER_ADMISSION}`;
 const RUN_NAME_ANCHOR_PREFIX =
-  "${{inputs.issue!=''&&format('#{0}',inputs.issue)||'nativework'}}:";
+  "${{inputs.issue!=''&&format('#{0}',inputs.issue)||'native work'}}:";
+const NATIVE_UNIQUE_CONCURRENCY_EXPRESSIONS = new Set([
+  'inputs.broker_intent_id',
+  'inputs.work',
+  "inputs.issue!=''&&inputs.issue||inputs.broker_intent_id",
+  "inputs.issue!=''&&inputs.issue||inputs.work",
+]);
+
+function removeUnquotedWhitespace(value) {
+  let normalized = '';
+  let quote = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote === "'") {
+      normalized += character;
+      if (character === "'") {
+        if (value[index + 1] === "'") {
+          normalized += value[index + 1];
+          index += 1;
+        } else {
+          quote = '';
+        }
+      }
+      continue;
+    }
+    if (quote === '"') {
+      normalized += character;
+      if (character === '\\' && index + 1 < value.length) {
+        normalized += value[index + 1];
+        index += 1;
+      } else if (character === '"') {
+        quote = '';
+      }
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      normalized += character;
+    } else if (!/\s/u.test(character)) {
+      normalized += character;
+    }
+  }
+  return normalized;
+}
 
 function normalizeExpression(value) {
   return typeof value === 'string'
-    ? value
-        .replaceAll('github.event.inputs', 'inputs')
-        .replaceAll('""', "''")
-        .replace(/\s+/gu, '')
+    ? removeUnquotedWhitespace(
+        value.replaceAll('github.event.inputs', 'inputs'),
+      )
     : '';
 }
 
@@ -58,13 +100,15 @@ function concurrencyGroup(concurrency) {
 function hasNativeUniqueConcurrencyKey(value) {
   if (typeof value !== 'string') return false;
 
-  // A plain group containing the text `inputs.work` is still one constant
-  // group, as is an interpolation whose only occurrence is inside a quoted
-  // string. Require an actual input dereference inside a GitHub expression.
+  // A native identifier must be the value returned by a deliberately simple
+  // interpolation. Merely mentioning it in a literal or a boolean comparison
+  // collapses every native run to the same constant concurrency key.
   for (const match of value.matchAll(/\$\{\{([\s\S]*?)\}\}/gu)) {
-    const expression = match[1].replaceAll('github.event.inputs', 'inputs');
-    const code = expression.replace(/'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"/gu, '');
-    if (/\binputs\.(?:broker_intent_id|work)\b/u.test(code)) return true;
+    if (
+      NATIVE_UNIQUE_CONCURRENCY_EXPRESSIONS.has(normalizeExpression(match[1]))
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -150,7 +194,7 @@ function validateWorkflow(provider, file, document) {
     const group = concurrencyGroup(document.concurrency);
     if (!hasNativeUniqueConcurrencyKey(group)) {
       errors.push(
-        `${file}: workflow-level concurrency.group must include inputs.broker_intent_id or inputs.work so native runs do not share an empty issue key`,
+        `${file}: workflow-level concurrency.group must return inputs.broker_intent_id or inputs.work so native runs have distinct keys`,
       );
     }
   }
