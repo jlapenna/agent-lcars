@@ -158,9 +158,20 @@ describe('ParkedWorkPanel', () => {
       true,
     );
     expect(
+      screen.getByText('Older tasks may contain parked work.'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the truncation disclosure when the current page has no parked work', () => {
+    renderPanel([], undefined, undefined, true);
+    expect(screen.getByTestId('parked-work-panel')).toBeInTheDocument();
+    expect(
       screen.getByText(
-        'Showing parked work from the 200 most recently updated tasks.',
+        'No parked work in the 200 most recently updated tasks.',
       ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Older tasks may contain parked work.'),
     ).toBeInTheDocument();
   });
 });
