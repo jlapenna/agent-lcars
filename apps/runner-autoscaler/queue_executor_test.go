@@ -44,7 +44,6 @@ func TestPollOnceClaimsAndLaunches(t *testing.T) {
 	var launched []directRunnerLaunch
 	cfg := queueExecutorConfig{
 		consoleURL: server.URL,
-		pipelines:  []string{"claude"},
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
 		launch: func(l directRunnerLaunch) error {
@@ -94,7 +93,6 @@ func TestPollOnceNoQueuedRunLaunchesNothing(t *testing.T) {
 			launchCount := 0
 			cfg := queueExecutorConfig{
 				consoleURL: server.URL,
-				pipelines:  []string{"claude"},
 				runnerName: "test-runner",
 				idToken:    func() (string, error) { return "fake-id-token", nil },
 				launch:     func(directRunnerLaunch) error { launchCount++; return nil },
@@ -123,7 +121,6 @@ func TestPollOnceMissingRequiredFieldsLaunchesNothing(t *testing.T) {
 	launchCount := 0
 	cfg := queueExecutorConfig{
 		consoleURL: server.URL,
-		pipelines:  []string{"claude"},
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
 		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
@@ -152,7 +149,6 @@ func TestPollOnceDrainingSkipsClaim(t *testing.T) {
 	launchCount := 0
 	cfg := queueExecutorConfig{
 		consoleURL: server.URL,
-		pipelines:  []string{"claude"},
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
 		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
@@ -182,7 +178,6 @@ func TestPollOnceUnauthorizedIsError(t *testing.T) {
 	launchCount := 0
 	cfg := queueExecutorConfig{
 		consoleURL: server.URL,
-		pipelines:  []string{"claude"},
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
 		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
@@ -200,10 +195,10 @@ func TestPollOnceUnauthorizedIsError(t *testing.T) {
 }
 
 // TestPollOnceClaimRequestBodyShape pins the claim request body's shape
-// (runner + pipelines only) and guards against it ever accidentally
-// growing a token field -- there is none to leak yet at claim time, but a
-// careless future edit threading a stale token through would be exactly
-// the kind of leak the "never log the run token" rule exists to prevent.
+// (runner only). The server derives claimable pipelines from the authenticated
+// work.executor grant, so a poller cannot supply a competing local allowlist.
+// It also guards against a token field: there is none to leak yet at claim
+// time, but threading a stale token through would violate its boundary.
 func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +209,6 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 
 	cfg := queueExecutorConfig{
 		consoleURL: server.URL,
-		pipelines:  []string{"claude", "codex"},
 		runnerName: "runner-a",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
 		launch:     func(directRunnerLaunch) error { return nil },
@@ -225,9 +219,8 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 	if gotBody["runner"] != "runner-a" {
 		t.Fatalf("expected runner %q, got %v", "runner-a", gotBody)
 	}
-	pipelines, ok := gotBody["pipelines"].([]any)
-	if !ok || len(pipelines) != 2 || pipelines[0] != "claude" || pipelines[1] != "codex" {
-		t.Fatalf("expected pipelines [claude codex], got %v", gotBody["pipelines"])
+	if _, supplied := gotBody["pipelines"]; supplied {
+		t.Fatalf("claim request body must not supply pipelines, got %v", gotBody)
 	}
 	if _, leaked := gotBody["token"]; leaked {
 		t.Fatalf("claim request body must never carry a run token, got %v", gotBody)
@@ -260,7 +253,6 @@ func TestPollOnceClaimResponseTooLargeIsError(t *testing.T) {
 	launchCount := 0
 	cfg := queueExecutorConfig{
 		consoleURL: server.URL,
-		pipelines:  []string{"claude"},
 		runnerName: "test-runner",
 		idToken:    func() (string, error) { return "fake-id-token", nil },
 		launch:     func(directRunnerLaunch) error { launchCount++; return nil },
@@ -342,76 +334,34 @@ func TestDirectRunnerMaxConcurrent(t *testing.T) {
 	}
 }
 
-// TestParseQueuePipelines pins LCARS_QUEUE_PIPELINES's parsing: trimmed,
-// empties dropped, so an unset/blank value never becomes a literal ""
-// pipeline name in the claim request body (see pollOnce's own body-shape
-// test) and stray whitespace/a trailing comma never turns a real pipeline
-// name into a different one.
-func TestParseQueuePipelines(t *testing.T) {
-	cases := []struct {
-		name string
-		raw  string
-		want []string
-	}{
-		{"empty", "", nil},
-		{"whitespace only", "   ", nil},
-		{"single", "claude", []string{"claude"}},
-		{"multiple", "claude,codex", []string{"claude", "codex"}},
-		{"whitespace around entries", " claude , codex ", []string{"claude", "codex"}},
-		{"trailing comma dropped", "claude,codex,", []string{"claude", "codex"}},
-		{"blank entries between commas dropped", "claude,,codex", []string{"claude", "codex"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := parseQueuePipelines(tc.raw)
-			if len(got) != len(tc.want) {
-				t.Fatalf("parseQueuePipelines(%q) = %v, want %v", tc.raw, got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("parseQueuePipelines(%q) = %v, want %v", tc.raw, got, tc.want)
-				}
-			}
-		})
-	}
-}
-
-// TestQueueExecutorStartupDecision pins the misconfiguration Task 5's own
-// final-review fix guards against: LCARS_QUEUE_POLL=1 with nothing usable
-// in LCARS_QUEUE_PIPELINES must refuse to start the poller and say why,
-// rather than starting a poller that can never claim anything.
+// TestQueueExecutorStartupDecision proves durable startup depends on the
+// connection and credential configuration it actually consumes, never a local
+// pipeline allowlist. The authenticated work.executor grant supplies that
+// capability to every claim request.
 func TestQueueExecutorStartupDecision(t *testing.T) {
 	cases := []struct {
-		name          string
-		pollRaw       string
-		pipelinesRaw  string
-		wantPipelines []string
-		wantStart     bool
-		wantReason    bool
+		name       string
+		consoleURL string
+		keyPath    string
+		writerKey  string
+		claudeKey  string
+		wantStart  bool
+		wantReason bool
 	}{
-		{"poll unset", "", "claude", nil, false, false},
-		{"poll not 1", "0", "claude", nil, false, false},
-		{"poll 1, no pipelines configured", "1", "", nil, false, true},
-		{"poll 1, only blank pipeline entries", "1", " , ,", nil, false, true},
-		{"poll 1, pipelines configured", "1", "claude,codex", []string{"claude", "codex"}, true, false},
-		{"poll 1 case-insensitive/whitespace", " 1 ", "claude", []string{"claude"}, true, false},
+		{"complete configuration", "https://lcars.example", "/run/writer.json", "/host/writer.json", "/host/claude-token", true, false},
+		{"missing console URL", "", "/run/writer.json", "/host/writer.json", "/host/claude-token", false, true},
+		{"missing ID-token credentials", "https://lcars.example", "", "/host/writer.json", "/host/claude-token", false, true},
+		{"missing Docker writer credential", "https://lcars.example", "/run/writer.json", "", "/host/claude-token", false, true},
+		{"missing Docker Claude credential", "https://lcars.example", "/run/writer.json", "/host/writer.json", "", false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			pipelines, start, reason := queueExecutorStartupDecision(tc.pollRaw, tc.pipelinesRaw)
+			start, reason := queueExecutorStartupDecision(tc.consoleURL, tc.keyPath, tc.writerKey, tc.claudeKey)
 			if start != tc.wantStart {
 				t.Errorf("start = %v, want %v", start, tc.wantStart)
 			}
 			if (reason != "") != tc.wantReason {
 				t.Errorf("reason = %q, want non-empty: %v", reason, tc.wantReason)
-			}
-			if len(pipelines) != len(tc.wantPipelines) {
-				t.Fatalf("pipelines = %v, want %v", pipelines, tc.wantPipelines)
-			}
-			for i := range pipelines {
-				if pipelines[i] != tc.wantPipelines[i] {
-					t.Fatalf("pipelines = %v, want %v", pipelines, tc.wantPipelines)
-				}
 			}
 		})
 	}

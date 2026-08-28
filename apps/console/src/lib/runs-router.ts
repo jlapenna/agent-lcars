@@ -104,21 +104,15 @@ const MAX_CLAIM_ATTEMPTS = 5;
 
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
-    // A `work.executor` principal may only claim pipelines its own grant
-    // lists -- the same rule `work-router.ts`'s `forbiddenReason` applies
-    // to `create`/`redispatch`, just answering "nothing claimed" instead
-    // of a 403 (there is no caller-actionable error to report here: an
-    // executor's grant is an infra concern, not something a claim request
-    // can be retried its way around). Intersecting BEFORE the store call,
-    // rather than filtering `claimQueuedRun`'s result afterward, is what
-    // matters: a claim outside the grant must never reach `claimed` --
-    // and therefore never reach `checkoutToken`, which would otherwise
-    // mint a real GitHub write token for a repo this principal was never
-    // trusted with.
-    const allowedPipelines = input.pipelines.filter((pipeline) =>
-      context.principal.pipelines.includes(pipeline),
-    );
-    if (allowedPipelines.length === 0) return undefined;
+    // The executor's authenticated grant is the only claim capability
+    // source. `pipelines` is an accepted-but-ignored transition field for
+    // old queue-executor images; a caller cannot widen, narrow, or otherwise
+    // choose the pipeline set by sending a body field that competes with
+    // server-side authorization.
+    // Passing these grant pipelines directly to the transactional store is
+    // what prevents an ungranted run from reaching `claimed` (and therefore
+    // ever minting a checkout token).
+    const allowedPipelines = context.principal.pipelines;
 
     // `claimQueuedRun` claims by `queue.state === 'queued'` alone; it says
     // nothing about whether the run itself is still live. Cancellation and

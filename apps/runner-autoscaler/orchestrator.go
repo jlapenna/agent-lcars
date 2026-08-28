@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -107,29 +108,27 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// own comment just below, and the README's "Queue executor" section.
 	var queueDraining atomic.Bool
 
-	// Native work items, queue-executor sub-project: an additional,
-	// independently-gated goroutine that polls the console's run-claim API
-	// and launches direct-mode containers, entirely outside the GitHub
-	// scale-set state machine above. LCARS_QUEUE_POLL unset (the default)
-	// means this block is skipped and nothing else in the process changes --
-	// see queue_executor.go's package doc comment and the design spec's
-	// "Autoscaler change" section. Deliberately read once at startup, not on
-	// every config reload -- a live SIGHUP reload below never restarts or
-	// reconfigures this goroutine, so a change to any LCARS_QUEUE_*/
-	// LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE env var (or to the Docker hosts
-	// pool launchDirectRunner reads from `resolved`) needs a full daemon
-	// restart to take effect, not just a config-file replace-and-SIGHUP.
-	pipelines, startQueuePoller, queueDisabledReason := queueExecutorStartupDecision(
-		os.Getenv("LCARS_QUEUE_POLL"), os.Getenv("LCARS_QUEUE_PIPELINES"))
+	// Native work items queue executor: a durable goroutine that polls the
+	// console's run-claim API and launches direct-mode containers, entirely
+	// outside the GitHub scale-set state machine above. It starts whenever
+	// its console and credential configuration is complete; the console's
+	// authenticated work.executor grant is the sole claim capability source.
+	// These values are read once at startup, not on SIGHUP, so changing an
+	// LCARS_QUEUE_*/LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE value (or the Docker
+	// host pool launchDirectRunner reads from `resolved`) needs a full daemon
+	// restart rather than a config-file replace-and-SIGHUP.
+	consoleURL := strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL"))
+	keyPath := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+	startQueuePoller, queueDisabledReason := queueExecutorStartupDecision(
+		consoleURL,
+		keyPath,
+		os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"),
+		os.Getenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH"),
+	)
 	if queueDisabledReason != "" {
 		logger.Error("Queue executor disabled", slog.String("reason", queueDisabledReason))
 	}
 	if startQueuePoller {
-		keyPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-		consoleURL := os.Getenv("LCARS_CONSOLE_URL")
-		if consoleURL == "" {
-			consoleURL = "https://lcars.jlapenna.net"
-		}
 		audience := queueExecutorAudience(os.Getenv("LCARS_WORK_AUDIENCE"))
 		hostname, hostErr := os.Hostname()
 		runnerName := queueExecutorRunnerName(hostname, hostErr)
@@ -149,7 +148,6 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		} else {
 			go runQueueExecutorPoller(ctx, queueExecutorConfig{
 				consoleURL: consoleURL,
-				pipelines:  pipelines,
 				runnerName: runnerName,
 				idToken: func() (string, error) {
 					return idTokenFromSource(tokenSource)

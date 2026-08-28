@@ -77,6 +77,24 @@ describe('runsContract', () => {
       ['claim', 'brief', 'heartbeat', 'complete', 'checkoutToken'].sort(),
     );
   });
+
+  it('accepts legacy pipeline input without making it part of claim capability', () => {
+    const [rawShape] = runsContract.claim['~orpc'].inputSchemas ?? [];
+    const shape = rawShape as z.ZodTypeAny | undefined;
+
+    expect(shape?.parse({ runner: 'autoscaler-1' })).toEqual({
+      runner: 'autoscaler-1',
+    });
+    expect(
+      shape?.parse({
+        runner: 'autoscaler-1',
+        pipelines: ['claude'],
+      }),
+    ).toEqual({ runner: 'autoscaler-1', pipelines: ['claude'] });
+    expect(
+      shape?.safeParse({ runner: 'autoscaler-1', unknown: true }).success,
+    ).toBe(false);
+  });
 });
 
 describe('runsContract.brief resume field', () => {

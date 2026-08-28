@@ -203,7 +203,7 @@ describe('claim', () => {
       { store, orchestrator, now, ...context, principal: undefined },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude'] },
+      { runner: 'runner-1' },
     );
     expect(r.status).toBe(401);
   });
@@ -214,7 +214,7 @@ describe('claim', () => {
       { store, orchestrator, now, ...context, principal: operatorPrincipal() },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude'] },
+      { runner: 'runner-1' },
     );
     expect(r.status).toBe(401);
   });
@@ -231,7 +231,7 @@ describe('claim', () => {
       },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude'] },
+      { runner: 'runner-1' },
     );
     expect(r.status).toBe(200);
     expect(r.json).toBeUndefined();
@@ -261,7 +261,7 @@ describe('claim', () => {
       },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude'] },
+      { runner: 'runner-1' },
     );
     expect(r.status).toBe(200);
     const claimed = r.json as { runId: string };
@@ -269,14 +269,7 @@ describe('claim', () => {
     expect(run?.queue?.claimedAt).toBe(NOW);
   });
 
-  // Critical fix (flagged in review of Task 7): the handler used to pass
-  // `input.pipelines` straight to `store.claimQueuedRun` with no check
-  // against the calling principal's own `pipelines` grant -- any
-  // `work.executor` principal could claim (and then mint a real GitHub
-  // write token for) a pipeline it was never granted. `claim` now
-  // intersects `input.pipelines` with `context.principal.pipelines`
-  // before ever touching the store.
-  it('claims nothing for a pipeline outside the principal grant, without calling the store', async () => {
+  it('derives claim eligibility only from the executor grant', async () => {
     const { store, orchestrator, now } = fixture();
     await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex'),
@@ -294,14 +287,16 @@ describe('claim', () => {
       },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['codex'] },
+      { runner: 'runner-1' },
     );
     expect(r.status).toBe(200);
     expect(r.json).toBeUndefined();
-    expect(claimSpy).not.toHaveBeenCalled();
+    expect(claimSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ pipelines: ['claude'] }),
+    );
   });
 
-  it('claims only the grant-allowed pipeline even when an older, ungranted pipeline is queued', async () => {
+  it('ignores a legacy pipeline selection and claims only the grant-allowed pipeline', async () => {
     const { store, orchestrator, now } = fixture();
     const codexRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-older'),
@@ -323,7 +318,7 @@ describe('claim', () => {
       },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude', 'codex'] },
+      { runner: 'runner-1', pipelines: ['codex', 'opencode'] },
     );
     expect(r.status).toBe(200);
     const claimed = r.json as { runId: string; pipeline: string };
@@ -358,7 +353,7 @@ describe('claim', () => {
       },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude'] },
+      { runner: 'runner-1' },
     );
     expect(r.status).toBe(200);
     expect((r.json as { runId: string }).runId).toBe(liveRunId);
@@ -379,11 +374,9 @@ describe('claim', () => {
     };
     const first = await call(ctx, 'POST', '/runs/claim', {
       runner: 'runner-1',
-      pipelines: ['claude'],
     });
     const second = await call(ctx, 'POST', '/runs/claim', {
       runner: 'runner-2',
-      pipelines: ['claude'],
     });
     expect(first.status).toBe(200);
     expect(first.json).toBeDefined();
@@ -410,11 +403,9 @@ describe('claim', () => {
     };
     const first = await call(ctx, 'POST', '/runs/claim', {
       runner: 'runner-1',
-      pipelines: ['claude'],
     });
     const second = await call(ctx, 'POST', '/runs/claim', {
       runner: 'runner-2',
-      pipelines: ['claude'],
     });
     expect((first.json as { runId: string }).runId).toBe(runA);
     expect((second.json as { runId: string }).runId).toBe(runB);
@@ -439,7 +430,7 @@ describe('claim -> brief -> heartbeat -> complete', () => {
       },
       'POST',
       '/runs/claim',
-      { runner: 'runner-1', pipelines: ['claude'] },
+      { runner: 'runner-1' },
     );
     expect(claimed.status).toBe(200);
     const {

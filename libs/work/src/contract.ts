@@ -463,7 +463,8 @@ export const runsContract = {
         method: 'POST',
         path: '/runs/claim',
         operationId: 'claimRun',
-        summary: 'Claim the oldest queued run for one of the given pipelines',
+        summary:
+          'Claim the oldest queued run allowed to the executor principal',
         successStatus: 200,
         spec: withBearer,
       }),
@@ -481,7 +482,18 @@ export const runsContract = {
     .input(
       z.strictObject({
         runner: z.string().min(1).max(256),
-        pipelines: z.array(z.string().min(1).max(64)).min(1),
+        // Accepted only while the deployed queue-executor image rolls from
+        // the former caller-selected claim contract. The router deliberately
+        // ignores it: authenticated work.executor grant pipelines are the
+        // sole claim capability source. Remove after that image and its
+        // Homelab configuration send runner-only claim requests.
+        pipelines: z
+          .array(z.string().min(1).max(64))
+          .min(1)
+          .optional()
+          .describe(
+            'Deprecated transition field. Ignored; claim eligibility comes from the authenticated executor grant. Remove after the queue-executor image and Homelab deployment use runner-only requests.',
+          ),
       }),
     )
     .output(runClaimResponseSchema.optional()),

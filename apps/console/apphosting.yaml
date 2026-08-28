@@ -80,10 +80,9 @@ env:
   # is the runner-autoscaler's queue executor claim identity
   # (native-work-items sub-project 4,
   # #1502): scoped to work.executor only, never work.operator -- see
-  # docs/deployment-boundary.md's work-grants table. Durable and inert on
-  # its own: an unset/empty AGENT_LCARS_QUEUE_PIPELINES means no pipeline
-  # is opted into the queue executor, so nothing ever calls /runs/claim as
-  # this principal regardless of this grant existing.
+  # docs/deployment-boundary.md's work-grants table. Its executor grant is
+  # separate from the routing control below: it may claim only the Claude
+  # work that the queue route creates.
   #
   # The Firebase App Hosting default compute service account is Sprinkles'
   # current ambient backend identity. Its ID token's raw `email` is the
@@ -93,6 +92,15 @@ env:
   # Its current grant lists every supported pipeline.
   - variable: AGENT_LCARS_WORK_GRANTS
     value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.executor"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
+    availability:
+      - RUNTIME
+
+  # Durable server-controlled execution routing for native work. Claude uses
+  # the direct queue executor; Codex and OpenCode continue through their
+  # existing GitHub Actions workers. This is independent of who may operate
+  # a pipeline through AGENT_LCARS_WORK_GRANTS.
+  - variable: AGENT_LCARS_QUEUE_PIPELINES
+    value: '["claude"]'
     availability:
       - RUNTIME
 
