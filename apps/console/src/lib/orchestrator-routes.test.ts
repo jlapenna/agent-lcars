@@ -388,6 +388,41 @@ describe('handleWebhookDelivery', () => {
       }),
     );
   });
+
+  it('gives a later review-label redispatch the same comment window', async () => {
+    const { clock, deps, store } = fixture();
+    const reviewPayload = {
+      action: 'labeled',
+      repository: { full_name: REPO },
+      pull_request: { number: ISSUE.issue },
+      label: { name: 'review:codex' },
+    };
+    const first = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'first-review-delivery',
+      payload: reviewPayload,
+    });
+    const firstRun = await store.readRun(first.body['runId'] as string);
+    expect(firstRun?.params).toEqual({ mode: 'review' });
+
+    await deps.orchestrator.report(firstRun?.runId ?? '', { ok: true });
+    clock.advanceMinutes(3);
+    const requestSpy = vi.spyOn(deps.orchestrator, 'request');
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'second-review-delivery',
+      payload: reviewPayload,
+    });
+
+    expect(requestSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: {
+          mode: 'review',
+          context: `${GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX}${T0}`,
+        },
+      }),
+    );
+  });
 });
 
 describe('handleDispatchRequest', () => {

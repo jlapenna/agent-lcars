@@ -114,16 +114,16 @@ function newestRunCreatedAt(runs: Run[]): string | undefined {
   );
 }
 
-/** A label-triggered implement request is the only webhook path that has no
- * explicit reply body.  First dispatches deliberately carry no extra field;
- * only a later label request gets the bounded comment window. */
+/** Label-triggered implement and review requests have no explicit reply body.
+ * First dispatches deliberately carry no extra field; only a later label
+ * request gets the bounded comment window. */
 async function labelRedispatchParams(
   deps: OrchestratorRouteDeps,
   input: { event: string; taskId: TaskId; params: Record<string, string> },
 ): Promise<Record<string, string>> {
   if (
     (input.event !== 'issues' && input.event !== 'pull_request') ||
-    input.params['mode'] !== 'implement'
+    (input.params['mode'] !== 'implement' && input.params['mode'] !== 'review')
   ) {
     return input.params;
   }
