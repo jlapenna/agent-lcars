@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	dockerclient "github.com/docker/docker/client"
@@ -245,12 +246,26 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 	defer ticker.Stop()
 	cleanupTicker := time.NewTicker(directRunnerCleanupInterval)
 	defer cleanupTicker.Stop()
+	cleanupRunning := make(chan struct{}, 1)
 	cleanup := func() {
 		if cfg.cleanup == nil {
 			return
 		}
-		if err := cfg.cleanup(ctx); err != nil {
-			logger.Warn("direct-runner retention cleanup failed", slog.String("error", err.Error()))
+		// Cleanup talks to every Docker host and can inspect several exited
+		// containers. It must never hold up the next work claim, and a slow
+		// Docker daemon must not accumulate overlapping cleanup goroutines.
+		select {
+		case cleanupRunning <- struct{}{}:
+			go func() {
+				defer func() { <-cleanupRunning }()
+				cleanupCtx, cancel := context.WithTimeout(ctx, directRunnerCleanupSweepTimeout)
+				defer cancel()
+				if err := cfg.cleanup(cleanupCtx); err != nil {
+					logger.Warn("direct-runner retention cleanup failed", slog.String("error", err.Error()))
+				}
+			}()
+		default:
+			logger.Debug("direct-runner retention cleanup still running; skipping overlapping sweep")
 		}
 	}
 	// Sweep a finite pre-existing backlog immediately rather than waiting for
@@ -378,6 +393,10 @@ const (
 	// queue work is idle. The initial sweep in runQueueExecutorPoller handles
 	// any backlog present when the daemon starts.
 	directRunnerCleanupInterval = 15 * time.Minute
+	// directRunnerCleanupSweepTimeout caps all Docker list, inspect, and
+	// remove work for one scheduled sweep. It is independent of the number of
+	// historical exits and runs off the claim loop.
+	directRunnerCleanupSweepTimeout = 30 * time.Second
 )
 
 // directRunnerHostCursor round-robins launchDirectRunner across the
@@ -531,6 +550,10 @@ func cleanupExitedDirectRunners(ctx context.Context, resolved resolvedOrchestrat
 	}
 	var errs []error
 	for _, host := range order {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("direct-runner cleanup deadline before host %q: %w", host, err))
+			break
+		}
 		if err := cleanupExitedDirectRunnersOnHost(ctx, newClient, host, targets[host], now); err != nil {
 			errs = append(errs, err)
 		}
@@ -555,27 +578,66 @@ func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target
 		return fmt.Errorf("host %q: listing direct-runner containers for cleanup: %w", host, err)
 	}
 
-	exited := make([]container.Summary, 0, len(containers))
+	type exitedDirectRunner struct {
+		container.Summary
+		finishedAt time.Time
+	}
+	exited := make([]exitedDirectRunner, 0, len(containers))
+	var errs []error
 	for _, c := range containers {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("host %q: direct-runner cleanup deadline: %w", host, err))
+			return errors.Join(errs...)
+		}
 		if c.Labels[directRunnerLabelKey] != "1" || c.Labels[directRunnerRunIDLabelKey] == "" || c.State != container.StateExited {
 			continue
 		}
-		exited = append(exited, c)
+		// Created is when a container was allocated, not when its one-shot
+		// direct runner exited. A long-running failure must receive the same
+		// evidence window as a short one, so inspect its authoritative
+		// FinishedAt value before deciding retention or sort order.
+		inspectCtx, cancelInspect := context.WithTimeout(ctx, dockerInspectTimeout)
+		inspected, inspectErr := client.ContainerInspect(inspectCtx, c.ID)
+		cancelInspect()
+		if inspectErr != nil {
+			if !cerrdefs.IsNotFound(inspectErr) {
+				errs = append(errs, fmt.Errorf("host %q: inspecting exited direct-runner container %q: %w", host, c.ID, inspectErr))
+			}
+			continue
+		}
+		// A container can change state between the list and inspect. Retain
+		// it unless Docker still confirms it exited; no direct runner is ever
+		// deleted merely because a stale list said so.
+		if inspected.State == nil || inspected.State.Status != container.StateExited {
+			continue
+		}
+		finishedAt, parseErr := time.Parse(time.RFC3339Nano, inspected.State.FinishedAt)
+		if parseErr != nil {
+			errs = append(errs, fmt.Errorf("host %q: parsing exit time for direct-runner container %q: %w", host, c.ID, parseErr))
+			continue
+		}
+		exited = append(exited, exitedDirectRunner{Summary: c, finishedAt: finishedAt})
 	}
 	sort.Slice(exited, func(i, j int) bool {
-		if exited[i].Created == exited[j].Created {
+		if exited[i].finishedAt.Equal(exited[j].finishedAt) {
 			return exited[i].ID < exited[j].ID
 		}
-		return exited[i].Created > exited[j].Created
+		return exited[i].finishedAt.After(exited[j].finishedAt)
 	})
 
-	var errs []error
 	for i, c := range exited {
-		age := now.Sub(time.Unix(c.Created, 0))
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, fmt.Errorf("host %q: direct-runner cleanup deadline: %w", host, err))
+			return errors.Join(errs...)
+		}
+		age := now.Sub(c.finishedAt)
 		if i < directRunnerExitedRetentionLimit && age < directRunnerExitedRetentionAge {
 			continue
 		}
-		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), dockerContainerOperationTimeout)
+		// Honor the whole-sweep context here. Unlike launch-start cleanup,
+		// retention is best-effort evidence hygiene and must not outlive its
+		// fixed deadline when a Docker daemon stalls during removal.
+		removeCtx, cancelRemove := context.WithTimeout(ctx, dockerContainerOperationTimeout)
 		err := client.ContainerRemove(removeCtx, c.ID, container.RemoveOptions{})
 		cancelRemove()
 		if err != nil {

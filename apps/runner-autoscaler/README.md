@@ -156,19 +156,24 @@ scale-set listeners:
 ### Exited direct-runner retention
 
 Direct-mode containers use `AutoRemove: false` so their exit logs remain
-available for diagnosis. The queue worker now performs a label-scoped sweep
-on startup and every 15 minutes. It considers only containers whose
+available for diagnosis. The queue worker now starts a label-scoped sweep on
+startup and every 15 minutes. Sweeps run separately from claim polling, are
+single-flight, and have a 30-second whole-sweep deadline, so a slow Docker
+host or a historical backlog cannot delay a work claim. It considers only
+containers whose
 `agent-lcars.direct-runner=1` **and**
 `agent-lcars.direct-runner.run-id` labels were set by this launcher, and only
 after Docker reports them `exited`. It never lists or removes GitHub Actions
 runner containers, other application containers, or running direct runners.
 
 Per Docker host, the five most recent exited direct runners are retained for
-up to 24 hours; any older exit or any exit beyond those five is removed. This
-keeps enough recent failure logs for investigation while bounding retained
-containers even during a failure burst. Removal is non-forcing: if a
-container races back to running, Docker refuses the deletion rather than
-ending an active run.
+up to 24 hours; any older exit or any exit beyond those five is removed. Both
+the ordering and age use Docker's inspected `State.FinishedAt`, not the
+container creation time, so a long-running runner receives the same evidence
+window as a short-lived failure. This keeps enough recent failure logs for
+investigation while bounding retained containers even during a failure burst.
+Removal is non-forcing: if a container races back to running, Docker refuses
+the deletion rather than ending an active run.
 
 **A failed launch leaves the run claimed on the control plane.** There is no
 callback here to un-claim it -- by design, see the design spec's "Autoscaler

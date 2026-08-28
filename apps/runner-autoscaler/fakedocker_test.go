@@ -33,10 +33,15 @@ type fakeDockerServer struct {
 	tops       map[string]container.TopResponse
 	containers []container.Summary // ContainerList response
 	removed    []string            // IDs passed to ContainerRemove, in call order
+	// removeForced records whether each ContainerRemove request asked Docker to
+	// force deletion. Queue retention must remain false here: a state race
+	// should be refused by Docker rather than ending a live direct runner.
+	removeForced []bool
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
 	listDelay        time.Duration
+	inspectDelay     time.Duration
 	imagePresent     bool
 	imagePulls       int
 	pullStreamError  bool
@@ -127,6 +132,12 @@ func (f *fakeDockerServer) setListDelay(d time.Duration) {
 	f.mu.Unlock()
 }
 
+func (f *fakeDockerServer) setInspectDelay(d time.Duration) {
+	f.mu.Lock()
+	f.inspectDelay = d
+	f.mu.Unlock()
+}
+
 // setContainers configures the full ContainerList response.
 func (f *fakeDockerServer) setContainers(cs []container.Summary) {
 	f.mu.Lock()
@@ -141,6 +152,14 @@ func (f *fakeDockerServer) removedIDs() []string {
 	defer f.mu.Unlock()
 	out := make([]string, len(f.removed))
 	copy(out, f.removed)
+	return out
+}
+
+func (f *fakeDockerServer) removalsForced() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]bool, len(f.removeForced))
+	copy(out, f.removeForced)
 	return out
 }
 
@@ -186,7 +205,11 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.inspectCalls[id]++
 		stub, ok := f.inspect[id]
+		delay := f.inspectDelay
 		f.mu.Unlock()
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		if !ok || stub.status == http.StatusNotFound {
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "No such container: " + id})
@@ -206,6 +229,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		id := containerIDFromPath(r.URL.Path)
 		f.mu.Lock()
 		f.removed = append(f.removed, id)
+		f.removeForced = append(f.removeForced, r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true")
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 

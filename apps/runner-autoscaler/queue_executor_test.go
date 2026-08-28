@@ -729,15 +729,17 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 
 	containers := []container.Summary{
 		// Six recent owned exits: retain the five newest and remove the sixth
-		// to keep an immediate per-host bound during a failure burst.
-		owned("new-1", now.Add(-1*time.Hour), container.StateExited),
-		owned("new-2", now.Add(-2*time.Hour), container.StateExited),
-		owned("new-3", now.Add(-3*time.Hour), container.StateExited),
-		owned("new-4", now.Add(-4*time.Hour), container.StateExited),
-		owned("new-5", now.Add(-5*time.Hour), container.StateExited),
-		owned("over-limit", now.Add(-6*time.Hour), container.StateExited),
-		// An aged exit is removed even when it is within the numerical limit.
-		owned("aged", now.Add(-25*time.Hour), container.StateExited),
+		// to keep an immediate per-host bound during a failure burst. Their
+		// creation times intentionally disagree with their exit times: a
+		// long-running newer failure must rank by FinishedAt, not Created.
+		owned("new-1", now.Add(-72*time.Hour), container.StateExited),
+		owned("new-2", now.Add(-48*time.Hour), container.StateExited),
+		owned("new-3", now.Add(-36*time.Hour), container.StateExited),
+		owned("new-4", now.Add(-24*time.Hour), container.StateExited),
+		owned("new-5", now.Add(-12*time.Hour), container.StateExited),
+		owned("over-limit", now.Add(-10*time.Minute), container.StateExited),
+		// A separately aged exit is removed by its actual finished time.
+		owned("aged", now.Add(-48*time.Hour), container.StateExited),
 		// A running direct runner must never be removed.
 		owned("active", now.Add(-48*time.Hour), container.StateRunning),
 		// Neither an Actions runner nor a malformed/foreign direct label is
@@ -747,6 +749,17 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 		{ID: "wrong-owner", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{directRunnerLabelKey: "other", directRunnerRunIDLabelKey: "work:foreign/r1"}},
 	}
 	f.setContainers(containers)
+	for id, finishedAt := range map[string]time.Time{
+		"new-1":      now.Add(-1 * time.Hour),
+		"new-2":      now.Add(-2 * time.Hour),
+		"new-3":      now.Add(-3 * time.Hour),
+		"new-4":      now.Add(-4 * time.Hour),
+		"new-5":      now.Add(-5 * time.Hour),
+		"over-limit": now.Add(-6 * time.Hour),
+		"aged":       now.Add(-25 * time.Hour),
+	} {
+		f.setInspect(id, http.StatusOK, &container.State{Status: container.StateExited, FinishedAt: finishedAt.Format(time.RFC3339Nano)})
+	}
 	resolved := resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}
 	if err := cleanupExitedDirectRunners(context.Background(), resolved, newClient, now); err != nil {
 		t.Fatalf("cleanupExitedDirectRunners: %v", err)
@@ -754,6 +767,127 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 	removed := f.removedIDs()
 	if strings.Join(removed, ",") != "over-limit,aged" {
 		t.Fatalf("removed = %v, want only over-limit and aged owned exits", removed)
+	}
+	for i, forced := range f.removalsForced() {
+		if forced {
+			t.Fatalf("removal %d was forced; retention must let Docker refuse an active-state race", i)
+		}
+	}
+}
+
+func TestCleanupExitedDirectRunnersRetainsMalformedOrChangedExitState(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	ownedExit := func(id string) container.Summary {
+		return container.Summary{
+			ID:      id,
+			Created: now.Add(-48 * time.Hour).Unix(),
+			State:   container.StateExited,
+			Labels:  map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:" + id + "/r1"},
+		}
+	}
+	cases := []struct {
+		name       string
+		inspect    *container.State
+		wantErr    bool
+		wantRemove bool
+	}{
+		{
+			name:    "malformed FinishedAt is retained",
+			inspect: &container.State{Status: container.StateExited, FinishedAt: "not-a-timestamp"},
+			wantErr: true,
+		},
+		{
+			name:    "state changed after list is retained",
+			inspect: &container.State{Status: container.StateRunning},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeDockerServer(t)
+			f.setContainers([]container.Summary{ownedExit("candidate")})
+			f.setInspect("candidate", http.StatusOK, tc.inspect)
+			newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+			err := cleanupExitedDirectRunners(context.Background(), resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}, newClient, now)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("cleanup error = %v, want error=%v", err, tc.wantErr)
+			}
+			if got := len(f.removedIDs()) > 0; got != tc.wantRemove {
+				t.Fatalf("removed=%v, want removed=%v", f.removedIDs(), tc.wantRemove)
+			}
+		})
+	}
+}
+
+func TestCleanupExitedDirectRunnersDeadlineBoundsStalledInspect(t *testing.T) {
+	f := newFakeDockerServer(t)
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	f.setContainers([]container.Summary{{
+		ID:      "stalled",
+		Created: now.Add(-48 * time.Hour).Unix(),
+		State:   container.StateExited,
+		Labels:  map[string]string{directRunnerLabelKey: "1", directRunnerRunIDLabelKey: "work:stalled/r1"},
+	}})
+	f.setInspect("stalled", http.StatusOK, &container.State{Status: container.StateExited, FinishedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)})
+	f.setInspectDelay(100 * time.Millisecond)
+	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := cleanupExitedDirectRunners(ctx, resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}, newClient, now)
+	if err == nil {
+		t.Fatal("expected stalled inspection to hit the sweep deadline")
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("cleanup took %s after a 15ms deadline; inspection must be deadline-bounded", elapsed)
+	}
+	if removed := f.removedIDs(); len(removed) != 0 {
+		t.Fatalf("stalled inspection removed %v; uncertain exits must be retained", removed)
+	}
+}
+
+func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cleanupStarted := make(chan struct{})
+	cleanupDone := make(chan struct{})
+	claimObserved := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case claimObserved <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	go runQueueExecutorPoller(ctx, queueExecutorConfig{
+		consoleURL: server.URL,
+		runnerName: "test-runner",
+		idToken:    func() (string, error) { return "token", nil },
+		launch:     func(directRunnerLaunch) error { return nil },
+		cleanup: func(cleanupCtx context.Context) error {
+			close(cleanupStarted)
+			<-cleanupCtx.Done()
+			close(cleanupDone)
+			return cleanupCtx.Err()
+		},
+	}, 5*time.Millisecond, discardLogger())
+
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start")
+	}
+	select {
+	case <-claimObserved:
+	case <-time.After(time.Second):
+		t.Fatal("claim polling was blocked behind cleanup")
+	}
+	cancel()
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not stop with the poller context")
 	}
 }
 
