@@ -84,6 +84,37 @@ const CODEX_TRANSCRIPT = [
   }),
 ].join('\n');
 
+const OPENCODE_TRANSCRIPT = JSON.stringify({
+  info: {
+    id: 'ses_opencode_runner',
+    directory: '/home/runner/_work/agent-lcars/agent-lcars',
+    time: { created: 1787052570554, updated: 1787052721363 },
+  },
+  messages: [
+    {
+      info: {
+        role: 'user',
+        time: { created: 1787052570573 },
+      },
+      parts: [],
+    },
+    {
+      info: {
+        role: 'assistant',
+        providerID: 'homelab',
+        modelID: 'default',
+        time: { created: 1787052570596, completed: 1787052721352 },
+        tokens: {
+          input: 20,
+          output: 7,
+          cache: { read: 40, write: 0 },
+        },
+      },
+      parts: [],
+    },
+  ],
+});
+
 function createFakeStore() {
   const upserts: SessionDoc[] = [];
   const store: SessionStore = {
@@ -108,6 +139,8 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
+    opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',
+    opencodeWorkspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
     sessionStateDir: NO_OVERLAY_STATE_DIR,
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
@@ -310,6 +343,129 @@ describe('startSidecar', () => {
     // match the host default of `/home/developer/p/members*`.
     expect(codexAllowlist).toEqual(['*']);
     expect(upserts).toHaveLength(1);
+  });
+
+  it('captures and discovers OpenCode exports during a live runner tick', async () => {
+    const { store, upserts } = createFakeStore();
+    const opencodeFile =
+      '/tmp/agent-lcars-opencode-exports/sessions/ses_opencode_runner.jsonl';
+    const files = { [opencodeFile]: OPENCODE_TRANSCRIPT };
+    const captureCalls: Array<{ workspaceDir: string; exportsDir: string }> =
+      [];
+
+    const daemon = startSidecar({
+      config: baseConfig({ runId: '6160', issueNumber: 1502 }),
+      store,
+      autoStart: false,
+      now: () => '2026-08-18T11:32:02.000Z',
+      captureOpenCodeExports: (options) => {
+        captureCalls.push(options);
+        return { status: 'ok', selected: 1, exported: 1, failed: 0 };
+      },
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((file) => file.startsWith(rootPath)),
+      readFile: (file) => files[file as keyof typeof files],
+      statFile: () => ({ mtimeMs: 1, size: OPENCODE_TRANSCRIPT.length }),
+      isProcessAliveForCwd: () => true,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+    });
+
+    await daemon.tick();
+
+    expect(captureCalls).toEqual([
+      {
+        workspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
+        exportsDir: '/tmp/agent-lcars-opencode-exports',
+      },
+    ]);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_opencode_runner',
+        source: 'issue-agent',
+        agent: 'opencode',
+        runId: '6160',
+        issueNumber: 1502,
+        tokens: {
+          inputTokens: 20,
+          outputTokens: 7,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 40,
+        },
+      }),
+    ]);
+  });
+
+  it('retries OpenCode capture when the CLI becomes available after the initial tick', async () => {
+    const { store } = createFakeStore();
+    let captureCalls = 0;
+    const daemon = startSidecar({
+      config: baseConfig(),
+      store,
+      autoStart: false,
+      captureOpenCodeExports: () => {
+        captureCalls++;
+        return captureCalls === 1
+          ? {
+              status: 'cli-unavailable',
+              selected: 0,
+              exported: 0,
+              failed: 0,
+            }
+          : { status: 'ok', selected: 0, exported: 0, failed: 0 };
+      },
+      discover: () => [],
+    });
+
+    await daemon.tick();
+    await daemon.tick();
+
+    expect(captureCalls).toBe(2);
+  });
+
+  it('keeps OpenCode capture and discovery single-flight across overlapping ticks', async () => {
+    const { store } = createFakeStore();
+    let releaseCapture: (() => void) | undefined;
+    let reportCaptureStarted: (() => void) | undefined;
+    const captureStarted = new Promise<void>((resolve) => {
+      reportCaptureStarted = resolve;
+    });
+    const captureBlocked = new Promise<void>((resolve) => {
+      releaseCapture = resolve;
+    });
+    let captureCalls = 0;
+    let discoverCalls = 0;
+    const daemon = startSidecar({
+      config: baseConfig(),
+      store,
+      autoStart: false,
+      captureOpenCodeExports: async () => {
+        captureCalls++;
+        reportCaptureStarted?.();
+        await captureBlocked;
+        return { status: 'ok', selected: 0, exported: 0, failed: 0 };
+      },
+      discover: () => {
+        discoverCalls++;
+        return [];
+      },
+    });
+
+    const firstTick = daemon.tick();
+    await captureStarted;
+    const overlappingTick = daemon.tick();
+
+    expect(overlappingTick).toBe(firstTick);
+    expect(captureCalls).toBe(1);
+    expect(discoverCalls).toBe(0);
+
+    releaseCapture?.();
+    await Promise.all([firstTick, overlappingTick]);
+    expect(discoverCalls).toBe(3);
+
+    await daemon.tick();
+    expect(captureCalls).toBe(2);
+    expect(discoverCalls).toBe(6);
   });
 
   it('does not start the daemon interval when autoStart is false', async () => {

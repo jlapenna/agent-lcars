@@ -1,0 +1,47 @@
+{
+  "info": {
+    "id": "ses_opencode_1",
+    "directory": "/home/runner/_work/agent-lcars/agent-lcars",
+    "time": { "created": 1787052570554, "updated": 1787052721363 }
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "msg_user",
+        "sessionID": "ses_opencode_1",
+        "role": "user",
+        "time": { "created": 1787052570573 }
+      },
+      "parts": []
+    },
+    {
+      "info": {
+        "id": "msg_assistant",
+        "sessionID": "ses_opencode_1",
+        "role": "assistant",
+        "providerID": "homelab",
+        "modelID": "default",
+        "time": { "created": 1787052570596, "completed": 1787052721352 },
+        "cost": 0.25,
+        "tokens": {
+          "input": 5587,
+          "output": 128,
+          "reasoning": 25,
+          "cache": { "read": 175125, "write": 12 }
+        }
+      },
+      "parts": [
+        {
+          "id": "part_tool",
+          "messageID": "msg_assistant",
+          "sessionID": "ses_opencode_1",
+          "type": "tool",
+          "tool": "bash",
+          "state": {
+            "time": { "start": 1787052695291, "end": 1787052702281 }
+          }
+        }
+      ]
+    }
+  ]
+}

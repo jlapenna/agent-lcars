@@ -37,24 +37,22 @@ export interface WatchRootConfig {
 
 /**
  * Agents a runner-mode telemetry pass (`runnerWatchRoots`, below) actually
- * has a watch root — and a registered `TranscriptAdapter` — for. Every other
- * {@link SessionAgent} value has nowhere for a runner pass to discover its
- * session data at all: OpenCode is the current, concrete case (its CLI
- * writes a single local SQLite database, not one `*.jsonl` file per
- * session, so it cannot be discovered the way this list's two roots are —
- * see `finalize.ts`'s zero-sessions-shipped warning for how that gap is
- * surfaced instead of silently shipping nothing, agent-lcars#645).
+ * has a capture root and registered `TranscriptAdapter` for. OpenCode's root
+ * is populated by the watcher's bounded `opencode export` materializer; the
+ * CLI's supported export contract keeps this package independent from the
+ * SQLite schema behind OpenCode's global session store.
  */
 export const RUNNER_CAPTURE_AGENTS: readonly SessionAgent[] = [
   'claude-code',
   'codex',
+  'opencode',
 ];
 
 /**
  * The single definition of the watch-root list a runner-mode telemetry pass
- * discovers transcripts under — both agents this repo has a working
+ * discovers transcripts under — every agent this repo has a working
  * transcript adapter for (see {@link RUNNER_CAPTURE_AGENTS}), unconditionally.
- * A dispatch workflow only ever runs one of them, and the other root simply
+ * A dispatch workflow only ever runs one of them, and the other roots simply
  * discovers nothing; that's cheaper and far less error-prone than having
  * each workflow declare which agent it is.
  *
@@ -75,6 +73,7 @@ export const RUNNER_CAPTURE_AGENTS: readonly SessionAgent[] = [
 export function runnerWatchRoots(config: {
   claudeProjectsDir: string;
   codexSessionsDir: string;
+  opencodeExportsDir: string;
 }): WatchRootConfig[] {
   return [
     {
@@ -89,6 +88,11 @@ export function runnerWatchRoots(config: {
       // unlike Claude's flat project dirs this root must be walked.
       recursive: true,
       cwdAllowlist: ['*'],
+    },
+    {
+      path: config.opencodeExportsDir,
+      adapter: 'opencode',
+      projectDirAllowlist: ['sessions'],
     },
   ];
 }

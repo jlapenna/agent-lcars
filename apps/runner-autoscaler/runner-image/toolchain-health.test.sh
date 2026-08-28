@@ -23,6 +23,30 @@ if ! [[ "$actionlint_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 dockerfile="$here/Dockerfile"
+entrypoint="$here/entrypoint.sh"
+opencode_version="$(tr -d '\r\n' < "$here/opencode-version")"
+if ! [[ "$opencode_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "opencode-version must contain an exact v-prefixed semantic version" >&2
+  exit 1
+fi
+if ! grep -Fqx 'ARG TARGETARCH' "$dockerfile" ||
+  ! grep -Fqx 'COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version' "$dockerfile" ||
+  ! grep -Fqx 'COPY install-opencode-release.sh /usr/local/lib/agent-lcars/install-opencode-release.sh' "$dockerfile" ||
+  ! grep -Fq 'OPENCODE_VERSION="$OPENCODE_VERSION" TARGETARCH="$TARGETARCH"' "$dockerfile" ||
+  ! grep -Fq 'bash /usr/local/lib/agent-lcars/install-opencode-release.sh' "$dockerfile" ||
+  ! grep -Fq '/usr/local/bin/opencode --version' "$dockerfile"; then
+  echo "runner image must install and smoke-check a reviewed root-owned OpenCode CLI" >&2
+  exit 1
+fi
+if grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$dockerfile" ||
+  grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
+  echo "runner image must not run OpenCode's mutable installer as root" >&2
+  exit 1
+fi
+if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entrypoint"; then
+  echo "runner entrypoint must preflight the exact trusted OpenCode executable" >&2
+  exit 1
+fi
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
   ! grep -Fqx '    pnpm --dir /opt/repo-tools add --ignore-scripts github:jlapenna/repo-tools#main && \' "$dockerfile" ||
   ! grep -Fqx '    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/' "$dockerfile"; then
@@ -57,7 +81,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/corepack" "$tmp/healthy" "$tmp/broken" "$tmp/missing" \
-  "$tmp/java21" "$tmp/java17" "$tmp/java-broken" "$tmp/java-malformed"
+  "$tmp/java21" "$tmp/java17" "$tmp/java-broken" "$tmp/java-malformed" \
+  "$tmp/opencode-healthy" "$tmp/opencode-broken"
 cat > "$tmp/healthy/pnpm" <<'PNPM'
 #!/bin/sh
 exit 0
@@ -107,6 +132,29 @@ cat > "$tmp/java-malformed/java" <<'JAVA'
 printf '%s\n' 'a Java runtime that does not identify its version' >&2
 JAVA
 chmod +x "$tmp"/java*/java
+
+cat > "$tmp/opencode-healthy/opencode" <<'OPENCODE'
+#!/bin/sh
+exit 0
+OPENCODE
+cat > "$tmp/opencode-broken/opencode" <<'OPENCODE'
+#!/bin/sh
+exit 1
+OPENCODE
+chmod +x "$tmp"/opencode-*/opencode
+
+trusted_opencode_runs "$tmp/opencode-healthy/opencode" || {
+  echo "healthy trusted OpenCode invocation was rejected" >&2
+  exit 1
+}
+if trusted_opencode_runs "$tmp/opencode-broken/opencode"; then
+  echo "broken trusted OpenCode invocation was accepted" >&2
+  exit 1
+fi
+if trusted_opencode_runs "$tmp/missing/opencode"; then
+  echo "missing trusted OpenCode executable was accepted" >&2
+  exit 1
+fi
 
 AGENT_LCARS_JAVA_COMMAND="$tmp/java21/java" java_21_runs || {
   echo "Java 21 runtime was rejected" >&2

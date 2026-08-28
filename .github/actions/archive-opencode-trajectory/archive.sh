@@ -25,12 +25,16 @@ elif ! opencode session list --format json -n 100 > "$sessions_path"; then
   printf '%s\n' '[]' > "$selected_path"
   capture_status=session-list-failed
 else
+  # OpenCode prints nothing (not `[]`) when the store has no sessions.
+  if [ ! -s "$sessions_path" ]; then
+    printf '%s\n' '[]' > "$sessions_path"
+  fi
   jq \
     --arg workspace "$GITHUB_WORKSPACE" \
     --argjson started "$started_epoch_ms" \
     '[.[] |
       select((.directory // "") == $workspace) |
-      select(((.time.updated // .time.created // .time_updated // 0) | tonumber) >= $started)
+      select(((.updated // .time.updated // .time_updated // .created // .time.created // .time_created // 0) | tonumber) >= $started)
     ]' "$sessions_path" > "$selected_path"
 fi
 

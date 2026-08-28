@@ -1,7 +1,11 @@
 import { SessionDoc, SessionWrite } from '@agent-lcars/telemetry';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { finalizeSidecar } from './finalize';
+import { captureOpenCodeExports } from './opencode-export-capture';
 import { RunnerConfig } from './runner-config';
 import { SessionStore } from './store';
 import { UploadTranscriptOptions } from './transcript-upload';
@@ -103,6 +107,8 @@ function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
+    opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',
+    opencodeWorkspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
     sessionStateDir: NO_OVERLAY_STATE_DIR,
     host: 'runner-host',
     heartbeatIntervalMs: 10_000,
@@ -221,6 +227,97 @@ describe('finalizeSidecar', () => {
       transcriptGcsUri:
         'gs://agent-lcars-session-transcripts/runs/42/codex/codex-runner-session.jsonl',
     });
+  });
+
+  it('archives only the strict OpenCode metadata allowlist under the opencode prefix', async () => {
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript, uploads } = createFakeUploader();
+    const exportsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'opencode-finalize-test-'),
+    );
+    try {
+      await captureOpenCodeExports({
+        workspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
+        exportsDir,
+        runOpenCode: () =>
+          JSON.stringify([
+            {
+              id: 'ses_opencode_final',
+              directory: '/home/runner/_work/agent-lcars/agent-lcars',
+            },
+          ]),
+        runOpenCodeToFile: (_args, output) => {
+          fs.writeFileSync(
+            output,
+            JSON.stringify({
+              info: {
+                id: 'ses_opencode_final',
+                time: { created: 1787052570554, updated: 1787052721363 },
+                metadata: { credential: 'writer-secret-gcs' },
+                share: { url: 'writer-secret-share' },
+                permission: { bash: 'allow' },
+              },
+              messages: [
+                {
+                  info: { role: 'user', time: { created: 1787052570573 } },
+                  parts: [{ type: 'text', text: 'writer-secret-message' }],
+                },
+              ],
+            }),
+          );
+        },
+      });
+
+      await finalizeSidecar({
+        config: baseConfig({
+          runId: '42',
+          transcriptsBucket: 'agent-lcars-session-transcripts',
+          opencodeExportsDir: exportsDir,
+        }),
+        store,
+        captureOpenCodeExports: () => ({
+          status: 'ok',
+          selected: 1,
+          exported: 1,
+          failed: 0,
+        }),
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+        uploadTranscript,
+      });
+    } finally {
+      fs.rmSync(exportsDir, { recursive: true, force: true });
+    }
+
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toMatchObject({
+      projectId: undefined,
+      bucket: 'agent-lcars-session-transcripts',
+      object: 'runs/42/opencode/ses_opencode_final.jsonl',
+    });
+    expect(uploads[0]?.contents).not.toContain('writer-secret');
+    expect(JSON.parse(uploads[0]?.contents ?? '')).toEqual({
+      info: {
+        id: 'ses_opencode_final',
+        directory: '/home/runner/_work/agent-lcars/agent-lcars',
+        time: { created: 1787052570554, updated: 1787052721363 },
+      },
+      messages: [
+        {
+          info: { role: 'user', time: { created: 1787052570573 } },
+          parts: [],
+        },
+      ],
+    });
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_opencode_final',
+        agent: 'opencode',
+        renderable: false,
+        transcriptGcsUri:
+          'gs://agent-lcars-session-transcripts/runs/42/opencode/ses_opencode_final.jsonl',
+      }),
+    ]);
   });
 
   it('reports a zero-session finalize pass loudly instead of shipping nothing silently (Bug 2, #645)', async () => {
@@ -496,8 +593,8 @@ describe('finalizeSidecar', () => {
     await finalizeSidecar({
       config: baseConfig(),
       store,
-      discover: (_dir: string, allowlist: string[]) => {
-        seenAllowlist = allowlist;
+      discover: (rootPath: string, allowlist: string[]) => {
+        if (rootPath.includes('.claude')) seenAllowlist = allowlist;
         return Object.keys(files);
       },
       readFile: (p: string) => files[p as keyof typeof files],

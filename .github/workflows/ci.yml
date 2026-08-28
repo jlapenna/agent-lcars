@@ -178,6 +178,9 @@ jobs:
       - name: Test runner-image toolchain preflight (#468)
         run: bash apps/runner-autoscaler/runner-image/toolchain-health.test.sh
 
+      - name: Test reviewed OpenCode release installation
+        run: bash apps/runner-autoscaler/runner-image/install-opencode-release.test.sh
+
       - name: Test control-plane native cross-compilation (#1436)
         run: bash apps/runner-autoscaler/control-plane-image.test.sh
 

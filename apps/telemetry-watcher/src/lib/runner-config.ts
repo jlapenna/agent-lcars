@@ -1,3 +1,6 @@
+import * as os from 'os';
+import * as path from 'path';
+
 import {
   defaultClaudeProjectsDir,
   defaultCodexSessionsDir,
@@ -33,6 +36,10 @@ export interface RunnerConfig extends Pick<
    * `claudeProjectsDir` rather than instead of it — see `runner.ts`'s
    * `startSidecar`, which declares both roots unconditionally. */
   codexSessionsDir: string;
+  /** Scratch root holding bounded `opencode export` materializations. */
+  opencodeExportsDir: string;
+  /** Exact checkout directory OpenCode sessions must report to be captured. */
+  opencodeWorkspaceDir: string;
   /** GitHub Actions run id — tags every doc this run ships as `runId`. */
   runId?: string;
   /** Orchestrator run ID (`broker_intent_id`) — tags every doc this run
@@ -163,6 +170,8 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   return {
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
     codexSessionsDir: flags.codexSessionsDir ?? defaultCodexSessionsDir(),
+    opencodeExportsDir: path.join(os.tmpdir(), 'agent-lcars-opencode-exports'),
+    opencodeWorkspaceDir: process.env['GITHUB_WORKSPACE'] ?? process.cwd(),
     sessionStateDir: defaultSessionStateDir(),
     host: base.host,
     heartbeatIntervalMs: base.heartbeatIntervalMs,
