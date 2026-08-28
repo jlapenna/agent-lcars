@@ -1,5 +1,7 @@
 import 'server-only';
 
+import crypto from 'node:crypto';
+
 import {
   isLive,
   isRefusal,
@@ -12,6 +14,7 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
+import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { toRunResult } from './orchestrator-routes';
@@ -32,6 +35,14 @@ export interface RunsContext {
   orchestrator: Orchestrator;
   tokens: DispatchTokenProvider;
   checkoutTokens: DispatchTokenProvider;
+  codexAuth: CodexAuthStore;
+  /**
+   * Staged only after both hosted and direct executors have access to the
+   * shared GCS lease object. Omitted is deliberately false: a direct Codex
+   * runner must not claim subscription auth while hosted jobs remain on
+   * repository-prefix-only storage authority.
+   */
+  codexSharedLeaseEnabled?: boolean;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -98,9 +109,165 @@ async function requireRunToken(
   return run;
 }
 
+async function requireCodexRun(
+  context: RunsContext,
+  runId: string,
+): Promise<{ run: Run; repository: string }> {
+  const run = await requireRunToken(context, runId);
+  if (run.pipeline !== 'codex') {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'Codex authentication is only available to Codex runs',
+    });
+  }
+  const task =
+    'workId' in run.task
+      ? (await context.store.readTask(run.task))?.task
+      : undefined;
+  return { run, repository: anchorTarget(run, task).repo };
+}
+
+function codexAuthError(
+  error: unknown,
+  errors: {
+    NOT_FOUND?: (options?: { message?: string }) => Error;
+    BAD_REQUEST?: (options?: { message?: string }) => Error;
+    CONFLICT?: (options?: { message?: string }) => Error;
+    INTERNAL_SERVER_ERROR: (options?: { message?: string }) => Error;
+  },
+): never {
+  if (error instanceof CodexAuthStoreError) {
+    if (error.kind === 'not-found' && errors.NOT_FOUND) {
+      throw errors.NOT_FOUND();
+    }
+    if (error.kind === 'invalid' && errors.BAD_REQUEST) {
+      throw errors.BAD_REQUEST();
+    }
+    if (error.kind === 'conflict' && errors.CONFLICT) {
+      throw errors.CONFLICT();
+    }
+  }
+  throw errors.INTERNAL_SERVER_ERROR();
+}
+
+function requireCodexSharedLeaseEnabled(context: RunsContext): void {
+  if (context.codexSharedLeaseEnabled !== true) {
+    throw new CodexAuthStoreError(
+      'unavailable',
+      'Shared Codex subscription lease authority is not enabled',
+    );
+  }
+}
+
 /** `claim` retry budget for a stale queue entry -- see the loop's own
  *  comment below. */
 const MAX_CLAIM_ATTEMPTS = 5;
+const MAX_CODEX_LEASE_ATTEMPTS = 5;
+
+async function acquireCodexLease(
+  context: RunsContext,
+  run: Run,
+  repository: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < MAX_CODEX_LEASE_ATTEMPTS; attempt++) {
+    const lease = await context.codexAuth.readLease();
+    if (lease === undefined) {
+      try {
+        await context.codexAuth.createLease({
+          runId: run.runId,
+          repository,
+          expiresAt: run.leaseExpiresAt,
+        });
+        return;
+      } catch (error) {
+        if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (lease.runId === run.runId && lease.repository === repository) return;
+
+    // This record is also owned by the hosted GitHub lane, whose run ID is
+    // intentionally not a broker run. Its expiry is therefore the shared
+    // stale-takeover authority; consulting only the broker store would let a
+    // direct runner race a hosted single-use refresh token.
+    if (Date.parse(lease.expiresAt) > context.now().getTime()) {
+      throw new CodexAuthStoreError(
+        'conflict',
+        'Codex subscription authentication is already in use',
+      );
+    }
+    try {
+      await context.codexAuth.takeLease({
+        runId: run.runId,
+        repository,
+        expiresAt: run.leaseExpiresAt,
+        expectedGeneration: lease.generation,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new CodexAuthStoreError(
+    'conflict',
+    'Codex subscription lease changed concurrently',
+  );
+}
+
+async function requireCodexLeaseOwner(
+  context: RunsContext,
+  runId: string,
+): Promise<void> {
+  const lease = await context.codexAuth.readLease();
+  if (lease?.runId !== runId) {
+    throw new CodexAuthStoreError(
+      'conflict',
+      'Codex subscription lease is not owned by this run',
+    );
+  }
+}
+
+/** Renew the shared credential lease with the broker run's freshly renewed
+ * expiry. The hosted executor uses this same expiry field, so no executor
+ * may continue using the rotating credential after its record becomes
+ * stealable. */
+async function renewCodexLease(
+  context: RunsContext,
+  runId: string,
+  expiresAt: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < MAX_CODEX_LEASE_ATTEMPTS; attempt++) {
+    const lease = await context.codexAuth.readLease();
+    if (lease?.runId !== runId) {
+      throw new CodexAuthStoreError(
+        'conflict',
+        'Codex subscription lease is not owned by this run',
+      );
+    }
+    try {
+      await context.codexAuth.takeLease({
+        runId,
+        repository: lease.repository,
+        expiresAt,
+        expectedGeneration: lease.generation,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new CodexAuthStoreError(
+    'conflict',
+    'Codex subscription lease changed concurrently',
+  );
+}
 
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
@@ -112,7 +279,13 @@ export const runsRouter = os.router({
     // Passing these grant pipelines directly to the transactional store is
     // what prevents an ungranted run from reaching `claimed` (and therefore
     // ever minting a checkout token).
-    const allowedPipelines = context.principal.pipelines;
+    const allowedPipelines = context.codexSharedLeaseEnabled
+      ? context.principal.pipelines
+      : context.principal.pipelines.filter((pipeline) => pipeline !== 'codex');
+    // Do not claim a disabled Codex run merely to fail it later in the
+    // executor. Empty grants are a normal "nothing eligible" response;
+    // Claude and OpenCode remain independently claimable.
+    if (allowedPipelines.length === 0) return undefined;
 
     // `claimQueuedRun` claims by `queue.state === 'queued'` alone; it says
     // nothing about whether the run itself is still live. Cancellation and
@@ -220,13 +393,20 @@ export const runsRouter = os.router({
 
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
+    if (run.pipeline === 'codex') {
+      requireCodexSharedLeaseEnabled(context);
+    }
     const renewed = await context.orchestrator.renew(run.runId);
     if (isRefusal(renewed)) {
       return { runId: run.runId, expiresAt: run.leaseExpiresAt };
     }
+    const expiresAt = renewed.run?.leaseExpiresAt ?? run.leaseExpiresAt;
+    if (run.pipeline === 'codex') {
+      await renewCodexLease(context, run.runId, expiresAt);
+    }
     return {
       runId: run.runId,
-      expiresAt: renewed.run?.leaseExpiresAt ?? run.leaseExpiresAt,
+      expiresAt,
     };
   }),
 
@@ -247,11 +427,17 @@ export const runsRouter = os.router({
       input.outcome,
       input.outcomeReference,
     );
-    const settled = await context.orchestrator.report(run.runId, result);
-    return {
-      runId: run.runId,
-      state: isRefusal(settled) ? settled.reason : 'finished',
-    };
+    try {
+      const settled = await context.orchestrator.report(run.runId, result);
+      return {
+        runId: run.runId,
+        state: isRefusal(settled) ? settled.reason : 'finished',
+      };
+    } finally {
+      if (run.pipeline === 'codex') {
+        await context.codexAuth.releaseLease(run.runId);
+      }
+    }
   }),
 
   checkoutToken: os.checkoutToken.handler(async ({ input, context }) => {
@@ -275,6 +461,90 @@ export const runsRouter = os.router({
       expiresAt: new Date(context.now().getTime() + 45 * 60_000).toISOString(),
     };
   }),
+
+  codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
+    const { run, repository } = await requireCodexRun(context, input.runId);
+    let acquired = false;
+    try {
+      requireCodexSharedLeaseEnabled(context);
+      await acquireCodexLease(context, run, repository);
+      acquired = true;
+      return await context.codexAuth.read(repository);
+    } catch (error) {
+      if (acquired) await context.codexAuth.releaseLease(run.runId);
+      return codexAuthError(error, errors);
+    }
+  }),
+
+  persistCodexAuth: os.persistCodexAuth.handler(
+    async ({ input, context, errors }) => {
+      const { repository } = await requireCodexRun(context, input.runId);
+      requireCodexSharedLeaseEnabled(context);
+      let persisted = false;
+      let result:
+        | { status: 'skipped-burned' }
+        | { status: 'unchanged' }
+        | { status: 'updated' }
+        | undefined;
+      let operationError: unknown;
+      try {
+        await requireCodexLeaseOwner(context, input.runId);
+
+        // #1192: a Codex process that positively reported one of the three
+        // known refresh-failure signatures must never advance the stored
+        // lineage. The direct runner derives this narrow enum from trusted
+        // Codex failure events/stderr; the broker makes the refusal
+        // authoritative before any GCS write.
+        if (input.authFailure !== undefined) {
+          result = { status: 'skipped-burned' };
+        } else {
+          const bytes = Buffer.from(input.authBase64, 'base64');
+          const endSha256 = crypto
+            .createHash('sha256')
+            .update(bytes)
+            .digest('hex');
+          if (endSha256 === input.restoredSha256) {
+            result = { status: 'unchanged' };
+          } else {
+            await context.codexAuth.replace({
+              repository,
+              expectedGeneration: input.generation,
+              authBase64: input.authBase64,
+            });
+            persisted = true;
+            result = { status: 'updated' };
+          }
+        }
+      } catch (error) {
+        operationError = error;
+      }
+      try {
+        await context.codexAuth.releaseLease(input.runId);
+      } catch (error) {
+        // Once the replacement is durable, a best-effort delete cannot make
+        // that successful rotation look like a 500/no-deliverable. If the
+        // operation failed, retain that operation's original response rather
+        // than letting cleanup mask it.
+        if (persisted || operationError !== undefined) {
+          console.error('agent-lcars: failed to release Codex auth lease', {
+            runId: input.runId,
+            error,
+          });
+        } else {
+          return codexAuthError(error, errors);
+        }
+      }
+      if (operationError !== undefined)
+        return codexAuthError(operationError, errors);
+      if (result === undefined) {
+        return codexAuthError(
+          new Error('Codex credential persistence produced no result'),
+          errors,
+        );
+      }
+      return result;
+    },
+  ),
 });
 
 export function createRunsHandler(): OpenAPIHandler<RunsContext> {

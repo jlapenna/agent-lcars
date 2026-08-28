@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Direct-mode bootstrap for one claimed queue-executor run (native work
-# items sub-project 4). Reproduces the `claude`-pipeline slice of
+# items sub-project 4). Reproduces the `claude` and `codex` pipeline slices of
 # .github/workflows/agent-lane.yml against the run-token-authenticated
 # /api/work/v1/runs/* routes instead of workflow_dispatch inputs and the
-# GitHub-OIDC completion route. codex/opencode are not covered -- see the
-# design spec's "Direct runner mode" section. Exact claude-code-action /
+# GitHub-OIDC completion route. OpenCode is not covered. Exact claude-code-action /
 # Agent SDK parity (its internal max_turns enforcement, MCP wiring) is out
 # of scope for this sub-project -- ruling, recorded in the design spec.
 set -euo pipefail
@@ -64,6 +63,12 @@ CURLCFG
 WORK="$(jq -c '{id, spec}' <<<"$brief")"
 export WORK
 TARGET_REPO="$(jq -r '.spec.target.repo' <<<"$brief")"
+PIPELINE="$(jq -r '.spec.pipeline' <<<"$brief")"
+case "$PIPELINE" in
+  claude) AGENT_NAME=Claude ;;
+  codex) AGENT_NAME=Codex ;;
+  *) AGENT_NAME=Unknown ;;
+esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
 export GITHUB_REPOSITORY="$TARGET_REPO"
@@ -92,6 +97,24 @@ RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 # below swallows that refusal exactly like every other best-effort call in
 # this script.
 COMPLETED=0
+CODEX_RUNTIME_DIR=''
+CODEX_STDERR_TEE_PID=''
+cleanup_codex_material() {
+  if [ -n "$CODEX_STDERR_TEE_PID" ]; then
+    kill "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
+    wait "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
+    CODEX_STDERR_TEE_PID=''
+  fi
+  if [ -n "$CODEX_RUNTIME_DIR" ]; then
+    # CODEX_RUNTIME_DIR is created by mktemp below, beneath the dedicated
+    # Docker tmpfs. Removing that exact generated directory erases auth,
+    # persistence payloads, captured diagnostics, and any Codex state on
+    # every shell exit; Docker discards the backing tmpfs again when the
+    # container stops, even though the stopped container itself is retained.
+    rm -rf -- "$CODEX_RUNTIME_DIR"
+    CODEX_RUNTIME_DIR=''
+  fi
+}
 report_early_failure() {
   early_exit_code=$?
   [ -n "${HEARTBEAT_PID:-}" ] && { kill "$HEARTBEAT_PID" 2>/dev/null || true; }
@@ -107,9 +130,15 @@ $CURL_TIMEOUT_CONFIG
 data-binary = "@$early_payload"
 CURLCFG
   fi
+  cleanup_codex_material
   return 0
 }
 trap report_early_failure EXIT
+
+if [ "$AGENT_NAME" = "Unknown" ]; then
+  echo "FATAL: direct runner does not support pipeline '$PIPELINE'" >&2
+  exit 1
+fi
 
 checkout="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/checkout-token"
@@ -174,7 +203,7 @@ git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
 # run proceeds as a fresh dispatch (`|| true` below), never blocking the
 # agent on a broken restore.
 RESUME_FLAG=()
-if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
+if [ "$PIPELINE" = "claude" ] && [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
   # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
   # exported inline exactly as sidecar-lifecycle.sh already does for
   # `runner sidecar`/`runner finalize` -- the same telemetry-writer
@@ -198,7 +227,7 @@ export GITHUB_ENV="$RUNNER_TEMP/github-env"
 export ISSUE='' MODE=implement REPLY='' RUNBOOK='' CONTEXT=''
 export PRIOR_TERMINAL_STATE=null
 export BUDGET_MINUTES=80 ARTIFACT_CHECKPOINT_MINUTES=15 FINALIZE_CHECKPOINT_MINUTES=70
-export AGENT=Claude
+export AGENT="$AGENT_NAME"
 
 bash "$GITHUB_ACTION_PATH/prepare.sh"
 set -a
@@ -232,9 +261,32 @@ Commit and push before you end your turn.
 PROMPT
 )"
 
+if [ "$PIPELINE" = "codex" ]; then
+  # The sidecar starts before the agent invocation so it can emit live state.
+  # Allocate the per-run tmpfs home first, then pass its eventual session root
+  # to both sidecar phases. Auth is restored below, after this setup but before
+  # Codex executes; nothing from a previous run is visible in this directory.
+  : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
+  if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
+    echo "FATAL: Codex volatile directory is missing" >&2
+    exit 1
+  fi
+  CODEX_RUNTIME_DIR="$(mktemp -d "$LCARS_CODEX_VOLATILE_DIR/run.XXXXXX")"
+  export CODEX_HOME="$CODEX_RUNTIME_DIR/home"
+  mkdir -m 700 "$CODEX_HOME"
+  if [ -e "$HOME/.codex/auth.json" ]; then
+    echo "FATAL: runner image must not contain Codex authentication" >&2
+    exit 1
+  fi
+  if [ -d "$HOME/.codex" ]; then
+    cp -a "$HOME/.codex/." "$CODEX_HOME/"
+  fi
+fi
+
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
+  CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
   "$SIDECAR_LIFECYCLE" start
 
 # Best-effort lease renewal for the duration of the agent's own run. A
@@ -270,61 +322,149 @@ CURLCFG
 ) &
 HEARTBEAT_PID=$!
 
-# The claude CLI reads its long-lived subscription credential straight from
-# its own process environment -- no file-based alternative exists (checked
-# against `claude --help`'s auth section) -- but the value never lands in
-# THIS container's Config.Env: launchDirectRunnerOnHost (queue_executor.go)
-# bind-mounts it here as a read-only file instead, exactly like
-# WRITER_CREDENTIALS_FILE above, specifically so it never shows up in a
-# `docker inspect` of this container the way a Config.Env entry would --
-# only something with exec/proc access to the running process can see it,
-# and only from here forward, immediately before the one command that needs
-# it. CLAUDE_TOKEN_FILE is env-overridable like every other baked-tool path
-# above, defaulting to where launchDirectRunnerOnHost actually mounts it
-# (directRunnerClaudeTokenMountPath), so direct-runner.test.sh can point it
-# at a fixture file instead of a real bind mount. A missing/unreadable file
-# exits loudly (review fix, PR #1568) -- report_early_failure's trap above
-# reports the resulting run as no-deliverable instead of leaving it claimed
-# and silently stuck for its whole 2h lease.
-CLAUDE_TOKEN_FILE="${CLAUDE_TOKEN_FILE:-/run/secrets/claude-code-oauth-token}"
-if [ ! -r "$CLAUDE_TOKEN_FILE" ]; then
-  echo "FATAL: $CLAUDE_TOKEN_FILE is required (CLAUDE_CODE_OAUTH_TOKEN source) but is missing or unreadable" >&2
-  exit 1
-fi
-CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_TOKEN_FILE")"
-export CLAUDE_CODE_OAUTH_TOKEN
+AGENT_EXIT=1
+if [ "$PIPELINE" = "claude" ]; then
+  # The Claude CLI reads its long-lived subscription credential straight
+  # from its own process environment. The autoscaler bind-mounts the value
+  # as a file only for Claude runs, keeping it out of docker inspect.
+  CLAUDE_TOKEN_FILE="${CLAUDE_TOKEN_FILE:-/run/secrets/claude-code-oauth-token}"
+  if [ ! -r "$CLAUDE_TOKEN_FILE" ]; then
+    echo "FATAL: $CLAUDE_TOKEN_FILE is required (CLAUDE_CODE_OAUTH_TOKEN source) but is missing or unreadable" >&2
+    exit 1
+  fi
+  CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_TOKEN_FILE")"
+  export CLAUDE_CODE_OAUTH_TOKEN
 
-set +e
-# --dangerously-skip-permissions: this container is dedicated to one
-# claimed run, the same trust boundary the claude-code-action's own
-# headless invocation already relies on inside a GitHub Actions runner
-# (see agent-lane.yml: "the runner is dedicated to this agent workload").
-# --allowedTools/--disallowedTools are copied verbatim from agent-lane.yml's
-# "Run Claude Code" step. VERIFY AT IMPLEMENTATION TIME against
-# `claude --help` -- both flags were confirmed present (`--dangerously-
-# skip-permissions`, `--allowedTools`, `--disallowedTools`) as of this
-# design pass (`claude --help` on the local install), but this repo has no
-# automated check pinning the installed `claude` CLI's flag surface.
-claude \
-  --dangerously-skip-permissions \
-  --allowedTools "Bash,Edit,Write,MultiEdit" \
-  --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
-  "${RESUME_FLAG[@]}" \
-  --print "$AGENT_PROMPT"
-CLAUDE_EXIT=$?
-set -e
+  set +e
+  claude \
+    --dangerously-skip-permissions \
+    --allowedTools "Bash,Edit,Write,MultiEdit" \
+    --disallowedTools "ScheduleWakeup,SendMessage,Monitor,Task" \
+    "${RESUME_FLAG[@]}" \
+    --print "$AGENT_PROMPT"
+  AGENT_EXIT=$?
+  set -e
+else
+  # The broker exposes only this run's target-repository lineage and only
+  # to this live run token. The direct container receives no GCS credential
+  # capable of reading another repository's auth.json.
+  codex_auth="$(curl -sf --config - <<CURLCFG
+url = "$RUNS_API/codex-auth"
+header = "$AUTH_HEADER"
+$CURL_TIMEOUT_CONFIG
+CURLCFG
+)"
+  CODEX_RESTORED_GENERATION="$(jq -r '.generation' <<<"$codex_auth")"
+  CODEX_RESTORED_SHA256="$(jq -r '.sha256' <<<"$codex_auth")"
+  CODEX_AUTH_FILE="$CODEX_HOME/auth.json"
+  jq -r '.authBase64' <<<"$codex_auth" | base64 --decode > "$CODEX_AUTH_FILE"
+  chmod 600 "$CODEX_AUTH_FILE"
+  if [ "$(sha256sum "$CODEX_AUTH_FILE" | awk '{print $1}')" != "$CODEX_RESTORED_SHA256" ]; then
+    echo "FATAL: restored Codex authentication failed its SHA-256 check" >&2
+    exit 1
+  fi
+  codex login status
+
+  CODEX_FAILURE_MESSAGES="$CODEX_RUNTIME_DIR/failure-messages"
+  CODEX_STDERR="$CODEX_RUNTIME_DIR/stderr"
+  CODEX_STDERR_PIPE="$CODEX_RUNTIME_DIR/stderr.pipe"
+  : > "$CODEX_FAILURE_MESSAGES"
+  : > "$CODEX_STDERR"
+  mkfifo "$CODEX_STDERR_PIPE"
+  CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-4800}"
+  case "$CODEX_TIMEOUT_SECONDS" in
+    '' | *[!0-9]*)
+      echo "FATAL: CODEX_TIMEOUT_SECONDS must be a positive integer" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$CODEX_TIMEOUT_SECONDS" -lt 1 ]; then
+    echo "FATAL: CODEX_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
+  tee "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
+  CODEX_STDERR_TEE_PID=$!
+  set +e
+  timeout --signal=TERM --kill-after=30s "${CODEX_TIMEOUT_SECONDS}s" \
+    codex exec --json --dangerously-bypass-approvals-and-sandbox \
+    "$AGENT_PROMPT" 2> "$CODEX_STDERR_PIPE" |
+    while IFS= read -r codex_event; do
+      printf '%s\n' "$codex_event"
+      # Only the CLI's top-level fatal `error.message` and
+      # `turn.failed.error.message` fields are trusted failure diagnostics.
+      # Agent messages, command output, and task text are item payloads and
+      # can contain attacker-chosen signature text; they are never selected.
+      jq -r '
+        if .type == "error" and (.message | type) == "string" then .message
+        elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
+        else empty
+        end
+      ' <<<"$codex_event" >> "$CODEX_FAILURE_MESSAGES" 2>/dev/null || true
+    done
+  AGENT_EXIT=${PIPESTATUS[0]}
+  set -e
+  wait "$CODEX_STDERR_TEE_PID" || true
+  CODEX_STDERR_TEE_PID=''
+  rm -f -- "$CODEX_STDERR_PIPE"
+
+  # #1192: derive only the three known refresh-failure signatures, then let
+  # the broker make the authoritative skip decision before any GCS write.
+  CODEX_AUTH_FAILURE=''
+  if grep -qF -- 'Your access token could not be refreshed' "$CODEX_FAILURE_MESSAGES" "$CODEX_STDERR"; then
+    CODEX_AUTH_FAILURE='access-token-refresh-failed'
+  elif grep -qF -- 'refresh token was already used' "$CODEX_FAILURE_MESSAGES" "$CODEX_STDERR"; then
+    CODEX_AUTH_FAILURE='refresh-token-reused'
+  elif grep -F -- 'codex_login' "$CODEX_FAILURE_MESSAGES" "$CODEX_STDERR" | grep -qF -- '401 Unauthorized'; then
+    CODEX_AUTH_FAILURE='codex-login-401'
+  fi
+  if [ -n "$CODEX_AUTH_FAILURE" ]; then
+    AGENT_EXIT=1
+  fi
+
+  if [ ! -s "$CODEX_AUTH_FILE" ]; then
+    echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
+    AGENT_EXIT=1
+  else
+    codex_persist_payload="$CODEX_RUNTIME_DIR/codex-auth-persist.json"
+    jq -n \
+      --arg generation "$CODEX_RESTORED_GENERATION" \
+      --arg restoredSha256 "$CODEX_RESTORED_SHA256" \
+      --arg authBase64 "$(base64 -w0 "$CODEX_AUTH_FILE")" \
+      --arg authFailure "$CODEX_AUTH_FAILURE" \
+      '{generation:$generation,restoredSha256:$restoredSha256,authBase64:$authBase64}
+       + (if $authFailure == "" then {} else {authFailure:$authFailure} end)' \
+      > "$codex_persist_payload"
+    if ! curl -sf --config - >/dev/null <<CURLCFG
+url = "$RUNS_API/codex-auth"
+request = "PUT"
+header = "$AUTH_HEADER"
+header = "content-type: application/json"
+$CURL_TIMEOUT_CONFIG
+data-binary = "@$codex_persist_payload"
+CURLCFG
+    then
+      echo "FATAL: Codex authentication persistence failed; refusing a successful outcome" >&2
+      AGENT_EXIT=1
+    fi
+  fi
+fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
 
 WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
+  CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
   "$SIDECAR_LIFECYCLE" finalize
+
+# Finalization has synchronously archived every Codex session it found. Only
+# now can the tmpfs-backed session/auth directory be erased.
+cleanup_codex_material
 
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
-if [ "$CLAUDE_EXIT" -eq 0 ] &&
-  AGENT=Claude REPO="$TARGET_REPO" NUM='' MODE=implement ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
+if [ "$AGENT_EXIT" -eq 0 ] &&
+  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM='' MODE=implement ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
   bash "$VERIFY_DELIVERABLE"; then
   # verify-deliverable.sh just proved (via its own equivalent gh api
   # lookup, moments ago) that some bot-authored PR on $TARGET_REPO carries

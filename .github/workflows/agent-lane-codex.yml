@@ -90,6 +90,11 @@ on:
         required: false
         default: false
         type: boolean
+      codex-shared-lease:
+        description: 'Opt into the cross-executor subscription lease after shared GCS authority is granted'
+        required: false
+        default: false
+        type: boolean
       install-workspace-deps:
         description: 'pnpm-install the primary checkout (sprinkles#4003)'
         required: false
@@ -213,6 +218,7 @@ jobs:
       dispatch-bootstrap: ${{ inputs.dispatch-bootstrap }}
       protected-snapshot: ${{ inputs.protected-snapshot }}
       queue-drain: ${{ inputs.queue-drain }}
+      codex-shared-lease: ${{ inputs.codex-shared-lease }}
       install-workspace-deps: ${{ inputs.install-workspace-deps }}
       gcp-workload-identity-provider: ${{ inputs.gcp-workload-identity-provider }}
       gcp-service-account: ${{ inputs.gcp-service-account }}

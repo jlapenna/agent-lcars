@@ -446,7 +446,7 @@ export const runBriefSchema = z.strictObject({
 /** `claim` is called by a runner authenticating with its own console
  *  bearer token (the same `bearerAuth` scheme `itemsContract` uses) --
  *  there is no run token yet, since claiming a run is what mints one. The
- *  other four routes are called by the runner presenting the token
+ *  other run routes are called by the runner presenting the token
  *  `claim` returned, hence the distinct `runToken` scheme. */
 const runToken = { security: [{ runToken: [] }] };
 const withRunToken = <T extends object>(current: T) => ({
@@ -560,6 +560,76 @@ export const runsContract = {
         token: z.string(),
         expiresAt: z.string(),
         repository: z.string(),
+      }),
+    ),
+  codexAuth: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/codex-auth',
+        operationId: 'getRunCodexAuth',
+        summary: "Restore a Codex run's repository-scoped authentication",
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid, expired, or non-Codex run token' },
+      NOT_FOUND: { message: 'Codex authentication is not seeded' },
+      CONFLICT: { message: 'Codex subscription authentication is in use' },
+      INTERNAL_SERVER_ERROR: {
+        message: 'Codex authentication storage is unavailable',
+      },
+    })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(
+      z.strictObject({
+        authBase64: z
+          .string()
+          .min(1)
+          .max(512 * 1024),
+        generation: z.string().regex(/^\d+$/u),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+      }),
+    ),
+  persistCodexAuth: runBase
+    .meta(
+      openapi({
+        method: 'PUT',
+        path: '/runs/{runId}/codex-auth',
+        operationId: 'persistRunCodexAuth',
+        summary: "Persist a Codex run's conditionally rotated authentication",
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid, expired, or non-Codex run token' },
+      BAD_REQUEST: { message: 'Codex authentication payload is invalid' },
+      CONFLICT: { message: 'Codex authentication was already rotated' },
+      INTERNAL_SERVER_ERROR: {
+        message: 'Codex authentication storage is unavailable',
+      },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        generation: z.string().regex(/^\d+$/u),
+        restoredSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+        authBase64: z
+          .string()
+          .min(1)
+          .max(512 * 1024),
+        authFailure: z
+          .enum([
+            'access-token-refresh-failed',
+            'refresh-token-reused',
+            'codex-login-401',
+          ])
+          .optional(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        status: z.enum(['updated', 'unchanged', 'skipped-burned']),
       }),
     ),
 };

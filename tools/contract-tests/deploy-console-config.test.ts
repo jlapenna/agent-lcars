@@ -304,7 +304,7 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('routes only Claude native work through the durable queue executor', async () => {
+  it('routes only Claude native work through the durable queue executor and keeps shared Codex authority disabled', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -316,6 +316,11 @@ describe('console deployment workflow', () => {
     )?.value;
 
     expect(JSON.parse(queuePipelines ?? 'null')).toEqual(['claude']);
+    expect(
+      config.env?.find(
+        ({ variable }) => variable === 'LCARS_CODEX_SHARED_LEASE_ENABLED',
+      )?.value,
+    ).toBe('false');
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {

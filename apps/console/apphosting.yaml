@@ -104,6 +104,14 @@ env:
     availability:
       - RUNTIME
 
+  # Shared Codex subscription-lease authority is staged only. Keep this
+  # explicit so direct Codex cannot be claimed before the central IAM,
+  # executor grant, and queue-routing activation are all in place.
+  - variable: LCARS_CODEX_SHARED_LEASE_ENABLED
+    value: 'false'
+    availability:
+      - RUNTIME
+
   # Not sensitive - the global cap on simultaneously live work runs.
   - variable: AGENT_LCARS_WORK_MAX_LIVE_RUNS
     value: '2'

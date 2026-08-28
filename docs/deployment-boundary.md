@@ -134,10 +134,13 @@ durable credential mounts and runner image are documented in
 `apps/runner-autoscaler/README.md`. This repository owns the server routing
 and executor grant; Homelab owns its autoscaler deployment.
 
-Codex and OpenCode are admitted by the same operator grants but remain on the
-GitHub Actions executor because the direct runner currently supports Claude
-only. Routing is chosen by the server configuration, not by a caller or an
-item specification.
+Codex and OpenCode are admitted by the same operator grants but presently
+remain on the GitHub Actions executor. The direct runner has an optional Codex
+provider implementation, but it remains disabled until its separate
+repository-prefix-preserving IAM grant and single-run canary are approved.
+Routing is chosen by the server configuration, not by a caller or an item
+specification; a repository that does not use a given provider is a normal
+routing outcome, not a failed dispatch.
 
 ### 4. Workflows — repo variables
 

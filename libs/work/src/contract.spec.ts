@@ -71,10 +71,18 @@ describe('schedulesContract', () => {
 });
 
 describe('runsContract', () => {
-  it('declares the five run routes with bearer security', () => {
+  it('declares the seven run routes with bearer security', () => {
     const paths = Object.keys(runsContract);
     expect(paths.sort()).toEqual(
-      ['claim', 'brief', 'heartbeat', 'complete', 'checkoutToken'].sort(),
+      [
+        'claim',
+        'brief',
+        'heartbeat',
+        'complete',
+        'checkoutToken',
+        'codexAuth',
+        'persistCodexAuth',
+      ].sort(),
     );
   });
 
@@ -152,6 +160,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/{runId}/heartbeat',
         '/runs/{runId}/complete',
         '/runs/{runId}/checkout-token',
+        '/runs/{runId}/codex-auth',
       ].sort(),
     );
     expect(Object.keys(doc.paths['/items/{id}'] ?? {}).sort()).toEqual([
@@ -231,6 +240,8 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/{runId}/heartbeat': ['200', '401'],
       'POST /runs/{runId}/complete': ['200', '401'],
       'GET /runs/{runId}/checkout-token': ['200', '401'],
+      'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
+      'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
     });
   });
 });

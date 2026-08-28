@@ -92,6 +92,9 @@ if [ -z "${RUN_ID:-}" ]; then
 fi
 
 ARGS=(runner "$CLI_SUBCOMMAND" --run-id "$RUN_ID" --projects-dir "$HOME/.claude/projects")
+if [ -n "${CODEX_SESSIONS_DIR:-}" ]; then
+  ARGS+=(--codex-sessions-dir "$CODEX_SESSIONS_DIR")
+fi
 if [ -n "${NUM:-}" ]; then
   ARGS+=(--issue-number "$NUM")
 fi

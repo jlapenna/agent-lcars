@@ -69,6 +69,7 @@ type createdContainerRequest struct {
 	Labels     map[string]string
 	HostConfig struct {
 		Binds []string
+		Tmpfs map[string]string
 	}
 }
 

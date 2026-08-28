@@ -1,7 +1,10 @@
+import crypto from 'node:crypto';
+
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 
+import { CodexAuthStoreError } from './codex-auth-store';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 
@@ -194,6 +197,19 @@ async function call(
 const context = {
   tokens: { tokenFor: async () => 'ambient-token' },
   checkoutTokens: { tokenFor: async () => 'checkout-token' },
+  codexAuth: {
+    read: async () => ({
+      authBase64: Buffer.from('{"tokens":{}}').toString('base64'),
+      generation: '7',
+      sha256: 'a'.repeat(64),
+    }),
+    readLease: async () => undefined,
+    createLease: async () => undefined,
+    takeLease: async () => undefined,
+    releaseLease: async () => undefined,
+    replace: async () => undefined,
+  },
+  codexSharedLeaseEnabled: true,
 };
 
 describe('claim', () => {
@@ -294,6 +310,37 @@ describe('claim', () => {
     expect(claimSpy).toHaveBeenCalledWith(
       expect.objectContaining({ pipelines: ['claude'] }),
     );
+  });
+
+  it('leaves Codex queued while the shared-lease capability is off without restricting Claude', async () => {
+    const { store, orchestrator, now } = fixture();
+    const codexRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex-staged-off'),
+      pipeline: 'codex',
+      now: NOW,
+    });
+    const claudeRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-claude-staged-off'),
+      pipeline: 'claude',
+      now: NOW,
+    });
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexSharedLeaseEnabled: false,
+        principal: executorPrincipal(['codex', 'claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+
+    expect(r.status).toBe(200);
+    expect((r.json as { runId: string }).runId).toBe(claudeRunId);
+    expect((await store.readRun(codexRunId))?.queue?.state).toBe('queued');
   });
 
   it('ignores a legacy pipeline selection and claims only the grant-allowed pipeline', async () => {
@@ -603,6 +650,16 @@ describe('run-token gate', () => {
       ['POST', '/heartbeat', undefined],
       ['POST', '/complete', { outcome: 'pull-request' }],
       ['GET', '/checkout-token', undefined],
+      ['GET', '/codex-auth', undefined],
+      [
+        'PUT',
+        '/codex-auth',
+        {
+          generation: '7',
+          restoredSha256: '0'.repeat(64),
+          authBase64: Buffer.from('{"tokens":{}}').toString('base64'),
+        },
+      ],
     ] as const) {
       const r = await call(ctx, method, runPath(runId, suffix), body);
       expect(r.status, `${method} ${suffix}`).toBe(401);
@@ -697,6 +754,8 @@ describe('run-token gate', () => {
       runPath(runId, '/checkout-token'),
     );
     expect(checkoutToken.status).toBe(401);
+    const codexAuth = await call(ctx, 'GET', runPath(runId, '/codex-auth'));
+    expect(codexAuth.status).toBe(401);
   });
 
   it('refuses a canceled run its own token on every run route, even though queue.state stays claimed', async () => {
@@ -736,6 +795,7 @@ describe('run-token gate', () => {
       ['POST', '/heartbeat', undefined],
       ['POST', '/complete', { outcome: 'pull-request' }],
       ['GET', '/checkout-token', undefined],
+      ['GET', '/codex-auth', undefined],
     ] as const) {
       const r = await call(ctx, method, runPath(runId, suffix), body);
       expect(r.status, `${method} ${suffix}`).toBe(401);
@@ -815,6 +875,54 @@ describe('heartbeat', () => {
     expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
     expect((await store.readRun(runId))!.leaseExpiresAt).toBe(after);
   });
+
+  it('extends the shared Codex credential lease with each broker heartbeat', async () => {
+    const { store, orchestrator, now, setNow } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex-heartbeat'),
+      pipeline: 'codex',
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const takeLease = vi.fn(async () => undefined);
+    setNow('2026-08-26T11:00:00.000Z');
+
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        bearerToken: token,
+        codexAuth: {
+          ...context.codexAuth,
+          readLease: async () => ({
+            runId,
+            repository: 'jlapenna/agent-lcars',
+            expiresAt: '2026-08-26T12:00:00.000Z',
+            generation: '31',
+          }),
+          takeLease,
+        },
+      },
+      'POST',
+      runPath(runId, '/heartbeat'),
+    );
+
+    expect(r.status).toBe(200);
+    expect(takeLease).toHaveBeenCalledWith({
+      runId,
+      repository: 'jlapenna/agent-lcars',
+      expiresAt: (r.json as { expiresAt: string }).expiresAt,
+      expectedGeneration: '31',
+    });
+  });
 });
 
 describe('complete', () => {
@@ -877,6 +985,7 @@ describe('checkoutToken', () => {
         now,
         tokens: context.tokens,
         checkoutTokens: { tokenFor },
+        codexAuth: context.codexAuth,
         bearerToken: runToken,
       },
       'GET',
@@ -904,5 +1013,379 @@ describe('checkoutToken', () => {
     // would hand the caller the wrong secret entirely.
     expect(body.token).not.toBe(runToken);
     expect(JSON.stringify(body)).not.toContain(runToken);
+  });
+});
+
+describe('codexAuth', () => {
+  function ownedCodexAuth(
+    runId: string,
+    overrides: Partial<RunsContext['codexAuth']> = {},
+  ): RunsContext['codexAuth'] {
+    return {
+      ...context.codexAuth,
+      readLease: async () => ({
+        runId,
+        repository: 'jlapenna/agent-lcars',
+        expiresAt: '2026-08-28T12:00:00.000Z',
+        generation: '11',
+      }),
+      ...overrides,
+    };
+  }
+
+  async function claimedCodexRun() {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex-auth'),
+      pipeline: 'codex',
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    return { store, orchestrator, now, runId, token };
+  }
+
+  it('restores only the target repository credential for a Codex run', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const read = vi.fn(context.codexAuth.read);
+    const createLease = vi.fn(async () => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: { ...context.codexAuth, read, createLease },
+        bearerToken: token,
+      },
+      'GET',
+      runPath(runId, '/codex-auth'),
+    );
+    expect(r.status).toBe(200);
+    expect(read).toHaveBeenCalledWith('jlapenna/agent-lcars');
+    expect(createLease).toHaveBeenCalledWith({
+      runId,
+      repository: 'jlapenna/agent-lcars',
+      expiresAt: (await store.readRun(runId))!.leaseExpiresAt,
+    });
+  });
+
+  it('refuses direct Codex auth until the shared lease capability is enabled', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const read = vi.fn(context.codexAuth.read);
+    const createLease = vi.fn(async () => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexSharedLeaseEnabled: false,
+        codexAuth: { ...context.codexAuth, read, createLease },
+        bearerToken: token,
+      },
+      'GET',
+      runPath(runId, '/codex-auth'),
+    );
+
+    expect(r.status).toBe(500);
+    expect(read).not.toHaveBeenCalled();
+    expect(createLease).not.toHaveBeenCalled();
+  });
+
+  it('releases a newly claimed subscription lease when credential restore fails', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const releaseLease = vi.fn(async () => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: {
+          ...context.codexAuth,
+          read: async () => {
+            throw new CodexAuthStoreError('not-found', 'not seeded');
+          },
+          releaseLease,
+        },
+        bearerToken: token,
+      },
+      'GET',
+      runPath(runId, '/codex-auth'),
+    );
+
+    expect(r.status).toBe(404);
+    expect(releaseLease).toHaveBeenCalledWith(runId);
+  });
+
+  it('refuses the broker routes to a non-Codex run token', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-claude-auth-refusal'),
+      pipeline: 'claude',
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/codex-auth'),
+    );
+    expect(r.status).toBe(401);
+  });
+
+  it('releases an owned subscription lease when a Codex run completes early', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const releaseLease = vi.fn(async () => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: ownedCodexAuth(runId, { releaseLease }),
+        bearerToken: token,
+      },
+      'POST',
+      runPath(runId, '/complete'),
+      { outcome: 'no-deliverable', outcomeReference: null },
+    );
+
+    expect(r.status).toBe(200);
+    expect(releaseLease).toHaveBeenCalledWith(runId);
+  });
+
+  it('does not write back a byte-identical or positively burned credential', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const authBase64 = Buffer.from('{"tokens":{"access":"x"}}').toString(
+      'base64',
+    );
+    const restoredSha256 = crypto
+      .createHash('sha256')
+      .update(Buffer.from(authBase64, 'base64'))
+      .digest('hex');
+    const replace = vi.fn(async () => undefined);
+    const ctx = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      codexAuth: ownedCodexAuth(runId, { replace }),
+      bearerToken: token,
+    };
+    const unchanged = await call(ctx, 'PUT', runPath(runId, '/codex-auth'), {
+      generation: '7',
+      restoredSha256,
+      authBase64,
+    });
+    expect(unchanged.json).toEqual({ status: 'unchanged' });
+
+    const burned = await call(ctx, 'PUT', runPath(runId, '/codex-auth'), {
+      generation: '7',
+      restoredSha256,
+      authBase64,
+      authFailure: 'refresh-token-reused',
+    });
+    expect(burned.json).toEqual({ status: 'skipped-burned' });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('persists a changed credential with the restored generation as its CAS', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const replace = vi.fn(async () => undefined);
+    const authBase64 = Buffer.from('{"tokens":{"access":"new"}}').toString(
+      'base64',
+    );
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: ownedCodexAuth(runId, { replace }),
+        bearerToken: token,
+      },
+      'PUT',
+      runPath(runId, '/codex-auth'),
+      {
+        generation: '1844674407370955161',
+        restoredSha256: '0'.repeat(64),
+        authBase64,
+      },
+    );
+    expect(r.json).toEqual({ status: 'updated' });
+    expect(replace).toHaveBeenCalledWith({
+      repository: 'jlapenna/agent-lcars',
+      expectedGeneration: '1844674407370955161',
+      authBase64,
+    });
+  });
+
+  it('keeps a durable credential rotation successful when lease cleanup fails', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const replace = vi.fn(async () => undefined);
+    const cleanupError = new CodexAuthStoreError('unavailable', 'bucket blip');
+    const releaseLease = vi.fn(async () => {
+      throw cleanupError;
+    });
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: ownedCodexAuth(runId, { replace, releaseLease }),
+        bearerToken: token,
+      },
+      'PUT',
+      runPath(runId, '/codex-auth'),
+      {
+        generation: '7',
+        restoredSha256: '0'.repeat(64),
+        authBase64: Buffer.from('{"tokens":{"access":"new"}}').toString(
+          'base64',
+        ),
+      },
+    );
+
+    expect(r).toMatchObject({ status: 200, json: { status: 'updated' } });
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(releaseLease).toHaveBeenCalledWith(runId);
+    expect(errorSpy).toHaveBeenCalledWith(
+      'agent-lcars: failed to release Codex auth lease',
+      { runId, error: cleanupError },
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('surfaces a generation conflict without retrying the write', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+    const replace = vi.fn(async () => {
+      throw new CodexAuthStoreError('conflict', 'already rotated');
+    });
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: ownedCodexAuth(runId, { replace }),
+        bearerToken: token,
+      },
+      'PUT',
+      runPath(runId, '/codex-auth'),
+      {
+        generation: '7',
+        restoredSha256: '0'.repeat(64),
+        authBase64: Buffer.from('{"tokens":{}}').toString('base64'),
+      },
+    );
+    expect(r.status).toBe(409);
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks a direct Codex run from restoring while the hosted executor holds the shared lease', async () => {
+    const { store, orchestrator, now } = fixture();
+    const secondRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex-lease-second'),
+      pipeline: 'codex',
+      now: NOW,
+    });
+    const secondToken = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner-2',
+      tokenHash: hashRunToken(secondToken),
+    });
+    const read = vi.fn(context.codexAuth.read);
+    const takeLease = vi.fn(context.codexAuth.takeLease);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        bearerToken: secondToken,
+        codexAuth: {
+          ...context.codexAuth,
+          readLease: async () => ({
+            runId: 'github:jlapenna/agent-lcars:12345:1',
+            repository: 'jlapenna/agent-lcars',
+            expiresAt: '2026-08-28T12:00:00.000Z',
+            generation: '21',
+          }),
+          read,
+          takeLease,
+        },
+      },
+      'GET',
+      runPath(secondRunId, '/codex-auth'),
+    );
+
+    expect(r.status).toBe(409);
+    expect(read).not.toHaveBeenCalled();
+    expect(takeLease).not.toHaveBeenCalled();
+  });
+
+  it('takes over the shared subscription lease only after its recorded expiry', async () => {
+    const { store, orchestrator, now } = fixture();
+    const secondRunId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-codex-stale-second'),
+      pipeline: 'codex',
+      now: NOW,
+    });
+    const secondToken = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner-2',
+      tokenHash: hashRunToken(secondToken),
+    });
+    const takeLease = vi.fn(async () => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        bearerToken: secondToken,
+        codexAuth: {
+          ...context.codexAuth,
+          readLease: async () => ({
+            runId: 'github:jlapenna/agent-lcars:12345:1',
+            repository: 'jlapenna/agent-lcars',
+            expiresAt: '2026-08-26T09:00:00.000Z',
+            generation: '22',
+          }),
+          takeLease,
+        },
+      },
+      'GET',
+      runPath(secondRunId, '/codex-auth'),
+    );
+
+    expect(r.status).toBe(200);
+    expect(takeLease).toHaveBeenCalledWith({
+      runId: secondRunId,
+      repository: 'jlapenna/agent-lcars',
+      expiresAt: expect.any(String),
+      expectedGeneration: '22',
+    });
   });
 });
