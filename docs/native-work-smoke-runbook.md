@@ -212,6 +212,26 @@ OIDC pin backing `work-schedules-tick.yml` accepts `workflow_dispatch` from
 `main`, which is the manual fallback used above and the one to reach for
 whenever a cron smoke can't wait out GitHub's schedule-activation lag.
 
+## Sub-project 4: QueueExecutor — acceptance still incomplete (2026-08-28)
+
+This is an evidence/status record, **not** a completion claim. The direct
+queue path has reached a real autoscaler-launched container three times, but
+no canary has yet produced the required successful deliverable and `done`
+item state.
+
+| Attempt         | Evidence and outcome                                                                                                                                                                                                                                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First canary    | The queue executor placed a direct runner, but `prepare-agent-dispatch` failed because `RUNNER_TEMP` was not exported. [PR #1576](https://github.com/jlapenna/agent-lcars/pull/1576) fixed that bootstrap contract.                                                                                                                                         |
+| Second canary   | The repaired bootstrap reached `direct-runner.sh`, then failed with `claude: command not found`. [PR #1577](https://github.com/jlapenna/agent-lcars/pull/1577) installs Claude Code in the runner image and smoke-checks `claude --version` during its build.                                                                                               |
+| Published image | The repaired image was published from Agent LCARS revision `4d30d30b230aac09c12c6f1bdf6a79a0abe90867` as `sha256:ad7b6e022ed0bdcca366dca1b2520001c6178ee413cdbc5224a8d88fe8e95b96`.                                                                                                                                                                         |
+| Third canary    | Item [`01M138S62PHGVQ5AQNBP1NRW66`](https://lcars.jlapenna.net/work/01M138S62PHGVQ5AQNBP1NRW66) minted a `queue` run, was claimed by a direct container, and did **not** trigger `claude.yml`. Claude itself then exited because its weekly quota resets at **2026-08-30 00:00 UTC**; the item was canceled and the temporary queue flags were rolled back. |
+
+**Next action:** after that quota reset, run exactly one more canary and
+require the direct container to finish with a real deliverable and the item
+to reach `done`; only then may sub-project 4 be marked complete. Until then,
+production remains on the rolled-back flags (console rollback:
+[PR #1579](https://github.com/jlapenna/agent-lcars/pull/1579)).
+
 ## Sub-project 5: ingress unification — issue-side claim/park projections (2026-08-27)
 
 Sub-project 5 landed as [PR #1545](https://github.com/jlapenna/agent-lcars/pull/1545)
