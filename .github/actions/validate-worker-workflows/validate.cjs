@@ -216,23 +216,38 @@ function main() {
     process.argv[2] || process.env.GITHUB_WORKSPACE || process.cwd(),
   );
   const errors = [];
+  const workflowsDirectory = path.join(workspace, '.github/workflows');
 
-  for (const provider of PROVIDERS) {
-    const relativeFile = `.github/workflows/${provider}.yml`;
-    const file = path.join(workspace, relativeFile);
-    let source;
-    try {
-      source = fs.readFileSync(file, 'utf8');
-    } catch (error) {
-      errors.push(`${relativeFile}: ${error.message}`);
-      continue;
+  try {
+    if (!fs.statSync(workflowsDirectory).isDirectory()) {
+      errors.push('.github/workflows must be a directory');
     }
+  } catch (error) {
+    errors.push(`.github/workflows must exist: ${error.message}`);
+  }
 
-    try {
-      const document = parseYaml(source);
-      errors.push(...validateWorkflow(provider, relativeFile, document));
-    } catch (error) {
-      errors.push(`${relativeFile}: invalid YAML: ${error.message}`);
+  if (errors.length === 0) {
+    for (const provider of PROVIDERS) {
+      const relativeFile = `.github/workflows/${provider}.yml`;
+      const file = path.join(workspace, relativeFile);
+      let source;
+      try {
+        source = fs.readFileSync(file, 'utf8');
+      } catch (error) {
+        // Provider adoption is intentionally incremental. A caller without a
+        // particular worker workflow has no contract for that provider yet;
+        // however, any other read failure is actionable and must still fail.
+        if (error && error.code === 'ENOENT') continue;
+        errors.push(`${relativeFile}: ${error.message}`);
+        continue;
+      }
+
+      try {
+        const document = parseYaml(source);
+        errors.push(...validateWorkflow(provider, relativeFile, document));
+      } catch (error) {
+        errors.push(`${relativeFile}: invalid YAML: ${error.message}`);
+      }
     }
   }
 
@@ -249,7 +264,7 @@ function main() {
   }
 
   process.stdout.write(
-    'Validated Claude, Codex, and OpenCode issue/native-work workflow contracts.\n',
+    'Validated every present Claude, Codex, and OpenCode issue/native-work workflow contract.\n',
   );
 }
 

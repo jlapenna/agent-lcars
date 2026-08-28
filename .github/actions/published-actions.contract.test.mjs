@@ -198,8 +198,8 @@ const PUBLISHED = {
     outputs: [],
   },
   // Centralized consumer-side native-work migration guard (#1502): the
-  // action intentionally has no inputs. It always validates the caller's
-  // three canonical worker workflow paths in GITHUB_WORKSPACE.
+  // action intentionally has no inputs. It validates every present canonical
+  // worker workflow path in GITHUB_WORKSPACE; providers remain optional.
   'validate-worker-workflows': {
     inputs: {},
     outputs: [],
