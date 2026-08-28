@@ -9,6 +9,11 @@ set -euo pipefail
 
 readonly OPENCODE_RELEASE_OWNER='anomalyco'
 readonly OPENCODE_RELEASE_REPOSITORY='opencode'
+# v1.18.25's largest reviewed archive is the 60,534,299-byte amd64 baseline
+# release. Keep a small bounded margin without permitting unbounded downloads.
+readonly OPENCODE_MAX_ARCHIVE_BYTES=67108864
+readonly OPENCODE_DOWNLOAD_BUDGET_SECONDS=600
+readonly OPENCODE_RETRY_MAX_SECONDS=570
 opencode_temp_dir=''
 
 fail() {
@@ -29,8 +34,8 @@ select_opencode_release() {
 
   case "$arch" in
     amd64)
-      asset='opencode-linux-x64.tar.gz'
-      digest='58a3729a6f3432dd6d2917fcc4a949788891a035818646ad480e12c947f56e78'
+      asset='opencode-linux-x64-baseline.tar.gz'
+      digest='ccd10586611b598b1eaed7c05cfbcbc68e3ec09e736b360da09b1d615d922968'
       ;;
     arm64)
       asset='opencode-linux-arm64.tar.gz'
@@ -85,10 +90,13 @@ install_opencode_release() {
   archive="$opencode_temp_dir/$asset"
   trap cleanup_opencode_temp_dir EXIT
 
-  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
-    --connect-timeout 30 --max-time 570 \
-    "https://github.com/$OPENCODE_RELEASE_OWNER/$OPENCODE_RELEASE_REPOSITORY/releases/download/$version/$asset" \
-    --output "$archive"
+  timeout -k 30s "${OPENCODE_DOWNLOAD_BUDGET_SECONDS}s" \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+      --retry-max-time "$OPENCODE_RETRY_MAX_SECONDS" \
+      --connect-timeout 30 --max-time "$OPENCODE_RETRY_MAX_SECONDS" \
+      --max-filesize "$OPENCODE_MAX_ARCHIVE_BYTES" \
+      "https://github.com/$OPENCODE_RELEASE_OWNER/$OPENCODE_RELEASE_REPOSITORY/releases/download/$version/$asset" \
+      --output "$archive"
   validate_opencode_archive "$archive" "$digest"
   tar -xzf "$archive" --no-same-owner --no-same-permissions -C "$opencode_temp_dir" -- opencode
   install -o root -g root -m 0755 "$opencode_temp_dir/opencode" /usr/local/bin/opencode

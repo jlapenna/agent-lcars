@@ -26,10 +26,20 @@ assert_release() {
     fail_test "wrong reviewed release selection for $arch"
 }
 
-assert_release amd64 opencode-linux-x64.tar.gz \
-  58a3729a6f3432dd6d2917fcc4a949788891a035818646ad480e12c947f56e78
+assert_release amd64 opencode-linux-x64-baseline.tar.gz \
+  ccd10586611b598b1eaed7c05cfbcbc68e3ec09e736b360da09b1d615d922968
 assert_release arm64 opencode-linux-arm64.tar.gz \
   35ef77897425e41b5183a2c21ac4fb1d4d944d82a94e3c920f57b5490af11ac5
+[[ "$OPENCODE_MAX_ARCHIVE_BYTES" -eq 67108864 ]] ||
+  fail_test 'OpenCode archive size cap is no longer the reviewed 64 MiB bound'
+[[ "$OPENCODE_RETRY_MAX_SECONDS" -eq 570 && "$OPENCODE_DOWNLOAD_BUDGET_SECONDS" -eq 600 ]] ||
+  fail_test 'OpenCode retry/download budgets are no longer bounded to the install window'
+grep -Fq -- '--max-filesize "$OPENCODE_MAX_ARCHIVE_BYTES"' "$here/install-opencode-release.sh" ||
+  fail_test 'OpenCode curl invocation is missing the reviewed archive size cap'
+grep -Fq -- '--retry-max-time "$OPENCODE_RETRY_MAX_SECONDS"' "$here/install-opencode-release.sh" ||
+  fail_test 'OpenCode curl invocation is missing the aggregate retry bound'
+grep -Fq -- 'timeout -k 30s "${OPENCODE_DOWNLOAD_BUDGET_SECONDS}s"' "$here/install-opencode-release.sh" ||
+  fail_test 'OpenCode curl invocation is missing the outer install budget'
 if (select_opencode_release v1.18.25 ppc64le) >/dev/null 2>&1; then
   fail_test 'unsupported target architecture was accepted'
 fi
