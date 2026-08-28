@@ -491,6 +491,12 @@ RUN chmod +x /usr/local/bin/lcars
 # runner is an integrated first-party delivery surface, not a pinned artifact.
 RUN npm install -g @openai/codex
 
+# QueueExecutor direct mode invokes `claude` itself instead of the GitHub
+# Action that normally provisions that CLI. Keep it in the shared runner image
+# and execute its version command while building: a package that no longer
+# provides the expected executable must fail publication, not a claimed run.
+RUN npm install -g @anthropic-ai/claude-code && claude --version
+
 # The Actions runner base carries npm inside both bundled Actions Node
 # runtimes, while NodeSource installs a third system copy. Repair all three
 # node-tar copies after the image's global npm installs so CVE-2026-59873
