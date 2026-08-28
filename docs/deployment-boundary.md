@@ -75,12 +75,12 @@ Google service-account ID token or an Auth.js session to a principal by
 looking it up here — an unlisted subject gets no access at all, regardless
 of how it authenticated.
 
-| Value                    | Env var                          | This deployment                                                                         |
-| ------------------------ | -------------------------------- | --------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`        | `[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]}]` |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                     |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                      |
-| queue-executor pipelines | `AGENT_LCARS_QUEUE_PIPELINES`    | unset (default `[]` -- every pipeline still dispatches through GitHub Actions)          |
+| Value                    | Env var                          | This deployment                                                                                  |
+| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`        | current operators: `claude`, `codex`, `opencode`; `svc:telemetry-writer` executor: `claude` only |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                              |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                               |
+| queue-executor pipelines | `AGENT_LCARS_QUEUE_PIPELINES`    | unset (default `[]`; every pipeline dispatches through GitHub Actions)                           |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
@@ -111,6 +111,16 @@ claim, the same field an operator's grant uses to gate `create`/
 `redispatch` -- it is intersected against `POST /runs/claim`'s own
 `pipelines` input before the store is ever touched
 (`runs-router.ts`'s `claim` handler).
+
+The current operator grants list all three supported pipelines (`claude`,
+`codex`, `opencode`), including the maintainer, repository-bounded
+`workflow:work-create`, and Sprinkles' App Hosting service principal. The
+published `work-create.yml` workflow is contract-tested against that list,
+so its provider canaries cannot fail at API admission. This does **not**
+enable queue execution for Codex or OpenCode: executor routing remains
+solely governed by `AGENT_LCARS_QUEUE_PIPELINES`. The telemetry-writer
+identity remains a Claude-only `work.executor`, a distinct role from an
+operator.
 
 #### Queue executor live-proof (maintainer-gated)
 
