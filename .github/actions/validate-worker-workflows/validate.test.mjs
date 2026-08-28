@@ -83,7 +83,7 @@ function expectFailure(name, provider, change, expected) {
 for (const [name, selectedProviders] of [
   ['one present provider workflow', ['claude']],
   ['a provider subset', ['claude', 'opencode']],
-  ['no provider workflows', []],
+  ['an existing empty provider workflow directory', []],
 ]) {
   const directory = fixture(selectedProviders);
   try {
@@ -92,6 +92,28 @@ for (const [name, selectedProviders] of [
       assert.equal(result.status, 0, result.stderr);
     }
     process.stdout.write(`ok - ${name} passes source and bundle\n`);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+{
+  const directory = mkdtempSync(
+    path.join(os.tmpdir(), 'validate-worker-workflows-missing-root-'),
+  );
+  try {
+    for (const validator of [sourceValidator, bundledValidator]) {
+      const result = runValidator(validator, directory);
+      assert.notEqual(result.status, 0, 'missing workflow directory must fail');
+      assert.match(
+        result.stderr,
+        /\.github\/workflows must exist:/u,
+        'missing workflow directory must not be treated as no providers',
+      );
+    }
+    process.stdout.write(
+      'ok - missing workflow directory fails source and bundle\n',
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
