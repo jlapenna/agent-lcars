@@ -110,7 +110,7 @@ env:
   # immediately, rather than leaving it queued for however long this flag
   # and the poller going live are apart.
   - variable: AGENT_LCARS_QUEUE_PIPELINES
-    value: '[]'
+    value: '["claude"]'
     availability:
       - RUNTIME
 
