@@ -88,23 +88,29 @@ const OPENCODE_TRANSCRIPT = JSON.stringify({
   info: {
     id: 'ses_opencode_runner',
     directory: '/home/runner/_work/agent-lcars/agent-lcars',
-    title: 'Run OpenCode in queue mode',
-    model: { providerID: 'homelab', id: 'default' },
     time: { created: 1787052570554, updated: 1787052721363 },
-    tokens: {
-      input: 20,
-      output: 7,
-      cache: { read: 40, write: 0 },
-    },
   },
   messages: [
     {
       info: {
-        id: 'msg_user',
         role: 'user',
         time: { created: 1787052570573 },
       },
-      parts: [{ type: 'text', text: 'go' }],
+      parts: [],
+    },
+    {
+      info: {
+        role: 'assistant',
+        providerID: 'homelab',
+        modelID: 'default',
+        time: { created: 1787052570596, completed: 1787052721352 },
+        tokens: {
+          input: 20,
+          output: 7,
+          cache: { read: 40, write: 0 },
+        },
+      },
+      parts: [],
     },
   ],
 });
@@ -388,6 +394,78 @@ describe('startSidecar', () => {
         },
       }),
     ]);
+  });
+
+  it('retries OpenCode capture when the CLI becomes available after the initial tick', async () => {
+    const { store } = createFakeStore();
+    let captureCalls = 0;
+    const daemon = startSidecar({
+      config: baseConfig(),
+      store,
+      autoStart: false,
+      captureOpenCodeExports: () => {
+        captureCalls++;
+        return captureCalls === 1
+          ? {
+              status: 'cli-unavailable',
+              selected: 0,
+              exported: 0,
+              failed: 0,
+            }
+          : { status: 'ok', selected: 0, exported: 0, failed: 0 };
+      },
+      discover: () => [],
+    });
+
+    await daemon.tick();
+    await daemon.tick();
+
+    expect(captureCalls).toBe(2);
+  });
+
+  it('keeps OpenCode capture and discovery single-flight across overlapping ticks', async () => {
+    const { store } = createFakeStore();
+    let releaseCapture: (() => void) | undefined;
+    let reportCaptureStarted: (() => void) | undefined;
+    const captureStarted = new Promise<void>((resolve) => {
+      reportCaptureStarted = resolve;
+    });
+    const captureBlocked = new Promise<void>((resolve) => {
+      releaseCapture = resolve;
+    });
+    let captureCalls = 0;
+    let discoverCalls = 0;
+    const daemon = startSidecar({
+      config: baseConfig(),
+      store,
+      autoStart: false,
+      captureOpenCodeExports: async () => {
+        captureCalls++;
+        reportCaptureStarted?.();
+        await captureBlocked;
+        return { status: 'ok', selected: 0, exported: 0, failed: 0 };
+      },
+      discover: () => {
+        discoverCalls++;
+        return [];
+      },
+    });
+
+    const firstTick = daemon.tick();
+    await captureStarted;
+    const overlappingTick = daemon.tick();
+
+    expect(overlappingTick).toBe(firstTick);
+    expect(captureCalls).toBe(1);
+    expect(discoverCalls).toBe(0);
+
+    releaseCapture?.();
+    await Promise.all([firstTick, overlappingTick]);
+    expect(discoverCalls).toBe(3);
+
+    await daemon.tick();
+    expect(captureCalls).toBe(2);
+    expect(discoverCalls).toBe(6);
   });
 
   it('does not start the daemon interval when autoStart is false', async () => {

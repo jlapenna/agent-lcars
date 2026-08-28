@@ -239,6 +239,7 @@ export class WatcherDaemon {
     SessionStatusAnnotationV1
   > = new Map();
   private intervalHandle?: ReturnType<typeof setInterval>;
+  private tickInFlight?: Promise<void>;
 
   constructor(private readonly options: WatcherDaemonOptions) {}
 
@@ -268,7 +269,24 @@ export class WatcherDaemon {
     }
   }
 
-  async tick(): Promise<void> {
+  /** Coalesces overlapping interval/manual triggers onto the active tick.
+   * OpenCode capture can legitimately take longer than one heartbeat, and
+   * every tick mutates shared discovery caches, so running a second pass in
+   * parallel would race both its export-directory pruning and this daemon's
+   * state. The next interval after completion starts a fresh pass. */
+  tick(): Promise<void> {
+    if (this.tickInFlight) return this.tickInFlight;
+
+    const inFlight = this.runTick();
+    this.tickInFlight = inFlight;
+    const clear = () => {
+      if (this.tickInFlight === inFlight) this.tickInFlight = undefined;
+    };
+    void inFlight.then(clear, clear);
+    return inFlight;
+  }
+
+  private async runTick(): Promise<void> {
     const now = (this.options.now ?? (() => new Date().toISOString()))();
     // Persist proof that the watcher is healthy without writing every 10s.
     // A five-minute bucket gives the console two missed buckets of tolerance.

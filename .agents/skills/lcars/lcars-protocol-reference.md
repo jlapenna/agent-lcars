@@ -138,9 +138,15 @@ as identical for both:
 - **OpenCode:** no live-resume command exists, but the runner sidecar uses
   OpenCode's supported `session list`/sanitized `export` CLI surface to
   materialize a bounded set of exact-workspace sessions from its SQLite-backed
-  store. The OpenCode adapter ships summary telemetry and finalize archives each
-  export under `runs/<run-id>/opencode/<session-id>.jsonl`. The archive is
-  durable but not timeline-renderable in the console (`renderable: false`).
+  store. Capture uses pure mode and archives only a strict metadata allowlist,
+  never message bodies or tool input/output. The OpenCode adapter ships summary
+  telemetry and finalize archives each export under
+  `runs/<run-id>/opencode/<session-id>.jsonl`. The archive is durable but not
+  timeline-renderable in the console (`renderable: false`). Privileged capture
+  accepts only a root-owned runner-image CLI; today's action-installed,
+  runner-writable CLI fails closed, so GitHub live/GCS capture remains deferred
+  until the image provides that binary. The separate post-agent trajectory
+  artifact does not inherit the telemetry writer credential.
 
 **Why this section is written so defensively:** it used to say the script did
 not exist in this repo at all, and stayed that way long after it landed. Every

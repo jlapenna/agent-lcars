@@ -15,6 +15,13 @@ interface CommandOptions {
   maxBytes: number;
 }
 
+interface CaptureLimitsOverride {
+  /** Test seam; production always uses OPENCODE_CAPTURE_LIMITS.timeoutMs. */
+  timeoutMs?: number;
+  /** Test seam; production always uses OPENCODE_CAPTURE_LIMITS.exportBytes. */
+  exportBytes?: number;
+}
+
 export type RunOpenCode = (
   args: string[],
   options: CommandOptions,
@@ -31,6 +38,10 @@ export interface CaptureOpenCodeExportsOptions {
   exportsDir: string;
   runOpenCode?: RunOpenCode;
   runOpenCodeToFile?: RunOpenCodeToFile;
+  /** Pre-resolved executable test seam. Production resolves only trusted
+   * installation locations and fails closed when none passes validation. */
+  opencodeExecutable?: string;
+  limits?: CaptureLimitsOverride;
 }
 
 export interface CaptureOpenCodeExportsResult {
@@ -46,12 +57,103 @@ interface ListedSession {
   updated: number;
 }
 
+const CHILD_ENV_ALLOWLIST = [
+  'HOME',
+  'XDG_DATA_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+] as const;
+
+function commandUnavailable(message: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(message), { code: 'ENOENT' });
+}
+
+function trustedNode(
+  candidate: string,
+  expectedUid: number,
+  type: 'file' | 'directory',
+): boolean {
+  try {
+    const stat = fs.lstatSync(candidate);
+    return (
+      !stat.isSymbolicLink() &&
+      (type === 'file' ? stat.isFile() : stat.isDirectory()) &&
+      stat.uid === expectedUid &&
+      (stat.mode & 0o022) === 0 &&
+      (type === 'directory' || (stat.mode & 0o111) !== 0)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Checks the executable plus its two install directories as one boundary. */
+export function isTrustedOpenCodePath(
+  candidate: string,
+  expectedUid = 0,
+): boolean {
+  const binDir = path.dirname(candidate);
+  const installDir = path.dirname(binDir);
+  return (
+    trustedNode(installDir, expectedUid, 'directory') &&
+    trustedNode(binDir, expectedUid, 'directory') &&
+    trustedNode(candidate, expectedUid, 'file')
+  );
+}
+
+/**
+ * Privileged telemetry capture resolves only the root-owned runner-image
+ * location. The action-installed `$HOME/.opencode/bin/opencode` is writable by
+ * the same uid as the agent and is therefore intentionally never eligible,
+ * even with `--pure` and a scrubbed child environment. PATH is never consulted.
+ * Until the runner image owns this executable, capture fails closed and the
+ * separate non-privileged trajectory artifact remains the available archive.
+ */
+export function resolveTrustedOpenCodeExecutable(
+  candidate = '/usr/local/bin/opencode',
+): string | undefined {
+  return isTrustedOpenCodePath(candidate) ? candidate : undefined;
+}
+
+function openCodeChildEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+function killCommand(child: {
+  pid?: number;
+  kill(signal?: NodeJS.Signals | number): boolean;
+}) {
+  if (child.pid !== undefined) {
+    try {
+      // Commands run in their own process group so plugin/subprocess bugs
+      // cannot retain stdout or outlive the timeout after the parent dies.
+      process.kill(-child.pid, 'SIGKILL');
+      return;
+    } catch {
+      // Fall back to the direct child if it exited between the timer and kill.
+    }
+  }
+  child.kill('SIGKILL');
+}
+
 function defaultRunOpenCode(
+  executable: string,
   args: string[],
   options: CommandOptions,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('opencode', args, {
+    const child = spawn(executable, args, {
+      detached: true,
+      env: openCodeChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const chunks: Buffer[] = [];
@@ -61,7 +163,7 @@ function defaultRunOpenCode(
       failure = Object.assign(new Error('OpenCode command timed out'), {
         code: 'ETIMEDOUT',
       });
-      child.kill('SIGKILL');
+      killCommand(child);
     }, options.timeout);
 
     child.stdout.on('data', (chunk: Buffer) => {
@@ -71,7 +173,7 @@ function defaultRunOpenCode(
           new Error(`OpenCode output exceeded ${options.maxBytes} bytes`),
           { code: 'OUTPUT_LIMIT' },
         );
-        child.kill('SIGKILL');
+        killCommand(child);
         return;
       }
       chunks.push(chunk);
@@ -98,15 +200,39 @@ function defaultRunOpenCode(
 }
 
 function defaultRunOpenCodeToFile(
+  executable: string,
   args: string[],
   outputPath: string,
   options: CommandOptions,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    const fileBlocks = Math.floor(options.maxBytes / 1024);
+    if (fileBlocks < 1) {
+      reject(new Error('OpenCode file bound must be at least 1024 bytes'));
+      return;
+    }
     const output = fs.openSync(outputPath, 'wx', 0o600);
-    const child = spawn('opencode', args, {
-      stdio: ['ignore', output, 'ignore'],
-    });
+    // OpenCode/Bun truncates large exports when stdout is a pipe, so capture
+    // must remain file-backed. RLIMIT_FSIZE is the hard kernel-enforced bound:
+    // unlike stat polling, a fast writer cannot overshoot it. The executable
+    // and all arguments are passed after the shell program and expanded only
+    // through "$@"; no session-controlled value is interpolated as shell code.
+    const child = spawn(
+      '/bin/bash',
+      [
+        '-c',
+        'ulimit -f "$1"; shift; exec "$@"',
+        'opencode-bounded-export',
+        String(fileBlocks),
+        executable,
+        ...args,
+      ],
+      {
+        detached: true,
+        env: openCodeChildEnv(),
+        stdio: ['ignore', output, 'ignore'],
+      },
+    );
     fs.closeSync(output);
     let failure: Error | undefined;
     let settled = false;
@@ -114,7 +240,6 @@ function defaultRunOpenCodeToFile(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      clearInterval(sizeCheck);
       if (error) reject(error);
       else resolve();
     };
@@ -122,22 +247,8 @@ function defaultRunOpenCodeToFile(
       failure = Object.assign(new Error('OpenCode command timed out'), {
         code: 'ETIMEDOUT',
       });
-      child.kill('SIGKILL');
+      killCommand(child);
     }, options.timeout);
-    const sizeCheck = setInterval(() => {
-      try {
-        if (fs.statSync(outputPath).size > options.maxBytes) {
-          failure = Object.assign(
-            new Error(`OpenCode output exceeded ${options.maxBytes} bytes`),
-            { code: 'OUTPUT_LIMIT' },
-          );
-          child.kill('SIGKILL');
-        }
-      } catch {
-        // The close/error path reports a missing output more usefully.
-      }
-    }, 25);
-
     child.once('error', (error) => finish(error));
     child.once('close', (code, signal) => {
       if (failure) return finish(failure);
@@ -218,6 +329,139 @@ function parseSessionList(
     .slice(0, SESSION_LIMIT);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function boundedString(value: unknown, maxLength = 256): string | undefined {
+  return typeof value === 'string' && value.length > 0
+    ? value.slice(0, maxLength)
+    : undefined;
+}
+
+function allowlistedTime(
+  value: unknown,
+  fields: readonly string[],
+): Record<string, number> | undefined {
+  const source = asRecord(value);
+  if (!source) return undefined;
+  const result: Record<string, number> = {};
+  for (const field of fields) {
+    const number = finiteNumber(source[field]);
+    if (number !== undefined) result[field] = number;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function allowlistedTokens(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const source = asRecord(value);
+  if (!source) return undefined;
+  const result: Record<string, unknown> = {};
+  for (const field of ['input', 'output', 'reasoning'] as const) {
+    const number = finiteNumber(source[field]);
+    if (number !== undefined) result[field] = Math.max(0, number);
+  }
+  const cacheSource = asRecord(source['cache']);
+  const cache: Record<string, number> = {};
+  for (const field of ['read', 'write'] as const) {
+    const number = finiteNumber(cacheSource?.[field]);
+    if (number !== undefined) cache[field] = Math.max(0, number);
+  }
+  if (Object.keys(cache).length > 0) result['cache'] = cache;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function allowlistedToolPart(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const part = asRecord(value);
+  if (!part || part['type'] !== 'tool') return undefined;
+  const tool = boundedString(part['tool'], 128);
+  if (!tool) return undefined;
+  const state = asRecord(part['state']);
+  const time = allowlistedTime(state?.['time'], ['start', 'end']);
+  return {
+    type: 'tool',
+    tool,
+    ...(time && { state: { time } }),
+  };
+}
+
+function allowlistedMessage(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const message = asRecord(value);
+  const sourceInfo = asRecord(message?.['info']);
+  if (!message || !sourceInfo) return undefined;
+
+  const role =
+    sourceInfo['role'] === 'user' || sourceInfo['role'] === 'assistant'
+      ? sourceInfo['role']
+      : undefined;
+  const time = allowlistedTime(sourceInfo['time'], ['created', 'completed']);
+  const providerID = boundedString(sourceInfo['providerID']);
+  const modelID = boundedString(sourceInfo['modelID']);
+  const tokens = allowlistedTokens(sourceInfo['tokens']);
+  const cost = finiteNumber(sourceInfo['cost']);
+  const info: Record<string, unknown> = {
+    ...(role && { role }),
+    ...(time && { time }),
+    ...(providerID && { providerID }),
+    ...(modelID && { modelID }),
+    ...(tokens && { tokens }),
+    ...(cost !== undefined && { cost }),
+  };
+  const parts = Array.isArray(message['parts'])
+    ? message['parts'].flatMap((part) => {
+        const allowlisted = allowlistedToolPart(part);
+        return allowlisted ? [allowlisted] : [];
+      })
+    : [];
+  return { info, parts };
+}
+
+/**
+ * Converts a sanitized CLI export into the strict metadata-only archive
+ * contract consumed by the adapter. This is an allowlist, not a redaction
+ * denylist: arbitrary top-level fields and nested metadata/share/permission,
+ * paths, message text, tool input, and tool output cannot enter the JSONL even
+ * if a future OpenCode sanitizer leaves them present.
+ */
+function materializeSafeExport(
+  exportRecord: Record<string, unknown>,
+  session: ListedSession,
+): Record<string, unknown> {
+  const rawInfo = asRecord(exportRecord['info']);
+  if (rawInfo?.['id'] !== session.id) {
+    throw new Error('OpenCode export session id did not match the request');
+  }
+  const time = allowlistedTime(rawInfo['time'], ['created', 'updated']);
+  const messages = Array.isArray(exportRecord['messages'])
+    ? exportRecord['messages'].flatMap((message) => {
+        const allowlisted = allowlistedMessage(message);
+        return allowlisted ? [allowlisted] : [];
+      })
+    : [];
+  return {
+    info: {
+      id: session.id,
+      directory: session.directory,
+      ...(time && { time }),
+    },
+    messages,
+  };
+}
+
 function isCommandUnavailable(error: unknown): boolean {
   return (
     !!error &&
@@ -237,14 +481,39 @@ function isCommandUnavailable(error: unknown): boolean {
 export async function captureOpenCodeExports(
   options: CaptureOpenCodeExportsOptions,
 ): Promise<CaptureOpenCodeExportsResult> {
-  const runOpenCode = options.runOpenCode ?? defaultRunOpenCode;
+  let resolvedExecutable = options.opencodeExecutable;
+  const executable = (): string => {
+    resolvedExecutable ??= resolveTrustedOpenCodeExecutable();
+    if (!resolvedExecutable) {
+      throw commandUnavailable(
+        'No trusted OpenCode executable was available; refusing PATH execution',
+      );
+    }
+    return resolvedExecutable;
+  };
+  const runOpenCode =
+    options.runOpenCode ??
+    ((args, commandOptions) =>
+      defaultRunOpenCode(executable(), args, commandOptions));
   const runOpenCodeToFile =
-    options.runOpenCodeToFile ?? defaultRunOpenCodeToFile;
+    options.runOpenCodeToFile ??
+    ((args, outputPath, commandOptions) =>
+      defaultRunOpenCodeToFile(executable(), args, outputPath, commandOptions));
+  const commandTimeoutMs = options.limits?.timeoutMs ?? COMMAND_TIMEOUT_MS;
+  const exportMaxBytes = options.limits?.exportBytes ?? EXPORT_MAX_BYTES;
   let listOutput: string;
   try {
     listOutput = await runOpenCode(
-      ['session', 'list', '--format', 'json', '-n', String(LIST_LIMIT)],
-      { timeout: COMMAND_TIMEOUT_MS, maxBytes: LIST_MAX_BYTES },
+      [
+        '--pure',
+        'session',
+        'list',
+        '--format',
+        'json',
+        '-n',
+        String(LIST_LIMIT),
+      ],
+      { timeout: commandTimeoutMs, maxBytes: LIST_MAX_BYTES },
     );
   } catch (error) {
     if (isCommandUnavailable(error)) {
@@ -280,11 +549,11 @@ export async function captureOpenCodeExports(
     const normalizedFile = `${destination}.tmp-${process.pid}-${Date.now()}`;
     try {
       await runOpenCodeToFile(
-        ['export', session.id, '--sanitize'],
+        ['--pure', 'export', session.id, '--sanitize'],
         captureFile,
         {
-          timeout: COMMAND_TIMEOUT_MS,
-          maxBytes: EXPORT_MAX_BYTES,
+          timeout: commandTimeoutMs,
+          maxBytes: exportMaxBytes,
         },
       );
       const exportedJson = fs.readFileSync(captureFile, 'utf8');
@@ -293,27 +562,7 @@ export async function captureOpenCodeExports(
         throw new Error('OpenCode export is not an object');
       }
       const exportRecord = parsed as Record<string, unknown>;
-      const rawInfo =
-        exportRecord['info'] && typeof exportRecord['info'] === 'object'
-          ? (exportRecord['info'] as Record<string, unknown>)
-          : {};
-      if (rawInfo['id'] !== session.id) {
-        throw new Error('OpenCode export session id did not match the request');
-      }
-      // `--sanitize` deliberately redacts session metadata and message/tool
-      // bodies. The bounded list response was what selected this exact
-      // workspace, so reattach only that known directory for summary
-      // attribution. In particular, do not reattach the potentially
-      // sensitive title from the list response.
-      const normalizedInfo: Record<string, unknown> = {
-        ...rawInfo,
-        directory: session.directory,
-      };
-      delete normalizedInfo['title'];
-      const normalized = {
-        ...exportRecord,
-        info: normalizedInfo,
-      };
+      const normalized = materializeSafeExport(exportRecord, session);
       const compact = `${JSON.stringify(normalized)}\n`;
       fs.writeFileSync(normalizedFile, compact, {
         encoding: 'utf8',

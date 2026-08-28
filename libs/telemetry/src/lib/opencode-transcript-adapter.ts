@@ -1,4 +1,3 @@
-import { findDeliverables, isDeliverableCommand } from './deliverables';
 import type { TranscriptAdapter } from './transcript-adapter-types';
 import { SessionSummary, TokenUsage } from './types';
 import {
@@ -92,8 +91,6 @@ export const opencodeAdapter: TranscriptAdapter = {
     let messageProviderId: string | undefined;
     const toolCallCounts: Record<string, number> = {};
     let lastToolCall: SessionSummary['lastToolCall'];
-    const prNumbers = new Set<number>();
-    const commitShas = new Set<string>();
 
     for (const messageValue of messages) {
       const message = asRecord(messageValue);
@@ -147,13 +144,6 @@ export const opencodeAdapter: TranscriptAdapter = {
         ) {
           lastToolCall = { name, timestamp: toolTimestamp };
         }
-
-        const input = asRecord(state?.['input']);
-        const command = asString(input?.['command']);
-        if (!command || !isDeliverableCommand(command)) continue;
-        const found = findDeliverables(state?.['output']);
-        for (const number of found.prNumbers) prNumbers.add(number);
-        for (const sha of found.commitShas) commitShas.add(sha);
       }
     }
 
@@ -187,8 +177,11 @@ export const opencodeAdapter: TranscriptAdapter = {
           titleSource: 'generated' as const,
         }),
         deliverables: {
-          prNumbers: Array.from(prNumbers),
-          commitShas: Array.from(commitShas),
+          // Production exports are sanitized and their strict materializer
+          // intentionally drops tool commands/output. No safe deliverable
+          // signal exists in this format, so never infer one from raw text.
+          prNumbers: [],
+          commitShas: [],
         },
         ...(infoCost !== undefined
           ? { totalCostUsd: infoCost }

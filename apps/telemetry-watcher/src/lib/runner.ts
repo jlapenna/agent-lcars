@@ -74,19 +74,16 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   const { config, store } = options;
   const captureOpenCodeExports =
     options.captureOpenCodeExports ?? defaultCaptureOpenCodeExports;
-  let openCodeCaptureUnavailable = false;
   const beforeDiscover =
     // Existing tests inject virtual transcript discovery and must not reach
     // the workstation's real OpenCode store. A capture injection opts back in.
     options.discover && !options.captureOpenCodeExports
       ? undefined
       : async () => {
-          if (openCodeCaptureUnavailable) return;
-          const result = await captureOpenCodeExports({
+          await captureOpenCodeExports({
             workspaceDir: config.opencodeWorkspaceDir,
             exportsDir: config.opencodeExportsDir,
           });
-          openCodeCaptureUnavailable = result.status === 'cli-unavailable';
         };
 
   const daemon = new WatcherDaemon({

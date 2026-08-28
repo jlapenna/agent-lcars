@@ -20,8 +20,6 @@ describe('opencodeAdapter', () => {
         agent: 'opencode',
         cwd: '/home/runner/_work/agent-lcars/agent-lcars',
         model: 'homelab/default',
-        title: 'Add OpenCode telemetry',
-        titleSource: 'generated',
         turns: 1,
         toolCallCounts: { bash: 1 },
         tokens: {
@@ -36,8 +34,8 @@ describe('opencodeAdapter', () => {
         },
         totalCostUsd: 0.25,
         deliverables: {
-          prNumbers: [1590],
-          commitShas: ['abcdef1234567'],
+          prNumbers: [],
+          commitShas: [],
         },
       }),
     ]);

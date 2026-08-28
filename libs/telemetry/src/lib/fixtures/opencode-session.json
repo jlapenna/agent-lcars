@@ -2,8 +2,6 @@
   "info": {
     "id": "ses_opencode_1",
     "directory": "/home/runner/_work/agent-lcars/agent-lcars",
-    "title": "Add OpenCode telemetry",
-    "agent": "build",
     "time": { "created": 1787052570554, "updated": 1787052721363 }
   },
   "messages": [
@@ -14,7 +12,7 @@
         "role": "user",
         "time": { "created": 1787052570573 }
       },
-      "parts": [{ "type": "text", "text": "Add telemetry" }]
+      "parts": []
     },
     {
       "info": {
@@ -40,9 +38,6 @@
           "type": "tool",
           "tool": "bash",
           "state": {
-            "status": "completed",
-            "input": { "command": "git commit -m telemetry && gh pr create" },
-            "output": "[feat/opencode abcdef1234567] telemetry\nhttps://github.com/jlapenna/agent-lcars/pull/1590",
             "time": { "start": 1787052695291, "end": 1787052702281 }
           }
         }
