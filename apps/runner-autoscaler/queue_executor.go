@@ -38,7 +38,6 @@ type directRunnerLaunch struct {
 // credential or Docker host (see queue_executor_test.go).
 type queueExecutorConfig struct {
 	consoleURL string
-	pipelines  []string
 	runnerName string
 	httpClient *http.Client
 	// idToken mints a Google ID token for the console's work audience.
@@ -110,10 +109,7 @@ func pollOnce(cfg queueExecutorConfig) error {
 	if err != nil {
 		return fmt.Errorf("minting claim id token: %w", err)
 	}
-	body, err := json.Marshal(map[string]any{
-		"runner":    cfg.runnerName,
-		"pipelines": cfg.pipelines,
-	})
+	body, err := json.Marshal(map[string]string{"runner": cfg.runnerName})
 	if err != nil {
 		return err
 	}
@@ -174,8 +170,8 @@ func pollOnce(cfg queueExecutorConfig) error {
 // service-account key can self-mint an ID token for any audience from its
 // own private key alone.
 //
-// Built once, at orchestrator startup (see runOrchestrator's
-// LCARS_QUEUE_POLL block), not per poll: idtoken.NewTokenSource reads and
+// Built once, at orchestrator startup (see runOrchestrator's queue-executor
+// block), not per poll: idtoken.NewTokenSource reads and
 // validates the credentials file on construction, and that file never
 // changes at runtime, so rebuilding it every 15s tick was repeated,
 // unnecessary I/O. The returned source caches and refreshes the minted
@@ -225,46 +221,25 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 	}
 }
 
-// parseQueuePipelines parses LCARS_QUEUE_PIPELINES's comma-separated value:
-// each entry is trimmed and empty entries are dropped, so an unset or
-// blank/whitespace-only value yields an empty slice (not strings.Split's own
-// [""], which would otherwise become a literal, un-matchable pipeline name
-// in the claim request body), and stray whitespace or a trailing comma
-// around a real pipeline name doesn't silently turn it into a different,
-// never-configured pipeline.
-func parseQueuePipelines(raw string) []string {
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
+// queueExecutorStartupDecision starts the durable poller only when every
+// deployment-owned connection and credential path it needs is present. Which
+// pipelines it may claim is intentionally absent here: the authenticated
+// work.executor grant is the single server-side capability source.
+func queueExecutorStartupDecision(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath string) (start bool, reason string) {
+	for _, required := range []struct {
+		name  string
+		value string
+	}{
+		{"LCARS_CONSOLE_URL", consoleURL},
+		{"GOOGLE_APPLICATION_CREDENTIALS", credentialsFile},
+		{"LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", writerKeyPath},
+		{"LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", claudeTokenPath},
+	} {
+		if strings.TrimSpace(required.value) == "" {
+			return false, required.name + " is required for the queue executor"
 		}
-		out = append(out, p)
 	}
-	return out
-}
-
-// queueExecutorStartupDecision resolves LCARS_QUEUE_POLL/LCARS_QUEUE_PIPELINES
-// into whether runOrchestrator should start the queue-executor poller at
-// all -- pulled out of runOrchestrator's own inline logic so this exact
-// misconfiguration is directly testable without a full runOrchestrator
-// fixture (config, Docker hosts, GitHub credentials). LCARS_QUEUE_POLL=1
-// with nothing (or only blank/whitespace entries) in LCARS_QUEUE_PIPELINES
-// is treated as a misconfiguration -- not a silently-inert poller -- because
-// a poller with no pipelines to claim for would only ever have wasted the
-// ID-token-source setup and every 15s tick for nothing; reason is empty
-// exactly when the caller should log nothing. Production always resolves
-// this from os.Getenv; tests call it directly with fixed inputs.
-func queueExecutorStartupDecision(pollRaw, pipelinesRaw string) (pipelines []string, start bool, reason string) {
-	if !strings.EqualFold(strings.TrimSpace(pollRaw), "1") {
-		return nil, false, ""
-	}
-	pipelines = parseQueuePipelines(pipelinesRaw)
-	if len(pipelines) == 0 {
-		return nil, false, "LCARS_QUEUE_POLL=1 but LCARS_QUEUE_PIPELINES is empty"
-	}
-	return pipelines, true, ""
+	return true, ""
 }
 
 // queueExecutorAudience resolves the Google ID token audience the queue
@@ -331,7 +306,7 @@ var directRunnerHostCursor atomic.Uint64
 // launchDirectRunner starts one direct-mode runner container for a
 // successful claim, on a host picked round-robin from resolved's configured
 // Docker hosts. It is the queueExecutorConfig.launch implementation wired
-// in production (see runOrchestrator's LCARS_QUEUE_POLL block); pollOnce's
+// in production (see runOrchestrator's queue-executor block); pollOnce's
 // own tests inject a stub launch instead, so this function's coverage is the
 // docker-facing tests in queue_executor_test.go that exercise
 // launchDirectRunnerOnHost (and this function's round-robin) directly

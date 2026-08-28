@@ -80,15 +80,16 @@ of how it authenticated.
 | grants                   | `AGENT_LCARS_WORK_GRANTS`        | current operators: `claude`, `codex`, `opencode`; `svc:telemetry-writer` executor: `claude` only |
 | max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                              |
 | Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                               |
-| queue-executor pipelines | `AGENT_LCARS_QUEUE_PIPELINES`    | unset (default `[]`; every pipeline dispatches through GitHub Actions)                           |
+| queue-executor pipelines | `AGENT_LCARS_QUEUE_PIPELINES`    | `["claude"]` (Claude direct queue executor; Codex and OpenCode use GitHub Actions)               |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
-operate the API), not a default principal. `AGENT_LCARS_QUEUE_PIPELINES` follows
-the same pattern: it decides the executor per pipeline at request time
+operate the API), not a default principal. `AGENT_LCARS_QUEUE_PIPELINES`
+decides the executor per pipeline at request time
 (`work-mint.ts`'s `executorFor`, called from inside `mintItem` so both
 `items.create` and the schedule tick honour it), never the item's own spec,
-and an unset value keeps the queue executor entirely off.
+and this deployment routes native Claude work to the queue executor. Codex
+and OpenCode retain the GitHub Actions executor.
 
 The autoscaler's own `work.executor` claim identity needs its own grant row
 in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
@@ -108,9 +109,11 @@ every `/items`/`/schedules` route (`work-router.test.ts`/
 `schedule-router.test.ts`'s "…-only principal" tests), and the reverse
 holds too. `pipelines` here gates which pipelines this claim identity may
 claim, the same field an operator's grant uses to gate `create`/
-`redispatch` -- it is intersected against `POST /runs/claim`'s own
-`pipelines` input before the store is ever touched
-(`runs-router.ts`'s `claim` handler).
+`redispatch`. `POST /runs/claim` derives its selection from that grant
+alone: the optional legacy `pipelines` request field is accepted only while
+older runner images roll forward and is ignored. Remove that compatibility
+field after the queue-executor image and Homelab deployment use runner-only
+requests (`runs-router.ts`'s `claim` handler).
 
 The current operator grants list all three supported pipelines (`claude`,
 `codex`, `opencode`), including the maintainer, repository-bounded
@@ -122,39 +125,19 @@ solely governed by `AGENT_LCARS_QUEUE_PIPELINES`. The telemetry-writer
 identity remains a Claude-only `work.executor`, a distinct role from an
 operator.
 
-#### Queue executor live-proof (maintainer-gated)
+#### Queue executor routing
 
-Every task up to this one lands and is verifiable with
-`AGENT_LCARS_QUEUE_PIPELINES` at its default `[]` -- production stays on
-`github-actions` for every pipeline until a maintainer deliberately opts one
-in. Turning it on for real needs four steps outside this repo's own CI,
-none of them a code change:
+Claude is a supported queue-executor pipeline. The App Hosting configuration
+routes native Claude work to the queue, and the autoscaler's matching
+console URL and credential configuration claims and runs it directly. The
+durable credential mounts and runner image are documented in
+`apps/runner-autoscaler/README.md`. This repository owns the server routing
+and executor grant; Homelab owns its autoscaler deployment.
 
-1. **Console**: set `AGENT_LCARS_QUEUE_PIPELINES='["claude"]'` in
-   `apps/console/apphosting.yaml`'s env block → triggers a rollout.
-2. **Grants**: add the `svc:telemetry-writer` row above to
-   `AGENT_LCARS_WORK_GRANTS` (same file, same rollout).
-3. **Autoscaler** (homelab repo, its own deploy path -- not owned by this
-   repo): set `LCARS_QUEUE_POLL=1`,
-   `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH`, and
-   `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` (see
-   `apps/runner-autoscaler/README.md`'s "Queue executor" section for the
-   full env-var list). The bind mount and in-container read-and-export
-   for `CLAUDE_CODE_OAUTH_TOKEN` are wired code (see that same README's
-   "Delivering the claude CLI's own credential"); what remains a one-time
-   manual action is placing the secret's current value into the homelab
-   encrypted secret store and staging it as a file at whatever host path
-   `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` names.
-4. **Runner image**: rebuild and publish it (bakes the direct-runner
-   bootstrap — see `AGENTS.md`'s image-build integration point) so the
-   image the autoscaler launches actually has `RUNNER_MODE=direct` support.
-
-With all four done: create one item via `work-create.yml`, watch the
-autoscaler's logs claim it and the direct runner produce a PR, `get` →
-`done`. Record the run in `docs/native-work-smoke-runbook.md`, then set
-`AGENT_LCARS_QUEUE_PIPELINES` back to `[]` (and `LCARS_QUEUE_POLL` back to
-unset) so production reverts to `github-actions` until deliberately opted
-in again.
+Codex and OpenCode are admitted by the same operator grants but remain on the
+GitHub Actions executor because the direct runner currently supports Claude
+only. Routing is chosen by the server configuration, not by a caller or an
+item specification.
 
 ### 4. Workflows — repo variables
 

@@ -73,17 +73,16 @@ live after 30 seconds without an update.
 
 ## Queue executor (direct-mode runners)
 
-Native work items (native-work-items sub-project 4): an additional,
-independently-gated goroutine that polls the console's `POST
+Native work items (native-work-items sub-project 4): an additional goroutine
+that polls the console's `POST
 /api/work/v1/runs/claim` and, on a successful claim, launches one direct-mode
 runner container -- entirely outside the GitHub scale-set state machine
-above (not GitHub-registered, not tracked by any `Scaler`, one-shot). Off by
-default; set these only on a homelab deployment that has opted a pipeline
-into `AGENT_LCARS_QUEUE_PIPELINES` on the console side:
+above (not GitHub-registered, not tracked by any `Scaler`, one-shot). The
+production Claude route is selected by
+`AGENT_LCARS_QUEUE_PIPELINES='["claude"]'` on the console side; its matching
+autoscaler configuration is:
 
 ```sh
-LCARS_QUEUE_POLL=1
-LCARS_QUEUE_PIPELINES=claude
 LCARS_CONSOLE_URL=https://lcars.jlapenna.net
 LCARS_WORK_AUDIENCE=agent-lcars-work
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
@@ -91,6 +90,11 @@ LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
 LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH=/secrets/claude-code-oauth-token
 LCARS_QUEUE_MAX_CONCURRENT=1
 ```
+
+With those durable console and credential settings present, the poller starts
+at daemon startup and sends a claim body containing only its runner identity.
+The server derives claimable pipelines from the authenticated `work.executor`
+grant; no autoscaler-local pipeline allowlist exists.
 
 The console claim call is authenticated with a Google ID token minted
 directly from the telemetry-writer service-account key (self-signed, no
@@ -119,7 +123,7 @@ bind-mounted this file (read-only, at `/run/secrets/telemetry-writer.json`,
 the fixed path `direct-runner.sh` reads) by the Docker daemon that actually
 creates it, which may be a remote fleet host over SSH -- so it cannot be
 inferred from a path meaningful only inside the autoscaler's own container.
-Required whenever `LCARS_QUEUE_POLL=1`; a claim that cannot resolve it fails
+Required for queue-executor startup; a claim that cannot resolve it fails
 loudly rather than guessing.
 
 `LCARS_QUEUE_MAX_CONCURRENT` (default `1`) caps how many direct-mode
@@ -186,7 +190,7 @@ this script reads and exports at runtime is not.
 host** -- the same "cannot be inferred, so it is required and fails loudly"
 reasoning as `LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH` immediately above,
 and every pipeline the queue executor launches today is `claude`, so it is
-unconditionally required whenever `LCARS_QUEUE_POLL=1`.
+unconditionally required whenever the queue executor runs.
 
 **Placing the secret's value on the Docker host is still a one-time,
 maintainer-gated action this repo's own code cannot perform**: a maintainer
@@ -195,9 +199,9 @@ encrypted secret store (`secrets-cli` skill) and stages it as a file at
 whatever path `LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH` names, mode `0600`, same
 as `telemetry-writer.json`. Not a Terraform change, not a new IAM grant, and
 not something any workflow in this repo performs -- but the bind mount and
-the in-container read-and-export it feeds are wired code, not an
-outstanding gap. See `docs/deployment-boundary.md`'s "Queue executor
-live-proof" section for the full maintainer checklist this is one step of.
+the in-container read-and-export it feeds are wired code. See
+`docs/deployment-boundary.md`'s "Queue executor routing" section for the
+ownership boundary.
 
 ## Host telemetry timeout
 
@@ -468,6 +472,6 @@ configuration running.
 
 The queue executor (see "Queue executor" above) is process-lifetime too, for
 the same reason, though it is not one of `validateReloadCompatibility`'s
-rejections: `LCARS_QUEUE_POLL` is not part of `orchestrator.yml` at all, so
-there is nothing for a reload to reject -- the poller goroutine (if started)
-simply never learns a reload happened.
+rejections: its console and credential environment is not part of
+`orchestrator.yml`, so there is nothing for a reload to reject -- the poller
+goroutine simply never learns a reload happened.

@@ -304,16 +304,18 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('does not override the disabled queue-executor default after the live proof', async () => {
+  it('routes only Claude native work through the durable queue executor', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
       env?: Array<{ variable?: string; value?: string }>;
     };
 
-    expect(config.env?.map(({ variable }) => variable)).not.toContain(
-      'AGENT_LCARS_QUEUE_PIPELINES',
-    );
+    const queuePipelines = config.env?.find(
+      ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
+    )?.value;
+
+    expect(JSON.parse(queuePipelines ?? 'null')).toEqual(['claude']);
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {
