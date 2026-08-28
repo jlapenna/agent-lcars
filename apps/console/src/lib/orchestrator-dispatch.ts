@@ -705,12 +705,30 @@ async function handleReportOutcome(
   }
 
   if (outcome.needsHumanLabel) {
-    await addNeedsHumanLabelBestEffort(
-      fetchImpl,
-      tokens,
-      target,
-      githubApiBaseUrl(deps),
-    );
+    // An older parked/failed outcome can be delayed behind a later run's
+    // successful report (for example while its comment delivery retries).
+    // Do not reintroduce the stale projection after that later run has
+    // already resolved the human need.
+    if (!(await hasLaterSuccessfulNonParkRun(store, run))) {
+      await addNeedsHumanLabelBestEffort(
+        fetchImpl,
+        tokens,
+        target,
+        githubApiBaseUrl(deps),
+      );
+    }
+  } else if (runResolvesNeedsHumanLabel(run)) {
+    // The symmetric out-of-order case: an older success can be delivered
+    // after a newer park/failure. That newer terminal result still needs the
+    // operator signal, so never let this old success clear it.
+    if (!(await hasLaterNeedsHumanRun(store, run))) {
+      await removeNeedsHumanLabelBestEffort(
+        fetchImpl,
+        tokens,
+        target,
+        githubApiBaseUrl(deps),
+      );
+    }
   }
 
   await settleClaim(deps, entry, 'done');
@@ -884,6 +902,36 @@ async function addNeedsHumanLabelBestEffort(
   }
 }
 
+/**
+ * Clears a prior park indicator after the same anchor later reaches a
+ * successful, non-park terminal outcome. This is deliberately separate from
+ * outcome delivery: the outcome comment is the durable operator record, so a
+ * transient label API failure must not retry or hide that completed result.
+ * GitHub treats an already-removed label as a 404; that is also a successful
+ * end state, so all cleanup failures remain best-effort like adding the label.
+ */
+async function removeNeedsHumanLabelBestEffort(
+  fetchImpl: typeof fetch,
+  tokens: DispatchTokenProvider,
+  target: AnchorTarget,
+  apiBaseUrl: string,
+): Promise<void> {
+  if (target.issue === undefined) {
+    // A native anchor has no GitHub issue to label.
+    return;
+  }
+  try {
+    const token = await tokens.tokenFor(target.repo);
+    await fetchImpl(
+      `${apiBaseUrl}/repos/${target.repo}/issues/${target.issue}/labels/${encodeURIComponent('status:needs-human')}`,
+      { method: 'DELETE', headers: githubHeaders(token) },
+    );
+  } catch {
+    // Swallowed deliberately -- the completed outcome is more important than
+    // this advisory projection; the next successful run can try again.
+  }
+}
+
 function githubHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
@@ -921,6 +969,92 @@ function runNeedsHumanLabel(run: Run): boolean {
   return (
     run.result?.ok === false || run.result?.summary === PARK_OUTCOME_SUMMARY
   );
+}
+
+/**
+ * A subsequent successful result resolves the earlier request for human
+ * attention unless the result is itself an explicit park. Failed, canceled,
+ * and lost runs must leave the signal alone: none proves the human need was
+ * resolved.
+ */
+function runResolvesNeedsHumanLabel(run: Run): boolean {
+  return (
+    run.state === 'finished' &&
+    run.result?.ok === true &&
+    run.result.summary !== PARK_OUTCOME_SUMMARY
+  );
+}
+
+/**
+ * Reads the task's durable run history only while considering an add, the
+ * rare path where the human-attention projection is changing. Outbox entries
+ * are intentionally fair rather than strictly FIFO, so an older report can
+ * otherwise land after a newer successful result and recreate a stale label.
+ * A read failure remains best-effort: preserving the current park/failure
+ * signal is safer than turning the outcome comment into a retry.
+ */
+async function hasLaterSuccessfulNonParkRun(
+  store: OrchestratorStore,
+  run: Run,
+): Promise<boolean> {
+  return hasLaterRunMatching(
+    store,
+    run,
+    runResolvesNeedsHumanLabel,
+    'before labeling',
+  );
+}
+
+/** The converse of `hasLaterSuccessfulNonParkRun`: an old success must not
+ * clear a human-needed signal established by a newer terminal run. */
+async function hasLaterNeedsHumanRun(
+  store: OrchestratorStore,
+  run: Run,
+): Promise<boolean> {
+  return hasLaterRunMatching(
+    store,
+    run,
+    runNeedsHumanLabel,
+    'before clearing a label',
+  );
+}
+
+async function hasLaterRunMatching(
+  store: OrchestratorStore,
+  run: Run,
+  matches: (candidate: Run) => boolean,
+  operation: string,
+): Promise<boolean> {
+  try {
+    return (await store.listRuns(run.task)).some(
+      (candidate) => isLaterRun(candidate, run) && matches(candidate),
+    );
+  } catch (error) {
+    console.error(
+      'agent-lcars: could not check later runs %s for %s:',
+      operation,
+      run.runId,
+      error,
+    );
+    return false;
+  }
+}
+
+function isLaterRun(candidate: Run, run: Run): boolean {
+  const candidateGeneration = runGeneration(candidate.runId);
+  const generation = runGeneration(run.runId);
+  return (
+    candidateGeneration !== undefined &&
+    generation !== undefined &&
+    candidateGeneration > generation
+  );
+}
+
+function runGeneration(runId: string): number | undefined {
+  const match = /\/r(\d+)$/u.exec(runId);
+  if (match === null) return undefined;
+  const generation = Number(match[1]);
+  return Number.isSafeInteger(generation) ? generation : undefined;
 }
 
 function outcomeCommentBody(run: Run): string {

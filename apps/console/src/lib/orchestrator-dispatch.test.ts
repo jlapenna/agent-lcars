@@ -320,8 +320,9 @@ describe('drainOutbox: dispatch-run', () => {
       ) {
         return new Response(null, { status: 204 });
       }
-      // Simulate a slow-but-successful earlier delivery. The next entry's
-      // lease must begin at this later time, not share the drain's start time.
+      // Simulate slow-but-successful outcome delivery. Both the outcome
+      // comment and its best-effort stale-label cleanup complete before the
+      // next entry's lease begins, rather than sharing the drain's start.
       clock.advanceMinutes(6);
       return new Response(null, { status: 201 });
     }) as typeof fetch;
@@ -342,11 +343,11 @@ describe('drainOutbox: dispatch-run', () => {
     expect(claimSpy.mock.calls.map(([input]) => input.now)).toEqual([
       T0,
       T0,
-      '2026-08-15T12:06:00.000Z',
-      '2026-08-15T12:06:00.000Z',
+      '2026-08-15T12:12:00.000Z',
+      '2026-08-15T12:12:00.000Z',
     ]);
     expect(claimSpy.mock.calls[2]?.[0]).toMatchObject({
-      leaseExpiresAt: '2026-08-15T12:11:00.000Z',
+      leaseExpiresAt: '2026-08-15T12:17:00.000Z',
     });
   });
 
@@ -1364,13 +1365,17 @@ describe('drainOutbox: report-outcome', () => {
       now: () => clock.now(),
     });
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.url).toBe(
       'https://fixture.invalid/github/repos/octo/example/issues/7/comments',
     );
     const body = callBody(calls[0]!).body as string;
     expect(body).toContain(`Run ${run.runId} finished.`);
     expect(body).toContain(ref);
+    expect(calls[1]).toMatchObject({
+      url: 'https://fixture.invalid/github/repos/octo/example/issues/7/labels/status%3Aneeds-human',
+      init: { method: 'DELETE' },
+    });
 
     expect(result.reported).toEqual([run.runId]);
     expect(result.failed).toEqual([]);
@@ -1382,7 +1387,7 @@ describe('drainOutbox: report-outcome', () => {
       fetchImpl,
     });
     expect(second.reported).toEqual([]);
-    expect(calls).toHaveLength(1); // no additional fetch call
+    expect(calls).toHaveLength(2); // no additional fetch call
   });
 
   it('settles report-outcome for a native run without calling GitHub', async () => {
@@ -1628,6 +1633,7 @@ describe('drainOutbox: report-outcome', () => {
     expect(JSON.parse(labelCall!.init.body as string)).toEqual({
       labels: ['status:needs-human'],
     });
+    expect(calls.some((c) => c.init.method === 'DELETE')).toBe(false);
 
     const commentCall = calls.find((c) =>
       c.url.endsWith('/issues/42/comments'),
@@ -1678,6 +1684,127 @@ describe('drainOutbox: report-outcome', () => {
         `Parked -- see this run's own comment above for the blocker and ` +
         `how to resume it.`,
     );
+    expect(calls.some((c) => c.init.method === 'DELETE')).toBe(false);
+  });
+
+  it('clears a stale needs-human label after a later successful non-park outcome (#1570)', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const first = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'park',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(first)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(first.run.runId);
+    await orchestrator.report(first.run.runId, { ok: true, summary: 'park' });
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: routedFetch().fetchImpl,
+      now: () => clock.now(),
+    });
+
+    const second = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'resolved',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    if (isRefusal(second)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(second.run.runId);
+    await orchestrator.report(second.run.runId, { ok: true, summary: 'no-op' });
+
+    const { fetchImpl, calls } = routedFetch();
+    const result = await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      githubApiBaseUrl: 'https://fixture.invalid/github',
+      now: () => clock.now(),
+    });
+
+    const removal = calls.find((c) => c.init.method === 'DELETE');
+    expect(removal?.url).toBe(
+      'https://fixture.invalid/github/repos/jlapenna/agent-lcars/issues/42/labels/status%3Aneeds-human',
+    );
+    expect(result.reported).toEqual([second.run.runId]);
+  });
+
+  it('does not re-add needs-human when a delayed park report follows a later successful result (#1570)', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const first = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'park',
+      pipeline: 'claude',
+    });
+    if (isRefusal(first)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(first.run.runId);
+    await orchestrator.report(first.run.runId, { ok: true, summary: 'park' });
+
+    const second = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'resolved',
+      pipeline: 'claude',
+    });
+    if (isRefusal(second)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(second.run.runId);
+    await orchestrator.report(second.run.runId, { ok: true, summary: 'no-op' });
+
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(
+      calls.some(
+        (call) => call.init.method === 'POST' && call.url.endsWith('/labels'),
+      ),
+    ).toBe(false);
+    expect(calls.some((call) => call.init.method === 'DELETE')).toBe(true);
+  });
+
+  it('does not clear needs-human when a delayed success precedes a later park (#1570)', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const first = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'resolved',
+      pipeline: 'claude',
+    });
+    if (isRefusal(first)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(first.run.runId);
+    await orchestrator.report(first.run.runId, { ok: true, summary: 'no-op' });
+
+    const second = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'park',
+      pipeline: 'claude',
+    });
+    if (isRefusal(second)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(second.run.runId);
+    await orchestrator.report(second.run.runId, { ok: true, summary: 'park' });
+
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(calls.some((call) => call.init.method === 'DELETE')).toBe(false);
+    expect(
+      calls.some(
+        (call) => call.init.method === 'POST' && call.url.endsWith('/labels'),
+      ),
+    ).toBe(true);
   });
 
   it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {
@@ -2234,7 +2361,7 @@ describe('drainOutbox: elapsed-time retirement and backoff (#1548 follow-up)', (
       now: () => clock.now(),
     });
     expect(afterBackoff.reported).toEqual([runId]);
-    expect(succeeding.calls.length).toBe(1);
+    expect(succeeding.calls.length).toBe(2);
   });
 
   it('a backing-off entry does not prevent a different, healthy entry from being delivered in the same drain', async () => {
@@ -2479,9 +2606,9 @@ describe('drainOutbox: stale report-outcome anchor check (#1548)', () => {
 
     expect(result.reported).toEqual([runId]);
     expect(result.failed).toEqual([]);
-    // The anchor lookup (GET) plus the outcome comment (POST): checking
-    // does not replace delivery when the anchor is still open.
-    expect(calls).toHaveLength(2);
+    // The anchor lookup (GET), outcome comment (POST), and stale-label
+    // cleanup (DELETE): checking does not replace delivery when open.
+    expect(calls).toHaveLength(3);
     expect(calls.some((c) => c.url.endsWith('/comments'))).toBe(true);
   });
 
@@ -2502,10 +2629,10 @@ describe('drainOutbox: stale report-outcome anchor check (#1548)', () => {
     });
 
     expect(result.reported).toEqual([runId]);
-    // Only the comment POST -- no GET to the issue itself. Proves the
-    // anchor lookup was never called for a fresh entry, not just that it
-    // came back "open".
-    expect(calls).toHaveLength(1);
+    // Only the comment POST and label cleanup DELETE -- no GET to the
+    // issue itself. Proves the anchor lookup was never called for a fresh
+    // entry, not just that it came back "open".
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.url.endsWith('/comments')).toBe(true);
   });
 

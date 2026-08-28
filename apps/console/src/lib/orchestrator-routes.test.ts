@@ -560,12 +560,22 @@ describe('handleCompletion', () => {
       ref: `https://github.com/${REPO}/pull/99`,
     });
 
-    expect(calls).toHaveLength(1);
+    // The successful non-park result both posts its durable outcome comment
+    // and clears a stale `status:needs-human` projection from an earlier
+    // park/failure (#1570).
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.url).toBe(
       `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
     );
     const body = JSON.parse(String(calls[0]?.init.body)) as { body: string };
     expect(body.body).toContain(run.runId);
+    expect(calls[1]).toMatchObject({
+      url: `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/labels/status%3Aneeds-human`,
+      init: {
+        method: 'DELETE',
+        headers: expect.objectContaining({ Authorization: `Bearer ${TOKEN}` }),
+      },
+    });
   });
 
   it('treats a park outcome as a successful run (agent-protocol.md #4: a marker-stamped park comment IS the deliverable)', async () => {
