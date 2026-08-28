@@ -231,6 +231,7 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 FROM ${RUNNER_BASE}
 
 ARG GO_VERSION
+ARG TARGETARCH
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -254,23 +255,17 @@ COPY --from=ci-tooling-build /out/actionlint /usr/local/bin/actionlint
 COPY actionlint-version /usr/local/share/agent-lcars-tooling/actionlint-version
 ENV PATH=/usr/local/go/bin:${PATH}
 
-# OpenCode's own installer selects the correct Linux binary for the target
-# architecture. The version is explicit and reviewed with this image rather
-# than resolved at runner boot, so every process holding the telemetry writer
-# credential runs the same root-owned executable. The composite action below
-# and the consumer workflow share its installation script; only this image
-# promotes the resulting root-owned binary to the trusted absolute path.
+# The root-owned OpenCode binary must not come from OpenCode's mutable
+# installer. Fetch the exact GitHub release artifact selected for TARGETARCH
+# and verify its reviewed SHA-256 before extraction. The consumer setup action
+# remains separately nonprivileged and may use OpenCode's supported installer.
 COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version
-COPY --from=telemetry-watcher-build \
-    /repo/.github/actions/setup-opencode/install.sh \
-    /usr/local/lib/agent-lcars/install-opencode.sh
+COPY install-opencode-release.sh /usr/local/lib/agent-lcars/install-opencode-release.sh
 RUN set -eux; \
     OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)"; \
     printf '%s\n' "$OPENCODE_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; \
-    OPENCODE_VERSION="$OPENCODE_VERSION" HOME=/root \
-      bash /usr/local/lib/agent-lcars/install-opencode.sh; \
-    install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode; \
-    rm -rf /root/.opencode; \
+    OPENCODE_VERSION="$OPENCODE_VERSION" TARGETARCH="$TARGETARCH" \
+      bash /usr/local/lib/agent-lcars/install-opencode-release.sh; \
     /usr/local/bin/opencode --version
 
 # Keep Corepack's selected pnpm version tied to this repo's one

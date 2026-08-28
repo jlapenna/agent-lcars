@@ -143,9 +143,10 @@ as identical for both:
   telemetry and finalize archives each export under
   `runs/<run-id>/opencode/<session-id>.jsonl`. The archive is durable but not
   timeline-renderable in the console (`renderable: false`). Privileged capture
-  accepts only the root-owned runner-image `/usr/local/bin/opencode`; it never
-  consults PATH or an action-installed, runner-writable CLI. The bootstrap
-  lane invokes that same image binary. The separate post-agent trajectory
+  accepts only the root-owned runner-image `/usr/local/bin/opencode`, built
+  from an exact GitHub release artifact after its reviewed SHA-256 verifies;
+  it never consults PATH or an action-installed, runner-writable CLI. The
+  bootstrap lane invokes that same image binary. The separate post-agent trajectory
   artifact does not inherit the telemetry writer credential.
 
 **Why this section is written so defensively:** it used to say the script did

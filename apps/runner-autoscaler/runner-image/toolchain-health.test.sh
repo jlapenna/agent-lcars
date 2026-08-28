@@ -29,12 +29,18 @@ if ! [[ "$opencode_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "opencode-version must contain an exact v-prefixed semantic version" >&2
   exit 1
 fi
-if ! grep -Fqx 'COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version' "$dockerfile" ||
-  ! grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$dockerfile" ||
-  ! grep -Fq 'OPENCODE_VERSION="$OPENCODE_VERSION" HOME=/root' "$dockerfile" ||
-  ! grep -Fq 'install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode' "$dockerfile" ||
+if ! grep -Fqx 'ARG TARGETARCH' "$dockerfile" ||
+  ! grep -Fqx 'COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version' "$dockerfile" ||
+  ! grep -Fqx 'COPY install-opencode-release.sh /usr/local/lib/agent-lcars/install-opencode-release.sh' "$dockerfile" ||
+  ! grep -Fq 'OPENCODE_VERSION="$OPENCODE_VERSION" TARGETARCH="$TARGETARCH"' "$dockerfile" ||
+  ! grep -Fq 'bash /usr/local/lib/agent-lcars/install-opencode-release.sh' "$dockerfile" ||
   ! grep -Fq '/usr/local/bin/opencode --version' "$dockerfile"; then
-  echo "runner image must install and smoke-check the exact root-owned OpenCode CLI" >&2
+  echo "runner image must install and smoke-check a reviewed root-owned OpenCode CLI" >&2
+  exit 1
+fi
+if grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$dockerfile" ||
+  grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
+  echo "runner image must not run OpenCode's mutable installer as root" >&2
   exit 1
 fi
 if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entrypoint"; then

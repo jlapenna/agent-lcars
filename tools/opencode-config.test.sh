@@ -97,10 +97,12 @@ if OPENCODE_VERSION=latest "$setup_installer" >/dev/null 2>&1; then
 fi
 grep -Fq "run: '\$GITHUB_ACTION_PATH/install.sh'" "$setup_action" ||
   fail "setup-opencode must invoke the shared OpenCode installer"
-grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$runner_dockerfile" ||
-  fail "runner image must use setup-opencode's shared installer"
-grep -Fq 'install -o root -g root -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode' "$runner_dockerfile" ||
-  fail "runner image must promote OpenCode to the trusted root-owned path"
+grep -Fq '/usr/local/lib/agent-lcars/install-opencode-release.sh' "$runner_dockerfile" ||
+  fail "runner image must use its reviewed OpenCode release installer"
+if grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$runner_dockerfile" ||
+  grep -Fq 'https://opencode.ai/install' "$runner_dockerfile"; then
+  fail "runner image must not use setup-opencode's mutable installer as root"
+fi
 grep -Fq 'run: /usr/local/bin/opencode github run' "$agent_lane" ||
   fail "dispatch-bootstrap OpenCode must invoke the trusted image executable"
 if grep -Fq 'uses: anomalyco/opencode/github@' "$agent_lane"; then
