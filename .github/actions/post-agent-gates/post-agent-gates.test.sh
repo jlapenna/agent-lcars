@@ -125,6 +125,7 @@ base_env() {
   export NO_DELIVERABLE_REASON="LANE_NO_DELIVERABLE_MARKER"
   export FAILURE_LOG_SCAN_SCRIPT=
   export CLAUDE_EXECUTION_FILE=
+  export NATIVE_WORK=
 }
 
 run_case() {
@@ -193,6 +194,25 @@ JSON
     fail "a found deliverable must never post a failure comment"
   fi
   test ! -s "$GITHUB_OUTPUT" || fail "the gates must publish no step outputs (outcome-kind/-reference were retired 2026-08-17; nothing maps them)"
+)
+
+# --- Native Work: the still-running worker cannot safely read its own
+# closed job log.  It must defer to the hosted finalizer; a silent outcome is
+# then rejected there by fallback-finalize-agent-step.test.ts.  This proves
+# the worker-side PR-only lookup does not falsely fail a marker-bound native
+# outcome before that finalizer gets a chance to verify it. ---
+(
+  base_env
+  export ISSUE=
+  export INTENT_ID='work:01M14TNABZRYYDRCSMYRKAQFCP/r1'
+  export NATIVE_WORK=1
+  run_case native-work-defers-terminal-outcome
+  test "$status" = 0 || fail "a native Work outcome must defer to the hosted finalizer"
+  grep -q 'Native Work terminal outcome deferred' <<<"$output" || \
+    fail "expected the native Work deferral notice"
+  if grep -q '/pulls?' "$FAKE_GH_DIR/calls"; then
+    fail "native Work deferral must not run the PR-only deliverable lookup"
+  fi
 )
 
 # --- Case 2: JOB_STATUS success, genuinely no deliverable - NO_DELIVERABLE

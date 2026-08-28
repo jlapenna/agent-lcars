@@ -272,11 +272,11 @@ jq -n \
       else $result | .body = ($result.body | clamp($max_result_body; "Read the full comment at \($result.html_url).")) end
     ),
     requested_results: (
-      # A native work item has no issue to comment on or park via a label,
-      # and no-op has no evidence surface without an anchor thread -- the
-      # only accepted deliverable is a PR (agent-protocol.md §5,
-      # "Work anchor").
-      if $anchor.type == "work" then ["pull-request"]
+      # A native work item has no issue thread, but a marker-bound terminal
+      # artifact is now a first-class park/no-op outcome. It remains
+      # provider-neutral and is verified by the hosted finalizer against
+      # the broker-bound attempt (agent-protocol.md §4/§5).
+      if $anchor.type == "work" then ["pull-request", "park", "no-op"]
       elif $mode == "review" then ["review", "park", "no-op"]
       elif $mode == "reply" then ["comment", "pull-request", "park", "no-op"]
       else ["pull-request", "park", "no-op"] end

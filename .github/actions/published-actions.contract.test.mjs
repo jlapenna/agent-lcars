@@ -369,6 +369,10 @@ test('post-agent-gates.sh env-var contract is guarded', async () => {
       // unchanged to telemetry-finalize.sh, then sidecar-lifecycle.sh
       // (task 7, native work items foundation).
       'INTENT_ID',
+      // Set only from immutable reusable-workflow inputs. Native Work has
+      // no issue/PR artifact; its terminal evidence is verified by the
+      // hosted finalizer after the worker closes.
+      'NATIVE_WORK',
       // AGENT_STEP_OUTCOME, READINESS_FAILURE, and MAINTAINER were
       // retired 2026-08-17: the first two only fed the step's own
       // now-deleted $GITHUB_OUTPUT writes (nothing ever mapped

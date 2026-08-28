@@ -440,6 +440,11 @@ jobs:
           PROTOCOL_NOTE: ${{ inputs.protocol-note }}
           ATTEMPT_ID: g${{ inputs.broker-generation }}:${{ inputs.broker-intent-id }}
           HAS_ATTEMPT_ID: ${{ inputs.broker-intent-id != '' }}
+          # A literal path for the agent's explicit native Work terminal
+          # record. It is supplied again statically to every agent step and
+          # to the capture step, so a later GITHUB_ENV write cannot redirect
+          # the trusted upload.
+          NATIVE_WORK_OUTCOME_FILE: ${{ runner.temp }}/native-work-terminal-outcome.txt
         run: |
           set -euo pipefail
           delimiter="EOF_$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
@@ -497,6 +502,16 @@ jobs:
           review it actually is. Stamp it into the PR description itself
           (not only a separate comment) for implement work, or into the
           comment/review body for the other outcomes above.
+
+          For a native Work anchor (no issue number), do not merely print a
+          terminal PARK or NO-OP: before ending, write its exact structured
+          result marker and this run's exact attempt-claim marker as the two
+          lines of \`\$NATIVE_WORK_OUTCOME_FILE\`. Use the native Work result
+          marker grammar in the shared protocol, choosing exactly one result
+          kind. Do not create that file for a normal PR outcome. The hosted
+          finalizer accepts only that explicit two-line artifact from a
+          successful agent step; a bare response, mixed result kinds, or a
+          silent success still fails closed.
           PROMPT
             fi
             cat <<PROMPT
@@ -1167,6 +1182,7 @@ jobs:
         # test dispatch first).
         uses: anthropics/claude-code-action@5ee796a55f92566ecd7e39d70dd613abcbea0d7c # v1.0.197
         env:
+          NATIVE_WORK_OUTCOME_FILE: ${{ runner.temp }}/native-work-terminal-outcome.txt
           # Turns on the marker-stamping gh wrapper agent-handoff installed
           # (agent-lcars#1213) — dispatch-bootstrap era only; consumer
           # prompts stamp the attempt-claim marker themselves. Deliberately
@@ -1275,6 +1291,7 @@ jobs:
         # and the issue was never told.
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
+          NATIVE_WORK_OUTCOME_FILE: ${{ runner.temp }}/native-work-terminal-outcome.txt
           # Marker-stamping gh wrapper installed by agent-handoff
           # (agent-lcars#1213) — dispatch-bootstrap era only; consumer
           # prompts stamp the attempt-claim marker themselves. Deliberately
@@ -1408,6 +1425,7 @@ jobs:
         if: ${{ inputs.pipeline == 'opencode' && inputs.dispatch-bootstrap }}
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
+          NATIVE_WORK_OUTCOME_FILE: ${{ runner.temp }}/native-work-terminal-outcome.txt
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # Marker-stamping gh wrapper installed by agent-handoff
           # (agent-lcars#1213) — deliberately set ONLY here; the post-agent
@@ -1433,6 +1451,7 @@ jobs:
         if: ${{ inputs.pipeline == 'opencode' && !inputs.dispatch-bootstrap }}
         timeout-minutes: ${{ inputs.agent-timeout-minutes }}
         env:
+          NATIVE_WORK_OUTCOME_FILE: ${{ runner.temp }}/native-work-terminal-outcome.txt
           OPENCODE_LLM_API_KEY: ${{ secrets.OPENCODE_LLM_API_KEY }}
           # use_github_token needs this passed explicitly — it does not
           # fall back to the job's ambient token.
@@ -1464,6 +1483,40 @@ jobs:
           path: ${{ steps.opencode-trajectory.outputs.path }}
           if-no-files-found: error
           retention-days: 30
+
+      # The whole worker job log is not valid native-Work evidence: GitHub
+      # echoes the fully expanded prompt and environment, including marker
+      # examples, before the agent runs. Capture only the explicit terminal
+      # record the successful agent chose to write. The static step env keeps
+      # its path out of an agent-controlled GITHUB_ENV update.
+      - name: Capture native Work terminal outcome
+        id: native_work_terminal_outcome
+        if: always() && inputs.issue == '' && inputs.work != ''
+        env:
+          NATIVE_WORK_OUTCOME_FILE: ${{ runner.temp }}/native-work-terminal-outcome.txt
+        run: |
+          set -euo pipefail
+          if [ ! -s "$NATIVE_WORK_OUTCOME_FILE" ]; then
+            echo '::notice::Native Work agent supplied no terminal-outcome artifact.'
+            exit 0
+          fi
+          capture_dir="$RUNNER_TEMP/native-work-terminal-outcome"
+          mkdir -p "$capture_dir"
+          cp -- "$NATIVE_WORK_OUTCOME_FILE" "$capture_dir/terminal-outcome.txt"
+          echo "path=$capture_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Upload native Work terminal outcome
+        if: always() && inputs.issue == '' && inputs.work != '' && steps.native_work_terminal_outcome.outputs.path != ''
+        # Artifact transport is deliberately fail-soft here: the isolated
+        # finalizer fails closed when it cannot retrieve the record, rather
+        # than misclassifying a delivery transport problem as agent failure.
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-work-terminal-outcome-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.native_work_terminal_outcome.outputs.path }}
+          if-no-files-found: error
+          retention-days: 1
 
       # Shared post-agent gate orchestrator (#645 Phase 3): runs
       # telemetry-finalize, verify-deliverable, failure-reason
@@ -1501,6 +1554,10 @@ jobs:
           # sidecar-lifecycle.sh.
           INTENT_ID: ${{ inputs.broker-intent-id }}
           ISSUE: ${{ inputs.issue }}
+          # This expression is evaluated from immutable reusable-workflow
+          # inputs when the step is created. It is deliberately not derived
+          # from an ambient variable an agent could write through GITHUB_ENV.
+          NATIVE_WORK: ${{ inputs.work != '' && inputs.issue == '' && '1' || '' }}
           MODE: ${{ inputs.mode }}
           # This run's verified attempt identity (#815): published via
           # $GITHUB_ENV by dispatch-bootstrap or the consumer-era publish
