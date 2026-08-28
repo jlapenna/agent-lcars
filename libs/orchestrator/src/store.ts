@@ -116,6 +116,21 @@ export interface OrchestratorStore {
    */
   listNativeTasks(limit?: number, before?: string): Promise<VersionedTask[]>;
 
+  /**
+   * Every task anchor, newest-updated first. This is the console's
+   * authoritative work-projection feed: unlike {@link listNativeTasks}, it
+   * includes GitHub anchors once they carry a `work` payload as well as
+   * native work items.
+   *
+   * The cursor names the final task in a prior page. `updatedAt` alone is
+   * not enough -- two decisions can legitimately share one clock instant --
+   * so the stable task key is the required tiebreaker. The store returns a
+   * bounded raw page; callers that filter derived state must keep following
+   * `before` until it is exhausted rather than treating an empty filtered
+   * page as the end of the feed.
+   */
+  listTasks(limit?: number, before?: TaskListCursor): Promise<VersionedTask[]>;
+
   /** Every live (`pending`/`running`) run, lease or no lease. The feed for
    *  settling runs whose *executor* is already terminal -- a fact only
    *  something outside the orchestrator can observe, so the caller resolves
@@ -143,6 +158,12 @@ export interface OrchestratorStore {
   /** Every `queue.state === 'queued'` run, oldest first, bounded by
    *  `limit` (default 200). */
   listQueuedRuns(limit?: number): Promise<Run[]>;
+}
+
+/** Opaque-at-the-API-boundary cursor for the all-anchor task feed. */
+export interface TaskListCursor {
+  readonly updatedAt: string;
+  readonly taskKey: string;
 }
 
 export interface VersionedTask {

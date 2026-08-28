@@ -10,6 +10,7 @@ import {
 import {
   type LeasedOutboxEntry,
   type TaskId,
+  taskKey,
   WORK_PAYLOAD_MAX_BYTES,
 } from './model';
 import { type Clock, Orchestrator } from './orchestrator';
@@ -585,6 +586,74 @@ export function runOrchestratorStoreContract(
         // rather than loop forever.
         const thirdPage = await store.listNativeTasks(2, workA);
         expect(thirdPage).toEqual([]);
+      });
+    });
+
+    describe('all-anchor task listing', () => {
+      it('includes GitHub and native anchors, newest-updated first, with a stable cursor', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const githubOld: TaskId = { repo: 'octo/example', issue: 1 };
+        const native: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3A' };
+        const githubNew: TaskId = { repo: 'octo/example', issue: 2 };
+
+        await orchestrator.request({
+          taskId: githubOld,
+          requestId: 'github-old',
+          pipeline: 'claude',
+        });
+        clock.advanceMinutes(1);
+        await orchestrator.request({
+          taskId: native,
+          requestId: 'native',
+          pipeline: 'claude',
+        });
+        clock.advanceMinutes(1);
+        await orchestrator.request({
+          taskId: githubNew,
+          requestId: 'github-new',
+          pipeline: 'claude',
+        });
+
+        const firstPage = await store.listTasks(2);
+        expect(firstPage.map((entry) => entry.task.task)).toEqual([
+          githubNew,
+          native,
+        ]);
+
+        const last = firstPage[1];
+        if (last === undefined) throw new Error('expected a cursor task');
+        const secondPage = await store.listTasks(2, {
+          updatedAt: last.task.updatedAt,
+          taskKey: taskKey(last.task.task),
+        });
+        expect(secondPage.map((entry) => entry.task.task)).toEqual([githubOld]);
+      });
+
+      it('uses the task key to page distinct same-instant decisions without dropping either', async () => {
+        const { store, orchestrator } = await fixture();
+        const first: TaskId = { repo: 'octo/example', issue: 1 };
+        const second: TaskId = { repo: 'octo/example', issue: 2 };
+        await orchestrator.request({
+          taskId: first,
+          requestId: 'first',
+          pipeline: 'claude',
+        });
+        await orchestrator.request({
+          taskId: second,
+          requestId: 'second',
+          pipeline: 'claude',
+        });
+
+        const firstPage = await store.listTasks(1);
+        const cursorTask = firstPage[0];
+        if (cursorTask === undefined) throw new Error('expected a cursor task');
+        const secondPage = await store.listTasks(1, {
+          updatedAt: cursorTask.task.updatedAt,
+          taskKey: taskKey(cursorTask.task.task),
+        });
+        expect(
+          [...firstPage, ...secondPage].map((entry) => entry.task.task),
+        ).toEqual(expect.arrayContaining([first, second]));
       });
     });
 

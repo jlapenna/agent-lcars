@@ -1,8 +1,14 @@
-import type { ItemView } from '@agent-lcars/work/derive';
+import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 
 import { formatRelativeTime } from './format';
 import { type WorkAction, WorkActions } from './work/work-actions';
+
+function summaryHref(item: WorkSummary): string {
+  if ('workId' in item.anchor) return `/work/${item.anchor.workId}`;
+  const [owner, repo] = item.anchor.repo.split('/');
+  return `/task/${owner}/${repo}/${item.anchor.issue}`;
+}
 
 /** Pure renderer: hidden at zero parked items; oldest-parked first. */
 export function ParkedWorkPanel({
@@ -10,7 +16,7 @@ export function ParkedWorkPanel({
   cancel,
   redispatch,
 }: {
-  items: ItemView[];
+  items: WorkSummary[];
   cancel: WorkAction;
   redispatch: WorkAction;
 }) {
@@ -29,7 +35,7 @@ export function ParkedWorkPanel({
           return (
             <Group key={item.id} justify="space-between" wrap="wrap" gap="sm">
               <Stack gap={2}>
-                <Anchor href={`/work/${item.id}`} size="sm" fw={600}>
+                <Anchor href={summaryHref(item)} size="sm" fw={600}>
                   {item.spec.title}
                 </Anchor>
                 <Text size="xs" c="dimmed">
@@ -38,12 +44,14 @@ export function ParkedWorkPanel({
                   {formatRelativeTime(item.updatedAt)}
                 </Text>
               </Stack>
-              <WorkActions
-                id={item.id}
-                state={item.state}
-                cancel={cancel}
-                redispatch={redispatch}
-              />
+              {'workId' in item.anchor && (
+                <WorkActions
+                  id={item.anchor.workId}
+                  state={item.state}
+                  cancel={cancel}
+                  redispatch={redispatch}
+                />
+              )}
             </Group>
           );
         })}

@@ -2,6 +2,8 @@ import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
+import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
+import { listAllParkedWorkSummaries } from '@/lib/work-summary';
 
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
@@ -35,7 +37,7 @@ import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 import { withConsolePageShell } from './with-console-page-shell';
-import { cancelItem, listItems, redispatchItem } from './work/actions';
+import { cancelItem, redispatchItem } from './work/actions';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -45,35 +47,24 @@ function toCard(item: ActionItem): BoardCard {
 }
 
 /**
- * Bridge slot: fetches through the same grant-checked server function the
- * /work page uses; an admin without a work grant sees no panel. Lives here
- * rather than alongside the pure `ParkedWorkPanel` - importing the
- * `'use server'` `./work/actions` module into that file drags in
- * `@orpc/next`'s Node-only `next/navigation` resolution, which vitest's
- * jsdom environment can't load (see parked-work-panel.test.tsx, which only
- * ever imports the pure component).
+ * Bridge slot: reads the all-anchor work summary projection from the
+ * orchestrator, rather than deriving parked state from a GitHub label or
+ * limiting itself to native work ids. GitHub remains a detail enrichment
+ * surface; it is not the state authority for this panel. Lives here rather
+ * than alongside the pure `ParkedWorkPanel` - importing the `'use server'`
+ * `./work/actions` module into that file drags in `@orpc/next`'s Node-only
+ * `next/navigation` resolution, which vitest's jsdom environment can't load
+ * (see parked-work-panel.test.tsx, which only ever imports the pure
+ * component).
  */
 async function ParkedWork() {
-  // `state: 'parked'` filters in the router (workRouter.list), before the
-  // per-item session join it does for every item that survives the filter
-  // - so that join only ever runs over parked items, not over every native
-  // task fetched. The `limit: 200` cap, though, is on the underlying
-  // `listNativeTasks` fetch itself - native tasks of *any* state, ordered
-  // by workId desc (ULIDs sort chronologically, so newest first) - and the
-  // state filter narrows within that already-limited window. A known
-  // limit, not a bug: if more than 200 native tasks in other states are
-  // newer than an old parked one, that parked item falls outside the
-  // window and simply doesn't show here.
   try {
-    const [err, data] = await listItems({ limit: 200, state: 'parked' });
-    if (err) {
-      if (err.code === 'UNAUTHORIZED') return null;
-      console.error('agent-lcars: parked work panel unavailable:', err);
-      return null;
-    }
+    const items = await listAllParkedWorkSummaries(
+      createOrchestratorRuntime().store,
+    );
     return (
       <ParkedWorkPanel
-        items={data.items}
+        items={items}
         cancel={cancelItem}
         redispatch={redispatchItem}
       />

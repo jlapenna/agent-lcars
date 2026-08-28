@@ -6,6 +6,8 @@ import {
   latestRun,
   toItemView,
   toItemViewSafe,
+  toWorkSummary,
+  toWorkSummarySafe,
 } from './derive';
 
 const T = '2026-08-26T10:00:00.000Z';
@@ -173,5 +175,38 @@ describe('toItemViewSafe', () => {
       runs: [],
     });
     expect(view).toBeUndefined();
+  });
+});
+
+describe('toWorkSummary', () => {
+  const githubTask: Task = {
+    task: { repo: 'octo/example', issue: 7 },
+    runCount: 1,
+    updatedAt: T,
+    work: payload,
+  };
+  const githubRun: Run = {
+    ...run(1, 'finished', { result: { ok: false, summary: 'parked' } }),
+    runId: 'octo/example#7/r1',
+    task: githubTask.task,
+  };
+
+  it('uses a collision-free anchor key and authoritative run state for a GitHub task', () => {
+    const summary = toWorkSummary({ task: githubTask, runs: [githubRun] });
+    expect(summary).toMatchObject({
+      id: 'octo/example#7',
+      anchor: { repo: 'octo/example', issue: 7 },
+      state: 'parked',
+      spec: payload.spec,
+    });
+  });
+
+  it('returns undefined for a legacy GitHub task with no work payload', () => {
+    expect(
+      toWorkSummarySafe({
+        task: { ...githubTask, work: undefined },
+        runs: [githubRun],
+      }),
+    ).toBeUndefined();
   });
 });
