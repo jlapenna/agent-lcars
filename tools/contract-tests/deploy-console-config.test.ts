@@ -292,7 +292,7 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('keeps queue-executor pipelines disabled after the live proof', async () => {
+  it('temporarily opts only claude into the queue-executor retry proof', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -303,7 +303,7 @@ describe('console deployment workflow', () => {
       config.env?.find(
         ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
       )?.value,
-    ).toBe('[]');
+    ).toBe('["claude"]');
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {
