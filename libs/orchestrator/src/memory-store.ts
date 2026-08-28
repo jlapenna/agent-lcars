@@ -4,6 +4,7 @@ import { byOutboxClaimFairness, isLive, isWorkAnchor, taskKey } from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
+  type TaskListCursor,
   type VersionedTask,
 } from './store';
 
@@ -171,6 +172,30 @@ export class MemoryStore implements OrchestratorStore {
       .sort((a, b) => b.workId.localeCompare(a.workId))
       .map(({ entry }) => entry);
     return structuredClone(native.slice(0, limit ?? 200));
+  }
+
+  async listTasks(
+    limit?: number,
+    before?: TaskListCursor,
+  ): Promise<VersionedTask[]> {
+    const compare = (
+      left: { key: string; updatedAt: string },
+      right: { key: string; updatedAt: string },
+    ) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.key.localeCompare(left.key);
+    const cursor =
+      before === undefined
+        ? undefined
+        : { key: before.taskKey, updatedAt: before.updatedAt };
+
+    const tasks = [...this.#tasks.entries()]
+      .map(([key, entry]) => ({ key, entry, updatedAt: entry.task.updatedAt }))
+      .sort(compare)
+      .filter((entry) => cursor === undefined || compare(entry, cursor) > 0)
+      .slice(0, limit ?? 200)
+      .map(({ entry }) => entry);
+    return structuredClone(tasks);
   }
 
   async listExpiredRuns(now: string): Promise<Run[]> {

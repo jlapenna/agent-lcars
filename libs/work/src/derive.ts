@@ -4,6 +4,8 @@ import {
   type Run,
   type RunExecutor,
   type Task,
+  type TaskId,
+  taskKey,
 } from '@agent-lcars/orchestrator';
 
 import { type WorkOrigin, workPayloadSchema, type WorkSpec } from './spec';
@@ -69,6 +71,28 @@ export interface ItemView {
   sessions: ItemSessionView[];
 }
 
+/**
+ * The console's one projection shape for every durable task that carries a
+ * valid work payload. Native items and GitHub-anchored work deliberately
+ * share lifecycle truth here: their state is derived from the orchestrator
+ * task and run history, never from a GitHub label or workflow-run title.
+ *
+ * `id` is `taskKey(anchor)`, so `work:<ulid>` and `owner/repo#number` live
+ * in one collision-free cursor/link namespace while `anchor` retains the
+ * typed route information a caller needs to choose its detail view.
+ */
+export interface WorkSummary {
+  id: string;
+  anchor: TaskId;
+  state: ItemState;
+  spec: WorkSpec;
+  origin: WorkOrigin;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+  runs: ItemRunView[];
+}
+
 export function toItemView(input: {
   workId: string;
   task: Task;
@@ -112,6 +136,48 @@ export function toItemView(input: {
   };
 }
 
+/** Projects any native or GitHub anchor with a valid `Task.work` payload. */
+export function toWorkSummary(input: {
+  task: Task;
+  runs: readonly Run[];
+}): WorkSummary {
+  const payload = workPayloadSchema.parse(input.task.work);
+  const runs = [...input.runs].sort((a, b) =>
+    a.createdAt.localeCompare(b.createdAt),
+  );
+  return {
+    id: taskKey(input.task.task),
+    anchor: input.task.task,
+    state: deriveItemState(input.task, input.runs),
+    spec: payload.spec,
+    origin: payload.origin,
+    createdAt: runs[0]?.createdAt ?? input.task.updatedAt,
+    updatedAt: input.task.updatedAt,
+    ...(input.task.closedAt === undefined
+      ? {}
+      : { closedAt: input.task.closedAt }),
+    runs: runs.map((r) => ({
+      runId: r.runId,
+      state: r.state,
+      pipeline: r.pipeline,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.executor === undefined ? {} : { executor: r.executor }),
+      ...(r.queue === undefined
+        ? {}
+        : {
+            queue: {
+              state: r.queue.state,
+              ...(r.queue.claimedBy === undefined
+                ? {}
+                : { claimedBy: r.queue.claimedBy }),
+            },
+          }),
+    })),
+  };
+}
+
 /**
  * `toItemView`, but for a caller that must survive a task whose `work` is
  * absent or only partially populated. The orchestrator persists `Task.work`
@@ -130,4 +196,17 @@ export function toItemViewSafe(input: {
 }): ItemView | undefined {
   const result = workPayloadSchema.safeParse(input.task.work);
   return result.success ? toItemView(input) : undefined;
+}
+
+/**
+ * Safe all-anchor variant for listings. A legacy GitHub task (or malformed
+ * persisted payload) is not work-console data yet, so it is omitted rather
+ * than allowing one bad document to fail the complete projection page.
+ */
+export function toWorkSummarySafe(input: {
+  task: Task;
+  runs: readonly Run[];
+}): WorkSummary | undefined {
+  const result = workPayloadSchema.safeParse(input.task.work);
+  return result.success ? toWorkSummary(input) : undefined;
 }

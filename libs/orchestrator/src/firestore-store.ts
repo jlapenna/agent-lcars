@@ -1,6 +1,7 @@
 import {
   type CollectionReference,
   type DocumentReference,
+  FieldPath,
   Firestore,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
@@ -23,6 +24,7 @@ import {
 import {
   type OrchestratorStore,
   StoreConflict,
+  type TaskListCursor,
   type VersionedTask,
 } from './store';
 
@@ -289,6 +291,29 @@ export class FirestoreStore implements OrchestratorStore {
     // entries than it in this same order -- exactly "the page after the
     // one that ended in `before`".
     if (before !== undefined) query = query.startAfter(before);
+    const snapshot = await query.limit(limit ?? 200).get();
+    return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
+  }
+
+  async listTasks(
+    limit?: number,
+    before?: TaskListCursor,
+  ): Promise<VersionedTask[]> {
+    // `updatedAt` makes this a useful live-console order rather than a
+    // creation-order archive. Firestore's document id is the stable
+    // tiebreaker, so concurrent decisions at the same timestamp page
+    // without drops or repeats. `__name__` is the implicit final component
+    // of Firestore's single-field index for an ordered field, so this does
+    // not require an operator-managed composite index or a data migration.
+    let query = this.#tasks
+      .orderBy('task.updatedAt', 'desc')
+      .orderBy(FieldPath.documentId(), 'desc');
+    if (before !== undefined) {
+      query = query.startAfter(
+        before.updatedAt,
+        encodeURIComponent(before.taskKey),
+      );
+    }
     const snapshot = await query.limit(limit ?? 200).get();
     return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }

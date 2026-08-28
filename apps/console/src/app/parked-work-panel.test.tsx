@@ -13,6 +13,7 @@ vi.mock('next/navigation', () => ({
 function item(
   overrides: Partial<{
     id: string;
+    githubIssue: number | undefined;
     state: string;
     title: string;
     updatedAt: string;
@@ -28,6 +29,7 @@ function item(
 ) {
   const {
     id = '01M107KR3X6VDH7NZ4JDXZNSS2',
+    githubIssue,
     state = 'parked',
     title = 'T',
     updatedAt = '2026-08-27T04:30:00.000Z',
@@ -36,7 +38,12 @@ function item(
     hasResult = true,
   } = overrides;
   return {
-    id,
+    id:
+      githubIssue === undefined ? `work:${id}` : `octo/example#${githubIssue}`,
+    anchor:
+      githubIssue === undefined
+        ? { workId: id }
+        : { repo: 'octo/example', issue: githubIssue },
     state,
     spec: {
       title,
@@ -65,11 +72,13 @@ function renderPanel(
   items: unknown[],
   cancel = vi.fn(async () => [null, undefined] as const),
   redispatch = vi.fn(async () => [null, undefined] as const),
+  hasMoreTasks = false,
 ) {
   render(
     <MantineProvider>
       <ParkedWorkPanel
         items={items as never}
+        hasMoreTasks={hasMoreTasks}
         cancel={cancel}
         redispatch={redispatch}
       />
@@ -130,5 +139,39 @@ describe('ParkedWorkPanel', () => {
   it('shows "lost" when the latest run is lost with no result (#12)', () => {
     renderPanel([item({ latestRunState: 'lost', hasResult: false })]);
     expect(screen.getByText('lost')).toBeInTheDocument();
+  });
+
+  it('links a parked GitHub task to its canonical task page without native controls', () => {
+    renderPanel([item({ githubIssue: 1502, title: 'GitHub task' })]);
+    expect(screen.getByRole('link', { name: 'GitHub task' })).toHaveAttribute(
+      'href',
+      '/task/octo/example/1502',
+    );
+    expect(screen.queryByRole('button', { name: /redispatch/i })).toBeNull();
+  });
+
+  it('discloses when an older task page may contain more parked work', () => {
+    renderPanel(
+      [item({ title: 'Recent parked work' })],
+      undefined,
+      undefined,
+      true,
+    );
+    expect(
+      screen.getByText('Older tasks may contain parked work.'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the truncation disclosure when the current page has no parked work', () => {
+    renderPanel([], undefined, undefined, true);
+    expect(screen.getByTestId('parked-work-panel')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'No parked work in the 200 most recently updated tasks.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Older tasks may contain parked work.'),
+    ).toBeInTheDocument();
   });
 });
