@@ -9,10 +9,17 @@ set -euo pipefail
 
 readonly OPENCODE_RELEASE_OWNER='anomalyco'
 readonly OPENCODE_RELEASE_REPOSITORY='opencode'
+opencode_temp_dir=''
 
 fail() {
   echo "OpenCode release install failed: $*" >&2
   exit 1
+}
+
+cleanup_opencode_temp_dir() {
+  if [[ -n "$opencode_temp_dir" ]]; then
+    rm -rf -- "$opencode_temp_dir"
+  fi
 }
 
 select_opencode_release() {
@@ -68,23 +75,23 @@ validate_opencode_archive() {
 install_opencode_release() {
   local version="$1"
   local arch="$2"
-  local asset digest release temp_dir archive
+  local asset digest release archive
 
   release="$(select_opencode_release "$version" "$arch")" ||
     fail "cannot select reviewed release for $version/$arch"
   IFS=$'\t' read -r asset digest <<< "$release" ||
     fail 'reviewed release selection is malformed'
-  temp_dir="$(mktemp -d)"
-  archive="$temp_dir/$asset"
-  trap 'rm -rf -- "$temp_dir"' EXIT
+  opencode_temp_dir="$(mktemp -d)"
+  archive="$opencode_temp_dir/$asset"
+  trap cleanup_opencode_temp_dir EXIT
 
   curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
     --connect-timeout 30 --max-time 570 \
     "https://github.com/$OPENCODE_RELEASE_OWNER/$OPENCODE_RELEASE_REPOSITORY/releases/download/$version/$asset" \
     --output "$archive"
   validate_opencode_archive "$archive" "$digest"
-  tar -xzf "$archive" --no-same-owner --no-same-permissions -C "$temp_dir" -- opencode
-  install -o root -g root -m 0755 "$temp_dir/opencode" /usr/local/bin/opencode
+  tar -xzf "$archive" --no-same-owner --no-same-permissions -C "$opencode_temp_dir" -- opencode
+  install -o root -g root -m 0755 "$opencode_temp_dir/opencode" /usr/local/bin/opencode
 }
 
 main() {
