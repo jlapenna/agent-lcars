@@ -25,6 +25,8 @@ const RUN_NAME_ANCHOR_PREFIX =
 const NATIVE_UNIQUE_CONCURRENCY_EXPRESSIONS = new Set([
   'inputs.broker_intent_id',
   'inputs.work',
+  'inputs.issue||inputs.broker_intent_id',
+  'inputs.issue||inputs.work',
   "inputs.issue!=''&&inputs.issue||inputs.broker_intent_id",
   "inputs.issue!=''&&inputs.issue||inputs.work",
 ]);
@@ -194,7 +196,7 @@ function validateWorkflow(provider, file, document) {
     const group = concurrencyGroup(document.concurrency);
     if (!hasNativeUniqueConcurrencyKey(group)) {
       errors.push(
-        `${file}: workflow-level concurrency.group must return inputs.broker_intent_id or inputs.work so native runs have distinct keys`,
+        `${file}: workflow-level concurrency.group must use inputs.work, inputs.broker_intent_id, or an inputs.issue || <native identifier> fallback`,
       );
     }
   }

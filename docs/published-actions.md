@@ -90,9 +90,12 @@ accepts.
 `.github/workflows/{claude,codex,opencode}.yml` files and protects the common
 dispatch boundary: the nine-input surface, optional empty `issue` and `work`
 anchors, the canonical issue-or-work admission and forwarding for both worker
-and fallback, a native-aware run name, and a returned native identifier value
-in any workflow-level concurrency group. Caller-supplied `prompt` overrides
-are rejected so the shared lane owns canonical prompt construction.
+and fallback, and a native-aware run name. A workflow-level concurrency group,
+when present, must interpolate `inputs.work`, `inputs.broker_intent_id`, or the
+canonical `inputs.issue || <native identifier>` fallback; the explicit
+`inputs.issue != '' && inputs.issue || <native identifier>` equivalent is also
+accepted. Caller-supplied `prompt` overrides are rejected so the shared lane
+owns canonical prompt construction.
 Provider-specific credentials, timeouts, lane plumbing, and job-level
 concurrency remain caller-owned.
 

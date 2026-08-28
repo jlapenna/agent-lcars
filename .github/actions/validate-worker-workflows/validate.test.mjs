@@ -207,7 +207,7 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must return/u,
+  /workflow-level concurrency\.group must use/u,
 );
 expectFailure(
   'workflow concurrency uses a literal input name',
@@ -218,7 +218,7 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must return/u,
+  /workflow-level concurrency\.group must use/u,
 );
 expectFailure(
   'workflow concurrency quotes an input name inside an expression',
@@ -229,7 +229,7 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must return/u,
+  /workflow-level concurrency\.group must use/u,
 );
 expectFailure(
   'workflow concurrency reduces work to a boolean',
@@ -240,7 +240,7 @@ expectFailure(
       'cancel-in-progress': false,
     };
   },
-  /workflow-level concurrency\.group must return/u,
+  /workflow-level concurrency\.group must use/u,
 );
 
 {
@@ -258,6 +258,28 @@ expectFailure(
     assert.equal(result.status, 0, result.stderr);
     process.stdout.write(
       'ok - native-unique concurrency and provider-specific options pass\n',
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+for (const [name, expression] of [
+  ['work', 'inputs.issue || inputs.work'],
+  ['broker intent', 'inputs.issue || inputs.broker_intent_id'],
+]) {
+  const directory = fixture();
+  try {
+    mutate(directory, 'opencode', (document) => {
+      document.concurrency = {
+        group: `opencode-\${{ ${expression} }}`,
+        'cancel-in-progress': false,
+      };
+    });
+    const result = runValidator(sourceValidator, directory);
+    assert.equal(result.status, 0, result.stderr);
+    process.stdout.write(
+      `ok - canonical ${name} concurrency fallback passes\n`,
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
