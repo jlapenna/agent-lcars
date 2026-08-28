@@ -33,6 +33,10 @@ type fakeDockerServer struct {
 	tops       map[string]container.TopResponse
 	containers []container.Summary // ContainerList response
 	removed    []string            // IDs passed to ContainerRemove, in call order
+	// removeForced records whether each ContainerRemove request asked Docker to
+	// force deletion. Queue retention must remain false here: a state race
+	// should be refused by Docker rather than ending a live direct runner.
+	removeForced []bool
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
@@ -144,6 +148,14 @@ func (f *fakeDockerServer) removedIDs() []string {
 	return out
 }
 
+func (f *fakeDockerServer) removalsForced() []bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]bool, len(f.removeForced))
+	copy(out, f.removeForced)
+	return out
+}
+
 func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/_ping"):
@@ -206,6 +218,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		id := containerIDFromPath(r.URL.Path)
 		f.mu.Lock()
 		f.removed = append(f.removed, id)
+		f.removeForced = append(f.removeForced, r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true")
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 

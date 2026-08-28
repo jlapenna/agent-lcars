@@ -729,15 +729,17 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 
 	containers := []container.Summary{
 		// Six recent owned exits: retain the five newest and remove the sixth
-		// to keep an immediate per-host bound during a failure burst.
-		owned("new-1", now.Add(-1*time.Hour), container.StateExited),
-		owned("new-2", now.Add(-2*time.Hour), container.StateExited),
-		owned("new-3", now.Add(-3*time.Hour), container.StateExited),
-		owned("new-4", now.Add(-4*time.Hour), container.StateExited),
-		owned("new-5", now.Add(-5*time.Hour), container.StateExited),
-		owned("over-limit", now.Add(-6*time.Hour), container.StateExited),
-		// An aged exit is removed even when it is within the numerical limit.
-		owned("aged", now.Add(-25*time.Hour), container.StateExited),
+		// to keep an immediate per-host bound during a failure burst. Their
+		// creation times intentionally disagree with their exit times: a
+		// long-running newer failure must rank by FinishedAt, not Created.
+		owned("new-1", now.Add(-72*time.Hour), container.StateExited),
+		owned("new-2", now.Add(-48*time.Hour), container.StateExited),
+		owned("new-3", now.Add(-36*time.Hour), container.StateExited),
+		owned("new-4", now.Add(-24*time.Hour), container.StateExited),
+		owned("new-5", now.Add(-12*time.Hour), container.StateExited),
+		owned("over-limit", now.Add(-10*time.Minute), container.StateExited),
+		// A separately aged exit is removed by its actual finished time.
+		owned("aged", now.Add(-48*time.Hour), container.StateExited),
 		// A running direct runner must never be removed.
 		owned("active", now.Add(-48*time.Hour), container.StateRunning),
 		// Neither an Actions runner nor a malformed/foreign direct label is
@@ -747,6 +749,17 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 		{ID: "wrong-owner", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{directRunnerLabelKey: "other", directRunnerRunIDLabelKey: "work:foreign/r1"}},
 	}
 	f.setContainers(containers)
+	for id, finishedAt := range map[string]time.Time{
+		"new-1":      now.Add(-1 * time.Hour),
+		"new-2":      now.Add(-2 * time.Hour),
+		"new-3":      now.Add(-3 * time.Hour),
+		"new-4":      now.Add(-4 * time.Hour),
+		"new-5":      now.Add(-5 * time.Hour),
+		"over-limit": now.Add(-6 * time.Hour),
+		"aged":       now.Add(-25 * time.Hour),
+	} {
+		f.setInspect(id, http.StatusOK, &container.State{Status: container.StateExited, FinishedAt: finishedAt.Format(time.RFC3339Nano)})
+	}
 	resolved := resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}
 	if err := cleanupExitedDirectRunners(context.Background(), resolved, newClient, now); err != nil {
 		t.Fatalf("cleanupExitedDirectRunners: %v", err)
@@ -754,6 +767,11 @@ func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits
 	removed := f.removedIDs()
 	if strings.Join(removed, ",") != "over-limit,aged" {
 		t.Fatalf("removed = %v, want only over-limit and aged owned exits", removed)
+	}
+	for i, forced := range f.removalsForced() {
+		if forced {
+			t.Fatalf("removal %d was forced; retention must let Docker refuse an active-state race", i)
+		}
 	}
 }
 
