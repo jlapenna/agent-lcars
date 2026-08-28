@@ -1770,6 +1770,43 @@ describe('drainOutbox: report-outcome', () => {
     expect(calls.some((call) => call.init.method === 'DELETE')).toBe(true);
   });
 
+  it('does not clear needs-human when a delayed success precedes a later park (#1570)', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const first = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'resolved',
+      pipeline: 'claude',
+    });
+    if (isRefusal(first)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(first.run.runId);
+    await orchestrator.report(first.run.runId, { ok: true, summary: 'no-op' });
+
+    const second = await orchestrator.request({
+      taskId: { repo: 'jlapenna/agent-lcars', issue: 42 },
+      requestId: 'park',
+      pipeline: 'claude',
+    });
+    if (isRefusal(second)) throw new Error('unexpected refusal');
+    await orchestrator.confirmDispatch(second.run.runId);
+    await orchestrator.report(second.run.runId, { ok: true, summary: 'park' });
+
+    const { fetchImpl, calls } = routedFetch();
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl,
+      now: () => clock.now(),
+    });
+
+    expect(calls.some((call) => call.init.method === 'DELETE')).toBe(false);
+    expect(
+      calls.some(
+        (call) => call.init.method === 'POST' && call.url.endsWith('/labels'),
+      ),
+    ).toBe(true);
+  });
+
   it('a needs-human label failure does not fail the drain, and does not block settling the entry (best-effort)', async () => {
     const { clock, store, orchestrator } = fixture();
     const { run } = await started(orchestrator);

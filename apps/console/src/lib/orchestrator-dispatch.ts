@@ -718,12 +718,17 @@ async function handleReportOutcome(
       );
     }
   } else if (runResolvesNeedsHumanLabel(run)) {
-    await removeNeedsHumanLabelBestEffort(
-      fetchImpl,
-      tokens,
-      target,
-      githubApiBaseUrl(deps),
-    );
+    // The symmetric out-of-order case: an older success can be delivered
+    // after a newer park/failure. That newer terminal result still needs the
+    // operator signal, so never let this old success clear it.
+    if (!(await hasLaterNeedsHumanRun(store, run))) {
+      await removeNeedsHumanLabelBestEffort(
+        fetchImpl,
+        tokens,
+        target,
+        githubApiBaseUrl(deps),
+      );
+    }
   }
 
   await settleClaim(deps, entry, 'done');
@@ -992,14 +997,42 @@ async function hasLaterSuccessfulNonParkRun(
   store: OrchestratorStore,
   run: Run,
 ): Promise<boolean> {
+  return hasLaterRunMatching(
+    store,
+    run,
+    runResolvesNeedsHumanLabel,
+    'before labeling',
+  );
+}
+
+/** The converse of `hasLaterSuccessfulNonParkRun`: an old success must not
+ * clear a human-needed signal established by a newer terminal run. */
+async function hasLaterNeedsHumanRun(
+  store: OrchestratorStore,
+  run: Run,
+): Promise<boolean> {
+  return hasLaterRunMatching(
+    store,
+    run,
+    runNeedsHumanLabel,
+    'before clearing a label',
+  );
+}
+
+async function hasLaterRunMatching(
+  store: OrchestratorStore,
+  run: Run,
+  matches: (candidate: Run) => boolean,
+  operation: string,
+): Promise<boolean> {
   try {
     return (await store.listRuns(run.task)).some(
-      (candidate) =>
-        isLaterRun(candidate, run) && runResolvesNeedsHumanLabel(candidate),
+      (candidate) => isLaterRun(candidate, run) && matches(candidate),
     );
   } catch (error) {
     console.error(
-      'agent-lcars: could not check later runs before labeling %s:',
+      'agent-lcars: could not check later runs %s for %s:',
+      operation,
       run.runId,
       error,
     );
