@@ -123,7 +123,6 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		consoleURL,
 		keyPath,
 		os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"),
-		os.Getenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH"),
 	)
 	setQueueExecutorStartupState(queueStartupState)
 	if queueDisabledReason != "" {

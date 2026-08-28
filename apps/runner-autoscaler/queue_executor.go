@@ -300,8 +300,8 @@ const (
 	queueExecutorStateReady         queueExecutorStartupState = "ready"
 )
 
-func queueExecutorStartupDecision(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath string) (start bool, reason string) {
-	start, _, reason = queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath)
+func queueExecutorStartupDecision(consoleURL, credentialsFile, writerKeyPath string) (start bool, reason string) {
+	start, _, reason = queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath)
 	return start, reason
 }
 
@@ -309,7 +309,7 @@ func queueExecutorStartupDecision(consoleURL, credentialsFile, writerKeyPath, cl
 // deployment (no console URL) from an incomplete deployment. Operators can
 // alert on the latter without treating a host that has never been configured
 // for queue work as a failed worker.
-func queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath string) (start bool, state queueExecutorStartupState, reason string) {
+func queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath string) (start bool, state queueExecutorStartupState, reason string) {
 	if strings.TrimSpace(consoleURL) == "" {
 		return false, queueExecutorStateDisabled, "LCARS_CONSOLE_URL is required for the queue executor"
 	}
@@ -320,7 +320,6 @@ func queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath, clau
 		{"LCARS_CONSOLE_URL", consoleURL},
 		{"GOOGLE_APPLICATION_CREDENTIALS", credentialsFile},
 		{"LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", writerKeyPath},
-		{"LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", claudeTokenPath},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			return false, queueExecutorStateMisconfigured, required.name + " is required for the queue executor"

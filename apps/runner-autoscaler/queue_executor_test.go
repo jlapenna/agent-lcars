@@ -440,19 +440,17 @@ func TestQueueExecutorStartupDecision(t *testing.T) {
 		consoleURL string
 		keyPath    string
 		writerKey  string
-		claudeKey  string
 		wantStart  bool
 		wantReason bool
 	}{
-		{"complete configuration", "https://lcars.example", "/run/writer.json", "/host/writer.json", "/host/claude-token", true, false},
-		{"missing console URL", "", "/run/writer.json", "/host/writer.json", "/host/claude-token", false, true},
-		{"missing ID-token credentials", "https://lcars.example", "", "/host/writer.json", "/host/claude-token", false, true},
-		{"missing Docker writer credential", "https://lcars.example", "/run/writer.json", "", "/host/claude-token", false, true},
-		{"missing Docker Claude credential", "https://lcars.example", "/run/writer.json", "/host/writer.json", "", false, true},
+		{"complete configuration", "https://lcars.example", "/run/writer.json", "/host/writer.json", true, false},
+		{"missing console URL", "", "/run/writer.json", "/host/writer.json", false, true},
+		{"missing ID-token credentials", "https://lcars.example", "", "/host/writer.json", false, true},
+		{"missing Docker writer credential", "https://lcars.example", "/run/writer.json", "", false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			start, reason := queueExecutorStartupDecision(tc.consoleURL, tc.keyPath, tc.writerKey, tc.claudeKey)
+			start, reason := queueExecutorStartupDecision(tc.consoleURL, tc.keyPath, tc.writerKey)
 			if start != tc.wantStart {
 				t.Errorf("start = %v, want %v", start, tc.wantStart)
 			}
@@ -469,21 +467,34 @@ func TestQueueExecutorStartupStatusDistinguishesDisabledFromMisconfigured(t *tes
 		consoleURL string
 		keyPath    string
 		writerKey  string
-		claudeKey  string
 		wantStart  bool
 		wantState  queueExecutorStartupState
 	}{
-		{"no queue deployment", "", "/run/writer.json", "/host/writer.json", "/host/claude-token", false, queueExecutorStateDisabled},
-		{"incomplete queue deployment", "https://lcars.example", "", "/host/writer.json", "/host/claude-token", false, queueExecutorStateMisconfigured},
-		{"ready", "https://lcars.example", "/run/writer.json", "/host/writer.json", "/host/claude-token", true, queueExecutorStateReady},
+		{"no queue deployment", "", "/run/writer.json", "/host/writer.json", false, queueExecutorStateDisabled},
+		{"incomplete queue deployment", "https://lcars.example", "", "/host/writer.json", false, queueExecutorStateMisconfigured},
+		{"ready", "https://lcars.example", "/run/writer.json", "/host/writer.json", true, queueExecutorStateReady},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			start, state, _ := queueExecutorStartupStatus(tc.consoleURL, tc.keyPath, tc.writerKey, tc.claudeKey)
+			start, state, _ := queueExecutorStartupStatus(tc.consoleURL, tc.keyPath, tc.writerKey)
 			if start != tc.wantStart || state != tc.wantState {
 				t.Fatalf("queueExecutorStartupStatus() = (%v, %q), want (%v, %q)", start, state, tc.wantStart, tc.wantState)
 			}
 		})
+	}
+}
+
+// A Codex-only executor has no Claude credential by design: a provider's
+// host secret is resolved only when that provider is launched. Startup must
+// therefore depend on the queue's shared transport credentials alone.
+func TestQueueExecutorStartupAllowsCodexOnlyDeployment(t *testing.T) {
+	start, state, reason := queueExecutorStartupStatus(
+		"https://lcars.example",
+		"/run/telemetry-writer.json",
+		"/host/telemetry-writer.json",
+	)
+	if !start || state != queueExecutorStateReady || reason != "" {
+		t.Fatalf("Codex-only queue startup = (%v, %q, %q), want (true, %q, empty)", start, state, reason, queueExecutorStateReady)
 	}
 }
 
