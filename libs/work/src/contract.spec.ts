@@ -240,7 +240,7 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/{runId}/heartbeat': ['200', '401'],
       'POST /runs/{runId}/complete': ['200', '401'],
       'GET /runs/{runId}/checkout-token': ['200', '401'],
-      'GET /runs/{runId}/codex-auth': ['200', '401', '404', '500'],
+      'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
     });
   });

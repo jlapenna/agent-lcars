@@ -1,7 +1,11 @@
 import type { Bucket } from '@google-cloud/storage';
 import { describe, expect, it, vi } from 'vitest';
 
-import { CodexAuthStoreError, GcsCodexAuthStore } from './codex-auth-store';
+import {
+  CODEX_GLOBAL_LEASE_OBJECT,
+  CodexAuthStoreError,
+  GcsCodexAuthStore,
+} from './codex-auth-store';
 
 describe('GcsCodexAuthStore', () => {
   it('downloads the exact generation whose metadata it observed', async () => {
@@ -65,5 +69,76 @@ describe('GcsCodexAuthStore', () => {
       }),
     ).rejects.toMatchObject<CodexAuthStoreError>({ kind: 'conflict' });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the global subscription lease from the exact observed generation', async () => {
+    const getMetadata = vi.fn(async () => [{ generation: '41' }]);
+    const download = vi.fn(async () => [
+      Buffer.from(
+        JSON.stringify({
+          runId: 'work:01CODEXLEASE0000000000000/r1',
+          repository: 'jlapenna/agent-lcars',
+        }),
+      ),
+    ]);
+    const file = vi.fn(() => ({ getMetadata, download }));
+    const store = new GcsCodexAuthStore({ file } as unknown as Bucket);
+
+    await expect(store.readLease()).resolves.toEqual({
+      runId: 'work:01CODEXLEASE0000000000000/r1',
+      repository: 'jlapenna/agent-lcars',
+      generation: '41',
+    });
+    expect(file).toHaveBeenNthCalledWith(1, CODEX_GLOBAL_LEASE_OBJECT);
+    expect(file).toHaveBeenNthCalledWith(2, CODEX_GLOBAL_LEASE_OBJECT, {
+      generation: '41',
+    });
+  });
+
+  it('creates, takes, and releases the global lease with generation preconditions', async () => {
+    const save = vi.fn(async () => undefined);
+    const deleteFile = vi.fn(async () => undefined);
+    const getMetadata = vi.fn(async () => [{ generation: '42' }]);
+    const download = vi.fn(async () => [
+      Buffer.from(
+        JSON.stringify({
+          runId: 'work:01CODEXLEASE0000000000000/r1',
+          repository: 'jlapenna/agent-lcars',
+        }),
+      ),
+    ]);
+    const file = vi.fn(() => ({
+      save,
+      delete: deleteFile,
+      getMetadata,
+      download,
+    }));
+    const store = new GcsCodexAuthStore({ file } as unknown as Bucket);
+    const input = {
+      runId: 'work:01CODEXLEASE0000000000000/r1',
+      repository: 'jlapenna/agent-lcars',
+    };
+
+    await store.createLease(input);
+    await store.takeLease({ ...input, expectedGeneration: '41' });
+    await store.releaseLease(input.runId);
+
+    expect(save).toHaveBeenNthCalledWith(
+      1,
+      Buffer.from(JSON.stringify(input)),
+      expect.objectContaining({
+        preconditionOpts: { ifGenerationMatch: '0' },
+      }),
+    );
+    expect(save).toHaveBeenNthCalledWith(
+      2,
+      Buffer.from(JSON.stringify(input)),
+      expect.objectContaining({
+        preconditionOpts: { ifGenerationMatch: '41' },
+      }),
+    );
+    expect(deleteFile).toHaveBeenCalledWith({
+      ifGenerationMatch: '42',
+    });
   });
 });

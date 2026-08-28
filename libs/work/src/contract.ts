@@ -575,6 +575,7 @@ export const runsContract = {
     .errors({
       UNAUTHORIZED: { message: 'Invalid, expired, or non-Codex run token' },
       NOT_FOUND: { message: 'Codex authentication is not seeded' },
+      CONFLICT: { message: 'Codex subscription authentication is in use' },
       INTERNAL_SERVER_ERROR: {
         message: 'Codex authentication storage is unavailable',
       },

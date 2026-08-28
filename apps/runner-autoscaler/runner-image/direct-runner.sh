@@ -97,6 +97,24 @@ RESUME_TRANSCRIPT_URI="$(jq -r '.resume.transcriptGcsUri // empty' <<<"$brief")"
 # below swallows that refusal exactly like every other best-effort call in
 # this script.
 COMPLETED=0
+CODEX_RUNTIME_DIR=''
+CODEX_STDERR_TEE_PID=''
+cleanup_codex_material() {
+  if [ -n "$CODEX_STDERR_TEE_PID" ]; then
+    kill "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
+    wait "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
+    CODEX_STDERR_TEE_PID=''
+  fi
+  if [ -n "$CODEX_RUNTIME_DIR" ]; then
+    # CODEX_RUNTIME_DIR is created by mktemp below, beneath the dedicated
+    # Docker tmpfs. Removing that exact generated directory erases auth,
+    # persistence payloads, captured diagnostics, and any Codex state on
+    # every shell exit; Docker discards the backing tmpfs again when the
+    # container stops, even though the stopped container itself is retained.
+    rm -rf -- "$CODEX_RUNTIME_DIR"
+    CODEX_RUNTIME_DIR=''
+  fi
+}
 report_early_failure() {
   early_exit_code=$?
   [ -n "${HEARTBEAT_PID:-}" ] && { kill "$HEARTBEAT_PID" 2>/dev/null || true; }
@@ -112,6 +130,7 @@ $CURL_TIMEOUT_CONFIG
 data-binary = "@$early_payload"
 CURLCFG
   fi
+  cleanup_codex_material
   return 0
 }
 trap report_early_failure EXIT
@@ -306,6 +325,25 @@ else
   # The broker exposes only this run's target-repository lineage and only
   # to this live run token. The direct container receives no GCS credential
   # capable of reading another repository's auth.json.
+  : "${LCARS_CODEX_VOLATILE_DIR:?LCARS_CODEX_VOLATILE_DIR is required for Codex runs}"
+  if [ ! -d "$LCARS_CODEX_VOLATILE_DIR" ]; then
+    echo "FATAL: Codex volatile directory is missing" >&2
+    exit 1
+  fi
+  CODEX_RUNTIME_DIR="$(mktemp -d "$LCARS_CODEX_VOLATILE_DIR/run.XXXXXX")"
+  export CODEX_HOME="$CODEX_RUNTIME_DIR/home"
+  mkdir -m 700 "$CODEX_HOME"
+  # Preserve the runner image's reviewed Codex plugins/configuration without
+  # letting any pre-existing auth credential enter the run. All subsequent
+  # Codex writes land in the tmpfs-backed copy.
+  if [ -e "$HOME/.codex/auth.json" ]; then
+    echo "FATAL: runner image must not contain Codex authentication" >&2
+    exit 1
+  fi
+  if [ -d "$HOME/.codex" ]; then
+    cp -a "$HOME/.codex/." "$CODEX_HOME/"
+  fi
+
   codex_auth="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/codex-auth"
 header = "$AUTH_HEADER"
@@ -314,17 +352,21 @@ CURLCFG
 )"
   CODEX_RESTORED_GENERATION="$(jq -r '.generation' <<<"$codex_auth")"
   CODEX_RESTORED_SHA256="$(jq -r '.sha256' <<<"$codex_auth")"
-  mkdir -p "$HOME/.codex"
-  chmod 700 "$HOME/.codex"
-  jq -r '.authBase64' <<<"$codex_auth" | base64 --decode > "$HOME/.codex/auth.json"
-  chmod 600 "$HOME/.codex/auth.json"
-  if [ "$(sha256sum "$HOME/.codex/auth.json" | awk '{print $1}')" != "$CODEX_RESTORED_SHA256" ]; then
+  CODEX_AUTH_FILE="$CODEX_HOME/auth.json"
+  jq -r '.authBase64' <<<"$codex_auth" | base64 --decode > "$CODEX_AUTH_FILE"
+  chmod 600 "$CODEX_AUTH_FILE"
+  if [ "$(sha256sum "$CODEX_AUTH_FILE" | awk '{print $1}')" != "$CODEX_RESTORED_SHA256" ]; then
     echo "FATAL: restored Codex authentication failed its SHA-256 check" >&2
     exit 1
   fi
   codex login status
 
-  CODEX_OUTPUT="$RUNNER_TEMP/codex-output.jsonl"
+  CODEX_FAILURE_MESSAGES="$CODEX_RUNTIME_DIR/failure-messages"
+  CODEX_STDERR="$CODEX_RUNTIME_DIR/stderr"
+  CODEX_STDERR_PIPE="$CODEX_RUNTIME_DIR/stderr.pipe"
+  : > "$CODEX_FAILURE_MESSAGES"
+  : > "$CODEX_STDERR"
+  mkfifo "$CODEX_STDERR_PIPE"
   CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-4800}"
   case "$CODEX_TIMEOUT_SECONDS" in
     '' | *[!0-9]*)
@@ -336,36 +378,54 @@ CURLCFG
     echo "FATAL: CODEX_TIMEOUT_SECONDS must be a positive integer" >&2
     exit 1
   fi
+  tee "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
+  CODEX_STDERR_TEE_PID=$!
   set +e
   timeout --signal=TERM --kill-after=30s "${CODEX_TIMEOUT_SECONDS}s" \
-    codex exec --json --dangerously-bypass-approvals-and-sandbox \
-    "$AGENT_PROMPT" | tee "$CODEX_OUTPUT"
+    codex exec --json --ephemeral --dangerously-bypass-approvals-and-sandbox \
+    "$AGENT_PROMPT" 2> "$CODEX_STDERR_PIPE" |
+    while IFS= read -r codex_event; do
+      printf '%s\n' "$codex_event"
+      # Only the CLI's top-level fatal `error.message` and
+      # `turn.failed.error.message` fields are trusted failure diagnostics.
+      # Agent messages, command output, and task text are item payloads and
+      # can contain attacker-chosen signature text; they are never selected.
+      jq -r '
+        if .type == "error" and (.message | type) == "string" then .message
+        elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
+        else empty
+        end
+      ' <<<"$codex_event" >> "$CODEX_FAILURE_MESSAGES" 2>/dev/null || true
+    done
   AGENT_EXIT=${PIPESTATUS[0]}
   set -e
+  wait "$CODEX_STDERR_TEE_PID" || true
+  CODEX_STDERR_TEE_PID=''
+  rm -f -- "$CODEX_STDERR_PIPE"
 
   # #1192: derive only the three known refresh-failure signatures, then let
   # the broker make the authoritative skip decision before any GCS write.
   CODEX_AUTH_FAILURE=''
-  if grep -qF -- 'Your access token could not be refreshed' "$CODEX_OUTPUT"; then
+  if grep -qF -- 'Your access token could not be refreshed' "$CODEX_FAILURE_MESSAGES" "$CODEX_STDERR"; then
     CODEX_AUTH_FAILURE='access-token-refresh-failed'
-  elif grep -qF -- 'refresh token was already used' "$CODEX_OUTPUT"; then
+  elif grep -qF -- 'refresh token was already used' "$CODEX_FAILURE_MESSAGES" "$CODEX_STDERR"; then
     CODEX_AUTH_FAILURE='refresh-token-reused'
-  elif grep -F -- 'codex_login' "$CODEX_OUTPUT" | grep -qF -- '401 Unauthorized'; then
+  elif grep -F -- 'codex_login' "$CODEX_FAILURE_MESSAGES" "$CODEX_STDERR" | grep -qF -- '401 Unauthorized'; then
     CODEX_AUTH_FAILURE='codex-login-401'
   fi
   if [ -n "$CODEX_AUTH_FAILURE" ]; then
     AGENT_EXIT=1
   fi
 
-  if [ ! -s "$HOME/.codex/auth.json" ]; then
+  if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
     AGENT_EXIT=1
   else
-    codex_persist_payload="$RUNNER_TEMP/codex-auth-persist.json"
+    codex_persist_payload="$CODEX_RUNTIME_DIR/codex-auth-persist.json"
     jq -n \
       --arg generation "$CODEX_RESTORED_GENERATION" \
       --arg restoredSha256 "$CODEX_RESTORED_SHA256" \
-      --arg authBase64 "$(base64 -w0 "$HOME/.codex/auth.json")" \
+      --arg authBase64 "$(base64 -w0 "$CODEX_AUTH_FILE")" \
       --arg authFailure "$CODEX_AUTH_FAILURE" \
       '{generation:$generation,restoredSha256:$restoredSha256,authBase64:$authBase64}
        + (if $authFailure == "" then {} else {authFailure:$authFailure} end)' \
@@ -383,6 +443,7 @@ CURLCFG
       AGENT_EXIT=1
     fi
   fi
+  cleanup_codex_material
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true

@@ -3088,6 +3088,23 @@
               }
             }
           },
+          "409": {
+            "description": "Codex subscription authentication is in use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "Codex authentication storage is unavailable",
             "content": {

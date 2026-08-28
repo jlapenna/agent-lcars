@@ -209,10 +209,18 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
-printf '%s' '{"tokens":{"access":"rotated"}}' > "$HOME/.codex/auth.json"
+printf '%s' '{"tokens":{"access":"rotated"}}' > "$CODEX_HOME/auth.json"
 if [ "${FAKE_CODEX_BURNED:-}" = "1" ]; then
   echo '{"type":"turn.failed","error":{"message":"refresh token was already used"}}'
   exit 1
+fi
+if [ "${FAKE_CODEX_STDERR_BURNED:-}" = "1" ]; then
+  echo 'Your access token could not be refreshed' >&2
+  echo '{"type":"turn.failed","error":{"message":"authentication failed"}}'
+  exit 1
+fi
+if [ "${FAKE_CODEX_FALSE_POSITIVE:-}" = "1" ]; then
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"refresh token was already used"}}'
 fi
 echo '{"type":"turn.completed"}'
 exit 0
@@ -261,7 +269,8 @@ run_scenario() {
     scenario_runner_temp="$RUNNER_TEMP"
   fi
   export HOME="$dir/home"
-  mkdir -p "$scenario_runner_temp" "$HOME"
+  export LCARS_CODEX_VOLATILE_DIR="$dir/codex-volatile"
+  mkdir -p "$scenario_runner_temp" "$HOME" "$LCARS_CODEX_VOLATILE_DIR"
 
   export COMPLETE_LOG="$dir/complete-calls.log"
   export GIT_CLONE_ARGV_LOG="$dir/git-clone-argv.log"
@@ -378,7 +387,7 @@ unset FAKE_MISSING_CLAUDE_TOKEN
 
 [ "$rc" -eq 0 ] || fail "codex happy path: expected exit 0, got $rc"
 [ -s "$CODEX_ARGS_LOG" ] || fail "codex happy path: codex was not invoked"
-grep -q -- 'exec --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
+grep -q -- 'exec --json --ephemeral --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
   fail "codex happy path: wrong invocation ($(cat "$CODEX_ARGS_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "codex happy path: claude was invoked"
 [ ! -f "$NODE_ARGS_LOG" ] || fail "codex happy path: Claude resume helper was invoked"
@@ -388,6 +397,9 @@ jq -e '.generation == "7" and (.restoredSha256 | test("^[0-9a-f]{64}$")) and (.a
   fail "codex happy path: persistence payload lost its CAS binding ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
 grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
   fail "codex happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
+if find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit | grep -q .; then
+  fail "codex happy path: volatile auth/payload files survived exit"
+fi
 
 echo "scenario codex-happy: OK"
 
@@ -405,6 +417,35 @@ grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
   fail "codex burned auth: completion did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario codex-burned: OK"
+
+# Agent/task text is untrusted even inside valid JSONL. A signature in an
+# agent_message item must not suppress persistence or force failure because
+# only top-level `error.message`, `turn.failed.error.message`, and the CLI's
+# own stderr are origin diagnostics.
+export FAKE_CODEX_FALSE_POSITIVE=1
+run_scenario codex-signature-in-agent-text codex
+unset FAKE_CODEX_FALSE_POSITIVE
+
+[ "$rc" -eq 0 ] || fail "codex false positive: untrusted agent text forced failure"
+jq -e 'has("authFailure") | not' "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
+  fail "codex false positive: untrusted agent text suppressed persistence ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
+
+echo "scenario codex-signature-in-agent-text: OK"
+
+# Codex also emits origin diagnostics on stderr. Capture that stream
+# separately from JSONL and classify the known signature there.
+export FAKE_CODEX_STDERR_BURNED=1
+run_scenario codex-burned-stderr codex
+unset FAKE_CODEX_STDERR_BURNED
+
+[ "$rc" -ne 0 ] || fail "codex stderr burned auth: expected a non-zero exit"
+jq -e '.authFailure == "access-token-refresh-failed"' "$CODEX_AUTH_PERSIST_LOG" >/dev/null ||
+  fail "codex stderr burned auth: origin diagnostic was not classified ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
+if find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit | grep -q .; then
+  fail "codex stderr burned auth: volatile auth/payload files survived failure exit"
+fi
+
+echo "scenario codex-burned-stderr: OK"
 
 # Provider expansion is explicit. OpenCode remains outside this PR and must
 # fail before checkout while still settling the already-claimed run.

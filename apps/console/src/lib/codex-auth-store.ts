@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { type Bucket, Storage } from '@google-cloud/storage';
 
 export const CODEX_AUTH_MAX_BYTES = 256 * 1024;
+export const CODEX_GLOBAL_LEASE_OBJECT = '_leases/codex-subscription.json';
 
 export type CodexAuthStoreErrorKind =
   'not-found' | 'conflict' | 'invalid' | 'unavailable';
@@ -24,13 +25,33 @@ export interface CodexAuthSnapshot {
   sha256: string;
 }
 
+export interface CodexAuthLease {
+  runId: string;
+  repository: string;
+  generation: string;
+}
+
 export interface CodexAuthStore {
   read(repository: string): Promise<CodexAuthSnapshot>;
+  readLease(): Promise<CodexAuthLease | undefined>;
+  createLease(input: { runId: string; repository: string }): Promise<void>;
+  takeLease(input: {
+    runId: string;
+    repository: string;
+    expectedGeneration: string;
+  }): Promise<void>;
+  releaseLease(runId: string): Promise<void>;
   replace(input: {
     repository: string;
     expectedGeneration: string;
     authBase64: string;
   }): Promise<void>;
+}
+
+function leaseBytes(input: { runId: string; repository: string }): Buffer {
+  return Buffer.from(
+    JSON.stringify({ runId: input.runId, repository: input.repository }),
+  );
 }
 
 function objectName(repository: string): string {
@@ -109,6 +130,110 @@ export class GcsCodexAuthStore implements CodexAuthStore {
       throw new CodexAuthStoreError(
         'unavailable',
         'Codex authentication storage is unavailable',
+      );
+    }
+  }
+
+  async readLease(): Promise<CodexAuthLease | undefined> {
+    try {
+      const [metadata] = await this.bucket
+        .file(CODEX_GLOBAL_LEASE_OBJECT)
+        .getMetadata();
+      const generation = metadata.generation;
+      if (!generation) {
+        throw new CodexAuthStoreError(
+          'invalid',
+          'Codex subscription lease is invalid',
+        );
+      }
+      const [bytes] = await this.bucket
+        .file(CODEX_GLOBAL_LEASE_OBJECT, { generation })
+        .download({ validation: 'crc32c' });
+      const parsed: unknown = JSON.parse(bytes.toString('utf8'));
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        !('runId' in parsed) ||
+        typeof parsed.runId !== 'string' ||
+        parsed.runId === '' ||
+        !('repository' in parsed) ||
+        typeof parsed.repository !== 'string' ||
+        parsed.repository === ''
+      ) {
+        throw new CodexAuthStoreError(
+          'invalid',
+          'Codex subscription lease is invalid',
+        );
+      }
+      return {
+        runId: parsed.runId,
+        repository: parsed.repository,
+        generation: String(generation),
+      };
+    } catch (error) {
+      if (error instanceof CodexAuthStoreError) throw error;
+      if (storageCode(error) === 404) return undefined;
+      throw new CodexAuthStoreError(
+        'unavailable',
+        'Codex subscription lease storage is unavailable',
+      );
+    }
+  }
+
+  async createLease(input: {
+    runId: string;
+    repository: string;
+  }): Promise<void> {
+    await this.saveLease(input, '0');
+  }
+
+  async takeLease(input: {
+    runId: string;
+    repository: string;
+    expectedGeneration: string;
+  }): Promise<void> {
+    await this.saveLease(input, input.expectedGeneration);
+  }
+
+  async releaseLease(runId: string): Promise<void> {
+    const lease = await this.readLease();
+    if (lease === undefined || lease.runId !== runId) return;
+    try {
+      await this.bucket.file(CODEX_GLOBAL_LEASE_OBJECT).delete({
+        ifGenerationMatch: lease.generation,
+      });
+    } catch (error) {
+      if (storageCode(error) === 404 || storageCode(error) === 412) return;
+      throw new CodexAuthStoreError(
+        'unavailable',
+        'Codex subscription lease storage is unavailable',
+      );
+    }
+  }
+
+  private async saveLease(
+    input: { runId: string; repository: string },
+    expectedGeneration: string,
+  ): Promise<void> {
+    try {
+      await this.bucket
+        .file(CODEX_GLOBAL_LEASE_OBJECT)
+        .save(leaseBytes(input), {
+          resumable: false,
+          validation: 'crc32c',
+          preconditionOpts: { ifGenerationMatch: expectedGeneration },
+          metadata: { contentType: 'application/json' },
+        });
+    } catch (error) {
+      if (storageCode(error) === 412) {
+        throw new CodexAuthStoreError(
+          'conflict',
+          'Codex subscription lease changed concurrently',
+        );
+      }
+      throw new CodexAuthStoreError(
+        'unavailable',
+        'Codex subscription lease storage is unavailable',
       );
     }
   }

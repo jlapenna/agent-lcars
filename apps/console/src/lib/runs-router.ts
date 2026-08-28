@@ -145,6 +145,75 @@ function codexAuthError(
 /** `claim` retry budget for a stale queue entry -- see the loop's own
  *  comment below. */
 const MAX_CLAIM_ATTEMPTS = 5;
+const MAX_CODEX_LEASE_ATTEMPTS = 5;
+
+async function acquireCodexLease(
+  context: RunsContext,
+  run: Run,
+  repository: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < MAX_CODEX_LEASE_ATTEMPTS; attempt++) {
+    const lease = await context.codexAuth.readLease();
+    if (lease === undefined) {
+      try {
+        await context.codexAuth.createLease({ runId: run.runId, repository });
+        return;
+      } catch (error) {
+        if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (lease.runId === run.runId && lease.repository === repository) return;
+
+    // The global lease serializes the single rotating subscription lineage
+    // across every repository and every runner host. Its stale-takeover
+    // authority is the control plane's own run state/lease, not a second
+    // independent timeout that could expire while the owner is still live.
+    const holder = await context.store.readRun(lease.runId);
+    if (
+      holder !== undefined &&
+      isLive(holder.state) &&
+      Date.parse(holder.leaseExpiresAt) > context.now().getTime()
+    ) {
+      throw new CodexAuthStoreError(
+        'conflict',
+        'Codex subscription authentication is already in use',
+      );
+    }
+    try {
+      await context.codexAuth.takeLease({
+        runId: run.runId,
+        repository,
+        expectedGeneration: lease.generation,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof CodexAuthStoreError && error.kind === 'conflict') {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new CodexAuthStoreError(
+    'conflict',
+    'Codex subscription lease changed concurrently',
+  );
+}
+
+async function requireCodexLeaseOwner(
+  context: RunsContext,
+  runId: string,
+): Promise<void> {
+  const lease = await context.codexAuth.readLease();
+  if (lease?.runId !== runId) {
+    throw new CodexAuthStoreError(
+      'conflict',
+      'Codex subscription lease is not owned by this run',
+    );
+  }
+}
 
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
@@ -291,11 +360,17 @@ export const runsRouter = os.router({
       input.outcome,
       input.outcomeReference,
     );
-    const settled = await context.orchestrator.report(run.runId, result);
-    return {
-      runId: run.runId,
-      state: isRefusal(settled) ? settled.reason : 'finished',
-    };
+    try {
+      const settled = await context.orchestrator.report(run.runId, result);
+      return {
+        runId: run.runId,
+        state: isRefusal(settled) ? settled.reason : 'finished',
+      };
+    } finally {
+      if (run.pipeline === 'codex') {
+        await context.codexAuth.releaseLease(run.runId);
+      }
+    }
   }),
 
   checkoutToken: os.checkoutToken.handler(async ({ input, context }) => {
@@ -321,10 +396,14 @@ export const runsRouter = os.router({
   }),
 
   codexAuth: os.codexAuth.handler(async ({ input, context, errors }) => {
-    const { repository } = await requireCodexRun(context, input.runId);
+    const { run, repository } = await requireCodexRun(context, input.runId);
+    let acquired = false;
     try {
+      await acquireCodexLease(context, run, repository);
+      acquired = true;
       return await context.codexAuth.read(repository);
     } catch (error) {
+      if (acquired) await context.codexAuth.releaseLease(run.runId);
       return codexAuthError(error, errors);
     }
   }),
@@ -332,23 +411,27 @@ export const runsRouter = os.router({
   persistCodexAuth: os.persistCodexAuth.handler(
     async ({ input, context, errors }) => {
       const { repository } = await requireCodexRun(context, input.runId);
-
-      // #1192: a Codex process that positively reported one of the three
-      // known refresh-failure signatures must never advance the stored
-      // lineage. The direct runner derives this narrow enum from Codex's
-      // captured JSONL; the broker makes the refusal authoritative before
-      // any GCS call.
-      if (input.authFailure !== undefined) {
-        return { status: 'skipped-burned' as const };
-      }
-
-      const bytes = Buffer.from(input.authBase64, 'base64');
-      const endSha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-      if (endSha256 === input.restoredSha256) {
-        return { status: 'unchanged' as const };
-      }
-
       try {
+        await requireCodexLeaseOwner(context, input.runId);
+
+        // #1192: a Codex process that positively reported one of the three
+        // known refresh-failure signatures must never advance the stored
+        // lineage. The direct runner derives this narrow enum from trusted
+        // Codex failure events/stderr; the broker makes the refusal
+        // authoritative before any GCS write.
+        if (input.authFailure !== undefined) {
+          return { status: 'skipped-burned' as const };
+        }
+
+        const bytes = Buffer.from(input.authBase64, 'base64');
+        const endSha256 = crypto
+          .createHash('sha256')
+          .update(bytes)
+          .digest('hex');
+        if (endSha256 === input.restoredSha256) {
+          return { status: 'unchanged' as const };
+        }
+
         await context.codexAuth.replace({
           repository,
           expectedGeneration: input.generation,
@@ -357,6 +440,8 @@ export const runsRouter = os.router({
         return { status: 'updated' as const };
       } catch (error) {
         return codexAuthError(error, errors);
+      } finally {
+        await context.codexAuth.releaseLease(input.runId);
       }
     },
   ),

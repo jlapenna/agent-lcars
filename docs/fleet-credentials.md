@@ -123,6 +123,15 @@ makes each repository's object a _lineage_, not a value:
 > documents this). Mint an independent login per repo — same ChatGPT
 > subscription, separate rotating token.
 
+QueueExecutor adds a conservative broker-wide guard even though those objects
+are independently minted: it generation-CAS claims the single
+`_leases/codex-subscription.json` object before any direct run restores auth.
+Only one direct Codex process can therefore hold subscription auth across all
+repos/hosts. A conflicting live owner returns 409; takeover requires the
+owner run to be non-live or lease-expired, and normal persistence/completion
+releases the object. The future App Hosting IAM grant must cover this exact
+coordination object as well as the repository auth objects.
+
 Per new repo. **Steps 1-2 are the whole job for a repo Terraform already
 covers** — the four 2026-08 additions (`www`, `girosf`, `nx-cache-server`,
 `sync-padd`) have their service accounts and prefix-restricted object grants
