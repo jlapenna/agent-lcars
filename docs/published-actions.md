@@ -30,6 +30,7 @@ their operating constraints.
 | `setup-nx-remote-cache`        | Configure trusted Nx jobs for the shared L2 cache.               |
 | `deploy-verify`                | Poll a deployed URL and optionally annotate deployment status.   |
 | `request-control-plane`        | Send an OIDC-authenticated request to a control-plane endpoint.  |
+| `validate-worker-workflows`    | Validate worker issue/native-work anchor-union contracts.        |
 
 ## Published reusable workflows
 
@@ -84,6 +85,15 @@ concurrency, repository-variable spellings, and any required fallback job.
 Each workflow's `workflow_call` declaration is authoritative for required
 inputs and secrets; add a `with:` block only for inputs that declaration
 accepts.
+
+`validate-worker-workflows` takes no inputs. It reads the caller checkout's
+`.github/workflows/{claude,codex,opencode}.yml` files and protects the common
+dispatch boundary: the nine-input surface, optional empty `issue` and `work`
+anchors, issue-or-work admission and forwarding for both worker and fallback,
+a native-aware run name, and a native-unique key in any workflow-level
+concurrency group. Caller-supplied `prompt` overrides are rejected so the
+shared lane owns canonical prompt construction. Provider-specific credentials,
+timeouts, lane plumbing, and job-level concurrency remain caller-owned.
 
 ## Security invariants
 
