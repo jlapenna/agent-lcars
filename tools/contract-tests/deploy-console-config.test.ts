@@ -265,7 +265,7 @@ describe('console deployment workflow', () => {
     );
   });
 
-  it("grants Sprinkles' ambient App Hosting identity only the native claude operator path", async () => {
+  it('lets the repository-bound work-create operator request every advertised pipeline', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -276,14 +276,26 @@ describe('console deployment workflow', () => {
     )?.value;
 
     expect(grantsValue).toBeDefined();
-    expect(JSON.parse(grantsValue ?? '[]')).toContainEqual({
-      principal:
-        'svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com',
-      subjects: [
-        'firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com',
-      ],
+    const grants = JSON.parse(grantsValue ?? '[]') as Array<{
+      principal: string;
+      pipelines: string[];
+    }>;
+    const workflowGrant = grants.find(
+      ({ principal }) => principal === 'workflow:work-create',
+    );
+
+    // work-create.yml exposes PIPELINE as its native Work API pipeline
+    // choice. Keep its admission grant in sync with the provider canaries.
+    expect(workflowGrant).toMatchObject({
+      principal: 'workflow:work-create',
+      pipelines: ['claude', 'codex', 'opencode'],
+    });
+    expect(
+      grants.find(({ principal }) => principal === 'svc:telemetry-writer'),
+    ).toMatchObject({
+      principal: 'svc:telemetry-writer',
       pipelines: ['claude'],
-      scopes: ['work.operator'],
+      scopes: ['work.executor'],
     });
     expect(
       config.env?.find(
@@ -292,18 +304,16 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('temporarily opts only claude into the queue-executor retry proof', async () => {
+  it('does not override the disabled queue-executor default after the live proof', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
       env?: Array<{ variable?: string; value?: string }>;
     };
 
-    expect(
-      config.env?.find(
-        ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
-      )?.value,
-    ).toBe('["claude"]');
+    expect(config.env?.map(({ variable }) => variable)).not.toContain(
+      'AGENT_LCARS_QUEUE_PIPELINES',
+    );
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {

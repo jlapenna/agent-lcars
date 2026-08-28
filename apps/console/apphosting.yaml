@@ -73,8 +73,12 @@ env:
   # Not sensitive - grants for the native work items API (see
   # apps/console/src/lib/work-grants.ts). Maps a Google service-account
   # email or a `github:<login>` session subject to a principal and the
-  # pipelines it may operate. svc:telemetry-writer is the runner-autoscaler
-  # queue executor's own claim identity (native-work-items sub-project 4,
+  # pipelines it may operate. The current operator grants each list every
+  # supported pipeline. That admission grant does not opt a
+  # pipeline into the queue executor; AGENT_LCARS_QUEUE_PIPELINES remains
+  # the separate, explicit execution-routing control. svc:telemetry-writer
+  # is the runner-autoscaler's queue executor claim identity
+  # (native-work-items sub-project 4,
   # #1502): scoped to work.executor only, never work.operator -- see
   # docs/deployment-boundary.md's work-grants table. Durable and inert on
   # its own: an unset/empty AGENT_LCARS_QUEUE_PIPELINES means no pipeline
@@ -85,32 +89,16 @@ env:
   # current ambient backend identity. Its ID token's raw `email` is the
   # grant subject (work-auth verifies that value); the service-prefixed
   # principal is the stable audit identity. It replaces the restricted
-  # `/lcars` Slack command's direct GitHub issue filing with a native item,
-  # limited to the command's existing `claude` pipeline and work.operator.
+  # `/lcars` Slack command's direct GitHub issue filing with a native item.
+  # Its current grant lists every supported pipeline.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.executor"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.operator"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.executor"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
     availability:
       - RUNTIME
 
   # Not sensitive - the global cap on simultaneously live work runs.
   - variable: AGENT_LCARS_WORK_MAX_LIVE_RUNS
     value: '2'
-    availability:
-      - RUNTIME
-
-  # Not sensitive - which pipelines mint queue-executor runs instead of
-  # dispatching through GitHub Actions (work-mint.ts's executorFor). Empty
-  # ([]) keeps every pipeline on github-actions; this is a DELIBERATELY
-  # TEMPORARY opt-in for the sub-project 4 live proof (#1502) and must be
-  # set back to '[]' immediately after, this variable first (see
-  # docs/deployment-boundary.md's "Queue executor live-proof"). Opened only
-  # once the runner-autoscaler's queue poller is confirmed live and polling
-  # cleanly against the svc:telemetry-writer grant (jlapenna/homelab#911) --
-  # the poller's 15s interval then claims a newly-minted item almost
-  # immediately, rather than leaving it queued for however long this flag
-  # and the poller going live are apart.
-  - variable: AGENT_LCARS_QUEUE_PIPELINES
-    value: '["claude"]'
     availability:
       - RUNTIME
 
