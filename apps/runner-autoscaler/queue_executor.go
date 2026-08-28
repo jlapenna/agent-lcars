@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -74,6 +76,10 @@ type queueExecutorConfig struct {
 	// value) means "never draining" -- pollOnce treats a nil draining the
 	// same as one that always returns false.
 	draining func() bool
+	// cleanup retains bounded post-exit direct-runner evidence. It is separate
+	// from launch because cleanup must never participate in claiming or affect
+	// a claim's recovery semantics.
+	cleanup func(context.Context) error
 }
 
 type claimResponse struct {
@@ -92,14 +98,37 @@ type claimResponse struct {
 // (run id, work id, pipeline name, token, timestamp).
 const claimResponseBodyLimit = 64 << 10
 
+// queuePollOutcome is deliberately bounded because it becomes a Prometheus
+// metric label. Keep operational causes here rather than using error strings
+// as labels.
+type queuePollOutcome string
+
+const (
+	queuePollOutcomeDraining  queuePollOutcome = "draining"
+	queuePollOutcomeIdle204   queuePollOutcome = "idle_204"
+	queuePollOutcomeIdleEmpty queuePollOutcome = "idle_empty"
+	queuePollOutcomePollError queuePollOutcome = "poll_error"
+	queuePollOutcomeClaimed   queuePollOutcome = "claimed"
+	queuePollOutcomeLaunchErr queuePollOutcome = "launch_error"
+)
+
 // pollOnce claims at most one run and, on success, launches it. "Nothing
 // queued for these pipelines" is not an error -- the caller's loop simply
 // tries again on the next tick -- and the console answers it two ways this
 // function must both tolerate: a bare 204, or (what it actually sends today)
 // 200 with an empty body.
 func pollOnce(cfg queueExecutorConfig) error {
+	_, err := pollOnceWithOutcome(cfg)
+	return err
+}
+
+// pollOnceWithOutcome preserves pollOnce's API/error behavior while exposing
+// a bounded operational outcome to the durable poller metrics. A valid claim
+// is counted before launch, so a launch failure is visible as both a claimed
+// run and a failed launch rather than being mistaken for an empty queue.
+func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	if cfg.draining != nil && cfg.draining() {
-		return nil
+		return queuePollOutcomeDraining, nil
 	}
 	client := cfg.httpClient
 	if client == nil {
@@ -107,30 +136,30 @@ func pollOnce(cfg queueExecutorConfig) error {
 	}
 	token, err := cfg.idToken()
 	if err != nil {
-		return fmt.Errorf("minting claim id token: %w", err)
+		return queuePollOutcomePollError, fmt.Errorf("minting claim id token: %w", err)
 	}
 	body, err := json.Marshal(map[string]string{"runner": cfg.runnerName})
 	if err != nil {
-		return err
+		return queuePollOutcomePollError, err
 	}
 	req, err := http.NewRequest(http.MethodPost, cfg.consoleURL+"/api/work/v1/runs/claim", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return queuePollOutcomePollError, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("claim request: %w", err)
+		return queuePollOutcomePollError, fmt.Errorf("claim request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNoContent {
-		return nil
+		return queuePollOutcomeIdle204, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("claim returned %d", resp.StatusCode)
+		return queuePollOutcomePollError, fmt.Errorf("claim returned %d", resp.StatusCode)
 	}
 	// Read the whole (bounded) body up front, rather than handing
 	// resp.Body straight to json.NewDecoder: an empty or whitespace-only
@@ -139,27 +168,32 @@ func pollOnce(cfg queueExecutorConfig) error {
 	// token was invalid" without this same read-first shape.
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, claimResponseBodyLimit))
 	if err != nil {
-		return fmt.Errorf("reading claim response: %w", err)
+		return queuePollOutcomePollError, fmt.Errorf("reading claim response: %w", err)
 	}
 	if len(bytes.TrimSpace(respBody)) == 0 {
-		return nil
+		return queuePollOutcomeIdleEmpty, nil
 	}
 	var claimed claimResponse
 	if err := json.Unmarshal(respBody, &claimed); err != nil {
-		return fmt.Errorf("decoding claim response: %w", err)
+		return queuePollOutcomePollError, fmt.Errorf("decoding claim response: %w", err)
 	}
 	if claimed.RunID == "" || claimed.Token == "" {
 		// A parseable-but-incomplete claim response (e.g. a stray `{}`) is
 		// exactly as unlaunchable as no body at all -- never start a
 		// container with a missing run id or token.
-		return nil
+		return queuePollOutcomeIdleEmpty, nil
 	}
-	return cfg.launch(directRunnerLaunch{
+	queueExecutorClaimsTotal.Inc()
+	err = cfg.launch(directRunnerLaunch{
 		runID:      claimed.RunID,
 		runToken:   claimed.Token,
 		pipeline:   claimed.Pipeline,
 		consoleURL: cfg.consoleURL,
 	})
+	if err != nil {
+		return queuePollOutcomeLaunchErr, err
+	}
+	return queuePollOutcomeClaimed, nil
 }
 
 // newDirectRunnerIDTokenSource builds the Google ID token source used to
@@ -209,14 +243,32 @@ func idTokenFromSource(source oauth2.TokenSource) (string, error) {
 func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interval time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	cleanupTicker := time.NewTicker(directRunnerCleanupInterval)
+	defer cleanupTicker.Stop()
+	cleanup := func() {
+		if cfg.cleanup == nil {
+			return
+		}
+		if err := cfg.cleanup(ctx); err != nil {
+			logger.Warn("direct-runner retention cleanup failed", slog.String("error", err.Error()))
+		}
+	}
+	// Sweep a finite pre-existing backlog immediately rather than waiting for
+	// the first retention interval. This does not touch active containers and
+	// has no claim side effect.
+	cleanup()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := pollOnce(cfg); err != nil {
+			outcome, err := pollOnceWithOutcome(cfg)
+			recordQueueExecutorPollOutcome(outcome)
+			if err != nil {
 				logger.Warn("queue executor poll failed", slog.String("error", err.Error()))
 			}
+		case <-cleanupTicker.C:
+			cleanup()
 		}
 	}
 }
@@ -225,7 +277,27 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 // deployment-owned connection and credential path it needs is present. Which
 // pipelines it may claim is intentionally absent here: the authenticated
 // work.executor grant is the single server-side capability source.
+type queueExecutorStartupState string
+
+const (
+	queueExecutorStateDisabled      queueExecutorStartupState = "disabled"
+	queueExecutorStateMisconfigured queueExecutorStartupState = "misconfigured"
+	queueExecutorStateReady         queueExecutorStartupState = "ready"
+)
+
 func queueExecutorStartupDecision(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath string) (start bool, reason string) {
+	start, _, reason = queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath)
+	return start, reason
+}
+
+// queueExecutorStartupStatus distinguishes an intentionally absent queue
+// deployment (no console URL) from an incomplete deployment. Operators can
+// alert on the latter without treating a host that has never been configured
+// for queue work as a failed worker.
+func queueExecutorStartupStatus(consoleURL, credentialsFile, writerKeyPath, claudeTokenPath string) (start bool, state queueExecutorStartupState, reason string) {
+	if strings.TrimSpace(consoleURL) == "" {
+		return false, queueExecutorStateDisabled, "LCARS_CONSOLE_URL is required for the queue executor"
+	}
 	for _, required := range []struct {
 		name  string
 		value string
@@ -236,10 +308,10 @@ func queueExecutorStartupDecision(consoleURL, credentialsFile, writerKeyPath, cl
 		{"LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", claudeTokenPath},
 	} {
 		if strings.TrimSpace(required.value) == "" {
-			return false, required.name + " is required for the queue executor"
+			return false, queueExecutorStateMisconfigured, required.name + " is required for the queue executor"
 		}
 	}
-	return true, ""
+	return true, queueExecutorStateReady, ""
 }
 
 // queueExecutorAudience resolves the Google ID token audience the queue
@@ -294,6 +366,18 @@ const (
 	// `docker inspect` the container on this host. Matches the
 	// telemetry-writer.json pattern immediately above, not a new one.
 	directRunnerClaudeTokenMountPath = "/run/secrets/claude-code-oauth-token"
+	// directRunnerExitedRetentionAge keeps an exited direct-runner's logs
+	// available for a full day. The direct runner remains one-shot, so this
+	// retention does not alter execution or the Work API's lease recovery.
+	directRunnerExitedRetentionAge = 24 * time.Hour
+	// directRunnerExitedRetentionLimit retains this many most-recent exited
+	// containers per Docker host even under a burst of failures. The bound is
+	// per host because containers and their logs are host-local.
+	directRunnerExitedRetentionLimit = 5
+	// directRunnerCleanupInterval bounds host-side accumulation even while
+	// queue work is idle. The initial sweep in runQueueExecutorPoller handles
+	// any backlog present when the daemon starts.
+	directRunnerCleanupInterval = 15 * time.Minute
 )
 
 // directRunnerHostCursor round-robins launchDirectRunner across the
@@ -434,6 +518,73 @@ func directRunnerClaudeTokenHostPath() (string, error) {
 	return path, nil
 }
 
+// cleanupExitedDirectRunners sweeps only containers this queue executor owns:
+// both direct-runner labels must match, and the Docker state must already be
+// exited. It never selects GitHub Actions runners (which have neither label),
+// other application containers, or running direct runners. Removals are
+// deliberately non-forcing, so Docker refuses a container that races back to
+// running rather than risking an active run.
+func cleanupExitedDirectRunners(ctx context.Context, resolved resolvedOrchestratorConfig, newClient func(target string) (*dockerclient.Client, error), now time.Time) error {
+	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
+	if err != nil {
+		return fmt.Errorf("parsing fleet docker hosts for direct-runner cleanup: %w", err)
+	}
+	var errs []error
+	for _, host := range order {
+		if err := cleanupExitedDirectRunnersOnHost(ctx, newClient, host, targets[host], now); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target string, now time.Time) error {
+	client, err := newClient(target)
+	if err != nil {
+		return fmt.Errorf("host %q: connecting for direct-runner cleanup: %w", host, err)
+	}
+	defer client.Close()
+
+	listCtx, cancelList := context.WithTimeout(ctx, dockerInspectTimeout)
+	containers, err := client.ContainerList(listCtx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", directRunnerLabelKey+"=1")),
+	})
+	cancelList()
+	if err != nil {
+		return fmt.Errorf("host %q: listing direct-runner containers for cleanup: %w", host, err)
+	}
+
+	exited := make([]container.Summary, 0, len(containers))
+	for _, c := range containers {
+		if c.Labels[directRunnerLabelKey] != "1" || c.Labels[directRunnerRunIDLabelKey] == "" || c.State != container.StateExited {
+			continue
+		}
+		exited = append(exited, c)
+	}
+	sort.Slice(exited, func(i, j int) bool {
+		if exited[i].Created == exited[j].Created {
+			return exited[i].ID < exited[j].ID
+		}
+		return exited[i].Created > exited[j].Created
+	})
+
+	var errs []error
+	for i, c := range exited {
+		age := now.Sub(time.Unix(c.Created, 0))
+		if i < directRunnerExitedRetentionLimit && age < directRunnerExitedRetentionAge {
+			continue
+		}
+		removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), dockerContainerOperationTimeout)
+		err := client.ContainerRemove(removeCtx, c.ID, container.RemoveOptions{})
+		cancelRemove()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("host %q: removing exited direct-runner container %q: %w", host, c.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // launchDirectRunnerOnHost attempts one host: connects, checks the
 // concurrency cap via a label-filtered ContainerList (the same
 // count-matching-labelled-containers pattern Scaler.checkHostRunnerLimit
@@ -478,17 +629,10 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 			writerKeyHostPath + ":" + directRunnerTelemetryWriterMountPath + ":ro",
 			claudeTokenHostPath + ":" + directRunnerClaudeTokenMountPath + ":ro",
 		},
-		// Deliberately NOT AutoRemove (final-review fix): AutoRemove reaps
-		// the container -- logs included -- the instant it exits, which
-		// would erase a non-zero-exit direct-runner's own stdout/stderr
-		// before anything here ever reads it. Capturing that output
-		// properly needs a live ContainerLogs follow stream started before
-		// exit plus a ContainerWait/manual-remove goroutine, which is well
-		// past a small change; see the README's "Queue executor" section
-		// ("Exited direct-runner containers are not swept") for the
-		// resulting gap this leaves -- exited containers now accumulate on
-		// the host until something removes them, and nothing in this repo
-		// does that yet.
+		// Deliberately NOT AutoRemove: AutoRemove would reap the container
+		// and its non-zero-exit stdout/stderr before an operator could
+		// inspect them. The queue worker's label-scoped retention sweep keeps
+		// recent exits and bounds the rest; see directRunnerExitedRetention*.
 		AutoRemove: false,
 	}
 

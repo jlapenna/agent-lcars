@@ -119,14 +119,19 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// restart rather than a config-file replace-and-SIGHUP.
 	consoleURL := strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL"))
 	keyPath := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-	startQueuePoller, queueDisabledReason := queueExecutorStartupDecision(
+	startQueuePoller, queueStartupState, queueDisabledReason := queueExecutorStartupStatus(
 		consoleURL,
 		keyPath,
 		os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"),
 		os.Getenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH"),
 	)
+	setQueueExecutorStartupState(queueStartupState)
 	if queueDisabledReason != "" {
-		logger.Error("Queue executor disabled", slog.String("reason", queueDisabledReason))
+		if queueStartupState == queueExecutorStateDisabled {
+			logger.Info("Queue executor disabled", slog.String("reason", queueDisabledReason))
+		} else {
+			logger.Error("Queue executor misconfigured", slog.String("reason", queueDisabledReason))
+		}
 	}
 	if startQueuePoller {
 		audience := queueExecutorAudience(os.Getenv("LCARS_WORK_AUDIENCE"))
@@ -144,6 +149,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		// function -- loudly, at startup, rather than silently every 15s.
 		tokenSource, tokenErr := newDirectRunnerIDTokenSource(ctx, keyPath, audience)
 		if tokenErr != nil {
+			setQueueExecutorStartupState(queueExecutorStateMisconfigured)
 			logger.Error("Queue executor disabled: could not build the claim ID token source", slog.Any("error", tokenErr))
 		} else {
 			go runQueueExecutorPoller(ctx, queueExecutorConfig{
@@ -156,6 +162,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
 				},
 				draining: queueDraining.Load,
+				cleanup: func(cleanupCtx context.Context) error {
+					return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved, newDockerClient, time.Now())
+				},
 			}, 15*time.Second, logger)
 		}
 	}

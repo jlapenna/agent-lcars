@@ -11,9 +11,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // discardLogger matches this package's own test convention
@@ -104,6 +106,100 @@ func TestPollOnceNoQueuedRunLaunchesNothing(t *testing.T) {
 				t.Fatalf("expected no launch, got %d", launchCount)
 			}
 		})
+	}
+}
+
+func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		body        string
+		launchErr   error
+		draining    bool
+		wantOutcome queuePollOutcome
+		wantErr     bool
+	}{
+		{name: "draining", draining: true, wantOutcome: queuePollOutcomeDraining},
+		{name: "idle 204", status: http.StatusNoContent, wantOutcome: queuePollOutcomeIdle204},
+		{name: "idle empty", status: http.StatusOK, wantOutcome: queuePollOutcomeIdleEmpty},
+		{name: "poll error", status: http.StatusUnauthorized, wantOutcome: queuePollOutcomePollError, wantErr: true},
+		{name: "claimed and launched", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, wantOutcome: queuePollOutcomeClaimed},
+		{name: "claimed launch error", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, launchErr: errors.New("docker unavailable"), wantOutcome: queuePollOutcomeLaunchErr, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			outcome, err := pollOnceWithOutcome(queueExecutorConfig{
+				consoleURL: server.URL,
+				runnerName: "test-runner",
+				idToken:    func() (string, error) { return "fake-id-token", nil },
+				launch:     func(directRunnerLaunch) error { return tc.launchErr },
+				draining: func() bool {
+					return tc.draining
+				},
+			})
+			if outcome != tc.wantOutcome {
+				t.Errorf("outcome = %q, want %q", outcome, tc.wantOutcome)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, want error=%v", err, tc.wantErr)
+			}
+			if tc.draining && calls != 0 {
+				t.Errorf("draining poll made %d HTTP calls, want 0", calls)
+			}
+		})
+	}
+}
+
+func TestQueueExecutorMetricsExposeReadinessAndPollOutcomes(t *testing.T) {
+	setQueueExecutorStartupState(queueExecutorStateMisconfigured)
+	if got := testutil.ToFloat64(queueExecutorReadyGauge); got != 0 {
+		t.Fatalf("queue readiness while misconfigured = %v, want 0", got)
+	}
+	if got := testutil.ToFloat64(queueExecutorStateGauge.WithLabelValues(string(queueExecutorStateMisconfigured))); got != 1 {
+		t.Fatalf("misconfigured state gauge = %v, want 1", got)
+	}
+	setQueueExecutorStartupState(queueExecutorStateReady)
+	if got := testutil.ToFloat64(queueExecutorReadyGauge); got != 1 {
+		t.Fatalf("queue readiness while ready = %v, want 1", got)
+	}
+
+	for _, outcome := range []queuePollOutcome{
+		queuePollOutcomeIdle204,
+		queuePollOutcomeIdleEmpty,
+		queuePollOutcomePollError,
+		queuePollOutcomeClaimed,
+		queuePollOutcomeLaunchErr,
+	} {
+		var counter float64
+		switch outcome {
+		case queuePollOutcomeClaimed:
+			counter = testutil.ToFloat64(queueExecutorLaunchesTotal.WithLabelValues("success"))
+		case queuePollOutcomeLaunchErr:
+			counter = testutil.ToFloat64(queueExecutorLaunchesTotal.WithLabelValues("error"))
+		default:
+			counter = testutil.ToFloat64(queueExecutorPollsTotal.WithLabelValues(string(outcome)))
+		}
+		recordQueueExecutorPollOutcome(outcome)
+		var got float64
+		switch outcome {
+		case queuePollOutcomeClaimed:
+			got = testutil.ToFloat64(queueExecutorLaunchesTotal.WithLabelValues("success"))
+		case queuePollOutcomeLaunchErr:
+			got = testutil.ToFloat64(queueExecutorLaunchesTotal.WithLabelValues("error"))
+		default:
+			got = testutil.ToFloat64(queueExecutorPollsTotal.WithLabelValues(string(outcome)))
+		}
+		if got != counter+1 {
+			t.Errorf("metric for %q = %v, want %v", outcome, got, counter+1)
+		}
 	}
 }
 
@@ -367,6 +463,30 @@ func TestQueueExecutorStartupDecision(t *testing.T) {
 	}
 }
 
+func TestQueueExecutorStartupStatusDistinguishesDisabledFromMisconfigured(t *testing.T) {
+	cases := []struct {
+		name       string
+		consoleURL string
+		keyPath    string
+		writerKey  string
+		claudeKey  string
+		wantStart  bool
+		wantState  queueExecutorStartupState
+	}{
+		{"no queue deployment", "", "/run/writer.json", "/host/writer.json", "/host/claude-token", false, queueExecutorStateDisabled},
+		{"incomplete queue deployment", "https://lcars.example", "", "/host/writer.json", "/host/claude-token", false, queueExecutorStateMisconfigured},
+		{"ready", "https://lcars.example", "/run/writer.json", "/host/writer.json", "/host/claude-token", true, queueExecutorStateReady},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start, state, _ := queueExecutorStartupStatus(tc.consoleURL, tc.keyPath, tc.writerKey, tc.claudeKey)
+			if start != tc.wantStart || state != tc.wantState {
+				t.Fatalf("queueExecutorStartupStatus() = (%v, %q), want (%v, %q)", start, state, tc.wantStart, tc.wantState)
+			}
+		})
+	}
+}
+
 // TestQueueExecutorAudience pins LCARS_WORK_AUDIENCE's default, matching
 // the console's own AGENT_LCARS_WORK_AUDIENCE fallback (route.ts).
 func TestQueueExecutorAudience(t *testing.T) {
@@ -588,6 +708,52 @@ func TestLaunchDirectRunnerOnHostAtCapacity(t *testing.T) {
 	}
 	if f.createCount() != 0 {
 		t.Fatalf("expected no ContainerCreate when at capacity, got %d", f.createCount())
+	}
+}
+
+func TestCleanupExitedDirectRunnersRetainsRecentEvidenceAndOnlyTouchesOwnedExits(t *testing.T) {
+	f := newFakeDockerServer(t)
+	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	owned := func(id string, created time.Time, state string) container.Summary {
+		return container.Summary{
+			ID:      id,
+			Created: created.Unix(),
+			State:   state,
+			Labels: map[string]string{
+				directRunnerLabelKey:      "1",
+				directRunnerRunIDLabelKey: "work:" + id + "/r1",
+			},
+		}
+	}
+
+	containers := []container.Summary{
+		// Six recent owned exits: retain the five newest and remove the sixth
+		// to keep an immediate per-host bound during a failure burst.
+		owned("new-1", now.Add(-1*time.Hour), container.StateExited),
+		owned("new-2", now.Add(-2*time.Hour), container.StateExited),
+		owned("new-3", now.Add(-3*time.Hour), container.StateExited),
+		owned("new-4", now.Add(-4*time.Hour), container.StateExited),
+		owned("new-5", now.Add(-5*time.Hour), container.StateExited),
+		owned("over-limit", now.Add(-6*time.Hour), container.StateExited),
+		// An aged exit is removed even when it is within the numerical limit.
+		owned("aged", now.Add(-25*time.Hour), container.StateExited),
+		// A running direct runner must never be removed.
+		owned("active", now.Add(-48*time.Hour), container.StateRunning),
+		// Neither an Actions runner nor a malformed/foreign direct label is
+		// queue-executor ownership, regardless of age or state.
+		{ID: "actions-runner", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{"agent-lcars.scale-set": "claude"}},
+		{ID: "missing-run-id", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{directRunnerLabelKey: "1"}},
+		{ID: "wrong-owner", Created: now.Add(-72 * time.Hour).Unix(), State: container.StateExited, Labels: map[string]string{directRunnerLabelKey: "other", directRunnerRunIDLabelKey: "work:foreign/r1"}},
+	}
+	f.setContainers(containers)
+	resolved := resolvedOrchestratorConfig{DockerHosts: []string{"host-a=fake-target"}}
+	if err := cleanupExitedDirectRunners(context.Background(), resolved, newClient, now); err != nil {
+		t.Fatalf("cleanupExitedDirectRunners: %v", err)
+	}
+	removed := f.removedIDs()
+	if strings.Join(removed, ",") != "over-limit,aged" {
+		t.Fatalf("removed = %v, want only over-limit and aged owned exits", removed)
 	}
 }
 
