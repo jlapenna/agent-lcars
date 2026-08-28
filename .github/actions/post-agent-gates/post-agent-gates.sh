@@ -58,9 +58,12 @@
 #     own three lanes, homelab#697, sprinkles' exact-marker flip), so this
 #     script no longer reads or forwards either variable.
 #   Optional: ISSUE (empty for a native work-anchored run -- forwarded
-#     unchanged to telemetry-finalize.sh, which is already anchor-agnostic;
-#     the verify-deliverable phase below is anchor-agnostic too: it is
-#     PR-marker-only when ISSUE is empty, see verify-deliverable.sh);
+#     unchanged to telemetry-finalize.sh, which is already anchor-agnostic);
+#     NATIVE_WORK (set only from the trusted reusable-workflow input, never
+#     inherited from $GITHUB_ENV): native Work terminal outcomes are verified
+#     by the hosted finalizer after this worker job is closed.  That finalizer
+#     can read this exact worker-job log and bind its structured outcome to the
+#     broker dispatch; this still-running worker cannot safely do either.
 #     WRITER_CREDENTIALS_FILE (telemetry-finalize's own credential
 #     path; empty is valid, matching telemetry-start being best-effort);
 #     NO_DELIVERABLE_REASON (each lane's own no-deliverable wording,
@@ -88,6 +91,7 @@ WRITER_CREDENTIALS_FILE="${WRITER_CREDENTIALS_FILE:-}"
 NO_DELIVERABLE_REASON="${NO_DELIVERABLE_REASON:-}"
 FAILURE_LOG_SCAN_SCRIPT="${FAILURE_LOG_SCAN_SCRIPT:-}"
 INTENT_ID="${INTENT_ID:-}"
+NATIVE_WORK="${NATIVE_WORK:-}"
 
 trusted_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -115,11 +119,20 @@ if [ "$JOB_STATUS" = "success" ]; then
   # is deleted. Fail here, before invoking it, with the same named
   # diagnostic shape as MODE above.
   : "${ATTEMPT_ID:?ATTEMPT_ID is required when JOB_STATUS is success - the deliverable gate is exact-marker-only and the legacy STARTED_AT/EXPECTED_COMMENT_LOGIN inference mode was deleted}"
-  if ! NUM="$ISSUE" bash "$trusted_dir/verify-deliverable/verify-deliverable.sh"; then
-    deliverable_failed=1
-    if [ -n "${GITHUB_ENV:-}" ] && [ -f "$GITHUB_ENV" ] && \
-      grep -qx 'NO_DELIVERABLE=1' "$GITHUB_ENV"; then
-      no_deliverable=1
+  if [ "$NATIVE_WORK" = '1' ]; then
+    # A work anchor has no GitHub issue thread.  Do not weaken the normal
+    # exact-marker gate into "job succeeded": the independent hosted
+    # finalizer reads this closed worker job and accepts only a structured
+    # native park/no-op marker paired with this attempt marker.  A silent
+    # native success remains an outcome-gate failure there.
+    echo "::notice::Native Work terminal outcome deferred to the hosted finalizer."
+  else
+    if ! NUM="$ISSUE" bash "$trusted_dir/verify-deliverable/verify-deliverable.sh"; then
+      deliverable_failed=1
+      if [ -n "${GITHUB_ENV:-}" ] && [ -f "$GITHUB_ENV" ] && \
+        grep -qx 'NO_DELIVERABLE=1' "$GITHUB_ENV"; then
+        no_deliverable=1
+      fi
     fi
   fi
 fi

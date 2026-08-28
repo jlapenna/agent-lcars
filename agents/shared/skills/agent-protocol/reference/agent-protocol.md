@@ -161,11 +161,21 @@ from a run that reasoned to nothing and produced nothing.
   mode. The console still applies the `status:needs-human` label for you
   from this marker; you do not add it yourself.
 
-- **Work anchor**: unchanged — there is no issue to comment on. Post
-  nothing to GitHub; the orchestrator's own `parked` state is the durable
-  record. Your blocker text reaches a human only through `lcars session
-status` (§12) and this run's log — set it there before you end your
-  turn.
+- **Work anchor**: there is no issue to comment on. Post nothing to GitHub;
+  the orchestrator's own `parked` state is the durable record. End the
+  terminal response with the blocker and resume trigger, then write both the
+  exact attempt-claim marker (§5) and the matching native result marker to
+  the `NATIVE_WORK_OUTCOME_FILE` path supplied by the dispatch prompt:
+
+  ```text
+  <!-- agent-result:v1:park:$ATTEMPT_ID -->
+  <!-- attempt-claim:$ATTEMPT_ID -->
+  ```
+
+  Write exactly those two lines and choose exactly one result kind; the
+  hosted finalizer checks the uploaded record against the broker-bound
+  attempt. Your blocker text also reaches a human through
+  `lcars session status` (§12); set it before you end your turn.
 
 Before parking with the same blocker a prior run on this anchor already
 reported, check the anchor's comments for a response first — see "The
@@ -189,9 +199,13 @@ branch on the reference format:
   same way, with the structured `<!-- agent-result:v1:park -->` marker
   instead (§4).
 - **Work anchor** (`anchor.type` is `work`, no issue): reference the item
-  as `Work: work:<id>` (never `Fixes #N`). No no-op or park comment is
-  available — there is no issue to post either to (§4): if the request is
-  already satisfied or you are blocked, `PARK` with that evidence instead.
+  as `Work: work:<id>` (never `Fixes #N`). No GitHub comment is available.
+  A parked or already-satisfied Work result is instead recorded in the
+  explicit terminal-outcome artifact with its exact attempt claim plus, respectively,
+  `<!-- agent-result:v1:park:$ATTEMPT_ID -->` or
+  `<!-- agent-result:v1:no-op:$ATTEMPT_ID -->`. The hosted finalizer verifies
+  that record only after the worker job closes; a bare response remains
+  insufficient.
 
 A run whose own worker crashed or was cancelled outright — never reached its
 own turn end, so it never had the chance to park itself per §4 — is a
@@ -250,12 +264,13 @@ comment must say.
 The dispatch brief's `mode` and `requested_results` fields are authoritative;
 do not infer the job from labels:
 
-| `mode`      | anchor       | deliverable                                                 |
-| ----------- | ------------ | ----------------------------------------------------------- |
-| `implement` | issue        | open a PR on a new branch                                   |
-| `implement` | pull request | take over and keep pushing to that PR's branch              |
-| `review`    | pull request | submit a real pull-request review with a body; push nothing |
-| `reply`     | either       | a comment may be the complete deliverable                   |
+| `mode`      | anchor       | deliverable                                                      |
+| ----------- | ------------ | ---------------------------------------------------------------- |
+| `implement` | issue        | open a PR on a new branch                                        |
+| `implement` | pull request | take over and keep pushing to that PR's branch                   |
+| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact |
+| `review`    | pull request | submit a real pull-request review with a body; push nothing      |
+| `reply`     | either       | a comment may be the complete deliverable                        |
 
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.

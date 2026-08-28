@@ -168,21 +168,21 @@ jobs:
           worker_job="$(jq -c --argjson steps "$agent_steps" \
             '[.[]?.jobs[]? | select(any(.steps[]?; .name as $n | $steps | index($n)))] | last // empty' \
             "$jobs_file")"
+          # Among the candidate step names, prefer the one that actually
+          # ran: skipped candidates are the inactive era's step, not
+          # evidence. Only when EVERY candidate is skipped does 'skipped'
+          # win — the agent never started, which IS a startup failure.
+          agent_conclusion="$(jq -r --argjson steps "$agent_steps" \
+            '[.steps[]? | select(.name as $n | $steps | index($n))]
+             | ((map(select(.conclusion != "skipped")) | last) // last)
+             | .conclusion // ""' \
+            <<<"$worker_job")"
 
           if [ "$WORKER_RESULT" != 'success' ]; then
             if [ -z "$worker_job" ]; then
               echo "::warning::Omitting unverified lifecycle outcome"
               exit 0
             fi
-            # Among the candidate step names, prefer the one that actually
-            # ran: skipped candidates are the inactive era's step, not
-            # evidence. Only when EVERY candidate is skipped does 'skipped'
-            # win — the agent never started, which IS a startup failure.
-            agent_conclusion="$(jq -r --argjson steps "$agent_steps" \
-              '[.steps[]? | select(.name as $n | $steps | index($n))]
-               | ((map(select(.conclusion != "skipped")) | last) // last)
-               | .conclusion // ""' \
-              <<<"$worker_job")"
             case "$agent_conclusion" in
               ''|skipped) outcome_kind='startup-failure' ;;
               success)
@@ -302,6 +302,51 @@ jobs:
                 echo "::warning::Could not verify exact review outcome"
               fi
             fi
+          fi
+
+          # Preserve the normal exact PR path for native Work first. A Work
+          # run can still deliver a marker-stamped pull request; it is not
+          # required to emit a park/no-op terminal artifact merely because
+          # it has no issue thread. Only when that durable PR lookup found
+          # nothing do we ask for the native terminal artifact.
+          #
+          # The whole worker log is not valid native-Work evidence: GitHub
+          # echoes expanded prompt marker examples before the agent runs
+          # (real canary 33201097024/job 98950475891). The fallback artifact
+          # is a dedicated two-line file the successful agent explicitly
+          # wrote, bound to this broker-authorized generation/intent. This
+          # fails closed for silent, wrong, or mixed outcomes without any
+          # provider- or consumer-specific log parsing.
+          if [ -z "$ISSUE" ] && [ -n "$WORK" ] && [ -z "$outcome_kind" ]; then
+            if [ "$agent_conclusion" != 'success' ]; then
+              echo "::warning::Native Work worker reached no successful agent terminal response"
+              printf 'outcome-kind=%s\n' 'outcome-gate-failure' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            outcome_dir="$(mktemp -d)"
+            artifact_name="native-work-terminal-outcome-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            if ! GH_REPO="$REPO" gh run download "$GITHUB_RUN_ID" --name "$artifact_name" --dir "$outcome_dir"; then
+              echo "::warning::Could not retrieve the native Work terminal-outcome artifact"
+              printf 'outcome-kind=%s\n' 'outcome-gate-failure' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            outcome_file="$outcome_dir/terminal-outcome.txt"
+            if [ ! -f "$outcome_file" ]; then
+              echo "::warning::Native Work terminal-outcome artifact had no terminal record"
+              printf 'outcome-kind=%s\n' 'outcome-gate-failure' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            native_park_marker="<!-- agent-result:v1:park:${attempt_id} -->"
+            native_no_op_marker="<!-- agent-result:v1:no-op:${attempt_id} -->"
+            if printf '%s\n%s\n' "$native_park_marker" "$claim_marker" | cmp -s - "$outcome_file"; then
+              printf 'outcome-kind=%s\n' 'park' >> "$GITHUB_OUTPUT"
+            elif printf '%s\n%s\n' "$native_no_op_marker" "$claim_marker" | cmp -s - "$outcome_file"; then
+              printf 'outcome-kind=%s\n' 'no-op' >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::Native Work worker completed without one exact marker-bound terminal outcome"
+              printf 'outcome-kind=%s\n' 'outcome-gate-failure' >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
           fi
 
           # WORKER_RESULT is 'success', which means the trusted worker gate

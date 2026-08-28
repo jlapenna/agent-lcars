@@ -404,6 +404,29 @@ const evidenceScript = extractRunScript(
 // involved.
 const fakeGhFunction = `
 gh() {
+  if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "download" ]; then
+    local destination=''
+    shift 2
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --dir|-D)
+          destination="$2"
+          shift 2
+          ;;
+        *) shift ;;
+      esac
+    done
+    if [ -f "$FAKE_GH_DIR/worker-outcome.txt" ] && [ -n "$destination" ]; then
+      mkdir -p "$destination"
+      cp "$FAKE_GH_DIR/worker-outcome.txt" "$destination/terminal-outcome.txt"
+      return 0
+    fi
+    # A completed artifact download with no expected record exercises the
+    # finalizer's explicit missing-file failure path without making this
+    # harness's unrelated stderr assertion carry the contract.
+    mkdir -p "$destination"
+    return 0
+  fi
   if [ "\${1:-}" != "api" ]; then
     echo "fake gh: unsupported invocation: $*" >&2
     return 64
@@ -447,6 +470,9 @@ interface EvidenceFixtures {
   pulls?: unknown;
   comments?: unknown;
   reviews?: unknown;
+  jobs?: unknown;
+  workerOutcome?: string;
+  workerLog?: string;
 }
 
 /** Runs the real embedded evidence-derivation script end to end (real
@@ -462,9 +488,15 @@ function runEvidenceScript(
   const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-gh-'));
   for (const [key, value] of Object.entries(fixtures)) {
     if (value === undefined) continue;
+    const filename =
+      key === 'workerOutcome'
+        ? 'worker-outcome.txt'
+        : key === 'workerLog'
+          ? 'worker-log.txt'
+          : `${key}.json`;
     fs.writeFileSync(
-      path.join(fakeGhDir, `${key}.json`),
-      JSON.stringify(value),
+      path.join(fakeGhDir, filename),
+      typeof value === 'string' ? value : JSON.stringify(value),
     );
   }
   const outputPath = path.join(fakeGhDir, 'github-output');
@@ -491,6 +523,7 @@ function runEvidenceScript(
         WORKER_WORKFLOW: 'claude.yml',
         WORKER_RESULT: 'success',
         GITHUB_RUN_ID: '999',
+        GITHUB_RUN_ATTEMPT: '1',
         GITHUB_OUTPUT: outputPath,
         ...envOverrides,
       },
@@ -511,6 +544,133 @@ function runEvidenceScript(
 const claimMarker = '<!-- attempt-claim:g1:example/consumer#70/r1 -->';
 
 describe('fallback-finalize success-branch outcome derivation', () => {
+  const nativeIntent = 'work:01M14TNABZRYYDRCSMYRKAQFCP/r1';
+  const nativeAttempt = `g1:${nativeIntent}`;
+  const nativeClaim = `<!-- attempt-claim:${nativeAttempt} -->`;
+  const nativeJobs = [
+    {
+      total_count: 1,
+      jobs: [
+        {
+          id: 123,
+          name: 'opencode / opencode / agent',
+          steps: [
+            { name: 'Run OpenCode', conclusion: 'skipped' },
+            { name: 'Run OpenCode (CLI)', conclusion: 'success' },
+            { name: 'Run post-agent gates', conclusion: 'success' },
+          ],
+        },
+      ],
+    },
+  ];
+
+  it('accepts a broker-bound native Work park only with its exact two-line artifact', () => {
+    const output = runEvidenceScript(
+      {
+        jobs: nativeJobs,
+        workerOutcome: `<!-- agent-result:v1:park:${nativeAttempt} -->\n${nativeClaim}\n`,
+      },
+      {
+        ISSUE: '',
+        WORK: '{"id":"01M14TNABZRYYDRCSMYRKAQFCP"}',
+        INTENT_ID: nativeIntent,
+        WORKER_WORKFLOW: 'opencode.yml',
+      },
+    );
+    expect(output['outcome-kind']).toBe('park');
+  });
+
+  it('accepts a broker-bound native Work no-op only with its exact two-line artifact', () => {
+    const output = runEvidenceScript(
+      {
+        jobs: nativeJobs,
+        workerOutcome: `<!-- agent-result:v1:no-op:${nativeAttempt} -->\n${nativeClaim}\n`,
+      },
+      {
+        ISSUE: '',
+        WORK: '{"id":"01M14TNABZRYYDRCSMYRKAQFCP"}',
+        INTENT_ID: nativeIntent,
+        WORKER_WORKFLOW: 'opencode.yml',
+      },
+    );
+    expect(output['outcome-kind']).toBe('no-op');
+  });
+
+  it('preserves a native Work exact PR outcome before terminal-artifact fallback', () => {
+    const output = runEvidenceScript(
+      {
+        jobs: nativeJobs,
+        pulls: [
+          [{ number: 42, title: '', body: `Work delivery\n${nativeClaim}` }],
+        ],
+      },
+      {
+        ISSUE: '',
+        WORK: '{"id":"01M14TNABZRYYDRCSMYRKAQFCP"}',
+        INTENT_ID: nativeIntent,
+        WORKER_WORKFLOW: 'opencode.yml',
+      },
+    );
+    expect(output['outcome-kind']).toBe('pull-request');
+    expect(output['outcome-reference']).toBe('42');
+  });
+
+  it('fails closed when the expanded prompt has both markers but the agent writes no artifact', () => {
+    const output = runEvidenceScript(
+      {
+        jobs: nativeJobs,
+        workerLog:
+          `prompt setup: <!-- agent-result:v1:park:${nativeAttempt} -->\n` +
+          `prompt setup: <!-- agent-result:v1:no-op:${nativeAttempt} -->\n` +
+          `prompt setup: ${nativeClaim}\n`,
+      },
+      {
+        ISSUE: '',
+        WORK: '{"id":"01M14TNABZRYYDRCSMYRKAQFCP"}',
+        INTENT_ID: nativeIntent,
+        WORKER_WORKFLOW: 'opencode.yml',
+      },
+    );
+    expect(output['outcome-kind']).toBe('outcome-gate-failure');
+  });
+
+  it('fails closed when the explicit native artifact belongs to another attempt', () => {
+    const output = runEvidenceScript(
+      {
+        jobs: nativeJobs,
+        workerOutcome:
+          '<!-- agent-result:v1:park:g1:work:another-attempt/r1 -->\n' +
+          `${nativeClaim}\n`,
+      },
+      {
+        ISSUE: '',
+        WORK: '{"id":"01M14TNABZRYYDRCSMYRKAQFCP"}',
+        INTENT_ID: nativeIntent,
+        WORKER_WORKFLOW: 'opencode.yml',
+      },
+    );
+    expect(output['outcome-kind']).toBe('outcome-gate-failure');
+  });
+
+  it('fails closed when the explicit native artifact claims both result kinds', () => {
+    const output = runEvidenceScript(
+      {
+        jobs: nativeJobs,
+        workerOutcome:
+          `<!-- agent-result:v1:park:${nativeAttempt} -->\n` +
+          `<!-- agent-result:v1:no-op:${nativeAttempt} -->\n` +
+          `${nativeClaim}\n`,
+      },
+      {
+        ISSUE: '',
+        WORK: '{"id":"01M14TNABZRYYDRCSMYRKAQFCP"}',
+        INTENT_ID: nativeIntent,
+        WORKER_WORKFLOW: 'opencode.yml',
+      },
+    );
+    expect(output['outcome-kind']).toBe('outcome-gate-failure');
+  });
+
   it('classifies a marked PR alone as pull-request', () => {
     const output = runEvidenceScript({
       pulls: [[{ number: 42, title: '', body: `Fixes #70\n\n${claimMarker}` }]],

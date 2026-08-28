@@ -322,7 +322,7 @@ jq -e '
   .mode == "implement" and
   .reply == "" and
   .latest_agent_result == null and
-  .requested_results == ["pull-request"] and
+  .requested_results == ["pull-request", "park", "no-op"] and
   .truncated == []' "$native_context_path" >/dev/null
 
 # A GitHub-anchored task that carries a work payload (WORK and ISSUE both
