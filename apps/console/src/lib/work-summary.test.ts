@@ -1,7 +1,7 @@
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 
-import { listAllParkedWorkSummaries, listWorkSummaries } from './work-summary';
+import { listWorkSummaries } from './work-summary';
 
 const T = '2026-08-28T10:00:00.000Z';
 const nativeId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
@@ -62,7 +62,7 @@ describe('listWorkSummaries', () => {
     );
   });
 
-  it('keeps paging after an empty filtered page so older parked work is visible', async () => {
+  it('keeps a stable cursor after an empty filtered page', async () => {
     const { store, orchestrator } = fixture();
     const parked = await orchestrator.request({
       taskId: { repo: 'jlapenna/agent-lcars', issue: 1 },
@@ -82,12 +82,17 @@ describe('listWorkSummaries', () => {
     await orchestrator.report(parked.run.runId, { ok: false });
 
     // Same instant orders by anchor key. A one-row raw page can legitimately
-    // be empty after state filtering, but the Bridge helper walks on.
+    // be empty after state filtering, but the cursor still makes the next
+    // bounded page available to a paginated console consumer.
     const first = await listWorkSummaries(store, { limit: 1, state: 'parked' });
     expect(first.items).toEqual([]);
     expect(first.nextCursor).toBeDefined();
-    const allParked = await listAllParkedWorkSummaries(store, 1);
-    expect(allParked.map((item) => item.id)).toContain(
+    const second = await listWorkSummaries(store, {
+      limit: 1,
+      cursor: first.nextCursor,
+      state: 'parked',
+    });
+    expect(second.items.map((item) => item.id)).toContain(
       'jlapenna/agent-lcars#1',
     );
   });

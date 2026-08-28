@@ -72,11 +72,13 @@ function renderPanel(
   items: unknown[],
   cancel = vi.fn(async () => [null, undefined] as const),
   redispatch = vi.fn(async () => [null, undefined] as const),
+  hasMoreTasks = false,
 ) {
   render(
     <MantineProvider>
       <ParkedWorkPanel
         items={items as never}
+        hasMoreTasks={hasMoreTasks}
         cancel={cancel}
         redispatch={redispatch}
       />
@@ -146,5 +148,19 @@ describe('ParkedWorkPanel', () => {
       '/task/octo/example/1502',
     );
     expect(screen.queryByRole('button', { name: /redispatch/i })).toBeNull();
+  });
+
+  it('discloses when an older task page may contain more parked work', () => {
+    renderPanel(
+      [item({ title: 'Recent parked work' })],
+      undefined,
+      undefined,
+      true,
+    );
+    expect(
+      screen.getByText(
+        'Showing parked work from the 200 most recently updated tasks.',
+      ),
+    ).toBeInTheDocument();
   });
 });

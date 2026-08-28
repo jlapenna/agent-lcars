@@ -73,27 +73,3 @@ export async function listWorkSummaries(
       : {}),
   };
 }
-
-/**
- * The Bridge's parked-work slot must keep paging through raw task pages:
- * an empty filtered page only means that particular newest-first slice had
- * no parked work. Stopping there would repeat the old native-list 200-item
- * visibility bug for GitHub anchors.
- */
-export async function listAllParkedWorkSummaries(
-  store: OrchestratorStore,
-  pageSize = 200,
-): Promise<WorkSummary[]> {
-  const items: WorkSummary[] = [];
-  let cursor: TaskListCursor | undefined;
-  do {
-    const page = await listWorkSummaries(store, {
-      limit: pageSize,
-      cursor,
-      state: 'parked',
-    });
-    items.push(...page.items);
-    cursor = page.nextCursor;
-  } while (cursor !== undefined);
-  return items;
-}

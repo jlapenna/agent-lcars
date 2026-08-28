@@ -13,10 +13,12 @@ function summaryHref(item: WorkSummary): string {
 /** Pure renderer: hidden at zero parked items; oldest-parked first. */
 export function ParkedWorkPanel({
   items,
+  hasMoreTasks,
   cancel,
   redispatch,
 }: {
   items: WorkSummary[];
+  hasMoreTasks: boolean;
   cancel: WorkAction;
   redispatch: WorkAction;
 }) {
@@ -56,6 +58,11 @@ export function ParkedWorkPanel({
           );
         })}
       </Stack>
+      {hasMoreTasks && (
+        <Text size="xs" c="dimmed" mt="xs">
+          Showing parked work from the 200 most recently updated tasks.
+        </Text>
+      )}
     </section>
   );
 }

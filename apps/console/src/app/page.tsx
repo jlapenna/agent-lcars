@@ -2,8 +2,7 @@ import { Anchor, Box } from '@mantine/core';
 import { Suspense } from 'react';
 
 import { assertAdmin } from '@/lib/auth-guards';
-import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
-import { listAllParkedWorkSummaries } from '@/lib/work-summary';
+import { listWorkSummaries } from '@/lib/work-summary';
 
 import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
@@ -38,6 +37,7 @@ import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
+import { context as workContext } from './work/context';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -47,10 +47,11 @@ function toCard(item: ActionItem): BoardCard {
 }
 
 /**
- * Bridge slot: reads the all-anchor work summary projection from the
- * orchestrator, rather than deriving parked state from a GitHub label or
- * limiting itself to native work ids. GitHub remains a detail enrichment
- * surface; it is not the state authority for this panel. Lives here rather
+ * Bridge slot: reads a bounded page of the all-anchor work summary projection
+ * from the orchestrator, rather than deriving parked state from a GitHub label
+ * or limiting itself to native work ids. GitHub remains a detail enrichment
+ * surface; it is not the state authority for this panel. The existing Work
+ * operator grant gates it before native controls can render. Lives here rather
  * than alongside the pure `ParkedWorkPanel` - importing the `'use server'`
  * `./work/actions` module into that file drags in `@orpc/next`'s Node-only
  * `next/navigation` resolution, which vitest's jsdom environment can't load
@@ -59,12 +60,16 @@ function toCard(item: ActionItem): BoardCard {
  */
 async function ParkedWork() {
   try {
-    const items = await listAllParkedWorkSummaries(
-      createOrchestratorRuntime().store,
-    );
+    const work = await workContext();
+    if (!work.principal?.scopes.has('work.operator')) return null;
+    const page = await listWorkSummaries(work.runtime.store, {
+      limit: 200,
+      state: 'parked',
+    });
     return (
       <ParkedWorkPanel
-        items={items}
+        items={page.items}
+        hasMoreTasks={page.nextCursor !== undefined}
         cancel={cancelItem}
         redispatch={redispatchItem}
       />
