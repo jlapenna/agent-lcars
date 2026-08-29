@@ -28,7 +28,6 @@ function freshGithubClientModule() {
 
 const ENV_KEY = 'AGENT_LCARS_WATCHED_REPOS';
 const CLAUDE_INTEGRATION = {
-  workflowFile: 'claude.yml',
   label: 'agent:claude',
   replyTrigger: '@claude',
 };
@@ -392,10 +391,10 @@ describe('getWatchedRepos', () => {
       {
         owner: 'org-a',
         name: 'repo-a',
-        agents: { claude: { workflowFile: 'claude.yml' } },
+        agents: { claude: { label: 'agent:claude' } },
       },
     ]);
-    expect(() => getWatchedRepos()).toThrow(/agents\.claude\.label/);
+    expect(() => getWatchedRepos()).toThrow(/agents\.claude\.replyTrigger/);
   });
 
   it('parses a complete agent integration', () => {

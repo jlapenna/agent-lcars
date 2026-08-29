@@ -8,7 +8,6 @@ import {
   pipelineContract,
   REPLY_COMMANDS,
   REVIEW_LABELS,
-  WORKER_WORKFLOW_FILES,
 } from './pipelines';
 
 // These assert the literal values the registry replaced, on purpose. The
@@ -47,16 +46,8 @@ describe('pipeline registry', () => {
     ]);
   });
 
-  it('lists every worker workflow file', () => {
-    expect([...WORKER_WORKFLOW_FILES]).toEqual([
-      'claude.yml',
-      'codex.yml',
-      'opencode.yml',
-    ]);
-  });
-
   it('resolves a contract and rejects an unknown pipeline', () => {
-    expect(pipelineContract('opencode').workflowFile).toBe('opencode.yml');
+    expect(pipelineContract('opencode').displayName).toBe('OpenCode');
     expect(() => pipelineContract('gemini' as never)).toThrowError(
       /Unsupported worker pipeline/u,
     );
@@ -80,9 +71,7 @@ describe('registry invariants', () => {
       expect(contract.pipeline).toBe(pipeline);
       expect(contract.label).toBe(`agent:${pipeline}`);
       expect(contract.reviewLabel).toBe(`review:${pipeline}`);
-      expect(contract.workflowFile).toBe(`${pipeline}.yml`);
       expect(contract.botLogin).toMatch(/\[bot\]$/u);
-      expect(contract.runNameLabel).toBe(`${contract.displayName} issue agent`);
     }
   });
 

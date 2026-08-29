@@ -288,7 +288,7 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
           `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline} must be an object or null`,
         );
       }
-      for (const field of ['workflowFile', 'label', 'replyTrigger']) {
+      for (const field of ['label', 'replyTrigger']) {
         const fieldValue = (value as Record<string, unknown>)[field];
         if (typeof fieldValue !== 'string' || fieldValue.length === 0) {
           throw new Error(

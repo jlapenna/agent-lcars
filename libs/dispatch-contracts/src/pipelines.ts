@@ -2,13 +2,13 @@
  * The fleet's one definition of which coding-agent pipelines exist and how
  * each is named.
  *
- * Before this module the same five facts (control label, review label, reply
- * command, worker workflow file, bot login) were hand-copied into at least
+ * Before this module the same provider facts (control label, review label,
+ * reply command, bot login) were hand-copied into at least
  * six places that had no way to notice each other drifting: normalize.mjs's
  * `AGENT_LABELS`/`REVIEW_LABELS`/`COMMANDS`, github-api.mjs's
  * `workerConfigurations`/`WORKER_WORKFLOWS`/`RECONCILE_DISCOVERY_LABELS`,
  * broker.mjs's `PIPELINES`, the console's `DEFAULT_AGENT_INTEGRATIONS` and
- * `AGENT_AUTHOR_LOGINS`, and the four worker workflows' own `env:` blocks.
+ * `AGENT_AUTHOR_LOGINS`.
  * Adding a pipeline meant five correct edits or it would be recognized in
  * some systems and invisible in others.
  */
@@ -19,14 +19,9 @@ export interface PipelineContract {
   /** Stable identifier used as the orchestrator's
    *   `pipeline` value and the router's `pipeline` workflow input. */
   pipeline: AgentPipeline;
-  /** Worker workflow dispatched for this pipeline. */
-  workflowFile: string;
   /** Human-facing name; the worker workflow's
    *   `AGENT_NAME` env value. */
   displayName: string;
-  /** The workflow `run-name:` role text that
-   *   follows `#<issue>: `. */
-  runNameLabel: string;
   /** Durable `agent:*` control label selecting this
    *   pipeline for implement mode. */
   label: string;
@@ -59,9 +54,7 @@ export const PIPELINE_CONTRACTS: Readonly<
 > = Object.freeze({
   claude: Object.freeze({
     pipeline: 'claude',
-    workflowFile: 'claude.yml',
     displayName: 'Claude',
-    runNameLabel: 'Claude issue agent',
     label: 'agent:claude',
     reviewLabel: 'review:claude',
     replyTrigger: '@claude',
@@ -71,9 +64,7 @@ export const PIPELINE_CONTRACTS: Readonly<
   }),
   codex: Object.freeze({
     pipeline: 'codex',
-    workflowFile: 'codex.yml',
     displayName: 'Codex',
-    runNameLabel: 'Codex issue agent',
     label: 'agent:codex',
     reviewLabel: 'review:codex',
     replyTrigger: '/codex',
@@ -83,9 +74,7 @@ export const PIPELINE_CONTRACTS: Readonly<
   }),
   opencode: Object.freeze({
     pipeline: 'opencode',
-    workflowFile: 'opencode.yml',
     displayName: 'OpenCode',
-    runNameLabel: 'OpenCode issue agent',
     label: 'agent:opencode',
     reviewLabel: 'review:opencode',
     replyTrigger: '/oc',
@@ -98,15 +87,6 @@ export const PIPELINE_CONTRACTS: Readonly<
 /** Every pipeline the broker can dispatch. */
 export const DISPATCH_PIPELINES = Object.freeze(
   Object.keys(PIPELINE_CONTRACTS) as AgentPipeline[],
-);
-
-/** Worker workflow files, for identity checks on a discovered run. */
-export const WORKER_WORKFLOW_FILES: ReadonlySet<string> = Object.freeze(
-  new Set(
-    DISPATCH_PIPELINES.map(
-      (pipeline) => PIPELINE_CONTRACTS[pipeline].workflowFile,
-    ),
-  ),
 );
 
 /**

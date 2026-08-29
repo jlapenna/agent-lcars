@@ -172,14 +172,9 @@ async function AgentsPageBody({
     new Set([...baseWarnings, ...authoritative.warnings]),
   );
 
-  // #306: logical-task/execution-attempt/runner-occupancy as three
-  // deliberately distinct numbers (see deriveActivityMetrics's own doc
-  // comment). Attempts include both live and recently finished runs;
-  // live/queued attempts are what actually feed the queued/running counts
-  // below. The richer per-task orchestrator overlay lives on the canonical
-  // `/task/<owner>/<repo>/<issue>` page - see task-detail.ts's
-  // `applyOrchestratorTruth`; every task here renders `deriveLogicalWork`'s
-  // attempts-only `legacy`/`unavailable` provenance.
+  // Logical tasks, authoritative Run occupancy, and physical runner capacity
+  // are deliberately distinct measures. GitHub contributes title/URL metadata
+  // only; lifecycle is projected from the control-plane records above.
   const logicalWorkItems = filteredItems.map((item) => ({
     ...item,
     humanNeeded: item.actionTypes.includes('needs-human'),
@@ -199,14 +194,18 @@ async function AgentsPageBody({
       });
     }
   }
-  const { work: logicalWork, unattributedAttempts } = deriveLogicalWork({
-    attempts: [...filteredActivity.liveRuns, ...filteredActivity.recentRuns],
+  const allRuns = [
+    ...filteredActivity.liveRuns,
+    ...filteredActivity.recentRuns,
+  ];
+  const { work: logicalWork, unattributedRuns } = deriveLogicalWork({
+    runs: allRuns,
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta,
   });
   const activityMetrics = deriveActivityMetrics(
     logicalWork,
-    [...logicalWork.flatMap((task) => task.attempts), ...unattributedAttempts],
+    [...logicalWork.flatMap((task) => task.runs), ...unattributedRuns],
     filteredActivity.fleet,
   );
 

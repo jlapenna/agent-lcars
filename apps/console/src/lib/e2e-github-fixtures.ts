@@ -5,7 +5,7 @@ import {
   E2E_FIXTURE_PR_TITLE,
   E2E_FIXTURE_PR_URL,
 } from './e2e-fixtures';
-import { type AgentPipeline, DEFAULT_AGENT_INTEGRATIONS } from './watched-repo';
+import type { AgentPipeline } from './watched-repo';
 
 /**
  * Canned GitHub API responses for the e2e suite's *populated* mode, added
@@ -535,7 +535,7 @@ export function recordQuickTaskIssue(params: {
   const titlePrefix = params.pipeline === 'claude' ? '' : `${params.pipeline} `;
   state.runs.push({
     id: runId,
-    workflow: DEFAULT_AGENT_INTEGRATIONS[params.pipeline].workflowFile,
+    workflow: params.pipeline,
     status: 'in_progress',
     conclusion: null,
     displayTitle: `${titlePrefix}#${number}: ${params.title} [dispatch:g1:${intentId}]`,

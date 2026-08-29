@@ -38,7 +38,6 @@ describe('watched repository agent capabilities', () => {
       ...standardRepo,
       agents: {
         codex: {
-          workflowFile: 'route-codex.yml',
           label: 'agent:custom-codex',
           replyTrigger: '/custom-codex',
         },

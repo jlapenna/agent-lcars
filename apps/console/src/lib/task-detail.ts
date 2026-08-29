@@ -1,4 +1,3 @@
-import { type DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import type { WorkSpec } from '@agent-lcars/work';
@@ -11,12 +10,7 @@ import {
 } from './authoritative-task-state';
 import { isNotFound } from './backend-actions';
 import { GITHUB_DATA_TAG } from './cache-tags';
-import {
-  DASHBOARD_CACHE_LIFE,
-  type Fetched,
-  getCachedAgentActivity,
-  oldestFetchedAt,
-} from './dashboard-data';
+import { DASHBOARD_CACHE_LIFE, type Fetched } from './dashboard-data';
 import {
   getGithubClient,
   repoItemKey,
@@ -27,9 +21,7 @@ import {
 import { enrichItems, type ItemEnrichment } from './item-enrichment';
 import {
   deriveLogicalWork,
-  type ExecutionAttempt,
   type LogicalWork,
-  type LogicalWorkAnomaly,
   type LogicalWorkState,
 } from './logical-work';
 import { taskRefKey } from './watched-repo';
@@ -38,22 +30,13 @@ export type TaskDetailResult =
   | {
       status: 'ok';
       work: LogicalWork;
-      /** This task's own orchestrator run history, verbatim - order not
-       * guaranteed (see `AuthoritativeTaskState.runs`'s own doc comment).
-       * Empty for a task with no orchestrator state (pre-cutover history,
-       * or a repo the orchestrator never covers); `LogicalWorkCard` renders
-       * this natively (#1015) alongside `work.attempts`'s legacy list
-       * whenever non-empty, and falls back to the legacy list alone when
-       * it's empty. */
+      /** This task's own authoritative orchestrator Run history, verbatim. */
       runs: OrchestratorRun[];
       item: ActionItem;
       repo: WatchedRepo;
       anchorState: 'open' | 'closed';
-      /** The oldest `fetchedAt` of every cached source this result was
-       * built from (see `dashboard-data.ts`'s `oldestFetchedAt`) - the page
-       * component's "Updated ..." label reads this instead of the render
-       * time, so a cache hit up to `DASHBOARD_CACHE_LIFE` old doesn't
-       * misreport itself as "just now". */
+      /** GitHub issue/PR metadata cache timestamp. Execution history is read
+       * separately from the authoritative control plane. */
       generatedAt: string;
       /** The task's `work.spec` snapshot, when one has been derived
        *  (sub-project 5) -- see `AuthoritativeTaskState.spec`. */
@@ -209,27 +192,15 @@ export async function getTaskDetail(
     typeof label === 'string' ? label : (label.name ?? ''),
   );
 
-  const { data: activity, fetchedAt: activityFetchedAt } =
-    await getCachedAgentActivity();
-  const allAttempts = [...activity.liveRuns, ...activity.recentRuns];
-
   const key = repoItemKey(repo, issueNumber);
   const authoritative = await readAuthoritativeTaskStates([
     { repository: repo, issueNumber },
   ]);
   const humanNeeded = labels.includes('status:needs-human');
-  const mergedDeliverables = new Set(
-    (itemEnrichment?.mergedDeliverables ?? []).map(
-      (deliverable) => deliverable.number,
-    ),
-  );
-  // `deriveLogicalWork` does the one join it's needed for here - attributing
-  // raw GitHub Actions attempts to `taskMeta`/`unavailableTaskKeys` - and
-  // yields the `legacy`/`unavailable` attempts-only provenance.
-  // `applyOrchestratorTruth` below then overlays the real authoritative
-  // truth - the orchestrator's own task+run history - on top of that.
+  // GitHub is the issue/PR presentation boundary. Lifecycle comes only from
+  // the task state read below; do not resurrect an Actions-attempt fallback.
   const { work } = deriveLogicalWork({
-    attempts: allAttempts,
+    runs: [],
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
     taskMeta: new Map([
       [
@@ -254,7 +225,6 @@ export async function getTaskDetail(
   const task = applyOrchestratorTruth(
     baseTask,
     authoritative.states.get(key),
-    mergedDeliverables,
     humanNeeded,
   );
 
@@ -276,59 +246,33 @@ export async function getTaskDetail(
     item,
     repo,
     anchorState: issue.state === 'closed' ? 'closed' : 'open',
-    // Both cached sources this result was built from - the older of the
-    // two is the honest staleness figure (see `oldestFetchedAt`'s own doc
-    // comment).
-    generatedAt: oldestFetchedAt(sourceFetchedAt, activityFetchedAt),
+    generatedAt: sourceFetchedAt,
     ...(state?.spec === undefined ? {} : { spec: state.spec }),
   };
 }
 
-/**
- * Overlays `@agent-lcars/orchestrator`'s own task+run truth onto the
- * attempts-only `LogicalWork` `deriveLogicalWork` already built from raw
- * GitHub Actions runs (#1183). Absent authoritative state (no orchestrator
- * task document - a repository outside `controlPlaneRepository()`, or a
- * task the fleet has never touched) leaves `work` exactly as `attempts`
- * alone already describe it, matching `deriveLogicalWork`'s own
- * `legacy`/`unavailable` fallback behavior for "no ledger".
- */
+/** Overlays the task's durable Run history onto GitHub presentation metadata.
+ * A missing task record is intentionally shown as no history, never replaced
+ * with a hosted Actions attempt. */
 function applyOrchestratorTruth(
   work: LogicalWork,
   state: AuthoritativeTaskState | undefined,
-  mergedDeliverables: ReadonlySet<number>,
   humanNeeded: boolean,
 ): LogicalWork {
   if (!state) return work;
 
-  const { attempts, anomalies: orchestratorAnomalies } =
-    attributeAttemptsToOrchestrator(work.attempts, state, mergedDeliverables);
-  const anomalies: LogicalWorkAnomaly[] = [
-    ...work.anomalies,
-    ...orchestratorAnomalies,
-  ];
   const orchestratorState = stateFromOrchestratorTask(state);
-  // Mirrors `deriveLogicalWork`'s own precedence (unavailable > anomaly >
-  // human-needed > the derived base state) - `work.state` here is exactly
-  // that base state's result, so
-  // 'unavailable' can only mean the read genuinely failed (in which case
-  // `state` above would also be undefined) and 'anomaly'/'human-needed' must
-  // still outrank the orchestrator's own reading of "what's active".
   const nextState: LogicalWorkState =
     work.state === 'unavailable'
       ? 'unavailable'
-      : anomalies.length > 0
-        ? 'anomaly'
-        : humanNeeded
-          ? 'human-needed'
-          : orchestratorState;
+      : humanNeeded
+        ? 'human-needed'
+        : orchestratorState;
 
   return {
     ...work,
-    attempts,
-    anomalies,
     state: nextState,
-    provenance: { kind: 'authoritative-v1', revision: state.storageRevision },
+    provenance: { kind: 'authoritative', revision: state.storageRevision },
   };
 }
 
@@ -336,9 +280,7 @@ function applyOrchestratorTruth(
  * "decided, dispatch not yet confirmed" (dispatching in the old ledger's own
  * vocabulary); `running` is `active`; every terminal state (`finished`,
  * `canceled`, `lost`) means the task is not currently being worked, exactly
- * like the ledger's own `completed`/`dispatch-rejected` states did - the
- * per-attempt `DispatchOutcomeBadge` remains where success/failure actually
- * renders, not this coarse state. */
+ * like the ledger's own `completed`/`dispatch-rejected` states did. */
 function stateFromOrchestratorTask(
   state: AuthoritativeTaskState,
 ): LogicalWorkState {
@@ -352,75 +294,4 @@ function stateFromOrchestratorTask(
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .at(0);
   return latest ? 'completed' : 'unknown';
-}
-
-/** Attributes GitHub Actions attempts to orchestrator runs by the
- * `[dispatch:gN:intentId]` run-name marker - `orchestrator-dispatch.ts`
- * mints its workflow-dispatch inputs under the identical `broker_intent_id`/
- * `broker_generation` names, with `intentId` now literally the
- * orchestrator's own `runId` (`{repo}#{issue}/r{generation}`), so the same
- * marker still corroborates a real run. */
-function attributeAttemptsToOrchestrator(
-  attempts: ExecutionAttempt[],
-  state: AuthoritativeTaskState,
-  mergedDeliverables: ReadonlySet<number>,
-): { attempts: ExecutionAttempt[]; anomalies: LogicalWorkAnomaly[] } {
-  const byRunId = new Map(state.runs.map((run) => [run.runId, run]));
-  const anomalies: LogicalWorkAnomaly[] = [];
-  const attributed = attempts.map((attempt) => {
-    if (attempt.intentId === undefined) return attempt;
-    const run = byRunId.get(attempt.intentId);
-    if (!run) {
-      anomalies.push({
-        kind: 'attempt-ledger-mismatch',
-        detail: `Run ${attempt.id} carries intent ${attempt.intentId}, which is not in this task's orchestrator run history.`,
-      });
-      return attempt;
-    }
-    return {
-      ...attempt,
-      generation: generationFromRunId(run.runId) ?? attempt.generation,
-      attribution: 'orchestrator' as const,
-      outcome: outcomeFromRunResult(run, mergedDeliverables) ?? attempt.outcome,
-    };
-  });
-  return { attempts: attributed, anomalies };
-}
-
-/** A run's own id is `{repo}#{issue}/r{generation}` (see
- * `libs/orchestrator/src/decide.ts`'s `requestRun`); this pulls the
- * trailing generation number back out for display parity with the marker's
- * own `g<generation>` badge. */
-function generationFromRunId(runId: string): number | undefined {
-  const match = /\/r(\d+)$/u.exec(runId);
-  return match ? Number(match[1]) : undefined;
-}
-
-/**
- * Maps a finished run's own `RunResult` (`{ok, summary?, ref?}` - see
- * `libs/orchestrator/src/model.ts`) onto the existing `DispatchOutcomeKind`
- * vocabulary as honestly as the orchestrator's own data allows. The
- * orchestrator deliberately does not preserve the legacy worker's
- * fine-grained failure classification (startup/trajectory/outcome-gate) -
- * only a boolean `ok` - so an unsuccessful run reports no outcome kind at
- * all here rather than guessing one; the raw GitHub Actions conclusion
- * (via `classifyAgentRun`'s own fallback) still drives that attempt's
- * status badge.
- */
-function outcomeFromRunResult(
-  run: AuthoritativeTaskState['runs'][number],
-  mergedDeliverables: ReadonlySet<number>,
-): DispatchOutcomeKind | undefined {
-  if (run.state !== 'finished' || !run.result?.ok) return undefined;
-  const prNumber = pullRequestNumberFromRef(run.result.ref);
-  if (prNumber !== undefined && mergedDeliverables.has(prNumber)) {
-    return 'merged-deliverable';
-  }
-  return prNumber !== undefined ? 'pull-request' : 'unknown-success';
-}
-
-function pullRequestNumberFromRef(ref: string | undefined): number | undefined {
-  if (!ref) return undefined;
-  const match = /\/pull\/(\d+)$/u.exec(ref);
-  return match ? Number(match[1]) : undefined;
 }

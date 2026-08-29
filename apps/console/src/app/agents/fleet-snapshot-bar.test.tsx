@@ -53,8 +53,8 @@ function renderBar(
   activeCliSessionCount = 0,
   metrics?: {
     logicalTaskCount: number;
-    queuedAttempts: number;
-    runningAttempts: number;
+    queuedRuns: number;
+    runningRuns: number;
     onlineRunners?: number;
     busyRunners?: number;
   },
@@ -134,8 +134,8 @@ describe('FleetSnapshotBar', () => {
   it('renders logical-task, queued-attempt, and running-attempt counts as visibly distinct numbers (#306)', () => {
     renderBar(EMPTY_ACTIVITY, 0, {
       logicalTaskCount: 2,
-      queuedAttempts: 1,
-      runningAttempts: 3,
+      queuedRuns: 1,
+      runningRuns: 3,
       onlineRunners: 5,
       busyRunners: 2,
     });
@@ -157,8 +157,8 @@ describe('FleetSnapshotBar', () => {
   it('omits the runner-occupancy metric when the runner API was unavailable', () => {
     renderBar(EMPTY_ACTIVITY, 0, {
       logicalTaskCount: 0,
-      queuedAttempts: 0,
-      runningAttempts: 0,
+      queuedRuns: 0,
+      runningRuns: 0,
     });
     expect(screen.queryByTestId('metric-runner-occupancy')).toBeNull();
   });
@@ -166,8 +166,8 @@ describe('FleetSnapshotBar', () => {
   it('summarizes an all-clear dispatch queue instead of spending a mobile row on four zeroes', () => {
     renderBar(EMPTY_ACTIVITY, 0, {
       logicalTaskCount: 0,
-      queuedAttempts: 0,
-      runningAttempts: 0,
+      queuedRuns: 0,
+      runningRuns: 0,
       onlineRunners: 0,
       busyRunners: 0,
     });
