@@ -34,23 +34,17 @@ vi.mock('./cancel-run-button', () => ({
 // import from it is type-only. The pure helpers are reimplemented here
 // rather than imported for real - agent-activity.test.ts is the source of
 // truth for their actual behavior; keep these in sync with it.
-// QUEUE_STALL_THRESHOLD_SECONDS and attemptMarkerFromDisplayTitle are both
-// pulled from the real module (importActual is safe here - neither touches
-// the browser guard, see the note above; attemptMarkerFromDisplayTitle is
-// itself only a thin wrapper over @agent-lcars/dispatch-contracts'
-// parseDispatchMarker) so findStalledQueuedRun's reimplemented threshold,
-// and workHrefForRun's native-run marker parsing, can't silently drift from
-// production (#863).
+// QUEUE_STALL_THRESHOLD_SECONDS is pulled from the real module (importActual
+// is safe here - it does not touch the browser guard) so the reimplemented
+// findStalledQueuedRun threshold cannot silently drift from production.
 vi.mock('../lib/agent-activity', async () => {
-  const { QUEUE_STALL_THRESHOLD_SECONDS, attemptMarkerFromDisplayTitle } =
-    await vi.importActual<typeof import('../lib/agent-activity')>(
-      '../lib/agent-activity',
-    );
+  const { QUEUE_STALL_THRESHOLD_SECONDS } = await vi.importActual<
+    typeof import('../lib/agent-activity')
+  >('../lib/agent-activity');
   return {
     RECENT_RUN_LIMIT: 8,
     RUN_TIMEOUT_MINUTES: 90,
     MAX_TURNS_BUDGET: 200,
-    attemptMarkerFromDisplayTitle,
     QUEUE_STALL_THRESHOLD_SECONDS,
     findStalledQueuedRun: (liveRuns: AgentRun[]) =>
       liveRuns
@@ -644,11 +638,8 @@ describe('AgentActivityPanel live run links (#176)', () => {
     );
   });
 
-  // #1530: a native work item's run has no `#<N>:` join key at all - its
-  // displayTitle's dispatch marker carries the orchestrator runId
-  // (work:<ulid>/r<n>) instead of an issue anchor, so it opens the item's
-  // /work/<ulid> page rather than falling all the way to the raw run URL
-  // like the legacy-title case above.
+  // A native Run carries its authoritative workId directly, so its UI link
+  // never derives identity from an encoded display title.
   it('opens a native work item on its /work/<id> route when issueNumber cannot be parsed', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
@@ -657,8 +648,8 @@ describe('AgentActivityPanel live run links (#176)', () => {
           id: 35,
           status: 'running',
           issueNumber: undefined,
-          displayTitle:
-            'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+          workId: '01M107KR3X6VDH7NZ4JDXZNSS2',
+          displayTitle: 'Native work: fix console model',
         }),
       ],
     });
@@ -704,8 +695,8 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
             id: 40,
             status: 'running',
             issueNumber: undefined,
-            displayTitle:
-              'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+            workId: '01M107KR3X6VDH7NZ4JDXZNSS2',
+            displayTitle: 'Native work: fix console model',
           })}
         />
       </MantineProvider>,
@@ -713,9 +704,7 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
 
     const link = screen.getByTestId('live-run-issue-link');
     expect(link.getAttribute('href')).toBe('/work/01M107KR3X6VDH7NZ4JDXZNSS2');
-    expect(link.textContent).toBe(
-      'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
-    );
+    expect(link.textContent).toBe('Native work: fix console model');
   });
 
   it('still falls back to the raw run URL for a legacy run with neither an issue number nor a marker', () => {
@@ -752,8 +741,8 @@ describe('FinishedRunRow detail variant (used by the /agents Recent Outcomes sec
             status: 'completed',
             conclusion: 'success',
             issueNumber: undefined,
-            displayTitle:
-              'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
+            workId: '01M107KR3X6VDH7NZ4JDXZNSS2',
+            displayTitle: 'Native work: fix console model',
           })}
         />
       </MantineProvider>,
@@ -761,9 +750,7 @@ describe('FinishedRunRow detail variant (used by the /agents Recent Outcomes sec
 
     const link = screen.getByTestId('recent-run-issue-link');
     expect(link.getAttribute('href')).toBe('/work/01M107KR3X6VDH7NZ4JDXZNSS2');
-    expect(link.textContent).toBe(
-      'native work: Claude issue agent [dispatch:g1:work:01M107KR3X6VDH7NZ4JDXZNSS2/r1]',
-    );
+    expect(link.textContent).toBe('Native work: fix console model');
   });
 });
 
@@ -998,20 +985,19 @@ describe('AgentActivityPanel pipeline metadata', () => {
     expect(screen.getByText('#43: OpenCode issue agent')).toBeTruthy();
   });
 
-  it('strips the dispatch marker from a Bridge run title', () => {
+  it('renders the authoritative native run title verbatim', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [
         makeAgentRun({
           id: 4,
           status: 'running',
-          displayTitle: '#42: Fix the thing [dispatch:g1:intent-abc]',
+          displayTitle: '#42: Fix the thing',
         }),
       ],
     });
 
     expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
-    expect(screen.queryByText(/dispatch:g1/)).toBeNull();
   });
 
   it('keeps recent opencode results equally quiet', () => {
