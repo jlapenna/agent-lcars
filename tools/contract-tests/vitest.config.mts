@@ -9,10 +9,9 @@ import { vitestTsconfigPaths } from '../../vitest.config.base.mts';
 // apps/console/src/lib, and operator-only tools that do not belong to an Nx
 // application/library project. They run directly via `pnpm check:contracts`
 // (see package.json) from the CI Verify job, not through
-// `nx run-many -t test`. CI/tooling self-tests (contracts that assert on
-// this repo's own CI wiring rather than a production contract) live under
-// tools/contract-tests/ci-self/ with their own config and are excluded here
-// (docs/testing-policy.md, #1486).
+// `nx run-many -t test`. CI policy contracts live in the same required
+// contract lane: every check must have a consumer, so there is no separate
+// advisory self-test lane.
 export default defineConfig({
   root: path.resolve(import.meta.dirname, '../..'),
   plugins: [
@@ -49,9 +48,7 @@ export default defineConfig({
   test: {
     include: [
       'tools/contract-tests/**/*.test.ts',
-      '!tools/contract-tests/ci-self/**',
       'tools/saved-session/**/*.test.mjs',
-      'tools/trajectory-evaluation/**/*.test.mjs',
       'tools/quick-task-evidence-*.test.mjs',
     ],
     watch: false,
