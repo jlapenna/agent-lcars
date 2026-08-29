@@ -42,7 +42,8 @@ if grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
   echo "runner image must not run OpenCode's mutable installer as root" >&2
   exit 1
 fi
-if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entrypoint"; then
+if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entrypoint" ||
+  ! grep -Fqx 'if ! trusted_opencode_supports_auto /usr/local/bin/opencode; then' "$entrypoint"; then
   echo "runner entrypoint must preflight the exact trusted OpenCode executable" >&2
   exit 1
 fi
@@ -138,6 +139,9 @@ chmod +x "$tmp"/java*/java
 
 cat > "$tmp/opencode-healthy/opencode" <<'OPENCODE'
 #!/bin/sh
+if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
+  echo '      --auto         auto-approve permissions'
+fi
 exit 0
 OPENCODE
 cat > "$tmp/opencode-broken/opencode" <<'OPENCODE'
@@ -150,12 +154,24 @@ trusted_opencode_runs "$tmp/opencode-healthy/opencode" || {
   echo "healthy trusted OpenCode invocation was rejected" >&2
   exit 1
 }
+trusted_opencode_supports_auto "$tmp/opencode-healthy/opencode" || {
+  echo "healthy trusted OpenCode --auto invocation was rejected" >&2
+  exit 1
+}
 if trusted_opencode_runs "$tmp/opencode-broken/opencode"; then
   echo "broken trusted OpenCode invocation was accepted" >&2
   exit 1
 fi
+if trusted_opencode_supports_auto "$tmp/opencode-broken/opencode"; then
+  echo "broken trusted OpenCode --auto invocation was accepted" >&2
+  exit 1
+fi
 if trusted_opencode_runs "$tmp/missing/opencode"; then
   echo "missing trusted OpenCode executable was accepted" >&2
+  exit 1
+fi
+if trusted_opencode_supports_auto "$tmp/missing/opencode"; then
+  echo "missing trusted OpenCode --auto invocation was accepted" >&2
   exit 1
 fi
 

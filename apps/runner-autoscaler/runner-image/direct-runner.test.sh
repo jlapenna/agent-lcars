@@ -296,8 +296,12 @@ exit 0
 FAKE
   chmod +x "$bindir/codex"
 
-  cat > "$bindir/opencode" <<'FAKE'
+cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
+if [ "${1:-}" = run ] && [ "${2:-}" = --help ]; then
+  [ "${FAKE_OPENCODE_NO_AUTO:-}" = 1 ] || echo '      --auto         auto-approve permissions'
+  exit 0
+fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
@@ -554,7 +558,7 @@ echo "scenario codex-burned-stderr: OK"
 run_scenario opencode-happy opencode
 [ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
-grep -q -- 'run --model homelab/default-nothink --dangerously-skip-permissions' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --model homelab/default-nothink --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
 [ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|$FAKE_TOKEN|$FAKE_TOKEN||" ] ||
   fail "opencode happy path: adapter environment mismatch ($(cat "$OPENCODE_ENV_LOG"))"
@@ -609,6 +613,20 @@ grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
   fail "opencode timeout: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario opencode-timeout: OK"
+
+# The queued direct path must reject a reviewed OpenCode CLI that no longer
+# supports the non-interactive --auto contract before it attempts a real turn.
+export FAKE_OPENCODE_NO_AUTO=1
+run_scenario opencode-no-auto opencode
+unset FAKE_OPENCODE_NO_AUTO
+
+[ "$rc" -ne 0 ] || fail "opencode no-auto: expected a non-zero exit"
+[ ! -s "$OPENCODE_ARGS_LOG" ] ||
+  fail "opencode no-auto: invoked OpenCode after the capability preflight ($(cat "$OPENCODE_ARGS_LOG"))"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "opencode no-auto: completion did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-no-auto: OK"
 
 # A GitHub reply keeps its anchor, mode, reply/runbook/context, and exact
 # marker lookup when it travels through the same direct runner. The marker is

@@ -42,3 +42,14 @@ trusted_opencode_runs() {
   local opencode_command="${1:-/usr/local/bin/opencode}"
   [ -x "$opencode_command" ] && "$opencode_command" --version >/dev/null 2>&1
 }
+
+# QueueExecutor invokes OpenCode through its ordinary non-interactive CLI,
+# with --auto approving permissions not explicitly denied. Keep that contract
+# at the image boundary: a reviewed CLI upgrade that drops or renames the
+# flag must fail runner registration rather than accepting work and dying
+# after checkout.
+trusted_opencode_supports_auto() {
+  local opencode_command="${1:-/usr/local/bin/opencode}"
+  [ -x "$opencode_command" ] &&
+    "$opencode_command" run --help 2>&1 | grep -Fq -- '--auto'
+}

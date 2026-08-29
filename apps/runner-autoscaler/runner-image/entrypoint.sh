@@ -46,6 +46,10 @@ if ! trusted_opencode_runs /usr/local/bin/opencode; then
   echo "FATAL: trusted OpenCode CLI failed a preflight invocation" >&2
   exit 1
 fi
+if ! trusted_opencode_supports_auto /usr/local/bin/opencode; then
+  echo "FATAL: trusted OpenCode CLI does not support QueueExecutor's --auto mode" >&2
+  exit 1
+fi
 
 # agent-lcars#1330: point the runner at the baked action-archive cache so
 # `uses:` tarballs resolve locally instead of from codeload (outage

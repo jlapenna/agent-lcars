@@ -508,6 +508,10 @@ else
     echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
     exit 1
   fi
+  if ! "$OPENCODE_BIN" run --help 2>&1 | grep -Fq -- '--auto'; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN does not support QueueExecutor's --auto mode" >&2
+    exit 1
+  fi
   OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
@@ -531,7 +535,7 @@ else
     GITHUB_TOKEN="$CHECKOUT_TOKEN" \
     timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
     "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
-      --dangerously-skip-permissions "$AGENT_PROMPT"
+      --auto "$AGENT_PROMPT"
   AGENT_EXIT=$?
   set -e
 fi
