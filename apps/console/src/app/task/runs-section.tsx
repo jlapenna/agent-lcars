@@ -136,11 +136,8 @@ function RunResultView({ result }: { result: Run['result'] }) {
 }
 
 /**
- * One run, rendered from the orchestrator's own truth rather than mapped
- * through the legacy attempts overlay (#1015). `LogicalWorkCard` renders
- * this in place of the "Execution attempts" list whenever the task has any
- * orchestrator run history at all - see its own doc comment for the
- * pre-cutover fallback.
+ * One authoritative Run from the orchestrator's own history. `LogicalWorkCard`
+ * renders this whenever a task has recorded Runs.
  */
 function RunRow({ run }: { run: Run }) {
   const badge = runStateBadge(run);
