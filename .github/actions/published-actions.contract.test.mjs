@@ -195,7 +195,7 @@ const PUBLISHED = {
       payloads: { required: false, default: '' },
       'timeout-seconds': { required: false, default: '60' },
     },
-    outputs: [],
+    outputs: ['accepted', 'refused', 'run-id'],
   },
   // Centralized consumer-side native-work migration guard (#1502): the
   // action intentionally has no inputs. It validates every present canonical

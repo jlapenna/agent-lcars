@@ -47,6 +47,7 @@ run() {
   printf '%s\n' "$1" > "$workdir/post-responses"
   shift
   : > "$workdir/curl.log"
+  : > "$workdir/github-output"
   echo 0 > "$workdir/post-calls"
   set +e
   output="$(
@@ -55,6 +56,7 @@ run() {
         CURL_LOG="$workdir/curl.log" \
         POST_RESPONSES="$workdir/post-responses" \
         POST_CALLS="$workdir/post-calls" \
+        GITHUB_OUTPUT="$workdir/github-output" \
         FAKE_OIDC_URL='https://oidc.example/token' \
         FAKE_OIDC_TOKEN='fake-oidc-jwt' \
         ACTIONS_ID_TOKEN_REQUEST_URL='https://oidc.example/token?api-version=2' \
@@ -67,6 +69,7 @@ run() {
   status=$?
   set -e
   curl_log="$(cat "$workdir/curl.log")"
+  github_output="$(cat "$workdir/github-output")"
 }
 
 fail() {
@@ -80,7 +83,7 @@ fail() {
 
 # 1. Single payload: token minted for the audience, then one POST carrying
 #    the bearer, the JSON content type, and the exact body.
-run $'0 {"ok":true}' PAYLOAD='{"issue": 7}'
+run $'0 {"runId":"run-1","dispatched":true}' PAYLOAD='{"issue": 7}'
 test "$status" = 0 || fail "single payload must succeed"
 grep -q 'audience=agent-lcars-dispatch-request' <<<"$curl_log" ||
   fail "token mint must request the audience"
@@ -92,6 +95,23 @@ grep -q 'Content-Type: application/json' <<<"$curl_log" ||
   fail "POST with a body must declare JSON"
 grep -Fq '{"issue": 7}' <<<"$curl_log" || fail "POST must send the exact body"
 grep -q -- '--max-time 60' <<<"$curl_log" || fail "POST must apply the timeout"
+grep -Fxq 'accepted=true' <<<"$github_output" ||
+  fail "accepted dispatch must expose accepted=true"
+grep -Fxq 'refused=' <<<"$github_output" ||
+  fail "accepted dispatch must have no refusal"
+grep -Fxq 'run-id=run-1' <<<"$github_output" ||
+  fail "accepted dispatch must expose the run ID"
+
+# 1b. A task-busy response is successful HTTP but must not be reported as an
+#     accepted dispatch; the active run ID and refusal reason are preserved.
+run $'0 {"refused":"task-busy","runId":"active-1"}' PAYLOAD='{"issue": 7}'
+test "$status" = 0 || fail "task-busy response must remain a successful POST"
+grep -Fxq 'accepted=false' <<<"$github_output" ||
+  fail "task-busy must not be accepted"
+grep -Fxq 'refused=task-busy' <<<"$github_output" ||
+  fail "task-busy must expose its refusal"
+grep -Fxq 'run-id=active-1' <<<"$github_output" ||
+  fail "task-busy must expose the active run ID"
 
 # 2. No payload at all: still exactly one POST, bodyless, no content type.
 run $'0 {"scanned":0}'

@@ -29,7 +29,7 @@ their operating constraints.
 | `merge-live-base`              | Merge the live base into a PR head before validation.            |
 | `setup-nx-remote-cache`        | Configure trusted Nx jobs for the shared L2 cache.               |
 | `deploy-verify`                | Poll a deployed URL and optionally annotate deployment status.   |
-| `request-control-plane`        | Send an OIDC-authenticated request to a control-plane endpoint.  |
+| `request-control-plane`        | Send an OIDC-authenticated request and expose its outcome.       |
 | `validate-worker-workflows`    | Validate worker issue/native-work anchor-union contracts.        |
 
 ## Published reusable workflows

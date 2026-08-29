@@ -41,10 +41,39 @@ post() {
   local response
   if ! response="$(curl "${args[@]}" "$ENDPOINT" 2>&1)"; then
     printf '%s\n' "$response" >&2
-    echo "::error title=request-control-plane::POST $ENDPOINT failed (response body above)."
+    echo "::error title=request-control-plane::POST $ENDPOINT failed (response body above)." >&2
     return 1
   fi
   printf '%s\n' "$response"
+}
+
+# A caller that sends one dispatch payload needs to distinguish a request the
+# Console accepted from a refusal such as task-busy before it records any
+# caller-owned state. The route's response is the authority for that decision;
+# unknown/non-Console responses remain a safe, non-accepted outcome.
+write_single_outcome() {
+  local response="$1"
+  [ -n "${GITHUB_OUTPUT:-}" ] || return 0
+
+  local accepted=false
+  local refused=''
+  local run_id=''
+  if jq -e 'type == "object"' >/dev/null 2>&1 <<<"$response"; then
+    run_id="$(jq -r '.runId // ""' <<<"$response")"
+    if jq -e '.refused != null' >/dev/null <<<"$response"; then
+      refused="$(jq -r '.refused' <<<"$response")"
+    elif jq -e '.duplicate == true' >/dev/null <<<"$response"; then
+      refused='duplicate-request'
+    elif [ -n "$run_id" ]; then
+      accepted=true
+    fi
+  fi
+
+  {
+    printf 'accepted=%s\n' "$accepted"
+    printf 'refused=%s\n' "$refused"
+    printf 'run-id=%s\n' "$run_id"
+  } >>"$GITHUB_OUTPUT"
 }
 
 if [ -n "$PAYLOADS" ]; then
@@ -61,7 +90,11 @@ if [ -n "$PAYLOADS" ]; then
   fi
   echo "POST $ENDPOINT succeeded for all $total payloads."
 elif [ -n "$PAYLOAD" ]; then
-  post "$PAYLOAD"
+  if ! response="$(post "$PAYLOAD")"; then
+    exit 1
+  fi
+  printf '%s\n' "$response"
+  write_single_outcome "$response"
   echo "POST $ENDPOINT succeeded."
 else
   post
