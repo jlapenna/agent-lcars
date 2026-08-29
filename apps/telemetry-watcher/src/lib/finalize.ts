@@ -88,7 +88,7 @@ export interface FinalizeSidecarOptions {
 
 /**
  * One-shot finalize pass for a runner (issue-agent) session (issue #24),
- * run once "Run Claude Code" has already exited: unlike `startSidecar`'s
+ * run once the provider has exited: unlike `startSidecar`'s
  * long-lived tick loop, this reduces each discovered transcript exactly
  * once, archives its raw content to `config.transcriptsBucket` (the runner
  * container is destroyed on job exit, so this is the session's only chance
@@ -96,8 +96,8 @@ export interface FinalizeSidecarOptions {
  * `ended` doc pointing at it via `transcriptGcsUri`.
  *
  * Liveness is hardcoded to `'ended'` rather than recomputed via
- * `computeLiveness` — by the time claude.yml's "Finalize telemetry
- * sidecar" step runs, "Run Claude Code" has already completed, so the
+ * `computeLiveness` — by the time QueueExecutor finalization runs, the
+ * provider has completed, so the
  * process this session's transcript belonged to is unconditionally gone;
  * there is no `/proc` check left to make.
  *

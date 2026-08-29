@@ -10,13 +10,9 @@ import { executeSessionTitleAnnotationCommand } from './session-title-annotation
 import { SESSION_STATE_DIRECTORY } from './session-title-paths';
 import { SessionStore } from './store';
 
-/** An issue-agent-shaped transcript: the `entrypoint:
- * 'claude-code-github-action'` marker on the first user line is what the
- * reducer keys off of to tag `source: 'issue-agent'` (see
- * libs/telemetry/src/lib/reducer.ts and the
- * session-with-result.jsonl fixture this mirrors) — a plain CLI-shaped
- * transcript would reduce to `source: 'cli'`, and `runId`/`issueNumber`
- * are dropped entirely for that source (see buildSessionDoc). */
+/** A provider transcript shaped like the QueueExecutor sidecar captures.
+ * `startSidecar` supplies its authoritative `source: 'issue-agent'`
+ * context rather than relying on provider-specific transcript metadata. */
 const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
   [
     JSON.stringify({
@@ -27,7 +23,6 @@ const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
       sessionId,
       cwd: '/home/runner/work/members/members',
       gitBranch: 'main',
-      entrypoint: 'claude-code-github-action',
       message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
     }),
     JSON.stringify({
@@ -65,7 +60,7 @@ const CODEX_TRANSCRIPT = [
       cwd: '/home/runner/_work/agent-lcars/agent-lcars',
       model: 'gpt-5.6',
       approval_policy: 'on-request',
-      instructions: 'Port codex.yml',
+      instructions: 'Port the queue runtime',
     },
   }),
   JSON.stringify({
@@ -275,9 +270,8 @@ describe('startSidecar', () => {
     expect(upserts).toHaveLength(1);
   });
 
-  // Until codex.yml existed the sidecar declared only the Claude root, so a
-  // Codex run shipped no telemetry at all — no turns, no tokens, no session
-  // row in the console. These pin both halves of the fix.
+  // Every QueueExecutor sidecar watches all supported provider roots, so a
+  // provider session ships telemetry without a provider-specific path.
   it('discovers Codex transcripts under the Codex sessions root', async () => {
     const { store, upserts } = createFakeStore();
     const codexFile =

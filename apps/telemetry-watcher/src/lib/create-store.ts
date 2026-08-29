@@ -46,16 +46,11 @@ export function createStoreFromConfig(config: StoreConfig): SessionStore {
   }
 
   if (config.firestoreProjectId) {
-    // Runner mode (issue #3107 follow-up 5): claude.yml's "Start telemetry
-    // sidecar" step mints a short-lived credentials file for the
-    // agent-telemetry-writer SA via WIF (google-github-actions/auth) and
-    // points GOOGLE_APPLICATION_CREDENTIALS at it for the sidecar
-    // process's own env only — never job-wide (see claude.yml's
-    // "Authenticate telemetry writer" step comment for why the ordering of
-    // that step relative to the readonly "Authenticate to GCP" step
-    // matters). No writer key JSON is involved: @google-cloud/firestore's
-    // client resolves that env var as Application Default Credentials
-    // automatically when no explicit `credentials` option is passed.
+    // Runner mode receives a short-lived telemetry-writer credential through
+    // GOOGLE_APPLICATION_CREDENTIALS for the sidecar process only. No writer
+    // key JSON is involved: @google-cloud/firestore resolves that environment
+    // variable as Application Default Credentials when no explicit
+    // `credentials` option is passed.
     logger.info(
       `agent-lcars-telemetry-watcher: using ambient Application Default Credentials for project ${config.firestoreProjectId}`,
     );

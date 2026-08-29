@@ -572,7 +572,6 @@ describe('WatcherDaemon', () => {
           sessionId,
           cwd: '/home/runner/work/members/members',
           gitBranch: 'main',
-          entrypoint: 'claude-code-github-action',
           message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
         }),
         JSON.stringify({
@@ -620,6 +619,7 @@ describe('WatcherDaemon', () => {
       isProcessAliveForCwd: () => true,
       resolveGitBranch: async () => undefined,
       resolveGitRepo,
+      forceSource: 'issue-agent',
       repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
 
@@ -643,7 +643,6 @@ describe('WatcherDaemon', () => {
           sessionId,
           cwd: '/home/runner/work/members/members',
           gitBranch: 'main',
-          entrypoint: 'claude-code-github-action',
           message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
         }),
         JSON.stringify({
@@ -687,6 +686,7 @@ describe('WatcherDaemon', () => {
       isProcessAliveForCwd: () => true,
       resolveGitBranch: async () => undefined,
       resolveGitRepo: async () => undefined,
+      forceSource: 'issue-agent',
       intentId: 'octo/example#7/r1',
     });
 

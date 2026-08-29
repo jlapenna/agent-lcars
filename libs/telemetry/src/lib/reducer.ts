@@ -15,8 +15,6 @@ import {
   isSafeIdentifier,
   truncateTitle,
 } from './unknown-value';
-const ISSUE_AGENT_ENTRYPOINT = 'claude-code-github-action';
-
 interface SessionState {
   sessionId: string;
   source: SessionSummary['source'];
@@ -180,11 +178,6 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
   applyTimestamp(state, timestamp);
 
   const isSidechain = asBoolean(raw['isSidechain']) ?? false;
-
-  const entrypoint = asString(raw['entrypoint']);
-  if (entrypoint === ISSUE_AGENT_ENTRYPOINT) {
-    state.source = 'issue-agent';
-  }
 
   const cwd = asString(raw['cwd']);
   if (cwd) {

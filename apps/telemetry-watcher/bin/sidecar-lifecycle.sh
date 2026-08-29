@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 # Telemetry-specific process-management wrapper around sidecar.cjs's
 # `runner sidecar`/`runner finalize` subcommands, baked into the runner
-# image alongside it (runner-image/Dockerfile). Every consuming dispatch
-# workflow used to duplicate this ~30-60 lines of bash inline; that let
-# members drift out of sync with agent-lcars for an unknown stretch of
-# time (it was missing the finalize half entirely). One script, baked
-# into the image, means a fix here reaches every consumer on the next
-# image pull instead of needing a hand-applied patch to every workflow
-# file.
+# image alongside it (runner-image/Dockerfile). The direct runner invokes
+# this one image-baked lifecycle for every provider.
 #
 # agent-lcars#1246: the actual background/PID/bounded-stop-wait/never-fail
 # lifecycle mechanics now live in the generic job-daemon.sh, extracted so
@@ -17,7 +12,7 @@
 # the sidecar.cjs argument assembly, and composing job-daemon.sh's `stop`
 # with the synchronous finalize pass below it.
 #
-# Usage (from a GitHub Actions step):
+# Usage:
 #   /usr/local/lib/agent-lcars/sidecar-lifecycle.sh start
 #   /usr/local/lib/agent-lcars/sidecar-lifecycle.sh finalize
 #
@@ -25,8 +20,7 @@
 # (issue/PR number), INTENT_ID (orchestrator run id, `broker_intent_id` --
 # the join key a work item needs to find its sessions). Every failure path
 # logs and exits 0 -- telemetry must never fail the job it instruments;
-# callers should still wrap the step itself in `continue-on-error: true` as
-# defense in depth.
+# callers must treat it as best effort.
 set -u
 
 MODE="${1:?usage: $0 start|finalize}"
