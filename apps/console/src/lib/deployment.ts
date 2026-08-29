@@ -64,9 +64,9 @@ export function isAdminGithubLogin(login: unknown): boolean {
   );
 }
 
-/** The machine user the agent fleet claims work as. claude.yml/codex.yml/
- * opencode.yml assign it to the anchor issue at run start, and
- * agent-automerge.yml assigns it to agent-authored PRs, so "assigned to
+/** The machine user the agent fleet claims work as. Direct workers assign it
+ * to the anchor issue at run start, and agent-authored PR handling assigns it
+ * to PRs, so "assigned to
  * this login" is the fleet's ownership marker (see agent-protocol.md §10 —
  * the bot App identity itself is not assignable, which is why a real
  * account stands in for it). */
@@ -88,8 +88,8 @@ export function consoleRepositoryUrl(): string {
  * This console deployment's own public base URL -- used to build a link
  * back to itself for something that has no other way to know its own
  * origin (`runs-router.ts`'s `brief` handler embeds it in
- * `anchor.html_url`, the same URL a `queue`-executor direct-mode container
- * would follow to view a native work item). Final-review fix: this used to
+ * `anchor.html_url`, the URL a direct worker follows to view a native work
+ * item). Final-review fix: this used to
  * be an inline, unregistered `process.env['AGENT_LCARS_CONSOLE_URL']` read
  * in `runs-router.ts` itself -- moved here to match every other instance-
  * identity value's home, per this file's own doc comment above.

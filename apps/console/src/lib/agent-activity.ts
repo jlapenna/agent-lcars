@@ -17,13 +17,12 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 // boundary; the pure integration shape itself lives in watched-repo.ts.
 export type { AgentPipeline } from './github-client';
 import type { AgentPipeline } from './github-client';
-// Direct executors share the same 90-minute run lease budget.
+// Direct workers share the same 90-minute Run lease budget.
 export const RUN_TIMEOUT_MINUTES = 90;
 
-// Mirrors claude.yml's `--max-turns 200` claude_args. opencode.yml has no
-// equivalent turn cap (its action takes no max_turns/max_steps input), so
-// the turn-budget gauge only ever renders for `pipeline === 'claude'` runs -
-// see LiveRunRow in agent-activity-panel.tsx.
+// Claude direct workers have a 200-turn budget. OpenCode has no equivalent
+// turn cap, so the turn-budget gauge only renders for `pipeline === 'claude'`
+// runs - see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
 /** Exported so the panel can label the list as "last N" when it fills. */

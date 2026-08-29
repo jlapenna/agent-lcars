@@ -89,12 +89,9 @@ export interface GrantsPrincipal {
  *
  * The repo check is `isControlPlaneRepository()` -- the full
  * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` allow-list, not the single
- * `controlPlaneRepository()` entry. Wave 1 of #1544 landed a `work`
- * `workflow_dispatch` input, forwarded from a `control-plane-projections`
- * flag, on every consumer repo's `claude/codex/opencode.yml` (six repos,
- * all merged); a native (work-anchored) item targeting any admitted repo
- * can now actually be delivered, so this narrowed from the single-repo
- * equality check wave 1's own doc comment predicted it would. A target
+ * `controlPlaneRepository()` entry. Native work targeting any admitted repo
+ * is dispatched through the direct worker path, so this narrowed from the
+ * original single-repo equality check. A target
  * repo that is *not* on the allow-list at all still cannot be dispatched
  * to -- refuse it at creation instead of minting a run that can never be
  * delivered.

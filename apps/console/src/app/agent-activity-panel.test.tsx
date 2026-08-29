@@ -140,13 +140,12 @@ function renderPanel(
 
 function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
   return {
-    id: 1,
+    id: 'run-1',
     repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     pipeline: 'claude',
     status: 'completed',
     conclusion: 'success',
-    event: 'workflow_dispatch',
-    url: 'https://github.com/o/r/actions/runs/1',
+    url: '/runs/run-1',
     displayTitle: '#123: Fix status tags on mobile',
     createdAt: '2026-07-12T00:00:00.000Z',
     updatedAt: '2026-07-12T00:05:00.000Z',
@@ -428,9 +427,7 @@ describe('AgentActivityPanel recent runs', () => {
       recentRuns: [makeAgentRun({ issueNumber: undefined })],
     });
     const link = screen.getByTestId('outcome-primary-action');
-    expect(link.getAttribute('href')).toBe(
-      'https://github.com/o/r/actions/runs/1',
-    );
+    expect(link.getAttribute('href')).toBe('/runs/run-1');
   });
 
   it('shows the latest outcomes by default with no disclosure', () => {
@@ -509,7 +506,7 @@ describe('AgentActivityPanel recent runs', () => {
       {
         // Zero recorded turns despite a success conclusion is a
         // session-provable anomaly (see run-status-classifier.ts) - unlike
-        // "no PR/commit", which claude.yml's own server-side gates already
+        // "no PR/commit", which the delivery gate already
         // rule out before a run can report success at all.
         15: makeIssueAgentSessionDoc({ turns: 0 }),
       },
@@ -626,9 +623,7 @@ describe('AgentActivityPanel live run links (#176)', () => {
       ],
     });
     const link = screen.getByTestId('current-run-primary-action');
-    expect(link.getAttribute('href')).toBe(
-      'https://github.com/o/r/actions/runs/1',
-    );
+    expect(link.getAttribute('href')).toBe('/runs/run-1');
   });
 
   // A native Run carries its authoritative workId directly, so its UI link
@@ -700,7 +695,7 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
     expect(link.textContent).toBe('Native work: fix console model');
   });
 
-  it('still falls back to the raw run URL for a legacy run with neither an issue number nor a marker', () => {
+  it('falls back to an unanchored Run URL when no task target is available', () => {
     render(
       <MantineProvider>
         <LiveRunRow
@@ -714,9 +709,7 @@ describe('LiveRunRow detail variant (used by the /agents Active Agents section) 
     );
 
     const link = screen.getByTestId('live-run-issue-link');
-    expect(link.getAttribute('href')).toBe(
-      'https://github.com/o/r/actions/runs/1',
-    );
+    expect(link.getAttribute('href')).toBe('/runs/run-1');
   });
 });
 
@@ -793,7 +786,7 @@ describe('AgentActivityPanel live run grouping by issue id (#239)', () => {
     expect(screen.getAllByTestId('current-run-row')).toHaveLength(2);
   });
 
-  it('flags two same-pipeline live attempts on one issue as a duplicate, never dropping either (#306)', () => {
+  it('flags two same-pipeline live Runs on one issue as a duplicate, never dropping either (#306)', () => {
     renderPanel([], {
       ...EMPTY_ACTIVITY,
       liveRuns: [

@@ -176,8 +176,8 @@ export function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
 // from PIPELINE_LABELS/PIPELINE_COLORS above, which tag an authoritative Run
 // by its selected provider - a
 // session's `agent` instead names which tool actually produced the
-// transcript, an orthogonal axis that matters once opencode.yml (or a
-// non-Claude CLI) starts shipping its own session docs.
+// transcript, an orthogonal axis that matters once OpenCode (or a non-Claude
+// CLI) starts shipping its own session docs.
 const AGENT_LABELS: Record<SessionAgent, string> = {
   'claude-code': 'claude code',
   codex: 'codex',
@@ -221,8 +221,8 @@ export function AgentBadge({ agent }: { agent: SessionAgent }) {
 }
 
 // How a session's transcript reached the console: streamed live off a
-// developer's machine by the watcher (`cli`) or shipped by an issue-agent
-// workflow run (`issue-agent`). Orthogonal to AGENT_* above (*which* tool
+// developer's machine by the watcher (`cli`) or reported by a worker
+// session (`issue-agent`). Orthogonal to AGENT_* above (*which* tool
 // wrote the transcript) - a codex session can arrive by either route.
 const SOURCE_LABELS: Record<SessionSource, string> = {
   cli: 'cli',
@@ -485,8 +485,7 @@ export function LiveRunRow({
       )}
       {run.status === 'running' &&
         session &&
-        // opencode.yml has no turn cap (its action takes no max_turns
-        // input), so the turn gauge is claude-pipeline-only - see
+        // OpenCode has no turn cap, so the turn gauge is Claude-only - see
         // MAX_TURNS_BUDGET's doc comment.
         (run.pipeline === 'claude' || session.totalCostUsd !== undefined) && (
           <Group gap={6} wrap="wrap">
@@ -615,7 +614,7 @@ export function LiveRunGroupList({
  * A finished run row: unlike the old title-only text, the run's title is
  * now a real link to the issue/PR it worked (derived from `issueNumber`),
  * so a finished run can be followed straight to its outcome instead of only
- * to its raw Actions log. Runs that predate the run-name rollout
+ * to an opaque execution log. Runs without a GitHub anchor
  * (`issueUrlForRun` undefined) fall back to the run's own title/url - the
  * same target as the secondary "View run" link.
  *

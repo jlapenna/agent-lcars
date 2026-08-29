@@ -48,9 +48,15 @@ The step summary names the item id and its first run.
 ## 2. Follow the run
 
 ```bash
-gh run list --workflow claude.yml --limit 3
-gh run watch <run-id>
+curl --fail-with-body \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://lcars.jlapenna.net/api/work/v1/items/<id>"
 ```
+
+Poll the item until its native Run reaches a terminal state, or open
+`https://lcars.jlapenna.net/work/<id>` while signed in. The Task/Run record
+and its session history are authoritative; direct workers do not create a
+GitHub Actions run to watch.
 
 ## 3. Check the item
 

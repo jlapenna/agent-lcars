@@ -75,8 +75,8 @@ export function ItemOverflowMenu({
   // resolve with a single click rather than a trip to GitHub.
   const canRebase =
     item.kind === 'pr' && item.mergeableState === 'behind' && !canReview;
-  // Only issues carry a pipeline label (claude.yml/codex.yml/opencode.yml
-  // dispatch off `issues: labeled`, not PRs) - an issue with none of the
+  // Only issues carry a pipeline label (the control plane admits labeled
+  // issues, not PRs) - an issue with none of the
   // three has never been handed to an agent, so there's nothing to
   // reassign FROM.
   const pipelines = supportedAgentPipelines(item.repo);
