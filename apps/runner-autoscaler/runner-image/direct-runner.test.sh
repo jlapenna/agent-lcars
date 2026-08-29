@@ -269,6 +269,12 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
 printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
+if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
+  [ -n "${ATTEMPT_ID:-}" ] || exit 2
+  [ -n "${NATIVE_WORK_OUTCOME_FILE:-}" ] || exit 2
+  printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
+    "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
 printf '%s' "$CODEX_HOME/sessions" > "$CODEX_SESSIONS_DIR_LOG"
 mkdir -p "$CODEX_HOME/sessions/2026/08/28"
 printf '%s\n' '{"type":"session_meta","payload":{"id":"sess-codex-test"}}' > "$CODEX_HOME/sessions/2026/08/28/sess-codex-test.jsonl"
@@ -293,7 +299,7 @@ FAKE
   cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$OPENCODE_ARGS_LOG"
-printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${MODEL:-}|${GITHUB_TOKEN:-}|${USE_GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$OPENCODE_ENV_LOG"
+printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
   sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
 fi
@@ -548,9 +554,9 @@ echo "scenario codex-burned-stderr: OK"
 run_scenario opencode-happy opencode
 [ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
-grep -q -- 'github run' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --model homelab/default-nothink --dangerously-skip-permissions' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
-[ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|homelab/default-nothink|$FAKE_TOKEN|true|$FAKE_TOKEN" ] ||
+[ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|$FAKE_TOKEN|$FAKE_TOKEN||" ] ||
   fail "opencode happy path: adapter environment mismatch ($(cat "$OPENCODE_ENV_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "opencode happy path: claude was invoked"
 [ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
@@ -558,6 +564,34 @@ grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
   fail "opencode happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario opencode-happy: OK"
+
+# QueueExecutor does not manufacture a GitHub Actions event.  Its OpenCode
+# adapter must therefore use the ordinary headless CLI, not `github run`,
+# whose action-only event parser rejects an unset GITHUB_EVENT_NAME.
+if grep -q -- 'github run' "$OPENCODE_ARGS_LOG"; then
+  fail "opencode happy path: invoked the GitHub Actions-only entrypoint ($(cat "$OPENCODE_ARGS_LOG"))"
+fi
+
+# Native Work outcomes have no GitHub issue thread.  The direct runner must
+# export the exact attempt and the common private outcome-file path to every
+# provider so a provider can emit a marker-bound PARK instead of failing the
+# ordinary PR-only deliverable lookup.  Codex is used here solely as a
+# second provider; the environment and completion behavior are shared.
+export FAKE_GH_NO_MATCH=1
+export FAKE_NATIVE_OUTCOME=park
+run_scenario codex-native-park codex
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME
+
+[ "$rc" -eq 0 ] || fail "codex native park: expected exit 0, got $rc"
+grep -Fq 'NATIVE_WORK_OUTCOME_FILE' "$CODEX_ARGS_LOG" ||
+  fail "codex native park: prompt did not tell the agent about the native outcome file ($(cat "$CODEX_ARGS_LOG"))"
+jq -e '.outcome == "park" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native park: marker-bound native outcome was not completed ($(cat "$COMPLETE_LOG"))"
+native_outcome_file="$scenario_runner_temp/native-work-terminal-outcome.txt"
+printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-- attempt-claim:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n' | cmp -s - "$native_outcome_file" ||
+  fail "codex native park: provider did not receive the shared native outcome contract ($(cat "$native_outcome_file" 2>/dev/null))"
+
+echo "scenario codex-native-park: OK"
 
 # The direct adapter must enforce the hosted lane's 60-minute OpenCode bound
 # locally. A short override makes this regression deterministic without
