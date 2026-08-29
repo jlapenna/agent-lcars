@@ -107,6 +107,17 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// reloads (SIGHUP) do NOT reach the poller at all -- see this block's
 	// own comment just below, and the README's "Queue executor" section.
 	var queueDraining atomic.Bool
+	queueStatus := newQueueExecutorStatusSource(
+		resolved,
+		queueDraining.Load,
+		newDockerClient,
+		logger.With("component", "queue-executor-status"),
+	)
+	// Publish even while disabled or misconfigured: a v2 queue-executor
+	// snapshot says explicitly that no direct worker is ready, rather than
+	// leaving a consumer unable to distinguish that condition from a stale
+	// telemetry writer. It shares the existing bounded runner-status store.
+	go runQueueExecutorStatusPublisher(ctx, statusPublisher, queueStatus)
 
 	// Native work items queue executor: a durable goroutine that polls the
 	// console's run-claim API and launches direct-mode containers, entirely
@@ -151,6 +162,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			setQueueExecutorStartupState(queueExecutorStateMisconfigured)
 			logger.Error("Queue executor disabled: could not build the claim ID token source", slog.Any("error", tokenErr))
 		} else {
+			queueStatus.ready.Store(true)
 			go runQueueExecutorPoller(ctx, queueExecutorConfig{
 				consoleURL: consoleURL,
 				runnerName: runnerName,

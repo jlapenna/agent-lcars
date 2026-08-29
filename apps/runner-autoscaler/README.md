@@ -71,6 +71,16 @@ listener, runner placement, or cleanup. Snapshots publish immediately on
 startup and then every 10 seconds; the console stops presenting a snapshot as
 live after 30 seconds without an update.
 
+The same bounded `runner-status` collection also contains one reserved
+`queue-executor` document (`schemaVersion: 2`, `kind: "queue-executor"`) for
+the direct executor. It reports only generic worker health: readiness,
+draining, configured direct-container capacity, and an active-container count
+when every Docker host can be read. It has no pipeline, repository, provider,
+credential, or individual-run data. Queue lifecycle counts (queued, claimed,
+running, and outcomes) remain the Console's authoritative orchestrator Run
+records, not autoscaler telemetry. Older console readers ignore this distinct
+v2 document safely while continuing to consume v1 scale-set snapshots.
+
 ## Queue executor (direct-mode runners)
 
 Server-dispatched work: an additional goroutine
