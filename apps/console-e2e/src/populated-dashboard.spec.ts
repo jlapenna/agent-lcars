@@ -10,7 +10,6 @@ import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 import {
   E2E_CONTROL_PLANE_REPOSITORY,
   readActiveOrchestratorRun,
-  seedOrchestratorTask,
 } from './util/orchestrator-seed';
 
 /**
@@ -222,7 +221,7 @@ test.describe('populated dashboard', () => {
     // stalled past the threshold, which is what drives the queue alert.
     await expect(page.getByTestId('queue-health-alert')).toBeVisible();
     await expect(page.getByTestId('fleet-chip')).toHaveText(
-      '2 runners active (1 busy)',
+      '2 scale-set runners active (1 busy)',
     );
 
     // #306: the fixture's duplicate live attempt on the same issue/pipeline
@@ -257,18 +256,6 @@ test.describe('populated dashboard', () => {
   test('the primary Open task action reaches the canonical task page with the duplicate-attempt anomaly (#306)', async ({
     page,
   }) => {
-    // #1183/#1187: task-detail.ts's provenance line reads real
-    // `@agent-lcars/orchestrator` state (authoritative-task-state.ts) - seed
-    // a matching orchestrator task directly against the emulator so this
-    // assertion exercises the real provenance path rather than the "no
-    // authoritative lifecycle state" fallback (see orchestrator-seed.ts's
-    // own doc comment for why a direct emulator write here is safe).
-    await seedOrchestratorTask({
-      issue: E2E_ITEM_NUMBERS.duplicateDispatch,
-      pipeline: 'claude',
-      requestId: 'e2e-fixture-seed:populated-dashboard:9008',
-    });
-
     await page.goto('/');
 
     const duplicateGroup = page.getByTestId(
@@ -302,12 +289,8 @@ test.describe('populated dashboard', () => {
     const anomalies = card.getByTestId('logical-work-anomalies');
     await expect(anomalies).toContainText('2 claude attempts');
 
-    // #1183/#1187: the orchestrator task seeded above gives the page a real
-    // authoritative revision to render - `seedOrchestratorTask`'s own
-    // idempotent-by-requestId contract keeps this at rev 1 across retries
-    // (the request always refuses as `duplicate-request` against the same
-    // still-live run rather than minting a second one, so the task's
-    // storage revision never advances past its first successful write).
+    // The populated fixture is a real authoritative Task/Run record, so this
+    // path cannot fall back to legacy GitHub workflow identity.
     await expect(card).toContainText('authoritative state rev 1');
   });
 
@@ -339,7 +322,10 @@ test.describe('populated dashboard', () => {
     ).toBeVisible();
     await expect(header.getByText('Cost', { exact: true })).toBeVisible();
     await expect(
-      header.getByRole('link', { name: `#${E2E_ITEM_NUMBERS.silentError}` }),
+      header.getByRole('link', {
+        name: `#${E2E_ITEM_NUMBERS.silentError}`,
+        exact: true,
+      }),
     ).toBeVisible();
   });
 

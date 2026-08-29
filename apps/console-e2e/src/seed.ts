@@ -64,10 +64,9 @@ export async function resetCliSessions() {
 
 /**
  * Turns on the full populated fixture set (#40): the CLI sessions above,
- * plus an `issue-agent` session doc, plus the action items, workflow runs,
- * and runner fleet served by `/api/e2e/github` — which stay invisible
- * otherwise, so the older specs keep asserting the zero state they were
- * written against.
+ * an `issue-agent` session doc, GitHub issue/PR metadata, and authoritative
+ * Work/Run plus runner-status records written by `/api/e2e/seed`. The
+ * activity fixture deliberately never depends on mocked workflow-run reads.
  */
 export async function seedPopulatedFixtures() {
   await callSeedApi('seed-populated');

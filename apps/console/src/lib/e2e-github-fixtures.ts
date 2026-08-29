@@ -15,10 +15,9 @@ import { type AgentPipeline, DEFAULT_AGENT_INTEGRATIONS } from './watched-repo';
  * (review-requested), and every `ACTION_COLORS` badge — had never actually
  * been rendered against anything.
  *
- * Off by default. `getActionItems()`/`getAgentActivity()` see empty results
- * exactly as they did before this file existed, so the pre-existing specs
- * (which assert the zero state) are untouched; a spec opts in by POSTing
- * `{action: 'seed-populated'}` to `/api/e2e/seed`.
+ * Off by default. A spec opts in by POSTing `{action: 'seed-populated'}` to
+ * `/api/e2e/seed`. That route now seeds agent activity from authoritative
+ * broker Tasks/Runs; this GitHub boundary supplies only issue and PR metadata.
  *
  * The one thing served unconditionally is the branch->PR join
  * `getCliSessions()` needs, which predates this file and which
@@ -55,33 +54,15 @@ export const E2E_ITEM_NUMBERS = {
   silentError: 9005,
   readyForAgent: 9006,
   humanNeededPostDeploy: 9010,
-  /** Carries two live workflow attempts bound to the same dispatch
-   * generation/intent marker (see `E2E_RUN_IDS.running` /
-   * `duplicateQueued`) - the #306 duplicate-attempt-anomaly scenario. Off
-   * the board on purpose (no board-qualifying label/assignee): the In
-   * Flight panel's "attempt history" link is what reaches its
+  /** Carries two live authoritative Runs for the #306 duplicate-attempt
+   * anomaly. Off the board on purpose (no board-qualifying label/assignee):
+   * the In Flight panel's "attempt history" link is what reaches its
    * `/task/.../9008` detail page, not the board. */
   duplicateDispatch: 9008,
   /** #538: green checks, no requested reviewer, mergeStateStatus BLOCKED
    * with real unresolved review threads - the retro (#521) scenario a
    * `gh pr checks` glance and an empty `reviewDecision` gave no hint about. */
   mergeBlockedThreads: 9011,
-} as const;
-
-export const E2E_RUN_IDS = {
-  running: 70001,
-  queuedWaiting: 70002,
-  succeeded: 70003,
-  failed: 70004,
-  timedOut: 70005,
-  opencodeSucceeded: 70006,
-  /** The `success` run whose joined session doc shows no work at all — the
-   * `silent-error` classification is derived from that join, never from the
-   * item's own GitHub state, so it needs both halves to render. */
-  silentError: 70007,
-  duplicateQueued: 70008,
-  olderSucceeded: 70009,
-  olderFailed: 70010,
 } as const;
 
 const HEAD_SHAS = {
@@ -96,13 +77,6 @@ const minutesAgo = (minutes: number) => secondsAgo(minutes * 60);
 
 const itemUrl = (number: number, kind: 'issues' | 'pull') =>
   `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/${kind}/${number}`;
-
-/** Shared by the two duplicate live-attempt run-name markers in
- * FIXTURE_RUNS - both attempts deliberately carry the SAME
- * generation/intent, since that is exactly the anomaly #306's
- * `deriveLogicalWork` exists to surface (two attempts genuinely bound to
- * one dispatch, not two different generations racing). */
-const E2E_DUPLICATE_INTENT_ID = 'e2e-fixture-intent-9008';
 
 interface FixtureItem {
   number: number;
@@ -308,146 +282,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
   },
 ];
 
-interface FixtureRun {
-  id: number;
-  workflow: 'claude.yml' | 'opencode.yml';
-  status: 'queued' | 'in_progress' | 'completed';
-  conclusion: string | null;
-  displayTitle: string;
-  createdAt: string;
-  startedAt: string;
-  updatedAt: string;
-}
-
-const FIXTURE_RUNS: FixtureRun[] = [
-  {
-    id: E2E_RUN_IDS.running,
-    workflow: 'claude.yml',
-    status: 'in_progress',
-    conclusion: null,
-    // Board membership is intentionally NOT what makes this render in In
-    // Flight (see E2E_ITEM_NUMBERS.duplicateDispatch's own comment) -
-    // pointing a live run at, say, the run-failed fixture would hide the
-    // very card this fixture set exists to render. Carries a real
-    // generation/intent marker (E2E_DUPLICATE_INTENT_ID) so this attempt
-    // gets `run-marker` attribution, not just a bare title-number parse.
-    displayTitle: `#${E2E_ITEM_NUMBERS.duplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_DUPLICATE_INTENT_ID}]`,
-    createdAt: minutesAgo(13),
-    startedAt: minutesAgo(12),
-    updatedAt: minutesAgo(1),
-  },
-  {
-    id: E2E_RUN_IDS.queuedWaiting,
-    workflow: 'claude.yml',
-    status: 'queued',
-    conclusion: null,
-    displayTitle: '#9009: chore(deps): bump the runner base image',
-    createdAt: minutesAgo(2),
-    startedAt: minutesAgo(2),
-    updatedAt: minutesAgo(2),
-  },
-  {
-    id: E2E_RUN_IDS.duplicateQueued,
-    workflow: 'claude.yml',
-    status: 'queued',
-    conclusion: null,
-    // #306: same logical work AND the same generation/intent marker as
-    // `running` above - a genuine duplicate dispatch, not a second
-    // pipeline racing the item. The GitHub API really does expose both
-    // attempts; the console must render both, grouped with a visible
-    // duplicate-attempt anomaly, never silently pick one (see
-    // agent-activity-panel.tsx's `duplicatePipelineSummary`).
-    displayTitle: `#${E2E_ITEM_NUMBERS.duplicateDispatch}: feat(console): repo filter chips [dispatch:g1:${E2E_DUPLICATE_INTENT_ID}]`,
-    // Past QUEUE_STALL_THRESHOLD_SECONDS (300), so queue health must still
-    // inspect this raw attempt and render the stall alert even though the
-    // group's other attempt is already running.
-    createdAt: minutesAgo(11),
-    startedAt: minutesAgo(11),
-    updatedAt: minutesAgo(11),
-  },
-  {
-    id: E2E_RUN_IDS.succeeded,
-    workflow: 'claude.yml',
-    status: 'completed',
-    conclusion: 'success',
-    displayTitle: `#${E2E_ITEM_NUMBERS.reviewRequested}: feat(console): tap-icon refresh on the queue header`,
-    createdAt: minutesAgo(70),
-    startedAt: minutesAgo(69),
-    updatedAt: minutesAgo(41),
-  },
-  {
-    id: E2E_RUN_IDS.failed,
-    workflow: 'claude.yml',
-    status: 'completed',
-    conclusion: 'failure',
-    displayTitle: `#${E2E_ITEM_NUMBERS.humanNeeded}: Decide the retention window for archived agent transcripts`,
-    createdAt: minutesAgo(95),
-    startedAt: minutesAgo(94),
-    updatedAt: minutesAgo(88),
-  },
-  {
-    id: E2E_RUN_IDS.timedOut,
-    workflow: 'claude.yml',
-    status: 'completed',
-    conclusion: 'cancelled',
-    displayTitle: '#9006: feat(autoscaler): drain idle scale sets',
-    // Cancelled after ~89 of the 90-minute budget: past
-    // LIKELY_TIMEOUT_FRACTION, so the classifier calls this `timeout`
-    // (mustard) rather than `cancelled`.
-    createdAt: minutesAgo(210),
-    startedAt: minutesAgo(209),
-    updatedAt: minutesAgo(120),
-  },
-  {
-    id: E2E_RUN_IDS.silentError,
-    workflow: 'claude.yml',
-    status: 'completed',
-    conclusion: 'success',
-    displayTitle: `#${E2E_ITEM_NUMBERS.silentError}: chore(telemetry): prune expired session docs`,
-    createdAt: minutesAgo(56),
-    startedAt: minutesAgo(55),
-    updatedAt: minutesAgo(52),
-  },
-  {
-    id: E2E_RUN_IDS.opencodeSucceeded,
-    workflow: 'opencode.yml',
-    status: 'completed',
-    conclusion: 'success',
-    displayTitle: 'opencode #9007: docs: refresh the onboarding runbook',
-    createdAt: minutesAgo(150),
-    startedAt: minutesAgo(149),
-    updatedAt: minutesAgo(140),
-  },
-  // Older completed attempts keep the populated Agents fixture above the
-  // phone disclosure threshold. Bridge still deliberately slices its five
-  // newest outcomes, while /agents can prove the older-evidence reveal.
-  {
-    id: E2E_RUN_IDS.olderSucceeded,
-    workflow: 'claude.yml',
-    status: 'completed',
-    conclusion: 'success',
-    displayTitle: `#${E2E_ITEM_NUMBERS.reviewRequested}: test(console): preserve the review evidence archive`,
-    createdAt: minutesAgo(180),
-    startedAt: minutesAgo(179),
-    updatedAt: minutesAgo(165),
-  },
-  {
-    id: E2E_RUN_IDS.olderFailed,
-    workflow: 'opencode.yml',
-    status: 'completed',
-    conclusion: 'failure',
-    displayTitle: `opencode #${E2E_ITEM_NUMBERS.humanNeeded}: test(console): preserve the failure evidence archive`,
-    createdAt: minutesAgo(195),
-    startedAt: minutesAgo(194),
-    updatedAt: minutesAgo(180),
-  },
-];
-
-const FIXTURE_RUNNERS = [
-  { id: 1, name: 'e2e-fixture-runner-1', status: 'online', busy: true },
-  { id: 2, name: 'e2e-fixture-runner-2', status: 'online', busy: false },
-];
-
 /**
  * Populated mode is a per-server-process toggle rather than a module-level
  * `let`: Next bundles each route handler separately, so `/api/e2e/seed` and
@@ -577,8 +411,8 @@ interface QuickTaskFixtureState {
   /** Claim ref SHAs keyed by `tags/agent-lcars/quick-task/<id>` -
    * `git.createRef` / `git.getRef` / `git.deleteRef`. */
   claimRefs: Map<string, string>;
-  /** Numbered well clear of both the curated `E2E_ITEM_NUMBERS` (9001-9010)
-   * and `E2E_RUN_IDS` ranges, and incrementing per created issue/run so a
+  /** Numbered well clear of curated `E2E_ITEM_NUMBERS` (9001-9010), and
+   * incrementing per created issue/run so a
    * fixture leak or an accidental duplicate create is immediately visible
    * as two different numbers rather than a silently-reused one. */
   nextIssueNumber: number;
@@ -697,8 +531,7 @@ export function recordQuickTaskIssue(params: {
   // Mirrors claude.yml/codex.yml/opencode.yml's real run-name templates:
   // claude has no pipeline prefix, codex/opencode repeat their own name
   // ahead of the `#N:` join key (see agent-activity.ts's
-  // DISPLAY_TITLE_NUMBER_RE / PIPELINE_TITLE_PREFIX_RE, and FIXTURE_RUNS'
-  // own opencode entry above).
+  // DISPLAY_TITLE_NUMBER_RE / PIPELINE_TITLE_PREFIX_RE).
   const titlePrefix = params.pipeline === 'claude' ? '' : `${params.pipeline} `;
   state.runs.push({
     id: runId,
@@ -1028,25 +861,11 @@ export function checkRuns(ref: string) {
   return { total_count: runs.length, check_runs: runs };
 }
 
-/** `GET /repos/{owner}/{repo}/actions/workflows/{file}/runs`. `status` is
- * how `fetchRecentRuns` asks for one conclusion at a time. */
+/** `GET /repos/{owner}/{repo}/actions/workflows/{file}/runs` remains only for
+ * the Quick Task write-boundary fixture. Curated populated activity is seeded
+ * as authoritative broker Runs by `/api/e2e/seed`, never read from GitHub. */
 export function workflowRuns(workflowFile: string, status?: string) {
-  // Quick Task's bound run is merged in unconditionally, same as issue()/
-  // enrichmentGraphql() above: the console's live/recent run fetch
-  // (agent-activity.ts) must see it whether or not populated mode is on.
-  const populated = populatedFixturesEnabled()
-    ? FIXTURE_RUNS.filter(
-        (run) =>
-          run.workflow === workflowFile &&
-          (status === undefined ||
-            status === run.conclusion ||
-            status === run.status),
-      )
-    : [];
-  const runs = [
-    ...populated,
-    ...quickTaskDynamicRuns(workflowFile, status),
-  ].map((run) => ({
+  const runs = quickTaskDynamicRuns(workflowFile, status).map((run) => ({
     id: run.id,
     status: run.status,
     conclusion: run.conclusion,
@@ -1060,18 +879,10 @@ export function workflowRuns(workflowFile: string, status?: string) {
   return { total_count: runs.length, workflow_runs: runs };
 }
 
-/** `GET /repos/{owner}/{repo}/actions/runs/{id}` -- the single-run lookup
- * `run-binding.ts`'s completion binder and `orchestrator-terminal-runs.ts`
- * use to join a run id to its dispatch marker. Same fixture run data as
- * `workflowRuns` above (curated fixtures gated on populated mode, Quick
- * Task's dynamic runs merged in unconditionally), keyed by run id instead
- * of workflow file. Returns `undefined` for an unknown id so the route can
- * 404 like the rest of the catch-all. */
+/** `GET /repos/{owner}/{repo}/actions/runs/{id}` for a dynamically-created
+ * Quick Task only. Curated activity never uses this legacy GitHub lookup. */
 export function workflowRun(runId: number) {
-  const populated = populatedFixturesEnabled() ? FIXTURE_RUNS : [];
-  const run = [...populated, ...quickTaskState().runs].find(
-    (candidate) => candidate.id === runId,
-  );
+  const run = quickTaskState().runs.find((candidate) => candidate.id === runId);
   if (!run) return undefined;
   return {
     id: run.id,
@@ -1084,8 +895,5 @@ export function workflowRun(runId: number) {
 
 /** `GET /repos/{owner}/{repo}/actions/runners` */
 export function selfHostedRunners() {
-  if (!populatedFixturesEnabled()) {
-    return { total_count: 0, runners: [] };
-  }
-  return { total_count: FIXTURE_RUNNERS.length, runners: FIXTURE_RUNNERS };
+  return { total_count: 0, runners: [] };
 }
