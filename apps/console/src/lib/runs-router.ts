@@ -222,9 +222,10 @@ async function acquireCodexLease(
 async function requireCodexLeaseOwner(
   context: RunsContext,
   runId: string,
+  repository: string,
 ): Promise<void> {
   const lease = await context.codexAuth.readLease();
-  if (lease?.runId !== runId) {
+  if (lease?.runId !== runId || lease.repository !== repository) {
     throw new CodexAuthStoreError(
       'conflict',
       'Codex subscription lease is not owned by this run',
@@ -486,7 +487,7 @@ export const runsRouter = os.router({
       requireCodexSharedLeaseEnabled(context);
       await acquireCodexLease(context, run, repository);
       acquired = true;
-      return await context.codexAuth.read(repository);
+      return await context.codexAuth.read();
     } catch (error) {
       if (acquired) await context.codexAuth.releaseLease(run.runId);
       return codexAuthError(error, errors);
@@ -505,7 +506,7 @@ export const runsRouter = os.router({
         | undefined;
       let operationError: unknown;
       try {
-        await requireCodexLeaseOwner(context, input.runId);
+        await requireCodexLeaseOwner(context, input.runId, repository);
 
         // #1192: a Codex process that positively reported one of the three
         // known refresh-failure signatures must never advance the stored
@@ -524,7 +525,6 @@ export const runsRouter = os.router({
             result = { status: 'unchanged' };
           } else {
             await context.codexAuth.replace({
-              repository,
               expectedGeneration: input.generation,
               authBase64: input.authBase64,
             });

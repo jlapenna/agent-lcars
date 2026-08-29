@@ -49,7 +49,7 @@ describe('RunsTable', () => {
     expect(screen.getByText(/claimed by runner-pike-1/u)).toBeInTheDocument();
   });
 
-  it('shows github-actions for a run with no executor field', () => {
+  it('shows queue for a historic run with no executor field', () => {
     renderRuns([
       {
         runId: 'gh:x/r1',
@@ -59,7 +59,7 @@ describe('RunsTable', () => {
         updatedAt: '2026-08-27T00:00:00.000Z',
       },
     ]);
-    expect(screen.getByText('github-actions')).toBeInTheDocument();
+    expect(screen.getByText('queue')).toBeInTheDocument();
   });
 });
 

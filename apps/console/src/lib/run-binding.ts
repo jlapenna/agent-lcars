@@ -25,8 +25,7 @@ export interface RunBindingDeps {
  * Prove the verified token belongs to the workflow run the orchestrator
  * dispatched for `runId`: the OIDC claims prove "a trusted finalizer on an
  * allowed repository", and the dispatch marker in that Actions run's
- * display title proves "for *this* run". Same join
- * `orchestrator-terminal-runs.ts` uses to settle terminal runs.
+ * display title proves "for *this* run".
  */
 export async function bindCompletionToRun(
   deps: RunBindingDeps,

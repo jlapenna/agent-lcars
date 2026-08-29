@@ -5,8 +5,7 @@ name: Agent PR Auto-Merge
 # see docs/published-actions.md). This file owns what `workflow_call`
 # cannot carry: the triggers below and this repo's parameter values. Any PR
 # whose author is one of this repo's known coding-agent bot identities
-# (vars.AGENT_BOT_LOGINS - a JSON array, currently claude[bot] from
-# claude.yml and agent-lcars[bot] from opencode.yml/codex.yml) gets squash
+# (vars.AGENT_BOT_LOGINS - a JSON array) gets squash
 # auto-merge enabled the moment it's opened/marked ready, gated only on the
 # ruleset's required "Verify" check. Adding a new agent pipeline later that
 # follows the shared agent-protocol.md conventions only

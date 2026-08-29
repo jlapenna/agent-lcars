@@ -147,35 +147,34 @@ evaluate false. Telemetry is the deliberate exception: the shared lane owns
 its non-secret fleet WIF/provider identity and uses that canonical default
 when a caller omits or empties the legacy override variables.
 
-| Variable                          | This deployment                                                                  | Used by                                                                                                                                      |
-| --------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_RUNNER_LABEL`              | `claude-agent-lcars`                                                             | claude / codex / opencode                                                                                                                    |
-| `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit, deploy-console gate — small, fast glue jobs only (#451)                                               |
-| `CI_RUNNER_LABEL`                 | `lcars-ci`                                                                       | ci (verify, e2e), local App Hosting build/deploy — long work kept off the latency-sensitive glue pool (#451, #1030)                          |
-| `E2E_ENABLED`                     | `true`                                                                           | CI E2E operational kill switch; only the exact value `true` enables the job                                                                  |
-| `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | codex (secret access)                                                                                                                        |
-| `GCP_WIF_PROVIDER`                | `projects/611425338852/…/providers/github`                                       | claude / codex / opencode                                                                                                                    |
-| `GCP_DEPLOYER_WIF_PROVIDER`       | `projects/611425338852/…/workloadIdentityPools/github-deployer/providers/github` | deploy-console only; provider accepts `deploy-console.yml` from `main`                                                                       |
-| `GCP_DEPLOYER_SA`                 | `github-deployer@agent-lcars…`                                                   | deploy-console only; the App Hosting deploy impersonates it through `GCP_DEPLOYER_WIF_PROVIDER`                                              |
-| `GCP_WEBHOOK_CONFIG_WIF_PROVIDER` | Terraform output `github_app_webhook_configurator_workload_identity_provider`    | configure-github-app-webhook only; provider accepts that workflow from `main`                                                                |
-| `GCP_TELEMETRY_WRITER_SA`         | optional override; shared default is `telemetry-writer@agent-lcars…`             | claude / codex / opencode                                                                                                                    |
-| `GCP_CODEX_AGENT_SA`              | `codex-agent@agent-lcars…`                                                       | codex                                                                                                                                        |
-| `GCP_WEBHOOK_CONFIG_SA`           | Terraform output `github_app_webhook_configurator_service_account`               | configure-github-app-webhook; reads only the webhook HMAC secret                                                                             |
-| `MAINTAINER_LOGIN`                | `jlapenna`                                                                       | dispatch guards, failure assignment                                                                                                          |
-| `AGENT_FLEET_LOGIN`               | `agent-lcars-bot`                                                                | claim steps and queue hand-off                                                                                                               |
-| `AGENT_LCARS_CLIENT_ID`           | `Iv23liO6X8pLJLcTFzyv` (the Agent LCARS GitHub App)                              | claude / codex / opencode (App-token mint via `dispatch-bootstrap` → `mint-agent-token`), configure-github-app-webhook, label-contract-audit |
-| `APPHOSTING_BACKEND_ID`           | `agent-lcars`                                                                    | deploy-console                                                                                                                               |
-| `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]"]`                                             | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                                                                            |
-| `NX_CACHE_URL`                    | homelab Nx cache                                                                 | all agent lanes (pre-existing)                                                                                                               |
+| Variable                          | This deployment                                                                  | Used by                                                                                                             |
+| --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_RUNNER_LABEL`              | `claude-agent-lcars`                                                             | claude / codex / opencode                                                                                           |
+| `DEFAULT_RUNNER_LABEL`            | `lcars-default`                                                                  | agent-automerge, label-contract-audit, deploy-console gate — small, fast glue jobs only (#451)                      |
+| `CI_RUNNER_LABEL`                 | `lcars-ci`                                                                       | ci (verify, e2e), local App Hosting build/deploy — long work kept off the latency-sensitive glue pool (#451, #1030) |
+| `E2E_ENABLED`                     | `true`                                                                           | CI E2E operational kill switch; only the exact value `true` enables the job                                         |
+| `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | Console credential brokering                                                                                        |
+| `GCP_WIF_PROVIDER`                | `projects/611425338852/…/providers/github`                                       | Console-adjacent GitHub workflows only                                                                              |
+| `GCP_DEPLOYER_WIF_PROVIDER`       | `projects/611425338852/…/workloadIdentityPools/github-deployer/providers/github` | deploy-console only; provider accepts `deploy-console.yml` from `main`                                              |
+| `GCP_DEPLOYER_SA`                 | `github-deployer@agent-lcars…`                                                   | deploy-console only; the App Hosting deploy impersonates it through `GCP_DEPLOYER_WIF_PROVIDER`                     |
+| `GCP_WEBHOOK_CONFIG_WIF_PROVIDER` | Terraform output `github_app_webhook_configurator_workload_identity_provider`    | configure-github-app-webhook only; provider accepts that workflow from `main`                                       |
+| `GCP_TELEMETRY_WRITER_SA`         | optional override; shared default is `telemetry-writer@agent-lcars…`             | QueueExecutor telemetry                                                                                             |
+| `GCP_CODEX_AGENT_SA`              | `codex-agent@agent-lcars…`                                                       | QueueExecutor Codex auth broker and console-session verification                                                    |
+| `GCP_WEBHOOK_CONFIG_SA`           | Terraform output `github_app_webhook_configurator_service_account`               | configure-github-app-webhook; reads only the webhook HMAC secret                                                    |
+| `MAINTAINER_LOGIN`                | `jlapenna`                                                                       | dispatch guards, failure assignment                                                                                 |
+| `AGENT_FLEET_LOGIN`               | `agent-lcars-bot`                                                                | claim steps and queue hand-off                                                                                      |
+| `AGENT_LCARS_CLIENT_ID`           | `Iv23liO6X8pLJLcTFzyv` (the Agent LCARS GitHub App)                              | Console labels/comments, configure-github-app-webhook, and label-contract-audit                                     |
+| `APPHOSTING_BACKEND_ID`           | `agent-lcars`                                                                    | deploy-console                                                                                                      |
+| `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]"]`                                             | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                                                   |
+| `NX_CACHE_URL`                    | homelab Nx cache                                                                 | CI jobs                                                                                                             |
 
 `DISPATCH_FIRESTORE_DATABASE_ID` is deliberately absent from this table: it
 is not a repo variable. It is an App Hosting environment value
 (`apps/console/apphosting.yaml`) read by the hosted orchestrator runtime
 (`apps/console/src/lib/orchestrator-runtime.ts`). The worker-side dispatch
 preflight that once read it — authenticating as a dedicated
-`dispatch-preflight` service account — was retired when `dispatch-bootstrap`
-became a thin executor (#1015): workers no longer authenticate to Firestore
-at all.
+`dispatch-preflight` service account is retired: QueueExecutor workers do not
+authenticate directly to Firestore.
 
 After applying Terraform, map the dedicated webhook configurator outputs to
 the repository variables the workflow consumes:

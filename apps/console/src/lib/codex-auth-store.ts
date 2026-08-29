@@ -5,6 +5,12 @@ import crypto from 'node:crypto';
 import { type Bucket, Storage } from '@google-cloud/storage';
 
 export const CODEX_AUTH_MAX_BYTES = 256 * 1024;
+/**
+ * The Console owns the one rotating Codex subscription lineage. Target
+ * repositories are authorized by the broker-bound run token, not by choosing
+ * a different credential object for each repository.
+ */
+export const CODEX_CENTRAL_AUTH_OBJECT = 'jlapenna/agent-lcars/auth.json';
 export const CODEX_GLOBAL_LEASE_OBJECT = '_leases/codex-subscription.json';
 
 export type CodexAuthStoreErrorKind =
@@ -37,7 +43,7 @@ export interface CodexAuthLease {
 }
 
 export interface CodexAuthStore {
-  read(repository: string): Promise<CodexAuthSnapshot>;
+  read(): Promise<CodexAuthSnapshot>;
   readLease(): Promise<CodexAuthLease | undefined>;
   createLease(input: {
     runId: string;
@@ -52,7 +58,6 @@ export interface CodexAuthStore {
   }): Promise<void>;
   releaseLease(runId: string): Promise<void>;
   replace(input: {
-    repository: string;
     expectedGeneration: string;
     authBase64: string;
   }): Promise<void>;
@@ -70,10 +75,6 @@ function leaseBytes(input: {
       expiresAt: input.expiresAt,
     }),
   );
-}
-
-function objectName(repository: string): string {
-  return `${repository}/auth.json`;
 }
 
 function sha256(bytes: Buffer): string {
@@ -107,18 +108,19 @@ function storageCode(error: unknown): number | undefined {
 }
 
 /**
- * Repository-scoped Codex subscription credential storage.
+ * Centrally owned Codex subscription credential storage.
  *
  * A read first resolves the current generation, then downloads that exact
  * immutable generation. A replace is conditional on the generation returned
- * by that read, preserving the same one-lineage CAS contract as the hosted
- * Codex lane. The caller never receives bucket credentials or an object URL.
+ * by that read. The run-token broker authorizes the target repository before
+ * it calls this store; the target repository never selects an auth object.
+ * The caller never receives bucket credentials or an object URL.
  */
 export class GcsCodexAuthStore implements CodexAuthStore {
   constructor(private readonly bucket: Bucket) {}
 
-  async read(repository: string): Promise<CodexAuthSnapshot> {
-    const name = objectName(repository);
+  async read(): Promise<CodexAuthSnapshot> {
+    const name = CODEX_CENTRAL_AUTH_OBJECT;
     try {
       const [metadata] = await this.bucket.file(name).getMetadata();
       const generation = metadata.generation;
@@ -263,13 +265,12 @@ export class GcsCodexAuthStore implements CodexAuthStore {
   }
 
   async replace(input: {
-    repository: string;
     expectedGeneration: string;
     authBase64: string;
   }): Promise<void> {
     const bytes = decodedAuth(input.authBase64);
     try {
-      await this.bucket.file(objectName(input.repository)).save(bytes, {
+      await this.bucket.file(CODEX_CENTRAL_AUTH_OBJECT).save(bytes, {
         resumable: false,
         validation: 'crc32c',
         preconditionOpts: {

@@ -71,6 +71,9 @@ async function seedQueuedRun(
      *  redispatch, the schedule tick) can never produce since they all
      *  validate through it first. */
     spec?: unknown;
+    /** A Codex credential run must still be authorized for this exact target
+     * repository even though the credential lineage itself is central. */
+    targetRepo?: string;
     /** Mirrors what `redispatch` (Task 2) writes onto a fresh run's
      *  `params` -- used by the `brief` resume tests below. */
     params?: Record<string, string>;
@@ -88,7 +91,7 @@ async function seedQueuedRun(
         title: 't',
         description: 'd',
         pipeline,
-        target: { repo: 'jlapenna/agent-lcars' },
+        target: { repo: opts.targetRepo ?? 'jlapenna/agent-lcars' },
       },
     },
     ...(opts.params === undefined ? {} : { params: opts.params }),
@@ -1085,12 +1088,13 @@ describe('codexAuth', () => {
     };
   }
 
-  async function claimedCodexRun() {
+  async function claimedCodexRun(targetRepo?: string) {
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-auth'),
       pipeline: 'codex',
       now: NOW,
+      targetRepo,
     });
     const token = mintRunToken();
     await store.claimQueuedRun({
@@ -1102,8 +1106,9 @@ describe('codexAuth', () => {
     return { store, orchestrator, now, runId, token };
   }
 
-  it('restores only the target repository credential for a Codex run', async () => {
-    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
+  it('authorizes the target repository but restores the one central credential lineage', async () => {
+    const { store, orchestrator, now, runId, token } =
+      await claimedCodexRun('jlapenna/sync-padd');
     const read = vi.fn(context.codexAuth.read);
     const createLease = vi.fn(async () => undefined);
     const r = await call(
@@ -1119,10 +1124,10 @@ describe('codexAuth', () => {
       runPath(runId, '/codex-auth'),
     );
     expect(r.status).toBe(200);
-    expect(read).toHaveBeenCalledWith('jlapenna/agent-lcars');
+    expect(read).toHaveBeenCalledWith();
     expect(createLease).toHaveBeenCalledWith({
       runId,
-      repository: 'jlapenna/agent-lcars',
+      repository: 'jlapenna/sync-padd',
       expiresAt: (await store.readRun(runId))!.leaseExpiresAt,
     });
   });
@@ -1279,10 +1284,37 @@ describe('codexAuth', () => {
     );
     expect(r.json).toEqual({ status: 'updated' });
     expect(replace).toHaveBeenCalledWith({
-      repository: 'jlapenna/agent-lcars',
       expectedGeneration: '1844674407370955161',
       authBase64,
     });
+  });
+
+  it('refuses persistence when the central lease names a different target repository', async () => {
+    const { store, orchestrator, now, runId, token } =
+      await claimedCodexRun('jlapenna/sync-padd');
+    const replace = vi.fn(async () => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        codexAuth: ownedCodexAuth(runId, { replace }),
+        bearerToken: token,
+      },
+      'PUT',
+      runPath(runId, '/codex-auth'),
+      {
+        generation: '7',
+        restoredSha256: '0'.repeat(64),
+        authBase64: Buffer.from('{"tokens":{"access":"new"}}').toString(
+          'base64',
+        ),
+      },
+    );
+
+    expect(r.status).toBe(409);
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it('keeps a durable credential rotation successful when lease cleanup fails', async () => {

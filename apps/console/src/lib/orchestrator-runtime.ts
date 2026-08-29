@@ -16,7 +16,6 @@ import {
 } from '@/lib/github-app-tokens';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
-import { settleTerminalRuns } from '@/lib/orchestrator-terminal-runs';
 import { bindCompletionToRun } from '@/lib/run-binding';
 
 /**
@@ -91,7 +90,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     store,
     orchestrator,
     dispatchExecutor: dispatchExecutor(),
-    // Resolved fresh on every call, exactly like `drain`/`settleTerminal`
+    // Resolved fresh on every call, exactly like `drain`
     // below -- NOT captured here at construction time. Two reasons: (1) a
     // rotated `AGENT_LCARS_APP_PRIVATE_KEY` must take effect on the very
     // next completion without a restart, same as it already does for
@@ -115,14 +114,6 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     drain: () => {
       const github = orchestratorGithubRuntimeDeps(process.env);
       return drainOutbox({
-        store,
-        orchestrator,
-        ...github,
-      });
-    },
-    settleTerminal: () => {
-      const github = orchestratorGithubRuntimeDeps(process.env);
-      return settleTerminalRuns({
         store,
         orchestrator,
         ...github,

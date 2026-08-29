@@ -57,7 +57,6 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
       store,
       orchestrator,
       drain: async () => ({ dispatched: [], failed: [] }),
-      settleTerminal: async () => ({}),
     } as unknown as WorkContext['runtime'],
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,

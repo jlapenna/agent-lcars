@@ -9,6 +9,7 @@ set -euo pipefail
 PAYLOAD="${PAYLOAD:-}"
 PAYLOADS="${PAYLOADS:-}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-60}"
+REQUEST_RESPONSE=""
 
 if [ -n "$PAYLOAD" ] && [ -n "$PAYLOADS" ]; then
   echo "::error title=request-control-plane::Provide payload or payloads, not both."
@@ -44,7 +45,24 @@ post() {
     echo "::error title=request-control-plane::POST $ENDPOINT failed (response body above)."
     return 1
   fi
+  REQUEST_RESPONSE="$response"
   printf '%s\n' "$response"
+}
+
+write_response() {
+  # GitHub Actions' output file uses a delimiter block for arbitrary response
+  # JSON. Grow the delimiter until it cannot collide with a response line,
+  # so a multiline response cannot terminate its own output block.
+  [ -n "${GITHUB_OUTPUT:-}" ] || return 0
+  local delimiter='request-control-plane-response'
+  while grep -Fqx "$delimiter" <<<"$REQUEST_RESPONSE"; do
+    delimiter="${delimiter}_"
+  done
+  {
+    printf 'response<<%s\n' "$delimiter"
+    printf '%s\n' "$REQUEST_RESPONSE"
+    printf '%s\n' "$delimiter"
+  } >> "$GITHUB_OUTPUT"
 }
 
 if [ -n "$PAYLOADS" ]; then
@@ -62,8 +80,10 @@ if [ -n "$PAYLOADS" ]; then
   echo "POST $ENDPOINT succeeded for all $total payloads."
 elif [ -n "$PAYLOAD" ]; then
   post "$PAYLOAD"
+  write_response
   echo "POST $ENDPOINT succeeded."
 else
   post
+  write_response
   echo "POST $ENDPOINT succeeded."
 fi

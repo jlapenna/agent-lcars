@@ -62,8 +62,7 @@ export FAKE_CLAUDE_OAUTH_TOKEN="fake-claude-oauth-token-abc123"
 # --- Fake binary factory ----------------------------------------------------
 # Installs curl/git/gh/provider fakes into "$1/bin". Every curl call in
 # direct-runner.sh sends its bearer/url/timeouts via `--config -` (stdin),
-# never `-H`/argv (fix round 1: agent-fallback-finalize.yml's own completion
-# callback does the same, to keep a bearer token out of `ps aux`/cmdline),
+# never `-H`/argv (to keep a bearer token out of `ps aux`/cmdline),
 # so this fake curl parses url/data-binary out of that stdin config block
 # instead of scanning argv for a bare "http*" token. Each scenario exports
 # its own COMPLETE_LOG/GIT_CLONE_ARGV_LOG so scenarios never share state.
@@ -302,7 +301,7 @@ exit 0
 FAKE
   chmod +x "$bindir/opencode"
 
-  # Mirrors .github/actions/resume-session/resume.test.sh's own fake node:
+  # Fake node helper for the direct-runner resume test:
   # records its argv (proving direct-runner.sh's `runner resume` call site
   # passes the right session id/transcript uri/cwd) and either prints a
   # fake resumed local path or, when FAKE_RESUME_FAIL is set, fails closed
@@ -427,10 +426,8 @@ if grep -q "$FAKE_TOKEN" "$GIT_CLONE_ARGV_LOG" 2>/dev/null; then
   fail "happy path: raw checkout token leaked into git clone argv ($(cat "$GIT_CLONE_ARGV_LOG"))"
 fi
 
-# Final-review fix: direct mode configures its own commit identity (no
-# agent-setup/action.yml composite action to do it, unlike GitHub-Actions
-# mode) -- assert it actually landed in the checkout's own git config, not
-# just that direct-runner.sh ran the config command without erroring.
+# Direct mode configures its own commit identity. Assert it landed in the
+# checkout's own git config, not just that direct-runner.sh ran the command.
 if ! grep -q "user.email" "$workspace/.git/config" 2>/dev/null; then
   fail "happy path: git commit identity (user.email) was not configured in $workspace/.git/config"
 fi

@@ -1,17 +1,8 @@
 # actionlint's self-hosted-runner allowlist only matters for LITERAL
 # `runs-on:` values - it has no way to resolve a `${{ vars.* }}` expression
-# at lint time, so it never actually checks a job whose `runs-on:` reads
-# `['${{ vars.AGENT_RUNNER_LABEL }}']`
-# against this list at all. That covers every claude-agent-lcars/
-# lcars-default job in this repo (claude.yml, opencode.yml, codex.yml,
-# agent-automerge.yml) - none of them are actually validated by this file.
-#
-# claude-agent-lcars and lcars-default stay listed anyway, for
-# documentation - their real registrations, matched to the `vars.*` names
-# above, live in jlapenna/homelab's github-runner-autoscaler/
-# orchestrator.yml as homelab-autoscale-claude-agent-lcars and
-# homelab-autoscale-lcars-default (homelab#97) - and in case a future
-# workflow ever pins one of them literally instead of through a variable.
+# at lint time, so it never actually checks a job whose `runs-on:` reads an
+# expression against this list. Keep the known labels documented here for any
+# non-provider workflow that later pins one literally.
 self-hosted-runner:
   labels:
     - claude-agent-lcars

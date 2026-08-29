@@ -57,7 +57,6 @@ vi.mock('@/lib/orchestrator-runtime', () => ({
     store: orchestratorStore,
     orchestrator,
     drain: async () => ({ dispatched: [], failed: [] }),
-    settleTerminal: async () => ({}),
   }),
   createScheduleStore: () => new MemoryScheduleStore(),
 }));

@@ -15,53 +15,34 @@ their operating constraints.
 
 ## Published composite actions
 
-| Action                         | Purpose                                                          |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `mint-agent-token`             | Mint a scoped Agent LCARS App installation token.                |
-| `agent-setup`                  | Configure agent Git identity, timestamps, and optional Nx cache. |
-| `verify-agent-identity`        | Verify the minted App identity and push credential.              |
-| `prepare-agent-dispatch`       | Write routed issue context for a headless agent.                 |
-| `setup-opencode`               | Resolve, cache, and install a versioned OpenCode CLI.            |
-| `verify-deliverable`           | Require an exact attempt marker on a deliverable artifact.       |
-| `report-failure`               | Record failure in the run log for the hosted finalizer.          |
-| `snapshot-enforcement-scripts` | Freeze post-agent gate scripts before the agent runs.            |
-| `assert-repo-vars`             | Report all missing required repository variables.                |
-| `merge-live-base`              | Merge the live base into a PR head before validation.            |
-| `setup-nx-remote-cache`        | Configure trusted Nx jobs for the shared L2 cache.               |
-| `deploy-verify`                | Poll a deployed URL and optionally annotate deployment status.   |
-| `request-control-plane`        | Send an OIDC-authenticated request to a control-plane endpoint.  |
-| `validate-worker-workflows`    | Validate worker issue/native-work anchor-union contracts.        |
+| Action                   | Purpose                                                            |
+| ------------------------ | ------------------------------------------------------------------ |
+| `mint-agent-token`       | Mint a scoped Agent LCARS App installation token.                  |
+| `prepare-agent-dispatch` | Write routed issue context for a headless agent.                   |
+| `verify-deliverable`     | Require an exact attempt marker on a deliverable artifact.         |
+| `assert-repo-vars`       | Report all missing required repository variables.                  |
+| `merge-live-base`        | Merge the live base into a PR head before validation.              |
+| `setup-nx-remote-cache`  | Configure trusted Nx jobs for the shared L2 cache.                 |
+| `deploy-verify`          | Poll a deployed URL and optionally annotate deployment status.     |
+| `request-control-plane`  | Send an OIDC-authenticated request and expose its single response. |
 
 ## Published reusable workflows
 
-| Workflow                                 | Purpose                                          |
-| ---------------------------------------- | ------------------------------------------------ |
-| `renovate-auto-approve.yml`              | Approve a Renovate PR with a minted App token.   |
-| `agent-automerge-reusable.yml`           | Arm auto-merge and restore the post-merge chain. |
-| `agent-lane-{claude,codex,opencode}.yml` | Published issue-agent lane contracts.            |
-| `repo-validation.yml`                    | Run actionlint and worker-anchor contracts.      |
-| `codeql-reusable.yml`                    | Run the caller-configured CodeQL analysis job.   |
+| Workflow                       | Purpose                                          |
+| ------------------------------ | ------------------------------------------------ |
+| `renovate-auto-approve.yml`    | Approve a Renovate PR with a minted App token.   |
+| `agent-automerge-reusable.yml` | Arm auto-merge and restore the post-merge chain. |
+| `repo-validation.yml`          | Run actionlint for a caller repository.          |
+| `codeql-reusable.yml`          | Run the caller-configured CodeQL analysis job.   |
 
-The lane shims are the published interface. They delegate to the internal
-parameterized `agent-lane.yml`; callers must not call that internal workflow
-directly.
-
-## Published script-only contract
-
-`post-agent-gates` is a script, not a composite action. Snapshot it before the
-agent runs, then invoke it only with
-`bash "$RUNNER_TEMP/trusted-actions/post-agent-gates/post-agent-gates.sh"`.
-Do not use it through `uses:` after the agent step.
+Hosted provider workflows are retired; providers execute through the Console
+QueueExecutor instead.
 
 ## Not consumer surfaces
 
-| Tier     | Names                                                                                                          |
-| -------- | -------------------------------------------------------------------------------------------------------------- |
-| Internal | `setup-node-pnpm`, `stamp-attempt-marker`, `agent-handoff`, `archive-opencode-trajectory`                      |
-| Coupled  | `dispatch-bootstrap`, `telemetry-start`, `telemetry-finalize`, `resume-session`, `agent-fallback-finalize.yml` |
-
-`agent-fallback-finalize.yml` is a dispatch-protocol component, not a
-general-purpose reusable workflow. See [Agent dispatch ownership](lifecycle-systems.md).
+| Tier     | Names             |
+| -------- | ----------------- |
+| Internal | `setup-node-pnpm` |
 
 ## Consume a published surface
 
@@ -86,30 +67,9 @@ Each workflow's `workflow_call` declaration is authoritative for required
 inputs and secrets; add a `with:` block only for inputs that declaration
 accepts.
 
-`validate-worker-workflows` takes no inputs. It reads the caller checkout's
-`.github/workflows/{claude,codex,opencode}.yml` files that are present. A
-repository may adopt any subset of providers, including none; absence is not a
-validation error when `.github/workflows/` exists. A missing workflow directory
-fails so a wrong checkout cannot masquerade as an agent-free repository. Every
-present provider workflow protects the common dispatch boundary: the nine-input
-surface, optional empty `issue` and `work` anchors, the canonical issue-or-work
-admission and forwarding for both worker and fallback, and a native-aware run
-name. A workflow-level concurrency group, when present, must interpolate
-`inputs.work`, `inputs.broker_intent_id`, or the
-canonical `inputs.issue || <native identifier>` fallback; the explicit
-`inputs.issue != '' && inputs.issue || <native identifier>` equivalent is also
-accepted. Caller-supplied `prompt` overrides are rejected so the shared lane
-owns canonical prompt construction.
-Provider-specific credentials, timeouts, lane plumbing, and job-level
-concurrency remain caller-owned.
-
 ## Security invariants
 
-- Snapshot post-agent gates before invoking an agent. Run them afterward only
-  from `$RUNNER_TEMP/trusted-actions`, never from a mutable checkout or a
-  post-agent `uses:` resolution.
-- Request the narrowest `mint-agent-token` permissions. `permission-workflows`
-  is opt-in; see [Agent workflow write permission](agent-workflow-write-permission.md).
+- Request the narrowest `mint-agent-token` permissions.
 - A run succeeds only when `verify-deliverable` finds its exact
   `<!-- attempt-claim:<attempt-id> -->` marker on a deliverable. Progress and
   takeover comments are not deliverables.
@@ -120,12 +80,17 @@ concurrency remain caller-owned.
   An action that relies on a sibling path must declare that dependency in its
   manifest.
 
+`request-control-plane` exposes the exact response body through its `response`
+output for a successful bodyless or `payload` request. Batch `payloads` mode
+has no singular response, so its output is empty. The action does not parse or
+assign endpoint-specific meaning to either response shape.
+
 ## Contract verification
 
 `published-actions.contract.test.mjs` verifies each Published composite
 action's declared inputs and outputs. Modify its manifest with every deliberate
-surface change. Reusable workflows are verified through actionlint and their
-workflow-contract tests; review their `workflow_call` surfaces as public API.
+surface change. Reusable workflows are verified through actionlint; review
+their `workflow_call` surfaces as public API.
 
 ## Related documents
 

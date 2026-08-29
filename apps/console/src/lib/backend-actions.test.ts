@@ -29,7 +29,6 @@ import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
-import { settleTerminalRuns } from './orchestrator-terminal-runs';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
@@ -65,7 +64,9 @@ beforeEach(() => {
  * `createOrchestratorRuntime()`. */
 function fixtureOrchestratorRuntime(
   now = '2026-08-15T12:00:00.000Z',
-  options: { dispatchExecutor?: () => 'queue' } = {},
+  options: { dispatchExecutor?: () => 'queue' } = {
+    dispatchExecutor: () => 'queue',
+  },
 ) {
   const clock = { now: () => now };
   const store = new MemoryStore();
@@ -74,17 +75,7 @@ function fixtureOrchestratorRuntime(
   const fetchImpl = (async (input: RequestInfo | URL) => {
     const url = String(input);
     calls.push({ url });
-    // The reconcile sweep's terminal-run probe (#1361) lists a workflow's
-    // runs; serve it an empty listing so nothing is settled that way here
-    // and these tests keep exercising the lease sweep they are about.
-    if (url.includes('/runs?event=workflow_dispatch')) {
-      return new Response(JSON.stringify({ workflow_runs: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    const status = url.includes('/actions/workflows/') ? 204 : 201;
-    return new Response(null, { status });
+    return new Response(null, { status: 201 });
   }) as typeof fetch;
   // Trivial fixed-token stub (`AmbientTokenProvider` itself was retired in
   // #1284 - see github-app-tokens.ts).
@@ -106,14 +97,11 @@ function fixtureOrchestratorRuntime(
       fetchImpl,
       now: () => clock.now(),
     });
-  const settleTerminal = () =>
-    settleTerminalRuns({ store, orchestrator, tokens, fetchImpl });
   (createOrchestratorRuntime as Mock).mockReturnValue({
     store,
     orchestrator,
     ...options,
     drain,
-    settleTerminal,
   });
   return { store, orchestrator, calls };
 }
@@ -953,19 +941,19 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   }
 
   it('falls back to claude and dispatches it when the task has no prior orchestrator run', async () => {
-    const { calls } = fixtureOrchestratorRuntime();
+    const { calls, store } = fixtureOrchestratorRuntime();
     mockOctokit();
 
     const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
     expect(result).toEqual({ pipelineFallback: true });
     expect(
-      calls.some((c) =>
-        c.url.includes(
-          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/claude.yml/dispatches`,
-        ),
-      ),
-    ).toBe(true);
+      (await store.listRuns({ repo: CONTROL_PLANE_REPO, issue: 2709 }))[0]
+        ?.executor,
+    ).toBe('queue');
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
   });
 
   it('uses QueueExecutor for a console retry after the global cutover', async () => {
@@ -1003,13 +991,13 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
     expect(result).toEqual({ pipelineFallback: false });
-    expect(
-      calls.some((c) =>
-        c.url.includes(
-          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/opencode.yml/dispatches`,
-        ),
-      ),
-    ).toBe(true);
+    const retried = (await store.listRuns(taskId)).find(
+      (run) => run.runId !== seeded.run.runId,
+    );
+    expect(retried?.executor).toBe('queue');
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
     expect((await store.listRuns(taskId)).length).toBe(2);
   });
 
@@ -1030,7 +1018,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   });
 
   it('posts the steering note and still dispatches when the note carries no mention', async () => {
-    const { calls } = fixtureOrchestratorRuntime();
+    const { calls, store } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
 
     const result = await retriggerIssue(
@@ -1045,8 +1033,12 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     );
     expect(result.pipelineFallback).toBe(true);
     expect(
-      calls.some((c) => c.url.includes('/actions/workflows/claude.yml/')),
-    ).toBe(true);
+      (await store.listRuns({ repo: CONTROL_PLANE_REPO, issue: 2709 }))[0]
+        ?.executor,
+    ).toBe('queue');
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
   });
 
   it('skips the orchestrator request when a later line carries a reply-trigger alias (would double-dispatch)', async () => {
@@ -1190,13 +1182,9 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     expect(setLabels).toHaveBeenCalledWith(
       expect.objectContaining({ labels: ['agent:claude'] }),
     );
-    expect(
-      calls.some((c) =>
-        c.url.includes(
-          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/claude.yml/dispatches`,
-        ),
-      ),
-    ).toBe(true);
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
     const runs = await store.listRuns({
       repo: CONTROL_PLANE_REPO,
       issue: 2709,
@@ -1291,13 +1279,10 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     expect(runs.find((r) => r.pipeline === 'codex')?.state).toBe('canceled');
     const claudeRun = runs.find((r) => r.pipeline === 'claude');
     expect(claudeRun?.params).toEqual({ mode: 'review' });
-    expect(
-      calls.some((c) =>
-        c.url.includes(
-          `/repos/${CONTROL_PLANE_REPO}/actions/workflows/claude.yml/dispatches`,
-        ),
-      ),
-    ).toBe(true);
+    expect(claudeRun?.executor).toBe('queue');
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
   });
 
   it('400s on a malformed caller ID before ever calling GitHub or the orchestrator', async () => {

@@ -583,7 +583,8 @@ export const runsContract = {
         method: 'GET',
         path: '/runs/{runId}/codex-auth',
         operationId: 'getRunCodexAuth',
-        summary: "Restore a Codex run's repository-scoped authentication",
+        summary:
+          'Restore the centrally owned Codex lineage for an authorized run',
         spec: withRunToken,
       }),
     )
@@ -612,7 +613,8 @@ export const runsContract = {
         method: 'PUT',
         path: '/runs/{runId}/codex-auth',
         operationId: 'persistRunCodexAuth',
-        summary: "Persist a Codex run's conditionally rotated authentication",
+        summary:
+          "Persist an authorized Codex run's conditionally rotated central lineage",
         spec: withRunToken,
       }),
     )

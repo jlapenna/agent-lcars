@@ -3146,7 +3146,7 @@
     "/runs/{runId}/codex-auth": {
       "get": {
         "operationId": "getRunCodexAuth",
-        "summary": "Restore a Codex run's repository-scoped authentication",
+        "summary": "Restore the centrally owned Codex lineage for an authorized run",
         "tags": ["runs"],
         "parameters": [
           {
@@ -3265,7 +3265,7 @@
       },
       "put": {
         "operationId": "persistRunCodexAuth",
-        "summary": "Persist a Codex run's conditionally rotated authentication",
+        "summary": "Persist an authorized Codex run's conditionally rotated central lineage",
         "tags": ["runs"],
         "parameters": [
           {

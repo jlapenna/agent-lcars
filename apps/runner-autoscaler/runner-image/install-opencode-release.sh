@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Install the reviewed OpenCode release into the runner image's trusted path.
 #
-# This is deliberately separate from .github/actions/setup-opencode/install.sh:
-# that action runs as the job user and follows OpenCode's supported installer,
-# while this runs as root during image construction. Do not make this script
-# accept a mutable installer, PATH result, or an unpinned release selection.
+# This runs as root during image construction. Do not make this script accept
+# a mutable installer, PATH result, or an unpinned release selection.
 set -euo pipefail
 
 readonly OPENCODE_RELEASE_OWNER='anomalyco'

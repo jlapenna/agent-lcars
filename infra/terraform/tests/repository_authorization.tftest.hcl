@@ -75,18 +75,13 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = length(google_storage_bucket_iam_member.codex_auth_runtime) == 7 && google_storage_bucket_iam_member.codex_auth_runtime["supersprinklesracing/sprinkles"].member == "serviceAccount:claude-agent-readonly@supersprinklesracing.iam.gserviceaccount.com" && alltrue([for repository, binding in google_storage_bucket_iam_member.codex_auth_runtime : binding.bucket == google_storage_bucket.codex_auth.name && binding.role == google_project_iam_custom_role.codex_auth_runtime.name && binding.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${repository}/\")"])
-    error_message = "Each Codex identity, including Sprinkles' cross-project identity, must be confined to its own object prefix in the auth bucket."
+    condition     = google_storage_bucket_iam_member.apphosting_codex_auth_broker.bucket == google_storage_bucket.codex_auth.name && google_storage_bucket_iam_member.apphosting_codex_auth_broker.role == google_project_iam_custom_role.codex_auth_runtime.name && google_storage_bucket_iam_member.apphosting_codex_auth_broker.member == "serviceAccount:firebase-app-hosting-compute@agent-lcars.iam.gserviceaccount.com" && local.codex_auth_broker_objects == [local.codex_central_auth_object, local.codex_auth_lease_object] && google_storage_bucket_iam_member.apphosting_codex_auth_broker.condition[0].expression == join(" || ", [for object in local.codex_auth_broker_objects : "resource.name == \"${object}\""])
+    error_message = "The Console broker must be confined to the one central auth.json object and one shared lease object."
   }
 
   assert {
-    condition     = length(google_storage_bucket_iam_member.codex_auth_shared_lease_runtime) == 7 && alltrue([for repository, binding in google_storage_bucket_iam_member.codex_auth_shared_lease_runtime : binding.bucket == google_storage_bucket.codex_auth.name && binding.role == google_project_iam_custom_role.codex_auth_runtime.name && binding.member == "serviceAccount:${local.codex_auth_runtime_identities[repository]}" && binding.condition[0].expression == "resource.name == \"${local.codex_auth_lease_object}\""])
-    error_message = "Every hosted Codex identity must have generation-CAS access only to the one shared subscription lease object."
-  }
-
-  assert {
-    condition     = google_storage_bucket_iam_member.apphosting_codex_auth_broker.bucket == google_storage_bucket.codex_auth.name && google_storage_bucket_iam_member.apphosting_codex_auth_broker.role == google_project_iam_custom_role.codex_auth_runtime.name && google_storage_bucket_iam_member.apphosting_codex_auth_broker.member == "serviceAccount:firebase-app-hosting-compute@agent-lcars.iam.gserviceaccount.com" && google_storage_bucket_iam_member.apphosting_codex_auth_broker.condition[0].expression == join(" || ", [for object in local.codex_auth_broker_objects : "resource.name == \"${object}\""])
-    error_message = "The Console broker must be confined to the seven auth.json objects and the one shared lease object."
+    condition     = google_service_account.codex_agent.email == "codex-agent@agent-lcars.iam.gserviceaccount.com"
+    error_message = "Keep the Codex agent service account: it has uses beyond the retired hosted auth path."
   }
 
   assert {

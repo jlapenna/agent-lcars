@@ -21,7 +21,7 @@ jobs:
 
       - uses: ./.github/actions/setup-node-pnpm
 
-      # This is the same identity available inside codex.yml. Its access is
+      # This is the identity used by QueueExecutor's Codex credential adapter. Its access is
       # read-only and scoped to the dedicated browser-state secret, so this
       # scheduled run proves the real issue-agent access path without gaining
       # the Auth.js signing key needed to mint or rotate sessions.

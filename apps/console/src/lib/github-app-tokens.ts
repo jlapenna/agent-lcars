@@ -64,8 +64,8 @@ export interface DispatchTokenProvider {
 
 /** The permission set `AppInstallationTokenProvider` requests when minting
  * a repo's installation token, absent an explicit `permissions` option --
- * exactly what the outbox drain needs (`workflow_dispatch`, issue and PR
- * comments, the `needs-human` label) and nothing more. `github-client.ts`
+ * exactly what the outbox drain needs (issue and PR comments plus the
+ * `needs-human` label) and nothing more. `github-client.ts`
  * passes its own, broader set instead (see `createGithubClientAuthStrategy`
  * below): a token's `permissions` is a request for a *subset* of the App's
  * own granted permissions, never a way to exceed them, so each caller

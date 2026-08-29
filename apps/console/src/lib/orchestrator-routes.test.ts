@@ -20,7 +20,6 @@ import {
   type HostedCompletionRequestBody,
   type OrchestratorRouteDeps,
 } from './orchestrator-routes';
-import { settleTerminalRuns } from './orchestrator-terminal-runs';
 import { BindingUnavailable, type RunBinding } from './run-binding';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
@@ -62,44 +61,29 @@ interface FetchCall {
   init: RequestInit;
 }
 
-/** Dispatch (`/actions/workflows/.../dispatches`) succeeds with 204, an
- *  outcome comment (`/issues/.../comments`) succeeds with 201 -- matching
- *  what `drainOutbox` (orchestrator-dispatch.ts) expects from each endpoint.
- *  The workflow-runs listing (`/actions/workflows/.../runs?...`, read by
- *  `settleTerminalRuns`) serves `workflowRuns`, empty unless a test arms it,
- *  so the reconcile route's terminal probe runs for real here. A single
- *  Actions run lookup (`/actions/runs/<id>`, read by `bindCompletionToRun`
+/** An outcome comment (`/issues/.../comments`) succeeds with 201 -- matching
+ *  what `drainOutbox` (orchestrator-dispatch.ts) expects. A single Actions
+ *  run lookup (`/actions/runs/<id>`, read by `bindCompletionToRun`
  *  through `defaultBind` -- see `run-binding.ts`) serves `actionsRun`,
  *  `{}` (no marker) unless a test arms it. */
 function fakeFetch(
   overrides: {
-    dispatchStatus?: number;
     commentStatus?: number;
-    workflowRuns?: () => unknown[];
     actionsRun?: () => unknown;
   } = {},
 ): { fetchImpl: typeof fetch; calls: FetchCall[] } {
-  const { dispatchStatus = 204, commentStatus = 201 } = overrides;
+  const { commentStatus = 201 } = overrides;
   const calls: FetchCall[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, init: init ?? {} });
-    if (url.includes('/runs?event=workflow_dispatch')) {
-      return new Response(
-        JSON.stringify({ workflow_runs: overrides.workflowRuns?.() ?? [] }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    }
     if (/\/actions\/runs\/\d+$/u.test(url)) {
       return new Response(JSON.stringify(overrides.actionsRun?.() ?? {}), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    const status = url.includes('/actions/workflows/')
-      ? dispatchStatus
-      : commentStatus;
-    return new Response(null, { status });
+    return new Response(null, { status: commentStatus });
   }) as typeof fetch;
   return { fetchImpl, calls };
 }
@@ -127,8 +111,6 @@ function fixture(overrides?: Parameters<typeof fakeFetch>[0]) {
         fetchImpl,
         now: () => clock.now(),
       }),
-    settleTerminal: () =>
-      settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
   };
   return { clock, store, orchestrator, deps, calls };
 }
@@ -245,11 +227,11 @@ describe('handleWebhookDelivery', () => {
     expect(runId).toBe(`${REPO}#42/r1`);
     expect(result.body['dispatched']).toBe(true);
 
-    // workflow_dispatch + the confirmed dispatch's eyes-reaction/assignee
-    // claim projection (`claimGithubAnchor` in orchestrator-dispatch.ts).
-    expect(calls).toHaveLength(3);
-    expect(calls[0]?.url).toBe(
-      `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
+    // Queue dispatch stays inside the control plane; GitHub only receives
+    // the confirmed dispatch's eyes-reaction/assignee claim projection.
+    expect(calls).toHaveLength(2);
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
     );
     expect(calls.some((c) => c.url.endsWith(`/issues/42/reactions`))).toBe(
       true,
@@ -468,14 +450,9 @@ describe('handleDispatchRequest', () => {
     expect(runId).toBe(`${REPO}#42/r1`);
     expect(result.body['dispatched']).toBe(true);
 
-    const dispatchCall = calls.find((c) =>
-      c.url.includes('/actions/workflows/'),
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
     );
-    const inputs = JSON.parse(String(dispatchCall?.init.body)) as {
-      inputs: Record<string, string>;
-    };
-    expect(inputs.inputs.runbook).toBe('pr-heal');
-    expect(inputs.inputs.context).toBe('nightly sweep');
 
     const run = await store.readRun(runId);
     expect(run?.params).toEqual({
@@ -779,20 +756,18 @@ describe('handleReconcile', () => {
     expect(newRun?.requestId).toBe(`retry:${runId}`);
     expect(newRun?.pipeline).toBe('claude');
 
-    // Five calls: the terminal probe's workflow-runs listing (which found
-    // nothing terminal here, so the lease sweep did the settling), then the
-    // retry's dispatch, the retry's confirmed-dispatch eyes-reaction/
-    // assignee claim projection, and the lost run's outcome comment.
-    expect(calls).toHaveLength(5);
+    // Queue reconciliation makes no Actions workflow request: only the
+    // retry's issue claim projection and the lost run's outcome comment.
+    expect(calls).toHaveLength(3);
     expect(calls.map((c) => c.url).sort()).toEqual(
       [
-        `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/dispatches`,
-        `https://api.github.com/repos/${REPO}/actions/workflows/claude.yml/runs` +
-          `?event=workflow_dispatch&per_page=100`,
         `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/comments`,
         `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/reactions`,
         `https://api.github.com/repos/${REPO}/issues/${ISSUE.issue}/assignees`,
       ].sort(),
+    );
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
     );
     const commentCall = calls.find((c) => c.url.includes('/comments'));
     const commentBody = JSON.parse(String(commentCall?.init.body)) as {
@@ -800,47 +775,6 @@ describe('handleReconcile', () => {
     };
     expect(commentBody.body).toContain(newRunId);
     expect(commentBody.body).toContain('attempt 2 of 3');
-    expect(result.body['terminal']).toEqual([]);
-  });
-
-  it('settles a run whose workflow run is already terminal, minutes into its lease (#1361)', async () => {
-    let terminal: unknown[] = [];
-    const { deps, clock, calls, store } = fixture({
-      workflowRuns: () => terminal,
-    });
-    const runId = await dispatchedRun(deps);
-    terminal = [
-      {
-        display_title: `#${ISSUE.issue}: Claude issue agent [dispatch:g1:${runId}]`,
-        status: 'completed',
-        conclusion: 'startup_failure',
-      },
-    ];
-    calls.length = 0;
-    // One minute in. The lease has another 119 minutes to run, so before
-    // #1361 this whole cycle reported `{lost: [], retried: []}` and the task
-    // stayed wedged -- exactly the girosf#15 symptom.
-    clock.advanceMinutes(1);
-
-    const result = await handleReconcile(deps);
-
-    expect(result.status).toBe(200);
-    expect(result.body['lost']).toEqual([]); // nothing expired: not the sweep
-    expect(result.body['terminal']).toEqual([
-      { runId, conclusion: 'startup_failure' },
-    ]);
-    const retried = result.body['retried'] as {
-      lostRunId: string;
-      newRunId: string;
-    }[];
-    expect(retried).toHaveLength(1);
-    expect(retried[0]?.lostRunId).toBe(runId);
-    const newRunId = retried[0]?.newRunId as string;
-    // Released AND re-dispatched inside this one reconcile cycle.
-    expect(result.body['dispatched']).toEqual([newRunId]);
-    expect((await store.readRun(runId))?.state).toBe('lost');
-    expect((await store.readRun(newRunId))?.state).toBe('running');
-    expect((await store.readActiveRun(ISSUE))?.runId).toBe(newRunId);
   });
 });
 
@@ -868,8 +802,6 @@ describe('error handling', () => {
           fetchImpl,
           now: () => clock.now(),
         }),
-      settleTerminal: () =>
-        settleTerminalRuns({ store, orchestrator, tokens, fetchImpl }),
     };
 
     const result = await handleCompletion(

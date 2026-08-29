@@ -8,7 +8,6 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
-import { type WorkSpec, workSpecSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin } from './deployment';
@@ -26,8 +25,8 @@ export type { DispatchTokenProvider };
  * store (see `libs/orchestrator/src/orchestrator.ts`) - it only records
  * that a run should be dispatched or that its outcome should be reported,
  * as a durable outbox entry. This module is the worker that drains that
- * outbox: it launches the worker workflow via `workflow_dispatch` and
- * posts the outcome back to the issue as a comment.
+ * outbox: it makes each run claimable by QueueExecutor and posts the outcome
+ * back to an issue as a comment.
  *
  * Nothing here is durable itself - `store.claimPendingOutbox` /
  * `store.settleOutbox` own that. A failed GitHub call just leaves its entry
@@ -202,233 +201,28 @@ export async function drainOutbox(
 }
 
 /**
- * Launches the run's worker workflow via `workflow_dispatch`. A run whose
- * outbox entry outlived it (already settled elsewhere, or never made it
- * past `pending`) is stale: there is nothing left to dispatch, so the entry
- * is just marked done without ever calling GitHub.
+ * Makes the run claimable by QueueExecutor. A run whose outbox entry outlived
+ * it (already settled elsewhere, or never made it past `pending`) is stale:
+ * there is nothing left to enqueue, so the entry is marked done.
  */
 async function handleDispatchRun(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
   result: DrainOutboxResult,
 ): Promise<void> {
-  const { store, orchestrator, tokens } = deps;
-  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  const { store, orchestrator } = deps;
 
   const run = await store.readRun(entry.runId);
   if (run === undefined || run.state !== 'pending') {
-    // A run that is already `running` (not settled/canceled) got there via
-    // this same function's primary path below on some earlier attempt --
-    // but a crash between that path's `confirmDispatch` and its own
-    // `claimGithubAnchor`/`settleClaim` would otherwise lose the claim
-    // projection permanently: this reclaimed entry is the only remaining
-    // trigger for it. Re-attempt it here, best-effort (`claimGithubAnchor`
-    // never throws), for a GitHub anchor only -- a native run's `target`
-    // never carries an `issue` for it to project onto anyway.
-    if (
-      run?.state === 'running' &&
-      run.executor !== 'queue' &&
-      !isWorkAnchor(run.task)
-    ) {
-      await claimGithubAnchor(deps, anchorTarget(run));
-    }
     await settleClaim(deps, entry, 'done');
     return;
   }
 
-  if (run.executor === 'queue') {
-    await store.enqueueRun({ runId: run.runId, now: now(deps) });
-    await orchestrator.confirmDispatch(run.runId);
-    await settleClaim(deps, entry, 'done');
-    result.dispatched.push(run.runId);
-    return;
-  }
-
-  const task = (await store.readTask(run.task))?.task;
-  let target: AnchorTarget;
-  try {
-    target = anchorTarget(run, task);
-  } catch (error) {
-    // A native run whose payload cannot name a repository can never be
-    // dispatched: permanent, so settle the entry rather than retry it.
-    await settleClaim(deps, entry, 'done');
-    recordPermanentFailure(entry, result, error);
-    return;
-  }
-
-  let inputs: Record<string, string>;
-  if (isWorkAnchor(run.task)) {
-    // `run.task` is narrowed to the work anchor here, so `.workId` is the
-    // bare ULID the worker workflow expects as `work.id` -- not the
-    // anchor object itself.
-    let spec: WorkSpec;
-    try {
-      spec = workSpecSchema.parse(task?.work?.['spec']);
-    } catch (error) {
-      // A spec that fails the workflow-side contract can never be
-      // dispatched: permanent, so settle the entry rather than retry it,
-      // exactly as the `anchorTarget` failure above.
-      await settleClaim(deps, entry, 'done');
-      recordPermanentFailure(entry, result, error);
-      return;
-    }
-    inputs = {
-      work: JSON.stringify({
-        id: run.task.workId,
-        spec,
-        // Sub-project 6: `resumeSessionId`/`resumeTranscriptGcsUri` are
-        // written together onto `run.params` by work-router.ts's
-        // `redispatch` handler (Task 2), which already resolved the
-        // session's transcript at redispatch time -- no further lookup
-        // needed here. Checking both rather than just `resumeSessionId`
-        // keeps a half-written params record (which should never happen,
-        // but this is cheap insurance) from producing a `resume` with no
-        // transcript to fetch.
-        ...(run.params?.['resumeSessionId'] !== undefined &&
-        run.params?.['resumeTranscriptGcsUri'] !== undefined
-          ? {
-              resume: {
-                sessionId: run.params['resumeSessionId'],
-                transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
-              },
-            }
-          : {}),
-      }),
-      mode: 'implement',
-      broker_intent_id: run.runId,
-      broker_generation: parseGeneration(run.runId),
-      broker_dispatch_token: crypto.randomUUID(),
-    };
-  } else {
-    // A GitHub anchor's `work` (present once Tasks 1-3 have derived one for
-    // this task) carries no separate `id` -- the anchor already names the
-    // task via `issue`. `spec.parse` failing here (an overlong/malformed
-    // stored payload) is the same permanent-failure shape as the native
-    // branch above: settle done, do not retry a spec that can never parse.
-    //
-    // Wave 1 of #1544 landed a `work` `workflow_dispatch` input on every
-    // consumer repo's `claude/codex/opencode.yml` (six repos, all merged),
-    // forwarded to the agent-lane shim alongside a
-    // `control-plane-projections` flag derived from whether `work` was
-    // sent -- so this no longer needs to gate `work` down to the single
-    // control-plane repo itself. `target.repo` reaching this point is
-    // already admitted: the webhook that created this GitHub-anchored task
-    // only ever does so for a repo in `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`
-    // (see `orchestrator-ingest.ts`'s `checkRepository`), and every
-    // admitted repo now declares the input. Emit it whenever the task has
-    // one.
-    //
-    // If an admitted repo's workflow hasn't actually caught up yet (a real
-    // possibility mid-onboarding -- see the 422-retry block below), the
-    // dispatch below 422s. That no longer risks poisoning the outbox the
-    // way it once did: `drainOutbox`'s per-entry fairness means one
-    // persistently-failing entry no longer blocks any other, and a
-    // dispatch that keeps failing is bounded by `OUTBOX_RETIRE_AFTER_MS`
-    // (with backoff between attempts) rather than retried forever.
-    let workInput: string | undefined;
-    if (task?.work !== undefined) {
-      try {
-        workInput = JSON.stringify({
-          spec: workSpecSchema.parse(task.work['spec']),
-        });
-      } catch (error) {
-        await settleClaim(deps, entry, 'done');
-        recordPermanentFailure(entry, result, error);
-        return;
-      }
-    }
-    inputs = {
-      issue: String(target.issue),
-      ...(workInput === undefined ? {} : { work: workInput }),
-      mode: run.params?.mode ?? 'implement',
-      reply: run.params?.reply ?? '',
-      runbook: run.params?.runbook ?? '',
-      context: run.params?.context ?? '',
-      broker_intent_id: run.runId,
-      broker_generation: parseGeneration(run.runId),
-      broker_dispatch_token: crypto.randomUUID(),
-    };
-  }
-  const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/actions/workflows/${run.pipeline}.yml/dispatches`;
-
-  let response: Response;
-  try {
-    const token = await tokens.tokenFor(target.repo);
-    response = await fetchImpl(url, {
-      method: 'POST',
-      headers: githubHeaders(token),
-      body: JSON.stringify({ ref: 'main', inputs }),
-    });
-  } catch (error) {
-    await settleRetryableFailure(deps, entry, result, error);
-    return;
-  }
-
-  // #1544 wave 2 review (PRRT_kwDOTemFxc6c7KaP): `docs/onboarding-repo.md`
-  // admits a repo to `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (step 1)
-  // before that repo's own workflow callers declare the `work` input
-  // (step 4). A webhook landing in that window mints a GitHub-anchored
-  // task with `work`, and GitHub 422s this dispatch because the
-  // not-yet-updated workflow doesn't declare it. Rather than re-add a
-  // repo allow-list here (which just recreates this failure for every
-  // *future* onboarding, forever), degrade: drop `work` and retry once so
-  // the run proceeds on the legacy issue-anchored path instead of poisoning
-  // the outbox entry. Only applies when there is a legacy path to fall
-  // back to (`target.issue !== undefined`, i.e. not a native work-anchor
-  // run, whose only content *is* `work`) and only for the specific 422
-  // shape GitHub uses for an undeclared input -- any other 422 reason
-  // fails exactly as before.
-  //
-  // #1548 interaction: the initial 422 that triggers this retry is never
-  // itself recorded via `settleRetryableFailure` -- only the outcome
-  // below (`response`, reassigned to the retry's result when a retry
-  // happens) is. So a retry that lands 204 leaves no failure/backoff state
-  // on the entry at all, and a retry that fails (network error above, or a
-  // non-204 status falling through to the check below) is recorded
-  // exactly once, against its own outcome -- never twice for what is, from
-  // the outbox's perspective, a single delivery attempt.
-  if (
-    response.status === 422 &&
-    inputs['work'] !== undefined &&
-    target.issue !== undefined
-  ) {
-    const unexpected = await unexpectedDispatchInputs(response);
-    if (unexpected?.includes('work')) {
-      console.error(
-        'agent-lcars: dispatch to %s#%s named unexpected input(s) [%s] ' +
-          '(422) -- retrying once without `work` on the legacy ' +
-          'issue-anchored path',
-        target.repo,
-        target.issue,
-        unexpected.join(', '),
-      );
-      const { work: _work, ...retryInputs } = inputs;
-      try {
-        const token = await tokens.tokenFor(target.repo);
-        response = await fetchImpl(url, {
-          method: 'POST',
-          headers: githubHeaders(token),
-          body: JSON.stringify({ ref: 'main', inputs: retryInputs }),
-        });
-      } catch (error) {
-        await settleRetryableFailure(deps, entry, result, error);
-        return;
-      }
-    }
-  }
-
-  if (response.status !== 204) {
-    await settleRetryableFailure(
-      deps,
-      entry,
-      result,
-      `workflow_dispatch returned ${response.status}`,
-    );
-    return;
-  }
-
+  await store.enqueueRun({ runId: run.runId, now: now(deps) });
   await orchestrator.confirmDispatch(run.runId);
-  await claimGithubAnchor(deps, target);
+  if (!isWorkAnchor(run.task)) {
+    await claimGithubAnchor(deps, anchorTarget(run));
+  }
   await settleClaim(deps, entry, 'done');
   result.dispatched.push(run.runId);
 }
@@ -940,17 +734,6 @@ function githubHeaders(token: string): Record<string, string> {
   };
 }
 
-/** A runId is `{repo}#{issue}/r{generation}` (see `model.ts`'s `requestRun`
- * run-id minting); this pulls the trailing generation back out for the
- * `broker_generation` workflow input. */
-function parseGeneration(runId: string): string {
-  const match = /\/r(\d+)$/u.exec(runId);
-  if (match === null) {
-    throw new Error(`cannot parse generation from runId: ${runId}`);
-  }
-  return match[1];
-}
-
 /** `run.result.summary` value the executor sends for a run that parked
  *  with real evidence (agent-protocol.md #4's issue-anchor path: a comment
  *  carrying both the attempt-claim and `agent-result:v1:park` markers).
@@ -1109,47 +892,6 @@ function outcomeCommentBody(run: Run): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** GitHub's `workflow_dispatch` 422 for an input the target workflow
- *  doesn't declare names the offending input(s) in its `message` field as
- *  `Unexpected inputs provided: ["name", ...]` -- confirmed against
- *  independent third-party reports of the live API response (not just its
- *  docs): backstage/backstage#20023 (`message` reproduced verbatim as
- *  `Unexpected inputs provided: ["instanceName", "projectId", ...]`) and
- *  benc-uk/workflow-dispatch#80 (`Unexpected inputs provided: ["action",
- *  "arg", "customer"] - https://docs.github.com/rest/actions/workflows#
- *  create-a-workflow-dispatch-event`). Returns the named inputs, or
- *  `undefined` if the body isn't that shape -- a 422 for any other reason
- *  (bad ref, disallowed value, etc.) must not be mistaken for this one. */
-async function unexpectedDispatchInputs(
-  response: Response,
-): Promise<string[] | undefined> {
-  let body: unknown;
-  try {
-    body = await response.clone().json();
-  } catch {
-    return undefined;
-  }
-  const message =
-    typeof body === 'object' && body !== null && 'message' in body
-      ? (body as { message: unknown }).message
-      : undefined;
-  if (typeof message !== 'string') return undefined;
-
-  const match = /^Unexpected inputs provided: (\[.*\])/u.exec(message);
-  if (match === null) return undefined;
-
-  try {
-    const names: unknown = JSON.parse(match[1]);
-    if (Array.isArray(names) && names.every((n) => typeof n === 'string')) {
-      return names as string[];
-    }
-  } catch {
-    // Matched the prefix but the bracketed list didn't parse as JSON --
-    // treat as not-this-shape rather than throwing out of a failure path.
-  }
-  return undefined;
 }
 
 function githubApiBaseUrl(

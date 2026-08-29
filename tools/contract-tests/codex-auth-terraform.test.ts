@@ -12,33 +12,30 @@ const terraform = readFileSync(
   path.join(repoRoot, 'infra/terraform/main.tf'),
   'utf8',
 );
-const codexLane = readFileSync(
-  path.join(repoRoot, '.github/workflows/agent-lane.yml'),
-  'utf8',
-);
-const codexShim = readFileSync(
-  path.join(repoRoot, '.github/workflows/agent-lane-codex.yml'),
-  'utf8',
-);
 
 describe('Codex auth Terraform retirement (#761)', () => {
-  it('keeps runtime access on the versioned GCS CAS store', () => {
+  it('keeps only the Console broker on the central versioned GCS CAS store', () => {
     expect(terraform).toContain(
       'resource "google_storage_bucket" "codex_auth"',
-    );
-    expect(terraform).toContain(
-      'resource "google_storage_bucket_iam_member" "codex_auth_runtime"',
-    );
-    expect(terraform).toContain(
-      'resource "google_storage_bucket_iam_member" "codex_auth_shared_lease_runtime"',
     );
     expect(terraform).toContain(
       'resource "google_storage_bucket_iam_member" "apphosting_codex_auth_broker"',
     );
     expect(terraform).toContain('objects/_leases/codex-subscription.json');
+    expect(terraform).toContain('objects/jlapenna/agent-lcars/auth.json');
     expect(terraform).toContain('storage.objects.create');
     expect(terraform).toContain('storage.objects.get');
     expect(terraform).toContain('storage.objects.delete');
+    expect(terraform).not.toContain(
+      'resource "google_storage_bucket_iam_member" "codex_auth_runtime"',
+    );
+    expect(terraform).not.toContain(
+      'resource "google_storage_bucket_iam_member" "codex_auth_shared_lease_runtime"',
+    );
+    expect(terraform).not.toContain('codex_auth_runtime_identities');
+    expect(terraform).toContain(
+      'resource "google_service_account" "codex_agent"',
+    );
   });
 
   it('contains no legacy Codex Secret Manager containers or runtime grants', () => {
@@ -63,10 +60,19 @@ describe('Codex auth Terraform retirement (#761)', () => {
     }
   });
 
-  it('does not publish or execute the retired Secret Manager compatibility path', () => {
-    expect(codexShim).not.toContain('codex-auth-secret-name');
-    expect(codexLane).not.toContain('codex-auth-secret-name');
-    expect(codexLane).not.toContain('LEGACY_CODEX_AUTH_SECRET_NAME');
-    expect(codexLane).not.toContain('auth-store=secret-manager');
+  it('deletes every hosted provider workflow entry point', () => {
+    for (const file of [
+      'claude.yml',
+      'codex.yml',
+      'opencode.yml',
+      'agent-lane.yml',
+      'agent-lane-claude.yml',
+      'agent-lane-codex.yml',
+      'agent-lane-opencode.yml',
+    ]) {
+      expect(() =>
+        readFileSync(path.join(repoRoot, '.github/workflows', file), 'utf8'),
+      ).toThrow();
+    }
   });
 });

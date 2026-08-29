@@ -14,13 +14,13 @@ succeeds. Never echo a secret value into terminal output, chat, or shell
 history — move values with pipes, `read -rs`, or files created under
 `umask 077`, and delete temporaries when done.
 
-| Credential                | Consumed by                              | Canonical home                                                                      | Mintable by                        |
-| ------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | claude lane (`agent-lane.yml`, run time) | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                    | maintainer only (browser OAuth)    |
-| Codex `auth.json` lineage | codex lane (`agent-lane.yml`, run time)  | GCS `gs://agent-lcars-codex-auth/<owner>/<repo>/auth.json`, one object **per repo** | maintainer only (`codex login`)    |
-| `OPENCODE_LLM_API_KEY`    | opencode lane (`agent-lane.yml`)         | age store + repo Actions secret                                                     | anyone with the LiteLLM master key |
-| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console     | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                | maintainer (App settings UI)       |
-| Autoscaler App key        | runner registration (homelab autoscaler) | homelab vault `github_autoscaler_lcars_app_private_key`                             | maintainer (App settings UI)       |
+| Credential                | Consumed by                              | Canonical home                                                                           | Mintable by                        |
+| ------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)         | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
+| Codex `auth.json` lineage | Console QueueExecutor (run time)         | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
+| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)         | age store + repo Actions secret                                                          | anyone with the LiteLLM master key |
+| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console     | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
+| Autoscaler App key        | runner registration (homelab autoscaler) | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
 
 Two GitHub Apps exist and are easy to confuse:
 
@@ -56,32 +56,23 @@ is "All repositories".
 > file had described as select-repositories when one installation was not
 > (#1381).
 
-## `CLAUDE_CODE_OAUTH_TOKEN` (claude lane)
+## `CLAUDE_CODE_OAUTH_TOKEN` (QueueExecutor)
 
 A long-lived OAuth token for the maintainer's Claude subscription. It does
 **not** rotate — `claude setup-token` mints it once and nothing writes it
 back — so unlike the Codex lineage below one value is safely shared across
 every repo, and it lives in exactly one place (#1350).
 
-No repo carries a copy. `agent-lane.yml` reads it from Secret Manager per
-run over WIF, so onboarding a new repo to the claude lane needs no
-credential work at all, and an expiry is one command rather than an N-repo
-fan-out. Admission is the shared `github` pool in project `agent-lcars`,
-conditioned on `assertion.repository` alone
-(`infra/terraform/main.tf`), so a new repo joins by being added to
-`local.github_repositories` — it needs no pool of its own. The reader
-identity is `claude-token-reader@agent-lcars.iam.gserviceaccount.com`: it
-holds `secretAccessor` on this one secret and nothing else, and is never
-exported as ambient ADC into the agent's shell.
+No repo carries a copy. QueueExecutor reads it from Secret Manager per run,
+so onboarding a repository needs no credential work at all, and an expiry is
+one command rather than an N-repo fan-out. The reader identity is
+`claude-token-reader@agent-lcars.iam.gserviceaccount.com`: it holds
+`secretAccessor` on this one secret and nothing else, and is never exported as
+ambient ADC into the agent's shell.
 
-The read itself is a direct Secret Manager REST call authorized by the
-`access_token` the auth step returns (`google-github-actions/auth` with
-`token_format: access_token`), **not** `get-secretmanager-secrets` or any
-client library that rediscovers credentials through ADC. That rediscovery
-is what broke every consumer lane after #1351 — auth succeeded, a
-credential file existed, and the read still reported "the caller does not
-have permission" against demonstrably correct IAM (#1368). #1370 replaced
-it; if you are changing this step, keep the explicit access token.
+The runtime reads this credential through its dedicated Secret Manager client;
+it is never mounted into a target-repository checkout or passed through a
+GitHub Actions workflow.
 
 1. Run `claude setup-token`. It prints an authorization URL and waits.
    Open that URL in the maintainer's signed-in browser (an agent with
@@ -108,58 +99,50 @@ it; if you are changing this step, keep the explicit access token.
      --project=agent-lcars | sha256sum
    ```
 
-## Codex `auth.json` lineage (codex lane)
+## Codex `auth.json` lineage (Console QueueExecutor)
 
-The GitHub Actions Codex lane and the QueueExecutor's run-token-authenticated
-Codex broker restore `~/.codex/auth.json` from its repository-scoped GCS
-object. Codex can refresh the credential during a run; either path persists a
-changed file only with that exact restored object's generation as its
-precondition. The broker additionally binds access to a live Codex run and its
-target repository; a direct container never receives bucket credentials. That
-makes each repository's object a _lineage_, not a value:
+The Console owns one rotating subscription lineage at
+`gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`. Every direct
+QueueExecutor Codex run restores that object and conditionally persists the
+same object with the exact generation it restored. This is one login for the
+fleet, not one login per target repository.
 
-> **Never copy the blob from another repo's object.** Two repos sharing one
-> lineage invalidate each other on every run (the lane's own comment block
-> documents this). Mint an independent login per repo — same ChatGPT
-> subscription, separate rotating token.
+The credential locator is deliberately central, but target-repository
+authorization is not: the broker first verifies the live, Codex-only run token
+and derives its target repository from the authoritative run. It records that
+repository in the lease and separately mints the short-lived checkout token
+for that exact repository. A direct container receives neither GCS credentials
+nor an arbitrary repository selector.
 
 ### Shared Codex lease
 
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`
-record serializes the single-use subscription refresh token across direct and
-hosted executors. The hosted lane and Console both enable it, so no Codex
-execution path can refresh the subscription outside the shared authority.
+record serializes the single-use subscription refresh token. A run first takes
+that record with generation CAS, then restores the central object. A changed
+`auth.json` is written only with its restored generation; a conflict is
+terminal and must not be retried. Normal persistence/completion releases the
+lease, while an expired owner may be taken over by CAS.
 
 The central activation contract is:
 
-1. Hosted and direct runtime identities have generation-CAS access to this
-   one shared object in addition to their existing repository object prefix.
-2. The published Codex reusable lane's `codex-shared-lease` default is `true`.
-3. The central `svc:telemetry-writer` `work.executor` grant covers `claude`,
+1. The Console App Hosting identity has generation-CAS access to the one
+   central auth object and the one lease object.
+2. The central `svc:telemetry-writer` `work.executor` grant covers `claude`,
    `codex`, and `opencode`.
-4. The Console runtime sets `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true`.
-5. The Console runtime sets `LCARS_CODEX_SHARED_LEASE_ENABLED=true`.
+3. The Console runtime sets `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true`.
+4. The Console runtime sets `LCARS_CODEX_SHARED_LEASE_ENABLED=true`.
 
-When enabled, the hosted workflow lease expires at the fixed GitHub Actions
-run deadline (`run_started_at + job-timeout-minutes`, read from the Actions
-run resource), and direct QueueExecutor heartbeats renew the same record to
-the broker run expiry.
-A conflicting live owner returns 409; takeover requires the recorded expiry;
-normal persistence/completion releases the object. This source configuration
-does not grant IAM access or deploy the production change. Consumers need no
-repository-local migration: the reusable-workflow default and the
-Console/autoscaler configuration are the central activation points.
+Direct QueueExecutor heartbeats renew the same record to the broker run expiry.
+This source configuration does not grant IAM access or deploy the production
+change. Onboarding another target repository requires its normal LCARS
+authorization, but no additional Codex login or auth object.
 
-Per new repo. **Steps 1-2 are the whole job for a repo Terraform already
-covers** — the four 2026-08 additions (`www`, `girosf`, `nx-cache-server`,
-`sync-padd`) have their service accounts and prefix-restricted object grants
-provisioned (#1354), so only the mint is left.
+### Seed or recover the one lineage
 
 1. Mint into an **isolated `CODEX_HOME`**, not your real one. `codex login`
-   writes `$CODEX_HOME/auth.json`, and `CODEX_HOME` defaults to `~/.codex`
-   — so an unisolated mint silently replaces your own live session, once
-   per repo. Point it at a temp dir instead and nothing of yours is
-   touched:
+   writes `$CODEX_HOME/auth.json`, and `CODEX_HOME` defaults to `~/.codex`.
+   Point it at a temporary directory so the fleet lineage does not share a
+   workstation's live session:
 
    ```bash
    export CODEX_HOME=$(mktemp -d) && chmod 700 "$CODEX_HOME"
@@ -167,87 +150,30 @@ provisioned (#1354), so only the mint is left.
    codex login status   # prove it authenticates BEFORE it becomes the lineage
    ```
 
-   This is why the old "run it on a workstation with no live Codex session
-   you care about" advice is obsolete: run it on your normal machine.
-
-2. Publish it to that repo's own GCS object, then shred the isolated home so
-   no competing lineage is left on disk:
+2. After confirming no live lease owner, publish the mint to the central
+   object. Use `0` only for the first seed; for recovery, read the current
+   generation and use that exact value. Then remove the isolated home:
 
    ```bash
+   # Initial seed only:
    gcloud storage cp "$CODEX_HOME/auth.json" \
-     gs://agent-lcars-codex-auth/jlapenna/sync-padd/auth.json \
+     gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json \
      --if-generation-match=0
+
+   # Recovery of an existing central lineage (never retry a 412):
+   GENERATION="$(gcloud storage objects describe \
+     gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json \
+     --format='value(generation)')"
+   gcloud storage cp "$CODEX_HOME/auth.json" \
+     gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json \
+     --if-generation-match="$GENERATION"
+   unset GENERATION
    rm -rf "$CODEX_HOME"; unset CODEX_HOME
    ```
 
-   For the four 2026-08 repos there is a script that does all of this with
-   preflight, per-repo isolation, shredding on every exit path (Ctrl-C
-   included), and a hash check that the stored bytes match what was
-   minted: `~/p/mint-fleet-codex-lineages.sh`, discussed in
-   jlapenna/homelab#758 (kept out of this public repo deliberately).
-
-   The object layout is `gs://agent-lcars-codex-auth/<owner>/<repo>/auth.json`.
-   **Project `agent-lcars` for every repo**, settled in #1354 including the
-   two `supersprinklesracing` ones: the shared `github` pool that admits them
-   lives there, and the bucket IAM condition confines each identity to its own
-   prefix. The lane reads one exact generation and persists only with that
-   generation as `--if-generation-match`; the direct broker uses the same GCS
-   precondition. A conflict is terminal and must not be retried.
-
-3. Infrastructure, for a repo Terraform does **not** yet cover: add its
-   existing runtime service account to `local.codex_auth_runtime_identities`
-   in `infra/terraform/main.tf`, then apply. That one map entry yields a
-   conditional `storage.objects.get/create/delete` grant restricted to the
-   repository's own object prefix; it grants neither object listing nor
-   access to another repository's credential.
-
-   Per-repo identities are not ceremony: the codex lane exports ambient ADC
-   for its GCS calls, so agent-authored code in that job can reach whatever
-   the identity can reach. A shared service account would let one repo's
-   agent read and rotate another repo's credential. Versioning keeps a
-   seven-day noncurrent recovery window; CAS prevents a stale run from
-   overwriting the current object (#1192).
-
-   `sprinkles` is the exception again: it authenticates against pool
-   `claude-agent-pool` / provider `claude-agent-github` in project
-   `supersprinklesracing`. The provider maps `job_workflow_ref` to a
-   `workflow_class` (`ci`, `deploy`, or `agent`) and must name each admitted
-   workflow with its immutable `@` ref suffix:
-
-   ```text
-   assertion.repository=='<owner>/<repo>' &&
-     (assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/ci.yml@')
-      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/e2e.yml@')
-      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy.yml@')
-      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy-rules-and-indexes.yml@')
-      || assertion.job_workflow_ref.startsWith('<owner>/<repo>/.github/workflows/deploy-qbp-appsscript.yml@')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml@')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-codex.yml@')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane-opencode.yml@')
-      || assertion.job_workflow_ref.startsWith('jlapenna/agent-lcars/.github/workflows/agent-lane.yml@'))
-   ```
-
-   That pool and provider are no longer hand-managed: `jlapenna/homelab`'s
-   root Terraform adopted them in homelab#750
-   (`terraform/gcp_sprinkles_wif.tf`), so extend the condition **there**
-   and apply, rather than with `gcloud ... update-oidc`, whose
-   `--attribute-condition` **replaces** rather than appends and whose
-   result that root's scheduled drift check would report. The shared
-   `github` pool needs none of this: it matches on
-   `assertion.repository` alone.
-
-   The provider also maps `attribute.workflow_class` (ci / deploy / agent)
-   from `job_workflow_ref` and, since keyless Sprinkles CI (#828), admits
-   `ci.yml` and `e2e.yml` alongside the deploy and agent-lane workflows;
-   every admitted workflow ref carries an `@`-pinned `startsWith`. The
-   machine-checkable copy lives in `tools/iam-contract/model.json`
-   (`gcpProjects.supersprinklesracing.pools.claude-agent-pool`), kept in
-   step with this file.
-
-4. Set the repo side: callers need only `gcp-project-id` plus their existing
-   WIF provider and service-account values. The object path derives from
-   `github.repository`; there is no per-repository secret-name input.
-5. Verify: `codex login status` inside the lane's restore step log.
+3. Verify with a real native Codex Work run. It must show the target
+   repository's normal checkout authorization, a central auth restore, and a
+   generation-CAS persistence (or an explicit byte-identical no-op).
 
 ## `OPENCODE_LLM_API_KEY` (opencode lane)
 
