@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Curated immutable pnpm content-store seed for ephemeral runners",
-  "packageManager": "pnpm@11.22.0",
+  "packageManager": "pnpm@11.24.0",
   "dependencies": {
     "@eslint/js": "10.0.1",
     "@google-cloud/firestore": "9.0.0",
