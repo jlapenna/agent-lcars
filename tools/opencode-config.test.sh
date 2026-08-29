@@ -73,6 +73,8 @@ done < <(jq -r '.provider.homelab.models | to_entries[] | "\(.key) \(.value.limi
 # A source-level contract catches either half of a relative instructions path
 # being moved without the other, and prevents a later workspace download from
 # recreating the retired copy-on-every-run design.
+jq -e '.provider.homelab.options.apiKey == "{file:/run/secrets/opencode-llm-api-key}"' "$config" >/dev/null ||
+  fail "the OpenCode provider must read its LiteLLM key from the file mount, never an agent-inherited environment variable"
 grep -Fq '/repo/agents/opencode/opencode.json' "$runner_dockerfile" ||
   fail "runner image no longer installs the shared opencode.json"
 grep -Fq '/home/runner/.config/opencode/opencode.json' "$runner_dockerfile" ||

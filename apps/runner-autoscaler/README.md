@@ -136,7 +136,9 @@ uses the run-token-authenticated Console broker for its repository auth.json.
 uses the baked, trusted `/usr/local/bin/opencode run` entry point, not its
 GitHub Actions-only `github run` integration. It defaults `OPENCODE_MODEL`
 to `homelab/default-nothink`; the model may be overridden only in the
-autoscaler's process environment.
+autoscaler's process environment. The baked OpenCode config consumes the
+read-only key file directly, rather than exporting the key to the OpenCode
+process, so routine agent tool-shell environment inspection cannot recover it.
 
 The console claim call is authenticated with a Google ID token minted
 directly from the telemetry-writer service-account key (self-signed, no
