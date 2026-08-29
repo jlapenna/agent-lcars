@@ -133,3 +133,32 @@ func TestDirectRunnerPreflightRequiresEveryPermanentAdapterContract(t *testing.T
 		t.Fatalf("preflight must fail before probing or claiming when a permanent adapter contract is absent")
 	}
 }
+
+func TestDirectRunnerPreflightRequiresEveryConfiguredDirectRunnerImage(t *testing.T) {
+	configureDirectRunnerPreflightMounts(t)
+	fake := newFakeDockerServer(t)
+	// The first configured image starts, while a pipeline-specific second
+	// image cannot. A host must be excluded before it can claim work for that
+	// second pipeline, rather than being marked ready from the first image.
+	fake.setStartFailures(0, 500)
+	resolved := resolvedOrchestratorConfig{
+		DockerHosts: []string{"host=host-target"},
+		ScaleSets: []Config{
+			{ScaleSetName: "claude", Labels: []string{"claude"}, RunnerImage: "registry/claude:test"},
+			{ScaleSetName: "codex", Labels: []string{"codex"}, RunnerImage: "registry/codex:test"},
+		},
+	}
+
+	_, err := directRunnerPreflightHosts(context.Background(), resolved, func(string) (*dockerclient.Client, error) {
+		return fake.client(t), nil
+	}, discardLogger())
+	if err == nil || !strings.Contains(err.Error(), "no configured Docker host passed") {
+		t.Fatalf("preflight error = %v, want no eligible host", err)
+	}
+	if fake.createCount() != 2 || fake.startCount() != 2 || fake.waitCount() != 1 {
+		t.Fatalf("every configured image must be probed: creates/starts/waits = %d/%d/%d, want 2/2/1", fake.createCount(), fake.startCount(), fake.waitCount())
+	}
+	if len(fake.removedIDs()) != 2 {
+		t.Fatalf("every image probe must clean up: removals=%v", fake.removedIDs())
+	}
+}

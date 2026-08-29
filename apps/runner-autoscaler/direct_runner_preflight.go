@@ -47,7 +47,7 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 	if err != nil {
 		return resolvedOrchestratorConfig{}, err
 	}
-	image, err := directRunnerPreflightImage(resolved)
+	images, err := directRunnerPreflightImages(resolved)
 	if err != nil {
 		return resolvedOrchestratorConfig{}, err
 	}
@@ -58,7 +58,7 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 
 	eligible := make([]string, 0, len(order))
 	for _, host := range order {
-		if err := directRunnerPreflightHost(ctx, newClient, host, targets[host], image, mounts); err != nil {
+		if err := directRunnerPreflightHostImages(ctx, newClient, host, targets[host], images, mounts); err != nil {
 			logger.Warn("Direct queue host is ineligible; excluding it from queue launch", slog.String("host", host), slog.String("error", err.Error()))
 			continue
 		}
@@ -72,11 +72,40 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 	return queueResolved, nil
 }
 
-func directRunnerPreflightImage(resolved resolvedOrchestratorConfig) (string, error) {
-	if len(resolved.ScaleSets) == 0 || resolved.ScaleSets[0].RunnerImage == "" {
-		return "", fmt.Errorf("no configured scale set to source a direct-runner preflight image")
+// directRunnerPreflightImages returns every image directRunnerImageFor can
+// select for a supported direct adapter. The direct executor is
+// provider-neutral, but a deployment may use a distinct runner image for
+// each pipeline. Probing only the first image could mark a host eligible and
+// then claim a run whose selected image cannot actually start with its
+// permanent mounts. The adapter registry is also the launch contract, so an
+// unrelated scale-set image cannot make a direct-queue host ineligible.
+func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]string, error) {
+	images := make([]string, 0, len(directRunnerAdapters))
+	seen := make(map[string]bool, len(directRunnerAdapters))
+	for _, adapter := range directRunnerAdapters {
+		image, err := directRunnerImageFor(resolved, adapter.pipeline)
+		if err != nil {
+			return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)
+		}
+		if seen[image] {
+			continue
+		}
+		seen[image] = true
+		images = append(images, image)
 	}
-	return resolved.ScaleSets[0].RunnerImage, nil
+	if len(images) == 0 {
+		return nil, fmt.Errorf("no configured scale set to source a direct-runner preflight image")
+	}
+	return images, nil
+}
+
+func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []string, mounts []directRunnerCredentialMount) error {
+	for _, image := range images {
+		if err := directRunnerPreflightHost(ctx, newClient, host, target, image, mounts); err != nil {
+			return fmt.Errorf("image %q: %w", image, err)
+		}
+	}
+	return nil
 }
 
 // directRunnerPreflightHost creates one disposable container with all
