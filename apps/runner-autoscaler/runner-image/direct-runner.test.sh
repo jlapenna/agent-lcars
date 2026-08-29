@@ -258,7 +258,7 @@ FAKE
   cat > "$bindir/claude" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
-printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
+printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
 exit 0
 FAKE
   chmod +x "$bindir/claude"
@@ -269,6 +269,7 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
 printf '%s' "$CODEX_HOME/sessions" > "$CODEX_SESSIONS_DIR_LOG"
 mkdir -p "$CODEX_HOME/sessions/2026/08/28"
 printf '%s\n' '{"type":"session_meta","payload":{"id":"sess-codex-test"}}' > "$CODEX_HOME/sessions/2026/08/28/sess-codex-test.jsonl"
@@ -293,7 +294,10 @@ FAKE
   cat > "$bindir/opencode" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$OPENCODE_ARGS_LOG"
-printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${MODEL:-}|${GITHUB_TOKEN:-}|${USE_GITHUB_TOKEN:-}" > "$OPENCODE_ENV_LOG"
+printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${MODEL:-}|${GITHUB_TOKEN:-}|${USE_GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$OPENCODE_ENV_LOG"
+if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
+  sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
+fi
 exit 0
 FAKE
   chmod +x "$bindir/opencode"
@@ -349,6 +353,7 @@ run_scenario() {
   export NODE_ARGS_LOG="$dir/node-args.log"
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
+  export CODEX_ENV_LOG="$dir/codex-env.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
@@ -448,8 +453,8 @@ grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
 # The credential-delivery fix under test: CLAUDE_TOKEN_FILE's contents must
 # reach claude's own process environment as CLAUDE_CODE_OAUTH_TOKEN.
 [ -f "$CLAUDE_ENV_TOKEN_LOG" ] || fail "happy path: claude was never invoked with an env to record"
-if [ "$(cat "$CLAUDE_ENV_TOKEN_LOG")" != "$FAKE_CLAUDE_OAUTH_TOKEN" ]; then
-  fail "happy path: claude did not see CLAUDE_CODE_OAUTH_TOKEN from CLAUDE_TOKEN_FILE (got $(cat "$CLAUDE_ENV_TOKEN_LOG"))"
+if [ "$(cat "$CLAUDE_ENV_TOKEN_LOG")" != "$FAKE_CLAUDE_OAUTH_TOKEN|$FAKE_TOKEN" ]; then
+  fail "happy path: Claude did not receive its credential and short-lived rerun token (got $(cat "$CLAUDE_ENV_TOKEN_LOG"))"
 fi
 
 echo "scenario happy-path: OK"
@@ -466,6 +471,8 @@ unset FAKE_MISSING_CLAUDE_TOKEN
 
 [ "$rc" -eq 0 ] || fail "codex happy path: expected exit 0, got $rc"
 [ -s "$CODEX_ARGS_LOG" ] || fail "codex happy path: codex was not invoked"
+[ "$(cat "$CODEX_ENV_LOG")" = "$FAKE_TOKEN" ] ||
+  fail "codex happy path: Codex did not receive the short-lived rerun token ($(cat "$CODEX_ENV_LOG"))"
 grep -q -- 'exec --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
   fail "codex happy path: wrong invocation ($(cat "$CODEX_ARGS_LOG"))"
 if grep -q -- '--ephemeral' "$CODEX_ARGS_LOG"; then
@@ -546,7 +553,7 @@ run_scenario opencode-happy opencode
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
 grep -q -- 'github run' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
-[ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|homelab/default-nothink|$FAKE_TOKEN|true" ] ||
+[ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|homelab/default-nothink|$FAKE_TOKEN|true|$FAKE_TOKEN" ] ||
   fail "opencode happy path: adapter environment mismatch ($(cat "$OPENCODE_ENV_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "opencode happy path: claude was invoked"
 [ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
@@ -554,6 +561,23 @@ grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
   fail "opencode happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario opencode-happy: OK"
+
+# The direct adapter must enforce the hosted lane's 60-minute OpenCode bound
+# locally. A short override makes this regression deterministic without
+# waiting an hour: timeout sends TERM to the trusted CLI, then the runner
+# finalizes and reports the failed/no-deliverable run instead of wedging a
+# queue slot indefinitely.
+export FAKE_OPENCODE_SLEEP_SECONDS=2
+export OPENCODE_TIMEOUT_SECONDS=1
+run_scenario opencode-timeout opencode
+unset FAKE_OPENCODE_SLEEP_SECONDS OPENCODE_TIMEOUT_SECONDS
+
+[ "$rc" -ne 0 ] || fail "opencode timeout: expected a non-zero exit, got 0"
+[ -f "$COMPLETE_LOG" ] || fail "opencode timeout: direct-runner.sh never called POST .../complete"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "opencode timeout: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-timeout: OK"
 
 # A GitHub reply keeps its anchor, mode, reply/runbook/context, and exact
 # marker lookup when it travels through the same direct runner. The marker is

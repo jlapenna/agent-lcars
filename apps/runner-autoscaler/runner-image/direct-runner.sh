@@ -178,8 +178,12 @@ CHECKOUT_TOKEN="$(jq -r '.token' <<<"$checkout")"
 # not claude's. The claude lane's own claude[bot]-push boundary (#645)
 # exists because the claude-code-action vends its own separate push
 # credential internally; direct mode never runs that Action, so there is
-# no second credential to vend. Accepted deliberately, not an oversight.
+# no second credential to vend. Its repository-scoped actions:write grant
+# is also exposed as ACTIONS_RERUN_TOKEN for agent-protocol.md §8's
+# `gh run rerun --failed` path; this is the same short-lived installation
+# token, not a new long-lived provider credential.
 export GH_TOKEN="$CHECKOUT_TOKEN"
+export ACTIONS_RERUN_TOKEN="$CHECKOUT_TOKEN"
 
 CHECKOUT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$CHECKOUT_TOKEN" | base64 -w0)"
 
@@ -486,6 +490,22 @@ else
     exit 1
   fi
   OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
+  # Mirrors the hosted OpenCode step's 60-minute hard timeout. OpenCode has
+  # no max-elapsed-time switch, so bound the trusted executable itself and
+  # leave the surrounding direct runner alive to finalize telemetry and
+  # report no-deliverable rather than letting an unbounded provider retry
+  # occupy a queue slot indefinitely.
+  OPENCODE_TIMEOUT_SECONDS="${OPENCODE_TIMEOUT_SECONDS:-3600}"
+  case "$OPENCODE_TIMEOUT_SECONDS" in
+    '' | *[!0-9]*)
+      echo "FATAL: OPENCODE_TIMEOUT_SECONDS must be a positive integer" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$OPENCODE_TIMEOUT_SECONDS" -lt 1 ]; then
+    echo "FATAL: OPENCODE_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
 
   set +e
   OPENCODE_LLM_API_KEY="$(cat "$OPENCODE_TOKEN_FILE")" \
@@ -493,6 +513,7 @@ else
     USE_GITHUB_TOKEN=true \
     GITHUB_TOKEN="$CHECKOUT_TOKEN" \
     PROMPT="$AGENT_PROMPT" \
+    timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
     "$OPENCODE_BIN" github run
   AGENT_EXIT=$?
   set -e

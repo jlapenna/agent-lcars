@@ -225,7 +225,7 @@ describe('AppInstallationTokenProvider', () => {
     });
   });
 
-  it('mints DIRECT_RUNNER_PERMISSIONS with contents/issues/pull_requests write, correctly spelled', async () => {
+  it('mints DIRECT_RUNNER_PERMISSIONS with direct checkout, push, and CI-rerun grants', async () => {
     // Pins the exact exported constant `route.ts`'s direct-mode checkout/
     // push path actually passes to `createDispatchTokenProvider` -- not a
     // hand-typed stand-in -- so a future edit cannot silently reintroduce
@@ -250,6 +250,7 @@ describe('AppInstallationTokenProvider', () => {
     expect(calls[1]?.body).toEqual({
       repositories: ['example'],
       permissions: {
+        actions: 'write',
         contents: 'write',
         pull_requests: 'write',
         issues: 'write',
