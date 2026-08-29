@@ -32,7 +32,7 @@ max-time = 60'
 
 # Every native runtime helper is env-overridable so direct-runner.test.sh
 # can exercise a fake baked image tree assembled from this checkout.
-RUNTIME_HELPERS_DIR="${RUNTIME_HELPERS_DIR:-/usr/local/lib/agent-lcars/runtime}"
+export RUNTIME_HELPERS_DIR="${RUNTIME_HELPERS_DIR:-/usr/local/lib/agent-lcars/runtime}"
 PREPARE_DISPATCH="${PREPARE_DISPATCH:-$RUNTIME_HELPERS_DIR/prepare-dispatch.sh}"
 VERIFY_OUTCOME="${VERIFY_OUTCOME:-$RUNTIME_HELPERS_DIR/verify-outcome.sh}"
 SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifecycle.sh}"

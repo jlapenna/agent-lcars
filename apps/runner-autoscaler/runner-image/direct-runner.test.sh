@@ -327,6 +327,31 @@ fi
 echo "/fake/claude/projects/-fake-cwd/sess_1.jsonl"
 FAKE
   chmod +x "$bindir/node"
+
+  # The production runner has no RUNTIME_HELPERS_DIR in its environment. For
+  # the one default-path scenario, intercept only the two image-runtime
+  # helper entrypoints: assert the direct runner exported its literal image
+  # default into this child process, then dispatch to the equivalent fake
+  # baked helper. All other bash calls execute normally. This avoids writing
+  # to /usr/local while still exercising the production default without
+  # pre-exporting RUNTIME_HELPERS_DIR from the fixture.
+  cat > "$bindir/bash" <<'FAKE'
+#!/bin/bash
+runtime_root='/usr/local/lib/agent-lcars/runtime'
+if [ "${FAKE_PRODUCTION_RUNTIME_DEFAULT:-}" = 1 ] && {
+  [ "${1:-}" = "$runtime_root/prepare-dispatch.sh" ] ||
+    [ "${1:-}" = "$runtime_root/verify-outcome.sh" ]
+}; then
+  [ "${RUNTIME_HELPERS_DIR:-}" = "$runtime_root" ] || {
+    echo "fake bash: direct runner did not export production RUNTIME_HELPERS_DIR" >&2
+    exit 1
+  }
+  printf '%s\n' "$1" >> "$RUNTIME_HELPERS_DEFAULT_LOG"
+  RUNTIME_HELPERS_DIR="$FAKE_BAKED_RUNTIME_HELPERS_DIR" exec /bin/bash "$FAKE_BAKED_RUNTIME_HELPERS_DIR/${1##*/}"
+fi
+exec /bin/bash "$@"
+FAKE
+  chmod +x "$bindir/bash"
 }
 
 run_scenario() {
@@ -372,6 +397,7 @@ run_scenario() {
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
+  export RUNTIME_HELPERS_DEFAULT_LOG="$dir/runtime-helpers-default.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
   # real bind mount produces -- a plain-text file holding just the token --
@@ -399,14 +425,22 @@ run_scenario() {
   export HEARTBEAT_INTERVAL_SECONDS=1
 
   # Point every helper at the fake baked tree (not the live repo), so this
-  # test exercises the same native layout the Dockerfile produces.
-  export RUNTIME_HELPERS_DIR="$BAKED_RUNTIME_HELPERS_DIR"
-  export PREPARE_DISPATCH="$BAKED_PREPARE_DISPATCH"
-  export VERIFY_OUTCOME="$BAKED_VERIFY_OUTCOME"
+  # test exercises the same native layout the Dockerfile produces. The
+  # production-default case deliberately leaves the runtime helper variables
+  # absent and lets the fake `bash` above prove the direct runner exports its
+  # literal image default before translating it to this fixture tree.
+  if [ "${FAKE_PRODUCTION_RUNTIME_DEFAULT:-}" = 1 ]; then
+    unset RUNTIME_HELPERS_DIR PREPARE_DISPATCH VERIFY_OUTCOME
+    export FAKE_BAKED_RUNTIME_HELPERS_DIR="$BAKED_RUNTIME_HELPERS_DIR"
+  else
+    export RUNTIME_HELPERS_DIR="$BAKED_RUNTIME_HELPERS_DIR"
+    export PREPARE_DISPATCH="$BAKED_PREPARE_DISPATCH"
+    export VERIFY_OUTCOME="$BAKED_VERIFY_OUTCOME"
+  fi
   export SIDECAR_LIFECYCLE="$BAKED_SIDECAR_LIFECYCLE"
 
   set +e
-  bash "$here/direct-runner.sh"
+  /bin/bash "$here/direct-runner.sh"
   rc=$?
   set -e
   workspace="$scenario_runner_temp/checkout"
@@ -460,6 +494,18 @@ grep -q -- "--cwd $workspace" "$NODE_ARGS_LOG" ||
   fail "happy path: runner resume was not passed the checkout cwd ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
   fail "happy path: claude was not passed --resume sess_1 ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+
+# Production starts without RUNTIME_HELPERS_DIR in the QueueExecutor
+# container. Its default must be exported to prepare/verify helpers; the
+# fixture's fake bash records those exact image paths before running the
+# equivalent baked helper tree.
+FAKE_PRODUCTION_RUNTIME_DEFAULT=1 run_scenario production-runtime-default
+
+[ "$rc" -eq 0 ] || fail "production runtime default: expected exit 0, got $rc"
+grep -Fxq '/usr/local/lib/agent-lcars/runtime/prepare-dispatch.sh' "$RUNTIME_HELPERS_DEFAULT_LOG" ||
+  fail "production runtime default: prepare helper did not receive exported image default"
+grep -Fxq '/usr/local/lib/agent-lcars/runtime/verify-outcome.sh' "$RUNTIME_HELPERS_DEFAULT_LOG" ||
+  fail "production runtime default: verify helper did not receive exported image default"
 
 # The credential-delivery fix under test: CLAUDE_TOKEN_FILE's contents must
 # reach claude's own process environment as CLAUDE_CODE_OAUTH_TOKEN.
