@@ -54,6 +54,9 @@ export interface AgentRun {
   displayTitle: string;
   /** Present for GitHub anchors; absent for native Work. */
   issueNumber?: number;
+  /** Present for native Work anchors; this is the stable logical-task key
+   * when no GitHub issue number exists. */
+  workId?: string;
   createdAt: string;
   updatedAt: string;
   /**
@@ -363,6 +366,7 @@ export function agentRunFromOrchestrator(
     conclusion: conclusionFor(run),
     event: run.executor ?? 'github-actions',
     url: `/work/${run.task.workId}`,
+    workId: run.task.workId,
     displayTitle: `${spec.data.title} ${marker}`,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -467,7 +471,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     liveRuns,
     recentRuns,
     fleet,
-    queue: queueFromLiveRuns(authoritativeLiveRuns),
+    ...(liveRead.status === 'fulfilled'
+      ? { queue: queueFromLiveRuns(authoritativeLiveRuns) }
+      : {}),
     warnings: Array.from(new Set(warnings)),
   };
 }

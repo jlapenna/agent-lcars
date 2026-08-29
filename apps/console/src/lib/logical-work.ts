@@ -90,7 +90,7 @@ export type LogicalWorkProvenance =
   | { kind: 'unavailable' };
 
 export interface LogicalWork {
-  task: TaskRef;
+  task: LogicalTaskRef;
   title: string;
   url: string;
   selectedPipeline?: AgentPipeline;
@@ -100,6 +100,19 @@ export interface LogicalWork {
   attempts: ExecutionAttempt[];
   anomalies: LogicalWorkAnomaly[];
   provenance: LogicalWorkProvenance;
+}
+
+/** A logical task is either an issue anchor or native Work. Native Work is
+ * deliberately keyed by its durable work id, never by a presentation title. */
+export type LogicalTaskRef =
+  TaskRef | { repository: TaskRef['repository']; workId: string };
+
+function logicalTaskKey(task: LogicalTaskRef): string {
+  return 'workId' in task ? `work:${task.workId}` : taskRefKey(task);
+}
+
+function logicalTaskUrl(task: LogicalTaskRef): string {
+  return 'workId' in task ? `/work/${task.workId}` : taskRefUrl(task);
 }
 
 /** Bare title/url metadata for a task, independent of whether it currently
@@ -209,21 +222,21 @@ export function deriveLogicalWork(
 ): DeriveLogicalWorkResult {
   const byKey = new Map<
     string,
-    { task: TaskRef; attempts: ExecutionAttempt[] }
+    { task: LogicalTaskRef; attempts: ExecutionAttempt[] }
   >();
   const unattributedAttempts: ExecutionAttempt[] = [];
 
   for (const run of input.attempts) {
     const attempt = toExecutionAttempt(run);
-    if (run.issueNumber === undefined) {
+    if (run.issueNumber === undefined && run.workId === undefined) {
       unattributedAttempts.push(attempt);
       continue;
     }
-    const task: TaskRef = {
-      repository: run.repo,
-      issueNumber: run.issueNumber,
-    };
-    const key = taskRefKey(task);
+    const task: LogicalTaskRef =
+      run.workId !== undefined
+        ? { repository: run.repo, workId: run.workId }
+        : { repository: run.repo, issueNumber: run.issueNumber as number };
+    const key = logicalTaskKey(task);
     const existing = byKey.get(key);
     if (existing) existing.attempts.push(attempt);
     else byKey.set(key, { task, attempts: [attempt] });
@@ -268,8 +281,10 @@ export function deriveLogicalWork(
     work.push({
       task,
       title:
-        meta?.title ?? fallbackAttempt?.displayTitle ?? `#${task.issueNumber}`,
-      url: meta?.url ?? taskRefUrl(task),
+        meta?.title ??
+        fallbackAttempt?.displayTitle ??
+        ('workId' in task ? `Work ${task.workId}` : `#${task.issueNumber}`),
+      url: meta?.url ?? logicalTaskUrl(task),
       // Presentation-only (which badge a card leads with), never a control
       // decision - matches `selectedAgentPipeline`'s "no implicit
       // precedence" spirit.

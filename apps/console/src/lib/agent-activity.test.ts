@@ -108,6 +108,7 @@ describe('agentRunFromOrchestrator', () => {
     });
     expect(native).toMatchObject({
       id: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
       status: 'queued',
       url: '/work/01J5Z3K9QX8F0N2B4V6C8D1E3G',
       displayTitle:
@@ -177,6 +178,7 @@ describe('getAgentActivity', () => {
 
     expect(activity.liveRuns).toEqual([]);
     expect(activity.recentRuns).toEqual([]);
+    expect(activity.queue).toBeUndefined();
     expect(activity.warnings).toEqual([
       'Authoritative live run activity unavailable.',
       'Authoritative recent run activity unavailable.',

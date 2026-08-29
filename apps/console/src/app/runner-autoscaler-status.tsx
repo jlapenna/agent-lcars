@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import type {
   AutoscalerScaleSetStatus,
   AutoscalerStatusResult,
+  QueueExecutorStatus,
 } from '../lib/autoscaler-status';
 import { Eyebrow } from './eyebrow';
 
@@ -24,10 +25,27 @@ export function expireAutoscalerStatuses(
     const updatedAt = Date.parse(status.updatedAt);
     return Number.isFinite(updatedAt) && now - updatedAt <= STALENESS_MS;
   });
-  if (statuses.length === result.statuses.length) return result;
+  const queueExecutor = result.queueExecutor;
+  const freshQueueExecutor =
+    queueExecutor !== undefined &&
+    Number.isFinite(Date.parse(queueExecutor.updatedAt)) &&
+    now - Date.parse(queueExecutor.updatedAt) <= STALENESS_MS
+      ? queueExecutor
+      : undefined;
+  if (
+    statuses.length === result.statuses.length &&
+    freshQueueExecutor === queueExecutor
+  ) {
+    return result;
+  }
   return {
     statuses,
-    warnings: ['Runner autoscaler status is stale.'],
+    ...(freshQueueExecutor === undefined
+      ? {}
+      : { queueExecutor: freshQueueExecutor }),
+    warnings: Array.from(
+      new Set([...result.warnings, 'Runner autoscaler status is stale.']),
+    ),
   };
 }
 
@@ -83,6 +101,32 @@ function ScaleSetRow({ status }: { status: AutoscalerScaleSetStatus }) {
   );
 }
 
+function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
+  return (
+    <Stack gap={2} data-testid="queue-executor-status">
+      <Group gap="xs" wrap="wrap">
+        <Text size="sm" fw={600}>
+          Queue executor
+        </Text>
+        <Badge color={status.ready ? 'green' : 'red'} size="xs">
+          {status.ready ? 'ready' : 'not ready'}
+        </Badge>
+        {status.draining && (
+          <Badge color="yellow" size="xs">
+            draining
+          </Badge>
+        )}
+        <Text size="xs" c="dimmed">
+          {status.activeRuns === undefined
+            ? 'active unknown'
+            : `${status.activeRuns} active`}{' '}
+          · {status.maxConcurrent} max
+        </Text>
+      </Group>
+    </Stack>
+  );
+}
+
 /** A tiny, isolated polling island: status refreshes every 10 seconds without
  * re-running the dashboard's GitHub reads or invalidating its cache. */
 export function RunnerAutoscalerStatus({
@@ -120,7 +164,7 @@ export function RunnerAutoscalerStatus({
     };
   }, []);
 
-  if (result.statuses.length === 0) {
+  if (result.statuses.length === 0 && result.queueExecutor === undefined) {
     return result.warnings.length > 0 ? (
       <Text size="xs" c="dimmed" data-testid="runner-autoscaler-status-warning">
         {result.warnings[0]}
@@ -133,6 +177,9 @@ export function RunnerAutoscalerStatus({
       {result.statuses.map((status) => (
         <ScaleSetRow key={status.scaleSet} status={status} />
       ))}
+      {result.queueExecutor && (
+        <QueueExecutorRow status={result.queueExecutor} />
+      )}
     </Stack>
   );
 }
