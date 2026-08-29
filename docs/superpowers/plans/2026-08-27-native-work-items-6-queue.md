@@ -594,113 +594,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: temporary executor selection in `work-router.ts` (superseded)
+### Task 4: unified executor decision
 
-**Files:**
+**Final design:** `dispatchExecutor` is a single server-owned policy which
+requires `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true` and returns `queue` for
+every admitted provider. The Console supplies that same decision to native
+Work, GitHub-anchored work, internal requests, schedule ticks, and
+redispatches. Work specifications and callers carry no executor-routing
+input, and no context/config parser maintains a pipeline allowlist.
 
-- Modify: `apps/console/src/lib/work-grants.ts` (config reader, alongside `workMaxLiveRuns`)
-- Modify: `apps/console/src/lib/work-router.ts` (`WorkContext`, `create`, `redispatch`)
-- Modify: `apps/console/src/app/api/work/v1/[[...rest]]/route.ts` (pass `queuePipelines` into context)
-- Test: `apps/console/src/lib/work-router.test.ts`, `apps/console/src/lib/work-grants.test.ts`
-
-**Interfaces:**
-
-- Produces: the original staged per-pipeline selector. It was superseded by the final server-wide QueueExecutor policy; callers and work specifications do not select a route.
-
-- [ ] **Step 1: Write the failing tests**
-
-```ts
-// apps/console/src/lib/work-grants.test.ts
-it('queuePipelines defaults to empty and parses a JSON array', () => {
-  expect(queuePipelines(undefined)).toEqual([]);
-  expect(queuePipelines('["claude"]')).toEqual(['claude']);
-});
-```
-
-```ts
-// apps/console/src/lib/work-router.test.ts (new case in the existing
-// 'items routes' describe block; `context()` gains `queuePipelines: []`
-// as a default -- see Step 3's edit to the test's own `context` helper)
-it('create sets executor: queue only for a configured pipeline', async () => {
-  const ctx = context({ queuePipelines: ['claude'] });
-  const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
-  expect(r.status).toBe(201);
-  const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-  expect(run?.executor).toBe('queue');
-});
-
-it('create leaves executor unset for a pipeline not in the queue list', async () => {
-  const ctx = context({ queuePipelines: ['codex'] });
-  const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
-  expect(r.status).toBe(201);
-  const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-  expect(run?.executor).toBeUndefined();
-});
-```
-
-- [ ] **Step 2: Run to verify they fail** — `./tools/nx test @agent-lcars/console -- work-grants work-router` → FAIL.
-
-- [ ] **Step 3: Implement**
-
-`work-grants.ts` — beside `workMaxLiveRuns`:
-
-```ts
-/** Pipelines routed to the `queue` executor at request time. Default `[]`:
- *  with nothing configured, `work-router.ts`'s `executorFor` never returns
- *  `'queue'` and every run dispatches through GitHub Actions exactly as
- *  before this sub-project. */
-export function queuePipelines(raw: string | undefined): string[] {
-  if (raw === undefined || raw.trim() === '') return [];
-  return z.array(z.string().min(1).max(64)).parse(JSON.parse(raw));
-}
-```
-
-`work-router.ts` — `WorkContext` gains `queuePipelines: readonly string[]`; add, near `forbiddenReason`:
-
-```ts
-import type { RunExecutor } from '@agent-lcars/orchestrator';
-
-/** Console configuration decides the executor, per pipeline, at request
- *  time -- never the item's own spec (design spec, "The `executor`
- *  field"). */
-export function executorFor(
-  pipeline: string,
-  queuePipelines: readonly string[],
-): RunExecutor | undefined {
-  return queuePipelines.includes(pipeline) ? 'queue' : undefined;
-}
-```
-
-(`undefined` rather than `'github-actions'` deliberately: `Run.executor` stays absent for the common case, matching Task 1's "absent means github-actions" contract exactly, rather than writing the default value explicitly onto every run.)
-
-In `create`'s handler, the `context.runtime.orchestrator.request({...})` call gains:
-
-```ts
-    executor: executorFor(input.spec.pipeline, context.queuePipelines),
-```
-
-(alongside the existing `work: {...}` field). In `redispatch`'s handler, the same line is added to its own `orchestrator.request({...})` call, using `spec.pipeline` (the item's declared pipeline, already read a few lines above via `workPayloadSchema.parse(task.task.work)`).
-
-`route.ts` — the `context` object gains:
-
-```ts
-      queuePipelines: queuePipelines(),
-```
-
-(import `queuePipelines` from `@/lib/work-grants` alongside the existing `workGrants`/`workMaxLiveRuns` import.)
-
-Update `work-router.test.ts`'s `context()` helper to accept and default `queuePipelines: []` in its returned object, spread after `maxLiveRuns: 4`.
-
-- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console -- work-grants work-router` → PASS; typecheck; prettier.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/console/src/lib/work-grants.ts apps/console/src/lib/work-grants.test.ts apps/console/src/lib/work-router.ts apps/console/src/lib/work-router.test.ts "apps/console/src/app/api/work/v1/[[...rest]]/route.ts"
-git commit -m "feat(console): temporary executor selection
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
-```
+**Verification:** unit tests prove Claude, Codex, and OpenCode all receive
+the queue executor; deployment-contract tests prove the active configuration
+and executor grant cover the same three providers.
 
 ---
 
@@ -1412,7 +1317,6 @@ async function handle(request: Request): Promise<Response> {
       runtime,
       sessionsFor: sessionsForRuns,
       maxLiveRuns: workMaxLiveRuns(),
-      queuePipelines: queuePipelines(),
     },
   });
   return matched && response !== undefined
