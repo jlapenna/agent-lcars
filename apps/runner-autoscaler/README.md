@@ -133,9 +133,10 @@ mounts, never Docker environment values; Codex receives no host credential and
 uses the run-token-authenticated Console broker for its repository auth.json.
 `LCARS_QUEUE_OPENCODE_KEY_HOST_PATH` must contain the LiteLLM virtual key
 (`OPENCODE_LLM_API_KEY`) before OpenCode work can launch. The direct adapter
-uses the baked, trusted `/usr/local/bin/opencode github run` entry point and
-defaults `OPENCODE_MODEL` to `homelab/default-nothink`; the model may be
-overridden only in the autoscaler's process environment.
+uses the baked, trusted `/usr/local/bin/opencode run` entry point, not its
+GitHub Actions-only `github run` integration. It defaults `OPENCODE_MODEL`
+to `homelab/default-nothink`; the model may be overridden only in the
+autoscaler's process environment.
 
 The console claim call is authenticated with a Google ID token minted
 directly from the telemetry-writer service-account key (self-signed, no

@@ -93,6 +93,11 @@ REPLY="$(jq -r '.reply // ""' <<<"$brief")"
 RUNBOOK="$(jq -r '.runbook // ""' <<<"$brief")"
 CONTEXT="$(jq -r '.context // ""' <<<"$brief")"
 export MODE REPLY RUNBOOK CONTEXT
+# Agent protocol markers name the exact broker attempt.  QueueExecutor is
+# not a GitHub Actions worker, so no action layer exports this on its behalf.
+# Keep it a direct-runner contract for every provider rather than relying on
+# any provider's own invocation shape.
+export ATTEMPT_ID
 export GITHUB_REPOSITORY="$TARGET_REPO"
 # Native work items sub-project 8: a claimed run may carry a resume request
 # (populated by the console's own drain input -- Task 3) for a prior
@@ -255,6 +260,28 @@ set -a
 source "$GITHUB_ENV"
 set +a
 
+# A native Work item has no GitHub issue thread on which to leave a terminal
+# park/no-op.  The provider gets one private, per-run file instead.  It is an
+# executor contract, not a provider feature: every provider receives the
+# same path and the completion logic below validates the exact two-line
+# record before accepting it.  An issue/PR anchor deliberately has no such
+# alternate evidence surface.
+NATIVE_WORK_INSTRUCTIONS=''
+if [ "$ANCHOR_TYPE" = "work" ]; then
+  NATIVE_WORK_OUTCOME_FILE="$RUNNER_TEMP/native-work-terminal-outcome.txt"
+  export NATIVE_WORK_OUTCOME_FILE
+  NATIVE_WORK_INSTRUCTIONS="
+For this native Work anchor, a PARK or NO-OP has no issue thread. Before you
+end, write exactly these two lines to \$NATIVE_WORK_OUTCOME_FILE (substituting
+the result kind):
+
+<!-- agent-result:v1:park:$ATTEMPT_ID -->
+<!-- attempt-claim:$ATTEMPT_ID -->
+
+Use no-op instead of park only when the requested result already exists. Do
+not create that file for a pull-request outcome."
+fi
+
 # Canonical direct-runner dispatch prompt. It is self-contained so target
 # repositories cannot change QueueExecutor behavior.
 AGENT_PROMPT="$(cat <<PROMPT
@@ -277,6 +304,7 @@ verbatim:
 <!-- attempt-claim:$ATTEMPT_ID -->
 
 Commit and push before you end your turn.
+$NATIVE_WORK_INSTRUCTIONS
 PROMPT
 )"
 
@@ -480,6 +508,10 @@ else
     echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
     exit 1
   fi
+  if ! "$OPENCODE_BIN" run --help 2>&1 | grep -Fq -- '--auto'; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN does not support QueueExecutor's --auto mode" >&2
+    exit 1
+  fi
   OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
@@ -500,12 +532,10 @@ else
 
   set +e
   OPENCODE_LLM_API_KEY="$(cat "$OPENCODE_TOKEN_FILE")" \
-    MODEL="$OPENCODE_MODEL" \
-    USE_GITHUB_TOKEN=true \
     GITHUB_TOKEN="$CHECKOUT_TOKEN" \
-    PROMPT="$AGENT_PROMPT" \
     timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
-    "$OPENCODE_BIN" github run
+    "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
+      --auto "$AGENT_PROMPT"
   AGENT_EXIT=$?
   set -e
 fi
@@ -524,9 +554,11 @@ cleanup_codex_material
 
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
+VERIFY_OUTPUT="$RUNNER_TEMP/verify-deliverable-output"
 if [ "$AGENT_EXIT" -eq 0 ] &&
   AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
-  bash "$VERIFY_DELIVERABLE"; then
+  bash "$VERIFY_DELIVERABLE" >"$VERIFY_OUTPUT" 2>&1; then
+  cat "$VERIFY_OUTPUT"
   # The verifier proves that *some* exact marker-bound artifact exists; the
   # completion outcome must still name that artifact rather than relabeling
   # a reply comment or a pull-request review as a pull request.
@@ -589,6 +621,25 @@ if [ "$AGENT_EXIT" -eq 0 ] &&
       echo "::warning::Could not classify a pull-request review deliverable for the completion callback" >&2
     fi
   fi
+elif [ "$AGENT_EXIT" -eq 0 ] && [ "$ANCHOR_TYPE" = "work" ]; then
+  # A native Work terminal outcome is a deliberately narrow replacement for
+  # the issue-comment evidence it cannot produce.  Do not parse agent stdout
+  # or the expanded prompt: only an exact, private two-line file may settle a
+  # park/no-op, matching the shared agent protocol's marker grammar.
+  native_park_marker="<!-- agent-result:v1:park:${ATTEMPT_ID} -->"
+  native_no_op_marker="<!-- agent-result:v1:no-op:${ATTEMPT_ID} -->"
+  claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
+  if [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
+    printf '%s\n%s\n' "$native_park_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
+    OUTCOME=park
+  elif [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
+    printf '%s\n%s\n' "$native_no_op_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
+    OUTCOME=no-op
+  else
+    cat "$VERIFY_OUTPUT"
+  fi
+elif [ "$AGENT_EXIT" -eq 0 ]; then
+  cat "$VERIFY_OUTPUT"
 fi
 
 payload_file="$RUNNER_TEMP/complete-payload.json"
