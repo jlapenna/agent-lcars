@@ -10,6 +10,13 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const e2eLocal = path.join(root, 'tools/e2e-local.sh');
 const validator = path.join(root, 'tools/e2e/validate-env.mjs');
+const canonicalEnv = path.join(root, 'tools/e2e/ci.env');
+
+test('the hermetic Console runtime enables the mandatory unified queue', () => {
+  const fixture = fs.readFileSync(canonicalEnv, 'utf8');
+
+  assert.match(fixture, /^AGENT_LCARS_UNIFIED_QUEUE_ENABLED="true"$/mu);
+});
 
 function runThroughE2eBoundary(probe, env = {}, excludedEnvironmentKeys = []) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-e2e-probe-'));
