@@ -111,6 +111,22 @@ passes, then sends a claim body containing only its runner identity.
 The server derives claimable pipelines from the authenticated `work.executor`
 grant; no autoscaler-local pipeline allowlist exists.
 
+### Native schedule ticker
+
+The same continuously running process ticks native schedules through
+`POST /api/work/v1/schedules/tick` once at startup and then every five
+minutes. It reuses the queue executor's Google ID-token source and Work API
+audience, but needs the separate `work.cron` scope; `work.executor` alone
+cannot mint schedules, and `work.cron` cannot claim runs. This keeps schedule
+state and admission in the Work API and removes GitHub Actions schedule
+delivery from the ingress path. `github_runner_autoscaler_schedule_ticks_total`
+reports `success` and `error` outcomes for operations monitoring.
+
+Every healthy autoscaler replica performs this tick; there is deliberately no
+host leader election. The Work API derives one deterministic item/request id
+per `(scheduleId, due slot)` and the orchestrator persists it with
+compare-and-set, so simultaneous ticks coalesce to one durable item and run.
+
 Provider credentials stay behind the direct-runner adapter boundary: Claude
 and OpenCode receive their respective host-staged token files as read-only
 mounts, never Docker environment values; Codex receives no host credential and

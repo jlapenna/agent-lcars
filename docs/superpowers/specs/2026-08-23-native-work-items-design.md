@@ -714,8 +714,9 @@ forever.
 
 ### Tick semantics
 
-`work-schedules-tick.yml` calls `POST /schedules/tick` every 5 minutes
-with an empty JSON body. Creation seeds `lastSlotAt` to the creation
+The continuously running autoscaler calls `POST /schedules/tick` every five
+minutes with an empty JSON body using its existing Google ID-token path.
+Creation seeds `lastSlotAt` to the creation
 instant, so a schedule's first slot is the first boundary after its
 creation. For each enabled schedule:
 
@@ -731,8 +732,8 @@ creation. For each enabled schedule:
    A missed slot is never backfilled: only the latest due slot is minted
    each tick, and an older one is silently superseded.
 3. Grants are re-checked at mint time against the schedule's `createdBy`
-   principal — never the tick caller's own `cron:tick` identity, which
-   carries no grant of its own — using the same `forbiddenReason` rule
+   principal — never the scheduler service's own `work.cron` authority —
+   using the same `forbiddenReason` rule
    `create` and `redispatch` already apply. A refusal disables the
    schedule (`disabledReason: 'grant-revoked'`) instead of retrying a
    refusal every 5 minutes forever.
@@ -757,21 +758,12 @@ principal's grant is checked and where the id comes from.
 
 ### Auth for the tick
 
-`POST /schedules/tick` has no human or service-account caller — only the
-scheduled workflow. A new scope `work.cron` (beside `work.operator`) is
-granted by GitHub Actions OIDC alone:
-`assertScheduleTickOidcClaims`/`verifyScheduleTickOidcToken` in
-`github-actions-oidc.ts` mirror the reconciler's pair — audience
-`agent-lcars-work-schedules`, repository pinned to the control-plane home
-(not the allow-list, like the reconciler), `ref: refs/heads/main`,
-`event_name` in `{schedule, workflow_dispatch}`, `job_workflow_ref`
-pinned to `.github/workflows/work-schedules-tick.yml@refs/heads/main`.
-`authenticateWorkRequest` grows a third branch: a bearer that fails Google
-verification is tried against this verifier before the request is
-refused, producing `{ principal: 'cron:tick', via: 'oidc', scopes:
-['work.cron'] }`. No grant-list entry for `cron:tick` itself — `work.cron`
-confers nothing but tick access, and the tick re-checks every schedule's
-own `createdBy` grant per schedule.
+`POST /schedules/tick` is a service route, not an operator route. The
+continuously running autoscaler authenticates with its existing Google ID
+token and is granted the narrow `work.cron` scope in
+`AGENT_LCARS_WORK_GRANTS`. `work.cron` confers only tick access; it does not
+grant `work.operator` or `work.executor`, and the tick re-checks every
+schedule's own `createdBy` grant per schedule.
 
 ### Console
 
@@ -791,17 +783,16 @@ Cron evaluator table tests (every operator, invalid expressions throw);
 against memory and the Firestore emulator; router tests for
 create/get/list/enable/disable and for the tick (not due, due plus
 idempotent re-tick, cap-skip leaving `lastSlotAt` untouched,
-grant-revoked disabling); OIDC claim tests mirroring the reconciler's;
-console page/form tests; a workflow text-assertion test for
-`work-schedules-tick.yml`'s cadence, trigger, minimal permissions, and
-target; the OpenAPI document regenerated and diffed in CI as it already
+grant-revoked disabling); Google grant/scope tests; console page/form tests;
+an autoscaler HTTP contract test for the five-minute Work API caller; the
+OpenAPI document regenerated and diffed in CI as it already
 is for `items`. `/api/work/v1/` is already the whole prefix's proxy
 allow-list entry (`proxy.ts`) — the tick route needs no proxy change.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant S as work-schedules-tick.yml (schedule)
+  participant S as autoscaler schedule ticker
   participant API as Console API
   participant G as Grants
   participant X as Orchestrator
@@ -1829,8 +1820,8 @@ without a new IAM grant has a literal `OrchestratorStore` handle _and_
 telemetry write access in the same process.
 
 **The chosen route (zero Terraform/IAM/secrets).** A new scheduled
-workflow, `work-session-pin-tick.yml`, mirroring
-`work-schedules-tick.yml`/`dispatch-reconcile.yml`'s existing pattern,
+workflow, `work-session-pin-tick.yml`, following the then-current
+`dispatch-reconcile.yml` pattern,
 combines two credentials the fleet already grants this repository, neither
 newly:
 
@@ -1838,11 +1829,11 @@ newly:
    `assertSessionPinTickOidcClaims`/`verifySessionPinTickOidcToken` pair in
    `github-actions-oidc.ts` (audience `agent-lcars-session-pin-tick`,
    `job_workflow_ref` pinned to `.github/workflows/work-session-pin-tick.yml`
-   — the same shape `assertScheduleTickOidcClaims` already established),
+   — the same pinned-workflow claim shape used by the reconciler),
    producing a `{ principal: 'pin:tick', scopes: ['work.reaper'] }`
    `WorkPrincipal` — a fourth `authenticateWorkRequest` branch, no grant-list
-   entry needed (exactly like `cron:tick` today, the OIDC branches are
-   hardcoded principals, not grant lookups). `work.reaper` is new, narrow,
+   entry needed (the OIDC branch is a hardcoded principal, not a grant
+   lookup). `work.reaper` is new, narrow,
    and mirrors `work.cron`/`work.executor`'s existing one-purpose-scope
    precedent rather than reusing `work.operator` (which would also confer
    create/cancel/redispatch — broader than this caller ever needs).
@@ -1943,8 +1934,8 @@ covers both the resume and the pin-tick flows).
 - Pinning (`session-pin-tick.spec.ts`): a fake `fetch` returning open items
   with sessions, and a fake `touchSessionExpiry`, proving every open item's
   session gets touched and a settled item's does not.
-- OIDC claims (`github-actions-oidc.test.ts`): `assertSessionPinTickOidcClaims`
-  accept/reject table mirroring `assertScheduleTickOidcClaims`'s.
+- OIDC claims (`github-actions-oidc.test.ts`):
+  `assertSessionPinTickOidcClaims` accept/reject table.
 - Workflow contract (`tools/workflow-session-pin-tick.test.sh`, registered
   in `ci.yml`): cadence, trigger, `id-token: write`-only permissions,
   target audience/endpoint.

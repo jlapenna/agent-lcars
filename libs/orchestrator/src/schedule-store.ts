@@ -29,8 +29,8 @@ export const scheduleSchema = z.strictObject({
     ),
   enabled: z.boolean(),
   /** LCARS-native principal that created the schedule -- the identity
-   *  grants are checked against at every tick, never the tick caller's
-   *  own `cron:tick` identity, which has no grant of its own. */
+   *  grants are checked against at every tick, not the scheduler service
+   *  principal's separate `work.cron` authority. */
   createdBy: z.string().min(1).max(128),
   createdAt: isoUtc,
   updatedAt: isoUtc,

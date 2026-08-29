@@ -233,12 +233,10 @@ describe('generateWorkOpenApi', () => {
     expect(doc.components.securitySchemes).toHaveProperty('runToken');
   });
 
-  it('gives tick a distinct presentation: the cron tag and GitHub Actions OIDC security', async () => {
-    // `tick` has no human/service-account caller and never accepts the
-    // operator `bearerAuth` a Google-authenticated principal presents
-    // elsewhere in this document -- `work-auth.ts` never grants
-    // `work.cron` from that path -- so it is documented with its own tag
-    // and its own (not additive) security requirement.
+  it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
+    // `tick` is a service operation guarded by the server-owned work.cron
+    // scope. Its credential is therefore the same Google bearer format as
+    // other Work API callers, not a GitHub workflow identity.
     const doc = (await generateWorkOpenApi()) as {
       paths: Record<
         string,
@@ -251,13 +249,8 @@ describe('generateWorkOpenApi', () => {
     };
     const tick = doc.paths['/schedules/tick']?.post;
     expect(tick?.tags).toEqual(['schedules', 'cron']);
-    expect(tick?.security).toEqual([{ githubOidc: [] }]);
-    expect(doc.components.securitySchemes).toHaveProperty('githubOidc', {
-      type: 'http',
-      scheme: 'bearer',
-      bearerFormat: 'JWT',
-      description: 'GitHub Actions OIDC token for work-schedules-tick.yml',
-    });
+    expect(tick?.security).toEqual([{ bearerAuth: [] }]);
+    expect(doc.components.securitySchemes).not.toHaveProperty('githubOidc');
   });
 
   it('documents every status each route can actually answer with', async () => {

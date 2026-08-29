@@ -295,7 +295,10 @@ describe('console deployment workflow', () => {
     ).toMatchObject({
       principal: 'svc:telemetry-writer',
       pipelines: ['claude', 'codex', 'opencode'],
-      scopes: ['work.executor'],
+      // The same Google principal drives both the durable executor and the
+      // server-owned schedule ticker. Pin this deployed grant so the ticker
+      // cannot silently start returning work.cron 401s after a config edit.
+      scopes: ['work.executor', 'work.cron'],
     });
     expect(
       config.env?.find(

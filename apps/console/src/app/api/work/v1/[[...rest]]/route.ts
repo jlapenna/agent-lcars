@@ -3,10 +3,7 @@ import 'server-only';
 import { auth } from '@/auth';
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import { controlPlaneRepository } from '@/lib/deployment';
-import {
-  verifyScheduleTickOidcToken,
-  verifySessionPinTickOidcToken,
-} from '@/lib/github-actions-oidc';
+import { verifySessionPinTickOidcToken } from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
@@ -64,11 +61,6 @@ async function handle(request: Request): Promise<Response> {
   const bearerToken = rawBearerToken(request);
   const principal = await authenticateWorkRequest(request, {
     verifyGoogleIdToken,
-    // #1502 sub-project 3: the scheduled tick trigger, like the reconciler,
-    // is pinned to the control-plane home -- not the request path's
-    // allow-list. See github-actions-oidc.ts's schedule-tick section.
-    verifyScheduleTickOidcToken: (token) =>
-      verifyScheduleTickOidcToken(token, controlPlaneRepository()),
     verifySessionPinTickOidcToken: (token) =>
       verifySessionPinTickOidcToken(token, controlPlaneRepository()),
     session: async () => (await auth()) as { user?: { login?: string } } | null,

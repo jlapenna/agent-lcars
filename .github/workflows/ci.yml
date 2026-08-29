@@ -127,9 +127,6 @@ jobs:
       - name: Test worker workflow anchor gates
         run: bash tools/workflow-anchor-gates.test.sh
 
-      - name: Test the work-schedules-tick workflow
-        run: bash tools/workflow-schedule-tick.test.sh
-
       - name: Test the work-session-pin-tick workflow
         run: bash tools/workflow-session-pin-tick.test.sh
 

@@ -117,11 +117,11 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// telemetry writer. It shares the existing bounded runner-status store.
 	go runQueueExecutorStatusPublisher(ctx, statusPublisher, queueStatus)
 
-	// Native work items queue executor: a durable goroutine that polls the
-	// console's run-claim API and launches direct-mode containers, entirely
-	// outside the GitHub scale-set state machine above. It starts whenever
-	// its console and credential configuration is complete; the console's
-	// authenticated work.executor grant is the sole claim capability source.
+	// Native work items: the durable queue executor claims and launches direct
+	// runners, while the schedule ticker calls the Work API's schedule route.
+	// Both use the same server-owned API and Google ID-token path, but the
+	// server grants work.executor and work.cron independently. Neither path
+	// depends on a GitHub scheduled workflow.
 	// These values are read once at startup, not on SIGHUP, so changing an
 	// LCARS_QUEUE_*/LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE value (or the Docker
 	// host pool launchDirectRunner reads from `resolved`) needs a full daemon
@@ -146,11 +146,13 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			logger.Error("Queue executor misconfigured", slog.String("reason", queueDisabledReason))
 		}
 	}
-	if startQueuePoller {
+	// Schedule ticking needs only the Console URL and the existing Google key;
+	// it must not be coupled to a direct-runner host mount. A host can be
+	// temporarily unavailable while the server still safely owns schedule
+	// admission and queue state.
+	if consoleURL != "" && keyPath != "" {
 		audience := queueExecutorAudience(os.Getenv("LCARS_WORK_AUDIENCE"))
-		hostname, hostErr := os.Hostname()
-		runnerName := queueExecutorRunnerName(hostname, hostErr)
-		// Built once here, not per poll: see newDirectRunnerIDTokenSource's
+		// Built once here, not per request: see newDirectRunnerIDTokenSource's
 		// doc comment. A bad/missing key fails this the same way a bad
 		// GitHub credential fails registration elsewhere in this
 		// function -- loudly, at startup, rather than silently every 15s.
@@ -159,36 +161,53 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			setQueueExecutorStartupState(queueExecutorStateMisconfigured)
 			logger.Error("Queue executor disabled: could not build the claim ID token source", slog.Any("error", tokenErr))
 		} else {
-			// Captured by value at startup, not read from the outer `resolved`
-			// directly: a config reload later in this function's select loop
-			// reassigns `resolved` from this same goroutine, and closing over
-			// that variable instead of a snapshot would race the poller
-			// goroutine's reads of it. The preflight also narrows this snapshot
-			// to only hosts that passed every direct-adapter bind check.
-			queueExecutorResolved, preflightErr := directRunnerPreflightHosts(ctx, resolved, newDockerClient, logger)
-			if preflightErr != nil {
-				setQueueExecutorStartupState(queueExecutorStateMisconfigured)
-				logger.Error("Queue executor disabled: no eligible direct-runner host", slog.Any("error", preflightErr))
-			} else {
-				queueStatus.configureEligibleHosts(queueExecutorResolved, newDockerClient)
-				setQueueExecutorStartupState(queueExecutorStateReady)
-				queueStatus.ready.Store(true)
-				go runQueueExecutorPoller(ctx, queueExecutorConfig{
-					consoleURL: consoleURL,
-					runnerName: runnerName,
-					idToken: func() (string, error) {
-						return idTokenFromSource(tokenSource)
-					},
-					launch: func(l directRunnerLaunch) error {
-						return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
-					},
-					draining: queueDraining.Load,
-					cleanup: func(cleanupCtx context.Context) error {
-						return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved, newDockerClient, time.Now())
-					},
-				}, 15*time.Second, logger)
+			// Schedule ticking needs no Docker host or provider credential. Keep
+			// it independent from direct-runner launch preflight so a temporary
+			// host fault cannot reintroduce GitHub as the scheduler. The API
+			// enforces the distinct work.cron grant on this same Google identity.
+			go runScheduleTicker(ctx, scheduleTickerConfig{
+				consoleURL: consoleURL,
+				idToken: func() (string, error) {
+					return idTokenFromSource(tokenSource)
+				},
+			}, logger.With("component", "schedule-ticker"))
+
+			if startQueuePoller {
+				hostname, hostErr := os.Hostname()
+				runnerName := queueExecutorRunnerName(hostname, hostErr)
+				// Captured by value at startup, not read from the outer `resolved`
+				// directly: a config reload later in this function's select loop
+				// reassigns `resolved` from this same goroutine, and closing over
+				// that variable instead of a snapshot would race the poller
+				// goroutine's reads of it. The preflight also narrows this snapshot
+				// to only hosts that passed every direct-adapter bind check.
+				queueExecutorResolved, preflightErr := directRunnerPreflightHosts(ctx, resolved, newDockerClient, logger)
+				if preflightErr != nil {
+					setQueueExecutorStartupState(queueExecutorStateMisconfigured)
+					logger.Error("Queue executor disabled: no eligible direct-runner host", slog.Any("error", preflightErr))
+				} else {
+					queueStatus.configureEligibleHosts(queueExecutorResolved, newDockerClient)
+					setQueueExecutorStartupState(queueExecutorStateReady)
+					queueStatus.ready.Store(true)
+					go runQueueExecutorPoller(ctx, queueExecutorConfig{
+						consoleURL: consoleURL,
+						runnerName: runnerName,
+						idToken: func() (string, error) {
+							return idTokenFromSource(tokenSource)
+						},
+						launch: func(l directRunnerLaunch) error {
+							return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
+						},
+						draining: queueDraining.Load,
+						cleanup: func(cleanupCtx context.Context) error {
+							return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved, newDockerClient, time.Now())
+						},
+					}, 15*time.Second, logger)
+				}
 			}
 		}
+	} else if consoleURL != "" {
+		logger.Error("Schedule ticker disabled: GOOGLE_APPLICATION_CREDENTIALS is required")
 	}
 
 	drainSignals := make(chan os.Signal, 1)

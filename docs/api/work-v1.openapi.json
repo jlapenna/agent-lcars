@@ -15,12 +15,6 @@
         "scheme": "bearer",
         "bearerFormat": "JWT"
       },
-      "githubOidc": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT",
-        "description": "GitHub Actions OIDC token for work-schedules-tick.yml"
-      },
       "runToken": {
         "type": "http",
         "scheme": "bearer",
@@ -2432,7 +2426,7 @@
     "/schedules/tick": {
       "post": {
         "operationId": "tickSchedules",
-        "summary": "Mint items for every enabled schedule's latest due slot (GitHub Actions OIDC only)",
+        "summary": "Mint items for every enabled schedule's latest due slot (work.cron required)",
         "tags": ["schedules", "cron"],
         "requestBody": {
           "required": true,
@@ -2522,7 +2516,7 @@
         },
         "security": [
           {
-            "githubOidc": []
+            "bearerAuth": []
           }
         ]
       }

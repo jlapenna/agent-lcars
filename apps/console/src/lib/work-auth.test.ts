@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { authenticateWorkRequest, type WorkAuthDeps } from './work-auth';
 import { parseWorkGrants } from './work-grants';
@@ -18,9 +18,6 @@ function deps(over: Partial<WorkAuthDeps> = {}): WorkAuthDeps {
       email: 'sa@example.iam.gserviceaccount.com',
       emailVerified: true,
     }),
-    verifyScheduleTickOidcToken: async () => {
-      throw new Error('not a schedule-tick token');
-    },
     verifySessionPinTickOidcToken: async () => {
       throw new Error('not a session-pin-tick token');
     },
@@ -69,19 +66,18 @@ describe('authenticateWorkRequest', () => {
       ),
     ).toBeUndefined();
   });
-  it('does not fall through to the schedule-tick verifier once the Google verifier itself has ruled on the token (unverified/empty email)', async () => {
-    const oidcSpy = vi.fn(async () => {
-      throw new Error('should never be called');
-    });
-    const p = await authenticateWorkRequest(
-      req({ authorization: 'Bearer t' }),
-      deps({
-        verifyGoogleIdToken: async () => ({ email: '', emailVerified: false }),
-        verifyScheduleTickOidcToken: oidcSpy,
-      }),
-    );
-    expect(p).toBeUndefined();
-    expect(oidcSpy).not.toHaveBeenCalled();
+  it('refuses a Google token without a verified email', async () => {
+    expect(
+      await authenticateWorkRequest(
+        req({ authorization: 'Bearer t' }),
+        deps({
+          verifyGoogleIdToken: async () => ({
+            email: '',
+            emailVerified: false,
+          }),
+        }),
+      ),
+    ).toBeUndefined();
   });
   it('returns undefined when the token fails verification', async () => {
     expect(
@@ -118,33 +114,12 @@ describe('authenticateWorkRequest', () => {
     );
     expect(p).toBeUndefined();
   });
-  it('falls through to the schedule-tick verifier when the bearer is not a Google token', async () => {
+  it('falls through to the session-pin-tick verifier when the bearer is not a Google token', async () => {
     const p = await authenticateWorkRequest(
       req({ authorization: 'Bearer t' }),
       deps({
         verifyGoogleIdToken: async () => {
           throw new Error('not Google');
-        },
-        verifyScheduleTickOidcToken: async () => ({ ok: true }),
-      }),
-    );
-    expect(p).toMatchObject({
-      principal: 'cron:tick',
-      subject: 'cron:tick',
-      via: 'oidc',
-      pipelines: [],
-    });
-    expect(p?.scopes.has('work.cron')).toBe(true);
-  });
-  it('falls through to the session-pin-tick verifier when neither Google nor schedule-tick match', async () => {
-    const p = await authenticateWorkRequest(
-      req({ authorization: 'Bearer t' }),
-      deps({
-        verifyGoogleIdToken: async () => {
-          throw new Error('not Google');
-        },
-        verifyScheduleTickOidcToken: async () => {
-          throw new Error('not schedule-tick');
         },
         verifySessionPinTickOidcToken: async () => ({ ok: true }),
       }),
@@ -163,9 +138,6 @@ describe('authenticateWorkRequest', () => {
         verifyGoogleIdToken: async () => {
           throw new Error('not Google');
         },
-        verifyScheduleTickOidcToken: async () => {
-          throw new Error('not schedule-tick either');
-        },
         verifySessionPinTickOidcToken: async () => {
           throw new Error('not session-pin-tick either');
         },
@@ -180,16 +152,28 @@ describe('authenticateWorkRequest', () => {
     );
     expect(p?.scopes.has('work.cron')).toBe(false);
   });
-  it('the schedule-tick principal does not satisfy work.operator', async () => {
+  it('a cron-scoped Google principal does not satisfy work.operator', async () => {
+    const cronGrants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:telemetry-writer',
+          subjects: ['telemetry-writer@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude', 'codex', 'opencode'],
+          scopes: ['work.cron'],
+        },
+      ]),
+    );
     const p = await authenticateWorkRequest(
       req({ authorization: 'Bearer t' }),
       deps({
-        verifyGoogleIdToken: async () => {
-          throw new Error('not Google');
-        },
-        verifyScheduleTickOidcToken: async () => ({ ok: true }),
+        verifyGoogleIdToken: async () => ({
+          email: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
+          emailVerified: true,
+        }),
+        grants: () => cronGrants,
       }),
     );
+    expect(p?.scopes.has('work.cron')).toBe(true);
     expect(p?.scopes.has('work.operator')).toBe(false);
   });
   it('maps a grant with an explicit scopes list onto the principal', async () => {

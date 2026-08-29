@@ -25,11 +25,11 @@ const operator = {
   via: 'session' as const,
 };
 const cronTick = {
-  principal: 'cron:tick',
-  subject: 'cron:tick',
+  principal: 'svc:telemetry-writer',
+  subject: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
   scopes: new Set(['work.cron'] as const),
-  pipelines: [],
-  via: 'oidc' as const,
+  pipelines: ['claude', 'codex', 'opencode'],
+  via: 'google' as const,
 };
 const executorOnly = {
   principal: 'svc:autoscaler',

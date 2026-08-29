@@ -9,21 +9,21 @@ const {
   auth,
   authenticateWorkRequest,
   controlPlaneRepository,
-  verifyScheduleTickOidcToken,
+  verifySessionPinTickOidcToken,
   sessionsForRuns,
   sessionForResume,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   authenticateWorkRequest: vi.fn(),
   controlPlaneRepository: vi.fn(() => 'jlapenna/agent-lcars'),
-  verifyScheduleTickOidcToken: vi.fn(),
+  verifySessionPinTickOidcToken: vi.fn(),
   sessionsForRuns: vi.fn(async () => []),
   sessionForResume: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/auth', () => ({ auth }));
 vi.mock('@/lib/deployment', () => ({ controlPlaneRepository }));
-vi.mock('@/lib/github-actions-oidc', () => ({ verifyScheduleTickOidcToken }));
+vi.mock('@/lib/github-actions-oidc', () => ({ verifySessionPinTickOidcToken }));
 vi.mock('@/lib/work-auth', () => ({
   authenticateWorkRequest,
   googleIdTokenVerifier: () => async () => ({

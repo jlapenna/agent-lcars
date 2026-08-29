@@ -75,12 +75,12 @@ Google service-account ID token or an Auth.js session to a principal by
 looking it up here — an unlisted subject gets no access at all, regardless
 of how it authenticated.
 
-| Value                    | Env var                             | This deployment                                                                      |
-| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators and `svc:telemetry-writer` executor: `claude`, `codex`, `opencode` |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                  |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                   |
-| unified queue            | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `true`; routes every admitted request through QueueExecutor                          |
+| Value                    | Env var                             | This deployment                                                                                |
+| ------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                            |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                             |
+| unified queue            | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `true`; routes every admitted request through QueueExecutor                                    |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
@@ -91,38 +91,38 @@ provider or whether it came from GitHub, the console, an internal request,
 native Work, a schedule tick, or redispatch. Callers and work specifications
 never choose a route.
 
-The autoscaler's own `work.executor` claim identity needs its own grant row
-in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
+The autoscaler's own identity needs its own grant row in
+`AGENT_LCARS_WORK_GRANTS`, distinct from an operator's. It receives
+`work.executor` to claim queued runs and the separately checked `work.cron`
+scope to call `POST /schedules/tick`; neither scope implies `work.operator`:
 
 ```json
 {
   "principal": "svc:telemetry-writer",
   "subjects": ["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],
   "pipelines": ["claude", "codex", "opencode"],
-  "scopes": ["work.executor"]
+  "scopes": ["work.executor", "work.cron"]
 }
 ```
 
 `runs-router.ts`'s `claim` route requires `work.executor`, never
-`work.operator` -- a principal granted only `work.executor` is refused on
-every `/items`/`/schedules` route (`work-router.test.ts`/
-`schedule-router.test.ts`'s "…-only principal" tests), and the reverse
-holds too. `pipelines` here gates which pipelines this claim identity may
-claim, the same field an operator's grant uses to gate `create`/
-`redispatch`. `POST /runs/claim` derives its selection from that grant
-alone: the optional legacy `pipelines` request field is accepted only while
-older runner images roll forward and is ignored. Remove that compatibility
-field after the queue-executor image and Homelab deployment use runner-only
-requests (`runs-router.ts`'s `claim` handler).
+`work.operator`; `schedules/tick` requires `work.cron`, never
+`work.operator` or `work.executor` alone. A principal granted only either
+scope is refused from every other `/items`/`/schedules` operation
+(`work-router.test.ts`/`schedule-router.test.ts`'s "…-only principal"
+tests). `pipelines` gates which pipelines the executor may claim, the same
+field an operator's grant uses to gate `create`/`redispatch`. `POST
+/runs/claim` derives selection from that grant alone.
 
 The current operator grants list all three supported pipelines (`claude`,
 `codex`, `opencode`), including the maintainer, repository-bounded
 `workflow:work-create`, and Sprinkles' App Hosting service principal. The
 published `work-create.yml` workflow is contract-tested against that list,
 so its provider canaries cannot fail at API admission. The telemetry-writer
-identity remains a provider-scoped `work.executor`, a distinct role from an
+identity remains a provider-neutral executor and scheduler, distinct from an
 operator. Its executor grant and the direct runner's claim support cover
-every admitted provider.
+every admitted provider; its cron scope only permits the server-owned
+schedule tick.
 
 #### Queue executor routing
 
@@ -130,9 +130,12 @@ QueueExecutor is the server route. The App Hosting flag is required to be
 `true` before any request enters the orchestrator, and the same selected
 executor reaches every entry point. The
 autoscaler's matching console URL and credentials claim and run the durable
-queue; its image and mounts are documented in
+queue, and the same process ticks native schedules every five minutes through
+the Work API. Every healthy autoscaler replica may tick; deterministic
+schedule item ids and the Work API's durable orchestrator coalesce a shared
+due slot to one item/run. Its image and mounts are documented in
 `apps/runner-autoscaler/README.md`. This repository owns server routing and
-executor grants; Homelab owns autoscaler deployment.
+executor/scheduler grants; Homelab owns autoscaler deployment.
 
 ### 4. Workflows — repo variables
 

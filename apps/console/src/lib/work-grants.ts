@@ -3,7 +3,7 @@ import 'server-only';
 import { PIPELINES } from '@agent-lcars/work';
 import { z } from 'zod';
 
-const workScopeSchema = z.enum(['work.operator', 'work.executor']);
+const workScopeSchema = z.enum(['work.operator', 'work.executor', 'work.cron']);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`
  *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
@@ -50,8 +50,8 @@ export function resolvePrincipal(
 /** Looks up a grant by its canonical LCARS principal (`user:jlapenna`,
  *  `svc:lcars-admin`) rather than by subject -- what a schedule's
  *  `createdBy` field already stores. Used only by the schedule tick, which
- *  must re-check the schedule creator's grant, never the tick caller's own
- *  (`cron:tick` has no grant of its own). */
+ *  must re-check the schedule creator's grant, not the tick caller's
+ *  separate `work.cron` authority. */
 export function grantForPrincipal(
   principal: string,
   grants: WorkGrant[] = workGrants(),

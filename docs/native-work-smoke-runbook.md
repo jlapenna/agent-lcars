@@ -159,11 +159,13 @@ comment in `page.tsx`).
 
 Sub-project 3 landed as [PR #1538](https://github.com/jlapenna/agent-lcars/pull/1538)
 (`28eb9cc`): a schedules resource (`ScheduleStore`), `POST /schedules/tick`,
-a cron grammar with deterministic slot ids, GitHub-OIDC tick auth scoped to
-`work.cron`, the `/work/schedules` page, `work-schedules-tick.yml` on
-`2-59/5 * * * *`, and `schedule-create`/`schedule-disable` actions on
-`work-create.yml`, shipped by
+a cron grammar with deterministic slot ids, the `/work/schedules` page, and
+`schedule-create`/`schedule-disable` actions on `work-create.yml`, shipped by
 [deploy-console run 33055030072](https://github.com/jlapenna/agent-lcars/actions/runs/33055030072).
+Issue #1542 subsequently moved tick ownership to the continuously running
+autoscaler: its Google service identity carries the narrow `work.cron` scope
+and calls the same API every five minutes. The GitHub scheduled workflow and
+its manual-dispatch fallback are retired.
 This smoke drives a schedule through create → tick (minting exactly one item
 for the due slot) → the minted item running and parking like any other
 native item → disable, to prove cron ingress lands end to end.
@@ -185,9 +187,6 @@ gh workflow run work-create.yml \
   -f cron='58 8 * * *' \
   -f repo=jlapenna/agent-lcars -f pipeline=claude
 
-# GitHub had not yet started the new schedule; manual fallback from main:
-gh workflow run work-schedules-tick.yml --ref main
-
 gh workflow run work-create.yml -f action=get -f id=01M116EJSY6NTCMF62YXHDXR60
 
 gh workflow run work-create.yml -f action=schedule-disable -f id=01M116EJSY6NTCMF62YXHDXR60
@@ -205,12 +204,10 @@ gh workflow run work-create.yml -f action=schedule-disable -f id=01M116EJSY6NTCM
 | Item after       | [get run 33057026944](https://github.com/jlapenna/agent-lcars/actions/runs/33057026944): `state: "parked"`, `origin: {principal: "cron:01M116EJSY6NTCMF62YXHDXR60", channel: "cron"}`, `runs[0].result: {ok: false, summary: "outcome-gate-failure"}`                                                                                                                                                                           |
 | schedule-disable | [schedule-disable run 33057092699](https://github.com/jlapenna/agent-lcars/actions/runs/33057092699): `POST …/disable -> 200`, `enabled: false`, `lastItemId: "01M1171FE03SFA06DAW6M5CXMY"`, `disabledReason: "operator"`                                                                                                                                                                                                       |
 
-Lag note: newly added scheduled workflows can lag before GitHub starts firing
-their `schedule` event — the new cron had not produced a single
-`schedule`-triggered run by 09:03Z, 15 minutes after schedule-create. The
-OIDC pin backing `work-schedules-tick.yml` accepts `workflow_dispatch` from
-`main`, which is the manual fallback used above and the one to reach for
-whenever a cron smoke can't wait out GitHub's schedule-activation lag.
+Historical note: this original smoke used a manual GitHub workflow dispatch
+because GitHub had not started the scheduled run. Current cron health is the
+autoscaler's `github_runner_autoscaler_schedule_ticks_total{outcome}` metric;
+the server's deterministic item IDs make a restarted ticker safe to retry.
 
 ## Sub-project 4: QueueExecutor — acceptance still incomplete (2026-08-28)
 

@@ -47,7 +47,7 @@ export interface WorkContext {
   /** The grant list, injected the way `sessionsFor` is: the schedule tick
    *  handler re-resolves a schedule's `createdBy` principal against it
    *  directly (`grantForPrincipal`), independent of the tick caller's own
-   *  principal (`cron:tick`, which has no grant). */
+   *  principal and separate `work.cron` authority. */
   grants: () => WorkGrant[];
   /** Injected clock: the tick handler's "latest due slot" computation must
    *  be deterministic under test, not tied to wall-clock `Date.now()`. */

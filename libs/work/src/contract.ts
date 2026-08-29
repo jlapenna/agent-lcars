@@ -75,17 +75,6 @@ const withBearer = <T extends object>(current: T) => ({
   ...bearer,
 });
 
-/** `tick` accepts only a GitHub Actions OIDC bearer -- `work-auth.ts` never
- *  grants `work.cron` from a Google-authenticated principal, so declaring
- *  `bearerAuth` here too would document an operator token as valid when it
- *  is refused at runtime. This replaces (not adds to) `withBearer`'s
- *  `security`. */
-const githubOidcSecurity = { security: [{ githubOidc: [] }] };
-const withGithubOidc = <T extends object>(current: T) => ({
-  ...current,
-  ...githubOidcSecurity,
-});
-
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
 export const itemsContract = {
@@ -368,14 +357,12 @@ export const schedulesContract = {
         path: '/schedules/tick',
         operationId: 'tickSchedules',
         summary:
-          "Mint items for every enabled schedule's latest due slot (GitHub Actions OIDC only)",
-        // Distinct presentation from the rest of `schedules`: this route
-        // has no human/service-account caller and a different security
-        // scheme (see `withGithubOidc` below), so it also carries the
-        // `cron` tag -- `openapi()`'s tags merge, so this becomes
-        // `['schedules', 'cron']` alongside `scheduleBase`'s own tag.
+          "Mint items for every enabled schedule's latest due slot (work.cron required)",
+        // The route remains visibly distinct from schedule CRUD: only a
+        // Google-authenticated service principal with work.cron may tick it.
+        // The ordinary bearer scheme is accurate because authorization is
+        // the server-owned grant, not a GitHub workflow identity.
         tags: ['cron'],
-        spec: withGithubOidc,
       }),
     )
     .input(z.strictObject({}))
