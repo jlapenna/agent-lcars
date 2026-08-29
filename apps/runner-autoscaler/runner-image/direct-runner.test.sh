@@ -3,6 +3,20 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../../.." && pwd)"
+dockerfile="$here/Dockerfile"
+
+# The image artifact must carry the native helpers that direct-runner uses.
+# This is a focused packaging contract: the direct scenarios below exercise
+# the copied helper behavior, while these assertions prove the Docker build
+# includes it.
+grep -Fq '/repo/apps/runner-autoscaler/runner-image/runtime' "$dockerfile" || {
+  echo "runner image does not copy the native runtime helpers" >&2
+  exit 1
+}
+grep -Fq '/usr/local/lib/agent-lcars/runtime' "$dockerfile" || {
+  echo "runner image does not install the native runtime helpers" >&2
+  exit 1
+}
 # Exported: the fake curl/git/gh/claude binaries below run as separate
 # processes (found via PATH, not sourced), so they only see `tmp` if it is
 # actually in their environment -- an unexported `tmp` would leave every
@@ -13,31 +27,18 @@ export tmp
 trap 'rm -rf "$tmp"' EXIT
 
 # --- Fake baked image tree -------------------------------------------------
-# direct-runner.sh's PREPARE_DISPATCH_DIR default assumes prepare.sh's own
-# unmodified `$GITHUB_ACTION_PATH/../../../agents/shared/skills/...` climb
-# resolves against a REAL baked filesystem layout: the Dockerfile places
-# prepare-agent-dispatch/ at .github/actions/prepare-agent-dispatch under
-# /usr/local/lib/agent-lcars/ (treated as a fake "repo root"), with
-# agents/shared/skills/ as its sibling at that same fake root -- see the
-# Dockerfile's own comment next to those COPY lines. Building that SAME
-# relative layout here, from this repo's real checked-in scripts, is what
-# actually exercises the climb instead of masking it (fix round 1,
-# review-critical): pointing PREPARE_DISPATCH_DIR straight at
-# $repo_root/.github/actions/prepare-agent-dispatch, as an earlier version
-# of this test did, makes the climb land on the REAL repo root, which also
-# happens to have agents/shared/skills -- so that version of this test
-# passed even though the real image never baked that directory at all.
+# Build the native runtime shape produced by the Dockerfile, including its
+# trusted protocol dependency. This proves direct execution without a
+# source checkout or a GitHub Actions directory.
 baked="$tmp/baked"
-mkdir -p "$baked/.github/actions"
-cp -R "$repo_root/.github/actions/prepare-agent-dispatch" "$baked/.github/actions/prepare-agent-dispatch"
-mkdir -p "$baked/.github/actions/verify-deliverable"
-cp "$repo_root/.github/actions/verify-deliverable/verify-deliverable.sh" \
-  "$baked/.github/actions/verify-deliverable/verify-deliverable.sh"
+mkdir -p "$baked/runtime"
+cp -R "$repo_root/apps/runner-autoscaler/runner-image/runtime/." "$baked/runtime/"
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
 
-BAKED_PREPARE_DISPATCH_DIR="$baked/.github/actions/prepare-agent-dispatch"
-BAKED_VERIFY_DELIVERABLE="$baked/.github/actions/verify-deliverable/verify-deliverable.sh"
+BAKED_RUNTIME_HELPERS_DIR="$baked/runtime"
+BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
+BAKED_VERIFY_OUTCOME="$baked/runtime/verify-outcome.sh"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
 # delegates to the fake `node` below. Keep it separate from the source tree:
 # the real runner image contains the compiled bundle, while this shell harness
@@ -397,12 +398,11 @@ run_scenario() {
   # not-yet-reaped `sleep` process from lingering past this test's own exit.
   export HEARTBEAT_INTERVAL_SECONDS=1
 
-  # Point every baked-tool env var at the fake baked tree built above (not
-  # the live repo -- see its own header comment), so this test exercises
-  # the REAL prepare.sh/verify-deliverable.sh/sidecar-lifecycle.sh through
-  # the SAME relative layout the Dockerfile actually produces.
-  export PREPARE_DISPATCH_DIR="$BAKED_PREPARE_DISPATCH_DIR"
-  export VERIFY_DELIVERABLE="$BAKED_VERIFY_DELIVERABLE"
+  # Point every helper at the fake baked tree (not the live repo), so this
+  # test exercises the same native layout the Dockerfile produces.
+  export RUNTIME_HELPERS_DIR="$BAKED_RUNTIME_HELPERS_DIR"
+  export PREPARE_DISPATCH="$BAKED_PREPARE_DISPATCH"
+  export VERIFY_OUTCOME="$BAKED_VERIFY_OUTCOME"
   export SIDECAR_LIFECYCLE="$BAKED_SIDECAR_LIFECYCLE"
 
   set +e
@@ -639,7 +639,7 @@ echo "scenario opencode-no-auto: OK"
 
 # A GitHub reply keeps its anchor, mode, reply/runbook/context, and exact
 # marker lookup when it travels through the same direct runner. The marker is
-# deliberately a comment rather than a PR here, proving verify-deliverable
+# deliberately a comment rather than a PR here, proving the native verifier
 # receives NUM and MODE rather than the native-work defaults.
 export FAKE_ANCHOR=github
 export FAKE_MODE=reply
@@ -730,7 +730,7 @@ echo "scenario github-review: OK"
 # --- Scenario 1b: GitHub-Actions temp environment absent -------------------
 # A direct-mode container is started by Docker rather than GitHub Actions, so
 # it has no inherited RUNNER_TEMP. Its own fallback must be exported before
-# prepare-agent-dispatch runs; otherwise prepare.sh fails after clone with
+# prepare-dispatch runs; otherwise it fails after clone with
 # "RUNNER_TEMP is required" and leaves the claimed work item to time out.
 export FAKE_MISSING_RUNNER_TEMP=1
 run_scenario missing-runner-temp
@@ -738,7 +738,7 @@ unset FAKE_MISSING_RUNNER_TEMP
 
 [ "$rc" -eq 0 ] || fail "missing-runner-temp: expected exit 0, got $rc"
 [ -f "$scenario_runner_temp/agent-dispatch/context.json" ] ||
-  fail "missing-runner-temp: prepare-agent-dispatch did not create its context"
+  fail "missing-runner-temp: prepare-dispatch did not create its context"
 [ -f "$COMPLETE_LOG" ] ||
   fail "missing-runner-temp: direct-runner.sh never called POST .../complete"
 grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
@@ -784,7 +784,7 @@ fi
 echo "scenario resume-failed: OK"
 
 # --- Scenario 2: no-deliverable ---------------------------------------------
-# The PR-marker lookup gh api call finds nothing, so verify-deliverable.sh's
+# The PR-marker lookup gh api call finds nothing, so the native verifier's
 # own gate fails closed. direct-runner.sh must still POST /complete (with
 # the failure outcome, never silently drop it) and, by this script's own
 # exit-code design (a non-pull-request outcome exits non-zero so container-

@@ -30,20 +30,14 @@ AUTH_HEADER="Authorization: Bearer $LCARS_RUN_TOKEN"
 CURL_TIMEOUT_CONFIG='connect-timeout = 10
 max-time = 60'
 
-# Every baked-tool path is env-overridable, defaulting to where the
-# Dockerfile bakes it in the real image -- so direct-runner.test.sh can
-# point these at a fake baked tree built from this repo's own checked-in
-# scripts and exercise them for real, instead of only faking curl/gh/claude
-# around a script that never actually ran them. PREPARE_DISPATCH_DIR's
-# default depth is load-bearing: see the Dockerfile's own comment next to
-# its COPY lines for why `.github/actions/prepare-agent-dispatch` (not a
-# flatter path) is what makes prepare.sh's unmodified relative climb to
-# agents/shared/skills resolve.
-PREPARE_DISPATCH_DIR="${PREPARE_DISPATCH_DIR:-/usr/local/lib/agent-lcars/.github/actions/prepare-agent-dispatch}"
-VERIFY_DELIVERABLE="${VERIFY_DELIVERABLE:-/usr/local/lib/agent-lcars/.github/actions/verify-deliverable/verify-deliverable.sh}"
+# Every native runtime helper is env-overridable so direct-runner.test.sh
+# can exercise a fake baked image tree assembled from this checkout.
+RUNTIME_HELPERS_DIR="${RUNTIME_HELPERS_DIR:-/usr/local/lib/agent-lcars/runtime}"
+PREPARE_DISPATCH="${PREPARE_DISPATCH:-$RUNTIME_HELPERS_DIR/prepare-dispatch.sh}"
+VERIFY_OUTCOME="${VERIFY_OUTCOME:-$RUNTIME_HELPERS_DIR/verify-outcome.sh}"
 SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifecycle.sh}"
 
-# prepare-agent-dispatch requires RUNNER_TEMP in its child environment. A
+# The native dispatch helper requires RUNNER_TEMP in its child environment. A
 # direct-mode container is not a GitHub Actions runner, so it does not supply
 # that variable for us; export the private fallback before invoking the
 # composite's prepare.sh below. Respecting TMPDIR also keeps local callers'
@@ -98,7 +92,6 @@ export MODE REPLY RUNBOOK CONTEXT
 # Keep it a direct-runner contract for every provider rather than relying on
 # any provider's own invocation shape.
 export ATTEMPT_ID
-export GITHUB_REPOSITORY="$TARGET_REPO"
 # Native work items sub-project 8: a claimed run may carry a resume request
 # (populated by the console's own drain input -- Task 3) for a prior
 # session's own transcript. Empty when the run is a fresh dispatch; both
@@ -244,20 +237,20 @@ if [ "$PIPELINE" = "claude" ] && [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TR
   fi
 fi
 
-export GITHUB_ACTION_PATH="$PREPARE_DISPATCH_DIR"
-export GITHUB_WORKSPACE="$workspace"
-export GITHUB_OUTPUT="$RUNNER_TEMP/github-output"
-export GITHUB_ENV="$RUNNER_TEMP/github-env"
-: > "$GITHUB_OUTPUT"
-: > "$GITHUB_ENV"
+export WORKSPACE="$workspace"
+export REPOSITORY="$TARGET_REPO"
+export RUNTIME_OUTPUT="$RUNNER_TEMP/runtime-output"
+export RUNTIME_ENV="$RUNNER_TEMP/runtime-env"
+: > "$RUNTIME_OUTPUT"
+: > "$RUNTIME_ENV"
 export PRIOR_TERMINAL_STATE=null
 export BUDGET_MINUTES=80 ARTIFACT_CHECKPOINT_MINUTES=15 FINALIZE_CHECKPOINT_MINUTES=70
 export AGENT="$AGENT_NAME"
 
-bash "$GITHUB_ACTION_PATH/prepare.sh"
+bash "$PREPARE_DISPATCH"
 set -a
 # shellcheck source=/dev/null
-source "$GITHUB_ENV"
+source "$RUNTIME_ENV"
 set +a
 
 # A native Work item has no GitHub issue thread on which to leave a terminal
@@ -557,10 +550,10 @@ cleanup_codex_material
 
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
-VERIFY_OUTPUT="$RUNNER_TEMP/verify-deliverable-output"
+VERIFY_OUTPUT="$RUNNER_TEMP/verify-outcome-output"
 if [ "$AGENT_EXIT" -eq 0 ] &&
   AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
-  bash "$VERIFY_DELIVERABLE" >"$VERIFY_OUTPUT" 2>&1; then
+  bash "$VERIFY_OUTCOME" >"$VERIFY_OUTPUT" 2>&1; then
   cat "$VERIFY_OUTPUT"
   # The verifier proves that *some* exact marker-bound artifact exists; the
   # completion outcome must still name that artifact rather than relabeling

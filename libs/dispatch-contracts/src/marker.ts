@@ -104,7 +104,7 @@ export function parseDispatchMarker(
  *
  * #645 Phase 4's exit criterion is "agents cannot certify themselves,
  * unrelated artifacts cannot satisfy a run". Before this marker existed,
- * `verify-deliverable.sh` proved a deliverable existed by inference: an
+ * The native outcome verifier proved a deliverable existed by inference: an
  * open/updated PR referencing the anchor, touched inside this run's time
  * window, under a bot login that is not always unique to one pipeline
  * (codex and opencode both push as `agent-lcars[bot]`). A time window plus a
@@ -112,7 +112,7 @@ export function parseDispatchMarker(
  * the same shared login could satisfy a run that produced nothing —
  * confirmed live on jlapenna/agent-lcars#650 generation 9. #815 retired
  * that inference entirely once every live lane adopted this marker;
- * `verify-deliverable.sh` now requires it (or the exact claimed no-op
+ * The native outcome verifier now requires it (or the exact claimed no-op
  * result below) on every run.
  *
  * This marker replaces inference with an exact claim for the artifacts that
@@ -127,7 +127,7 @@ export function parseDispatchMarker(
  * identity gets embedded into.
  *
  * This function is the canonical definition of the claim marker.
- * `.github/actions/verify-deliverable/verify-deliverable.sh` names it as the
+ * QueueExecutor's `runtime/verify-outcome.sh` names it as the
  * spec its bash matcher re-implements — keep the two in lockstep.
  */
 export function formatClaimMarker(attemptId: string): string {

@@ -111,17 +111,8 @@ jobs:
           find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
             | xargs -0 "$actionlint_command"
 
-      - name: Test agent dispatch preparation
-        run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
-
-      - name: Test fleet skill source boundaries (#1269)
-        run: bash .github/actions/prepare-agent-dispatch/assert-consumer-boundaries.test.sh
-
       - name: Test the work-session-pin-tick workflow
         run: bash tools/workflow-session-pin-tick.test.sh
-
-      - name: Test layer-1 skill install (#1269)
-        run: bash .github/actions/prepare-agent-dispatch/install-skills.test.sh
 
       - name: Test OpenCode configuration
         run: bash tools/opencode-config.test.sh
@@ -140,9 +131,6 @@ jobs:
 
       - name: Test workflows-permission grant verification (#868)
         run: bash .github/actions/mint-agent-token/verify-workflows-grant.test.sh
-
-      - name: Test deliverable verification
-        run: bash .github/actions/verify-deliverable/verify-deliverable.test.sh
 
       - name: Test the GitHub attachment download helper
         run: bash agents/shared/skills/agent-protocol/scripts/download-github-attachment.test.sh

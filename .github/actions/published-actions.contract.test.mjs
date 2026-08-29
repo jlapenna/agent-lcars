@@ -50,52 +50,6 @@ const PUBLISHED = {
     // unaffected by an output it never asked for.
     outputs: ['token', 'app-slug', 'installation-id'],
   },
-  'prepare-agent-dispatch': {
-    inputs: {
-      token: { required: false, default: '' },
-      agent: { required: true },
-      // issue/work: additive to Plan 3's native lane (agent-lcars#1527) --
-      // issue is now optional (empty for a native work-item dispatch) and
-      // `work` carries that dispatch's JSON payload instead. An existing
-      // consumer that still always passes `issue` is unaffected.
-      issue: { required: false, default: '' },
-      work: { required: false, default: '' },
-      mode: { required: true },
-      reply: { required: false, default: '' },
-      runbook: { required: false, default: '' },
-      context: { required: false, default: '' },
-      // console-url: additive (agent-lcars#1527) -- builds a native work
-      // item's anchor.html_url; unused, so harmless, for an issue dispatch.
-      'console-url': { required: false, default: 'https://lcars.jlapenna.net' },
-      'prior-terminal-state': { required: false, default: 'null' },
-      'budget-minutes': { required: false, default: '60' },
-      'artifact-checkpoint-minutes': { required: false, default: '25' },
-      'finalize-checkpoint-minutes': { required: false, default: '45' },
-    },
-    outputs: ['path', 'protocol-path', 'skills-path', 'skills-digest'],
-  },
-  // Exact-marker only: attempt-id is required, and the legacy inference
-  // inputs #4388 once restored (started-at, runbook,
-  // expected-comment-login, exclude-pr-author, exclude-comment-id) were
-  // deleted once every fleet consumer passed attempt-id (agent-lcars's own
-  // lanes, homelab#697, sprinkles#4490). Dropping an input is safe for a
-  // moving-@main consumer that still passes it: the runner emits an
-  // "Unexpected input(s)" WARNING for unknown composite-action inputs,
-  // never an error (actions/runner ActionRunner.cs).
-  'verify-deliverable': {
-    inputs: {
-      token: { required: true },
-      agent: { required: true },
-      // issue: made optional for Plan 3's native lane (agent-lcars#1527) --
-      // empty for a native work-item run, which has no issue/PR anchor and
-      // is gated on the PR-marker lookup alone. An existing consumer that
-      // still always passes `issue` is unaffected.
-      issue: { required: false, default: '' },
-      mode: { required: true },
-      'attempt-id': { required: true },
-    },
-    outputs: [],
-  },
   'merge-live-base': {
     inputs: { 'base-ref': { required: true } },
     outputs: ['original_head', 'live_base', 'tested_head'],

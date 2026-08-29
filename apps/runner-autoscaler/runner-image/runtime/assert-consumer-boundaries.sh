@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Native QueueExecutor runtime boundary assertion.
 
 set -euo pipefail
 

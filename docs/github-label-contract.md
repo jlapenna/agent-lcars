@@ -24,7 +24,7 @@ pull-request state.
   that transient window itself by honoring the newest label and removing
   the other before dispatching, rather than failing the run.
 - `review:*` (pull requests only; declared fleet-wide since #1312 -- #567
-  introduced it on Agent LCARS alone, while verify-deliverable's
+  introduced it on Agent LCARS alone, while the native verifier's
   `MODE=review` support was already fleet-wide) asks an agent to leave a
   review on the diff instead of taking it over -- no commits pushed. Same one-of-three-and-only-within-its-own-namespace
   contract as `agent:*`, evaluated independently: a PR may carry an

@@ -10,7 +10,7 @@ available through Git history.
 | --------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Orchestrator    | Per-task admission, leases, dispatch/outcome outbox, and reconciliation.      | `libs/orchestrator/`, `apps/console/src/lib/orchestrator-*.ts`   |
 | Runner platform | Worker capacity, registration, placement, readiness, and loss recovery.       | `apps/runner-autoscaler/`; live configuration belongs to Homelab |
-| Worker runtime  | Bootstrap, agent invocation, credential separation, and deliverable evidence. | QueueExecutor direct-runner image and `.github/actions/`         |
+| Worker runtime  | Bootstrap, agent invocation, credential separation, and deliverable evidence. | QueueExecutor direct-runner image and native runtime helpers     |
 
 ## Dispatch contract
 
@@ -21,7 +21,7 @@ available through Git history.
    claimable queue state; it does not dispatch a GitHub Actions workflow.
 3. The QueueExecutor claims that identity, runs the direct-runner bootstrap,
    then reports completion through the Work API run-token route.
-4. A successful worker run must satisfy `verify-deliverable`: an artifact
+4. A successful worker run must satisfy the native deliverable verifier: an artifact
    contains its exact `<!-- attempt-claim:<attempt-id> -->` marker.
 5. A lease is renewed while the run is live. Reconciliation settles terminal
    GitHub runs or expired leases, then performs bounded retry; an exhausted
@@ -38,7 +38,7 @@ available through Git history.
 | Queue dispatch and outcome comments                 | `apps/console/src/lib/orchestrator-dispatch.ts`                                  |
 | Console dependencies and routes                     | `apps/console/src/lib/orchestrator-runtime.ts`, `apps/console/src/app/api/work/` |
 | Provider execution                                  | Console QueueExecutor and the direct-runner image                                |
-| Bootstrap and deliverable evidence                  | `prepare-agent-dispatch`, `verify-deliverable`, and direct-runner                |
+| Bootstrap and deliverable evidence                  | Native runtime helpers and direct-runner                                         |
 
 ## Diagnose by symptom
 
@@ -49,7 +49,7 @@ available through Git history.
 | Worker is not claimed                                     | Runner platform        | QueueExecutor health and direct-runner placement                     |
 | Failure before the agent step                             | Worker bootstrap       | Direct-runner logs before the provider invocation                    |
 | Provider, model, or agent failure                         | Worker runtime         | Agent-step log                                                       |
-| Agent exits zero without deliverable evidence             | Worker runtime         | `verify-deliverable` log and the expected attempt marker             |
+| Agent exits zero without deliverable evidence             | Worker runtime         | Native verifier log and the expected attempt marker                  |
 | Failed worker has no outcome comment                      | Completion path        | Direct-runner completion logs, then Work API logs                    |
 | Completion reports success but no outcome comment appears | Outbox drain           | Pending/failed outbox entries from completion or reconcile response  |
 | Task is silent or appears stuck                           | Reconciliation         | `dispatch-reconcile.yml` history and reconcile response              |
@@ -77,9 +77,8 @@ registration or its ownership boundary.
   when configured.
 - Deliverable evidence is a post-agent gate, not an orchestrator judgement.
 
-See [Published actions](published-actions.md) for consumption and gate
-contracts, and [Deployment boundary](deployment-boundary.md) for credential
-and runner-variable ownership.
+See [Deployment boundary](deployment-boundary.md) for credential and
+runner-variable ownership.
 
 ## Related documentation
 

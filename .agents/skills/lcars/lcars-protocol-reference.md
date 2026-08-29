@@ -62,7 +62,7 @@ families (#565) and on `issue_comment`'s `created` action for reply
 commands; `unlabeled`, `closed`, `reopened`, and any other action are
 received but ignored today (`ignore('unhandled-action')` /
 `ignore('unhandled-event')`) — there is no relabel/close-driven cleanup in
-the current design. `verify-deliverable.sh` keeps the deliverable contract
+the current design. The native outcome verifier keeps the deliverable contract
 aligned for both modes regardless of how the run was requested.
 
 ## Reconciliation and lease recovery

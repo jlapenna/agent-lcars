@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Native QueueExecutor runtime skill installer.
 # Installs the layer-1 skill surface into a dispatched agent's skills
 # directory (#1269). Layer 1 is an explicit list, not "everything in the
 # directory": layer 3 is repo dev/ops tooling and must never travel.

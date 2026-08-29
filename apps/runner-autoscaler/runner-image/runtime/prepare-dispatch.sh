@@ -4,13 +4,14 @@ set -euo pipefail
 umask 077
 
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
-: "${GITHUB_ACTION_PATH:?GITHUB_ACTION_PATH is required}"
-: "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}"
-: "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-: "${GITHUB_ENV:?GITHUB_ENV is required}"
+: "${RUNTIME_HELPERS_DIR:?RUNTIME_HELPERS_DIR is required}"
+: "${WORKSPACE:?WORKSPACE is required}"
+: "${RUNTIME_OUTPUT:?RUNTIME_OUTPUT is required}"
+: "${RUNTIME_ENV:?RUNTIME_ENV is required}"
+: "${REPOSITORY:?REPOSITORY is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
 
-bash "$GITHUB_ACTION_PATH/assert-consumer-boundaries.sh" "$GITHUB_WORKSPACE" "$GITHUB_REPOSITORY"
+bash "$RUNTIME_HELPERS_DIR/assert-consumer-boundaries.sh" "$WORKSPACE" "$REPOSITORY"
 
 # Character budgets for the untrusted prose the brief carries. Deliberately
 # constants, not action inputs: the brief is a contract every lane and every
@@ -62,7 +63,7 @@ fi
 
 dispatch_dir="$RUNNER_TEMP/agent-dispatch"
 context_path="$dispatch_dir/context.json"
-protocol_path="$(realpath "$GITHUB_ACTION_PATH/../../../agents/shared/skills/agent-protocol/reference/agent-protocol.md")"
+protocol_path="$(realpath "$RUNTIME_HELPERS_DIR/../agents/shared/skills/agent-protocol/reference/agent-protocol.md")"
 
 if [ ! -f "$protocol_path" ]; then
   echo "::error::Shared agent protocol is missing at $protocol_path" >&2
@@ -70,13 +71,13 @@ if [ ! -f "$protocol_path" ]; then
 fi
 
 # Install the layer-1 skill surface into the agent's own skills directory
-# (#1269). HOME, not GITHUB_WORKSPACE: the runner's home has no skills of
+# (#1269). HOME, not WORKSPACE: the runner's home has no skills of
 # its own, the agent auto-discovers them there exactly as a workstation
 # session does, and it cannot collide with a consumer repo's .claude/skills
 # -- which in agent-lcars is a symlink into the checkout.
 skills_dest="${HOME:-/root}/.claude/skills"
-skills_digest="$(bash "$GITHUB_ACTION_PATH/install-skills.sh" \
-  "$GITHUB_ACTION_PATH/../../../agents/shared/skills" "$skills_dest" || true)"
+skills_digest="$(bash "$RUNTIME_HELPERS_DIR/install-skills.sh" \
+  "$RUNTIME_HELPERS_DIR/../agents/shared/skills" "$skills_dest" || true)"
 
 mkdir -p "$dispatch_dir"
 
@@ -117,8 +118,8 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
     exit 1
   fi
   work_json="$(jq -c . <<<"$WORK")"
-  issue_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
-  comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+  issue_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE")"
+  comments_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
   # Merge, right side wins: every field the raw issue/PR response carries
   # (number, labels, assignees, state, state_reason, html_url, and --
   # load-bearing -- pull_request) survives untouched, with only
@@ -134,8 +135,8 @@ else
   # Legacy: no work payload yet on this task (pre-sub-project-5, or a task
   # created through the internal-request path -- see the design spec's
   # "handleDispatchRequest is not a derivation site" note). Unchanged.
-  anchor_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE")"
-  comments_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+  anchor_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE")"
+  comments_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
 fi
 
 if ! jq -e 'type == "object" or . == null' <<<"${PRIOR_TERMINAL_STATE:-null}" >/dev/null; then
@@ -163,7 +164,7 @@ finalize_by="$(date -u -d "@$((now_epoch + FINALIZE_CHECKPOINT_MINUTES * 60))" +
 # brief, while the tail is bounded and told exactly where to read the rest.
 jq -n \
   --arg agent "$AGENT" \
-  --arg repository "$GITHUB_REPOSITORY" \
+  --arg repository "$REPOSITORY" \
   --arg issue "$ISSUE" \
   --arg mode "$MODE" \
   --arg reply "$REPLY" \
@@ -318,9 +319,9 @@ jq -n \
   echo "protocol-path=$protocol_path"
   echo "skills-path=$skills_dest"
   echo "skills-digest=$skills_digest"
-} >> "$GITHUB_OUTPUT"
+} >> "$RUNTIME_OUTPUT"
 
 {
   echo "AGENT_DISPATCH_CONTEXT=$context_path"
   echo "AGENT_PROTOCOL_PATH=$protocol_path"
-} >> "$GITHUB_ENV"
+} >> "$RUNTIME_ENV"

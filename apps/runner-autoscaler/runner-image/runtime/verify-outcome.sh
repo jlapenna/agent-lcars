@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Native QueueExecutor exact-marker outcome verifier.
 # Same gate every worker uses (agent-protocol.md #5): an agent can reason to
 # a genuine conclusion and stop without ever posting it, so a bare "success"
 # job conclusion is never trusted on its own.
@@ -141,7 +142,7 @@ if [ "${#errors[@]}" -gt 0 ]; then
   exit 1
 fi
 
-echo "NO_DELIVERABLE=1" >> "${GITHUB_ENV:-/dev/null}"
+echo "NO_DELIVERABLE=1" >> "${RUNTIME_ENV:-/dev/null}"
 checked="No PR"
 if [ -n "$NUM" ]; then
   checked="No PR or comment"

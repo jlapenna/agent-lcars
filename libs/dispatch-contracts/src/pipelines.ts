@@ -48,7 +48,7 @@ export interface PipelineContract {
   /** REST-shaped login (docs/bot-identity-formats.md)
    *   this pipeline comments, reviews, and authors pull requests under. Not
    *   unique per pipeline — codex and opencode share `agent-lcars[bot]`. This
-   *   is why `verify-deliverable` identifies a run's own deliverable by its
+   *   is why the native outcome verifier identifies a run's own deliverable by its
    *   exact attempt-claim marker (marker.ts's `formatClaimMarker`) rather
    *   than by this login (#815). */
   botLogin: string;
