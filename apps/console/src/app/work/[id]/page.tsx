@@ -86,7 +86,7 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
             <TableTd>{run.state}</TableTd>
             <TableTd>
               <Stack gap={0}>
-                <Text size="xs">{run.executor ?? 'github-actions'}</Text>
+                <Text size="xs">{run.executor ?? 'queue'}</Text>
                 {run.queue?.state === 'claimed' && run.queue.claimedBy && (
                   <Text size="xs" c="dimmed">
                     claimed by {run.queue.claimedBy}

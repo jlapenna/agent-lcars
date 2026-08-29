@@ -122,7 +122,7 @@ resource "google_storage_bucket" "codex_auth" {
 resource "google_project_iam_custom_role" "codex_auth_runtime" {
   role_id     = "codexAuthRuntime"
   title       = "Codex auth runtime"
-  description = "Read and generation-CAS replace the repository's Codex auth object."
+  description = "Read and generation-CAS replace the centrally owned Codex auth object."
   permissions = [
     "storage.objects.create",
     "storage.objects.get",
@@ -479,7 +479,7 @@ resource "google_secret_manager_secret_iam_member" "admin_storage_state_accessor
 # `gcloud secrets versions add CLAUDE_CODE_OAUTH_TOKEN --data-file=-`. It
 # never lives in this repo or in a GitHub Actions secret.
 #
-# Contrast Codex authentication, which uses a repository-scoped GCS object
+# Contrast Codex authentication, which uses one LCARS-owned GCS object
 # with generation-CAS because it rotates on every run. This
 # credential never rotates - `claude setup-token` mints it once and nothing
 # writes it back - so a single shared, read-only copy is safe fleet-wide,
@@ -496,11 +496,10 @@ resource "google_secret_manager_secret" "claude_oauth" {
 # Its own identity rather than codex_agent or telemetry_writer: this one is
 # read-only, holds nothing but accessor on the single secret below, and -
 # unlike codex_agent - is never exported as ambient ADC into the agent's
-# shell (agent-lane.yml scopes the credential file to the one step that
-# reads the secret). Blast radius is exactly the Claude token.
+# shell. Blast radius is exactly the Claude token.
 resource "google_service_account" "claude_token_reader" {
   account_id   = "claude-token-reader"
-  display_name = "Claude lane subscription-token reader"
+  display_name = "QueueExecutor Claude subscription-token reader"
 }
 
 resource "google_secret_manager_secret_iam_member" "claude_oauth_accessor" {
@@ -567,73 +566,29 @@ resource "google_service_account_iam_member" "homelab_codex_agent_impersonation"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
-# Phase 1 grants the existing per-repository Codex identities only the three
-# operations GCS needs for a conditional overwrite.  The condition is the
-# security boundary: an agent may never list, read, or replace another
-# repository's credential object.
+# QueueExecutor is the only supported Codex execution path. Its Console
+# broker owns the one rotating subscription lineage; hosted repository
+# identities receive no auth-object or refresh-lease grant.
 locals {
-  codex_auth_runtime_identities = merge(
-    {
-      "jlapenna/agent-lcars" = google_service_account.codex_agent.email
-      "jlapenna/homelab"     = google_service_account.homelab_codex_agent.email
-      # Sprinkles authenticates through its own WIF pool in the
-      # supersprinklesracing project, so it has no agent-lcars service
-      # account to derive here. Its conditional bucket grant is still
-      # confined to this one repository prefix.
-      "supersprinklesracing/sprinkles" = "claude-agent-readonly@supersprinklesracing.iam.gserviceaccount.com"
-    },
-    { for repository, agent in google_service_account.fleet_codex_agent : repository => agent.email },
-  )
-  codex_auth_lease_object = "projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/_leases/codex-subscription.json"
-  codex_auth_broker_objects = concat(
-    [for repository in keys(local.codex_auth_runtime_identities) : "projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${repository}/auth.json"],
-    [local.codex_auth_lease_object],
-  )
-}
-
-resource "google_storage_bucket_iam_member" "codex_auth_runtime" {
-  for_each = local.codex_auth_runtime_identities
-
-  bucket = google_storage_bucket.codex_auth.name
-  role   = google_project_iam_custom_role.codex_auth_runtime.name
-  member = "serviceAccount:${each.value}"
-  condition {
-    title       = "${replace(each.key, "/", "-")}-codex-auth"
-    description = "Confines the Codex agent to its own auth.json object."
-    expression  = "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${each.key}/\")"
-  }
-}
-
-# The hosted lane and direct QueueExecutor share one subscription refresh
-# token. Each hosted repository identity keeps its existing repository-prefix
-# grant above and gains access only to this single lease object, so it cannot
-# read or replace another repository's auth.json while serializing refreshes
-# with a direct run.
-resource "google_storage_bucket_iam_member" "codex_auth_shared_lease_runtime" {
-  for_each = local.codex_auth_runtime_identities
-
-  bucket = google_storage_bucket.codex_auth.name
-  role   = google_project_iam_custom_role.codex_auth_runtime.name
-  member = "serviceAccount:${each.value}"
-  condition {
-    title       = "${replace(each.key, "/", "-")}-codex-shared-lease"
-    description = "Confines the Codex agent's shared coordination access to one lease object."
-    expression  = "resource.name == \"${local.codex_auth_lease_object}\""
-  }
+  codex_central_auth_object = "projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/jlapenna/agent-lcars/auth.json"
+  codex_auth_lease_object   = "projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/_leases/codex-subscription.json"
+  codex_auth_broker_objects = [
+    local.codex_central_auth_object,
+    local.codex_auth_lease_object,
+  ]
 }
 
 # The Console is the direct runner's credential broker. It derives the target
-# repository from the broker-bound run and needs generation-CAS access to that
-# repository's exact auth.json plus the one shared lease. Enumerating all
-# eight object names keeps this materially narrower than a bucket prefix or
-# objectAdmin grant and grants no list permission.
+# repository from the broker-bound run, while its GCS authority is limited to
+# the centrally owned lineage and the one shared lease. It grants no list
+# permission and no caller-controlled object selection.
 resource "google_storage_bucket_iam_member" "apphosting_codex_auth_broker" {
   bucket = google_storage_bucket.codex_auth.name
   role   = google_project_iam_custom_role.codex_auth_runtime.name
   member = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
   condition {
     title       = "apphosting-codex-auth-broker"
-    description = "Confines the direct-runner broker to fleet auth.json objects and the shared lease."
+    description = "Confines the direct-runner broker to the central auth.json object and shared lease."
     expression  = join(" || ", [for object in local.codex_auth_broker_objects : "resource.name == \"${object}\""])
   }
 }

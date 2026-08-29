@@ -50,23 +50,6 @@ const PUBLISHED = {
     // unaffected by an output it never asked for.
     outputs: ['token', 'app-slug', 'installation-id'],
   },
-  'agent-setup': {
-    inputs: {
-      'agent-login': { required: true },
-      'shared-cache': { required: false, default: 'auto' },
-    },
-    outputs: ['started-at'],
-  },
-  'verify-agent-identity': {
-    inputs: {
-      token: { required: true },
-      agent: { required: true },
-      'app-slug': { required: true },
-      'expected-app-slug': { required: false, default: 'agent-lcars' },
-      'expected-login': { required: false, default: 'agent-lcars[bot]' },
-    },
-    outputs: [],
-  },
   'prepare-agent-dispatch': {
     inputs: {
       token: { required: false, default: '' },
@@ -91,10 +74,6 @@ const PUBLISHED = {
     },
     outputs: ['path', 'protocol-path', 'skills-path', 'skills-digest'],
   },
-  'setup-opencode': {
-    inputs: { 'github-token': { required: true } },
-    outputs: ['version'],
-  },
   // Exact-marker only: attempt-id is required, and the legacy inference
   // inputs #4388 once restored (started-at, runbook,
   // expected-comment-login, exclude-pr-author, exclude-comment-id) were
@@ -117,23 +96,6 @@ const PUBLISHED = {
     },
     outputs: [],
   },
-  // Log-only (#813): the hosted finalizer/orchestrator owns visible
-  // failure reporting. The former standalone token/issue/maintainer
-  // direct-park inputs (#4388) were retired per maintainer decision
-  // 2026-08-17 -- every fleet consumer runs the coupled
-  // agent-fallback-finalize.yml, so the direct park had become a
-  // redundant second writer. Dropping an input is safe for a
-  // moving-@main consumer that still passes it: the runner emits an
-  // "Unexpected input(s)" WARNING, never an error.
-  'report-failure': {
-    inputs: {
-      agent: { required: true },
-      'message-prefix': { required: false, default: '' },
-      reason: { required: false, default: '' },
-      'job-status': { required: true },
-    },
-    outputs: [],
-  },
   'merge-live-base': {
     inputs: { 'base-ref': { required: true } },
     outputs: ['original_head', 'live_base', 'tested_head'],
@@ -144,14 +106,6 @@ const PUBLISHED = {
       vars: { required: true },
     },
     outputs: [],
-  },
-  'snapshot-enforcement-scripts': {
-    inputs: {
-      // Multi-line default (the three enforcement gates); requiredness
-      // only.
-      actions: { required: false },
-    },
-    outputs: ['path'],
   },
   // Promoted from Internal when sprinkles retired its independent rebuild
   // of the same self-hosted-cache-guard logic and adopted this copy
@@ -195,14 +149,7 @@ const PUBLISHED = {
       payloads: { required: false, default: '' },
       'timeout-seconds': { required: false, default: '60' },
     },
-    outputs: [],
-  },
-  // Centralized consumer-side native-work migration guard (#1502): the
-  // action intentionally has no inputs. It validates every present canonical
-  // worker workflow path in GITHUB_WORKSPACE; providers remain optional.
-  'validate-worker-workflows': {
-    inputs: {},
-    outputs: [],
+    outputs: ['response'],
   },
 };
 
@@ -276,114 +223,6 @@ for (const [name, expected] of Object.entries(PUBLISHED)) {
     );
   });
 }
-
-// The generic parser skips block-scalar defaults, but
-// snapshot-enforcement-scripts' default `actions` list IS published
-// surface: a consumer that omits the input (sprinkles claude.yml) relies
-// on it naming every post-agent gate. Assert the exact list so silently
-// dropping a gate fails here.
-test('snapshot-enforcement-scripts default gate list is guarded', async () => {
-  const source = await fs.readFile(
-    path.join(actionsDirectory, 'snapshot-enforcement-scripts', 'action.yml'),
-    'utf8',
-  );
-  const lines = source.split(/\r?\n/gu);
-  const start = lines.findIndex((line) => /^ {4}default: \|/u.test(line));
-  assert.notEqual(start, -1, 'actions input must keep a block-scalar default');
-  const entries = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    const entry = /^ {6}([a-z-]+)\s*$/u.exec(lines[i]);
-    if (!entry) break;
-    entries.push(entry[1]);
-  }
-  // post-agent-gates is the orchestrator that now invokes the other three, so
-  // it has to be snapshotted too: leave it out and an agent could rewrite
-  // post-agent-gates.sh in the workspace and neutralize all three gates at
-  // once, which is exactly what snapshotting into $RUNNER_TEMP prevents. It
-  // was added to the action's default list when the orchestrator landed, but
-  // this expectation was not updated -- and the mismatch went unnoticed
-  // because an earlier CI step was aborting the job before this test ran.
-  assert.deepEqual(entries, [
-    'verify-deliverable',
-    'report-failure',
-    'telemetry-finalize',
-    'post-agent-gates',
-  ]);
-});
-
-// post-agent-gates has no action.yml -- see docs/published-actions.md's
-// "Security: post-agent gates run from a pre-agent snapshot": it is
-// deliberately never `uses:`-callable, only ever run from the pre-agent
-// snapshot as `bash ".../post-agent-gates.sh"`, so a composite-action
-// input/output surface would invite calling it post-agent and defeat the
-// snapshot invariant. Its published surface is instead the environment-
-// variable contract documented in its own header comment (#1208) -- parse
-// that contract straight out of the script's own `: "${VAR:?...}"` (fails
-// fast, required) and `VAR="${VAR:-...}"` (has a default, optional) shapes
-// so silently adding, renaming, or dropping one fails here instead of only
-// showing up as review-invisible drift in a consumer's hand-copied step.
-test('post-agent-gates.sh env-var contract is guarded', async () => {
-  const source = await fs.readFile(
-    path.join(actionsDirectory, 'post-agent-gates', 'post-agent-gates.sh'),
-    'utf8',
-  );
-  const required = [...source.matchAll(/^\s*: "\$\{([A-Z_]+):\?/gmu)].map(
-    (m) => m[1],
-  );
-  const optional = [...source.matchAll(/^([A-Z_]+)="\$\{\1:-/gmu)].map(
-    (m) => m[1],
-  );
-
-  assert.deepEqual(
-    required.sort(),
-    [
-      // Always required.
-      'GH_TOKEN',
-      'AGENT',
-      'REPO',
-      'SERVER_URL',
-      'RUN_ID',
-      'JOB_STATUS',
-      // Required only when JOB_STATUS is "success" (#815): the verify
-      // phase is exact-marker-only. The legacy STARTED_AT +
-      // EXPECTED_COMMENT_LOGIN inference pair (#1208 Phase 2/#1237's
-      // ATTEMPT_ID optionality) was deleted once every fleet consumer
-      // passed ATTEMPT_ID.
-      'MODE',
-      'ATTEMPT_ID',
-    ].sort(),
-    'post-agent-gates.sh: required env-var set changed',
-  );
-  assert.deepEqual(
-    optional.sort(),
-    [
-      // Empty for a native (work-anchored) run -- forwarded unchanged to
-      // telemetry-finalize.sh, which is already anchor-agnostic; the
-      // verify-deliverable phase is anchor-agnostic too: it is
-      // PR-marker-only when ISSUE is empty (see verify-deliverable.sh).
-      'ISSUE',
-      'WRITER_CREDENTIALS_FILE',
-      'NO_DELIVERABLE_REASON',
-      'FAILURE_LOG_SCAN_SCRIPT',
-      // The orchestrator run id (`broker_intent_id`) -- forwarded
-      // unchanged to telemetry-finalize.sh, then sidecar-lifecycle.sh
-      // (task 7, native work items foundation).
-      'INTENT_ID',
-      // Set only from immutable reusable-workflow inputs. Native Work has
-      // no issue/PR artifact; its terminal evidence is verified by the
-      // hosted finalizer after the worker closes.
-      'NATIVE_WORK',
-      // AGENT_STEP_OUTCOME, READINESS_FAILURE, and MAINTAINER were
-      // retired 2026-08-17: the first two only fed the step's own
-      // now-deleted $GITHUB_OUTPUT writes (nothing ever mapped
-      // steps.post_agent_gates.outputs.* -- the hosted fallback finalizer
-      // re-derives from job metadata by design), and MAINTAINER was
-      // report-failure.sh's standalone direct-park toggle, retired with
-      // that path.
-    ].sort(),
-    'post-agent-gates.sh: optional env-var set changed',
-  );
-});
 
 test('every Published action directory exists', async () => {
   for (const name of Object.keys(PUBLISHED)) {

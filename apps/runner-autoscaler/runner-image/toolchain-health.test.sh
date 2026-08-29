@@ -38,8 +38,7 @@ if ! grep -Fqx 'ARG TARGETARCH' "$dockerfile" ||
   echo "runner image must install and smoke-check a reviewed root-owned OpenCode CLI" >&2
   exit 1
 fi
-if grep -Fq '/repo/.github/actions/setup-opencode/install.sh' "$dockerfile" ||
-  grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
+if grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
   echo "runner image must not run OpenCode's mutable installer as root" >&2
   exit 1
 fi

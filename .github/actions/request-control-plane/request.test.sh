@@ -2,7 +2,8 @@
 # Hermetic tests for request.sh: a PATH-shimmed curl records every
 # invocation and plays back canned token-mint and POST responses, so the
 # real script logic (token mint, header/body assembly, bodyless POST,
-# batch attempt-all semantics, loud failure) runs with no network.
+# response output encoding, batch attempt-all semantics, loud failure) runs
+# with no network.
 set -euo pipefail
 
 action_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,6 +38,14 @@ call="$(( $(cat "$POST_CALLS") + 1 ))"
 echo "$call" > "$POST_CALLS"
 line="$(sed -n "${call}p" "$POST_RESPONSES")"
 status="${line%% *}"
+if [ "${MULTILINE_RESPONSE:-}" = 'json' ]; then
+  printf '{"accepted":\ntrue}'
+  exit "$status"
+fi
+if [ "${MULTILINE_RESPONSE:-}" = 'delimiter' ]; then
+  printf 'request-control-plane-response\n{"ok":true}'
+  exit "$status"
+fi
 printf '%s\n' "${line#* }"
 exit "$status"
 SHIM
@@ -47,6 +56,7 @@ run() {
   printf '%s\n' "$1" > "$workdir/post-responses"
   shift
   : > "$workdir/curl.log"
+  : > "$workdir/github-output"
   echo 0 > "$workdir/post-calls"
   set +e
   output="$(
@@ -55,6 +65,7 @@ run() {
         CURL_LOG="$workdir/curl.log" \
         POST_RESPONSES="$workdir/post-responses" \
         POST_CALLS="$workdir/post-calls" \
+        GITHUB_OUTPUT="$workdir/github-output" \
         FAKE_OIDC_URL='https://oidc.example/token' \
         FAKE_OIDC_TOKEN='fake-oidc-jwt' \
         ACTIONS_ID_TOKEN_REQUEST_URL='https://oidc.example/token?api-version=2' \
@@ -67,6 +78,7 @@ run() {
   status=$?
   set -e
   curl_log="$(cat "$workdir/curl.log")"
+  github_output="$(cat "$workdir/github-output")"
 }
 
 fail() {
@@ -92,6 +104,8 @@ grep -q 'Content-Type: application/json' <<<"$curl_log" ||
   fail "POST with a body must declare JSON"
 grep -Fq '{"issue": 7}' <<<"$curl_log" || fail "POST must send the exact body"
 grep -q -- '--max-time 60' <<<"$curl_log" || fail "POST must apply the timeout"
+test "$(sed -n '2p' "$workdir/github-output")" = '{"ok":true}' ||
+  fail "single payload must expose the exact response as an action output"
 
 # 2. No payload at all: still exactly one POST, bodyless, no content type.
 run $'0 {"scanned":0}'
@@ -100,6 +114,8 @@ post_lines="$(grep -c -- '-X POST' <<<"$curl_log")"
 test "$post_lines" = 1 || fail "bodyless mode must POST exactly once"
 grep -q 'Content-Type' <<<"$curl_log" &&
   fail "bodyless POST must not declare a content type"
+test "$(sed -n '2p' "$workdir/github-output")" = '{"scanned":0}' ||
+  fail "bodyless request must expose its response as an action output"
 
 # 3. Batch: one token mint, one POST per non-blank line, in order.
 run $'0 ok1\n0 ok2\n0 ok3' PAYLOADS=$'{"issue":1}\n\n{"issue":2}\n{"issue":3}'
@@ -109,6 +125,7 @@ test "$mints" = 1 || fail "batch must mint exactly one token"
 post_lines="$(grep -c -- '-X POST' <<<"$curl_log")"
 test "$post_lines" = 3 || fail "batch must POST once per non-blank line"
 grep -Fq '{"issue":3}' <<<"$curl_log" || fail "batch must send every line"
+test -z "$github_output" || fail "batch requests must not publish one ambiguous response"
 
 # 4. Batch attempt-all: a mid-batch failure still attempts the rest, then
 #    fails the step naming the failure count.
@@ -141,5 +158,23 @@ set -e
 test "$status" != 0 || fail "missing OIDC env must fail"
 grep -q "id-token: write" <<<"$output" ||
   fail "missing OIDC env must name the permission fix"
+
+# 8. A formatted JSON response is encoded as a multiline output block, not a
+# single-line assignment that GitHub Actions would truncate.
+run $'0 unused' PAYLOAD='{"issue": 7}' MULTILINE_RESPONSE=json
+test "$status" = 0 || fail "multiline response must succeed"
+test "$(sed -n '2,3p' "$workdir/github-output")" = $'{"accepted":\ntrue}' ||
+  fail "multiline response must remain intact in the action output"
+
+# 9. The output delimiter grows when it occurs as a complete response line,
+# preventing untrusted response text from closing the output block early.
+run $'0 unused' PAYLOAD='{"issue": 7}' MULTILINE_RESPONSE=delimiter
+test "$status" = 0 || fail "delimiter-collision response must succeed"
+test "$(sed -n '1p' "$workdir/github-output")" = \
+  'response<<request-control-plane-response_' ||
+  fail "output delimiter must not collide with a response line"
+test "$(sed -n '2,3p' "$workdir/github-output")" = \
+  $'request-control-plane-response\n{"ok":true}' ||
+  fail "delimiter-collision response must remain intact"
 
 echo "ok - request-control-plane request.sh"

@@ -21,10 +21,7 @@
 # PR whose body merely said "Issue #650" was credited as a run's
 # deliverable (#711, #650 generation 9) - and keeping it reachable meant
 # any consumer that forgot to pass identity silently got the weaker gate.
-# Every fleet consumer passes ATTEMPT_ID as of the #1201-era flips:
-# agent-lcars's own three lanes (#815/#645 Phase 4), homelab's three lanes
-# (homelab#697; the inert legacy env removed in homelab#701), and
-# sprinkles' three lanes (the exact-marker flip PR).
+# QueueExecutor passes ATTEMPT_ID for every provider run.
 #
 # The `.user.type == "Bot"` requirement is #1223. The marker was treated as
 # unforgeable identity, but it is a plain string: `g<gen>:<repo>#<n>/r<gen>`,
@@ -37,13 +34,10 @@
 # out only bystanders, and every lane's real artifacts are bot-authored
 # (claude[bot], agent-lcars[bot]).
 #
-# Deliberately `.user.type`, not a specific login: claude.yml's PRs are
-# authored claude[bot] (its action mints that identity itself) while its
-# `gh` comments come from agent-lcars[bot], so no single expected login
-# covers one lane's own artifacts. On an agent:*-on-PR takeover of a
-# HUMAN-authored PR, stamping that PR's body does not count; the shared
-# protocol's other sanctioned path, a bot-authored comment carrying the
-# marker, still does.
+# Deliberately `.user.type`, not a specific login: QueueExecutor may create
+# artifacts through either the provider identity or `agent-lcars[bot]`. On an
+# agent:*-on-PR takeover of a HUMAN-authored PR, stamping that PR's body does
+# not count; a bot-authored comment carrying the marker still does.
 #
 # Uses the REST list/view endpoints throughout (not `gh pr list`/`gh issue
 # view --json ... | GraphQL-backed flags) - see docs/bot-identity-formats.md:
@@ -137,10 +131,7 @@ fi
 if [ -n "$found" ]; then
   echo "::notice::$AGENT deliverable verified via exact attempt-claim marker"
   echo "Deliverable evidence: $found"
-  # No $GITHUB_OUTPUT writes: the former outcome-kind/outcome-reference
-  # step outputs were retired 2026-08-17 -- nothing ever mapped this
-  # step's outputs (agent-fallback-finalize.yml re-derives outcome
-  # evidence from job metadata and exact attempt markers itself).
+  # The direct runner owns completion after this gate succeeds.
   exit 0
 fi
 

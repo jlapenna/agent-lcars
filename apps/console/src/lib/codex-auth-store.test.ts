@@ -2,6 +2,7 @@ import type { Bucket } from '@google-cloud/storage';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  CODEX_CENTRAL_AUTH_OBJECT,
   CODEX_GLOBAL_LEASE_OBJECT,
   CodexAuthStoreError,
   GcsCodexAuthStore,
@@ -21,10 +22,10 @@ describe('GcsCodexAuthStore', () => {
     }));
     const store = new GcsCodexAuthStore({ file } as unknown as Bucket);
 
-    const snapshot = await store.read('jlapenna/agent-lcars');
+    const snapshot = await store.read();
 
-    expect(file).toHaveBeenNthCalledWith(1, 'jlapenna/agent-lcars/auth.json');
-    expect(file).toHaveBeenNthCalledWith(2, 'jlapenna/agent-lcars/auth.json', {
+    expect(file).toHaveBeenNthCalledWith(1, CODEX_CENTRAL_AUTH_OBJECT);
+    expect(file).toHaveBeenNthCalledWith(2, CODEX_CENTRAL_AUTH_OBJECT, {
       generation: '1700000000000001',
     });
     expect(download).toHaveBeenCalledWith({ validation: 'crc32c' });
@@ -40,7 +41,6 @@ describe('GcsCodexAuthStore', () => {
     const bytes = Buffer.from('{"tokens":{"access":"rotated"}}');
 
     await store.replace({
-      repository: 'jlapenna/agent-lcars',
       expectedGeneration: '1700000000000001',
       authBase64: bytes.toString('base64'),
     });
@@ -63,7 +63,6 @@ describe('GcsCodexAuthStore', () => {
 
     await expect(
       store.replace({
-        repository: 'jlapenna/agent-lcars',
         expectedGeneration: '7',
         authBase64: Buffer.from('{"tokens":{}}').toString('base64'),
       }),

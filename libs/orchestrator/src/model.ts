@@ -167,10 +167,9 @@ export const runSchema = z.strictObject({
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here. */
   params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
-  /** Which executor drains this run's dispatch. Absent means
-   *  `'github-actions'` -- every run persisted before this field existed
-   *  parses unchanged (see model.ts's top comment on the anchor union for
-   *  why this stays optional-with-a-default rather than required). */
+  /** Which executor drains this run's dispatch. New runs are always `queue`.
+   *  Absent remains readable for historic records; the drain still enqueues
+   *  those records through QueueExecutor rather than restoring a hosted path. */
   executor: runExecutorSchema.optional(),
   /** `executor: 'queue'` runs only -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),

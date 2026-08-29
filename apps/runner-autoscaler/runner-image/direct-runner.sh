@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
-# Direct-mode bootstrap for one claimed queue-executor run. Reproduces the
-# `claude`, `codex`, and `opencode` pipeline slices of
-# .github/workflows/agent-lane.yml against the run-token-authenticated
-# /api/work/v1/runs/* routes instead of workflow_dispatch inputs and the
-# GitHub-OIDC completion route. Exact claude-code-action /
-# Agent SDK parity (its internal max_turns enforcement, MCP wiring) is out
-# of scope for this sub-project -- ruling, recorded in the design spec.
+# Direct-mode bootstrap for one claimed QueueExecutor run. It invokes the
+# `claude`, `codex`, and `opencode` providers through the run-token-
+# authenticated /api/work/v1/runs/* routes. Exact Claude SDK parity (its
+# internal max_turns enforcement, MCP wiring) is out of scope for this
+# sub-project -- ruling, recorded in the design spec.
 set -euo pipefail
 # Defensive: nothing above sets -x, but every command below that touches
 # LCARS_RUN_TOKEN/CHECKOUT_TOKEN would otherwise be one inherited/accidental
 # `set -x` away from echoing a live credential into container logs (the same
-# discipline agent-fallback-finalize.yml's own completion callback step
-# applies around its dispatch token). Every bearer below also travels via
-# `curl --config -` (stdin), never `-H`/argv -- agent-fallback-finalize.yml's
-# own pattern -- so it never appears in `ps aux`/`/proc/*/cmdline` either,
+# discipline for the run-token completion callback. Every bearer below also
+# travels via `curl --config -` (stdin), never `-H`/argv, so it never appears
+# in `ps aux`/`/proc/*/cmdline` either,
 # nor would `set -x` tracing print it (xtrace shows a command's argv, not a
 # heredoc body piped to its stdin). Tokens are never echoed directly either;
 # only jq-extracted into named vars, never printed whole.
@@ -216,18 +213,13 @@ cd "$workspace"
 # without a second token hand-off.
 git config --local "http.https://github.com/.extraheader" "$CHECKOUT_AUTH_HEADER"
 
-# Same git identity .github/actions/agent-setup/action.yml's own "Configure
-# git identity" step sets for every GitHub-Actions-mode agent commit (final-
-# review fix): direct mode runs no such composite action, so nothing else in
-# this bootstrap configures it, and an agent commit with no identity set
-# fails outright.
+# Every QueueExecutor agent commit needs this Git identity; without it an
+# agent commit fails outright.
 GIT_LOGIN="${LCARS_GIT_LOGIN:-agent-lcars[bot]}"
 git config --local user.name "$GIT_LOGIN"
 git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
 
-# Same restore .github/actions/resume-session/resume.sh performs for the
-# GitHub-Actions lane (Task 6) -- mirrored here rather than shared, since
-# direct mode has no composite-action step to invoke it from. Fail-soft:
+# Restore uses the telemetry writer's own store. Fail-soft:
 # any missing input or failed download leaves RESUME_FLAG empty and this
 # run proceeds as a fresh dispatch (`|| true` below), never blocking the
 # agent on a broken restore.
@@ -263,9 +255,8 @@ set -a
 source "$GITHUB_ENV"
 set +a
 
-# Duplicated from agent-lane.yml's "Resolve the canonical dispatch prompt"
-# step -- that step is inline workflow YAML, not an extractable script.
-# Flagged in the plan's self-review as a drift risk, not fixed here.
+# Canonical direct-runner dispatch prompt. It is self-contained so target
+# repositories cannot change QueueExecutor behavior.
 AGENT_PROMPT="$(cat <<PROMPT
 Work the routed anchor in the JSON brief at \$AGENT_DISPATCH_CONTEXT.
 Read AGENTS.md, then the shared protocol at \$AGENT_PROTOCOL_PATH, and
@@ -373,9 +364,9 @@ if [ "$PIPELINE" = "claude" ]; then
   AGENT_EXIT=$?
   set -e
 elif [ "$PIPELINE" = "codex" ]; then
-  # The broker exposes only this run's target-repository lineage and only
-  # to this live run token. The direct container receives no GCS credential
-  # capable of reading another repository's auth.json.
+  # The broker exposes the centrally owned lineage only to this live run
+  # token. The target repository is independently bound to that token; the
+  # direct container receives no GCS credential or object selector.
   codex_auth="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/codex-auth"
 header = "$AUTH_HEADER"
@@ -490,7 +481,7 @@ else
     exit 1
   fi
   OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
-  # Mirrors the hosted OpenCode step's 60-minute hard timeout. OpenCode has
+  # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
   # leave the surrounding direct runner alive to finalize telemetry and
   # report no-deliverable rather than letting an unbounded provider retry
@@ -536,8 +527,7 @@ OUTCOME_REFERENCE=null
 if [ "$AGENT_EXIT" -eq 0 ] &&
   AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
   bash "$VERIFY_DELIVERABLE"; then
-  # Mirror the hosted fallback finalizer's artifact classification. The
-  # verifier proves that *some* exact marker-bound artifact exists; the
+  # The verifier proves that *some* exact marker-bound artifact exists; the
   # completion outcome must still name that artifact rather than relabeling
   # a reply comment or a pull-request review as a pull request.
   #
@@ -559,8 +549,7 @@ if [ "$AGENT_EXIT" -eq 0 ] &&
   fi
 
   # A GitHub issue/PR anchor can complete with an evidence comment. Check
-  # park/no-op before a plain comment, matching the hosted finalizer's
-  # ordering; these structured comments carry distinct control-plane
+  # park/no-op before a plain comment; these structured comments carry distinct control-plane
   # semantics even though they use the same GitHub artifact type.
   if [ -n "$ISSUE" ]; then
     if comment_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
@@ -588,8 +577,8 @@ if [ "$AGENT_EXIT" -eq 0 ] &&
   fi
 
   # A review is a distinct protocol deliverable. It is intentionally after
-  # comments, exactly as hosted finalization does: a marker-stamped comment
-  # remains the authoritative artifact if an agent left both.
+  # comments: a marker-stamped comment remains the authoritative artifact if
+  # an agent left both.
   if [ "$OUTCOME" = unknown-success ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
     if review_hits="$(gh api "repos/$TARGET_REPO/pulls/$ISSUE/reviews?per_page=100" --paginate \
       --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then

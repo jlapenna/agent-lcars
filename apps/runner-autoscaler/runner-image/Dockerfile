@@ -69,7 +69,7 @@ ARG GO_VERSION=1.26.5
 # never drift to different agent-lcars revisions the way two separately
 # published artifacts could. Always builds from agent-lcars's
 # `main` (no version pin): a stale pin was exactly the failure mode this
-# replaces (agent-lcars#29 — claude.yml silently pointed at a frozen,
+# replaces (agent-lcars#29 — an earlier worker silently pointed at a frozen,
 # never-republished GCS bundle for months). If this stage fails, the whole
 # image build fails and the fleet keeps running the last successfully
 # published image -- deploy_runner_autoscaler.yml pulls and fails loudly if
@@ -374,7 +374,7 @@ RUN chmod +r /usr/local/lib/agent-lcars/toolchain-health.sh
 # Consumed via /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 # start|finalize — a thin telemetry-specific wrapper (credential/RUN_ID
 # guards, sidecar.cjs argument assembly) baked in alongside the binary
-# itself, so every consuming claude.yml's telemetry step is one line
+# itself, so QueueExecutor invokes the telemetry lifecycle directly
 # instead of duplicating that ~30-60 lines of bash inline. That
 # duplication is exactly how members drifted out of sync with agent-lcars
 # for an unknown stretch of time (it was missing the finalize half

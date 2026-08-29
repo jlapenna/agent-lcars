@@ -24,7 +24,6 @@ import type {
   DrainOutboxResult,
 } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
-import type { SettleTerminalRunsResult } from '@/lib/orchestrator-terminal-runs';
 import {
   bindCompletionToRun,
   BindingUnavailable,
@@ -45,11 +44,6 @@ export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   drain: () => Promise<DrainOutboxResult>;
-  /** Settles live runs whose GitHub workflow run is already terminal (see
-   *  `orchestrator-terminal-runs.ts`). Injected rather than called directly
-   *  for the same reason `drain` is: it does GitHub I/O, and these handlers
-   *  stay drivable in tests without it. */
-  settleTerminal: () => Promise<SettleTerminalRunsResult>;
   /** The one deployment-selected executor decision for every newly admitted
    * run. Before the global cutover it preserves the legacy selector; once
    * enabled it returns `queue` for every provider and request source. */
@@ -93,11 +87,11 @@ type RouteResult = { status: number; body: Record<string, unknown> };
 
 /**
  * A label re-request has no reply text of its own.  Put this opaque marker
- * into the already-published `context` dispatch input so
- * prepare-agent-dispatch can select the GitHub comments that appeared after
- * the previous attempt.  Adding a new workflow_dispatch input here would
- * require every fleet consumer to update in lockstep; `context` already
- * reaches every supported lane and is deliberately bounded by that action.
+ * into the queued run's `context` parameter so `prepare-agent-dispatch` can
+ * select the GitHub comments that appeared after the previous attempt. Adding
+ * another queue parameter here would require every worker consumer to update
+ * in lockstep; `context` already reaches every supported provider and is
+ * deliberately bounded by that action.
  *
  * This is intentionally a timestamp rather than copied comment prose.  The
  * worker's existing authenticated GitHub read remains the source of the
@@ -469,49 +463,27 @@ export async function handleCompletion(
 }
 
 /**
- * One reconcile cycle: settle first, then dispatch what the settling
- * produced.
- *
- * Terminal-run settling (#1361) runs *before* the lease sweep on purpose.
- * Both settle a live run to `lost` and release its task's mutex, but the
- * terminal probe knows *why* (the workflow run is over), where the sweep
- * only knows the run went quiet for a full lease. Running it first means a
- * run whose executor already died is settled on this evidence, with its
- * conclusion recorded, rather than waiting out the lease that would settle
- * it hours later; a run the probe cannot resolve falls through to the sweep
- * exactly as before, which is what keeps the lease a backstop rather than a
- * competing mechanism.
- *
- * The response keeps every key `dispatch-reconcile.yml`'s log already shows
- * and adds `terminal` (the runs settled from a terminal workflow run, with
- * the conclusion that proved it). `retried` is the union of both settle
- * paths' auto-retries -- they are the same mechanism, on the same
- * `MAX_AUTO_RETRIES` budget, and a reader wants one list of "what got
- * retried this cycle".
+ * One QueueExecutor reconcile cycle: expire lost leases, then dispatch the
+ * resulting retry work. Provider workers report completion through the Work
+ * API; no GitHub Actions workflow probing is part of this path.
  */
 export async function handleReconcile(
   deps: OrchestratorRouteDeps,
 ): Promise<RouteResult> {
   try {
-    const terminal = await deps.settleTerminal();
     const swept = await deps.orchestrator.sweepExpired();
     const drained = await deps.drain();
     return {
       status: 200,
       body: {
         lost: swept.lost.map((run) => run.runId),
-        terminal: terminal.settled,
-        retried: [...terminal.retried, ...swept.retried],
+        retried: swept.retried,
         dispatched: drained.dispatched,
         reported: drained.reported,
-        ...(terminal.failed.length === 0
-          ? {}
-          : { terminalProbeFailed: terminal.failed }),
         // #1548: the drain itself now logs every per-entry failure (see
         // `orchestrator-dispatch.ts`'s `logOutboxFailure`), but surfacing it
-        // here too, next to `terminalProbeFailed`, means a reconcile run's
-        // own response already shows an outbox problem without needing a
-        // separate log lookup.
+        // here means a reconcile run's response already shows an outbox
+        // problem without needing a separate log lookup.
         ...(drained.failed.length === 0
           ? {}
           : { outboxDrainFailed: drained.failed }),

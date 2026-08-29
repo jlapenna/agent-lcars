@@ -1,7 +1,7 @@
 # Onboarding a repo to the Agent LCARS console + telemetry
 
 > Part of the end-to-end repo onboarding sequence — start at
-> [onboarding-repo.md](onboarding-repo.md); this doc is its §6 detail.
+> [onboarding-repo.md](onboarding-repo.md); this doc is its §5 detail.
 
 > Credential minting (Claude OAuth token, Codex auth lineage, LiteLLM key,
 > App keys) is documented in [fleet-credentials.md](fleet-credentials.md).
@@ -13,45 +13,19 @@ takeover/parking work the same way they do for any already-onboarded repo.
 There are three independent layers. A repo can adopt them incrementally,
 but the console only becomes useful once all three are in place:
 
-1. **Agent protocol** — the repo's dispatch workflows follow the shared
-   conventions the console parses out of GitHub state.
-2. **Telemetry** — the repo's runner image/workflow reports live and
-   final session data to this console's Firestore.
+1. **Agent protocol** — QueueExecutor follows the shared conventions for
+   work admitted from the repository's GitHub state.
+2. **Telemetry** — QueueExecutor reports live and final session data to this
+   console's Firestore.
 3. **Console config** — this repo (`agent-lcars`) is told the new repo
    exists.
 
 ## 1. Agent protocol
 
-Use the shared protocol as the complete fleet behavior contract. Every dispatch
-workflow (however many of `claude.yml`, `opencode.yml`, and `codex.yml` the
-repo runs) should:
-
-- Use the `prepare-agent-dispatch` action (ref per the convention in
-  [published-actions.md](published-actions.md) — the moving `main` ref with a
-  `# latest` comment) and have the agent read the
-  shared protocol at `$AGENT_PROTOCOL_PATH`. The action is already downloaded
-  outside the consumer's Git
-  worktree, so it exposes its bundled protocol file and writes the dispatch
-  brief under `$RUNNER_TEMP`:
-
-  ```yaml
-  - name: Prepare dispatch context
-    id: dispatch
-    uses: jlapenna/agent-lcars/.github/actions/prepare-agent-dispatch@main # latest
-    with:
-      agent: Claude
-      issue: ${{ github.event.inputs.issue }}
-      mode: ${{ github.event.inputs.mode }}
-  ```
-
-  The action exports `AGENT_PROTOCOL_PATH` and `AGENT_DISPATCH_CONTEXT` for
-  subsequent steps and exposes the same values as `protocol-path` and `path`
-  outputs. The example uses the backward-compatible 60-minute runtime defaults
-  (durable artifact by minute 25, scope finalization by minute 45) and the
-  caller's ambient `github.token`. Pass `token` and all three deadline inputs
-  explicitly when the agent step uses different credentials or a different
-  timeout. Do not check this repository out inside the consumer repository;
-  runtime-only files must never appear in the consumer's Git status.
+Use the shared protocol as the complete fleet behavior contract. QueueExecutor
+uses the centrally baked `prepare-agent-dispatch` bootstrap and exposes its
+protocol and context only inside the isolated worker, never in a target
+repository workflow.
 
 - Do not copy `agent-protocol` or centrally published plugin skills into the
   repository. The action installs the shared layer-1 skill surface into the
@@ -66,8 +40,8 @@ repo runs) should:
   deliverable semantics in the shared protocol. A consumer must not redefine
   them locally.
 
-None of this requires touching this repo. It's entirely the new repo's own
-dispatch-workflow work, following a file this repo publishes.
+None of this requires target-repository provider workflow files. The Console
+admission and QueueExecutor own execution centrally.
 
 ## 2. Telemetry
 
@@ -77,21 +51,17 @@ archives raw JSONL but has no live-resume command; OpenCode reports summary
 telemetry and archives a bounded, sanitized metadata-only CLI export, but that
 archive has no timeline renderer or resume command. Telemetry steps are
 deliberately fail-soft, so verify the expected provider-specific result rather
-than treating a green workflow as proof that session data arrived.
+than treating a successful agent process as proof that session data arrived.
 
 OpenCode live/GCS capture uses the root-owned `/usr/local/bin/opencode` baked
 into the shared runner image from an exact GitHub release artifact whose
 reviewed SHA-256 is verified before extraction. The privileged telemetry
-process deliberately rejects PATH and the runner-writable CLI a consumer setup
-action installs; that nonprivileged action retains its supported upstream
-installer. The bootstrap lane invokes the image binary directly. The separate
-post-agent trajectory artifact remains available because it does not run with
-the telemetry writer credential.
+process deliberately rejects PATH and invokes the image binary directly.
 
-The shared lane owns the standard WIF provider and telemetry-writer service
-account. A new repo therefore needs no duplicated workflow steps or repository
-variables for telemetry; it needs the shared runner image and membership in
-this repo's Terraform-managed fleet repository list.
+QueueExecutor owns the standard telemetry identity and writer service account.
+A new repo therefore needs no provider workflow, repository secret, or
+repository variable for telemetry; it needs Console admission and shared
+QueueExecutor capacity.
 
 ### 2a. The sidecar tool needs to be on the runner
 
@@ -115,37 +85,33 @@ step.
   shipping some other way. Don't reintroduce a publish-and-pin scheme —
   build-time bake-in from this repo's own `main` is the supported pattern.
 
-### 2b. Dispatch workflow contract
+### 2b. QueueExecutor telemetry contract
 
-Use the published Agent LCARS Claude, Codex, and OpenCode lanes. Their shared
-`agent-lane.yml` authenticates, starts, and finalizes telemetry with the
-canonical provider and writer identity when the caller leaves the optional
-override inputs empty. Do not copy those steps into consumers, and do not make
-telemetry depend on per-repository `GCP_TELEMETRY_WRITER_SA` variables.
+QueueExecutor authenticates, starts, and finalizes telemetry with the canonical
+provider and writer identity. It is the only provider execution path; target
+repositories do not call a provider lane or configure telemetry workflow
+inputs. Do not copy telemetry steps into consumers or create per-repository
+writer variables.
 
-The composite and sidecar remain fail-soft: broken WIF or an old runner image
-must not turn a healthy agent deliverable red. That makes live console/storage
-verification mandatory; a green Actions run alone is not telemetry proof.
+The sidecar remains fail-soft: broken telemetry authentication or an old runner
+image must not turn a healthy agent deliverable red. That makes live
+console/storage verification mandatory; GitHub Actions is not dispatch
+evidence.
 
 ### 2c. IAM grant (requires explicit maintainer approval)
 
-Add the repository to `local.github_repositories`. The same curated list owns
-both the WIF provider admission condition and the per-repository
-`roles/iam.workloadIdentityUser` grants on `telemetry-writer`; do not add a
-one-off writer resource that can drift from fleet membership. This repo's
-own `AGENTS.md`/development-skill rules deny Terraform and IAM changes by
-default. The named maintainer may explicitly approve a specific issue,
-operation, and target; without that approval, flag the step and wait. With
-approval, use a dedicated worktree, add regression coverage, review the
-complete plan before applying, and verify a clean post-apply plan. Never work
-around Terraform ownership with a hand-rolled `gcloud` grant.
+Admit the repository through the Console's reviewed repository configuration;
+do not create a one-off telemetry identity, WIF grant, secret, or variable.
+If a central IAM boundary genuinely needs changing, this repo's
+`AGENTS.md`/development-skill rules require explicit maintainer approval for
+that exact Terraform operation. Never work around Terraform ownership with a
+hand-rolled `gcloud` grant.
 
-Codex also needs a repository-specific service account and rotating credential
-secret. Repository-local Actions concurrency cannot protect a credential shared
-across repositories, so never grant a new repository access to another repo's
-Codex service account or copy its `auth.json`. Provision a distinct secret
-container through Terraform; a maintainer must populate it with an independently
-minted credential through the approved secret-value workflow.
+Codex work uses the Console's centrally owned rotating `auth.json` lineage.
+The QueueExecutor binds every restore and persistence request to a live Codex
+run and derives the target repository from that run before minting its separate
+checkout token. Onboarding a repository therefore needs LCARS authorization,
+not another Codex login, GCS object, or direct credential grant.
 
 ## 3. Console config
 
@@ -174,12 +140,10 @@ set in this repo's `apphosting.yaml`): a JSON array of
   identity keys used to join items/runs/sessions to a repo — those always
   use the real `owner`/`name`.
 - Omit `agents` for the standard Claude, Codex, and OpenCode integrations.
-  Set `agents` to an empty object for a repository that has no agent
-  dispatch, or provide a complete per-pipeline object with `workflowFile`,
-  `label`, and `replyTrigger` when an integration differs. Optional
-  `replyTriggerAliases` records equivalent accepted commands. This keeps the
-  console's routing behavior declarative and lets future integrations add
-  their own control label and reply syntax without hard-coded repo branches.
+  Set `agents` to an empty object for a repository that has no agent dispatch,
+  or provide label and reply-trigger overrides when an integration differs.
+  QueueExecutor does not invoke a target-repository workflow file. Optional
+  `replyTriggerAliases` records equivalent accepted commands.
 - `getGithubClient()` (see `github-client.ts`) mints a short-lived GitHub App
   installation token per request, scoped to the target repo, rather than
   using one long-lived ambient credential (#1284 retired the classic PAT
@@ -205,8 +169,8 @@ Don't take any of the above on faith — confirm each layer:
 
 1. Dispatch a real, low-stakes issue in the new repo with the `agent:claude`
    (or `agent:opencode`/`agent:codex`) label and watch the run through to a real
-   deliverable (PR opened, or a parked `status:needs-human` comment) — not just
-   a green job.
+   deliverable (PR opened, or a parked `status:needs-human` comment) — not a
+   GitHub Actions job.
 2. While it's running, check this console's dashboard for the in-flight
    session (live turns/tokens updating) — proves the sidecar + WIF auth +
    watched-repos config are all correctly wired end to end, not just each

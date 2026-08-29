@@ -37,13 +37,6 @@ inputs:
 runs:
   using: composite
   steps:
-    # This composite is only safe to invoke via `uses:` BEFORE the agent
-    # step runs. Called after it, use the pre-agent snapshot of
-    # verify-deliverable.sh instead (see the "Snapshot post-agent
-    # enforcement scripts" step in agent-lane-*.yml and
-    # dispatch-bootstrap/action.yml) - a local composite resolves from the
-    # current working tree, which the agent has unrestricted Bash access
-    # to modify.
     - name: Verify a deliverable exists
       shell: bash
       env:

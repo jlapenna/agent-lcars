@@ -108,12 +108,8 @@ jobs:
             go install "github.com/rhysd/actionlint/cmd/actionlint@v${actionlint_version}"
             actionlint_command="$(go env GOPATH)/bin/actionlint"
           fi
-          find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) \
-            ! -name codex.yml -print0 \
+          find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
             | xargs -0 "$actionlint_command"
-          "$actionlint_command" \
-            -ignore 'unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"' \
-            .github/workflows/codex.yml
 
       - name: Test agent dispatch preparation
         run: bash .github/actions/prepare-agent-dispatch/prepare.test.sh
@@ -121,26 +117,14 @@ jobs:
       - name: Test fleet skill source boundaries (#1269)
         run: bash .github/actions/prepare-agent-dispatch/assert-consumer-boundaries.test.sh
 
-      - name: Test Claude run-status gate (#1283)
-        run: bash tools/verify-claude-run-status.test.sh
-
-      - name: Test worker workflow anchor gates
-        run: bash tools/workflow-anchor-gates.test.sh
-
       - name: Test the work-session-pin-tick workflow
         run: bash tools/workflow-session-pin-tick.test.sh
 
       - name: Test layer-1 skill install (#1269)
         run: bash .github/actions/prepare-agent-dispatch/install-skills.test.sh
 
-      - name: Test attempt-marker stamping
-        run: bash .github/actions/stamp-attempt-marker/stamp.test.sh
-
-      - name: Test opencode config contract
+      - name: Test OpenCode configuration
         run: bash tools/opencode-config.test.sh
-
-      - name: Test OpenCode trajectory archival
-        run: bash .github/actions/archive-opencode-trajectory/archive.test.sh
 
       - name: Test the agent-tools package install
         run: bash packages/fleet-tools/tests/package-install.test.sh
@@ -162,12 +146,6 @@ jobs:
 
       - name: Test the GitHub attachment download helper
         run: bash agents/shared/skills/agent-protocol/scripts/download-github-attachment.test.sh
-
-      - name: Test failure reporting
-        run: bash .github/actions/report-failure/report-failure.test.sh
-
-      - name: Test post-agent gate orchestration (#645 Phase 3)
-        run: bash .github/actions/post-agent-gates/post-agent-gates.test.sh
 
       - name: Test generic in-job daemon lifecycle (#1246)
         run: bash apps/telemetry-watcher/bin/job-daemon.test.sh
@@ -196,9 +174,6 @@ jobs:
       - name: Test live-base merging
         run: bash .github/actions/merge-live-base/merge-live-base.test.sh
 
-      - name: Test resume-session action
-        run: bash .github/actions/resume-session/resume.test.sh
-
       - name: Test published-action contracts
         run: node .github/actions/published-actions.contract.test.mjs
 
@@ -206,9 +181,6 @@ jobs:
         run: node --test packages/fleet-tools/tests/codex-issue-guardrail.test.cjs
 
       - uses: ./.github/actions/setup-node-pnpm
-
-      - name: Test published worker-workflow validation
-        run: node .github/actions/validate-worker-workflows/validate.test.mjs
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:

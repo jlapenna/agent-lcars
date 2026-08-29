@@ -19,7 +19,7 @@ jobs:
       - uses: ./.github/actions/local-thing
       - uses: actions/codeql-action/init@abc1234def5678901234abc1234def5678901234
   caller:
-    uses: jlapenna/agent-lcars/.github/workflows/agent-lane-claude.yml@main
+    uses: jlapenna/agent-lcars/.github/workflows/repo-validation.yml@main
 YML
 cat > "$tmp/repo/.github/actions/local-thing/action.yml" <<'YML'
 runs:

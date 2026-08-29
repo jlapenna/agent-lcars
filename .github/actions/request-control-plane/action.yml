@@ -38,10 +38,18 @@ inputs:
     required: false
     default: '60'
 
+outputs:
+  response:
+    description: >-
+      Exact response body from a successful single request (`payload` or
+      bodyless mode). Empty for batch `payloads` mode.
+    value: ${{ steps.request.outputs.response }}
+
 runs:
   using: composite
   steps:
     - name: Mint the OIDC token and POST the request
+      id: request
       shell: bash
       env:
         ENDPOINT: ${{ inputs.endpoint }}

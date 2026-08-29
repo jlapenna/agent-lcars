@@ -3,8 +3,7 @@ description: >-
   Point trusted Nx jobs at the self-hosted L2 remote cache. Same-repository PRs
   can warm the cache; fork PRs receive no cache capability. Published for fleet
   consumption (sprinkles adopted it in place of its former independent rebuild
-  of the same guard logic). Complements agent-setup, which wires the
-  host-mounted L1 (NX_CACHE_DIRECTORY) rather than the remote server.
+  of the same guard logic).
 
 inputs:
   url:

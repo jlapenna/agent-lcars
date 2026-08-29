@@ -70,9 +70,9 @@ jobs:
           echo "token=$oidc_token" >> "$GITHUB_OUTPUT"
 
       # Write side: WIF-impersonate telemetry_writer -- the exact same
-      # binding .github/actions/telemetry-start already exercises for
+      # binding the retired worker telemetry step previously exercised for
       # every dispatched run (fleet_writer_impersonation, infra/terraform/
-      # main.tf). No new Terraform, IAM, or secret. Unlike telemetry-start,
+      # main.tf). No new Terraform, IAM, or secret. Unlike the old worker step,
       # this keeps the default `export_environment_variables: true`: that
       # action turns it off because a *later* step in its job runs an
       # untrusted, possibly prompt-injected agent whose Bash tool must
