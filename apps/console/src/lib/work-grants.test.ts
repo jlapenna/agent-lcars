@@ -130,20 +130,13 @@ describe('grant pipelines', () => {
 });
 
 describe('queuePipelines', () => {
-  it('defaults to empty and parses a JSON array', () => {
+  it('defaults to empty and parses the temporary legacy selector', () => {
     expect(queuePipelines(undefined)).toEqual([]);
     expect(queuePipelines('["claude"]')).toEqual(['claude']);
   });
 
-  it('rejects malformed input loudly', () => {
+  it('rejects a malformed or unknown pipeline selector loudly', () => {
     expect(() => queuePipelines('not json')).toThrow();
-    expect(() => queuePipelines('{"not":"an array"}')).toThrow();
-  });
-
-  it('rejects a pipeline name outside PIPELINES as a startup config error', () => {
-    // A typo here would otherwise route nothing, ever, for a pipeline
-    // whose name doesn't exactly match a real one -- silently inert
-    // exactly like the grant-side typo above.
     expect(() => queuePipelines('["claud"]')).toThrow();
   });
 });

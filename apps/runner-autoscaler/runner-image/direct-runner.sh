@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Direct-mode bootstrap for one claimed queue-executor run (native work
-# items sub-project 4). Reproduces the `claude` and `codex` pipeline slices of
+# Direct-mode bootstrap for one claimed queue-executor run. Reproduces the
+# `claude`, `codex`, and `opencode` pipeline slices of
 # .github/workflows/agent-lane.yml against the run-token-authenticated
 # /api/work/v1/runs/* routes instead of workflow_dispatch inputs and the
-# GitHub-OIDC completion route. OpenCode is not covered. Exact claude-code-action /
+# GitHub-OIDC completion route. Exact claude-code-action /
 # Agent SDK parity (its internal max_turns enforcement, MCP wiring) is out
 # of scope for this sub-project -- ruling, recorded in the design spec.
 set -euo pipefail
@@ -60,17 +60,42 @@ header = "$AUTH_HEADER"
 $CURL_TIMEOUT_CONFIG
 CURLCFG
 )"
-WORK="$(jq -c '{id, spec}' <<<"$brief")"
-export WORK
-TARGET_REPO="$(jq -r '.spec.target.repo' <<<"$brief")"
-PIPELINE="$(jq -r '.spec.pipeline' <<<"$brief")"
+ANCHOR_TYPE="$(jq -r '.anchor.type' <<<"$brief")"
+PIPELINE="$(jq -r '.pipeline // .spec.pipeline // empty' <<<"$brief")"
+case "$ANCHOR_TYPE" in
+  work)
+    WORK="$(jq -c '{id, spec}' <<<"$brief")"
+    TARGET_REPO="$(jq -r '.anchor.target_repo // .spec.target.repo' <<<"$brief")"
+    ISSUE=''
+    ;;
+  github)
+    # A GitHub anchor may carry the server-derived Work spec, but the
+    # dispatch still remains valid without one: prepare.sh then fetches the
+    # anchor in the normal legacy path. The queue never makes this a routing
+    # distinction; it is only the brief's task-text representation.
+    WORK="$(jq -c '.work // empty' <<<"$brief")"
+    TARGET_REPO="$(jq -r '.anchor.repo' <<<"$brief")"
+    ISSUE="$(jq -r '.anchor.issue' <<<"$brief")"
+    ;;
+  *)
+    echo "FATAL: direct runner received unsupported brief anchor type '$ANCHOR_TYPE'" >&2
+    exit 1
+    ;;
+esac
+export WORK ISSUE
 case "$PIPELINE" in
   claude) AGENT_NAME=Claude ;;
   codex) AGENT_NAME=Codex ;;
+  opencode) AGENT_NAME=OpenCode ;;
   *) AGENT_NAME=Unknown ;;
 esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
+MODE="$(jq -r '.mode // "implement"' <<<"$brief")"
+REPLY="$(jq -r '.reply // ""' <<<"$brief")"
+RUNBOOK="$(jq -r '.runbook // ""' <<<"$brief")"
+CONTEXT="$(jq -r '.context // ""' <<<"$brief")"
+export MODE REPLY RUNBOOK CONTEXT
 export GITHUB_REPOSITORY="$TARGET_REPO"
 # Native work items sub-project 8: a claimed run may carry a resume request
 # (populated by the console's own drain input -- Task 3) for a prior
@@ -153,8 +178,12 @@ CHECKOUT_TOKEN="$(jq -r '.token' <<<"$checkout")"
 # not claude's. The claude lane's own claude[bot]-push boundary (#645)
 # exists because the claude-code-action vends its own separate push
 # credential internally; direct mode never runs that Action, so there is
-# no second credential to vend. Accepted deliberately, not an oversight.
+# no second credential to vend. Its repository-scoped actions:write grant
+# is also exposed as ACTIONS_RERUN_TOKEN for agent-protocol.md §8's
+# `gh run rerun --failed` path; this is the same short-lived installation
+# token, not a new long-lived provider credential.
 export GH_TOKEN="$CHECKOUT_TOKEN"
+export ACTIONS_RERUN_TOKEN="$CHECKOUT_TOKEN"
 
 CHECKOUT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$CHECKOUT_TOKEN" | base64 -w0)"
 
@@ -224,7 +253,6 @@ export GITHUB_OUTPUT="$RUNNER_TEMP/github-output"
 export GITHUB_ENV="$RUNNER_TEMP/github-env"
 : > "$GITHUB_OUTPUT"
 : > "$GITHUB_ENV"
-export ISSUE='' MODE=implement REPLY='' RUNBOOK='' CONTEXT=''
 export PRIOR_TERMINAL_STATE=null
 export BUDGET_MINUTES=80 ARTIFACT_CHECKPOINT_MINUTES=15 FINALIZE_CHECKPOINT_MINUTES=70
 export AGENT="$AGENT_NAME"
@@ -344,7 +372,7 @@ if [ "$PIPELINE" = "claude" ]; then
     --print "$AGENT_PROMPT"
   AGENT_EXIT=$?
   set -e
-else
+elif [ "$PIPELINE" = "codex" ]; then
   # The broker exposes only this run's target-repository lineage and only
   # to this live run token. The direct container receives no GCS credential
   # capable of reading another repository's auth.json.
@@ -447,6 +475,48 @@ CURLCFG
       AGENT_EXIT=1
     fi
   fi
+else
+  # OpenCode's LiteLLM virtual key follows the same file-mounted credential
+  # boundary as Claude. It is exported only for the trusted OpenCode process,
+  # never placed in Docker's inspectable environment at container creation.
+  OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
+  if [ ! -r "$OPENCODE_TOKEN_FILE" ]; then
+    echo "FATAL: $OPENCODE_TOKEN_FILE is required (OPENCODE_LLM_API_KEY source) but is missing or unreadable" >&2
+    exit 1
+  fi
+  OPENCODE_BIN="${OPENCODE_BIN:-/usr/local/bin/opencode}"
+  if [ ! -x "$OPENCODE_BIN" ]; then
+    echo "FATAL: trusted OpenCode executable $OPENCODE_BIN is missing or not executable" >&2
+    exit 1
+  fi
+  OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
+  # Mirrors the hosted OpenCode step's 60-minute hard timeout. OpenCode has
+  # no max-elapsed-time switch, so bound the trusted executable itself and
+  # leave the surrounding direct runner alive to finalize telemetry and
+  # report no-deliverable rather than letting an unbounded provider retry
+  # occupy a queue slot indefinitely.
+  OPENCODE_TIMEOUT_SECONDS="${OPENCODE_TIMEOUT_SECONDS:-3600}"
+  case "$OPENCODE_TIMEOUT_SECONDS" in
+    '' | *[!0-9]*)
+      echo "FATAL: OPENCODE_TIMEOUT_SECONDS must be a positive integer" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$OPENCODE_TIMEOUT_SECONDS" -lt 1 ]; then
+    echo "FATAL: OPENCODE_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
+
+  set +e
+  OPENCODE_LLM_API_KEY="$(cat "$OPENCODE_TOKEN_FILE")" \
+    MODEL="$OPENCODE_MODEL" \
+    USE_GITHUB_TOKEN=true \
+    GITHUB_TOKEN="$CHECKOUT_TOKEN" \
+    PROMPT="$AGENT_PROMPT" \
+    timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
+    "$OPENCODE_BIN" github run
+  AGENT_EXIT=$?
+  set -e
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true
@@ -464,29 +534,71 @@ cleanup_codex_material
 OUTCOME=no-deliverable
 OUTCOME_REFERENCE=null
 if [ "$AGENT_EXIT" -eq 0 ] &&
-  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM='' MODE=implement ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
+  AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
   bash "$VERIFY_DELIVERABLE"; then
-  # verify-deliverable.sh just proved (via its own equivalent gh api
-  # lookup, moments ago) that some bot-authored PR on $TARGET_REPO carries
-  # this run's exact attempt-claim marker -- a native work-item run has no
-  # other evidence surface at all (no ISSUE, so no comment/review path;
-  # see prepare.sh's own note on this). OUTCOME is therefore always
-  # "pull-request" past this point. The only open question below is
-  # whether THIS follow-up lookup can also cite the exact PR number: a
-  # transient `gh api` failure or an ambiguous (more than one) match here
-  # must not regress the already-proven outcome back to no-deliverable --
-  # mirrors agent-fallback-finalize.yml's own pr_hits handling exactly
-  # (pull-request with no reference unless the hit list is exactly one
-  # line).
-  OUTCOME=pull-request
+  # Mirror the hosted fallback finalizer's artifact classification. The
+  # verifier proves that *some* exact marker-bound artifact exists; the
+  # completion outcome must still name that artifact rather than relabeling
+  # a reply comment or a pull-request review as a pull request.
+  #
+  # Start at `unknown-success`: a transient classification lookup cannot
+  # undo the verifier's success, nor can it assert a nonexistent PR.
+  OUTCOME=unknown-success
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
-  if ! pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
+  if pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
     --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number")"; then
-    echo "::warning::Could not verify the exact PR number for the completion callback; reporting pull-request with no reference" >&2
+    if [ -n "$pr_hits" ]; then
+      OUTCOME=pull-request
+      if [[ "$pr_hits" != *$'\n'* ]]; then
+        OUTCOME_REFERENCE="$(jq -n --argjson n "$pr_hits" '{kind: "pull-request", number: $n}')"
+      fi
+    fi
+  else
+    echo "::warning::Could not classify a pull-request deliverable for the completion callback" >&2
     pr_hits=""
   fi
-  if [ -n "$pr_hits" ] && [[ "$pr_hits" != *$'\n'* ]]; then
-    OUTCOME_REFERENCE="$(jq -n --argjson n "$pr_hits" '{kind: "pull-request", number: $n}')"
+
+  # A GitHub issue/PR anchor can complete with an evidence comment. Check
+  # park/no-op before a plain comment, matching the hosted finalizer's
+  # ordering; these structured comments carry distinct control-plane
+  # semantics even though they use the same GitHub artifact type.
+  if [ -n "$ISSUE" ]; then
+    if comment_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
+      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
+      if [ -n "$comment_hits" ]; then
+        if park_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
+          --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:park -->\")) | .id")" && \
+          [ -n "$park_hits" ]; then
+          # A structured park wins even if this run also opened a PR. The
+          # PR reference remains attached so the control plane can point at
+          # the partial work alongside the human blocker.
+          OUTCOME=park
+        elif [ "$OUTCOME" = unknown-success ]; then
+          OUTCOME=comment
+          if no_op_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
+            --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id")" && \
+            [ -n "$no_op_hits" ]; then
+            OUTCOME=no-op
+          fi
+        fi
+      fi
+    else
+      echo "::warning::Could not classify a comment deliverable for the completion callback" >&2
+    fi
+  fi
+
+  # A review is a distinct protocol deliverable. It is intentionally after
+  # comments, exactly as hosted finalization does: a marker-stamped comment
+  # remains the authoritative artifact if an agent left both.
+  if [ "$OUTCOME" = unknown-success ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
+    if review_hits="$(gh api "repos/$TARGET_REPO/pulls/$ISSUE/reviews?per_page=100" --paginate \
+      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
+      if [ -n "$review_hits" ]; then
+        OUTCOME=review
+      fi
+    else
+      echo "::warning::Could not classify a pull-request review deliverable for the completion callback" >&2
+    fi
   fi
 fi
 
@@ -509,13 +621,11 @@ CURLCFG
 # below.
 COMPLETED=1
 
-# Exit code reflects the reported outcome (design choice, not the OpenAPI
-# contract's own concern -- the console already has the true outcome via
-# the /complete POST above, which always happens first regardless of this
-# exit path). A non-pull-request outcome exits non-zero so container-level
-# supervision (runner-autoscaler logs, crash-loop/anomaly detection) can
-# tell "reported a real failure" apart from "reported success" without
-# re-parsing this script's own stdout.
-if [ "$OUTCOME" != pull-request ]; then
-  exit 1
-fi
+# Exit code reflects completion success, not one particular artifact class.
+# Reply comments and reviews are valid mode-specific deliverables, as are
+# the structured no-op/park paths; their successful `/complete` callbacks
+# must not turn into container-level failures after the fact.
+case "$OUTCOME" in
+  pull-request | comment | review | no-op | park | unknown-success) ;;
+  *) exit 1 ;;
+esac

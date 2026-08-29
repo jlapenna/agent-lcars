@@ -400,25 +400,45 @@ export const schedulesContract = {
 };
 export type SchedulesContract = typeof schedulesContract;
 
-/**
- * A native run id: `taskKey(anchor)/r<n>` (`libs/orchestrator/src/decide.ts`'s
- * `runId` minting). Kept as a bounded string here rather than a regex-pinned
- * shape -- a queue-executor run is always native-anchored in practice (see
- * the design spec's Plan 6), but this contract has no reason to reject a
- * GitHub-anchored run id's `repo#issue/r<n>` shape either; the orchestrator
- * alone owns what a valid run id looks like.
- */
-const runIdSchema = z.string().min(1).max(64);
+/** A broker run id, owned and minted by the orchestrator. The orchestrator's
+ * longest legal GitHub run ID is 175 characters (140-char owner/repository,
+ * 16-digit issue, and 16-digit generation); keep this standalone contract
+ * literal in sync without importing the storage-oriented orchestrator lib. */
+const runIdSchema = z.string().min(1).max(175);
 
 export const runClaimResponseSchema = z.strictObject({
   runId: runIdSchema,
-  workId: workIdSchema,
+  /** Present for native Work anchors only. */
+  workId: workIdSchema.optional(),
   pipeline: z.string(),
   token: z.string(),
   expiresAt: z.string(),
 });
 
-export const runBriefSchema = z.strictObject({
+const runBriefSharedSchema = {
+  pipeline: z.string(),
+  /** The worker behavior requested at admission, never inferred from labels. */
+  mode: z.string(),
+  reply: z.string(),
+  runbook: z.string(),
+  context: z.string(),
+  attemptId: z.string(),
+  generation: z.number().int().positive(),
+  intentId: z.string(),
+  // Present iff the run's params carried a resume request. The same shape the
+  // old hosted `work` input carried, so one provider adapter can consume it.
+  resume: z
+    .strictObject({
+      sessionId: z.string(),
+      transcriptGcsUri: z.string(),
+    })
+    .optional(),
+};
+
+/** Native Work preserves its existing top-level `id`/`spec` fields so an
+ * already-deployed direct runner can consume the brief while the GitHub-anchor
+ * branch rolls out. */
+const nativeRunBriefSchema = z.strictObject({
   id: workIdSchema,
   spec: workSpecSchema,
   anchor: z.strictObject({
@@ -429,19 +449,27 @@ export const runBriefSchema = z.strictObject({
     target_repo: z.string(),
     html_url: z.string(),
   }),
-  attemptId: z.string(),
-  generation: z.number().int().positive(),
-  intentId: z.string(),
-  // Sub-project 6: present iff the run's params carried a resume request.
-  // The same shape the drain puts on the `work` workflow_dispatch input's
-  // `resume` field -- one shape for both runners.
-  resume: z
-    .strictObject({
-      sessionId: z.string(),
-      transcriptGcsUri: z.string(),
-    })
-    .optional(),
+  ...runBriefSharedSchema,
 });
+
+/** GitHub issue and PR anchors use the same queue route as native Work. A
+ * stored derived Work spec is optional because legacy GitHub tasks predate
+ * that projection; the direct runner can still prepare from `anchor.issue`. */
+const githubRunBriefSchema = z.strictObject({
+  anchor: z.strictObject({
+    type: z.literal('github'),
+    repo: z.string(),
+    issue: z.number().int().positive(),
+    html_url: z.string(),
+  }),
+  work: z.strictObject({ spec: workSpecSchema }).optional(),
+  ...runBriefSharedSchema,
+});
+
+export const runBriefSchema = z.union([
+  nativeRunBriefSchema,
+  githubRunBriefSchema,
+]);
 
 /** `claim` is called by a runner authenticating with its own console
  *  bearer token (the same `bearerAuth` scheme `itemsContract` uses) --

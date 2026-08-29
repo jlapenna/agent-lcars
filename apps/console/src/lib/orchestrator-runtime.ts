@@ -9,6 +9,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 
+import { dispatchExecutor } from '@/lib/dispatch-executor';
 import {
   createDispatchTokenProvider,
   type DispatchTokenProvider,
@@ -89,6 +90,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   cached = {
     store,
     orchestrator,
+    dispatchExecutor: dispatchExecutor(),
     // Resolved fresh on every call, exactly like `drain`/`settleTerminal`
     // below -- NOT captured here at construction time. Two reasons: (1) a
     // rotated `AGENT_LCARS_APP_PRIVATE_KEY` must take effect on the very

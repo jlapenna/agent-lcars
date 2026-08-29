@@ -103,6 +103,43 @@ describe('runsContract', () => {
       shape?.safeParse({ runner: 'autoscaler-1', unknown: true }).success,
     ).toBe(false);
   });
+
+  it('accepts the longest legal GitHub run ID on every token-authenticated route', () => {
+    const runId =
+      `${'o'.repeat(39)}/${'r'.repeat(100)}` +
+      `#${Number.MAX_SAFE_INTEGER}/r${Number.MAX_SAFE_INTEGER + 1}`;
+    expect(runId).toHaveLength(175);
+
+    const routes = [
+      [runsContract.brief, { runId }],
+      [runsContract.heartbeat, { runId }],
+      [runsContract.complete, { runId, outcome: 'done' }],
+      [runsContract.checkoutToken, { runId }],
+      [runsContract.codexAuth, { runId }],
+      [
+        runsContract.persistCodexAuth,
+        {
+          runId,
+          generation: '1',
+          restoredSha256: 'a'.repeat(64),
+          authBase64: 'YXV0aA==',
+        },
+      ],
+    ] as const;
+
+    for (const [route, input] of routes) {
+      const [rawShape] = route['~orpc'].inputSchemas ?? [];
+      const shape = rawShape as z.ZodTypeAny | undefined;
+      expect(shape?.safeParse(input).success).toBe(true);
+    }
+
+    const [briefShape] = runsContract.brief['~orpc'].inputSchemas ?? [];
+    expect(
+      (briefShape as z.ZodTypeAny | undefined)?.safeParse({
+        runId: `${runId}x`,
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('runsContract.brief resume field', () => {
@@ -123,6 +160,11 @@ describe('runsContract.brief resume field', () => {
         target_repo: 'octo/example',
         html_url: 'https://lcars.test/work/01J5Z3K9QX8F0N2B4V6C8D1E3G',
       },
+      pipeline: 'claude',
+      mode: 'implement',
+      reply: '',
+      runbook: '',
+      context: '',
       attemptId: 'g1:work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
       generation: 1,
       intentId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
@@ -133,6 +175,26 @@ describe('runsContract.brief resume field', () => {
       },
     });
     expect(withResume.resume?.sessionId).toBe('sess_123');
+  });
+
+  it('accepts a GitHub issue or pull-request anchor with dispatch metadata', () => {
+    const github = runBriefSchema.parse({
+      anchor: {
+        type: 'github',
+        repo: 'octo/example',
+        issue: 42,
+        html_url: 'https://github.com/octo/example/issues/42',
+      },
+      pipeline: 'opencode',
+      mode: 'review',
+      reply: '/opencode review this',
+      runbook: 'pr-heal',
+      context: 'nightly',
+      attemptId: 'g1:octo/example#42/r1',
+      generation: 1,
+      intentId: 'octo/example#42/r1',
+    });
+    expect(github.anchor.type).toBe('github');
   });
 });
 

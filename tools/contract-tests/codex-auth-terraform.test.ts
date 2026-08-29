@@ -29,6 +29,13 @@ describe('Codex auth Terraform retirement (#761)', () => {
     expect(terraform).toContain(
       'resource "google_storage_bucket_iam_member" "codex_auth_runtime"',
     );
+    expect(terraform).toContain(
+      'resource "google_storage_bucket_iam_member" "codex_auth_shared_lease_runtime"',
+    );
+    expect(terraform).toContain(
+      'resource "google_storage_bucket_iam_member" "apphosting_codex_auth_broker"',
+    );
+    expect(terraform).toContain('objects/_leases/codex-subscription.json');
     expect(terraform).toContain('storage.objects.create');
     expect(terraform).toContain('storage.objects.get');
     expect(terraform).toContain('storage.objects.delete');

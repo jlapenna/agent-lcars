@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  GITHUB_REPO_MAX_LENGTH,
   isGithubAnchor,
   isWorkAnchor,
   outboxEntrySchema,
+  RUN_ID_MAX_LENGTH,
   runQueueSchema,
   runSchema,
   taskIdSchema,
@@ -44,6 +46,18 @@ describe('taskIdSchema', () => {
       taskIdSchema.parse({ workId: '01J5Z3K9QX8F0N2B4V6C8D1E3I' }),
     ).toThrow();
   });
+
+  it('accepts the longest legal GitHub repository name and rejects a longer one', () => {
+    const longest = `${'o'.repeat(39)}/${'r'.repeat(100)}`;
+    expect(longest).toHaveLength(GITHUB_REPO_MAX_LENGTH);
+    expect(
+      taskIdSchema.safeParse({ repo: longest, issue: Number.MAX_SAFE_INTEGER })
+        .success,
+    ).toBe(true);
+    expect(
+      taskIdSchema.safeParse({ repo: `${longest}x`, issue: 1 }).success,
+    ).toBe(false);
+  });
 });
 
 describe('taskKey', () => {
@@ -53,6 +67,15 @@ describe('taskKey', () => {
 
   it('prefixes native anchors with work:', () => {
     expect(taskKey({ workId: ULID })).toBe(`work:${ULID}`);
+  });
+
+  it('bounds every minted GitHub run ID, including maximal issue and generation suffixes', () => {
+    const task = {
+      repo: `${'o'.repeat(39)}/${'r'.repeat(100)}`,
+      issue: Number.MAX_SAFE_INTEGER,
+    };
+    const runId = `${taskKey(task)}/r${Number.MAX_SAFE_INTEGER + 1}`;
+    expect(runId).toHaveLength(RUN_ID_MAX_LENGTH);
   });
 });
 
@@ -103,6 +126,52 @@ describe('persisted-shape fixtures', () => {
         updatedAt: T,
       }),
     ).not.toThrow();
+  });
+
+  it('persists the longest minted GitHub run ID and its generated dependent IDs', () => {
+    const task = {
+      repo: `${'o'.repeat(39)}/${'r'.repeat(100)}`,
+      issue: Number.MAX_SAFE_INTEGER,
+    };
+    // The terminal safe generation has the same 16-digit width as the
+    // increment `mintRun` would produce from it, without creating an unsafe
+    // next persisted task counter in this schema fixture.
+    const runId = `${taskKey(task)}/r${Number.MAX_SAFE_INTEGER}`;
+    expect(runId).toHaveLength(RUN_ID_MAX_LENGTH);
+
+    expect(
+      runSchema.safeParse({
+        runId,
+        task,
+        state: 'pending',
+        pipeline: 'claude',
+        requestId: `retry:${runId}`,
+        leaseExpiresAt: T,
+        events: [{ at: T, to: 'pending', by: 'request' }],
+        createdAt: T,
+        updatedAt: T,
+      }).success,
+    ).toBe(true);
+    expect(
+      taskSchema.safeParse({
+        task,
+        activeRunId: runId,
+        runCount: Number.MAX_SAFE_INTEGER,
+        updatedAt: T,
+      }).success,
+    ).toBe(true);
+    expect(
+      outboxEntrySchema.safeParse({
+        entryId: `dispatch/${runId}`,
+        kind: 'dispatch-run',
+        task,
+        runId,
+        state: 'pending',
+        attempts: 0,
+        createdAt: T,
+        updatedAt: T,
+      }).success,
+    ).toBe(true);
   });
 
   // Missing fixture (final-review item 3/8): every other fixture above is

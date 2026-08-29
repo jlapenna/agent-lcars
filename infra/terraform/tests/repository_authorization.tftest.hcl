@@ -80,6 +80,16 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
+    condition     = length(google_storage_bucket_iam_member.codex_auth_shared_lease_runtime) == 7 && alltrue([for repository, binding in google_storage_bucket_iam_member.codex_auth_shared_lease_runtime : binding.bucket == google_storage_bucket.codex_auth.name && binding.role == google_project_iam_custom_role.codex_auth_runtime.name && binding.member == "serviceAccount:${local.codex_auth_runtime_identities[repository]}" && binding.condition[0].expression == "resource.name == \"${local.codex_auth_lease_object}\""])
+    error_message = "Every hosted Codex identity must have generation-CAS access only to the one shared subscription lease object."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.apphosting_codex_auth_broker.bucket == google_storage_bucket.codex_auth.name && google_storage_bucket_iam_member.apphosting_codex_auth_broker.role == google_project_iam_custom_role.codex_auth_runtime.name && google_storage_bucket_iam_member.apphosting_codex_auth_broker.member == "serviceAccount:firebase-app-hosting-compute@agent-lcars.iam.gserviceaccount.com" && google_storage_bucket_iam_member.apphosting_codex_auth_broker.condition[0].expression == join(" || ", [for object in local.codex_auth_broker_objects : "resource.name == \"${object}\""])
+    error_message = "The Console broker must be confined to the seven auth.json objects and the one shared lease object."
+  }
+
+  assert {
     condition     = !strcontains(google_iam_workload_identity_pool_provider.github.attribute_condition, "*")
     error_message = "The WIF provider condition must not contain a repository wildcard."
   }

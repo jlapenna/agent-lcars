@@ -7,11 +7,8 @@ const workScopeSchema = z.enum(['work.operator', 'work.executor']);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`
  *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
- *  `AGENT_LCARS_WORK_GRANTS`/`AGENT_LCARS_QUEUE_PIPELINES` (a grant or a
- *  queue-pipeline entry that can never match a real request) is a startup
- *  config error, not a silently-inert grant/entry discovered later by a
- *  principal who mysteriously has no access, or a queue pipeline that
- *  mysteriously never routes. */
+ *  `AGENT_LCARS_WORK_GRANTS` is a startup config error, not a silently inert
+ *  grant discovered later by a principal who mysteriously has no access. */
 const pipelineNameSchema = z.enum(PIPELINES);
 
 const grantSchema = z.strictObject({
@@ -62,10 +59,9 @@ export function grantForPrincipal(
   return grants.find((g) => g.principal === principal);
 }
 
-/** Pipelines routed to the `queue` executor at request time. Default `[]`:
- *  with nothing configured, `work-mint.ts`'s `executorFor` never returns
- *  `'queue'` and every run dispatches through GitHub Actions exactly as
- *  before this sub-project. */
+/** Legacy, staged pipeline selector. It remains only while the global
+ * `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` cutover is false; `dispatch-executor`
+ * owns interpreting that flag and makes it provider-neutral once enabled. */
 export function queuePipelines(
   raw: string | undefined = process.env['AGENT_LCARS_QUEUE_PIPELINES'],
 ): string[] {

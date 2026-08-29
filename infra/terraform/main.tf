@@ -584,6 +584,11 @@ locals {
     },
     { for repository, agent in google_service_account.fleet_codex_agent : repository => agent.email },
   )
+  codex_auth_lease_object = "projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/_leases/codex-subscription.json"
+  codex_auth_broker_objects = concat(
+    [for repository in keys(local.codex_auth_runtime_identities) : "projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${repository}/auth.json"],
+    [local.codex_auth_lease_object],
+  )
 }
 
 resource "google_storage_bucket_iam_member" "codex_auth_runtime" {
@@ -596,6 +601,40 @@ resource "google_storage_bucket_iam_member" "codex_auth_runtime" {
     title       = "${replace(each.key, "/", "-")}-codex-auth"
     description = "Confines the Codex agent to its own auth.json object."
     expression  = "resource.name.startsWith(\"projects/_/buckets/${google_storage_bucket.codex_auth.name}/objects/${each.key}/\")"
+  }
+}
+
+# The hosted lane and direct QueueExecutor share one subscription refresh
+# token. Each hosted repository identity keeps its existing repository-prefix
+# grant above and gains access only to this single lease object, so it cannot
+# read or replace another repository's auth.json while serializing refreshes
+# with a direct run.
+resource "google_storage_bucket_iam_member" "codex_auth_shared_lease_runtime" {
+  for_each = local.codex_auth_runtime_identities
+
+  bucket = google_storage_bucket.codex_auth.name
+  role   = google_project_iam_custom_role.codex_auth_runtime.name
+  member = "serviceAccount:${each.value}"
+  condition {
+    title       = "${replace(each.key, "/", "-")}-codex-shared-lease"
+    description = "Confines the Codex agent's shared coordination access to one lease object."
+    expression  = "resource.name == \"${local.codex_auth_lease_object}\""
+  }
+}
+
+# The Console is the direct runner's credential broker. It derives the target
+# repository from the broker-bound run and needs generation-CAS access to that
+# repository's exact auth.json plus the one shared lease. Enumerating all
+# eight object names keeps this materially narrower than a bucket prefix or
+# objectAdmin grant and grants no list permission.
+resource "google_storage_bucket_iam_member" "apphosting_codex_auth_broker" {
+  bucket = google_storage_bucket.codex_auth.name
+  role   = google_project_iam_custom_role.codex_auth_runtime.name
+  member = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+  condition {
+    title       = "apphosting-codex-auth-broker"
+    description = "Confines the direct-runner broker to fleet auth.json objects and the shared lease."
+    expression  = join(" || ", [for object in local.codex_auth_broker_objects : "resource.name == \"${object}\""])
   }
 }
 

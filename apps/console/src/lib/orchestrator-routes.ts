@@ -17,6 +17,7 @@ import {
   type parseHostedCompletionRequestBody,
   type parseHostedDispatchRequestBody,
 } from '@/lib/control-plane-request';
+import type { DispatchExecutor } from '@/lib/dispatch-executor';
 import type { CompletionOidcIdentity } from '@/lib/github-actions-oidc';
 import type {
   DispatchTokenProvider,
@@ -49,6 +50,10 @@ export interface OrchestratorRouteDeps {
    *  for the same reason `drain` is: it does GitHub I/O, and these handlers
    *  stay drivable in tests without it. */
   settleTerminal: () => Promise<SettleTerminalRunsResult>;
+  /** The one deployment-selected executor decision for every newly admitted
+   * run. Before the global cutover it preserves the legacy selector; once
+   * enabled it returns `queue` for every provider and request source. */
+  dispatchExecutor?: DispatchExecutor;
   /** Token provider `defaultBind` (below) uses to fetch the Actions run
    *  named by a completion token's OIDC claims (see `run-binding.ts`).
    *  Optional: a caller that only wants `store`/`orchestrator` -- e.g.
@@ -169,6 +174,9 @@ export async function handleWebhookDelivery(
       pipeline: interpreted.pipeline,
       params,
       ...(interpreted.work === undefined ? {} : { work: interpreted.work }),
+      ...(deps.dispatchExecutor?.(interpreted.pipeline) === undefined
+        ? {}
+        : { executor: deps.dispatchExecutor(interpreted.pipeline) }),
     });
 
     if (isRefusal(outcome)) {
@@ -265,6 +273,9 @@ export async function handleDispatchRequest(
       requestId,
       pipeline: body.pipeline,
       params: dispatchRequestParams(body),
+      ...(deps.dispatchExecutor?.(body.pipeline) === undefined
+        ? {}
+        : { executor: deps.dispatchExecutor(body.pipeline) }),
     });
 
     if (isRefusal(outcome)) {

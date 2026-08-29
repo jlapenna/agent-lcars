@@ -26,9 +26,20 @@ const isoUtc = z.iso.datetime({ offset: false });
  * and OutboxEntry on read, so a variant requiring a field legacy documents
  * lack would reject the whole existing dataset.
  */
+/** GitHub limits an owner/name repository full name to 140 characters
+ * (39-character owner, slash, 100-character repository). */
+export const GITHUB_REPO_MAX_LENGTH = 140;
+
+/** Zod's integer check is safe-integer bounded; name that ceiling so the
+ * task-key and run-id bounds below stay coupled to accepted input. */
+export const GITHUB_ISSUE_MAX = Number.MAX_SAFE_INTEGER;
+
 export const githubAnchorSchema = z.strictObject({
-  repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/u),
-  issue: z.number().int().positive(),
+  repo: z
+    .string()
+    .max(GITHUB_REPO_MAX_LENGTH)
+    .regex(/^[\w.-]+\/[\w.-]+$/u),
+  issue: z.number().int().positive().max(GITHUB_ISSUE_MAX),
 });
 export type GithubAnchor = z.infer<typeof githubAnchorSchema>;
 
@@ -59,6 +70,21 @@ export function isWorkAnchor(id: TaskId): id is WorkAnchor {
 export function taskKey(id: TaskId): string {
   return isWorkAnchor(id) ? `work:${id.workId}` : `${id.repo}#${id.issue}`;
 }
+
+/** `mintRun` appends `/r${task.runCount + 1}`. A persisted task accepts a
+ * safe-integer `runCount`; its one final legal increment still has 16 digits.
+ * The longest GitHub key is therefore 140 + `#` + 16 + `/r` + 16 = 175.
+ * Native Work run IDs are only 49 characters, so GitHub sets this bound. */
+export const RUN_ID_MAX_LENGTH =
+  GITHUB_REPO_MAX_LENGTH +
+  1 + // #
+  String(GITHUB_ISSUE_MAX).length +
+  2 + // /r
+  String(GITHUB_ISSUE_MAX + 1).length;
+
+/** Orchestrator-generated dependent IDs must admit the longest run ID too. */
+const RETRY_REQUEST_ID_MAX_LENGTH = 'retry:'.length + RUN_ID_MAX_LENGTH;
+const OUTBOX_ENTRY_ID_MAX_LENGTH = 'dispatch/'.length + RUN_ID_MAX_LENGTH;
 
 /**
  * A run's lifecycle. `lost` is the orchestrator's own verdict, reached when
@@ -130,14 +156,14 @@ export const runEventSchema = z.strictObject({
 export type RunEvent = z.infer<typeof runEventSchema>;
 
 export const runSchema = z.strictObject({
-  runId: z.string().min(1).max(64),
+  runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   task: taskIdSchema,
   state: runStateSchema,
   /** The agent/pipeline asked to do the work; opaque routing data. */
   pipeline: z.string().min(1).max(128),
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
-  requestId: z.string().min(1).max(128),
+  requestId: z.string().min(1).max(RETRY_REQUEST_ID_MAX_LENGTH),
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here. */
   params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
@@ -180,7 +206,7 @@ export type WorkPayload = z.infer<typeof workPayloadSchema>;
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
   /** The mutex. Set iff a run is live. */
-  activeRunId: z.string().min(1).max(64).optional(),
+  activeRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
   /** Monotonic count of runs ever started, for run-id minting. */
   runCount: z.number().int().nonnegative(),
   /** How many runs in a row have gone `lost`, since the last one that
@@ -209,10 +235,10 @@ export type Task = z.infer<typeof taskSchema>;
  * drains this; the decision and its side effect are never in one step.
  */
 const outboxEntryBaseSchema = z.strictObject({
-  entryId: z.string().min(1).max(128),
+  entryId: z.string().min(1).max(OUTBOX_ENTRY_ID_MAX_LENGTH),
   kind: z.enum(['dispatch-run', 'report-outcome']),
   task: taskIdSchema,
-  runId: z.string().min(1).max(64),
+  runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   /** Incremented by every `claimPendingOutbox` claim, including expired-
    *  lease recovery -- so this counts how many times the entry has been
    *  handed to a worker, not how many times delivery was actually

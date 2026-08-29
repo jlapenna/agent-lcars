@@ -63,7 +63,10 @@ beforeEach(() => {
  * identical fixture) - then installs it as the mocked runtime backend-
  * actions.ts's retriggerIssue/reassignPipeline read via
  * `createOrchestratorRuntime()`. */
-function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
+function fixtureOrchestratorRuntime(
+  now = '2026-08-15T12:00:00.000Z',
+  options: { dispatchExecutor?: () => 'queue' } = {},
+) {
   const clock = { now: () => now };
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, clock);
@@ -108,6 +111,7 @@ function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
   (createOrchestratorRuntime as Mock).mockReturnValue({
     store,
     orchestrator,
+    ...options,
     drain,
     settleTerminal,
   });
@@ -964,6 +968,24 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     ).toBe(true);
   });
 
+  it('uses QueueExecutor for a console retry after the global cutover', async () => {
+    const { store, calls } = fixtureOrchestratorRuntime(undefined, {
+      dispatchExecutor: () => 'queue',
+    });
+    mockOctokit();
+
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
+
+    const [run] = await store.listRuns({
+      repo: CONTROL_PLANE_REPO,
+      issue: 2709,
+    });
+    expect(run?.executor).toBe('queue');
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
+  });
+
   it("reads the task's latest orchestrator run for the dispatch pipeline instead of defaulting", async () => {
     const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
     mockOctokit();
@@ -1181,6 +1203,24 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     });
     expect(runs).toHaveLength(1);
     expect(runs[0].pipeline).toBe('claude');
+  });
+
+  it('uses QueueExecutor for a console reassignment after the global cutover', async () => {
+    mockOctokit(['agent:codex']);
+    const { store, calls } = fixtureOrchestratorRuntime(undefined, {
+      dispatchExecutor: () => 'queue',
+    });
+
+    await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
+
+    const [run] = await store.listRuns({
+      repo: CONTROL_PLANE_REPO,
+      issue: 2709,
+    });
+    expect(run?.executor).toBe('queue');
+    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
+      false,
+    );
   });
 
   // A reassignment hands the task to a fresh agent, so any pending

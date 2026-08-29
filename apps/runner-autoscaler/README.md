@@ -73,14 +73,14 @@ live after 30 seconds without an update.
 
 ## Queue executor (direct-mode runners)
 
-Native work items (native-work-items sub-project 4): an additional goroutine
+Server-dispatched work: an additional goroutine
 that polls the console's `POST
 /api/work/v1/runs/claim` and, on a successful claim, launches one direct-mode
 runner container -- entirely outside the GitHub scale-set state machine
 above (not GitHub-registered, not tracked by any `Scaler`, one-shot). The
-production Claude route is selected by
-`AGENT_LCARS_QUEUE_PIPELINES='["claude"]'` on the console side; its matching
-autoscaler configuration is:
+Console routes every admitted run through this one
+server-authoritative executor; the run's pipeline selects only its provider
+adapter after the queue has claimed it. Its autoscaler configuration is:
 
 ```sh
 LCARS_CONSOLE_URL=https://lcars.jlapenna.net
@@ -88,6 +88,7 @@ LCARS_WORK_AUDIENCE=agent-lcars-work
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
 LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
 LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH=/secrets/claude-code-oauth-token
+LCARS_QUEUE_OPENCODE_KEY_HOST_PATH=/secrets/opencode-llm-api-key
 LCARS_QUEUE_MAX_CONCURRENT=1
 ```
 
@@ -95,6 +96,16 @@ With those durable console and credential settings present, the poller starts
 at daemon startup and sends a claim body containing only its runner identity.
 The server derives claimable pipelines from the authenticated `work.executor`
 grant; no autoscaler-local pipeline allowlist exists.
+
+Provider credentials stay behind the direct-runner adapter boundary: Claude
+and OpenCode receive their respective host-staged token files as read-only
+mounts, never Docker environment values; Codex receives no host credential and
+uses the run-token-authenticated Console broker for its repository auth.json.
+`LCARS_QUEUE_OPENCODE_KEY_HOST_PATH` must contain the LiteLLM virtual key
+(`OPENCODE_LLM_API_KEY`) before OpenCode work can launch. The direct adapter
+uses the baked, trusted `/usr/local/bin/opencode github run` entry point and
+defaults `OPENCODE_MODEL` to `homelab/default-nothink`; the model may be
+overridden only in the autoscaler's process environment.
 
 The console claim call is authenticated with a Google ID token minted
 directly from the telemetry-writer service-account key (self-signed, no
