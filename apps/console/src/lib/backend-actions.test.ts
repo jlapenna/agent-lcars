@@ -62,12 +62,7 @@ beforeEach(() => {
  * identical fixture) - then installs it as the mocked runtime backend-
  * actions.ts's retriggerIssue/reassignPipeline read via
  * `createOrchestratorRuntime()`. */
-function fixtureOrchestratorRuntime(
-  now = '2026-08-15T12:00:00.000Z',
-  options: { dispatchExecutor?: () => 'queue' } = {
-    dispatchExecutor: () => 'queue',
-  },
-) {
+function fixtureOrchestratorRuntime(now = '2026-08-15T12:00:00.000Z') {
   const clock = { now: () => now };
   const store = new MemoryStore();
   const orchestrator = new Orchestrator(store, clock);
@@ -100,7 +95,6 @@ function fixtureOrchestratorRuntime(
   (createOrchestratorRuntime as Mock).mockReturnValue({
     store,
     orchestrator,
-    ...options,
     drain,
   });
   return { store, orchestrator, calls };
@@ -941,34 +935,12 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   }
 
   it('falls back to claude and dispatches it when the task has no prior orchestrator run', async () => {
-    const { calls, store } = fixtureOrchestratorRuntime();
+    const { calls } = fixtureOrchestratorRuntime();
     mockOctokit();
 
     const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
     expect(result).toEqual({ pipelineFallback: true });
-    expect(
-      (await store.listRuns({ repo: CONTROL_PLANE_REPO, issue: 2709 }))[0]
-        ?.executor,
-    ).toBe('queue');
-    expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
-      false,
-    );
-  });
-
-  it('uses QueueExecutor for a console retry after the global cutover', async () => {
-    const { store, calls } = fixtureOrchestratorRuntime(undefined, {
-      dispatchExecutor: () => 'queue',
-    });
-    mockOctokit();
-
-    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
-
-    const [run] = await store.listRuns({
-      repo: CONTROL_PLANE_REPO,
-      issue: 2709,
-    });
-    expect(run?.executor).toBe('queue');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -991,10 +963,6 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
 
     expect(result).toEqual({ pipelineFallback: false });
-    const retried = (await store.listRuns(taskId)).find(
-      (run) => run.runId !== seeded.run.runId,
-    );
-    expect(retried?.executor).toBe('queue');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -1018,7 +986,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   });
 
   it('posts the steering note and still dispatches when the note carries no mention', async () => {
-    const { calls, store } = fixtureOrchestratorRuntime();
+    const { calls } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
 
     const result = await retriggerIssue(
@@ -1032,10 +1000,6 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       expect.objectContaining({ body: 'try a different approach' }),
     );
     expect(result.pipelineFallback).toBe(true);
-    expect(
-      (await store.listRuns({ repo: CONTROL_PLANE_REPO, issue: 2709 }))[0]
-        ?.executor,
-    ).toBe('queue');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -1193,19 +1157,15 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     expect(runs[0].pipeline).toBe('claude');
   });
 
-  it('uses QueueExecutor for a console reassignment after the global cutover', async () => {
+  it('does not call a GitHub Actions workflow for a console reassignment', async () => {
     mockOctokit(['agent:codex']);
-    const { store, calls } = fixtureOrchestratorRuntime(undefined, {
-      dispatchExecutor: () => 'queue',
-    });
+    const { store, calls } = fixtureOrchestratorRuntime();
 
     await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
 
-    const [run] = await store.listRuns({
-      repo: CONTROL_PLANE_REPO,
-      issue: 2709,
-    });
-    expect(run?.executor).toBe('queue');
+    expect(
+      await store.listRuns({ repo: CONTROL_PLANE_REPO, issue: 2709 }),
+    ).toHaveLength(1);
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -1279,7 +1239,6 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     expect(runs.find((r) => r.pipeline === 'codex')?.state).toBe('canceled');
     const claudeRun = runs.find((r) => r.pipeline === 'claude');
     expect(claudeRun?.params).toEqual({ mode: 'review' });
-    expect(claudeRun?.executor).toBe('queue');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );

@@ -75,21 +75,18 @@ Google service-account ID token or an Auth.js session to a principal by
 looking it up here — an unlisted subject gets no access at all, regardless
 of how it authenticated.
 
-| Value                    | Env var                             | This deployment                                                                                |
-| ------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                            |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                             |
-| unified queue            | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `true`; routes every admitted request through QueueExecutor                                    |
+| Value                    | Env var                          | This deployment                                                                                |
+| ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`        | current operators and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                            |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                             |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
-operate the API), not a default principal. The global
-`AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true` is the sole executor decision:
-every admitted run uses QueueExecutor, regardless of its
-provider or whether it came from GitHub, the console, an internal request,
-native Work, a schedule tick, or redispatch. Callers and work specifications
-never choose a route.
+operate the API), not a default principal. Every admitted run uses
+QueueExecutor, regardless of its provider or whether it came from GitHub, the
+console, an internal request, native Work, a schedule tick, or redispatch.
+Callers and work specifications never choose a route.
 
 The autoscaler's own identity needs its own grant row in
 `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's. It receives

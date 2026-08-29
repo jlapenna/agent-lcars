@@ -125,7 +125,6 @@ function runFor(input: {
     state: input.state,
     pipeline: input.pipeline,
     requestId: `e2e-fixture:${input.runId}`,
-    executor: 'queue',
     ...(input.queue === undefined
       ? {}
       : {

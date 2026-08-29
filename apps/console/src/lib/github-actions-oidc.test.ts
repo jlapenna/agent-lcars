@@ -1,7 +1,3 @@
-import {
-  COMPLETION_FINALIZER_WORKFLOW_PATH,
-  COMPLETION_OIDC_AUDIENCE,
-} from '@agent-lcars/dispatch-contracts';
 import { errors as joseErrors } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,11 +17,9 @@ vi.mock('jose', async (importOriginal) => {
 });
 
 import {
-  assertCompletionOidcClaims,
   assertReconcileOidcClaims,
   assertRequestOidcClaims,
   assertSessionPinTickOidcClaims,
-  verifyCompletionOidcToken,
   verifyReconcileOidcToken,
   verifyRequestOidcToken,
 } from './github-actions-oidc';
@@ -43,7 +37,7 @@ const repository = 'jlapenna/agent-lcars';
 // #1190: a second repository admitted only once it is added to the
 // allow-list -- see deployment.ts's `controlPlaneRepositories`/
 // `isControlPlaneRepository`. Not the home repo, so unset env in these
-// tests still resolves `controlPlaneRepository()` (the finalizer's home)
+// tests still resolves `controlPlaneRepository()` (the control plane's home)
 // to `repository` above.
 const secondRepo = 'other-org/other-repo';
 
@@ -181,163 +175,8 @@ describe('GitHub Actions session-pin-tick OIDC claims', () => {
   });
 });
 
-// The shared, fleet-wide completion finalizer (jlapenna/agent-lcars's own
-// .github/workflows/agent-fallback-finalize.yml) is called as a reusable
-// `workflow_call` by every onboarded repo's worker -- there is no per-repo
-// copy. GitHub's OIDC token therefore claims `job_workflow_ref` from the
-// CALLED workflow's own repo/path/ref (always the home repo), while
-// `repository`/`workflow_ref` continue to name the CALLER.
-const completionClaims = {
-  aud: COMPLETION_OIDC_AUDIENCE,
-  repository,
-  repository_id: '1307149765',
-  run_id: '93099054125',
-  workflow_ref: `${repository}/.github/workflows/codex.yml@refs/heads/main`,
-  job_workflow_ref: `${repository}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`,
-  ref: 'refs/heads/main',
-  event_name: 'workflow_dispatch',
-};
-
-describe('GitHub Actions completion OIDC claims', () => {
-  it('derives immutable worker identity from signed claims', () => {
-    expect(assertCompletionOidcClaims(completionClaims, repository)).toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-      workflow: 'codex.yml',
-    });
-  });
-
-  it.each([
-    [{ ...completionClaims, repository: 'attacker/fork' }, 'repository'],
-    [{ ...completionClaims, ref: 'refs/heads/feature' }, 'ref'],
-    [{ ...completionClaims, event_name: 'pull_request' }, 'event_name'],
-    [{ ...completionClaims, job_workflow_ref: undefined }, 'job_workflow_ref'],
-    [
-      {
-        ...completionClaims,
-        job_workflow_ref: `${repository}/.github/workflows/codex.yml@refs/heads/main`,
-      },
-      'job_workflow_ref',
-    ],
-    [
-      {
-        ...completionClaims,
-        workflow_ref: `${repository}/.github/workflows/ci.yml@refs/heads/main`,
-      },
-      'workflow_ref',
-    ],
-    [{ ...completionClaims, repository_id: 'not-a-number' }, 'repository_id'],
-    [{ ...completionClaims, run_id: '0' }, 'run_id'],
-  ])('rejects a completion caller with the wrong %s claim', (claims, field) => {
-    expect(() => assertCompletionOidcClaims(claims, repository)).toThrow(field);
-  });
-});
-
-// #1190: a second allow-listed repo is held to its OWN workflow_ref formula
-// but the CANONICAL (home-repo) job_workflow_ref -- there is only ever one
-// shared finalizer, so a token whose job_workflow_ref names ITS OWN repo's
-// copy of that filename must be rejected, not accepted.
-describe('GitHub Actions completion OIDC claims: multi-repo allow-list (#1190)', () => {
-  const secondRepoClaims = {
-    ...completionClaims,
-    repository: secondRepo,
-    workflow_ref: `${secondRepo}/.github/workflows/codex.yml@refs/heads/main`,
-    // job_workflow_ref intentionally left as completionClaims' home-repo
-    // finalizer ref -- the canonical shared one, not secondRepo's own.
-  };
-
-  it('accepts a second repo whose job_workflow_ref is the canonical home-repo finalizer', () => {
-    expect(assertCompletionOidcClaims(secondRepoClaims, secondRepo)).toEqual({
-      repository: secondRepo,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-      workflow: 'codex.yml',
-    });
-  });
-
-  it('rejects a second repo whose job_workflow_ref points at its OWN finalizer copy', () => {
-    const ownFinalizerClaims = {
-      ...secondRepoClaims,
-      job_workflow_ref: `${secondRepo}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`,
-    };
-    expect(() =>
-      assertCompletionOidcClaims(ownFinalizerClaims, secondRepo),
-    ).toThrow('job_workflow_ref');
-  });
-});
-
-describe('verifyCompletionOidcToken repository allow-list (#1190)', () => {
-  afterEach(() => {
-    jwtVerify.mockReset();
-  });
-
-  it('admits the default single home-repo token unchanged', async () => {
-    jwtVerify.mockResolvedValue({ payload: completionClaims });
-
-    await expect(
-      verifyCompletionOidcToken('token', [repository]),
-    ).resolves.toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-      workflow: 'codex.yml',
-    });
-  });
-
-  it('admits an allow-listed second repo, held to its own workflow_ref and the canonical finalizer', async () => {
-    jwtVerify.mockResolvedValue({
-      payload: {
-        ...completionClaims,
-        repository: secondRepo,
-        workflow_ref: `${secondRepo}/.github/workflows/codex.yml@refs/heads/main`,
-      },
-    });
-
-    await expect(
-      verifyCompletionOidcToken('token', [repository, secondRepo]),
-    ).resolves.toEqual({
-      repository: secondRepo,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-      workflow: 'codex.yml',
-    });
-  });
-
-  it('rejects a second-repo token whose job_workflow_ref points at its own finalizer', async () => {
-    jwtVerify.mockResolvedValue({
-      payload: {
-        ...completionClaims,
-        repository: secondRepo,
-        workflow_ref: `${secondRepo}/.github/workflows/codex.yml@refs/heads/main`,
-        job_workflow_ref: `${secondRepo}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`,
-      },
-    });
-
-    await expect(
-      verifyCompletionOidcToken('token', [repository, secondRepo]),
-    ).rejects.toThrow('job_workflow_ref');
-  });
-
-  it('rejects a token claiming a repository outside the configured allow-list', async () => {
-    jwtVerify.mockResolvedValue({
-      payload: {
-        ...completionClaims,
-        repository: secondRepo,
-        workflow_ref: `${secondRepo}/.github/workflows/codex.yml@refs/heads/main`,
-      },
-    });
-
-    // Allow-list omits secondRepo entirely.
-    await expect(
-      verifyCompletionOidcToken('token', [repository]),
-    ).rejects.toThrow('allow-listed');
-  });
-});
-
-// #1215: the internal-workflow request path. Unlike the reconciler
-// (one pinned workflow) or completion's `job_workflow_ref` (one shared
-// finalizer), `workflow_ref` here is deliberately NOT pinned to a specific
+// #1215: the internal-workflow request path. Unlike the reconciler's pinned
+// workflow, `workflow_ref` here is deliberately NOT pinned to a specific
 // file -- any of the caller repository's own main-branch workflows may
 // request work. See `isOwnWorkflowRefOnMain`'s doc comment for why that's
 // safe (branch-protected `main` means repo-maintainer-controlled code).
@@ -483,7 +322,7 @@ describe('verifyRequestOidcToken repository allow-list (#1215)', () => {
     );
   });
 
-  it('requests the dispatch-request audience, not the reconciler or completion one', async () => {
+  it('requests the dispatch-request audience, not the reconciler one', async () => {
     jwtVerify.mockResolvedValue({ payload: requestClaims });
 
     await verifyRequestOidcToken('token', [repository]);

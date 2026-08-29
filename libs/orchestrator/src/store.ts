@@ -146,8 +146,8 @@ export interface OrchestratorStore {
    */
   listRecentRuns(limit: number): Promise<Run[]>;
 
-  /** Writes `run.queue = { state: 'queued' }` on a run the drain is
-   *  handling as `executor: 'queue'`. Idempotent: a run already `queued`
+  /** Writes `run.queue = { state: 'queued' }` on a QueueExecutor run the
+   *  drain is handling. Idempotent: a run already `queued`
    *  or `claimed` is left untouched. */
   enqueueRun(input: { runId: string; now: string }): Promise<void>;
 

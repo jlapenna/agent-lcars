@@ -1,13 +1,6 @@
 import 'server-only';
 
-import {
-  COMPLETION_FINALIZER_WORKFLOW_PATH,
-  COMPLETION_OIDC_AUDIENCE,
-  WORKER_WORKFLOW_FILES,
-} from '@agent-lcars/dispatch-contracts';
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
-
-import { controlPlaneRepository } from './deployment';
 
 // Inlined from the now-deleted @agent-lcars/dispatch-reconcile (#1015 Wave
 // 4: that lib's scan/discovery/dispatch machinery was only ever consumed by
@@ -22,7 +15,7 @@ const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
 // main-branch automation asking the control plane to work a task, carrying
 // `runbook`/`context` dispatch parameters the label-admission webhook has no
 // way to express). Audience/claims verified the same way as the reconciler
-// and completion routes -- see `verifyRequestOidcToken` below.
+// route -- see `verifyRequestOidcToken` below.
 const REQUEST_OIDC_AUDIENCE = 'agent-lcars-dispatch-request';
 /** Internal-caller trigger shapes covered today: sprinkles's four surviving
  *  `agent-router.yml` callers (pr-heal, playbook-unstick-prs, visual-refresh,
@@ -41,13 +34,6 @@ const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com';
 const githubActionsJwks = createRemoteJWKSet(
   new URL(`${GITHUB_ACTIONS_ISSUER}/.well-known/jwks`),
 );
-
-export interface CompletionOidcIdentity {
-  repository: string;
-  repositoryId: number;
-  runId: number;
-  workflow: string;
-}
 
 export interface ReconcileOidcIdentity {
   repository: string;
@@ -175,98 +161,9 @@ export async function verifySessionPinTickOidcToken(
 }
 
 /**
- * The one shared, GitHub-hosted completion finalizer every onboarded repo's
- * worker calls as a reusable workflow (`workflow_call`) -- there is no
- * per-repo copy. For a cross-repo `workflow_call`, GitHub's OIDC token
- * claims `job_workflow_ref` from the CALLED workflow's own repo/path/ref
- * (this constant), while `repository`/`workflow_ref` continue to name the
- * CALLER. So this is pinned to the home repo regardless of which
- * allow-listed repository claimed the token -- derived from
- * {@link controlPlaneRepository}, not a second hardcoded string.
- */
-function canonicalCompletionFinalizerWorkflowRef(): string {
-  return `${controlPlaneRepository()}/${COMPLETION_FINALIZER_WORKFLOW_PATH}@refs/heads/main`;
-}
-
-export function assertCompletionOidcClaims(
-  claims: JWTPayload,
-  repository: string,
-): CompletionOidcIdentity {
-  if (claims['repository'] !== repository) {
-    throw new Error('OIDC repository claim does not match the control plane');
-  }
-  if (claims['ref'] !== 'refs/heads/main') {
-    throw new Error('OIDC ref claim is not main');
-  }
-  if (claims['event_name'] !== 'workflow_dispatch') {
-    throw new Error('OIDC event_name claim is not workflow_dispatch');
-  }
-  if (
-    claims['job_workflow_ref'] !== canonicalCompletionFinalizerWorkflowRef()
-  ) {
-    throw new Error(
-      'OIDC job_workflow_ref claim is not the trusted completion finalizer on main',
-    );
-  }
-  const workflow = [...WORKER_WORKFLOW_FILES].find(
-    (candidate) =>
-      claims['workflow_ref'] ===
-      `${repository}/.github/workflows/${candidate}@refs/heads/main`,
-  );
-  if (!workflow) {
-    throw new Error('OIDC workflow_ref claim is not an allowed worker on main');
-  }
-  return {
-    repository,
-    repositoryId: positiveIntegerClaim(
-      claims['repository_id'],
-      'repository_id',
-    ),
-    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
-    workflow,
-  };
-}
-
-/**
- * Verifies signature/issuer/audience, then checks the *claimed* repository
- * (from the now-trusted payload) against the allow-list before running the
- * existing per-repo claim assertions with that claimed repository.
- *
- * This is #1190's generalization from a single pinned repository to an
- * allow-list. The `workflow_ref` half of
- * {@link assertCompletionOidcClaims}'s formula is still built from *that*
- * caller's own repository (a token claiming repo A can never be validated
- * against repo B's worker paths), but `job_workflow_ref` is pinned to the
- * one shared fleet finalizer in the home repo for every caller -- see
- * {@link canonicalCompletionFinalizerWorkflowRef}. With the default,
- * single-repo config the claimed repository IS the home repo, so the two
- * formulas coincide and nothing observably changes.
- */
-export async function verifyCompletionOidcToken(
-  token: string,
-  allowedRepositories: string[],
-): Promise<CompletionOidcIdentity> {
-  const { payload } = await jwtVerify(token, githubActionsJwks, {
-    issuer: GITHUB_ACTIONS_ISSUER,
-    audience: COMPLETION_OIDC_AUDIENCE,
-  });
-  const claimedRepository = payload['repository'];
-  if (
-    typeof claimedRepository !== 'string' ||
-    !allowedRepositories.includes(claimedRepository)
-  ) {
-    throw new Error(
-      'OIDC repository claim is not an allow-listed control-plane repository',
-    );
-  }
-  return assertCompletionOidcClaims(payload, claimedRepository);
-}
-
-/**
  * `workflow_ref` names ANY workflow file in this repository's own
  * `.github/workflows/` on `main` -- not one pinned path, unlike the
- * reconciler (one canonical scheduler) or the completion route's
- * `job_workflow_ref` (one shared fleet finalizer). #1215's request endpoint
+ * reconciler's canonical scheduler. #1215's request endpoint
  * exists precisely because the callers are NOT one shared workflow: they are
  * an open-ended set of a repo's own internal automation (sprinkles's
  * pr-heal, playbook-unstick-prs, visual-refresh, post-deploy-verify today;
@@ -334,9 +231,8 @@ export function assertRequestOidcClaims(
 
 /**
  * Verifies signature/issuer/audience, then checks the *claimed* repository
- * against the allow-list before running the per-repo claim assertions --
- * same shape as {@link verifyCompletionOidcToken}. Every allow-listed
- * repository is trusted to request work through its own workflows on
+ * against the allow-list before running the per-repo claim assertions.
+ * Every allow-listed repository is trusted to request work through its own workflows on
  * `main`; see {@link isOwnWorkflowRefOnMain} for why that's safe.
  */
 export async function verifyRequestOidcToken(

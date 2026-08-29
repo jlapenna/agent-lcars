@@ -2,7 +2,6 @@ import {
   isLive,
   MAX_AUTO_RETRIES,
   type Run,
-  type RunExecutor,
   type Task,
   type TaskId,
   taskKey,
@@ -45,7 +44,6 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
-  executor?: RunExecutor;
   queue?: { state: 'queued' | 'claimed'; claimedBy?: string };
 }
 
@@ -120,7 +118,6 @@ export function toItemView(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
-      ...(r.executor === undefined ? {} : { executor: r.executor }),
       ...(r.queue === undefined
         ? {}
         : {
@@ -163,7 +160,6 @@ export function toWorkSummary(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
-      ...(r.executor === undefined ? {} : { executor: r.executor }),
       ...(r.queue === undefined
         ? {}
         : {

@@ -94,19 +94,6 @@ env:
     availability:
       - RUNTIME
 
-  # Every admitted request uses the same server-authoritative QueueExecutor
-  # path; no ingress or provider can select a different executor.
-  - variable: AGENT_LCARS_UNIFIED_QUEUE_ENABLED
-    value: 'true'
-    availability:
-      - RUNTIME
-
-  # Hosted and direct Codex executions use the same subscription lease.
-  - variable: LCARS_CODEX_SHARED_LEASE_ENABLED
-    value: 'true'
-    availability:
-      - RUNTIME
-
   # Not sensitive - the global cap on simultaneously live work runs.
   - variable: AGENT_LCARS_WORK_MAX_LIVE_RUNS
     value: '2'
@@ -133,7 +120,7 @@ env:
     value: 'jlapenna/agent-lcars'
     availability:
       - RUNTIME
-  # Repositories the orchestrator admits (webhook, ingest, completion,
+  # Repositories the orchestrator admits (webhook, ingest,
   # task-state). The home repo stays the reconcile caller. Dispatch tokens
   # are minted per repository from the fleet App (#1197/#1287); the ambient
   # PAT this flip was originally probe-verified against (#1190) has been

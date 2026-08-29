@@ -33,7 +33,7 @@ function renderRuns(runs: Parameters<typeof RunsTable>[0]['runs']) {
 }
 
 describe('RunsTable', () => {
-  it('shows the executor and claimed-by line for a queue-executor run', () => {
+  it('shows the QueueExecutor and claimed-by line for a claimed run', () => {
     renderRuns([
       {
         runId: 'work:x/r1',
@@ -41,15 +41,14 @@ describe('RunsTable', () => {
         pipeline: 'claude',
         createdAt: '2026-08-27T00:00:00.000Z',
         updatedAt: '2026-08-27T00:00:00.000Z',
-        executor: 'queue',
         queue: { state: 'claimed', claimedBy: 'runner-pike-1' },
       },
     ]);
-    expect(screen.getByText('queue')).toBeInTheDocument();
+    expect(screen.getByText('Queue executor')).toBeInTheDocument();
     expect(screen.getByText(/claimed by runner-pike-1/u)).toBeInTheDocument();
   });
 
-  it('shows queue for a historic run with no executor field', () => {
+  it('shows QueueExecutor for every run', () => {
     renderRuns([
       {
         runId: 'gh:x/r1',
@@ -59,7 +58,7 @@ describe('RunsTable', () => {
         updatedAt: '2026-08-27T00:00:00.000Z',
       },
     ]);
-    expect(screen.getByText('queue')).toBeInTheDocument();
+    expect(screen.getByText('Queue executor')).toBeInTheDocument();
   });
 });
 

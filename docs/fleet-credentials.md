@@ -129,13 +129,10 @@ The central activation contract is:
    central auth object and the one lease object.
 2. The central `svc:telemetry-writer` `work.executor` grant covers `claude`,
    `codex`, and `opencode`.
-3. The Console runtime sets `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true`.
-4. The Console runtime sets `LCARS_CODEX_SHARED_LEASE_ENABLED=true`.
-
-Direct QueueExecutor heartbeats renew the same record to the broker run expiry.
-This source configuration does not grant IAM access or deploy the production
-change. Onboarding another target repository requires its normal LCARS
-authorization, but no additional Codex login or auth object.
+   Direct QueueExecutor heartbeats renew the same record to the broker run expiry.
+   This source configuration does not grant IAM access or deploy the production
+   change. Onboarding another target repository requires its normal LCARS
+   authorization, but no additional Codex login or auth object.
 
 ### Seed or recover the one lineage
 

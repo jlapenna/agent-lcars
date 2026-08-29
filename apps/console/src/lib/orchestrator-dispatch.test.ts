@@ -27,7 +27,6 @@ async function requested(orchestrator: Orchestrator, taskId = TASK) {
     taskId,
     requestId: 'request-1',
     pipeline: 'codex',
-    executor: 'queue',
   });
   if (isRefusal(outcome)) {
     throw new Error(`unexpected refusal: ${outcome.reason}`);

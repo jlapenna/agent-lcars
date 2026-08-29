@@ -723,9 +723,6 @@ export async function retriggerIssue(
     pipeline,
     params: { mode: 'implement' },
     ...(work === undefined ? {} : { work }),
-    ...(runtime.dispatchExecutor?.(pipeline) === undefined
-      ? {}
-      : { executor: runtime.dispatchExecutor(pipeline) }),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'task-busy') {
@@ -847,9 +844,6 @@ export async function reassignPipeline(
         ? { mode: activeRun.params.mode }
         : { mode: 'implement' },
     ...(work === undefined ? {} : { work }),
-    ...(runtime.dispatchExecutor?.(targetPipeline) === undefined
-      ? {}
-      : { executor: runtime.dispatchExecutor(targetPipeline) }),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'task-busy') {

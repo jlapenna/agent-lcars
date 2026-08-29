@@ -16,7 +16,6 @@ import proxy, { publicPrefixes, publicRoutes } from './proxy';
 const EXPECTED_PUBLIC_ROUTES = [
   '/login',
   '/api/logs/error',
-  '/api/control-plane/completion',
   '/api/control-plane/reconcile',
   '/api/control-plane/request',
   '/api/control-plane/webhook',

@@ -35,7 +35,7 @@ export interface CodexAuthLease {
   runId: string;
   repository: string;
   /**
-   * Absolute expiry shared with the hosted lane. A holder that cannot renew
+   * Absolute expiry shared by QueueExecutor runs. A holder that cannot renew
    * this record is no longer allowed to keep the single-use refresh token.
    */
   expiresAt: string;

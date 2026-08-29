@@ -118,13 +118,9 @@ export const runResultSchema = z.strictObject({
 });
 export type RunResult = z.infer<typeof runResultSchema>;
 
-export const runExecutorSchema = z.enum(['github-actions', 'queue']);
-export type RunExecutor = z.infer<typeof runExecutorSchema>;
-
-/** A `queue`-executor run's claim state, written directly onto the run
- *  document by the outbox drain and by `POST /runs/claim` — see the design
- *  spec's "Queue state machine". Absent means "not a queue-executor run,
- *  or not yet drained". `tokenHash` is `sha256(token)` hex, never the raw
+/** A queue run's claim state, written directly onto the run document by the
+ *  outbox drain and by `POST /runs/claim` — see the design spec's "Queue
+ *  state machine". Absent means not yet drained. `tokenHash` is `sha256(token)` hex, never the raw
  *  token; `apps/console/src/lib/run-token.ts` mints/hashes it. */
 export const runQueueSchema = z.strictObject({
   state: z.enum(['queued', 'claimed']),
@@ -167,11 +163,7 @@ export const runSchema = z.strictObject({
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here. */
   params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
-  /** Which executor drains this run's dispatch. New runs are always `queue`.
-   *  Absent remains readable for historic records; the drain still enqueues
-   *  those records through QueueExecutor rather than restoring a hosted path. */
-  executor: runExecutorSchema.optional(),
-  /** `executor: 'queue'` runs only -- see `runQueueSchema`. */
+  /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
   /** A live run must renew before this instant or it is presumed lost. */
   leaseExpiresAt: isoUtc,
@@ -181,6 +173,16 @@ export const runSchema = z.strictObject({
   updatedAt: isoUtc,
 });
 export type Run = z.infer<typeof runSchema>;
+
+/** Reads persisted runs through a general projection that discards unknown
+ * top-level fields. `runSchema` remains strict for every known field, so a
+ * malformed known value still fails validation. This lets retired fields in
+ * existing records age out without preserving a legacy runtime choice. */
+export const persistedRunSchema = runSchema.strip();
+
+export function parsePersistedRun(value: unknown): Run {
+  return persistedRunSchema.parse(value);
+}
 
 /**
  * A native work item's payload -- who asked and what for. The orchestrator

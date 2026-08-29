@@ -14,8 +14,8 @@ export const config = {
 };
 
 // These control-plane routes do not use browser sessions. Reconcile and
-// completion verify GitHub Actions OIDC claims, while webhook verifies
-// raw-body HMACs.
+// request verify GitHub Actions OIDC claims, while webhook verifies raw-body
+// HMACs.
 // Exported (rather than kept inline in the createAuthProxy call below) so
 // proxy.test.ts can iterate the real list instead of maintaining its own
 // copy that can silently drift out of coverage as routes are added (#863).
@@ -23,7 +23,7 @@ export const config = {
 // recovery-observation rejecting 100% of its callers since it shipped,
 // until #885 fixed it - a hand-copied test list can't catch an entry that
 // was never added to either list. (recovery-observation and
-// completion/reconcile were retired in #1015 Wave 4 along with the legacy
+// reconciliation's predecessor was retired in #1015 Wave 4 along with the legacy
 // broker machinery they backed.)
 // #1232's /api/control-plane/request shipped without an entry in either
 // list and 401ed every OIDC caller until it was caught here — the same
@@ -33,7 +33,6 @@ export const config = {
 export const publicRoutes = [
   '/login',
   '/api/logs/error',
-  '/api/control-plane/completion',
   '/api/control-plane/reconcile',
   '/api/control-plane/request',
   '/api/control-plane/webhook',

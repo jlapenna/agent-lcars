@@ -5,6 +5,7 @@ import {
   isGithubAnchor,
   isWorkAnchor,
   outboxEntrySchema,
+  parsePersistedRun,
   RUN_ID_MAX_LENGTH,
   runQueueSchema,
   runSchema,
@@ -262,7 +263,7 @@ describe('taskSchema work payload', () => {
   });
 });
 
-describe('Run.executor / Run.queue', () => {
+describe('persisted Run projection / Run.queue', () => {
   const base = {
     runId: 'work:01M107KR3X6VDH7NZ4JDXZNSS2/r1',
     task: { workId: '01M107KR3X6VDH7NZ4JDXZNSS2' },
@@ -275,17 +276,20 @@ describe('Run.executor / Run.queue', () => {
     updatedAt: '2026-08-27T00:00:00.000Z',
   };
 
-  it('parses a run with no executor/queue field (existing documents)', () => {
-    expect(runSchema.parse(base).executor).toBeUndefined();
+  it('strips unknown persisted fields while strictly validating known fields', () => {
+    const persisted = { ...base, retiredField: 'old value' };
+    expect(runSchema.safeParse(persisted).success).toBe(false);
+    expect(parsePersistedRun(persisted)).toEqual(base);
+    expect(() =>
+      parsePersistedRun({ ...persisted, state: 'not-a-run-state' }),
+    ).toThrow();
   });
 
-  it('accepts an explicit executor and a queued claim state', () => {
+  it('accepts a queued claim state', () => {
     const parsed = runSchema.parse({
       ...base,
-      executor: 'queue',
       queue: { state: 'queued' },
     });
-    expect(parsed.executor).toBe('queue');
     expect(parsed.queue).toEqual({ state: 'queued' });
   });
 

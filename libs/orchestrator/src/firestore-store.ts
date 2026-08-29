@@ -14,8 +14,8 @@ import {
   type LeasedOutboxEntry,
   type OutboxEntry,
   outboxEntrySchema,
+  parsePersistedRun,
   type Run,
-  runSchema,
   runStateSchema,
   type TaskId,
   taskKey,
@@ -85,7 +85,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async readRun(runId: string): Promise<Run | undefined> {
     const snapshot = await this.#runRef(runId).get();
-    return snapshot.exists ? runSchema.parse(snapshot.data()) : undefined;
+    return snapshot.exists ? parsePersistedRun(snapshot.data()) : undefined;
   }
 
   async readActiveRun(id: TaskId): Promise<Run | undefined> {
@@ -103,7 +103,7 @@ export class FirestoreStore implements OrchestratorStore {
           .where('task.repo', '==', id.repo)
           .where('task.issue', '==', id.issue);
     const snapshot = await query.get();
-    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+    return snapshot.docs.map((doc) => parsePersistedRun(doc.data()));
   }
 
   async apply(input: {
@@ -339,7 +339,7 @@ export class FirestoreStore implements OrchestratorStore {
       LIVE_STATES.map((state) => this.#runs.where('state', '==', state).get()),
     );
     return perState.flatMap((snapshot) =>
-      snapshot.docs.map((doc) => runSchema.parse(doc.data())),
+      snapshot.docs.map((doc) => parsePersistedRun(doc.data())),
     );
   }
 
@@ -352,7 +352,7 @@ export class FirestoreStore implements OrchestratorStore {
       .orderBy('updatedAt', 'desc')
       .limit(limit)
       .get();
-    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+    return snapshot.docs.map((doc) => parsePersistedRun(doc.data()));
   }
 
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
@@ -360,7 +360,7 @@ export class FirestoreStore implements OrchestratorStore {
     await this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       if (!snapshot.exists) return;
-      const run = runSchema.parse(snapshot.data());
+      const run = parsePersistedRun(snapshot.data());
       if (run.queue !== undefined) return;
       tx.set(ref, {
         ...run,
@@ -394,7 +394,7 @@ export class FirestoreStore implements OrchestratorStore {
       );
       const candidates = snapshots
         .flatMap((snapshot) => snapshot.docs)
-        .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }))
+        .map((doc) => ({ doc, run: parsePersistedRun(doc.data()) }))
         .sort((a, b) => a.run.createdAt.localeCompare(b.run.createdAt));
       const first = candidates[0];
       if (first === undefined) return undefined;
@@ -427,7 +427,7 @@ export class FirestoreStore implements OrchestratorStore {
       .where('queue.state', '==', 'queued')
       .get();
     return snapshot.docs
-      .map((doc) => runSchema.parse(doc.data()))
+      .map((doc) => parsePersistedRun(doc.data()))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit ?? 200);
   }
