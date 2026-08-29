@@ -103,6 +103,43 @@ describe('runsContract', () => {
       shape?.safeParse({ runner: 'autoscaler-1', unknown: true }).success,
     ).toBe(false);
   });
+
+  it('accepts the longest legal GitHub run ID on every token-authenticated route', () => {
+    const runId =
+      `${'o'.repeat(39)}/${'r'.repeat(100)}` +
+      `#${Number.MAX_SAFE_INTEGER}/r${Number.MAX_SAFE_INTEGER + 1}`;
+    expect(runId).toHaveLength(175);
+
+    const routes = [
+      [runsContract.brief, { runId }],
+      [runsContract.heartbeat, { runId }],
+      [runsContract.complete, { runId, outcome: 'done' }],
+      [runsContract.checkoutToken, { runId }],
+      [runsContract.codexAuth, { runId }],
+      [
+        runsContract.persistCodexAuth,
+        {
+          runId,
+          generation: '1',
+          restoredSha256: 'a'.repeat(64),
+          authBase64: 'YXV0aA==',
+        },
+      ],
+    ] as const;
+
+    for (const [route, input] of routes) {
+      const [rawShape] = route['~orpc'].inputSchemas ?? [];
+      const shape = rawShape as z.ZodTypeAny | undefined;
+      expect(shape?.safeParse(input).success).toBe(true);
+    }
+
+    const [briefShape] = runsContract.brief['~orpc'].inputSchemas ?? [];
+    expect(
+      (briefShape as z.ZodTypeAny | undefined)?.safeParse({
+        runId: `${runId}x`,
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('runsContract.brief resume field', () => {

@@ -400,8 +400,11 @@ export const schedulesContract = {
 };
 export type SchedulesContract = typeof schedulesContract;
 
-/** A broker run id, owned and minted by the orchestrator. */
-const runIdSchema = z.string().min(1).max(64);
+/** A broker run id, owned and minted by the orchestrator. The orchestrator's
+ * longest legal GitHub run ID is 175 characters (140-char owner/repository,
+ * 16-digit issue, and 16-digit generation); keep this standalone contract
+ * literal in sync without importing the storage-oriented orchestrator lib. */
+const runIdSchema = z.string().min(1).max(175);
 
 export const runClaimResponseSchema = z.strictObject({
   runId: runIdSchema,
