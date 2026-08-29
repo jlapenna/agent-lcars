@@ -17,6 +17,11 @@ export default defineConfig({
   root: path.resolve(import.meta.dirname, '../..'),
   plugins: [
     vitestTsconfigPaths([
+      // Contract tests import console code that reaches shared libraries.
+      // Include the workspace alias registry as well as the console's local
+      // config so transitive imports (for example work -> dispatch-contracts)
+      // resolve the same way they do in the Nx project graph.
+      path.resolve(import.meta.dirname, '../../tsconfig.base.json'),
       path.resolve(
         import.meta.dirname,
         '../../apps/console/tsconfig.typecheck.json',
