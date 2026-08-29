@@ -42,10 +42,8 @@ export interface EnvVars {
   AGENT_LCARS_WORK_GRANTS?: string;
   /** Global live-run cap for native work items (default 4). */
   AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;
-  /** Temporary staged selector retained until the global queue cutover. */
-  AGENT_LCARS_QUEUE_PIPELINES?: string;
-  /** Global dispatch cutover: `true` sends every admitted broker run to the
-   *  queue executor; absent/`false` retains the staged hosted executor. */
+  /** Required unified dispatch policy. `true` sends every admitted broker run
+   *  to the queue executor. */
   AGENT_LCARS_UNIFIED_QUEUE_ENABLED?: string;
   /** This console deployment's own public base URL, embedded in a native
    *  work item's `brief.anchor.html_url` for a direct-mode agent to read

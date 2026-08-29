@@ -1031,17 +1031,17 @@ describe('AgentActivityPanel pipeline metadata', () => {
 });
 
 describe('AgentActivityPanel fleet chip', () => {
-  it('renders an active-runner count with a busy breakdown when the fleet has online runners', () => {
+  it('renders scale-set capacity with a busy breakdown when the fleet has online runners', () => {
     renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 2, busy: 1 } });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
-      '2 runners active (1 busy)',
+      '2 scale-set runners active (1 busy)',
     );
   });
 
   it('renders singular wording and no parenthetical when exactly one runner is online and idle', () => {
     renderPanel([], { ...EMPTY_ACTIVITY, fleet: { online: 1, busy: 0 } });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
-      '1 runner active',
+      '1 scale-set runner active',
     );
   });
 

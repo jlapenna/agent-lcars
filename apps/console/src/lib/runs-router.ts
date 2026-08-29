@@ -38,10 +38,10 @@ export interface RunsContext {
   checkoutTokens: DispatchTokenProvider;
   codexAuth: CodexAuthStore;
   /**
-   * Staged only after both hosted and direct executors have access to the
-   * shared GCS lease object. Omitted is deliberately false: a direct Codex
-   * runner must not claim subscription auth while hosted jobs remain on
-   * repository-prefix-only storage authority.
+   * Enables the Codex credential adapter only after hosted and direct
+   * executors share the GCS lease authority. Omitted is deliberately false:
+   * a direct Codex runner may claim work, but cannot obtain subscription
+   * credentials until the adapter can enforce that shared lease.
    */
   codexSharedLeaseEnabled?: boolean;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
@@ -277,16 +277,12 @@ export const runsRouter = os.router({
     // old queue-executor images; a caller cannot widen, narrow, or otherwise
     // choose the pipeline set by sending a body field that competes with
     // server-side authorization.
-    // Passing these grant pipelines directly to the transactional store is
-    // what prevents an ungranted run from reaching `claimed` (and therefore
-    // ever minting a checkout token).
-    const allowedPipelines = context.codexSharedLeaseEnabled
-      ? context.principal.pipelines
-      : context.principal.pipelines.filter((pipeline) => pipeline !== 'codex');
-    // Do not claim a disabled Codex run merely to fail it later in the
-    // executor. Empty grants are a normal "nothing eligible" response;
-    // Claude and OpenCode remain independently claimable.
-    if (allowedPipelines.length === 0) return undefined;
+    // Passing the executor grant directly to the transactional store is what
+    // prevents an ungranted run from reaching `claimed` (and therefore ever
+    // minting a checkout token). Codex's subscription lease is enforced only
+    // by its credential adapter after a run is claimed; it never changes the
+    // shared executor grant or the route used to claim any provider.
+    if (context.principal.pipelines.length === 0) return undefined;
 
     // `claimQueuedRun` claims by `queue.state === 'queued'` alone; it says
     // nothing about whether the run itself is still live. Cancellation and
@@ -310,7 +306,7 @@ export const runsRouter = os.router({
       // One call, one transaction, no store signature change.
       const token = mintRunToken();
       const claimed = await context.store.claimQueuedRun({
-        pipelines: allowedPipelines,
+        pipelines: context.principal.pipelines,
         now: context.now().toISOString(),
         claimedBy: input.runner,
         tokenHash: hashRunToken(token),

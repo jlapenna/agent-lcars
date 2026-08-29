@@ -343,6 +343,18 @@ export class FirestoreStore implements OrchestratorStore {
     );
   }
 
+  async listRecentRuns(limit: number): Promise<Run[]> {
+    // A global updatedAt order needs only Firestore's automatic single-field
+    // index. Do not add a state filter here: filtering another field before
+    // ordering would require a composite index and turn this bounded console
+    // read into deployment configuration.
+    const snapshot = await this.#runs
+      .orderBy('updatedAt', 'desc')
+      .limit(limit)
+      .get();
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
     const ref = this.#runRef(input.runId);
     await this.#firestore.runTransaction(async (tx) => {

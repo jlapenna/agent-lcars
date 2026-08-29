@@ -294,7 +294,7 @@ describe('console deployment workflow', () => {
       grants.find(({ principal }) => principal === 'svc:telemetry-writer'),
     ).toMatchObject({
       principal: 'svc:telemetry-writer',
-      pipelines: ['claude'],
+      pipelines: ['claude', 'codex', 'opencode'],
       scopes: ['work.executor'],
     });
     expect(
@@ -304,7 +304,7 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('keeps the provider-neutral queue cutover staged off until every direct runner is ready', async () => {
+  it('activates one queue route for every provider and keeps the Codex credential adapter enabled', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -315,17 +315,12 @@ describe('console deployment workflow', () => {
       ({ variable }) => variable === 'AGENT_LCARS_UNIFIED_QUEUE_ENABLED',
     )?.value;
 
-    expect(unifiedQueueEnabled).toBe('false');
-    expect(
-      config.env?.find(
-        ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
-      )?.value,
-    ).toBe('["claude"]');
+    expect(unifiedQueueEnabled).toBe('true');
     expect(
       config.env?.find(
         ({ variable }) => variable === 'LCARS_CODEX_SHARED_LEASE_ENABLED',
       )?.value,
-    ).toBe('false');
+    ).toBe('true');
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {

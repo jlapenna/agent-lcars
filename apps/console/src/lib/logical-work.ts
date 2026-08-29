@@ -25,7 +25,7 @@ import {
  * - `LogicalWork`: one canonical task (`TaskRef` - repo + issue number,
  *   never a title or a run ID). What an operator actually wants to reason
  *   about: "what is happening with issue #42."
- * - `ExecutionAttempt`: one GitHub Actions workflow run. A task may have
+ * - `ExecutionAttempt`: one authoritative broker execution attempt. A task may have
  *   zero attempts (nothing dispatched yet), one normal attempt, or
  *   more than one (a genuine anomaly this model surfaces, never hides).
  *
@@ -46,7 +46,7 @@ export type LogicalWorkState =
 export type AttemptAttribution =
   'orchestrator' | 'run-marker' | 'legacy-title' | 'unattributed';
 
-/** One GitHub Actions workflow run, enriched with whatever dispatch
+/** One broker execution attempt, enriched with whatever dispatch
  * lineage could be attributed to it. Every field `AgentRun` already carries
  * is still here (this is a superset, not a projection) - nothing about the
  * underlying run is lost by wrapping it. */
@@ -90,16 +90,29 @@ export type LogicalWorkProvenance =
   | { kind: 'unavailable' };
 
 export interface LogicalWork {
-  task: TaskRef;
+  task: LogicalTaskRef;
   title: string;
   url: string;
   selectedPipeline?: AgentPipeline;
   state: LogicalWorkState;
-  /** Every workflow run attributed to this task, oldest first. Never
+  /** Every execution attempt attributed to this task, oldest first. Never
    * shrunk by grouping - a duplicate/retry keeps every attempt visible. */
   attempts: ExecutionAttempt[];
   anomalies: LogicalWorkAnomaly[];
   provenance: LogicalWorkProvenance;
+}
+
+/** A logical task is either an issue anchor or native Work. Native Work is
+ * deliberately keyed by its durable work id, never by a presentation title. */
+export type LogicalTaskRef =
+  TaskRef | { repository: TaskRef['repository']; workId: string };
+
+function logicalTaskKey(task: LogicalTaskRef): string {
+  return 'workId' in task ? `work:${task.workId}` : taskRefKey(task);
+}
+
+function logicalTaskUrl(task: LogicalTaskRef): string {
+  return 'workId' in task ? `/work/${task.workId}` : taskRefUrl(task);
 }
 
 /** Bare title/url metadata for a task, independent of whether it currently
@@ -209,21 +222,21 @@ export function deriveLogicalWork(
 ): DeriveLogicalWorkResult {
   const byKey = new Map<
     string,
-    { task: TaskRef; attempts: ExecutionAttempt[] }
+    { task: LogicalTaskRef; attempts: ExecutionAttempt[] }
   >();
   const unattributedAttempts: ExecutionAttempt[] = [];
 
   for (const run of input.attempts) {
     const attempt = toExecutionAttempt(run);
-    if (run.issueNumber === undefined) {
+    if (run.issueNumber === undefined && run.workId === undefined) {
       unattributedAttempts.push(attempt);
       continue;
     }
-    const task: TaskRef = {
-      repository: run.repo,
-      issueNumber: run.issueNumber,
-    };
-    const key = taskRefKey(task);
+    const task: LogicalTaskRef =
+      run.workId !== undefined
+        ? { repository: run.repo, workId: run.workId }
+        : { repository: run.repo, issueNumber: run.issueNumber as number };
+    const key = logicalTaskKey(task);
     const existing = byKey.get(key);
     if (existing) existing.attempts.push(attempt);
     else byKey.set(key, { task, attempts: [attempt] });
@@ -268,8 +281,10 @@ export function deriveLogicalWork(
     work.push({
       task,
       title:
-        meta?.title ?? fallbackAttempt?.displayTitle ?? `#${task.issueNumber}`,
-      url: meta?.url ?? taskRefUrl(task),
+        meta?.title ??
+        fallbackAttempt?.displayTitle ??
+        ('workId' in task ? `Work ${task.workId}` : `#${task.issueNumber}`),
+      url: meta?.url ?? logicalTaskUrl(task),
       // Presentation-only (which badge a card leads with), never a control
       // decision - matches `selectedAgentPipeline`'s "no implicit
       // precedence" spirit.
@@ -295,9 +310,9 @@ export interface ActivityMetrics {
   queuedAttempts: number;
   /** Raw workflow attempts currently running, across every task. */
   runningAttempts: number;
-  /** From `listSelfHostedRunnersForRepo` - physical capacity, not work.
-   * Undefined when the runner API was unavailable (matches `FleetSummary`
-   * itself being optional). */
+  /** From the server-owned autoscaler telemetry projection - physical
+   * capacity, not work. Undefined when that authoritative read failed
+   * (matches `FleetSummary` itself being optional). */
   onlineRunners?: number;
   busyRunners?: number;
 }

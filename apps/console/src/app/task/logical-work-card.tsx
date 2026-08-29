@@ -155,7 +155,9 @@ export function LogicalWorkCard({
                 rel="noreferrer"
                 c="inherit"
               >
-                #{work.task.issueNumber} {work.title}
+                {'workId' in work.task
+                  ? work.title
+                  : `#${work.task.issueNumber} ${work.title}`}
               </Anchor>
             </Title>
             <Group gap="xs" wrap="wrap">

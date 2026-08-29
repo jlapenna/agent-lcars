@@ -139,6 +139,13 @@ export interface OrchestratorStore {
    *  the whole point is to catch a run long before its lease runs out. */
   listLiveRuns(): Promise<Run[]>;
 
+  /**
+   * The most recently updated runs across every anchor, newest first and
+   * bounded at the datastore. This is the console activity feed: unlike
+   * `listRuns`, it never requires scanning tasks or repositories first.
+   */
+  listRecentRuns(limit: number): Promise<Run[]>;
+
   /** Writes `run.queue = { state: 'queued' }` on a run the drain is
    *  handling as `executor: 'queue'`. Idempotent: a run already `queued`
    *  or `claimed` is left untouched. */

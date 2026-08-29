@@ -188,6 +188,41 @@ describe('deriveLogicalWork - duplicate active attempts', () => {
 });
 
 describe('deriveLogicalWork - attribution', () => {
+  it('groups native Work attempts by work id and surfaces duplicate active attempts', () => {
+    const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+    const attempts = [
+      makeRun({
+        id: `work:${workId}/r1`,
+        issueNumber: undefined,
+        workId,
+        status: 'queued',
+        displayTitle: `Native task [dispatch:g1:work:${workId}/r1]`,
+      }),
+      makeRun({
+        id: `work:${workId}/r2`,
+        issueNumber: undefined,
+        workId,
+        status: 'running',
+        displayTitle: `Native task [dispatch:g2:work:${workId}/r2]`,
+      }),
+    ];
+
+    const { work, unattributedAttempts } = deriveLogicalWork({
+      attempts,
+      taskMeta: new Map(),
+    });
+
+    expect(unattributedAttempts).toEqual([]);
+    expect(work).toHaveLength(1);
+    expect(work[0].task).toEqual({ repository: REPO, workId });
+    expect(work[0].url).toBe(`/work/${workId}`);
+    expect(work[0].state).toBe('anomaly');
+    expect(work[0].anomalies).toHaveLength(1);
+    expect(deriveActivityMetrics(work, work[0].attempts).logicalTaskCount).toBe(
+      1,
+    );
+  });
+
   it('falls back to legacy-title attribution for a pre-marker run', () => {
     const attempts = [makeRun({ id: 1, displayTitle: '#42: Fix the thing' })];
     const { work } = deriveLogicalWork({

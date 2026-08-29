@@ -20,6 +20,13 @@ import (
 // is busy for months.
 const runnerStatusCollection = "runner-status"
 
+// queueExecutorStatusDocument is deliberately a reserved, non-scale-set
+// document in the same bounded telemetry collection.  Keeping queue-executor
+// health beside (rather than inside) a scale-set snapshot prevents a direct
+// runner from being mistaken for a GitHub-registered runner, while avoiding a
+// second operational store.
+const queueExecutorStatusDocument = "queue-executor"
+
 const (
 	consoleStatusInterval = 10 * time.Second
 	consoleStatusTimeout  = 5 * time.Second
@@ -50,17 +57,44 @@ type consoleScaleSetStatus struct {
 	ExpireAt        time.Time             `firestore:"expireAt"`
 }
 
+// consoleQueueExecutorStatus is the generic direct-executor health
+// projection. It intentionally has no repository, pipeline, credential, or
+// individual-run fields: durable queue/claim/run lifecycle belongs to the
+// orchestrator Run record, and provider-specific details belong behind the
+// direct-runner adapter.
+//
+// SchemaVersion 2 plus Kind makes this safely distinguishable from the
+// existing scale-set schema (v1). Older console readers reject this document
+// rather than treating it as a malformed scale set; newer readers can accept
+// both independently.
+type consoleQueueExecutorStatus struct {
+	SchemaVersion int       `firestore:"schemaVersion"`
+	Kind          string    `firestore:"kind"`
+	Executor      string    `firestore:"executor"`
+	Ready         bool      `firestore:"ready"`
+	Draining      bool      `firestore:"draining"`
+	ActiveRuns    *int      `firestore:"activeRuns,omitempty"`
+	MaxConcurrent int       `firestore:"maxConcurrent"`
+	UpdatedAt     string    `firestore:"updatedAt"`
+	ExpireAt      time.Time `firestore:"expireAt"`
+}
+
 // consoleStatusPublisher abstracts the writer for tests and keeps status
 // telemetry isolated from the placement/listener critical path.
 type consoleStatusPublisher interface {
 	Publish(context.Context, consoleScaleSetStatus)
+	PublishQueueExecutor(context.Context, consoleQueueExecutorStatus)
+	Enabled() bool
 	Close() error
 }
 
 type noopConsoleStatusPublisher struct{}
 
 func (noopConsoleStatusPublisher) Publish(context.Context, consoleScaleSetStatus) {}
-func (noopConsoleStatusPublisher) Close() error                                   { return nil }
+func (noopConsoleStatusPublisher) PublishQueueExecutor(context.Context, consoleQueueExecutorStatus) {
+}
+func (noopConsoleStatusPublisher) Enabled() bool { return false }
+func (noopConsoleStatusPublisher) Close() error  { return nil }
 
 type firestoreConsoleStatusPublisher struct {
 	client *firestore.Client
@@ -68,7 +102,7 @@ type firestoreConsoleStatusPublisher struct {
 	// A single slot per scale set coalesces rapid listener transitions. The
 	// autoscaler never waits for Firestore, and the next 10-second snapshot
 	// heals any dropped write after a transient outage.
-	pending sync.Map // map[string]consoleScaleSetStatus
+	pending sync.Map // map[string]consoleScaleSetStatus | consoleQueueExecutorStatus
 	wake    chan struct{}
 	closed  atomic.Bool
 }
@@ -99,10 +133,20 @@ func newConsoleStatusPublisher(ctx context.Context, logger *slog.Logger) (consol
 }
 
 func (p *firestoreConsoleStatusPublisher) Publish(_ context.Context, status consoleScaleSetStatus) {
+	p.publish(status.ScaleSet, status)
+}
+
+func (p *firestoreConsoleStatusPublisher) PublishQueueExecutor(_ context.Context, status consoleQueueExecutorStatus) {
+	p.publish(queueExecutorStatusDocument, status)
+}
+
+func (p *firestoreConsoleStatusPublisher) Enabled() bool { return true }
+
+func (p *firestoreConsoleStatusPublisher) publish(name string, status any) {
 	if p.closed.Load() {
 		return
 	}
-	p.pending.Store(status.ScaleSet, status)
+	p.pending.Store(name, status)
 	select {
 	case p.wake <- struct{}{}:
 	default:
@@ -117,9 +161,9 @@ func (p *firestoreConsoleStatusPublisher) run(ctx context.Context) {
 		case <-p.wake:
 		}
 		p.pending.Range(func(key, value any) bool {
-			name, status := key.(string), value.(consoleScaleSetStatus)
+			name := key.(string)
 			writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), consoleStatusTimeout)
-			_, err := p.client.Collection(runnerStatusCollection).Doc(name).Set(writeCtx, status)
+			_, err := p.client.Collection(runnerStatusCollection).Doc(name).Set(writeCtx, value)
 			cancel()
 			if err != nil {
 				p.logger.Warn("Failed to publish autoscaler status to the console; placement continues", slog.String("scale_set", name), slog.String("error", err.Error()))

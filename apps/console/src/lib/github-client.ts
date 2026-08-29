@@ -123,14 +123,12 @@ const ThrottledOctokit = Octokit.plugin(retry, throttling);
  * permission the GitHub App itself was never granted fails EVERY mint for
  * EVERY request, not just the one call site that needed it -- so this
  * deliberately excludes `checks`/`administration`, the two gaps #1284's
- * permission audit found (see that PR's body for the full call-site table):
- * `agent-activity.ts`'s `actions.listSelfHostedRunnersForRepo` (needs
- * `administration:read`) and `item-enrichment.ts`'s GraphQL
- * `statusCheckRollup` field (needs `checks:read`). Both already degrade
- * through their own existing `Promise.allSettled`/partial-GraphQL-error
- * handling rather than crashing -- see those files' own comments -- so this
- * is a known, accepted read gap pending a maintainer App-permission change,
- * not a silent one.
+ * permission audit found. Runner fleet status no longer needs
+ * `administration:read`: it comes from the control plane's autoscaler
+ * telemetry, rather than GitHub's repository-scoped runner endpoint. The
+ * remaining `checks:read` gap is `item-enrichment.ts`'s GraphQL
+ * `statusCheckRollup` field, which degrades through partial-GraphQL-error
+ * handling rather than crashing -- see that file's own comments.
  */
 const CONSOLE_GITHUB_CLIENT_PERMISSIONS: Record<string, string> = {
   actions: 'write',

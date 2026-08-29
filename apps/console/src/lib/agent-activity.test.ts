@@ -1,614 +1,247 @@
-import { describe, expect, it, type Mock, vi } from 'vitest';
+import type { Run, Task } from '@agent-lcars/orchestrator';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  type AgentRun,
-  attemptMarkerFromDisplayTitle,
-  duplicateLivePipelineGroups,
-  findStalledQueuedRun,
+  agentRunFromOrchestrator,
   getAgentActivity,
-  groupLiveRunsByIssue,
-  issueNumberFromDisplayTitle,
-  issueUrlForRun,
+  queueFromLiveRuns,
 } from './agent-activity';
-import { getGithubClient, getWatchedRepos } from './github-client';
+import { getAutoscalerStatuses } from './autoscaler-status';
+import { createOrchestratorRuntime } from './orchestrator-runtime';
 
-const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
+const NOW = Date.parse('2026-08-28T12:00:00.000Z');
+const T0 = '2026-08-28T10:00:00.000Z';
 
-vi.mock('./github-client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./github-client')>();
+const store = {
+  listLiveRuns: vi.fn(),
+  listRecentRuns: vi.fn(),
+  readTask: vi.fn(),
+};
+
+vi.mock('./orchestrator-runtime', () => ({
+  createOrchestratorRuntime: vi.fn(),
+}));
+
+vi.mock('./autoscaler-status', () => ({
+  getAutoscalerStatuses: vi.fn(),
+}));
+
+function githubTask(issue = 42): Task {
   return {
-    ...actual,
-    getGithubClient: vi.fn(),
-    getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
-  };
-});
-
-interface FakeWorkflowRun {
-  id: number;
-  status: string | null;
-  conclusion: string | null;
-  event: string;
-  html_url: string;
-  display_title: string;
-  created_at: string;
-  updated_at: string;
-  run_started_at?: string;
-}
-
-function makeRun(overrides: Partial<FakeWorkflowRun> = {}): FakeWorkflowRun {
-  return {
-    id: 1,
-    status: 'in_progress',
-    conclusion: null,
-    event: 'issues',
-    html_url:
-      'https://github.com/supersprinklesracing/sprinkles/actions/runs/1',
-    display_title: '#42: Fix the thing',
-    created_at: '2026-07-07T00:00:00Z',
-    updated_at: '2026-07-07T00:00:00Z',
-    run_started_at: '2026-07-07T00:00:00Z',
-    ...overrides,
+    task: { repo: 'octo/example', issue },
+    runCount: 1,
+    updatedAt: T0,
+    work: {
+      spec: {
+        title: `GitHub task ${issue}`,
+        description: 'd',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+    },
   };
 }
 
-function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
+function nativeTask(): Task {
   return {
-    id: 1,
-    repo: DEFAULT_REPO,
+    task: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+    runCount: 1,
+    updatedAt: T0,
+    work: {
+      spec: {
+        title: 'Native task',
+        description: 'd',
+        pipeline: 'opencode',
+        target: { repo: 'octo/example' },
+      },
+    },
+  };
+}
+
+function run(overrides: Partial<Run> = {}): Run {
+  return {
+    runId: 'octo/example#42/r1',
+    task: { repo: 'octo/example', issue: 42 },
+    state: 'running',
     pipeline: 'claude',
-    status: 'completed',
-    conclusion: 'success',
-    event: 'issues',
-    url: 'https://github.com/supersprinklesracing/sprinkles/actions/runs/1',
-    displayTitle: '#42: Fix the thing',
-    issueNumber: 42,
-    createdAt: '2026-07-07T00:00:00Z',
-    updatedAt: '2026-07-07T00:00:00Z',
-    elapsedSeconds: 60,
+    requestId: 'request-1',
+    executor: 'queue',
+    leaseExpiresAt: '2026-08-28T14:00:00.000Z',
+    events: [{ at: T0, to: 'pending', by: 'request' }],
+    createdAt: T0,
+    updatedAt: T0,
     ...overrides,
   };
 }
 
-describe('issueNumberFromDisplayTitle', () => {
-  it('parses the leading run-name issue number', () => {
-    expect(issueNumberFromDisplayTitle('#42: Fix the thing')).toBe(42);
+beforeEach(() => {
+  vi.clearAllMocks();
+  (createOrchestratorRuntime as ReturnType<typeof vi.fn>).mockReturnValue({
+    store,
   });
-
-  it('parses the registry run-name shape every lane caller now renders', () => {
-    expect(
-      issueNumberFromDisplayTitle(
-        '#99: OpenCode issue agent [dispatch:g1:intent-abc]',
-      ),
-    ).toBe(99);
+  (getAutoscalerStatuses as ReturnType<typeof vi.fn>).mockResolvedValue({
+    statuses: [],
+    warnings: [],
   });
-
-  // The legacy `codex #N:` / `opencode #N:` prefixes are retired fleet-wide
-  // (#1340 A-R2). Asserting they no longer parse is what keeps the
-  // optional-prefix branch from creeping back: a run title in that shape
-  // can only come from an un-normalized caller, and silently joining it
-  // would hide exactly that regression.
-  it('does not parse a retired pipeline-prefixed run-name', () => {
-    expect(
-      issueNumberFromDisplayTitle('opencode #99: Fix the other thing'),
-    ).toBeUndefined();
-  });
-
-  it('returns undefined for a pre-rollout title with no leading number', () => {
-    expect(issueNumberFromDisplayTitle('Fix the thing')).toBeUndefined();
-  });
+  store.listLiveRuns.mockResolvedValue([]);
+  store.listRecentRuns.mockResolvedValue([]);
+  store.readTask.mockResolvedValue(undefined);
 });
 
-describe('attemptMarkerFromDisplayTitle', () => {
-  it('parses the generation and intent id off a claude run-name', () => {
-    expect(
-      attemptMarkerFromDisplayTitle(
-        '#42: Claude issue agent [dispatch:g3:intent-abc-123]',
-      ),
-    ).toEqual({ generation: 3, intentId: 'intent-abc-123' });
-  });
-
-  it('parses a codex run-name, which has no title text before the marker', () => {
-    expect(
-      attemptMarkerFromDisplayTitle('codex #7: [dispatch:g1:intent-xyz]'),
-    ).toEqual({ generation: 1, intentId: 'intent-xyz' });
-  });
-
-  it('parses an opencode run-name', () => {
-    expect(
-      attemptMarkerFromDisplayTitle(
-        '#9: OpenCode issue agent [dispatch:g2:intent-oc]',
-      ),
-    ).toEqual({ generation: 2, intentId: 'intent-oc' });
-  });
-
-  it('parses an orchestrator run-name, whose intent id is the runId (owner/repo#issue/rN)', () => {
-    // @agent-lcars/orchestrator's outbox drain (orchestrator-dispatch.ts)
-    // passes run.runId verbatim as broker_intent_id, so claude.yml's
-    // run-name embeds it unchanged: `/` and `#` included. Before widening
-    // DISPATCH_MARKER_RE's charset, this fell back to weaker title/issue
-    // attribution instead of the exact marker (found during the console
-    // migration, PR #1187).
-    expect(
-      attemptMarkerFromDisplayTitle(
-        '#1178: Claude issue agent [dispatch:g1:jlapenna/agent-lcars#1178/r1]',
-      ),
-    ).toEqual({ generation: 1, intentId: 'jlapenna/agent-lcars#1178/r1' });
-  });
-
-  it('returns undefined for a title with no marker (pre-broker run)', () => {
-    expect(attemptMarkerFromDisplayTitle('#42: Fix the thing')).toBeUndefined();
-  });
-
-  it('returns undefined for a manual dispatch with a blank generation/intent', () => {
-    expect(
-      attemptMarkerFromDisplayTitle('#42: Claude issue agent [dispatch:g:]'),
-    ).toBeUndefined();
-  });
-});
-
-describe('issueUrlForRun', () => {
-  it('links to /issues/<N> using the parsed issue number', () => {
-    const run = makeAgentRun({ issueNumber: 42 });
-    expect(issueUrlForRun(run)).toBe(
-      'https://github.com/supersprinklesracing/sprinkles/issues/42',
-    );
-  });
-
-  it('returns undefined for a legacy run with no parsed issue number', () => {
-    const run = makeAgentRun({ issueNumber: undefined });
-    expect(issueUrlForRun(run)).toBeUndefined();
-  });
-});
-
-describe('findStalledQueuedRun', () => {
-  it('returns undefined when no live run is queued past the threshold', () => {
-    const runs = [
-      makeAgentRun({ id: 1, status: 'queued', elapsedSeconds: 100 }),
-      makeAgentRun({ id: 2, status: 'running', elapsedSeconds: 10_000 }),
-    ];
-    expect(findStalledQueuedRun(runs)).toBeUndefined();
-  });
-
-  it('returns the longest-stalled queued run past the threshold', () => {
-    const short = makeAgentRun({
-      id: 1,
-      status: 'queued',
-      elapsedSeconds: 301,
+describe('agentRunFromOrchestrator', () => {
+  it('projects GitHub and native anchors with exact broker dispatch markers', () => {
+    const github = agentRunFromOrchestrator(run(), githubTask(), NOW);
+    const nativeRun = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+      state: 'pending',
+      pipeline: 'opencode',
     });
-    const long = makeAgentRun({ id: 2, status: 'queued', elapsedSeconds: 900 });
-    expect(findStalledQueuedRun([short, long])?.id).toBe(2);
-  });
+    const native = agentRunFromOrchestrator(nativeRun, nativeTask(), NOW);
 
-  it('ignores queued runs at or under the threshold', () => {
-    const run = makeAgentRun({ id: 1, status: 'queued', elapsedSeconds: 300 });
-    expect(findStalledQueuedRun([run])).toBeUndefined();
-  });
-});
-
-describe('groupLiveRunsByIssue', () => {
-  it('clusters runs sharing the same repo and issue number into one group', () => {
-    const first = makeAgentRun({ id: 1, issueNumber: 42 });
-    const second = makeAgentRun({ id: 2, issueNumber: 42, pipeline: 'codex' });
-    const groups = groupLiveRunsByIssue([first, second]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].issueNumber).toBe(42);
-    expect(groups[0].runs.map((r) => r.id)).toEqual([1, 2]);
-  });
-
-  it('keeps runs on different issue numbers in separate groups', () => {
-    const groups = groupLiveRunsByIssue([
-      makeAgentRun({ id: 1, issueNumber: 42 }),
-      makeAgentRun({ id: 2, issueNumber: 43 }),
-    ]);
-    expect(groups).toHaveLength(2);
-    expect(groups.map((g) => g.runs[0].id)).toEqual([1, 2]);
-  });
-
-  it('never merges same-numbered issues across different repos', () => {
-    const groups = groupLiveRunsByIssue([
-      makeAgentRun({
-        id: 1,
-        issueNumber: 42,
-        repo: { owner: 'ownerA', name: 'repoA' },
-      }),
-      makeAgentRun({
-        id: 2,
-        issueNumber: 42,
-        repo: { owner: 'ownerB', name: 'repoB' },
-      }),
-    ]);
-    expect(groups).toHaveLength(2);
-  });
-
-  it('gives each run with no parsed issue number its own singleton group', () => {
-    const groups = groupLiveRunsByIssue([
-      makeAgentRun({ id: 1, issueNumber: undefined }),
-      makeAgentRun({ id: 2, issueNumber: undefined }),
-    ]);
-    expect(groups).toHaveLength(2);
-    expect(groups.every((g) => g.runs.length === 1)).toBe(true);
-  });
-});
-
-describe('duplicateLivePipelineGroups', () => {
-  // The shared counting rule both logical-work.ts's
-  // `duplicateAttemptAnomalies` (task-detail anomaly list) and
-  // agent-activity-panel.tsx's `duplicatePipelineSummary` (In Flight
-  // duplicate badge) build their own formatting on top of.
-  it('groups queued/running runs by pipeline, keeping only pipelines with more than one live run', () => {
-    const groups = duplicateLivePipelineGroups([
-      makeAgentRun({ id: 1, status: 'queued', pipeline: 'claude' }),
-      makeAgentRun({ id: 2, status: 'running', pipeline: 'claude' }),
-      makeAgentRun({ id: 3, status: 'running', pipeline: 'codex' }),
-    ]);
-
-    expect(Array.from(groups.keys())).toEqual(['claude']);
-    expect(groups.get('claude')?.map((run) => run.id)).toEqual([1, 2]);
-  });
-
-  it('excludes completed runs from the live grouping entirely', () => {
-    const groups = duplicateLivePipelineGroups([
-      makeAgentRun({ id: 1, status: 'running', pipeline: 'claude' }),
-      makeAgentRun({ id: 2, status: 'completed', pipeline: 'claude' }),
-    ]);
-
-    expect(groups.size).toBe(0);
-  });
-
-  it('returns an empty map when no pipeline has more than one live run', () => {
-    const groups = duplicateLivePipelineGroups([
-      makeAgentRun({ id: 1, status: 'running', pipeline: 'claude' }),
-      makeAgentRun({ id: 2, status: 'queued', pipeline: 'codex' }),
-    ]);
-
-    expect(groups.size).toBe(0);
+    expect(github).toMatchObject({
+      id: 'octo/example#42/r1',
+      issueNumber: 42,
+      status: 'running',
+      event: 'queue',
+      displayTitle: '#42: GitHub task 42 [dispatch:g1:octo/example#42/r1]',
+    });
+    expect(native).toMatchObject({
+      id: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      status: 'queued',
+      url: '/work/01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      displayTitle:
+        'Native task [dispatch:g1:work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1]',
+    });
   });
 });
 
 describe('getAgentActivity', () => {
-  function setupOctokit({
-    listWorkflowRuns,
-    listSelfHostedRunnersForRepo,
-  }: {
-    listWorkflowRuns: Mock;
-    listSelfHostedRunnersForRepo: Mock;
-  }) {
-    (getGithubClient as Mock).mockReturnValue({
-      rest: {
-        actions: {
-          listWorkflowRuns,
-          listSelfHostedRunnersForRepo,
-        },
-      },
+  it('uses authoritative live and terminal Run records for every anchor while reading capacity once from autoscaler telemetry', async () => {
+    const github = githubTask();
+    const native = nativeTask();
+    const live = run();
+    const finished = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: native.task,
+      state: 'finished',
+      pipeline: 'opencode',
+      result: { ok: true, summary: 'done' },
+      updatedAt: '2026-08-28T11:30:00.000Z',
     });
-  }
-
-  it('parses issueNumber onto live runs from the run-name display title', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (workflow_id === 'claude.yml' && status === undefined) {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [makeRun({ id: 1, status: 'in_progress' })],
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.warnings).toEqual([]);
-    expect(activity.liveRuns).toHaveLength(1);
-    expect(activity.liveRuns[0].issueNumber).toBe(42);
-    expect(activity.liveRuns[0].pipeline).toBe('claude');
-  });
-
-  it('preserves every duplicate attempt of the same agent item instead of collapsing to one representative (#306)', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (workflow_id === 'claude.yml' && status === undefined) {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [
-                makeRun({ id: 1, status: 'pending' }),
-                makeRun({ id: 2, status: 'in_progress' }),
-              ],
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    // Both the queued and the running attempt survive into `liveRuns` -
-    // #306 removed the representative-attempt collapse that used to leave
-    // only the running one visible here.
-    expect(activity.liveRuns.map((run) => run.id)).toEqual([1, 2]);
-  });
-
-  it('falls back to undefined issueNumber for a legacy title', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (workflow_id === 'claude.yml' && status === undefined) {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [
-                makeRun({ id: 2, display_title: 'Fix the thing' }),
-              ],
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.liveRuns[0].issueNumber).toBeUndefined();
-    expect(activity.liveRuns[0].displayTitle).toBe('Fix the thing');
-  });
-
-  it('keeps a valid pending follow-up even before its job is materialized', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (workflow_id === 'claude.yml' && status === undefined) {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [
-                makeRun({
-                  id: 3,
-                  status: 'pending',
-                  display_title: '#44: follow-up',
-                }),
-              ],
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.liveRuns.map((run) => run.id)).toEqual([3]);
-    expect(activity.liveRuns[0].status).toBe('queued');
-  });
-
-  it('fetches live runs from both pipelines in parallel and tags each with its source workflow', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (status !== undefined) {
-          return Promise.resolve({ data: { workflow_runs: [] } });
-        }
-        if (workflow_id === 'claude.yml') {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [
-                makeRun({ id: 1, display_title: '#10: Claude run' }),
-              ],
-            },
-          });
-        }
-        if (workflow_id === 'opencode.yml') {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [
-                makeRun({ id: 2, display_title: '#11: OpenCode issue agent' }),
-              ],
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.liveRuns).toHaveLength(2);
-    const claudeRun = activity.liveRuns.find((run) => run.id === 1);
-    const opencodeRun = activity.liveRuns.find((run) => run.id === 2);
-    expect(claudeRun?.pipeline).toBe('claude');
-    expect(opencodeRun?.pipeline).toBe('opencode');
-    expect(opencodeRun?.issueNumber).toBe(11);
-  });
-
-  it('merges recent runs across both pipelines, sorted by updatedAt desc, capped at 8 overall', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockImplementation(({ workflow_id, status }) => {
-        if (status === undefined) {
-          return Promise.resolve({ data: { workflow_runs: [] } });
-        }
-        // Only the 'success' conclusion query returns fixtures - keeps this
-        // fixture small while still exercising the per-conclusion + per-
-        // pipeline fan-out and the final merge/sort/cap.
-        if (status !== 'success') {
-          return Promise.resolve({ data: { workflow_runs: [] } });
-        }
-        if (workflow_id === 'claude.yml') {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [1, 2, 3, 4, 5].map((day) =>
-                makeRun({
-                  id: day,
-                  status: 'completed',
-                  conclusion: 'success',
-                  display_title: `#${day}: claude run ${day}`,
-                  updated_at: `2026-07-0${day}T00:00:00Z`,
-                }),
-              ),
-            },
-          });
-        }
-        if (workflow_id === 'opencode.yml') {
-          return Promise.resolve({
-            data: {
-              workflow_runs: [3, 4, 5, 6, 7].map((day) =>
-                makeRun({
-                  id: 100 + day,
-                  status: 'completed',
-                  conclusion: 'success',
-                  display_title: `#${100 + day}: OpenCode issue agent ${day}`,
-                  updated_at: `2026-07-0${day}T12:00:00Z`,
-                }),
-              ),
-            },
-          });
-        }
-        return Promise.resolve({ data: { workflow_runs: [] } });
-      });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockResolvedValue({ data: { runners: [] } });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.recentRuns).toHaveLength(8);
-    // Strictly descending by updatedAt - the merge point where both
-    // pipelines' fixtures interleave.
-    const updatedAts = activity.recentRuns.map((run) => run.updatedAt);
-    expect(updatedAts).toEqual(
-      [...updatedAts].sort((a, b) => b.localeCompare(a)),
+    store.listLiveRuns.mockResolvedValue([live]);
+    store.listRecentRuns.mockResolvedValue([finished]);
+    store.readTask.mockImplementation(async (task: Task['task']) =>
+      'workId' in task
+        ? { task: native, revision: 1 }
+        : { task: github, revision: 1 },
     );
-    // Most recent is the opencode run - proves the two pipelines' results
-    // were actually merged rather than one clobbering the other.
-    expect(activity.recentRuns[0].pipeline).toBe('opencode');
-    expect(activity.recentRuns.some((run) => run.pipeline === 'claude')).toBe(
-      true,
-    );
-    // The two oldest claude fixtures (07-01, 07-02) fell outside the cap.
-    expect(activity.recentRuns.some((run) => run.id === 1)).toBe(false);
-    expect(activity.recentRuns.some((run) => run.id === 2)).toBe(false);
-  });
-
-  it('reduces self-hosted runners into an aggregate fleet summary without label filtering', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockResolvedValue({ data: { workflow_runs: [] } });
-    const listSelfHostedRunnersForRepo = vi.fn().mockResolvedValue({
-      data: {
-        runners: [
-          { id: 1, name: 'runner-a', status: 'online', busy: true, labels: [] },
-          {
-            id: 2,
-            name: 'runner-b',
-            status: 'online',
-            busy: false,
-            labels: [],
-          },
-          {
-            id: 3,
-            name: 'runner-c',
-            status: 'offline',
-            busy: false,
-            labels: [],
-          },
-        ],
-      },
-    });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.fleet).toEqual({ online: 2, busy: 1 });
-  });
-
-  // Two watched repos sharing an org-level runner group both list the same
-  // runner (by id) - counting it once per repo would inflate the fleet
-  // gauge without a real capacity change.
-  it('dedupes a runner shared across two watched repos by runner id', async () => {
-    const repoA = { owner: 'org-a', name: 'repo-a' };
-    const repoB = { owner: 'org-b', name: 'repo-b' };
-    (getWatchedRepos as Mock).mockReturnValueOnce([repoA, repoB]);
-
-    const listWorkflowRuns = vi
-      .fn()
-      .mockResolvedValue({ data: { workflow_runs: [] } });
-    const listSelfHostedRunnersForRepo = vi.fn().mockImplementation(() =>
-      Promise.resolve({
-        data: {
+    (getAutoscalerStatuses as ReturnType<typeof vi.fn>).mockResolvedValue({
+      statuses: [
+        {
+          schemaVersion: 1,
+          scaleSet: 'linux-arm64',
+          registration: 'registered',
+          queuedJobs: 0,
+          minRunners: 0,
+          maxRunners: 2,
+          draining: false,
           runners: [
-            {
-              id: 1,
-              name: 'shared-runner',
-              status: 'online',
-              busy: true,
-              labels: [],
-            },
+            { name: 'a', host: 'laforge', state: 'busy' },
+            { name: 'b', host: 'janeway', state: 'idle' },
           ],
+          updatedAt: '2026-08-28T12:00:00.000Z',
         },
-      }),
-    );
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
+      ],
+      warnings: [],
+    });
 
     const activity = await getAgentActivity();
 
-    expect(listSelfHostedRunnersForRepo).toHaveBeenCalledTimes(2);
-    expect(activity.fleet).toEqual({ online: 1, busy: 1 });
-    // Per-repo breakdown is NOT deduped - each repo's own API view still
-    // reports the shared runner, since that's what that repo's endpoint
-    // actually returned.
-    expect(activity.fleetByRepo).toEqual({
-      'org-a/repo-a': { online: 1, busy: 1 },
-      'org-b/repo-b': { online: 1, busy: 1 },
-    });
+    expect(activity.liveRuns.map((entry) => entry.id)).toEqual([live.runId]);
+    expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
+      finished.runId,
+    ]);
+    expect(activity.fleet).toEqual({ online: 2, busy: 1 });
+    expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
+    expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.readTask).toHaveBeenCalledTimes(2);
   });
 
-  it('omits fleetByRepo entirely when only one repo is watched', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockResolvedValue({ data: { workflow_runs: [] } });
-    const listSelfHostedRunnersForRepo = vi.fn().mockResolvedValue({
-      data: { runners: [{ id: 1, status: 'online', busy: false, labels: [] }] },
-    });
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
+  it('keeps one genuine authoritative-data warning when the store read fails', async () => {
+    store.listLiveRuns.mockRejectedValue(new Error('unavailable'));
+    store.listRecentRuns.mockRejectedValue(new Error('unavailable'));
 
     const activity = await getAgentActivity();
 
-    expect(activity.fleet).toEqual({ online: 1, busy: 0 });
-    expect(activity.fleetByRepo).toBeUndefined();
-  });
-
-  it('degrades the fleet section and records a warning instead of throwing', async () => {
-    const listWorkflowRuns = vi
-      .fn()
-      .mockResolvedValue({ data: { workflow_runs: [] } });
-    const listSelfHostedRunnersForRepo = vi
-      .fn()
-      .mockRejectedValue(new Error('403 admin:read required'));
-    setupOctokit({ listWorkflowRuns, listSelfHostedRunnersForRepo });
-
-    const activity = await getAgentActivity();
-
-    expect(activity.fleet).toBeUndefined();
     expect(activity.liveRuns).toEqual([]);
+    expect(activity.recentRuns).toEqual([]);
+    expect(activity.queue).toBeUndefined();
+    expect(activity.warnings).toEqual([
+      'Authoritative live run activity unavailable.',
+      'Authoritative recent run activity unavailable.',
+    ]);
+  });
+
+  it('bounds recent reads and never scans tasks or per-task runs', async () => {
+    const native = nativeTask();
+    const finished = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: native.task,
+      state: 'finished',
+      pipeline: 'opencode',
+      result: { ok: true },
+    });
+    store.listRecentRuns.mockResolvedValue([finished]);
+    store.readTask.mockResolvedValue({ task: native, revision: 1 });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
+      finished.runId,
+    ]);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.readTask).toHaveBeenCalledTimes(1);
+    expect(store).not.toHaveProperty('listTasks');
+    expect(store).not.toHaveProperty('listRuns');
+  });
+
+  it('reads each bounded recent anchor only once when it has multiple runs', async () => {
+    const github = githubTask();
+    const newest = run({
+      runId: 'octo/example#42/r2',
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: '2026-08-28T11:00:00.000Z',
+    });
+    const older = run({ state: 'finished', result: { ok: true } });
+    store.listRecentRuns.mockResolvedValue([newest, older]);
+    store.readTask.mockResolvedValue({ task: github, revision: 1 });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
+      newest.runId,
+      older.runId,
+    ]);
+    expect(store.readTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('queueFromLiveRuns', () => {
+  it('derives queue, claimed, and running lifecycle counts from Run state rather than runner capacity', () => {
     expect(
-      activity.warnings.some((w) => w.includes('Runner fleet status')),
-    ).toBe(true);
+      queueFromLiveRuns([
+        run({ state: 'pending' }),
+        run({
+          runId: 'octo/example#42/r2',
+          state: 'pending',
+          queue: { state: 'claimed' },
+        }),
+        run({ runId: 'octo/example#42/r3', state: 'running' }),
+      ]),
+    ).toEqual({ queued: 1, claimed: 1, running: 1 });
   });
 });

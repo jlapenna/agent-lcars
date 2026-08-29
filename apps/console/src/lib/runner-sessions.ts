@@ -14,7 +14,7 @@ import {
 const ACTIVE_WINDOW_HOURS = 24;
 
 export interface RunnerSessionsResult {
-  /** Keyed by the GitHub Actions run id (`AgentRun.id`, stringified) via
+  /** Keyed by the authoritative broker Run id (`AgentRun.id`) via
    * `IssueAgentSessionDoc.runId` - the join key the runner-mode telemetry
    * shipper writes at upsert time (`buildSessionDoc`'s `options.runId`).
    * Docs with no `runId` yet (shipper not wired up for a given run, or a doc
@@ -27,7 +27,7 @@ export interface RunnerSessionsResult {
 
 /**
  * Fetches recently-active `source: 'issue-agent'` session docs so live and
- * finished GitHub Actions runs can be joined to their session telemetry -
+ * finished broker Runs can be joined to their session telemetry -
  * turn/cost budget gauges on in-flight runs, run-status diagnosis on
  * finished ones (see run-classification.ts). Degrades to an empty map
  * rather than throwing, matching `getCliSessions`'s defensive pattern: every

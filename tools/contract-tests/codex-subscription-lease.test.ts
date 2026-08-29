@@ -59,21 +59,21 @@ describe('Codex subscription lease contract', () => {
     expect(lane).toContain('it expires automatically');
   });
 
-  it('leaves hosted jobs and direct broker auth disabled until one shared authority is activated', () => {
+  it('enables one shared authority for hosted and direct Codex execution', () => {
     expect(lane).toContain(
       "if: ${{ inputs.pipeline == 'codex' && inputs.codex-shared-lease }}",
     );
     expect(lane).toContain(
       "if: always() && inputs.pipeline == 'codex' && inputs.codex-shared-lease && steps.codex-auth-lease.outcome == 'success'",
     );
-    expect(credentialsGuide).toContain('disabled by default');
+    expect(lane).toContain('default: true');
     expect(credentialsGuide).toContain(
-      'default is\n   changed centrally from `false` to `true`',
+      'svc:telemetry-writer` `work.executor` grant covers `claude`,',
     );
+    expect(credentialsGuide).toContain('`codex`, and `opencode`.');
     expect(credentialsGuide).toContain(
-      'svc:telemetry-writer` `work.executor` grant adds `codex`',
+      'AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true',
     );
-    expect(credentialsGuide).toContain('AGENT_LCARS_QUEUE_PIPELINES`');
     expect(credentialsGuide).toContain('LCARS_CODEX_SHARED_LEASE_ENABLED=true');
   });
 });

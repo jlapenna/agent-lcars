@@ -567,7 +567,7 @@ const LANE_SURFACES: Record<
       'codex-shared-lease': {
         required: false,
         type: 'boolean',
-        default: false,
+        default: true,
       },
       'gcp-workload-identity-provider': { required: true, type: 'string' },
       'gcp-service-account': { required: true, type: 'string' },

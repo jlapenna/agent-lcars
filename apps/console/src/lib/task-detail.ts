@@ -245,7 +245,9 @@ export async function getTaskDetail(
     ]),
   });
 
-  const baseTask = work.find((w) => taskRefKey(w.task) === key);
+  const baseTask = work.find(
+    (w) => 'issueNumber' in w.task && taskRefKey(w.task) === key,
+  );
   // Unreachable in practice - `taskMeta` above always seeds exactly this
   // key - but keeps the return type honest instead of a non-null assertion.
   if (!baseTask) return { status: 'not-found' };

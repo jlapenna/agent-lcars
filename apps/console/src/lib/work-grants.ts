@@ -59,16 +59,6 @@ export function grantForPrincipal(
   return grants.find((g) => g.principal === principal);
 }
 
-/** Legacy, staged pipeline selector. It remains only while the global
- * `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` cutover is false; `dispatch-executor`
- * owns interpreting that flag and makes it provider-neutral once enabled. */
-export function queuePipelines(
-  raw: string | undefined = process.env['AGENT_LCARS_QUEUE_PIPELINES'],
-): string[] {
-  if (raw === undefined || raw.trim() === '') return [];
-  return z.array(pipelineNameSchema).parse(JSON.parse(raw));
-}
-
 export function workMaxLiveRuns(): number {
   const raw = process.env['AGENT_LCARS_WORK_MAX_LIVE_RUNS'];
   if (raw === undefined || raw === '') return 4;

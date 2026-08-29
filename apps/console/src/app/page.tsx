@@ -23,7 +23,7 @@ import {
 } from '../lib/github-client';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
-import { indexSessionsByNumericRunId } from '../lib/run-classification';
+import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
@@ -121,7 +121,7 @@ async function IndexBody({
   // run.id -> joined session doc, for every run this page renders (live and
   // recent alike) - powers the In Flight budget gauges and the Recent
   // Outcomes classification/diagnosis (see agent-activity-panel.tsx).
-  const sessionsByRunId = indexSessionsByNumericRunId(
+  const sessionsByRunId = indexSessionsByRunId(
     [...activity.liveRuns, ...activity.recentRuns],
     runnerSessionsByRunId,
   );
@@ -130,7 +130,7 @@ async function IndexBody({
 
   // The reverse join: live runs annotated with the item they're working, so
   // the In Flight panel can link the issue instead of the raw run title.
-  const itemsByRunId: Record<number, RunItemRef> = {};
+  const itemsByRunId: Record<string, RunItemRef> = {};
   for (const item of queueView.items) {
     const run = queueView.liveRunByItemKey.get(
       repoItemKey(item.repo, item.number),

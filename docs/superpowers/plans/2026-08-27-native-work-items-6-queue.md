@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A `queue`-executor native run is drained onto the run document itself instead of GitHub Actions, claimed by the runner-autoscaler through four new run routes authenticated by an LCARS-minted per-run token, and executed by a direct-mode runner container running the `claude` pipeline end to end — with `github-actions`-executor runs, every existing route, and the GitHub scale-set path completely unchanged, and the feature dark (`AGENT_LCARS_QUEUE_PIPELINES=[]`) until a maintainer opts a pipeline in.
+**Goal:** A `queue`-executor native run is drained onto the run document itself instead of GitHub Actions, claimed by the runner-autoscaler through four new run routes authenticated by an LCARS-minted per-run token, and executed by a direct-mode runner container end to end. The final activation routes every admitted provider through this one path.
 
 **Architecture:** `Run` gains an optional `executor` (default `github-actions`, zero migration) and an optional `queue` claim-state projection, using the outbox's own lease/fencing discipline instead of a new collection. `work-router.ts`'s `create`/`redispatch` decide `executor` from console config at request time; `orchestrator-dispatch.ts`'s drain branches on it — `github-actions` calls GitHub exactly as today, `queue` writes `run.queue` and calls nothing external. A new `runs` oRPC resource, served by the same `/api/work/v1` catch-all, exposes `claim`/`brief`/`heartbeat`/`complete`/`checkout-token`, gated by a new `work.executor` scope (claim) and a per-run bearer token hashed onto `run.queue.tokenHash` (the other four). The runner-autoscaler — a homelab Go daemon, not a GCP-hosted service — polls `claim` using a Google ID token self-minted from its existing `telemetry-writer` service-account key, and launches the runner image in a new `RUNNER_MODE=direct` entrypoint that reproduces the `claude`-pipeline slice of `agent-lane.yml` against the new routes.
 
@@ -14,10 +14,10 @@
 
 - No Terraform, no new IAM binding, no new GCP Secret Manager entry, anywhere before the final task. The one thing that genuinely cannot be done without a maintainer (delivering `CLAUDE_CODE_OAUTH_TOKEN` to a homelab container) is a one-time manual credential-placement action, isolated to Task 12, never a code change.
 - `Run.executor` and `Run.queue` are both optional fields with a defined absent-means meaning (`github-actions`, "not queued") — every existing persisted `Run` document must keep parsing unchanged. No migration script, anywhere.
-- `workSpecSchema` (`libs/work/src/spec.ts`) is unchanged. Executor selection is console configuration (`AGENT_LCARS_QUEUE_PIPELINES`), never part of an item's spec.
+- `workSpecSchema` (`libs/work/src/spec.ts`) is unchanged. Executor selection is server-owned Console policy, never part of an item's spec.
 - The run-token bearer gate (`brief`/`heartbeat`/`complete`/`checkout-token`) is implemented in each handler, not router middleware — the check needs the `runId` path parameter, which un-validated middleware (the pattern `operator`/`executor` use) cannot see.
 - Every new secret-shaped value (`run.queue.tokenHash`) is a one-way hash; the raw token is returned exactly once, from `claim`, and never persisted.
-- `AGENT_LCARS_QUEUE_PIPELINES` defaults to `[]`; with it empty, `executorFor` never returns `'queue'` and nothing observable changes for any existing caller.
+- `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true` makes QueueExecutor the one route for every admitted provider and ingress.
 - No real git in unit tests. Console E2E is not run locally (paused by maintainer direction, #1049); this sub-project adds no E2E surface, so nothing here is gated on it.
 - Maintainer directive: implementers run the fast layer locally (focused vitest/`go test`, typecheck of the touched project, prettier/`gofmt`), then push; CI carries suites/builds.
 - Every commit carries `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` and `Claude-Session: https://claude.ai/code/session_01BiTUeJCQByPUqRLZUpt3CD`.
@@ -594,115 +594,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: `AGENT_LCARS_QUEUE_PIPELINES` and executor selection in `work-router.ts`
+### Task 4: unified executor decision
 
-**Files:**
+**Final design:** `dispatchExecutor` is a single server-owned policy which
+requires `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true` and returns `queue` for
+every admitted provider. The Console supplies that same decision to native
+Work, GitHub-anchored work, internal requests, schedule ticks, and
+redispatches. Work specifications and callers carry no executor-routing
+input, and no context/config parser maintains a pipeline allowlist.
 
-- Modify: `apps/console/src/lib/work-grants.ts` (config reader, alongside `workMaxLiveRuns`)
-- Modify: `apps/console/src/lib/work-router.ts` (`WorkContext`, `create`, `redispatch`)
-- Modify: `apps/console/src/app/api/work/v1/[[...rest]]/route.ts` (pass `queuePipelines` into context)
-- Test: `apps/console/src/lib/work-router.test.ts`, `apps/console/src/lib/work-grants.test.ts`
-
-**Interfaces:**
-
-- Produces: `queuePipelines(): string[]` (`work-grants.ts`, parses `AGENT_LCARS_QUEUE_PIPELINES`, default `[]`); `WorkContext.queuePipelines: readonly string[]`; `executorFor(pipeline: string, queuePipelines: readonly string[]): RunExecutor` (`work-router.ts`, exported for the test).
-
-- [ ] **Step 1: Write the failing tests**
-
-```ts
-// apps/console/src/lib/work-grants.test.ts
-it('queuePipelines defaults to empty and parses a JSON array', () => {
-  expect(queuePipelines(undefined)).toEqual([]);
-  expect(queuePipelines('["claude"]')).toEqual(['claude']);
-});
-```
-
-```ts
-// apps/console/src/lib/work-router.test.ts (new case in the existing
-// 'items routes' describe block; `context()` gains `queuePipelines: []`
-// as a default -- see Step 3's edit to the test's own `context` helper)
-it('create sets executor: queue only for a configured pipeline', async () => {
-  const ctx = context({ queuePipelines: ['claude'] });
-  const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
-  expect(r.status).toBe(201);
-  const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-  expect(run?.executor).toBe('queue');
-});
-
-it('create leaves executor unset for a pipeline not in the queue list', async () => {
-  const ctx = context({ queuePipelines: ['codex'] });
-  const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
-  expect(r.status).toBe(201);
-  const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-  expect(run?.executor).toBeUndefined();
-});
-```
-
-- [ ] **Step 2: Run to verify they fail** — `./tools/nx test @agent-lcars/console -- work-grants work-router` → FAIL.
-
-- [ ] **Step 3: Implement**
-
-`work-grants.ts` — beside `workMaxLiveRuns`:
-
-```ts
-/** Pipelines routed to the `queue` executor at request time. Default `[]`:
- *  with nothing configured, `work-router.ts`'s `executorFor` never returns
- *  `'queue'` and every run dispatches through GitHub Actions exactly as
- *  before this sub-project. */
-export function queuePipelines(
-  raw: string | undefined = process.env['AGENT_LCARS_QUEUE_PIPELINES'],
-): string[] {
-  if (raw === undefined || raw.trim() === '') return [];
-  return z.array(z.string().min(1).max(64)).parse(JSON.parse(raw));
-}
-```
-
-`work-router.ts` — `WorkContext` gains `queuePipelines: readonly string[]`; add, near `forbiddenReason`:
-
-```ts
-import type { RunExecutor } from '@agent-lcars/orchestrator';
-
-/** Console configuration decides the executor, per pipeline, at request
- *  time -- never the item's own spec (design spec, "The `executor`
- *  field"). */
-export function executorFor(
-  pipeline: string,
-  queuePipelines: readonly string[],
-): RunExecutor | undefined {
-  return queuePipelines.includes(pipeline) ? 'queue' : undefined;
-}
-```
-
-(`undefined` rather than `'github-actions'` deliberately: `Run.executor` stays absent for the common case, matching Task 1's "absent means github-actions" contract exactly, rather than writing the default value explicitly onto every run.)
-
-In `create`'s handler, the `context.runtime.orchestrator.request({...})` call gains:
-
-```ts
-    executor: executorFor(input.spec.pipeline, context.queuePipelines),
-```
-
-(alongside the existing `work: {...}` field). In `redispatch`'s handler, the same line is added to its own `orchestrator.request({...})` call, using `spec.pipeline` (the item's declared pipeline, already read a few lines above via `workPayloadSchema.parse(task.task.work)`).
-
-`route.ts` — the `context` object gains:
-
-```ts
-      queuePipelines: queuePipelines(),
-```
-
-(import `queuePipelines` from `@/lib/work-grants` alongside the existing `workGrants`/`workMaxLiveRuns` import.)
-
-Update `work-router.test.ts`'s `context()` helper to accept and default `queuePipelines: []` in its returned object, spread after `maxLiveRuns: 4`.
-
-- [ ] **Step 4: Run** — `./tools/nx test @agent-lcars/console -- work-grants work-router` → PASS; typecheck; prettier.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/console/src/lib/work-grants.ts apps/console/src/lib/work-grants.test.ts apps/console/src/lib/work-router.ts apps/console/src/lib/work-router.test.ts "apps/console/src/app/api/work/v1/[[...rest]]/route.ts"
-git commit -m "feat(console): AGENT_LCARS_QUEUE_PIPELINES executor selection
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
-```
+**Verification:** unit tests prove Claude, Codex, and OpenCode all receive
+the queue executor; deployment-contract tests prove the active configuration
+and executor grant cover the same three providers.
 
 ---
 
@@ -1414,7 +1317,6 @@ async function handle(request: Request): Promise<Response> {
       runtime,
       sessionsFor: sessionsForRuns,
       maxLiveRuns: workMaxLiveRuns(),
-      queuePipelines: queuePipelines(),
     },
   });
   return matched && response !== undefined
@@ -2596,9 +2498,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - [ ] **Step 3: The one maintainer-gated action** — a maintainer places a copy of the `CLAUDE_CODE_OAUTH_TOKEN` secret's current value into the homelab encrypted secret store (`secrets-cli` skill) and adds a file-mount entry exposing it read-only into direct-mode containers, the same way `telemetry-writer.json` already reaches them. This is a one-time manual credential-placement action, not a Terraform change, not a new IAM grant, and not something this plan's own tasks perform — it is the single step gating the proof below.
 
-- [ ] **Step 4: The real path** — with Step 3 done: set `AGENT_LCARS_QUEUE_PIPELINES='["claude"]'` on the console; `LCARS_QUEUE_POLL=1` and `LCARS_QUEUE_PIPELINES=claude` on the autoscaler's homelab deploy (its own env/config, not owned by this repo's CI); `gh workflow run work-create.yml -f action=create -f title='Native work smoke: queue executor' -f description='Add a one-line comment to README.md and open a PR.' -f repo=jlapenna/agent-lcars -f pipeline=claude`. Watch the autoscaler's logs claim the run and the direct-runner container's own logs (`docker logs`) run `prepare.sh` → `claude` → `verify-deliverable.sh` → `complete`. `gh workflow run work-create.yml -f action=get -f id=<id>` → `state: done`, `runs[0].result.ref` is the PR URL.
+- [ ] **Step 4: The real path** — with Step 3 done, activate the unified Console policy and direct-runner deploy; create a work item for each provider. Watch the autoscaler's logs claim each run and the direct-runner container's logs run `prepare.sh` → agent → `verify-deliverable.sh` → `complete`. Confirm each item reaches `done` with its PR reference.
 
-- [ ] **Step 5: Record and revert the flag** — append a "Sub-project 4" section to `docs/native-work-smoke-runbook.md` with the item id, the claimed run id, the host/container, and the PR URL. Then set `AGENT_LCARS_QUEUE_PIPELINES` back to `[]` (and `LCARS_QUEUE_POLL` back to unset) so production stays on `github-actions` for every pipeline until a maintainer deliberately opts one in again. Commit the runbook update on a follow-up branch, PR, merge. Tick sub-project 4 on the tracking issue.
+- [ ] **Step 5: Record the proof** — append a "Sub-project 4" section to `docs/native-work-smoke-runbook.md` with the item id, claimed run id, host/container, and PR URL. Commit the runbook update on a follow-up branch, PR, merge. Tick sub-project 4 on the tracking issue.
 
 ---
 

@@ -275,6 +275,32 @@ export function runOrchestratorStoreContract(
       ]);
     });
 
+    it('lists a bounded newest-first global run feed across anchor kinds', async () => {
+      const { clock, store, orchestrator } = await fixture();
+      const issue: TaskId = { repo: 'octo/example', issue: 8 };
+      const work: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      await orchestrator.request({
+        taskId: issue,
+        requestId: 'issue-recent',
+        pipeline: 'claude',
+      });
+      clock.advanceMinutes(1);
+      await orchestrator.request({
+        taskId: work,
+        requestId: 'work-recent',
+        pipeline: 'opencode',
+        work: {},
+      });
+
+      expect((await store.listRecentRuns(1)).map((run) => run.runId)).toEqual([
+        'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      ]);
+      expect((await store.listRecentRuns(2)).map((run) => run.runId)).toEqual([
+        'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+        'octo/example#8/r1',
+      ]);
+    });
+
     it('round-trips work and closedAt on a native task', async () => {
       const { store, orchestrator } = await fixture();
       const work: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3H' };

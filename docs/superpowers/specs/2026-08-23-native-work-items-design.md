@@ -846,38 +846,23 @@ direct-mode equivalent yet).
 (absent means `'github-actions'`, so every existing persisted run parses
 unchanged — zero migration, the same discipline `Task.consecutiveLost`
 already established). `workSpecSchema` is **unchanged**: an item's spec
-carries no executor opinion. Instead, console configuration
-`AGENT_LCARS_QUEUE_PIPELINES` (a JSON array of pipeline names, default
-`[]`) says which pipelines route to the queue; `RequestRunInput` (`libs/
-orchestrator/src/decide.ts`) gains an optional `executor`, threaded from
+carries no executor opinion. The unified Console policy routes every admitted
+run to the queue; `RequestRunInput` (`libs/orchestrator/src/decide.ts`) gains
+an optional `executor`, threaded from
 `Orchestrator.request`'s `RequestInput` straight into the minted `Run` by
-`mintRun`. `work-router.ts`'s `create` and `redispatch` handlers are the
-only two callers that decide it, both the same way:
+`mintRun`. Every ingress supplies the same executor decision:
 
 ```ts
-function executorFor(
-  spec: WorkSpec,
-  queuePipelines: readonly string[],
-): RunExecutor | undefined {
-  return queuePipelines.includes(spec.pipeline) ? 'queue' : undefined;
+function dispatchExecutor(_pipeline: string): RunExecutor {
+  return 'queue';
 }
 ```
-
-Returns `undefined`, not the literal `'github-actions'`, when the pipeline
-is not in the list: `executor` is optional and "absent means
-`github-actions`" (see the field's own definition just above), so this
-keeps the field genuinely absent on the minted `Run` rather than writing out
-its own default value explicitly — the same "don't persist a value equal to
-the default" discipline as leaving any other optional field unset.
 
 Evaluated **at request time**, against the config as it stands _then_ —
 identical in spirit to `forbiddenReason`'s existing "re-checked against
 grants and the repository list as they stand now" rule for `redispatch`.
-A GitHub-anchored task (`handleWebhookDelivery`, `handleDispatchRequest`)
-never sets `executor`: those requests have no `WorkSpec.pipeline` to look
-up in `AGENT_LCARS_QUEUE_PIPELINES` in the first place, and GitHub-
-anchored tasks always run `github-actions` — the queue only ever serves
-native work.
+GitHub-anchored, console, internal, native Work, schedule, and redispatch
+requests all use that same decision.
 
 ### Queue state machine
 
@@ -1177,11 +1162,9 @@ not audited here; extending direct mode to them is follow-up work.
 `LCARS_QUEUE_POLL=1`, alongside the existing `RunHostSampler`/orphan-
 sweeper goroutines: a new `apps/runner-autoscaler/queue_executor.go`
 polls `POST /runs/claim` on a fixed interval (`LCARS_QUEUE_POLL_INTERVAL`,
-default 15s) for the pipelines named by `LCARS_QUEUE_PIPELINES` (comma-
-separated; independently configured from the console's
-`AGENT_LCARS_QUEUE_PIPELINES` — operationally they should agree, but
-nothing enforces it, the same way no code enforces that a GitHub scale
-set's `Labels` matches what a workflow actually requests). On a
+default 15s). The server derives every claimable provider from the
+authenticated `work.executor` grant; the autoscaler has no competing local
+pipeline selector. On a
 successful claim it launches the direct-runner image as a plain, one-shot
 Docker container (`newDockerClient`/`hosts.go` for host connectivity,
 reused as-is) on a host from the existing pool — **not** wired through
@@ -1196,19 +1179,12 @@ path has real traffic to justify the complexity. With `LCARS_QUEUE_POLL`
 unset, this goroutine never starts and nothing else in the binary
 changes — the GitHub scale-set path is untouched line for line.
 
-### Feature flags
+### Activation policy
 
-- **Console:** `AGENT_LCARS_QUEUE_PIPELINES` (JSON array, default `[]`).
-  Empty means every request routes `github-actions` exactly as today —
-  `executorFor` never returns `'queue'` for an empty list.
-- **Autoscaler:** `LCARS_QUEUE_POLL=1` (default unset/`0`) plus
-  `LCARS_QUEUE_PIPELINES` (comma-separated). Unset means the new
-  goroutine never starts.
-- Both must be set for the path to do anything; either alone is inert —
-  the console would mint `queue`-executor runs nobody ever claims (caught
-  by the ordinary lease/auto-retry/park backstop, same as any other
-  undispatchable run) or the autoscaler would poll and find nothing
-  (`204` every time).
+- **Console:** `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true` routes every admitted
+  request through QueueExecutor.
+- **Autoscaler:** its authenticated `work.executor` grant is the sole
+  provider capability source for claims.
 
 ### What stays unchanged
 
@@ -1270,20 +1246,12 @@ already leans on twice: a maintainer places a copy of that secret's value
 into the homelab encrypted secret store (`secrets-cli` skill) and adds a
 `file_mount`/`queue_executor` config entry exposing it read-only into
 direct-mode containers, exactly like `telemetry-writer.json`. This is a
-**one-time manual credential-placement action, not a code change**, and
-it is the one step in this whole sub-project that needs a human: every
-task up to it lands and is verifiable with `AGENT_LCARS_QUEUE_PIPELINES`
-at its default `[]`.
-
-With that placement done: set `AGENT_LCARS_QUEUE_PIPELINES='["claude"]'`
-on the console, `LCARS_QUEUE_POLL=1` plus `LCARS_QUEUE_PIPELINES=claude`
-on the autoscaler's deploy (its config/env, homelab-side — deploy path
-not owned by this repo), create one item via `work-create.yml`, watch the
-autoscaler's logs claim it and the direct runner produce a PR, `get` →
+**one-time manual credential-placement action, not a code change**. With
+placement complete, activate the unified Console policy and the autoscaler's
+direct runner, create one item via `work-create.yml`, watch the autoscaler's
+logs claim it and the direct runner produce a PR, then confirm `get` →
 `done`. Append a "Sub-project 4" section to `docs/native-work-smoke-
-runbook.md` with the run id, container/host, and PR URL. Then set
-`AGENT_LCARS_QUEUE_PIPELINES` back to `[]` so production stays on
-`github-actions` until a maintainer deliberately opts a pipeline in.
+runbook.md` with the run id, container/host, and PR URL.
 
 ## Sub-project 5: ingress unification
 

@@ -18,11 +18,18 @@ import { E2E_FIXTURE_BRANCH } from '../../../../lib/e2e-fixtures';
 import {
   E2E_FIXTURE_REPO,
   E2E_ITEM_NUMBERS,
-  E2E_RUN_IDS,
   resetIssueContentEdits,
   resetQuickTaskFixtures,
   setPopulatedFixtures,
 } from '../../../../lib/e2e-github-fixtures';
+import {
+  E2E_ORCHESTRATOR_RUN_IDS,
+  resetE2eOrchestratorFixtures,
+  seedPopulatedE2eOrchestratorFixtures,
+} from '../../../../lib/e2e-orchestrator-fixtures';
+
+const RUNNER_STATUS_COLLECTION = 'runner-status';
+const E2E_RUNNER_STATUS_ID = 'e2e-fixture-scale-set';
 
 export const E2E_CLI_SESSION_IDS = {
   live: 'e2e-cli-session-live',
@@ -147,7 +154,7 @@ function fixtureSessions(): CliSessionDoc[] {
 
 /**
  * The `issue-agent` half of the populated fixture set. Joined to
- * `E2E_RUN_IDS.silentError` (a run GitHub reported as `success`) with zero
+ * `E2E_ORCHESTRATOR_RUN_IDS.silentError` (a successful broker Run) with zero
  * turns and zero cost, which is exactly the signature
  * `deriveSilentErrorDiagnoses` looks for — so seeding this is what makes
  * the dashboard's `silent-error` action type render at all.
@@ -159,7 +166,7 @@ function fixtureIssueAgentSession(): IssueAgentSessionDoc {
     source: 'issue-agent',
     liveness: 'ended',
     repo: { owner: E2E_FIXTURE_REPO.owner, name: E2E_FIXTURE_REPO.name },
-    runId: String(E2E_RUN_IDS.silentError),
+    runId: E2E_ORCHESTRATOR_RUN_IDS.silentError,
     issueNumber: E2E_ITEM_NUMBERS.silentError,
     startedAt: minutesAgo(56),
     lastActivityAt,
@@ -217,8 +224,9 @@ function fixtureArchiveIssueSessions(): IssueAgentSessionDoc[] {
 
 interface SeedRequest {
   /** `seed` is the original CLI-session-only fixture set; `seed-populated`
-   * adds the issue-agent session and switches the GitHub fixture route into
-   * populated mode (#40). `reset` clears both. */
+   * adds the issue-agent session plus authoritative broker Work/Run records;
+   * GitHub fixture mode remains only for issue/PR metadata. `reset` clears all
+   * hermetic fixture state. */
   action?: 'seed' | 'seed-populated' | 'reset';
 }
 
@@ -248,6 +256,35 @@ function revalidateDashboardCache() {
   revalidateTag(GITHUB_DATA_TAG, { expire: 0 });
 }
 
+async function seedRunnerStatus() {
+  const firestore = getAgentTelemetryWriterFirestore();
+  await firestore
+    .collection(RUNNER_STATUS_COLLECTION)
+    .doc(E2E_RUNNER_STATUS_ID)
+    .set({
+      schemaVersion: 1,
+      scaleSet: 'e2e-fixture-runners',
+      registration: 'e2e-fixture-registration',
+      queuedJobs: 0,
+      minRunners: 0,
+      maxRunners: 2,
+      draining: false,
+      runners: [
+        {
+          name: 'e2e-fixture-runner-1',
+          host: 'e2e-fixture-host-1',
+          state: 'busy',
+        },
+        {
+          name: 'e2e-fixture-runner-2',
+          host: 'e2e-fixture-host-2',
+          state: 'idle',
+        },
+      ],
+      updatedAt: new Date().toISOString(),
+    });
+}
+
 export async function POST(req: NextRequest) {
   if (!isE2eTesting()) {
     return NextResponse.json(
@@ -264,9 +301,16 @@ export async function POST(req: NextRequest) {
       resetIssueContentEdits();
       resetQuickTaskFixtures();
       revalidateDashboardCache();
-      const firestore = getAgentTelemetryWriterFirestore();
-      const snapshot = await firestore.collection(SESSIONS_COLLECTION).get();
-      await Promise.all(snapshot.docs.map((doc) => doc.ref.delete()));
+      const telemetry = getAgentTelemetryWriterFirestore();
+      const snapshot = await telemetry.collection(SESSIONS_COLLECTION).get();
+      await Promise.all([
+        ...snapshot.docs.map((doc) => doc.ref.delete()),
+        telemetry
+          .collection(RUNNER_STATUS_COLLECTION)
+          .doc(E2E_RUNNER_STATUS_ID)
+          .delete(),
+        resetE2eOrchestratorFixtures(),
+      ]);
       return NextResponse.json({ success: true });
     }
 
@@ -290,6 +334,12 @@ export async function POST(req: NextRequest) {
       clearFields: [],
     }));
     await Promise.all(writes.map((write) => upsertSession(write)));
+    if (populated) {
+      await Promise.all([
+        seedPopulatedE2eOrchestratorFixtures(),
+        seedRunnerStatus(),
+      ]);
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('agent-lcars: error in E2E seed API:', error);

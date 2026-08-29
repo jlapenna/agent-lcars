@@ -213,6 +213,18 @@ export class MemoryStore implements OrchestratorStore {
     );
   }
 
+  async listRecentRuns(limit: number): Promise<Run[]> {
+    return structuredClone(
+      [...this.#runs.values()]
+        .sort(
+          (left, right) =>
+            right.updatedAt.localeCompare(left.updatedAt) ||
+            right.runId.localeCompare(left.runId),
+        )
+        .slice(0, limit),
+    );
+  }
+
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
     const run = this.#runs.get(input.runId);
     if (run === undefined || run.queue !== undefined) return;

@@ -75,26 +75,21 @@ Google service-account ID token or an Auth.js session to a principal by
 looking it up here — an unlisted subject gets no access at all, regardless
 of how it authenticated.
 
-| Value                    | Env var                             | This deployment                                                                                                          |
-| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators: `claude`, `codex`, `opencode`; `svc:telemetry-writer` executor: `claude` only                         |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                                                      |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                                                       |
-| staged legacy queue      | `AGENT_LCARS_QUEUE_PIPELINES`       | `["claude"]`; retained only while unified queue cutover is `false`                                                       |
-| unified queue cutover    | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `false` until the direct runner supports all three providers; `true` routes every admitted request through QueueExecutor |
+| Value                    | Env var                             | This deployment                                                                      |
+| ------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------ |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators and `svc:telemetry-writer` executor: `claude`, `codex`, `opencode` |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                  |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                   |
+| unified queue            | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `true`; routes every admitted request through QueueExecutor                          |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
 operate the API), not a default principal. The global
-`AGENT_LCARS_UNIFIED_QUEUE_ENABLED` flag is the sole executor decision:
-when it is `true`, every admitted run uses QueueExecutor, regardless of its
+`AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true` is the sole executor decision:
+every admitted run uses QueueExecutor, regardless of its
 provider or whether it came from GitHub, the console, an internal request,
-native Work, a schedule tick, or redispatch. `false` is the temporary staged
-rollout state and preserves the existing `AGENT_LCARS_QUEUE_PIPELINES`
-selection so merging the support layer never moves live Claude work back to
-GitHub Actions. Callers and work specifications never choose a route. The
-activation change sets the global flag to `true`, then removes the legacy
-selector in the same deployment.
+native Work, a schedule tick, or redispatch. Callers and work specifications
+never choose a route.
 
 The autoscaler's own `work.executor` claim identity needs its own grant row
 in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
@@ -103,7 +98,7 @@ in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
 {
   "principal": "svc:telemetry-writer",
   "subjects": ["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],
-  "pipelines": ["claude"],
+  "pipelines": ["claude", "codex", "opencode"],
   "scopes": ["work.executor"]
 }
 ```
@@ -126,25 +121,18 @@ The current operator grants list all three supported pipelines (`claude`,
 published `work-create.yml` workflow is contract-tested against that list,
 so its provider canaries cannot fail at API admission. The telemetry-writer
 identity remains a provider-scoped `work.executor`, a distinct role from an
-operator. Before enabling the global queue cutover, its executor grant and
-the direct runner's claim support must both cover every admitted provider.
+operator. Its executor grant and the direct runner's claim support cover
+every admitted provider.
 
 #### Queue executor routing
 
-QueueExecutor is the normal server route after the global cutover. The App
-Hosting flag makes that one decision before any request enters the
-orchestrator, and the same selected executor reaches every entry point. The
+QueueExecutor is the server route. The App Hosting flag is required to be
+`true` before any request enters the orchestrator, and the same selected
+executor reaches every entry point. The
 autoscaler's matching console URL and credentials claim and run the durable
 queue; its image and mounts are documented in
 `apps/runner-autoscaler/README.md`. This repository owns server routing and
 executor grants; Homelab owns autoscaler deployment.
-
-The checked-in App Hosting setting stays `false` until Claude, Codex, and
-OpenCode direct runners have passed their readiness/canary checks and the
-executor grant covers all three. Until then it retains the checked-in
-Claude-only legacy selector. Enabling the global flag and deleting that
-selector is one deployment-only activation change; it must not reintroduce
-provider-specific server routing.
 
 ### 4. Workflows — repo variables
 
