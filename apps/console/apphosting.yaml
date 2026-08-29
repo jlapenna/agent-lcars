@@ -94,6 +94,14 @@ env:
     availability:
       - RUNTIME
 
+  # Existing staged Claude queue lane. Keep this selector until the global
+  # cutover is explicitly enabled, so merging the support layer never routes
+  # live Claude work back through GitHub Actions.
+  - variable: AGENT_LCARS_QUEUE_PIPELINES
+    value: '["claude"]'
+    availability:
+      - RUNTIME
+
   # Staged, provider-neutral cutover to the direct queue executor. When true,
   # every admitted request uses the same queue path; it is intentionally
   # false until the runner supports Claude, Codex, and OpenCode equally.

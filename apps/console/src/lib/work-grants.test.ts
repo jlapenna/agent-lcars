@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   grantForPrincipal,
   parseWorkGrants,
+  queuePipelines,
   resolvePrincipal,
 } from './work-grants';
 
@@ -125,5 +126,17 @@ describe('grant pipelines', () => {
         ]),
       ),
     ).toThrow();
+  });
+});
+
+describe('queuePipelines', () => {
+  it('defaults to empty and parses the temporary legacy selector', () => {
+    expect(queuePipelines(undefined)).toEqual([]);
+    expect(queuePipelines('["claude"]')).toEqual(['claude']);
+  });
+
+  it('rejects a malformed or unknown pipeline selector loudly', () => {
+    expect(() => queuePipelines('not json')).toThrow();
+    expect(() => queuePipelines('["claud"]')).toThrow();
   });
 });

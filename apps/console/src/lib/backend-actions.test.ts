@@ -65,7 +65,7 @@ beforeEach(() => {
  * `createOrchestratorRuntime()`. */
 function fixtureOrchestratorRuntime(
   now = '2026-08-15T12:00:00.000Z',
-  options: { dispatchExecutor?: 'queue' } = {},
+  options: { dispatchExecutor?: () => 'queue' } = {},
 ) {
   const clock = { now: () => now };
   const store = new MemoryStore();
@@ -970,7 +970,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
 
   it('uses QueueExecutor for a console retry after the global cutover', async () => {
     const { store, calls } = fixtureOrchestratorRuntime(undefined, {
-      dispatchExecutor: 'queue',
+      dispatchExecutor: () => 'queue',
     });
     mockOctokit();
 
@@ -1208,7 +1208,7 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
   it('uses QueueExecutor for a console reassignment after the global cutover', async () => {
     mockOctokit(['agent:codex']);
     const { store, calls } = fixtureOrchestratorRuntime(undefined, {
-      dispatchExecutor: 'queue',
+      dispatchExecutor: () => 'queue',
     });
 
     await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);

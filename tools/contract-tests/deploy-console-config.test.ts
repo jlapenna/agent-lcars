@@ -317,10 +317,10 @@ describe('console deployment workflow', () => {
 
     expect(unifiedQueueEnabled).toBe('false');
     expect(
-      config.env?.some(
+      config.env?.find(
         ({ variable }) => variable === 'AGENT_LCARS_QUEUE_PIPELINES',
-      ),
-    ).toBe(false);
+      )?.value,
+    ).toBe('["claude"]');
     expect(
       config.env?.find(
         ({ variable }) => variable === 'LCARS_CODEX_SHARED_LEASE_ENABLED',

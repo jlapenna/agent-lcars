@@ -474,7 +474,7 @@ describe('tick', () => {
     // Both `items.create` and the schedule tick route through `mintItem`.
     // The runtime's one provider-neutral decision must reach both paths.
     const ctx = context();
-    ctx.runtime.dispatchExecutor = 'queue';
+    ctx.runtime.dispatchExecutor = () => 'queue';
     await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
       cron: '* * * * *',
       spec,

@@ -217,7 +217,7 @@ describe('items routes', () => {
 
   it('create uses the one server-selected executor for every admitted pipeline', async () => {
     const ctx = context();
-    ctx.runtime.dispatchExecutor = 'queue';
+    ctx.runtime.dispatchExecutor = () => 'queue';
     const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
     expect(r.status).toBe(201);
     const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
@@ -351,7 +351,7 @@ describe('items routes', () => {
 
     // The global executor is consulted when the new run is requested, so a
     // queued migration cannot be bypassed by a retry or redispatch.
-    ctx.runtime.dispatchExecutor = 'queue';
+    ctx.runtime.dispatchExecutor = () => 'queue';
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(200);
     const after = await ctx.runtime.store.readRun(`work:${ID}/r2`);

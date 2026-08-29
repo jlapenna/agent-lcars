@@ -264,7 +264,7 @@ describe('handleWebhookDelivery', () => {
 
   it('uses the deployment-selected queue executor for webhook and internal requests', async () => {
     const { deps, store } = fixture();
-    deps.dispatchExecutor = 'queue';
+    deps.dispatchExecutor = () => 'queue';
 
     const webhook = await handleWebhookDelivery(deps, {
       event: 'issues',

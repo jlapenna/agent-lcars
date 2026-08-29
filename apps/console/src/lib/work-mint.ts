@@ -172,9 +172,9 @@ export async function mintItem(
     requestId: input.id,
     pipeline: input.spec.pipeline,
     work: { origin: input.origin, spec: input.spec },
-    ...(context.runtime.dispatchExecutor === undefined
+    ...(context.runtime.dispatchExecutor?.(input.spec.pipeline) === undefined
       ? {}
-      : { executor: context.runtime.dispatchExecutor }),
+      : { executor: context.runtime.dispatchExecutor(input.spec.pipeline) }),
   });
   if (isRefusal(outcome)) {
     return { kind: 'conflict', message: outcome.reason };

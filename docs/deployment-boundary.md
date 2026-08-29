@@ -80,6 +80,7 @@ of how it authenticated.
 | grants                   | `AGENT_LCARS_WORK_GRANTS`           | current operators: `claude`, `codex`, `opencode`; `svc:telemetry-writer` executor: `claude` only                         |
 | max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS`    | `2`                                                                                                                      |
 | Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`         | `agent-lcars-work`                                                                                                       |
+| staged legacy queue      | `AGENT_LCARS_QUEUE_PIPELINES`       | `["claude"]`; retained only while unified queue cutover is `false`                                                       |
 | unified queue cutover    | `AGENT_LCARS_UNIFIED_QUEUE_ENABLED` | `false` until the direct runner supports all three providers; `true` routes every admitted request through QueueExecutor |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
@@ -89,8 +90,11 @@ operate the API), not a default principal. The global
 when it is `true`, every admitted run uses QueueExecutor, regardless of its
 provider or whether it came from GitHub, the console, an internal request,
 native Work, a schedule tick, or redispatch. `false` is the temporary staged
-rollout state and keeps the legacy hosted executor until all direct runners
-are ready; callers and work specifications never choose a route.
+rollout state and preserves the existing `AGENT_LCARS_QUEUE_PIPELINES`
+selection so merging the support layer never moves live Claude work back to
+GitHub Actions. Callers and work specifications never choose a route. The
+activation change sets the global flag to `true`, then removes the legacy
+selector in the same deployment.
 
 The autoscaler's own `work.executor` claim identity needs its own grant row
 in `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's:
@@ -137,8 +141,10 @@ executor grants; Homelab owns autoscaler deployment.
 
 The checked-in App Hosting setting stays `false` until Claude, Codex, and
 OpenCode direct runners have passed their readiness/canary checks and the
-executor grant covers all three. Enabling it is a single deployment-only
-change; it must not reintroduce provider-specific server routing.
+executor grant covers all three. Until then it retains the checked-in
+Claude-only legacy selector. Enabling the global flag and deleting that
+selector is one deployment-only activation change; it must not reintroduce
+provider-specific server routing.
 
 ### 4. Workflows — repo variables
 
