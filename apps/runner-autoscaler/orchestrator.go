@@ -108,9 +108,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// own comment just below, and the README's "Queue executor" section.
 	var queueDraining atomic.Bool
 	queueStatus := newQueueExecutorStatusSource(
-		resolved,
 		queueDraining.Load,
-		newDockerClient,
 		logger.With("component", "queue-executor-status"),
 	)
 	// Publish even while disabled or misconfigured: a v2 queue-executor
@@ -135,7 +133,12 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		keyPath,
 		os.Getenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH"),
 	)
-	setQueueExecutorStartupState(queueStartupState)
+	// Do not advertise ready merely because the process configuration parses:
+	// direct work cannot be claimed until the per-host bind preflight below has
+	// established at least one eligible launch host.
+	if queueStartupState != queueExecutorStateReady {
+		setQueueExecutorStartupState(queueStartupState)
+	}
 	if queueDisabledReason != "" {
 		if queueStartupState == queueExecutorStateDisabled {
 			logger.Info("Queue executor disabled", slog.String("reason", queueDisabledReason))
@@ -147,12 +150,6 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		audience := queueExecutorAudience(os.Getenv("LCARS_WORK_AUDIENCE"))
 		hostname, hostErr := os.Hostname()
 		runnerName := queueExecutorRunnerName(hostname, hostErr)
-		// Captured by value at startup, not read from the outer `resolved`
-		// directly: a config reload later in this function's select loop
-		// reassigns `resolved` from this same goroutine, and closing over
-		// that variable instead of a snapshot would race the poller
-		// goroutine's reads of it.
-		queueExecutorResolved := resolved
 		// Built once here, not per poll: see newDirectRunnerIDTokenSource's
 		// doc comment. A bad/missing key fails this the same way a bad
 		// GitHub credential fails registration elsewhere in this
@@ -162,21 +159,35 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			setQueueExecutorStartupState(queueExecutorStateMisconfigured)
 			logger.Error("Queue executor disabled: could not build the claim ID token source", slog.Any("error", tokenErr))
 		} else {
-			queueStatus.ready.Store(true)
-			go runQueueExecutorPoller(ctx, queueExecutorConfig{
-				consoleURL: consoleURL,
-				runnerName: runnerName,
-				idToken: func() (string, error) {
-					return idTokenFromSource(tokenSource)
-				},
-				launch: func(l directRunnerLaunch) error {
-					return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
-				},
-				draining: queueDraining.Load,
-				cleanup: func(cleanupCtx context.Context) error {
-					return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved, newDockerClient, time.Now())
-				},
-			}, 15*time.Second, logger)
+			// Captured by value at startup, not read from the outer `resolved`
+			// directly: a config reload later in this function's select loop
+			// reassigns `resolved` from this same goroutine, and closing over
+			// that variable instead of a snapshot would race the poller
+			// goroutine's reads of it. The preflight also narrows this snapshot
+			// to only hosts that passed every direct-adapter bind check.
+			queueExecutorResolved, preflightErr := directRunnerPreflightHosts(ctx, resolved, newDockerClient, logger)
+			if preflightErr != nil {
+				setQueueExecutorStartupState(queueExecutorStateMisconfigured)
+				logger.Error("Queue executor disabled: no eligible direct-runner host", slog.Any("error", preflightErr))
+			} else {
+				queueStatus.configureEligibleHosts(queueExecutorResolved, newDockerClient)
+				setQueueExecutorStartupState(queueExecutorStateReady)
+				queueStatus.ready.Store(true)
+				go runQueueExecutorPoller(ctx, queueExecutorConfig{
+					consoleURL: consoleURL,
+					runnerName: runnerName,
+					idToken: func() (string, error) {
+						return idTokenFromSource(tokenSource)
+					},
+					launch: func(l directRunnerLaunch) error {
+						return launchDirectRunner(ctx, queueExecutorResolved, l, logger)
+					},
+					draining: queueDraining.Load,
+					cleanup: func(cleanupCtx context.Context) error {
+						return cleanupExitedDirectRunners(cleanupCtx, queueExecutorResolved, newDockerClient, time.Now())
+					},
+				}, 15*time.Second, logger)
+			}
 		}
 	}
 

@@ -405,6 +405,10 @@ const (
 	// remove work for one scheduled sweep. It is independent of the number of
 	// historical exits and runs off the claim loop.
 	directRunnerCleanupSweepTimeout = 30 * time.Second
+	// directRunnerPreflightWaitTimeout bounds the disposable probe that proves
+	// a Docker host can read every permanent direct-runner credential mount.
+	// It deliberately shares neither a run lease nor a claimed run token.
+	directRunnerPreflightWaitTimeout = 30 * time.Second
 )
 
 // directRunnerHostCursor round-robins launchDirectRunner across the
@@ -561,25 +565,71 @@ func directRunnerOpenCodeTokenHostPath() (string, error) {
 // provider's runtime material. Codex deliberately receives no host credential;
 // its adapter restores and conditionally persists auth.json through the
 // run-token-authenticated console broker.
-func directRunnerProviderCredentialBinds(pipeline string) ([]string, error) {
-	switch strings.ToLower(strings.TrimSpace(pipeline)) {
-	case "claude":
-		path, err := directRunnerClaudeTokenHostPath()
-		if err != nil {
-			return nil, err
+type directRunnerCredentialMount struct {
+	hostPath      string
+	containerPath string
+}
+
+func (m directRunnerCredentialMount) bind() string {
+	return m.hostPath + ":" + m.containerPath + ":ro"
+}
+
+// directRunnerAdapter contains only the provider-specific runtime material.
+// Queue admission never asks an adapter whether a run may be claimed; this
+// registry is shared by launch and startup preflight so an adapter cannot be
+// admitted without its permanent credential contract being checked first.
+type directRunnerAdapter struct {
+	pipeline         string
+	credentialMounts func() ([]directRunnerCredentialMount, error)
+}
+
+var directRunnerAdapters = []directRunnerAdapter{
+	{
+		pipeline: "claude",
+		credentialMounts: func() ([]directRunnerCredentialMount, error) {
+			path, err := directRunnerClaudeTokenHostPath()
+			if err != nil {
+				return nil, err
+			}
+			return []directRunnerCredentialMount{{hostPath: path, containerPath: directRunnerClaudeTokenMountPath}}, nil
+		},
+	},
+	{
+		pipeline:         "codex",
+		credentialMounts: func() ([]directRunnerCredentialMount, error) { return nil, nil },
+	},
+	{
+		pipeline: "opencode",
+		credentialMounts: func() ([]directRunnerCredentialMount, error) {
+			path, err := directRunnerOpenCodeTokenHostPath()
+			if err != nil {
+				return nil, err
+			}
+			return []directRunnerCredentialMount{{hostPath: path, containerPath: directRunnerOpenCodeTokenMountPath}}, nil
+		},
+	},
+}
+
+func directRunnerProviderCredentialMounts(pipeline string) ([]directRunnerCredentialMount, error) {
+	pipeline = strings.ToLower(strings.TrimSpace(pipeline))
+	for _, adapter := range directRunnerAdapters {
+		if adapter.pipeline == pipeline {
+			return adapter.credentialMounts()
 		}
-		return []string{path + ":" + directRunnerClaudeTokenMountPath + ":ro"}, nil
-	case "codex":
-		return nil, nil
-	case "opencode":
-		path, err := directRunnerOpenCodeTokenHostPath()
-		if err != nil {
-			return nil, err
-		}
-		return []string{path + ":" + directRunnerOpenCodeTokenMountPath + ":ro"}, nil
-	default:
-		return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", pipeline)
 	}
+	return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", pipeline)
+}
+
+func directRunnerProviderCredentialBinds(pipeline string) ([]string, error) {
+	mounts, err := directRunnerProviderCredentialMounts(pipeline)
+	if err != nil {
+		return nil, err
+	}
+	binds := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		binds = append(binds, mount.bind())
+	}
+	return binds, nil
 }
 
 // cleanupExitedDirectRunners sweeps only containers this queue executor owns:

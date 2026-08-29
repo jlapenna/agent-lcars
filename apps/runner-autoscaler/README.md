@@ -102,8 +102,12 @@ LCARS_QUEUE_OPENCODE_KEY_HOST_PATH=/secrets/opencode-llm-api-key
 LCARS_QUEUE_MAX_CONCURRENT=1
 ```
 
-With those durable console and credential settings present, the poller starts
-at daemon startup and sends a claim body containing only its runner identity.
+With those durable console and credential settings present, daemon startup
+also runs a disposable Docker bind-read probe on every configured host. Only
+hosts that can read the telemetry, Claude, and OpenCode mount files enter the
+direct queue's launch pool; unavailable laptops and other failed probes remain
+outside that pool. The poller starts only when at least one eligible host
+passes, then sends a claim body containing only its runner identity.
 The server derives claimable pipelines from the authenticated `work.executor`
 grant; no autoscaler-local pipeline allowlist exists.
 
@@ -159,8 +163,9 @@ The metrics endpoint exposes the queue worker independently of the GitHub
 scale-set listeners:
 
 - `github_runner_autoscaler_queue_executor_ready` is `1` only after the
-  queue executor has all required deployment configuration and a claim-token
-  source; it is `0` when disabled or misconfigured.
+  queue executor has all required deployment configuration, a claim-token
+  source, and at least one host that passed the permanent credential-mount
+  probe; it is `0` when disabled or misconfigured.
 - `github_runner_autoscaler_queue_executor_state{state}` is a one-hot state
   (`disabled`, `misconfigured`, or `ready`). An absent `LCARS_CONSOLE_URL`
   is disabled; a console URL with a missing required credential or host-path
@@ -270,10 +275,11 @@ telemetry sidecar has finalized and archived them; cleanup then removes the
 per-run directory. A retained Docker container therefore holds neither the
 subscription credential nor its session transcript.
 
-This implementation remains disabled until a separately reviewed,
+Direct Codex requires the separately reviewed,
 repository-prefix-preserving runtime grant on `agent-lcars-codex-auth` and a
-single-run canary are complete. This repository does not make that IAM change
-or alter queue routing.
+single-run canary before activation. This repository does not make that IAM
+change; queue readiness does not bypass the broker's lease and repository
+authorization checks.
 
 ## Host telemetry timeout
 

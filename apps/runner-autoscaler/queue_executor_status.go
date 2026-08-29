@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,29 +21,36 @@ import (
 type queueExecutorStatusSource struct {
 	ready         atomic.Bool
 	draining      func() bool
+	mu            sync.RWMutex
 	maxConcurrent int
 	activeRuns    func(context.Context) (int, error)
 	logger        *slog.Logger
 }
 
 func newQueueExecutorStatusSource(
-	resolved resolvedOrchestratorConfig,
 	draining func() bool,
-	newClient func(string) (*dockerclient.Client, error),
 	logger *slog.Logger,
 ) *queueExecutorStatusSource {
+	return &queueExecutorStatusSource{
+		draining: draining,
+		logger:   logger,
+	}
+}
+
+// configureEligibleHosts is called exactly once, before ready becomes true.
+// Keeping the selected set here makes status capacity and active-run counts
+// use the exact same host pool as the poller's launch callback.
+func (s *queueExecutorStatusSource) configureEligibleHosts(resolved resolvedOrchestratorConfig, newClient func(string) (*dockerclient.Client, error)) {
 	capacity := 0
 	if _, hosts, err := ParseDockerHosts(resolved.DockerHosts); err == nil {
 		capacity = len(hosts) * directRunnerMaxConcurrent()
 	}
-	return &queueExecutorStatusSource{
-		draining:      draining,
-		maxConcurrent: capacity,
-		activeRuns: func(ctx context.Context) (int, error) {
-			return activeDirectRunnerCount(ctx, resolved, newClient)
-		},
-		logger: logger,
+	s.mu.Lock()
+	s.maxConcurrent = capacity
+	s.activeRuns = func(ctx context.Context) (int, error) {
+		return activeDirectRunnerCount(ctx, resolved, newClient)
 	}
+	s.mu.Unlock()
 }
 
 func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time) consoleQueueExecutorStatus {
@@ -59,9 +67,16 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 	if !ready {
 		return status
 	}
-	status.MaxConcurrent = s.maxConcurrent
+	s.mu.RLock()
+	maxConcurrent := s.maxConcurrent
+	activeRuns := s.activeRuns
+	s.mu.RUnlock()
+	status.MaxConcurrent = maxConcurrent
+	if activeRuns == nil {
+		return status
+	}
 	countCtx, cancel := context.WithTimeout(ctx, consoleStatusTimeout)
-	active, err := s.activeRuns(countCtx)
+	active, err := activeRuns(countCtx)
 	cancel()
 	if err != nil {
 		// Omitting activeRuns is intentional: a partial Docker-host read must

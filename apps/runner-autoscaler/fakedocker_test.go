@@ -55,6 +55,8 @@ type fakeDockerServer struct {
 	// one status per call (0 means succeed) the same way createFailures does.
 	starts        int
 	startFailures []int
+	waits         int
+	waitStatuses  []int
 }
 
 // createdContainerRequest mirrors the JSON shape the docker client sends to
@@ -66,10 +68,14 @@ type createdContainerRequest struct {
 	Image      string
 	User       string
 	Env        []string
+	Entrypoint []string
+	Cmd        []string
 	Labels     map[string]string
 	HostConfig struct {
-		Binds []string
-		Tmpfs map[string]string
+		Binds          []string
+		Tmpfs          map[string]string
+		NetworkMode    string
+		ReadonlyRootfs bool
 	}
 }
 
@@ -306,6 +312,18 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wait"):
+		f.mu.Lock()
+		f.waits++
+		status := 0
+		if len(f.waitStatuses) > 0 {
+			status = f.waitStatuses[0]
+			f.waitStatuses = f.waitStatuses[1:]
+		}
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(container.WaitResponse{StatusCode: int64(status)})
+
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -358,6 +376,21 @@ func (f *fakeDockerServer) setStartFailures(statuses ...int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.startFailures = append([]int(nil), statuses...)
+}
+
+func (f *fakeDockerServer) waitCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.waits
+}
+
+// setWaitStatuses configures the exit status reported by ContainerWait for
+// each started test container. A non-zero status models the disposable
+// credential probe finding a missing or unreadable bind source.
+func (f *fakeDockerServer) setWaitStatuses(statuses ...int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.waitStatuses = append([]int(nil), statuses...)
 }
 
 // containerIDFromPath extracts the {id} segment from versioned docker API
