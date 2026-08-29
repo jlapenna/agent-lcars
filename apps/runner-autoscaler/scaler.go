@@ -1975,18 +1975,27 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 
 	a.logger.Info("Refreshing runner image on selected host",
 		slog.String("host", host), slog.String("image", a.runnerImage))
+	if err := pullRunnerImage(ctx, client, a.runnerImage, host); err != nil {
+		return err
+	}
+	logDigests(ctx, a.logger, DockerHost{Name: host, Client: client}, a.runnerImage)
+	return nil
+}
+
+// pullRunnerImage establishes the exact runner image on one host. Mutable
+// tags are deliberately pulled even when cached, and Docker's streamed
+// progress is decoded because registry/auth failures are reported in that
+// stream with a successful ImagePull HTTP response.
+func pullRunnerImage(ctx context.Context, client *dockerclient.Client, runnerImage, host string) error {
 	// Keep the deadline alive while consuming the response: Docker can accept
 	// ImagePull and then wedge part-way through the progress stream.
 	pullCtx, cancelPull := context.WithTimeout(ctx, dockerImagePullTimeout)
-	pull, err := client.ImagePull(pullCtx, a.runnerImage, image.PullOptions{})
+	defer cancelPull()
+	pull, err := client.ImagePull(pullCtx, runnerImage, image.PullOptions{})
 	if err != nil {
-		cancelPull()
-		return fmt.Errorf("failed to pull runner image %q on host %q: %w", a.runnerImage, host, err)
+		return fmt.Errorf("failed to pull runner image %q on host %q: %w", runnerImage, host, err)
 	}
-	defer func() {
-		_ = pull.Close()
-		cancelPull()
-	}()
+	defer func() { _ = pull.Close() }()
 	// Docker streams pull progress as newline-delimited JSON and reports
 	// registry/auth/manifest failures INSIDE that stream -- ImagePull itself
 	// returns a nil error for them. Discarding the body would swallow that,
@@ -2006,22 +2015,21 @@ func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Cli
 		if decErr := dec.Decode(&msg); errors.Is(decErr, io.EOF) {
 			break
 		} else if decErr != nil {
-			return fmt.Errorf("failed while reading pull progress for runner image %q on host %q: %w", a.runnerImage, host, decErr)
+			return fmt.Errorf("failed while reading pull progress for runner image %q on host %q: %w", runnerImage, host, decErr)
 		}
 		if detail := msg.Error; detail != "" {
-			return fmt.Errorf("pull of runner image %q on host %q failed: %s", a.runnerImage, host, detail)
+			return fmt.Errorf("pull of runner image %q on host %q failed: %s", runnerImage, host, detail)
 		}
 		if detail := msg.ErrorDetail.Message; detail != "" {
-			return fmt.Errorf("pull of runner image %q on host %q failed: %s", a.runnerImage, host, detail)
+			return fmt.Errorf("pull of runner image %q on host %q failed: %s", runnerImage, host, detail)
 		}
 	}
 	inspectCtx, cancelInspect := context.WithTimeout(ctx, dockerInspectTimeout)
-	_, err = client.ImageInspect(inspectCtx, a.runnerImage)
+	_, err = client.ImageInspect(inspectCtx, runnerImage)
 	cancelInspect()
 	if err != nil {
-		return fmt.Errorf("runner image %q is still unavailable on host %q after pull: %w", a.runnerImage, host, err)
+		return fmt.Errorf("runner image %q is still unavailable on host %q after pull: %w", runnerImage, host, err)
 	}
-	logDigests(ctx, a.logger, DockerHost{Name: host, Client: client}, a.runnerImage)
 	return nil
 }
 

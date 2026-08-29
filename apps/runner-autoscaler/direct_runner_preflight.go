@@ -119,6 +119,13 @@ func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*doc
 		return fmt.Errorf("connecting: %w", err)
 	}
 	defer client.Close()
+	// The normal startup warmer runs asynchronously. Establish the selected
+	// mutable image here as part of this host's admission probe instead of
+	// racing its background pull on a fresh host. A host with a failed pull is
+	// excluded before it can claim any provider's work.
+	if err := pullRunnerImage(ctx, client, image, host); err != nil {
+		return err
+	}
 
 	binds := make([]string, 0, len(mounts))
 	paths := make([]string, 0, len(mounts))

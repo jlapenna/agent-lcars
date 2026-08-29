@@ -3,17 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/actions/scaleset"
-	"github.com/docker/docker/api/types/image"
 	"github.com/spf13/cobra"
 )
 
@@ -117,21 +114,14 @@ func pullRunnerImages(ctx context.Context, hosts []DockerHost, runnerImage strin
 		wg.Add(1)
 		go func(host DockerHost) {
 			defer wg.Done()
-			pullCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-			defer cancel()
 			logger.Info("Pulling runner image", slog.String("host", host.Name), slog.String("image", runnerImage))
-			pull, err := host.Client.ImagePull(pullCtx, runnerImage, image.PullOptions{})
+			err := pullRunnerImage(ctx, host.Client, runnerImage, host.Name)
 			if err != nil {
 				if _, inspectErr := host.Client.ImageInspect(ctx, runnerImage); inspectErr == nil {
 					logger.Warn("Failed to pull runner image; using cached copy", slog.String("host", host.Name), slog.String("error", err.Error()))
 				} else {
 					logger.Error("Failed to pull runner image and no cached copy exists", slog.String("host", host.Name), slog.String("error", err.Error()))
 				}
-				return
-			}
-			defer func() { _ = pull.Close() }()
-			if _, err := io.Copy(io.Discard, pull); err != nil {
-				logger.Warn("Failed while reading image pull response", slog.String("host", host.Name), slog.String("error", err.Error()))
 				return
 			}
 			logDigests(ctx, logger, host, runnerImage)
