@@ -304,7 +304,7 @@ describe('console deployment workflow', () => {
     ).toBe('agent-lcars-work');
   });
 
-  it('activates one queue route and shared Codex lease for every provider', async () => {
+  it('activates one queue route for every provider and keeps the Codex credential adapter enabled', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {

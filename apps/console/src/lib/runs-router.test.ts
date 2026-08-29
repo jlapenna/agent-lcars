@@ -312,7 +312,7 @@ describe('claim', () => {
     );
   });
 
-  it('leaves Codex queued while the shared-lease capability is off without restricting Claude', async () => {
+  it('claims Codex from the executor grant even when the credential adapter is off', async () => {
     const { store, orchestrator, now } = fixture();
     const codexRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-staged-off'),
@@ -339,8 +339,8 @@ describe('claim', () => {
     );
 
     expect(r.status).toBe(200);
-    expect((r.json as { runId: string }).runId).toBe(claudeRunId);
-    expect((await store.readRun(codexRunId))?.queue?.state).toBe('queued');
+    expect((r.json as { runId: string }).runId).toBe(codexRunId);
+    expect((await store.readRun(claudeRunId))?.queue?.state).toBe('queued');
   });
 
   it('ignores a legacy pipeline selection and claims only the grant-allowed pipeline', async () => {
