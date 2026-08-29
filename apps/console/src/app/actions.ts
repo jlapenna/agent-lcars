@@ -14,7 +14,6 @@ import {
   approveAndMergePr,
   approveAndRebasePr,
   assignPipeline as assignPipelineLib,
-  cancelWorkflowRun as cancelWorkflowRunLib,
   clearHumanNeededLabel,
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
@@ -177,20 +176,6 @@ export async function retriggerIssue(
           }
         : {}),
     };
-  } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
-  }
-}
-
-export async function cancelRun(
-  repo: WatchedRepo,
-  runId: number,
-): Promise<ActionResult> {
-  await requireAdmin();
-  try {
-    await cancelWorkflowRunLib(resolveWatchedRepo(repo), runId);
-    revalidateDashboard();
-    return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
   }

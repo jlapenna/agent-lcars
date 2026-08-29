@@ -25,8 +25,6 @@ import {
   recordQuickTaskIssue,
   selfHostedRunners,
   updateFixtureIssueContent,
-  workflowRun,
-  workflowRuns,
 } from '../../../../../lib/e2e-github-fixtures';
 
 const E2E_BASE_COMMIT_SHA = '1111111111111111111111111111111111111111';
@@ -153,25 +151,6 @@ export async function GET(
     // GET /repos/{o}/{r}/commits/{ref}/check-runs
     if (rest[0] === 'commits' && rest[2] === 'check-runs') {
       return NextResponse.json(checkRuns(rest[1]));
-    }
-
-    // GET /repos/{o}/{r}/actions/workflows/{file}/runs
-    if (
-      rest[0] === 'actions' &&
-      rest[1] === 'workflows' &&
-      rest[3] === 'runs'
-    ) {
-      return NextResponse.json(
-        workflowRuns(rest[2], query.get('status') ?? undefined),
-      );
-    }
-
-    // GET /repos/{o}/{r}/actions/runs/{id}
-    if (rest[0] === 'actions' && rest[1] === 'runs' && rest[2]) {
-      const run = workflowRun(Number(rest[2]));
-      return run
-        ? NextResponse.json(run)
-        : NextResponse.json({ message: 'Not Found' }, { status: 404 });
     }
 
     // GET /repos/{o}/{r}/actions/runners

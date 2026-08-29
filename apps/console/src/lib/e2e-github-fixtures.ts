@@ -372,9 +372,9 @@ export function reassignFixtureIssuePipeline(
  * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
  * writes through `AGENT_CONSOLE_GITHUB_API_BASE_URL` - the claim tag/ref
- * ledger, the issue itself, and (standing in for the dispatcher this suite
- * never runs for real - see docs/e2e-security-boundary.md) the bound
- * workflow run a successful create+label write would eventually produce.
+ * ledger and the issue itself. Execution state is seeded through the
+ * authoritative Task/Run fixture boundary, never synthesized as an Actions
+ * workflow run.
  *
  * Lives on `globalThis` for the same reason `POPULATED_KEY` does: Next
  * bundles `/api/e2e/github/*` and `/api/e2e/seed` as separate route modules
@@ -382,17 +382,6 @@ export function reassignFixtureIssuePipeline(
  * needs to reset this between specs (see `resetQuickTaskFixtures`).
  */
 const QUICK_TASK_STATE_KEY = '__agentLcarsE2eQuickTaskState';
-
-interface QuickTaskFixtureRun {
-  id: number;
-  workflow: string;
-  status: 'queued' | 'in_progress' | 'completed';
-  conclusion: string | null;
-  displayTitle: string;
-  createdAt: string;
-  startedAt: string;
-  updatedAt: string;
-}
 
 interface QuickTaskFixtureIssue {
   number: number;
@@ -405,29 +394,22 @@ interface QuickTaskFixtureIssue {
 
 interface QuickTaskFixtureState {
   issues: QuickTaskFixtureIssue[];
-  runs: QuickTaskFixtureRun[];
   /** Annotated tag objects keyed by SHA - `git.createTag` / `git.getTag`. */
   claimTags: Map<string, { message: string; tag: string }>;
   /** Claim ref SHAs keyed by `tags/agent-lcars/quick-task/<id>` -
    * `git.createRef` / `git.getRef` / `git.deleteRef`. */
   claimRefs: Map<string, string>;
-  /** Numbered well clear of curated `E2E_ITEM_NUMBERS` (9001-9010), and
-   * incrementing per created issue/run so a
-   * fixture leak or an accidental duplicate create is immediately visible
-   * as two different numbers rather than a silently-reused one. */
+  /** Numbered well clear of curated `E2E_ITEM_NUMBERS` (9001-9010). */
   nextIssueNumber: number;
-  nextRunId: number;
   tagSequence: number;
 }
 
 function freshQuickTaskState(): QuickTaskFixtureState {
   return {
     issues: [],
-    runs: [],
     claimTags: new Map(),
     claimRefs: new Map(),
     nextIssueNumber: 20001,
-    nextRunId: 480001,
     tagSequence: 0,
   };
 }
@@ -498,13 +480,8 @@ export function deleteQuickTaskClaimRef(ref: string): boolean {
 }
 
 /**
- * Creates the issue AND immediately synthesizes the marker-carrying workflow
- * run a real deployment's router + dispatcher + worker would eventually
- * produce from that same create+label write. This suite never runs the
- * actual dispatch (see docs/e2e-security-boundary.md) - the point is that
- * everything downstream of this write (the console's own GET/GraphQL
- * polling and `deriveLogicalWork` rendering) still runs for real against a
- * plausible, internally-consistent end state.
+ * Creates the GitHub issue projection for a Quick Task. Its execution state
+ * is independently supplied by the authoritative Task/Run fixture seam.
  */
 export function recordQuickTaskIssue(params: {
   title: string;
@@ -520,29 +497,7 @@ export function recordQuickTaskIssue(params: {
 } {
   const state = quickTaskState();
   const number = state.nextIssueNumber++;
-  const runId = state.nextRunId++;
   const now = new Date().toISOString();
-
-  // The orchestrator's first run id is deterministic and is the exact value
-  // the real dispatch puts into the workflow marker. The E2E test seeds that
-  // same task directly in the emulator after the GitHub-side issue write.
-  const intentId = `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}#${number}/r1`;
-
-  // Mirrors claude.yml/codex.yml/opencode.yml's real run-name templates:
-  // claude has no pipeline prefix, codex/opencode repeat their own name
-  // ahead of the `#N:` join key (see agent-activity.ts's
-  // DISPLAY_TITLE_NUMBER_RE / PIPELINE_TITLE_PREFIX_RE).
-  const titlePrefix = params.pipeline === 'claude' ? '' : `${params.pipeline} `;
-  state.runs.push({
-    id: runId,
-    workflow: params.pipeline,
-    status: 'in_progress',
-    conclusion: null,
-    displayTitle: `${titlePrefix}#${number}: ${params.title} [dispatch:g1:${intentId}]`,
-    createdAt: now,
-    startedAt: now,
-    updatedAt: now,
-  });
 
   state.issues.push({
     number,
@@ -612,16 +567,6 @@ function quickTaskGraphqlEntries(): Record<string, unknown> {
     };
   }
   return repository;
-}
-
-function quickTaskDynamicRuns(workflowFile: string, status?: string) {
-  return quickTaskState().runs.filter(
-    (run) =>
-      run.workflow === workflowFile &&
-      (status === undefined ||
-        status === run.conclusion ||
-        status === run.status),
-  );
 }
 
 function quickTaskIssueComments(number: number) {
@@ -859,38 +804,6 @@ export function checkRuns(ref: string) {
     html_url: `${itemUrl(item?.number ?? 0, 'pull')}/checks`,
   }));
   return { total_count: runs.length, check_runs: runs };
-}
-
-/** `GET /repos/{owner}/{repo}/actions/workflows/{file}/runs` remains only for
- * the Quick Task write-boundary fixture. Curated populated activity is seeded
- * as authoritative broker Runs by `/api/e2e/seed`, never read from GitHub. */
-export function workflowRuns(workflowFile: string, status?: string) {
-  const runs = quickTaskDynamicRuns(workflowFile, status).map((run) => ({
-    id: run.id,
-    status: run.status,
-    conclusion: run.conclusion,
-    event: 'issues',
-    html_url: `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/actions/runs/${run.id}`,
-    display_title: run.displayTitle,
-    created_at: run.createdAt,
-    run_started_at: run.startedAt,
-    updated_at: run.updatedAt,
-  }));
-  return { total_count: runs.length, workflow_runs: runs };
-}
-
-/** `GET /repos/{owner}/{repo}/actions/runs/{id}` for a dynamically-created
- * Quick Task only. Curated activity never uses this legacy GitHub lookup. */
-export function workflowRun(runId: number) {
-  const run = quickTaskState().runs.find((candidate) => candidate.id === runId);
-  if (!run) return undefined;
-  return {
-    id: run.id,
-    display_title: run.displayTitle,
-    name: run.workflow,
-    status: run.status,
-    conclusion: run.conclusion,
-  };
 }
 
 /** `GET /repos/{owner}/{repo}/actions/runners` */

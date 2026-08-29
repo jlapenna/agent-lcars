@@ -17,17 +17,10 @@ import {
   SourceBadge,
 } from './agent-activity-panel';
 
-// CancelRunButton is a 'use server' client component wired to backend
-// actions - out of scope here, matching the pattern in
-// action-items-board.test.tsx.
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
   useSearchParams: () => new URLSearchParams(''),
 }));
-vi.mock('./cancel-run-button', () => ({
-  CancelRunButton: () => null,
-}));
-
 // agent-activity.ts pulls in the server-only (ESM) GitHub client - stub the
 // runtime values this panel actually uses so the module never loads (and
 // its assertNotBrowser() guard never fires) at test time. Every other

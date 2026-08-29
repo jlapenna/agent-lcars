@@ -102,7 +102,6 @@ describe('agentRunFromOrchestrator', () => {
       id: 'octo/example#42/r1',
       issueNumber: 42,
       status: 'running',
-      executor: 'queue',
       displayTitle: '#42: GitHub task 42',
     });
     expect(native).toMatchObject({

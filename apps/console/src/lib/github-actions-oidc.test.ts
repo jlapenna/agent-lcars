@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { JWTClaimValidationFailed, JWTExpired } = joseErrors;
 
-// `verifyCompletionOidcToken`'s allow-list gate (#1190) needs to be exercised
-// end-to-end -- including the jwtVerify call -- without a real GitHub OIDC
-// token or network JWKS fetch. Only `jwtVerify` is replaced; the real
+// OIDC verification needs to be exercised end-to-end -- including the
+// jwtVerify call -- without a real GitHub OIDC token or network JWKS fetch.
+// Only `jwtVerify` is replaced; the real
 // `createRemoteJWKSet` is harmless to construct (it fetches lazily, only on
 // first `jwtVerify` call) and every other test in this file already relies
 // on it working unmocked.
@@ -197,7 +197,7 @@ describe('GitHub Actions request OIDC claims (#1215)', () => {
       repositoryId: 1_307_149_765,
       runId: 93_099_054_125,
     });
-    for (const workflowFile of [
+    for (const workflowPath of [
       'playbook-unstick-prs.yml',
       'visual-refresh.yml',
       'post-deploy-verify.yml',
@@ -206,7 +206,7 @@ describe('GitHub Actions request OIDC claims (#1215)', () => {
         assertRequestOidcClaims(
           {
             ...requestClaims,
-            workflow_ref: `${repository}/.github/workflows/${workflowFile}@refs/heads/main`,
+            workflow_ref: `${repository}/.github/workflows/${workflowPath}@refs/heads/main`,
           },
           repository,
         ),

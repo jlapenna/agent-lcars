@@ -40,7 +40,6 @@ import {
 } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
-import { CancelRunButton } from './cancel-run-button';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
@@ -403,14 +402,6 @@ export function LiveRunRow({
             {taskHref ? 'Open task' : 'Inspect run'}
             {!taskHref && ' ↗'}
           </Anchor>
-          {typeof run.id === 'number' && (
-            <CancelRunButton
-              repo={run.repo}
-              runId={run.id}
-              label={run.displayTitle}
-              className="operations-secondary-action"
-            />
-          )}
         </Group>
       </div>
     );
@@ -481,13 +472,6 @@ export function LiveRunRow({
             >
               session
             </Anchor>
-          )}
-          {typeof run.id === 'number' && (
-            <CancelRunButton
-              repo={run.repo}
-              runId={run.id}
-              label={run.displayTitle}
-            />
           )}
         </Group>
       </Group>

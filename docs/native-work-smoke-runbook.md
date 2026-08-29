@@ -1,11 +1,10 @@
 # Native work item production smoke runbook
 
-The first real native work item, run end to end against production on
-2026-08-27: an item created through the work API with no GitHub issue behind
-it, dispatched by the console's orchestrator with the `work` workflow input,
-executed by the claude lane, delivered as a pull request carrying the
-attempt-claim marker, and settled by the finalizer's completion call bound to
-the run by its dispatch marker. This is the sub-project 1 proof from the
+The first real native work item was run end to end against production on
+2026-08-27. The historical evidence below predates the direct-run migration.
+For the current path, create an item through the work API with no GitHub issue
+behind it; the authoritative Task and Run records drive dispatch, execution,
+session history, and settlement. This is the sub-project 1 proof from the
 [native work items design](superpowers/specs/2026-08-23-native-work-items-design.md)
 (#1502), Plan 3 Task 6.
 
@@ -25,14 +24,14 @@ the run by its dispatch marker. This is the sub-project 1 proof from the
 
 ## Contract under test
 
-| Step              | Expected                                                                                                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUT /items/{id}` | `201` with the item view; `runs[0].runId` = `work:<id>/r1`, state `running` once the drain dispatches                                                                           |
-| Actions run       | `claude.yml` run titled `native work: Claude issue agent [dispatch:g1:work:<id>/r1]` with `issue` empty and `work` = `{"id","spec"}`                                            |
-| Lane              | claim/eyes/assignee steps skipped; brief `anchor.type` is `work` with `html_url` = `https://lcars.jlapenna.net/work/<id>`; telemetry session doc carries `intentId`             |
-| Deliverable       | a PR by the fleet login whose body carries `<!-- attempt-claim:<ATTEMPT_ID> -->` and `Work: work:<id>`; `verify-deliverable` passes on the marker alone with no `/issues/` call |
-| Completion        | the finalizer posts by run; `GET /items/{id}` shows `state: done`, `runs[0].result.ref` = the PR URL, and the session listed under the item                                     |
-| Cancel after done | `POST /items/{id}/cancel` → `409`                                                                                                                                               |
+| Step              | Expected                                                                                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PUT /items/{id}` | `201` with the item view; `runs[0].runId` = `work:<id>/r1`, state `running` once the authoritative drain dispatches                                                                  |
+| Run               | `GET /items/{id}` and the console show the native Run id and lifecycle state; no GitHub Actions run or title marker is required                                                      |
+| Execution         | the direct worker claims the native Run and records session history against that Run id; the item brief has `anchor.type: work` and `html_url: https://lcars.jlapenna.net/work/<id>` |
+| Deliverable       | a PR by the fleet login references `Work: work:<id>`; the Task/Run record carries the resulting outcome and PR reference                                                             |
+| Settlement        | `GET /items/{id}` shows `state: done`, `runs[0].result.ref` = the PR URL, and the session listed under the item                                                                      |
+| Cancel after done | `POST /items/{id}/cancel` → `409`                                                                                                                                                    |
 
 ## 1. Create the item
 

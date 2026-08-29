@@ -6,7 +6,6 @@ import {
   ActionError,
   approveAndMergePr,
   approveAndRebasePr,
-  cancelWorkflowRun,
   clearHumanNeededLabel,
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
@@ -19,7 +18,6 @@ import {
 import { GITHUB_DATA_TAG } from '../lib/cache-tags';
 import {
   approveAndRebase,
-  cancelRun,
   clearHumanNeeded,
   closeIssue,
   createQuickTask,
@@ -56,7 +54,6 @@ vi.mock('../lib/backend-actions', () => {
     ActionError,
     approveAndMergePr: vi.fn(),
     approveAndRebasePr: vi.fn(),
-    cancelWorkflowRun: vi.fn(),
     clearHumanNeededLabel: vi.fn(),
     closeIssue: vi.fn(),
     createQuickTask: vi.fn(),
@@ -166,20 +163,6 @@ describe('agent-lcars Server Actions', () => {
       ).resolves.toEqual({
         ok: false,
         message: 'Issue does not carry the claude label; nothing to retrigger',
-      });
-    });
-
-    it('cancelRun returns { ok: false, message } instead of throwing', async () => {
-      (cancelWorkflowRun as Mock).mockRejectedValue(
-        Object.assign(new Error('Conflict'), {
-          status: 409,
-          response: { data: { message: 'Run already completed' } },
-        }),
-      );
-
-      await expect(cancelRun(DEFAULT_REPO, 123)).resolves.toEqual({
-        ok: false,
-        message: 'Run already completed',
       });
     });
 
@@ -538,12 +521,6 @@ The refresh path has browser coverage.
       const result = await dispatchUnstickPrs('ctx', UNWATCHED_REPO);
       expect(result.ok).toBe(false);
       expect(dispatchUnstickPrsLib).not.toHaveBeenCalled();
-    });
-
-    it('cancelRun rejects without calling cancelWorkflowRun', async () => {
-      const result = await cancelRun(UNWATCHED_REPO, 123);
-      expect(result.ok).toBe(false);
-      expect(cancelWorkflowRun).not.toHaveBeenCalled();
     });
 
     it('closeIssue rejects without calling closeIssueLib', async () => {

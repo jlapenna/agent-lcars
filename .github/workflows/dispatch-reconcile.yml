@@ -1,10 +1,8 @@
-name: Hosted Dispatch Reconciler
+name: Dispatch Reconciler
 
 # Periodically and manually invoke App Hosting's reconciliation endpoint. It
-# discovers open agent-labeled or fleet-assigned anchors, then processes each
-# directly through the hosted controller under its Firestore authority lease.
-# This scheduler is deliberately GitHub-hosted so recovery remains available
-# when the self-hosted worker pool is unavailable.
+# expires native Run leases and drains the authoritative control-plane outbox.
+# This scheduler stays available when the direct worker pool is unavailable.
 
 on:
   schedule:
@@ -16,12 +14,12 @@ permissions: {}
 
 concurrency:
   # This prevents redundant full scans. Per-anchor serialization remains the
-  # hosted controller's Firestore authority lease.
+  # control plane's authority lease.
   group: dispatch-reconcile-scan
   cancel-in-progress: false
 
 jobs:
-  hosted-scan:
+  reconcile:
     runs-on: ubuntu-latest
     timeout-minutes: 7
     permissions:
@@ -30,11 +28,11 @@ jobs:
       # Referenced @main rather than as a local path on purpose: this
       # workflow only ever runs from main (schedule/workflow_dispatch), and
       # the remote reference keeps the job checkout-free.
-      - name: Invoke hosted reconciler with GitHub Actions OIDC
+      - name: Invoke control-plane reconciler with GitHub Actions OIDC
         uses: jlapenna/agent-lcars/.github/actions/request-control-plane@main # latest
         with:
           endpoint: https://lcars.jlapenna.net/api/control-plane/reconcile
           audience: agent-lcars-dispatch-reconcile
-          # A full reconcile scan processes every discovered anchor
-          # synchronously; keep the pre-#1340 inline block's budget.
+          # A full reconcile expires leases and drains the durable outbox;
+          # keep the scheduler's bounded request budget.
           timeout-seconds: '360'
