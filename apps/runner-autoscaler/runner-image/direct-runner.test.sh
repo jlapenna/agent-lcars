@@ -331,6 +331,10 @@ FAKE
 run_scenario() {
   name="$1"
   export FAKE_PIPELINE="${2:-claude}"
+  # A QueueExecutor container is not a GitHub Actions worker.  CI itself
+  # exports this event context, so clear it explicitly before each fixture to
+  # prove the direct adapter neither depends on nor invents an Actions event.
+  unset GITHUB_EVENT_NAME GITHUB_EVENT_PATH
   dir="$tmp/$name"
   mkdir -p "$dir/bin"
   make_fake_bins "$dir/bin"
