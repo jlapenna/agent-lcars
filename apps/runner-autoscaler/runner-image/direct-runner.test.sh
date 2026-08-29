@@ -557,15 +557,20 @@ fi
 echo "scenario codex-burned-stderr: OK"
 
 # OpenCode follows the same queue bootstrap and completion path. Its provider
-# key is read only from the adapter's file mount and is supplied to the trusted
-# CLI process, together with the standard direct-runner checkout credential.
+# key is read only from the adapter's file mount by OpenCode's baked config;
+# it must never enter the CLI environment, where agent tool shells inherit it.
+# Deliberately seed the direct runner's inherited environment so this proves
+# the adapter actively scrubs it rather than merely starting from a clean
+# fixture.  The value is a test sentinel, never a credential.
+export OPENCODE_LLM_API_KEY='ambient-opencode-key-must-not-reach-agent'
 run_scenario opencode-happy opencode
+unset OPENCODE_LLM_API_KEY
 [ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
 grep -q -- 'run --model homelab/default-nothink --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
-[ "$(cat "$OPENCODE_ENV_LOG")" = "fake-opencode-llm-key|$FAKE_TOKEN|$FAKE_TOKEN||" ] ||
-  fail "opencode happy path: adapter environment mismatch ($(cat "$OPENCODE_ENV_LOG"))"
+[ "$(cat "$OPENCODE_ENV_LOG")" = "|$FAKE_TOKEN|$FAKE_TOKEN||" ] ||
+  fail "opencode happy path: OpenCode inherited the LiteLLM key in its environment ($(cat "$OPENCODE_ENV_LOG"))"
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "opencode happy path: claude was invoked"
 [ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
 grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||

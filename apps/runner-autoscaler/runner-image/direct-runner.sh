@@ -496,8 +496,11 @@ CURLCFG
   fi
 else
   # OpenCode's LiteLLM virtual key follows the same file-mounted credential
-  # boundary as Claude. It is exported only for the trusted OpenCode process,
-  # never placed in Docker's inspectable environment at container creation.
+  # boundary as Claude. The baked global OpenCode config reads it with
+  # `{file:/run/secrets/opencode-llm-api-key}`, so it never enters the
+  # provider process environment (and therefore cannot be inherited by the
+  # agent's tool shells). It is never placed in Docker's inspectable
+  # environment at container creation either.
   OPENCODE_TOKEN_FILE="${OPENCODE_TOKEN_FILE:-/run/secrets/opencode-llm-api-key}"
   if [ ! -r "$OPENCODE_TOKEN_FILE" ]; then
     echo "FATAL: $OPENCODE_TOKEN_FILE is required (OPENCODE_LLM_API_KEY source) but is missing or unreadable" >&2
@@ -531,7 +534,7 @@ else
   fi
 
   set +e
-  OPENCODE_LLM_API_KEY="$(cat "$OPENCODE_TOKEN_FILE")" \
+  env -u OPENCODE_LLM_API_KEY \
     GITHUB_TOKEN="$CHECKOUT_TOKEN" \
     timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
     "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \

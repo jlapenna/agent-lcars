@@ -15,7 +15,7 @@
       "name": "Homelab LiteLLM (spark)",
       "options": {
         "baseURL": "https://llm.lan.jlapenna.net/v1",
-        "apiKey": "{env:OPENCODE_LLM_API_KEY}"
+        "apiKey": "{file:/run/secrets/opencode-llm-api-key}"
       },
       "models": {
         "default": {
