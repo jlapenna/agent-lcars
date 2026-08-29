@@ -1,11 +1,9 @@
 import { parseDispatchMarker } from '@agent-lcars/dispatch-contracts';
 import {
   isWorkAnchor,
-  type OrchestratorStore,
   type Run as OrchestratorRun,
   type Task,
   taskKey,
-  type VersionedTask,
 } from '@agent-lcars/orchestrator';
 import { workSpecSchema } from '@agent-lcars/work';
 
@@ -31,7 +29,9 @@ export const MAX_TURNS_BUDGET = 200;
 
 /** Exported so the panel can label the list as "last N" when it fills. */
 export const RECENT_RUN_LIMIT = 8;
-const ACTIVITY_TASK_LIMIT = 200;
+/** Small bounded overfetch allows the global feed to contain live runs while
+ * the console still renders up to RECENT_RUN_LIMIT terminal outcomes. */
+const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
@@ -133,34 +133,6 @@ export function queueFromLiveRuns(
     }
   }
   return summary;
-}
-
-/**
- * The store deliberately pages task reads. Recent runs have no repository or
- * provider partition, so following that cursor is what keeps older anchors
- * from disappearing once the fleet exceeds one page.
- */
-async function listAllActivityTasks(
-  store: Pick<OrchestratorStore, 'listTasks'>,
-): Promise<VersionedTask[]> {
-  const tasks: VersionedTask[] = [];
-  let before: { updatedAt: string; taskKey: string } | undefined;
-  do {
-    const page = await (before === undefined
-      ? store.listTasks(ACTIVITY_TASK_LIMIT)
-      : store.listTasks(ACTIVITY_TASK_LIMIT, before));
-    tasks.push(...page);
-    const last = page.at(-1);
-    before =
-      last === undefined
-        ? undefined
-        : {
-            updatedAt: last.task.updatedAt,
-            taskKey: taskKey(last.task.task),
-          };
-    if (page.length < ACTIVITY_TASK_LIMIT) return tasks;
-  } while (before !== undefined);
-  return tasks;
 }
 
 // One shape fleet-wide since #1340 A-R2. Before that, codex and opencode
@@ -402,9 +374,9 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   const { store } = createOrchestratorRuntime();
 
   const warnings: string[] = [];
-  const [liveRead, taskRead, autoscalerRead] = await Promise.allSettled([
+  const [liveRead, recentRead, autoscalerRead] = await Promise.allSettled([
     store.listLiveRuns(),
-    listAllActivityTasks(store),
+    store.listRecentRuns(RECENT_RUN_FETCH_LIMIT),
     getAutoscalerStatuses(),
   ]);
   const autoscaler =
@@ -419,20 +391,14 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     );
     warnings.push('Authoritative live run activity unavailable.');
   }
-  if (taskRead.status === 'rejected') {
+  if (recentRead.status === 'rejected') {
     console.error(
       'agent-lcars: failed to list authoritative recent runs:',
-      taskRead.reason,
+      recentRead.reason,
     );
     warnings.push('Authoritative recent run activity unavailable.');
   }
 
-  const taskByKey = new Map(
-    (taskRead.status === 'fulfilled' ? taskRead.value : []).map(({ task }) => [
-      taskKey(task.task),
-      task,
-    ]),
-  );
   const invalidMetadata = { value: false };
   const project = (run: OrchestratorRun, task: Task | undefined) => {
     if (task === undefined) {
@@ -446,52 +412,43 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   const authoritativeLiveRuns =
     liveRead.status === 'fulfilled' ? liveRead.value : [];
-  const liveRuns = (
-    await Promise.all(
-      authoritativeLiveRuns.map(async (run) => {
-        const known = taskByKey.get(taskKey(run.task));
-        if (known !== undefined) return project(run, known);
-        try {
-          return project(run, (await store.readTask(run.task))?.task);
-        } catch (error) {
-          console.error(
-            'agent-lcars: failed to read authoritative live run task:',
-            error,
-          );
+  const terminalRecentRuns = (
+    recentRead.status === 'fulfilled' ? recentRead.value : []
+  ).filter((run) => run.state !== 'pending' && run.state !== 'running');
+  const runsByTask = new Map<string, OrchestratorRun[]>();
+  for (const run of [...authoritativeLiveRuns, ...terminalRecentRuns]) {
+    const key = taskKey(run.task);
+    const runs = runsByTask.get(key);
+    if (runs) runs.push(run);
+    else runsByTask.set(key, [run]);
+  }
+  const taskByKey = new Map<string, Task>();
+  await Promise.all(
+    [...runsByTask.entries()].map(async ([key, runs]) => {
+      const run = runs[0];
+      if (run === undefined) return;
+      try {
+        const task = await store.readTask(run.task);
+        if (task === undefined) {
           invalidMetadata.value = true;
-          return undefined;
+        } else {
+          taskByKey.set(key, task.task);
         }
-      }),
-    )
-  ).filter((run): run is AgentRun => run !== undefined);
-
-  const recentSources = await Promise.all(
-    (taskRead.status === 'fulfilled' ? taskRead.value : []).map(
-      async ({ task }) => {
-        try {
-          return { task, runs: await store.listRuns(task.task) };
-        } catch (error) {
-          console.error(
-            'agent-lcars: failed to read authoritative task runs:',
-            error,
-          );
-          warnings.push('Authoritative recent run activity unavailable.');
-          return undefined;
-        }
-      },
-    ),
+      } catch (error) {
+        console.error(
+          'agent-lcars: failed to read authoritative run task:',
+          error,
+        );
+        invalidMetadata.value = true;
+      }
+    }),
   );
-  const recentRuns = recentSources
-    .flatMap((source) =>
-      source === undefined
-        ? []
-        : source.runs
-            .filter((run) => run.state !== 'pending' && run.state !== 'running')
-            .map((run) => project(run, source.task)),
-    )
-    .filter((run): run is AgentRun => run !== undefined)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, RECENT_RUN_LIMIT);
+  const projectRuns = (runs: readonly OrchestratorRun[]) =>
+    runs
+      .map((run) => project(run, taskByKey.get(taskKey(run.task))))
+      .filter((run): run is AgentRun => run !== undefined);
+  const liveRuns = projectRuns(authoritativeLiveRuns);
+  const recentRuns = projectRuns(terminalRecentRuns).slice(0, RECENT_RUN_LIMIT);
   if (invalidMetadata.value) {
     warnings.push('Authoritative run activity contains invalid task metadata.');
   }

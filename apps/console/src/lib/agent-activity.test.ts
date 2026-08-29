@@ -14,9 +14,8 @@ const T0 = '2026-08-28T10:00:00.000Z';
 
 const store = {
   listLiveRuns: vi.fn(),
-  listTasks: vi.fn(),
+  listRecentRuns: vi.fn(),
   readTask: vi.fn(),
-  listRuns: vi.fn(),
 };
 
 vi.mock('./orchestrator-runtime', () => ({
@@ -85,9 +84,8 @@ beforeEach(() => {
     warnings: [],
   });
   store.listLiveRuns.mockResolvedValue([]);
-  store.listTasks.mockResolvedValue([]);
+  store.listRecentRuns.mockResolvedValue([]);
   store.readTask.mockResolvedValue(undefined);
-  store.listRuns.mockResolvedValue([]);
 });
 
 describe('agentRunFromOrchestrator', () => {
@@ -132,12 +130,11 @@ describe('getAgentActivity', () => {
       updatedAt: '2026-08-28T11:30:00.000Z',
     });
     store.listLiveRuns.mockResolvedValue([live]);
-    store.listTasks.mockResolvedValue([
-      { task: github, revision: 1 },
-      { task: native, revision: 1 },
-    ]);
-    store.listRuns.mockImplementation(async (task: Task['task']) =>
-      'workId' in task ? [finished] : [live],
+    store.listRecentRuns.mockResolvedValue([finished]);
+    store.readTask.mockImplementation(async (task: Task['task']) =>
+      'workId' in task
+        ? { task: native, revision: 1 }
+        : { task: github, revision: 1 },
     );
     (getAutoscalerStatuses as ReturnType<typeof vi.fn>).mockResolvedValue({
       statuses: [
@@ -168,12 +165,13 @@ describe('getAgentActivity', () => {
     expect(activity.fleet).toEqual({ online: 2, busy: 1 });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
-    expect(store.listTasks).toHaveBeenCalledWith(200);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.readTask).toHaveBeenCalledTimes(2);
   });
 
   it('keeps one genuine authoritative-data warning when the store read fails', async () => {
     store.listLiveRuns.mockRejectedValue(new Error('unavailable'));
-    store.listTasks.mockRejectedValue(new Error('unavailable'));
+    store.listRecentRuns.mockRejectedValue(new Error('unavailable'));
 
     const activity = await getAgentActivity();
 
@@ -185,7 +183,7 @@ describe('getAgentActivity', () => {
     ]);
   });
 
-  it('follows the authoritative task cursor so a terminal run past one task page remains visible', async () => {
+  it('bounds recent reads and never scans tasks or per-task runs', async () => {
     const native = nativeTask();
     const finished = run({
       runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
@@ -194,27 +192,39 @@ describe('getAgentActivity', () => {
       pipeline: 'opencode',
       result: { ok: true },
     });
-    const firstPage = Array.from({ length: 200 }, (_, index) => ({
-      task: githubTask(index + 1),
-      revision: 1,
-    }));
-    store.listTasks
-      .mockResolvedValueOnce(firstPage)
-      .mockResolvedValueOnce([{ task: native, revision: 1 }]);
-    store.listRuns.mockImplementation(async (task: Task['task']) =>
-      'workId' in task ? [finished] : [],
-    );
+    store.listRecentRuns.mockResolvedValue([finished]);
+    store.readTask.mockResolvedValue({ task: native, revision: 1 });
 
     const activity = await getAgentActivity();
 
     expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
       finished.runId,
     ]);
-    expect(store.listTasks).toHaveBeenNthCalledWith(1, 200);
-    expect(store.listTasks).toHaveBeenNthCalledWith(2, 200, {
-      updatedAt: firstPage.at(-1)?.task.updatedAt,
-      taskKey: 'octo/example#200',
+    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.readTask).toHaveBeenCalledTimes(1);
+    expect(store).not.toHaveProperty('listTasks');
+    expect(store).not.toHaveProperty('listRuns');
+  });
+
+  it('reads each bounded recent anchor only once when it has multiple runs', async () => {
+    const github = githubTask();
+    const newest = run({
+      runId: 'octo/example#42/r2',
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: '2026-08-28T11:00:00.000Z',
     });
+    const older = run({ state: 'finished', result: { ok: true } });
+    store.listRecentRuns.mockResolvedValue([newest, older]);
+    store.readTask.mockResolvedValue({ task: github, revision: 1 });
+
+    const activity = await getAgentActivity();
+
+    expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
+      newest.runId,
+      older.runId,
+    ]);
+    expect(store.readTask).toHaveBeenCalledTimes(1);
   });
 });
 
