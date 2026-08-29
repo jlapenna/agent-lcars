@@ -6,7 +6,7 @@ description: Developer toolkit and mandatory guardrails for the agent-lcars repo
 # Agent LCARS Dev Toolkit
 
 Workflows and guardrails for developing on the `agent-lcars` repo (Nx/pnpm
-monorepo, Node 24, pnpm 10).
+monorepo, Node 24, pnpm 11).
 
 > [!IMPORTANT]
 > **Workflow Adherence.** Read [references/pr.md](references/pr.md) before
