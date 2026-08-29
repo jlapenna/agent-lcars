@@ -18,13 +18,11 @@ fixed cost on every dispatch on every provider, and #1210 split these out so
 that cost stops including sections most runs never need. Section numbers are
 unchanged, so `§8`/`§10` cross-references from any repo still resolve.
 
-This directory is this repo's canonical, single source of every consuming
-repo's copy of the protocol: a cross-repo `uses:` on `prepare-agent-dispatch`
-downloads this whole repository, and the action resolves
-`reference/agent-protocol.md` relative to its own `GITHUB_ACTION_PATH`
-(`.github/actions/prepare-agent-dispatch/prepare.sh`). No consuming repo
-hardcodes this path itself — it only invokes the composite action — so this
-directory can be relocated, but only in the same change that updates
-`prepare.sh` (and its test) to match. `.agents/skills/agent-protocol` is a
-symlink to this directory, kept so interactive Claude Code and Codex dev
-sessions in this repo still auto-discover it.
+This directory is this repo's canonical, single source of the protocol.
+QueueExecutor's baked native runtime resolves
+`reference/agent-protocol.md` from its adjacent trusted skill tree; consumer
+repositories do not download or hardcode that path. Keep that resolution in
+lockstep with the runner image and its direct-runner contract test.
+`.agents/skills/agent-protocol` is a symlink to this directory, kept so
+interactive Claude Code and Codex dev sessions in this repo still
+auto-discover it.

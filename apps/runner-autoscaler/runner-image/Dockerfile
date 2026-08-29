@@ -404,41 +404,22 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
     /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 RUN chmod +x /usr/local/lib/agent-lcars/job-daemon.sh /usr/local/lib/agent-lcars/sidecar-lifecycle.sh
 
-# Native work items sub-project 4 ("direct runner mode"): direct-runner.sh's
-# baked-tool defaults (PREPARE_DISPATCH_DIR/VERIFY_DELIVERABLE) point here.
+# QueueExecutor's native runtime helpers are baked beside direct-runner.sh.
 # Same fresh-`main`-checkout stage as sidecar.cjs/job-daemon.sh above, not
 # `/tmp/fleet-repo-github/.github` a few lines up -- that copy is `rm -rf`'d
 # right after populating the action-archive cache, so nothing downstream can
 # depend on it surviving.
 #
-# Layout note (fix round 1, review-critical): this mirrors the real repo's
-# OWN directory shape under /usr/local/lib/agent-lcars/, treating that
-# directory as a fake "repo root" -- prepare-agent-dispatch/ lands at
-# .github/actions/prepare-agent-dispatch precisely so that
-# prepare.sh's own unmodified `$GITHUB_ACTION_PATH/../../../agents/shared/
-# skills/...` climb (3 levels up from GITHUB_ACTION_PATH, which
-# direct-runner.sh sets to PREPARE_DISPATCH_DIR) lands on
-# /usr/local/lib/agent-lcars -- exactly where agents/shared/skills is baked
-# below. Do not move prepare-agent-dispatch/ without recomputing this: any
-# change to its depth here breaks prepare.sh's climb without changing a
-# single character of prepare.sh itself, which this task is not allowed to
-# touch (it is a shared script other real GitHub Actions callers also use
-# via their own real GITHUB_ACTION_PATH). verify-deliverable.sh is baked
-# alongside it at the same real-repo-relative depth for the same reason
-# direct-runner.test.sh's own fake baked tree mirrors this shape exactly --
-# so a layout mistake here is caught by that test instead of only surfacing
-# once a real image actually runs a real dispatch.
+# The helpers resolve the trusted shared protocol relative to this exact
+# native location. direct-runner.test.sh mirrors it, proving the image
+# cannot accidentally rely on a source checkout or GitHub Actions layout.
 COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/.github/actions/prepare-agent-dispatch \
-    /usr/local/lib/agent-lcars/.github/actions/prepare-agent-dispatch
-COPY --from=telemetry-watcher-build --chown=runner:runner \
-    /repo/.github/actions/verify-deliverable/verify-deliverable.sh \
-    /usr/local/lib/agent-lcars/.github/actions/verify-deliverable/verify-deliverable.sh
+    /repo/apps/runner-autoscaler/runner-image/runtime \
+    /usr/local/lib/agent-lcars/runtime
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/shared/skills \
     /usr/local/lib/agent-lcars/agents/shared/skills
-RUN chmod +x /usr/local/lib/agent-lcars/.github/actions/prepare-agent-dispatch/*.sh \
-    /usr/local/lib/agent-lcars/.github/actions/verify-deliverable/verify-deliverable.sh
+RUN chmod +x /usr/local/lib/agent-lcars/runtime/*.sh
 COPY direct-runner.sh /usr/local/lib/agent-lcars/direct-runner.sh
 RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh
 

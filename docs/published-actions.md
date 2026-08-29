@@ -15,16 +15,14 @@ their operating constraints.
 
 ## Published composite actions
 
-| Action                   | Purpose                                                            |
-| ------------------------ | ------------------------------------------------------------------ |
-| `mint-agent-token`       | Mint a scoped Agent LCARS App installation token.                  |
-| `prepare-agent-dispatch` | Write routed issue context for a headless agent.                   |
-| `verify-deliverable`     | Require an exact attempt marker on a deliverable artifact.         |
-| `assert-repo-vars`       | Report all missing required repository variables.                  |
-| `merge-live-base`        | Merge the live base into a PR head before validation.              |
-| `setup-nx-remote-cache`  | Configure trusted Nx jobs for the shared L2 cache.                 |
-| `deploy-verify`          | Poll a deployed URL and optionally annotate deployment status.     |
-| `request-control-plane`  | Send an OIDC-authenticated request and expose its single response. |
+| Action                  | Purpose                                                            |
+| ----------------------- | ------------------------------------------------------------------ |
+| `mint-agent-token`      | Mint a scoped Agent LCARS App installation token.                  |
+| `assert-repo-vars`      | Report all missing required repository variables.                  |
+| `merge-live-base`       | Merge the live base into a PR head before validation.              |
+| `setup-nx-remote-cache` | Configure trusted Nx jobs for the shared L2 cache.                 |
+| `deploy-verify`         | Poll a deployed URL and optionally annotate deployment status.     |
+| `request-control-plane` | Send an OIDC-authenticated request and expose its single response. |
 
 ## Published reusable workflows
 
@@ -70,7 +68,7 @@ accepts.
 ## Security invariants
 
 - Request the narrowest `mint-agent-token` permissions.
-- A run succeeds only when `verify-deliverable` finds its exact
+- A QueueExecutor run succeeds only when its native verifier finds its exact
   `<!-- attempt-claim:<attempt-id> -->` marker on a deliverable. Progress and
   takeover comments are not deliverables.
 - Marker stamping is enabled only for the untrusted agent step. Post-agent

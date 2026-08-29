@@ -23,12 +23,12 @@ but the console only becomes useful once all three are in place:
 ## 1. Agent protocol
 
 Use the shared protocol as the complete fleet behavior contract. QueueExecutor
-uses the centrally baked `prepare-agent-dispatch` bootstrap and exposes its
+uses the centrally baked native dispatch bootstrap and exposes its
 protocol and context only inside the isolated worker, never in a target
 repository workflow.
 
 - Do not copy `agent-protocol` or centrally published plugin skills into the
-  repository. The action installs the shared layer-1 skill surface into the
+  repository. The native runtime installs the shared layer-1 skill surface into the
   runner's agent home and exports the source protocol path.
 - Keep repository-local facts in `AGENTS.md` or the repository's development
   skill: bootstrap and verification commands, protected infrastructure, deploy

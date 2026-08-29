@@ -66,7 +66,7 @@ describe('pipeline registry', () => {
 describe('bot identities', () => {
   it('deduplicates the shared codex/opencode login', () => {
     // codex and opencode both push as agent-lcars[bot]; this is the
-    // acknowledged limitation behind verify-deliverable being unable to tell
+    // acknowledged limitation behind the native verifier being unable to tell
     // their deliverables apart, so the list must be deduplicated, not
     // per-pipeline.
     expect(AGENT_BOT_LOGINS).toEqual(['claude[bot]', 'agent-lcars[bot]']);

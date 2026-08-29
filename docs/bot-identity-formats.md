@@ -29,7 +29,7 @@ Do not compare a raw `app/<slug>` value with a REST login.
 | Actions event payload checks                    | REST                                                            |
 | `agent-automerge-reusable.yml` PR-author lookup | REST                                                            |
 | Console GitHub client                           | REST                                                            |
-| `verify-deliverable` bot filtering              | REST; filter on user type where a specific login is unnecessary |
+| Native outcome verifier bot filtering           | REST; filter on user type where a specific login is unnecessary |
 
 Before adding a callsite, identify the API that produced the value and
 normalize it at that boundary.

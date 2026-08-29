@@ -87,7 +87,7 @@ type RouteResult = { status: number; body: Record<string, unknown> };
 
 /**
  * A label re-request has no reply text of its own.  Put this opaque marker
- * into the queued run's `context` parameter so `prepare-agent-dispatch` can
+ * into the queued run's `context` parameter so the native runtime can
  * select the GitHub comments that appeared after the previous attempt. Adding
  * another queue parameter here would require every worker consumer to update
  * in lockstep; `context` already reaches every supported provider and is
@@ -154,7 +154,7 @@ export async function handleWebhookDelivery(
 
     // The first label-triggered run stays byte-for-byte on its existing
     // prompt path. On a later label request, carry only the previous run's
-    // timestamp; prepare-agent-dispatch uses it to expose a bounded,
+    // timestamp; the native runtime uses it to expose a bounded,
     // author-attributed comment window in the brief.
     const params = await labelRedispatchParams(deps, {
       event: input.event,
