@@ -1394,7 +1394,8 @@ jobs:
           # just before the crash, satisfies it.
           set -o pipefail
           codex exec --json --dangerously-bypass-approvals-and-sandbox \
-            "$CODEX_PROMPT" | tee "$RUNNER_TEMP/codex-output.jsonl"
+            "$CODEX_PROMPT" \
+            2> >(tee "$RUNNER_TEMP/codex-stderr.log" >&2) | tee "$RUNNER_TEMP/codex-output.jsonl"
 
       - name: Persist refreshed subscription authentication
         # Persist a refresh whether Codex succeeded or failed, but do not
@@ -1425,46 +1426,48 @@ jobs:
           # the very next dispatch.
           #
           # This guard is deliberately narrow: it skips the write ONLY
-          # when the captured codex output
-          # ($RUNNER_TEMP/codex-output.jsonl, produced by the `tee` in
-          # "Run Codex") carries positive evidence that THIS run's auth
-          # was the problem. A run that failed for any other reason may
-          # still have legitimately rotated the token before failing, and
-          # losing that rotation would burn the lineage just the same —
-          # so this must never become a blanket "skip persist on any
-          # failure" guard.
+          # when Codex's own failure diagnostics carry positive evidence
+          # that THIS run's auth was the problem. A run that failed for any
+          # other reason may still have legitimately rotated the token
+          # before failing, and losing that rotation would burn the lineage
+          # just the same — so this must never become a blanket "skip
+          # persist on any failure" guard.
           #
-          # Fixed-string greps only, not a broad pattern: agent output
-          # routinely discusses HTTP status codes and auth as the SUBJECT
-          # of its work (e.g. debugging someone else's 401), and a regex
-          # loose enough to catch every phrasing would misclassify that as
-          # this run's own auth failure. Each signature is either copied
-          # verbatim from the incident log or anchored to the
-          # codex_login source module that actually emits the refresh
-          # error, so a bare mention of "401" elsewhere in agent output
-          # cannot trip it.
+          # Fixed-string checks only, not a broad pattern. stdout is JSONL
+          # containing agent-authored item payloads, so select only Codex's
+          # top-level error / turn.failed error fields before inspecting it.
+          # stderr is the CLI's own diagnostic stream. That excludes an
+          # agent merely discussing a 401 or refresh token from suppressing
+          # a legitimate rotation, while retaining a real auth failure even
+          # when the CLI emits it only on stderr.
           codex_output="$RUNNER_TEMP/codex-output.jsonl"
+          codex_stderr="$RUNNER_TEMP/codex-stderr.log"
+          codex_failure_messages="$RUNNER_TEMP/codex-failure-messages"
           auth_failure_reason=""
+          [ -e "$codex_stderr" ] || : > "$codex_stderr"
+          : > "$codex_failure_messages"
           if [ -s "$codex_output" ]; then
-            if grep -qF -- 'Your access token could not be refreshed' "$codex_output"; then
-              # Covers both the plain CLI message and the structured
-              # {"type":"turn.failed","error":{"message":"Your access
-              # token could not be refreshed..."}} shape codex emits on
-              # --json runs: that JSON's error.message value IS this
-              # exact string, so one fixed-string match catches both
-              # forms without needing to parse the JSON.
-              auth_failure_reason='codex reported "Your access token could not be refreshed"'
-            elif grep -qF -- 'refresh token was already used' "$codex_output"; then
-              auth_failure_reason='codex reported "refresh token was already used" (the #1192 incident signature)'
-            elif grep -F -- 'codex_login' "$codex_output" | grep -qF -- '401 Unauthorized'; then
-              # Anchored to the codex_login logger, not a bare "401" —
-              # see the false-positive note above.
-              auth_failure_reason='codex_login logged a 401 Unauthorized refresh error'
-            fi
+            while IFS= read -r codex_event; do
+              jq -r '
+                if .type == "error" and (.message | type) == "string" then .message
+                elif .type == "turn.failed" and (.error.message | type) == "string" then .error.message
+                else empty
+                end
+              ' <<<"$codex_event" >> "$codex_failure_messages" 2>/dev/null || true
+            done < "$codex_output"
+          fi
+          if grep -qF -- 'Your access token could not be refreshed' "$codex_failure_messages" "$codex_stderr"; then
+            auth_failure_reason='codex reported "Your access token could not be refreshed"'
+          elif grep -qF -- 'refresh token was already used' "$codex_failure_messages" "$codex_stderr"; then
+            auth_failure_reason='codex reported "refresh token was already used"'
+          elif grep -F -- 'codex_login' "$codex_failure_messages" "$codex_stderr" | grep -qF -- '401 Unauthorized'; then
+            # Anchored to the codex_login logger, not a bare "401" — see
+            # the false-positive note above.
+            auth_failure_reason='codex_login logged a 401 Unauthorized refresh error'
           fi
 
           if [ -n "$auth_failure_reason" ]; then
-            echo "::warning::Skipping credential persist: $auth_failure_reason. The restored credential is burned; a human must re-seed $CODEX_AUTH_OBJECT (see #1192). Not writing auth.json back."
+            echo "::warning::Skipping credential persist: $auth_failure_reason. The restored credential is burned and must be re-seeded. Not writing auth.json back."
             exit 0
           fi
 
