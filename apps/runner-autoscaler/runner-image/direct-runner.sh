@@ -515,21 +515,69 @@ OUTCOME_REFERENCE=null
 if [ "$AGENT_EXIT" -eq 0 ] &&
   AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID="$ATTEMPT_ID" GH_TOKEN="$CHECKOUT_TOKEN" \
   bash "$VERIFY_DELIVERABLE"; then
-  # verify-deliverable.sh just proved an exact marker-bound deliverable. A
-  # native work item can only use a PR; a GitHub anchor can also use a
-  # comment or review. The completion protocol's successful outcome remains
-  # `pull-request` today, with an optional reference only when a unique PR
-  # marker lookup succeeds. A transient or ambiguous lookup must never
-  # regress the already-proven success back to no-deliverable.
-  OUTCOME=pull-request
+  # Mirror the hosted fallback finalizer's artifact classification. The
+  # verifier proves that *some* exact marker-bound artifact exists; the
+  # completion outcome must still name that artifact rather than relabeling
+  # a reply comment or a pull-request review as a pull request.
+  #
+  # Start at `unknown-success`: a transient classification lookup cannot
+  # undo the verifier's success, nor can it assert a nonexistent PR.
+  OUTCOME=unknown-success
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
-  if ! pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
+  if pr_hits="$(gh api "repos/$TARGET_REPO/pulls?state=all&per_page=100" --paginate \
     --jq ".[] | select(.user.type == \"Bot\") | select(((.title // \"\") + \"\n\" + (.body // \"\")) | contains(\"$claim_marker\")) | .number")"; then
-    echo "::warning::Could not verify the exact PR number for the completion callback; reporting pull-request with no reference" >&2
+    if [ -n "$pr_hits" ]; then
+      OUTCOME=pull-request
+      if [[ "$pr_hits" != *$'\n'* ]]; then
+        OUTCOME_REFERENCE="$(jq -n --argjson n "$pr_hits" '{kind: "pull-request", number: $n}')"
+      fi
+    fi
+  else
+    echo "::warning::Could not classify a pull-request deliverable for the completion callback" >&2
     pr_hits=""
   fi
-  if [ -n "$pr_hits" ] && [[ "$pr_hits" != *$'\n'* ]]; then
-    OUTCOME_REFERENCE="$(jq -n --argjson n "$pr_hits" '{kind: "pull-request", number: $n}')"
+
+  # A GitHub issue/PR anchor can complete with an evidence comment. Check
+  # park/no-op before a plain comment, matching the hosted finalizer's
+  # ordering; these structured comments carry distinct control-plane
+  # semantics even though they use the same GitHub artifact type.
+  if [ -n "$ISSUE" ]; then
+    if comment_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
+      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
+      if [ -n "$comment_hits" ]; then
+        if park_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
+          --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:park -->\")) | .id")" && \
+          [ -n "$park_hits" ]; then
+          # A structured park wins even if this run also opened a PR. The
+          # PR reference remains attached so the control plane can point at
+          # the partial work alongside the human blocker.
+          OUTCOME=park
+        elif [ "$OUTCOME" = unknown-success ]; then
+          OUTCOME=comment
+          if no_op_hits="$(gh api "repos/$TARGET_REPO/issues/$ISSUE/comments?per_page=100" --paginate \
+            --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\") and contains(\"<!-- agent-result:v1:no-op -->\")) | .id")" && \
+            [ -n "$no_op_hits" ]; then
+            OUTCOME=no-op
+          fi
+        fi
+      fi
+    else
+      echo "::warning::Could not classify a comment deliverable for the completion callback" >&2
+    fi
+  fi
+
+  # A review is a distinct protocol deliverable. It is intentionally after
+  # comments, exactly as hosted finalization does: a marker-stamped comment
+  # remains the authoritative artifact if an agent left both.
+  if [ "$OUTCOME" = unknown-success ] && [ "$MODE" = review ] && [ -n "$ISSUE" ]; then
+    if review_hits="$(gh api "repos/$TARGET_REPO/pulls/$ISSUE/reviews?per_page=100" --paginate \
+      --jq ".[] | select(.user.type == \"Bot\") | select((.body // \"\") | contains(\"$claim_marker\")) | .id")"; then
+      if [ -n "$review_hits" ]; then
+        OUTCOME=review
+      fi
+    else
+      echo "::warning::Could not classify a pull-request review deliverable for the completion callback" >&2
+    fi
   fi
 fi
 
@@ -552,13 +600,11 @@ CURLCFG
 # below.
 COMPLETED=1
 
-# Exit code reflects the reported outcome (design choice, not the OpenAPI
-# contract's own concern -- the console already has the true outcome via
-# the /complete POST above, which always happens first regardless of this
-# exit path). A non-pull-request outcome exits non-zero so container-level
-# supervision (runner-autoscaler logs, crash-loop/anomaly detection) can
-# tell "reported a real failure" apart from "reported success" without
-# re-parsing this script's own stdout.
-if [ "$OUTCOME" != pull-request ]; then
-  exit 1
-fi
+# Exit code reflects completion success, not one particular artifact class.
+# Reply comments and reviews are valid mode-specific deliverables, as are
+# the structured no-op/park paths; their successful `/complete` callbacks
+# must not turn into container-level failures after the fact.
+case "$OUTCOME" in
+  pull-request | comment | review | no-op | park | unknown-success) ;;
+  *) exit 1 ;;
+esac

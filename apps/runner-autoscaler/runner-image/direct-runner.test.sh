@@ -196,17 +196,41 @@ if [[ "$*" == *"pulls?state=all"* ]]; then
 fi
 if [[ "$*" == *"issues/42/comments"* ]]; then
   if [ "${FAKE_GH_MARKER_COMMENT:-}" = "1" ]; then
-    printf '[{"user":{"type":"Bot"},"body":"<!-- attempt-claim:%s -->"}]\n' "$ATTEMPT_ID"
+    if [[ "$*" == *"--jq"* ]]; then
+      case "$*" in
+        *'agent-result:v1:park'*)
+          [ "${FAKE_GH_MARKER_PARK:-}" = "1" ] && echo '99'
+          ;;
+        *'agent-result:v1:no-op'*)
+          [ "${FAKE_GH_MARKER_NO_OP:-}" = "1" ] && echo '99'
+          ;;
+        *) echo '99' ;;
+      esac
+    else
+      printf '[{"user":{"type":"Bot"},"body":"<!-- attempt-claim:%s -->"}]\n' "$ATTEMPT_ID"
+    fi
   else
-    echo '[]'
+    if [[ "$*" == *"--jq"* ]]; then
+      echo ''
+    else
+      echo '[]'
+    fi
   fi
   exit 0
 fi
 if [[ "$*" == *"pulls/42/reviews"* ]]; then
   if [ "${FAKE_GH_MARKER_REVIEW:-}" = "1" ]; then
-    printf '[{"user":{"type":"Bot"},"body":"<!-- attempt-claim:%s -->"}]\n' "$ATTEMPT_ID"
+    if [[ "$*" == *"--jq"* ]]; then
+      echo '100'
+    else
+      printf '[{"user":{"type":"Bot"},"body":"<!-- attempt-claim:%s -->"}]\n' "$ATTEMPT_ID"
+    fi
   else
-    echo '[]'
+    if [[ "$*" == *"--jq"* ]]; then
+      echo ''
+    else
+      echo '[]'
+    fi
   fi
   exit 0
 fi
@@ -550,10 +574,56 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "issue" and .anchor.number == 42 and .mode == "reply" and .reply == "/opencode report the current status" and .runbook == "status-runbook" and .context == "from a GitHub comment"' \
   "$context_path" >/dev/null ||
   fail "github reply: prepare context lost the anchor or dispatch parameters ($(cat "$context_path"))"
-grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
-  fail "github reply: marker-bound comment was not accepted ($(cat "$COMPLETE_LOG"))"
+jq -e '.outcome == "comment" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "github reply: marker-bound comment was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-reply: OK"
+
+# Structured reply terminal outcomes retain their dedicated semantics rather
+# than being flattened to a generic comment. Both are valid successful
+# executions, so the runner must also preserve its zero exit status.
+export FAKE_ANCHOR=github
+export FAKE_MODE=reply
+export FAKE_GH_NO_MATCH=1
+export FAKE_GH_MARKER_COMMENT=1
+export FAKE_GH_MARKER_NO_OP=1
+run_scenario github-reply-no-op opencode
+unset FAKE_ANCHOR FAKE_MODE FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_NO_OP
+
+[ "$rc" -eq 0 ] || fail "github reply no-op: expected exit 0, got $rc"
+jq -e '.outcome == "no-op" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "github reply no-op: marker-bound no-op was misclassified ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario github-reply-no-op: OK"
+
+export FAKE_ANCHOR=github
+export FAKE_MODE=reply
+export FAKE_GH_NO_MATCH=1
+export FAKE_GH_MARKER_COMMENT=1
+export FAKE_GH_MARKER_PARK=1
+run_scenario github-reply-park opencode
+unset FAKE_ANCHOR FAKE_MODE FAKE_GH_NO_MATCH FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_PARK
+
+[ "$rc" -eq 0 ] || fail "github reply park: expected exit 0, got $rc"
+jq -e '.outcome == "park" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "github reply park: marker-bound park was misclassified ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario github-reply-park: OK"
+
+# A structured park overrides a same-attempt PR, but preserves that PR as
+# the reference for the control plane's human-facing blocker record.
+export FAKE_ANCHOR=github
+export FAKE_MODE=implement
+export FAKE_GH_MARKER_COMMENT=1
+export FAKE_GH_MARKER_PARK=1
+run_scenario github-pr-park opencode
+unset FAKE_ANCHOR FAKE_MODE FAKE_GH_MARKER_COMMENT FAKE_GH_MARKER_PARK
+
+[ "$rc" -eq 0 ] || fail "github PR park: expected exit 0, got $rc"
+jq -e '.outcome == "park" and .outcomeReference == {kind: "pull-request", number: 12}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "github PR park: park did not override the PR while retaining its reference ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario github-pr-park: OK"
 
 # Review mode must preserve the pull-request anchor and query its review
 # evidence after the shared PR/comment lookup finds nothing.
@@ -570,8 +640,8 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "pull-request" and .anchor.number == 42 and .mode == "review"' \
   "$context_path" >/dev/null ||
   fail "github review: prepare context lost the PR anchor or review mode ($(cat "$context_path"))"
-grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
-  fail "github review: marker-bound review was not accepted ($(cat "$COMPLETE_LOG"))"
+jq -e '.outcome == "review" and .outcomeReference == null' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "github review: marker-bound review was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-review: OK"
 
