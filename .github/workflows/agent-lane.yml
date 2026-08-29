@@ -183,9 +183,9 @@ on:
         default: false
         type: boolean
       codex-shared-lease:
-        description: 'Codex: opt into the cross-executor subscription lease after shared GCS authority is granted'
+        description: 'Codex: use the cross-executor subscription lease'
         required: false
-        default: false
+        default: true
         type: boolean
       install-workspace-deps:
         description: 'pnpm-install the primary checkout (sprinkles#4003)'

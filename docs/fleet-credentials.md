@@ -123,27 +123,21 @@ makes each repository's object a _lineage_, not a value:
 > documents this). Mint an independent login per repo — same ChatGPT
 > subscription, separate rotating token.
 
-### Shared Codex lease activation (staged)
+### Shared Codex lease
 
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`
 record serializes the single-use subscription refresh token across direct and
-hosted executors. It is deliberately **disabled by default**: existing hosted
-lanes retain their repository-prefix-only GCS authority and their current
-per-repository concurrency behavior, while the Console rejects direct Codex
-credential routes unless `LCARS_CODEX_SHARED_LEASE_ENABLED=true`.
+hosted executors. The hosted lane and Console both enable it, so no Codex
+execution path can refresh the subscription outside the shared authority.
 
-Do not enable either side independently. Activation requires all five central
-changes:
+The central activation contract is:
 
 1. Hosted and direct runtime identities have generation-CAS access to this
    one shared object in addition to their existing repository object prefix.
-2. The published Codex reusable lane's `codex-shared-lease` default is
-   changed centrally from `false` to `true` (a caller may explicitly pass
-   `false` for a rollback).
-3. The central `svc:telemetry-writer` `work.executor` grant adds `codex`.
-4. The central Console queue route adds `codex` to
-   `AGENT_LCARS_QUEUE_PIPELINES`, and the autoscaler's central
-   `LCARS_QUEUE_PIPELINES` configuration adds the matching provider.
+2. The published Codex reusable lane's `codex-shared-lease` default is `true`.
+3. The central `svc:telemetry-writer` `work.executor` grant covers `claude`,
+   `codex`, and `opencode`.
+4. The Console runtime sets `AGENT_LCARS_UNIFIED_QUEUE_ENABLED=true`.
 5. The Console runtime sets `LCARS_CODEX_SHARED_LEASE_ENABLED=true`.
 
 When enabled, the hosted workflow lease expires at the fixed GitHub Actions
@@ -151,13 +145,10 @@ run deadline (`run_started_at + job-timeout-minutes`, read from the Actions
 run resource), and direct QueueExecutor heartbeats renew the same record to
 the broker run expiry.
 A conflicting live owner returns 409; takeover requires the recorded expiry;
-normal persistence/completion releases the object. This documentation and the
-code-only staging change grant no IAM access and do not activate production
-routing. Consumers need no repository-local migration: the reusable-workflow
-default and the Console/autoscaler configuration are the central activation
-points. Until all five activation
-conditions are true, the broker must not be treated as a supported production
-Codex executor.
+normal persistence/completion releases the object. This source configuration
+does not grant IAM access or deploy the production change. Consumers need no
+repository-local migration: the reusable-workflow default and the
+Console/autoscaler configuration are the central activation points.
 
 Per new repo. **Steps 1-2 are the whole job for a repo Terraform already
 covers** — the four 2026-08 additions (`www`, `girosf`, `nx-cache-server`,
