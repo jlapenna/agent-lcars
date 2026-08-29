@@ -73,6 +73,127 @@ func TestPollOnceClaimsAndLaunches(t *testing.T) {
 	}
 }
 
+func TestTickSchedulesOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {
+	var gotMethod, gotPath, gotBearer, gotContentType string
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotBearer = r.Header.Get("Authorization")
+		gotContentType = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ticked":0,"minted":[],"errors":[]}`))
+	}))
+	defer server.Close()
+
+	err := tickSchedulesOnce(scheduleTickerConfig{
+		consoleURL: server.URL + "/",
+		idToken:    func() (string, error) { return "google-id-token", nil },
+	})
+	if err != nil {
+		t.Fatalf("tickSchedulesOnce: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/work/v1/schedules/tick" {
+		t.Fatalf("request = %s %s, want POST /api/work/v1/schedules/tick", gotMethod, gotPath)
+	}
+	if gotBearer != "Bearer google-id-token" {
+		t.Fatalf("Authorization = %q", gotBearer)
+	}
+	if gotContentType != "application/json" || string(gotBody) != "{}" {
+		t.Fatalf("request body/content type = %q/%q, want application/json/{}", gotContentType, gotBody)
+	}
+}
+
+func TestTickSchedulesOnceReportsNonSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("work.cron scope required"))
+	}))
+	defer server.Close()
+
+	err := tickSchedulesOnce(scheduleTickerConfig{
+		consoleURL: server.URL,
+		idToken:    func() (string, error) { return "google-id-token", nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "work.cron") {
+		t.Fatalf("tickSchedulesOnce error = %v, want bounded unauthorized diagnostic", err)
+	}
+}
+
+func TestTickSchedulesOnceReportsPartialScheduleFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ticked":2,"minted":[],"errors":[{"scheduleId":"01J5Z3K9QX8F0N2B4V6C8D1E3G","message":"store unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	err := tickSchedulesOnce(scheduleTickerConfig{
+		consoleURL: server.URL,
+		idToken:    func() (string, error) { return "google-id-token", nil },
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "1 per-schedule errors") ||
+		!strings.Contains(err.Error(), "01J5Z3K9QX8F0N2B4V6C8D1E3G") ||
+		!strings.Contains(err.Error(), "store unavailable") {
+		t.Fatalf("tickSchedulesOnce error = %v, want partial schedule failure", err)
+	}
+}
+
+func TestTickSchedulesOnceRejectsMalformedOrOversizedSuccessResponse(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "malformed JSON",
+			body: `{"errors":`,
+			want: "decoding schedule tick response",
+		},
+		{
+			name: "missing errors array",
+			body: `{"ticked":0}`,
+			want: "missing errors array",
+		},
+		{
+			name: "oversized response",
+			body: `{"errors":[],"padding":"` + strings.Repeat("x", scheduleTickResponseBodyLimit) + `"}`,
+			want: "exceeds",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			err := tickSchedulesOnce(scheduleTickerConfig{
+				consoleURL: server.URL,
+				idToken:    func() (string, error) { return "google-id-token", nil },
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("tickSchedulesOnce error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestScheduleTickMetricsExposeSuccessAndError(t *testing.T) {
+	success := testutil.ToFloat64(scheduleTicksTotal.WithLabelValues("success"))
+	failure := testutil.ToFloat64(scheduleTicksTotal.WithLabelValues("error"))
+	recordScheduleTick(true)
+	recordScheduleTick(false)
+	if got := testutil.ToFloat64(scheduleTicksTotal.WithLabelValues("success")); got != success+1 {
+		t.Fatalf("schedule tick success metric = %v, want %v", got, success+1)
+	}
+	if got := testutil.ToFloat64(scheduleTicksTotal.WithLabelValues("error")); got != failure+1 {
+		t.Fatalf("schedule tick error metric = %v, want %v", got, failure+1)
+	}
+}
+
 // TestPollOnceNoQueuedRunLaunchesNothing covers both shapes the console
 // answers "nothing queued for these pipelines" with: a 200 with an empty
 // body (what it actually sends today) and a bare 204 (still tolerated, in

@@ -78,9 +78,10 @@ env:
   # the one global cutover below does. svc:telemetry-writer
   # is the runner-autoscaler's queue executor claim identity
   # (native-work-items sub-project 4,
-  # #1502): scoped to work.executor only, never work.operator -- see
-  # docs/deployment-boundary.md's work-grants table. Its executor grant is
-  # the sole server-side claim capability source for every direct runner.
+  # #1502): scoped to work.executor and work.cron, never work.operator --
+  # see docs/deployment-boundary.md's work-grants table. Those separate
+  # grants make it the sole server-side claim capability source for every
+  # direct runner and the server-owned schedule ticker identity.
   #
   # The Firebase App Hosting default compute service account is Sprinkles'
   # current ambient backend identity. Its ID token's raw `email` is the
@@ -89,7 +90,7 @@ env:
   # `/lcars` Slack command's direct GitHub issue filing with a native item.
   # Its current grant lists every supported pipeline.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
     availability:
       - RUNTIME
 

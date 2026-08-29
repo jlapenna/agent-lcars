@@ -19,16 +19,8 @@ export interface WorkAuthDeps {
   verifyGoogleIdToken: (
     token: string,
   ) => Promise<{ email: string; emailVerified: boolean }>;
-  /** GitHub Actions OIDC verifier for the scheduled tick trigger
-   *  (`work-schedules-tick.yml`). Only reached when the bearer is not a
-   *  valid Google token for our audience -- see `authenticateWorkRequest`
-   *  below. Resolves on a trusted token, throws otherwise; the identity
-   *  itself is not needed past "this is the trusted tick caller". */
-  verifyScheduleTickOidcToken: (token: string) => Promise<unknown>;
   /** GitHub Actions OIDC verifier for the session-pin-tick trigger
-   *  (`work-session-pin-tick.yml`, sub-project 6) -- tried after the
-   *  schedule-tick verifier, on the same "not Google, try the next
-   *  pinned workflow" fallthrough `authenticateWorkRequest` already uses. */
+   *  (`work-session-pin-tick.yml`, sub-project 6). */
   verifySessionPinTickOidcToken: (token: string) => Promise<unknown>;
   session: () => Promise<{ user?: { login?: string } } | null>;
   grants: () => WorkGrant[];
@@ -92,8 +84,8 @@ export function rawBearerToken(request: Request): string | undefined {
 
 /**
  * Bearer token first, tried against Google, then on failure against the
- * schedule-tick OIDC verifier, then on failure against the session-pin-tick
- * OIDC verifier; an Auth.js session only when no bearer header is present.
+ * session-pin-tick OIDC verifier; an Auth.js session only when no bearer
+ * header is present.
  * A bearer that fails all three never falls back to the session -- a
  * caller that presented a credential is judged on it.
  */
@@ -112,27 +104,13 @@ export async function authenticateWorkRequest(
         return principalFor(email, 'google', deps.grants());
       }
       // Verified as a Google token for our audience, but carrying no
-      // confirmed identity (unverified or empty email) -- refused outright,
-      // never retried against the schedule-tick OIDC verifier below. A
-      // caller that presented a credential is judged on it; this is not
+      // confirmed identity (unverified or empty email) -- refused outright.
+      // A caller that presented a credential is judged on it; this is not
       // the "not a Google token at all" case the catch below is for.
       return undefined;
     } catch {
       // Not a Google-issued token for our audience -- fall through to the
-      // GitHub Actions schedule-tick branch below.
-    }
-    try {
-      await deps.verifyScheduleTickOidcToken(token);
-      return {
-        principal: 'cron:tick',
-        subject: 'cron:tick',
-        scopes: new Set<WorkScope>(['work.cron']),
-        pipelines: [],
-        via: 'oidc',
-      };
-    } catch {
-      // Not the schedule-tick caller either -- fall through to the
-      // session-pin-tick branch below.
+      // one remaining GitHub Actions OIDC caller below.
     }
     try {
       await deps.verifySessionPinTickOidcToken(token);

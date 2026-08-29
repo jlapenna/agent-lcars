@@ -8,8 +8,8 @@ name: Work Session Pin Tick
 # "Sub-project 6: session resume and persistence".
 #
 # Cadence and its rationale (#1542): GitHub drops most scheduled runs in
-# this repo -- the evidence there shows work-schedules-tick.yml's `*/5`
-# schedule firing zero times over several hours, while
+# this repo -- the evidence there showed the former native-schedule workflow
+# firing zero times over several hours, while
 # dispatch-reconcile.yml's 30-minute-offset `7,37 * * * *` schedule (the
 # one pattern confirmed to actually fire) still only completed 3 of an
 # expected 16 runs in an 8-hour window. This workflow deliberately copies
@@ -50,7 +50,7 @@ jobs:
 
       # Read side: a session-pin-tick-audienced GitHub Actions OIDC token,
       # verified by work-auth.ts's fourth branch (work.reaper scope, no
-      # grant-list entry needed -- an OIDC principal, like cron:tick).
+      # grant-list entry needed -- this is a hardcoded OIDC principal).
       # Minted by hand rather than through
       # .github/actions/request-control-plane: that action mints a token
       # and POSTs it in the same step, but the token here needs to survive

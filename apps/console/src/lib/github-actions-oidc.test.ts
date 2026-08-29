@@ -24,12 +24,10 @@ import {
   assertCompletionOidcClaims,
   assertReconcileOidcClaims,
   assertRequestOidcClaims,
-  assertScheduleTickOidcClaims,
   assertSessionPinTickOidcClaims,
   verifyCompletionOidcToken,
   verifyReconcileOidcToken,
   verifyRequestOidcToken,
-  verifyScheduleTickOidcToken,
 } from './github-actions-oidc';
 
 // Matches the constants inlined into github-actions-oidc.ts (formerly
@@ -96,8 +94,8 @@ describe('GitHub Actions reconciler OIDC claims', () => {
   });
 });
 
-// `verifyReconcileOidcToken` (and `verifyScheduleTickOidcToken` below) never
-// wrap `jwtVerify`'s own rejection -- these guard that a token jose itself
+// `verifyReconcileOidcToken` never wraps `jwtVerify`'s own rejection -- these
+// guard that a token jose itself
 // refuses (wrong audience, expired) propagates as a rejection rather than
 // being swallowed or mis-mapped. Real claim-shape enforcement (repository,
 // ref, event_name, ...) is exercised directly against `assertReconcileOidcClaims`
@@ -134,109 +132,6 @@ describe('verifyReconcileOidcToken', () => {
     await expect(verifyReconcileOidcToken('token', repository)).rejects.toThrow(
       'exp',
     );
-  });
-});
-
-// #1502 sub-project 3: the scheduled tick trigger for cron-ingressed work.
-// One canonical caller, like the reconciler -- pinned to the control-plane
-// home via `job_workflow_ref`, not the request path's allow-list.
-const SCHEDULE_TICK_OIDC_AUDIENCE = 'agent-lcars-work-schedules';
-const SCHEDULE_TICK_WORKFLOW_PATH = '.github/workflows/work-schedules-tick.yml';
-
-const scheduleTickClaims = {
-  aud: SCHEDULE_TICK_OIDC_AUDIENCE,
-  repository,
-  repository_id: '1307149765',
-  run_id: '93099054125',
-  job_workflow_ref: `${repository}/${SCHEDULE_TICK_WORKFLOW_PATH}@refs/heads/main`,
-  ref: 'refs/heads/main',
-  event_name: 'schedule',
-};
-
-describe('GitHub Actions schedule-tick OIDC claims', () => {
-  it('accepts the scheduled and manual tick workflow on main', () => {
-    expect(
-      assertScheduleTickOidcClaims(scheduleTickClaims, repository),
-    ).toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-    });
-    expect(
-      assertScheduleTickOidcClaims(
-        { ...scheduleTickClaims, event_name: 'workflow_dispatch' },
-        repository,
-      ),
-    ).toEqual({
-      repository,
-      repositoryId: 1_307_149_765,
-      runId: 93_099_054_125,
-    });
-  });
-
-  it.each([
-    [{ ...scheduleTickClaims, repository: 'attacker/fork' }, 'repository'],
-    [
-      {
-        ...scheduleTickClaims,
-        job_workflow_ref: `${repository}/.github/workflows/ci.yml@refs/heads/main`,
-      },
-      'job_workflow_ref',
-    ],
-    [{ ...scheduleTickClaims, ref: 'refs/heads/feature' }, 'ref'],
-    [{ ...scheduleTickClaims, event_name: 'pull_request' }, 'event_name'],
-    [{ ...scheduleTickClaims, repository_id: 'not-a-number' }, 'repository_id'],
-    [{ ...scheduleTickClaims, run_id: '0' }, 'run_id'],
-  ])('rejects a caller with the wrong %s claim', (claims, field) => {
-    expect(() => assertScheduleTickOidcClaims(claims, repository)).toThrow(
-      field,
-    );
-  });
-});
-
-describe('verifyScheduleTickOidcToken', () => {
-  afterEach(() => {
-    jwtVerify.mockReset();
-  });
-
-  it('requests the schedule-tick audience, not the reconciler or completion one', async () => {
-    jwtVerify.mockResolvedValue({ payload: scheduleTickClaims });
-
-    await verifyScheduleTickOidcToken('token', repository);
-
-    expect(jwtVerify).toHaveBeenCalledWith(
-      'token',
-      expect.anything(),
-      expect.objectContaining({ audience: SCHEDULE_TICK_OIDC_AUDIENCE }),
-    );
-  });
-
-  it('rejects a token bearing the wrong audience', async () => {
-    jwtVerify.mockRejectedValue(
-      new JWTClaimValidationFailed(
-        'unexpected "aud" claim value',
-        scheduleTickClaims,
-        'aud',
-        'check_failed',
-      ),
-    );
-    await expect(
-      verifyScheduleTickOidcToken('token', repository),
-    ).rejects.toThrow('aud');
-  });
-
-  it('rejects an expired token', async () => {
-    jwtVerify.mockRejectedValue(
-      new JWTExpired(
-        '"exp" claim timestamp check failed',
-        scheduleTickClaims,
-        'exp',
-        'check_failed',
-      ),
-    );
-    await expect(
-      verifyScheduleTickOidcToken('token', repository),
-    ).rejects.toThrow('exp');
   });
 });
 

@@ -26,11 +26,11 @@ const operator = {
   via: 'session' as const,
 };
 const cronTick = {
-  principal: 'cron:tick',
-  subject: 'cron:tick',
+  principal: 'svc:telemetry-writer',
+  subject: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
   scopes: new Set(['work.cron'] as const),
-  pipelines: [],
-  via: 'oidc' as const,
+  pipelines: ['claude', 'codex', 'opencode'],
+  via: 'google' as const,
 };
 const executorOnly = {
   principal: 'svc:autoscaler',
@@ -140,7 +140,7 @@ describe('schedules routes', () => {
     );
   });
 
-  it('refuses schedule CRUD for a cron:tick principal, which carries no work.operator scope', async () => {
+  it('refuses schedule CRUD for a cron-scoped service principal, which carries no work.operator scope', async () => {
     const ctx = withPrincipal(context(), cronTick);
     for (const [m, p, b] of [
       ['PUT', `/schedules/${ID}`, { cron: '0 * * * *', spec }],
@@ -468,6 +468,34 @@ describe('tick', () => {
     const gotAfterSecond = await call(ctx, 'GET', `/schedules/${ID}`);
     expect(gotAfterSecond.json.lastSlotAt).toBe(gotAfterFirst.json.lastSlotAt);
     expect(gotAfterSecond.json.lastItemId).toBe(itemId);
+  });
+
+  it('coalesces concurrent autoscaler ticks for one due slot into one durable item and run', async () => {
+    const ctx = context();
+    await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
+      cron: '* * * * *',
+      spec,
+    });
+    const tickCtx = withPrincipal(ctx, cronTick);
+
+    // Autoscaler replicas all own the same cadence. They may reach the Work
+    // API together, but the deterministic item/request id makes the
+    // orchestrator's compare-and-set the authority: exactly one task/run is
+    // durable and the other call replays it.
+    const [first, second] = await Promise.all([
+      call(tickCtx, 'POST', '/schedules/tick', {}),
+      call(tickCtx, 'POST', '/schedules/tick', {}),
+    ]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+
+    const slot = latestDueSlot(parseCron('* * * * *'), NOW);
+    if (slot === undefined) throw new Error('expected a due slot at NOW');
+    const itemId = await slotItemId(ID, slot);
+    expect(await ctx.runtime.store.readTask({ workId: itemId })).toBeDefined();
+    expect(await ctx.runtime.store.listRuns({ workId: itemId })).toHaveLength(
+      1,
+    );
   });
 
   it('uses the global queue executor on a minted tick run, same as items.create', async () => {

@@ -94,6 +94,20 @@ describe('grant scopes', () => {
     expect(grants[0]?.scopes).toEqual(['work.executor']);
   });
 
+  it('accepts work.cron only when explicitly granted', () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:telemetry-writer',
+          subjects: ['telemetry-writer@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claude', 'codex', 'opencode'],
+          scopes: ['work.cron'],
+        },
+      ]),
+    );
+    expect(grants[0]?.scopes).toEqual(['work.cron']);
+  });
+
   it('rejects an explicit empty scopes list as a config error rather than silently treating it as none', () => {
     expect(() =>
       parseWorkGrants(
