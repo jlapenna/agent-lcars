@@ -65,7 +65,6 @@ function run(overrides: Partial<Run> = {}): Run {
     state: 'running',
     pipeline: 'claude',
     requestId: 'request-1',
-    executor: 'queue',
     leaseExpiresAt: '2026-08-28T14:00:00.000Z',
     events: [{ at: T0, to: 'pending', by: 'request' }],
     createdAt: T0,

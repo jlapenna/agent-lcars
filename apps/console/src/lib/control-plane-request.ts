@@ -47,41 +47,6 @@ export function parseHostedJsonBody<T>(
   return parse(value);
 }
 
-const hostedCompletionRequestSchema = z
-  .object({
-    // Optional: a native/work-anchored run has no GitHub issue at all and
-    // completes by `intentId` alone -- see `handleCompletion`'s own
-    // `isGithubAnchor` guard (`orchestrator-routes.ts`), which only checks
-    // `issue` when the run it names is GitHub-anchored.
-    issue: z.number().int().safe().positive().optional(),
-    workflow: z.string().min(1),
-    generation: z.number().int().safe().optional(),
-    intentId: z.string().min(1).optional(),
-    /** Echoed back from the dispatch token minted at `beginDispatch`
-     *  (`crypto.randomBytes(24).toString('base64url')`, 32 characters); 16
-     *  is a floor that rejects an obviously wrong value without hard-coding
-     *  the exact minted length here. */
-    token: z.string().min(16).optional(),
-    outcome: z.unknown().optional(),
-    outcomeReference: z.unknown().optional(),
-  })
-  .strict();
-
-/**
- * Validate a hosted worker completion callback body. This is wire-shape
- * validation only -- binding the completion to the correct ledger
- * generation happens deeper, in `assertCompletionLedgerBinding`.
- */
-export function parseHostedCompletionRequestBody(
-  value: unknown,
-): z.infer<typeof hostedCompletionRequestSchema> {
-  const result = hostedCompletionRequestSchema.safeParse(value);
-  if (!result.success) {
-    throw new HostedRouteRequestError('Invalid completion request body');
-  }
-  return result.data;
-}
-
 /**
  * The scheduled reconcile trigger carries no payload of its own -- reject
  * anything but an empty body so a caller sending unexpected data fails fast

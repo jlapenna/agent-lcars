@@ -31,7 +31,6 @@ export const itemRunViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
-  executor: z.enum(['github-actions', 'queue']).optional(),
   queue: z
     .strictObject({
       state: z.enum(['queued', 'claimed']),

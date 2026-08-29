@@ -652,7 +652,7 @@ printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-
 
 echo "scenario codex-native-park: OK"
 
-# The direct adapter must enforce the hosted lane's 60-minute OpenCode bound
+# The QueueExecutor adapter must enforce the 60-minute OpenCode bound
 # locally. A short override makes this regression deterministic without
 # waiting an hour: timeout sends TERM to the trusted CLI, then the runner
 # finalizes and reports the failed/no-deliverable run instead of wedging a

@@ -84,7 +84,6 @@ async function seedQueuedRun(
     taskId: { workId: opts.workId },
     requestId: opts.workId,
     pipeline,
-    executor: 'queue',
     work: {
       origin: { principal: 'user:jlapenna', channel: 'api' },
       spec: opts.spec ?? {
@@ -212,7 +211,6 @@ const context = {
     releaseLease: async () => undefined,
     replace: async () => undefined,
   },
-  codexSharedLeaseEnabled: true,
 };
 
 describe('claim', () => {
@@ -315,7 +313,7 @@ describe('claim', () => {
     );
   });
 
-  it('claims Codex from the executor grant even when the credential adapter is off', async () => {
+  it('claims Codex from the executor grant', async () => {
     const { store, orchestrator, now } = fixture();
     const codexRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-staged-off'),
@@ -333,7 +331,6 @@ describe('claim', () => {
         orchestrator,
         now,
         ...context,
-        codexSharedLeaseEnabled: false,
         principal: executorPrincipal(['codex', 'claude']),
       },
       'POST',
@@ -544,7 +541,6 @@ describe('brief', () => {
       taskId: { repo: 'octo/example', issue: 42 },
       requestId: 'github-brief',
       pipeline: 'opencode',
-      executor: 'queue',
       params: {
         mode: 'review',
         reply: '/opencode review this',
@@ -1132,29 +1128,6 @@ describe('codexAuth', () => {
     });
   });
 
-  it('refuses direct Codex auth until the shared lease capability is enabled', async () => {
-    const { store, orchestrator, now, runId, token } = await claimedCodexRun();
-    const read = vi.fn(context.codexAuth.read);
-    const createLease = vi.fn(async () => undefined);
-    const r = await call(
-      {
-        store,
-        orchestrator,
-        now,
-        ...context,
-        codexSharedLeaseEnabled: false,
-        codexAuth: { ...context.codexAuth, read, createLease },
-        bearerToken: token,
-      },
-      'GET',
-      runPath(runId, '/codex-auth'),
-    );
-
-    expect(r.status).toBe(500);
-    expect(read).not.toHaveBeenCalled();
-    expect(createLease).not.toHaveBeenCalled();
-  });
-
   it('releases a newly claimed subscription lease when credential restore fails', async () => {
     const { store, orchestrator, now, runId, token } = await claimedCodexRun();
     const releaseLease = vi.fn(async () => undefined);
@@ -1383,7 +1356,7 @@ describe('codexAuth', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks a direct Codex run from restoring while the hosted executor holds the shared lease', async () => {
+  it('blocks a second Codex QueueExecutor run while another run holds the shared lease', async () => {
     const { store, orchestrator, now } = fixture();
     const secondRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-lease-second'),

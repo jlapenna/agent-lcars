@@ -123,23 +123,20 @@ describe('toItemView', () => {
     expect(view.spec.title).toBe('t');
     expect(view.runs[0]?.result?.ref).toContain('/pull/9');
     expect(view.sessions).toHaveLength(1);
-    expect(view.runs[0]).not.toHaveProperty('executor');
     expect(view.runs[0]).not.toHaveProperty('queue');
   });
 
-  it('projects executor and a claimed-by queue state onto each run view', () => {
+  it('projects a claimed-by queue state onto each run view', () => {
     const view = toItemView({
       workId: WORK_ID,
       task: task(),
       runs: [
         run(1, 'running', {
-          executor: 'queue',
           queue: { state: 'claimed', claimedBy: 'runner-pike-1' },
         }),
       ],
     });
     expect(view.runs[0]).toMatchObject({
-      executor: 'queue',
       queue: { state: 'claimed', claimedBy: 'runner-pike-1' },
     });
   });

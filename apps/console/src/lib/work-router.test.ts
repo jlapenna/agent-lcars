@@ -214,23 +214,6 @@ describe('items routes', () => {
     expect(again.json.runs).toHaveLength(1);
   });
 
-  it('create uses the one server-selected executor for every admitted pipeline', async () => {
-    const ctx = context();
-    ctx.runtime.dispatchExecutor = () => 'queue';
-    const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
-    expect(r.status).toBe(201);
-    const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-    expect(run?.executor).toBe('queue');
-  });
-
-  it('create leaves executor unset before the global queue cutover', async () => {
-    const ctx = context();
-    const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
-    expect(r.status).toBe(201);
-    const run = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-    expect(run?.executor).toBeUndefined();
-  });
-
   it('refuses a replay whose spec differs from the stored one with 409', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });
@@ -338,23 +321,18 @@ describe('items routes', () => {
     expect(fresh?.params).toBeUndefined();
   });
 
-  it('redispatch adopts the one server-selected executor at the cutover', async () => {
+  it('redispatch creates a fresh run', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });
     await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
       ok: false,
       summary: 'blocked',
     });
-    const before = await ctx.runtime.store.readRun(`work:${ID}/r1`);
-    expect(before?.executor).toBeUndefined();
-
-    // The global executor is consulted when the new run is requested, so a
-    // queued migration cannot be bypassed by a retry or redispatch.
-    ctx.runtime.dispatchExecutor = () => 'queue';
     const r = await call(ctx, 'POST', `/items/${ID}/redispatch`);
     expect(r.status).toBe(200);
-    const after = await ctx.runtime.store.readRun(`work:${ID}/r2`);
-    expect(after?.executor).toBe('queue');
+    expect(await ctx.runtime.store.readRun(`work:${ID}/r2`)).toMatchObject({
+      state: 'pending',
+    });
   });
 
   it('refuses to redispatch an item whose repo is not admitted, with 403', async () => {

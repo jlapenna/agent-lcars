@@ -497,11 +497,8 @@ describe('tick', () => {
     );
   });
 
-  it('uses the global queue executor on a minted tick run, same as items.create', async () => {
-    // Both `items.create` and the schedule tick route through `mintItem`.
-    // The runtime's one provider-neutral decision must reach both paths.
+  it('mints a run for a due tick item', async () => {
     const ctx = context();
-    ctx.runtime.dispatchExecutor = () => 'queue';
     await call(withNow(ctx, CREATE_NOW), 'PUT', `/schedules/${ID}`, {
       cron: '* * * * *',
       spec,
@@ -513,8 +510,9 @@ describe('tick', () => {
     expect(r.json.minted).toHaveLength(1);
     const itemId = r.json.minted[0].itemId;
 
-    const run = await ctx.runtime.store.readRun(`work:${itemId}/r1`);
-    expect(run?.executor).toBe('queue');
+    expect(await ctx.runtime.store.readRun(`work:${itemId}/r1`)).toMatchObject({
+      state: 'pending',
+    });
   });
 
   it("replays mintItem's idempotent-create path when the deterministic slot item already exists", async () => {

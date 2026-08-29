@@ -18,7 +18,7 @@ import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { toRunResult } from './orchestrator-routes';
+import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import type { WorkPrincipal } from './work-auth';
 
@@ -37,13 +37,6 @@ export interface RunsContext {
   tokens: DispatchTokenProvider;
   checkoutTokens: DispatchTokenProvider;
   codexAuth: CodexAuthStore;
-  /**
-   * Enables the Codex credential adapter only after hosted and direct
-   * executors share the GCS lease authority. Omitted is deliberately false:
-   * a direct Codex runner may claim work, but cannot obtain subscription
-   * credentials until the adapter can enforce that shared lease.
-   */
-  codexSharedLeaseEnabled?: boolean;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -150,15 +143,6 @@ function codexAuthError(
   throw errors.INTERNAL_SERVER_ERROR();
 }
 
-function requireCodexSharedLeaseEnabled(context: RunsContext): void {
-  if (context.codexSharedLeaseEnabled !== true) {
-    throw new CodexAuthStoreError(
-      'unavailable',
-      'Shared Codex subscription lease authority is not enabled',
-    );
-  }
-}
-
 /** `claim` retry budget for a stale queue entry -- see the loop's own
  *  comment below. */
 const MAX_CLAIM_ATTEMPTS = 5;
@@ -233,10 +217,9 @@ async function requireCodexLeaseOwner(
   }
 }
 
-/** Renew the shared credential lease with the broker run's freshly renewed
- * expiry. The hosted executor uses this same expiry field, so no executor
- * may continue using the rotating credential after its record becomes
- * stealable. */
+/** Renew the shared credential lease with the QueueExecutor run's freshly
+ * renewed expiry, so no executor may continue using the rotating credential
+ * after its record becomes stealable. */
 async function renewCodexLease(
   context: RunsContext,
   runId: string,
@@ -411,9 +394,6 @@ export const runsRouter = os.router({
 
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
-    if (run.pipeline === 'codex') {
-      requireCodexSharedLeaseEnabled(context);
-    }
     const renewed = await context.orchestrator.renew(run.runId);
     if (isRefusal(renewed)) {
       return { runId: run.runId, expiresAt: run.leaseExpiresAt };
@@ -484,7 +464,6 @@ export const runsRouter = os.router({
     const { run, repository } = await requireCodexRun(context, input.runId);
     let acquired = false;
     try {
-      requireCodexSharedLeaseEnabled(context);
       await acquireCodexLease(context, run, repository);
       acquired = true;
       return await context.codexAuth.read();
@@ -497,7 +476,6 @@ export const runsRouter = os.router({
   persistCodexAuth: os.persistCodexAuth.handler(
     async ({ input, context, errors }) => {
       const { repository } = await requireCodexRun(context, input.runId);
-      requireCodexSharedLeaseEnabled(context);
       let persisted = false;
       let result:
         | { status: 'skipped-burned' }

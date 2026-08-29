@@ -272,9 +272,6 @@ export const workRouter = os.router({
         taskId: { workId: input.id },
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
-        ...(context.runtime.dispatchExecutor?.(spec.pipeline) === undefined
-          ? {}
-          : { executor: context.runtime.dispatchExecutor(spec.pipeline) }),
         ...(resumeParams === undefined ? {} : { params: resumeParams }),
       });
       if (isRefusal(outcome)) {

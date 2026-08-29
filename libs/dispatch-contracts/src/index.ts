@@ -12,10 +12,6 @@ export {
   formatDispatchMarker,
   parseDispatchMarker,
 } from './marker';
-export {
-  COMPLETION_FINALIZER_WORKFLOW_PATH,
-  COMPLETION_OIDC_AUDIENCE,
-} from './oidc';
 export type { DispatchOutcomeKind } from './outcomes';
 export type { AgentPipeline, PipelineContract } from './pipelines';
 export {

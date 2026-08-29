@@ -92,10 +92,6 @@ async function handle(request: Request): Promise<Response> {
         createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
       ),
       codexAuth: codexAuthStore('agent-lcars-codex-auth'),
-      // Default-off staging gate: direct Codex cannot use auth until hosted
-      // lanes are deliberately moved onto the same global lease authority.
-      codexSharedLeaseEnabled:
-        process.env['LCARS_CODEX_SHARED_LEASE_ENABLED'] === 'true',
     },
   });
   if (runsResult.matched && runsResult.response !== undefined) {

@@ -698,7 +698,6 @@ export function runOrchestratorStoreContract(
           taskId: { workId: queueWorkId(requestId) },
           requestId,
           pipeline: 'claude',
-          executor: 'queue',
         });
         if (isRefusal(outcome)) throw new Error('unexpected refusal');
         return decidedRun(outcome);
