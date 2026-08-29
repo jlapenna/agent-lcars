@@ -67,7 +67,22 @@ describe('Codex subscription lease contract', () => {
     // This is a workflow-boundary contract: its consumer is the required
     // Verify job, which blocks a hosted lane regression before it can write
     // a burned generation back to the credential store.
-    expect(lane).toContain('2> >(tee "$RUNNER_TEMP/codex-stderr.log" >&2)');
+    expect(lane).toContain('mkfifo "$codex_stderr_pipe"');
+    expect(lane).toContain(
+      'tee "$RUNNER_TEMP/codex-stderr.log" < "$codex_stderr_pipe" >&2 &',
+    );
+    expect(lane).toContain('codex_stderr_tee_pid=$!');
+    expect(lane).toContain('wait "$codex_stderr_tee_pid" || true');
+    const stderrTee = lane.indexOf(
+      'tee "$RUNNER_TEMP/codex-stderr.log" < "$codex_stderr_pipe" >&2 &',
+    );
+    const stderrWait = lane.indexOf('wait "$codex_stderr_tee_pid" || true');
+    const persist = lane.indexOf(
+      '- name: Persist refreshed subscription authentication',
+    );
+    expect(stderrTee).toBeGreaterThanOrEqual(0);
+    expect(stderrTee).toBeLessThan(stderrWait);
+    expect(stderrWait).toBeLessThan(persist);
     expect(lane).toContain(
       'codex_failure_messages="$RUNNER_TEMP/codex-failure-messages"',
     );

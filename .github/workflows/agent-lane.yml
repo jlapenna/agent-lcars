@@ -1393,9 +1393,24 @@ jobs:
           # catch that -- a pre-existing status:needs-human label, or a PR opened
           # just before the crash, satisfies it.
           set -o pipefail
+          codex_stderr_pipe="$RUNNER_TEMP/codex-stderr.pipe"
+          rm -f -- "$codex_stderr_pipe"
+          mkfifo "$codex_stderr_pipe"
+          tee "$RUNNER_TEMP/codex-stderr.log" < "$codex_stderr_pipe" >&2 &
+          codex_stderr_tee_pid=$!
+          set +e
           codex exec --json --dangerously-bypass-approvals-and-sandbox \
             "$CODEX_PROMPT" \
-            2> >(tee "$RUNNER_TEMP/codex-stderr.log" >&2) | tee "$RUNNER_TEMP/codex-output.jsonl"
+            2> "$codex_stderr_pipe" | tee "$RUNNER_TEMP/codex-output.jsonl"
+          codex_run_status=("${PIPESTATUS[@]}")
+          set -e
+          wait "$codex_stderr_tee_pid" || true
+          rm -f -- "$codex_stderr_pipe"
+          for status in "${codex_run_status[@]}"; do
+            if [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
+          done
 
       - name: Persist refreshed subscription authentication
         # Persist a refresh whether Codex succeeded or failed, but do not
@@ -1444,7 +1459,6 @@ jobs:
           codex_stderr="$RUNNER_TEMP/codex-stderr.log"
           codex_failure_messages="$RUNNER_TEMP/codex-failure-messages"
           auth_failure_reason=""
-          [ -e "$codex_stderr" ] || : > "$codex_stderr"
           : > "$codex_failure_messages"
           if [ -s "$codex_output" ]; then
             while IFS= read -r codex_event; do
