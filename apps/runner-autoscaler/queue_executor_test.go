@@ -83,7 +83,7 @@ func TestTickSchedulesOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {
 		gotContentType = r.Header.Get("Content-Type")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ticked":0,"minted":[]}`))
+		_, _ = w.Write([]byte(`{"ticked":0,"minted":[],"errors":[]}`))
 	}))
 	defer server.Close()
 
@@ -118,6 +118,66 @@ func TestTickSchedulesOnceReportsNonSuccess(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "work.cron") {
 		t.Fatalf("tickSchedulesOnce error = %v, want bounded unauthorized diagnostic", err)
+	}
+}
+
+func TestTickSchedulesOnceReportsPartialScheduleFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ticked":2,"minted":[],"errors":[{"scheduleId":"01J5Z3K9QX8F0N2B4V6C8D1E3G","message":"store unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	err := tickSchedulesOnce(scheduleTickerConfig{
+		consoleURL: server.URL,
+		idToken:    func() (string, error) { return "google-id-token", nil },
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "1 per-schedule errors") ||
+		!strings.Contains(err.Error(), "01J5Z3K9QX8F0N2B4V6C8D1E3G") ||
+		!strings.Contains(err.Error(), "store unavailable") {
+		t.Fatalf("tickSchedulesOnce error = %v, want partial schedule failure", err)
+	}
+}
+
+func TestTickSchedulesOnceRejectsMalformedOrOversizedSuccessResponse(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "malformed JSON",
+			body: `{"errors":`,
+			want: "decoding schedule tick response",
+		},
+		{
+			name: "missing errors array",
+			body: `{"ticked":0}`,
+			want: "missing errors array",
+		},
+		{
+			name: "oversized response",
+			body: `{"errors":[],"padding":"` + strings.Repeat("x", scheduleTickResponseBodyLimit) + `"}`,
+			want: "exceeds",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			err := tickSchedulesOnce(scheduleTickerConfig{
+				consoleURL: server.URL,
+				idToken:    func() (string, error) { return "google-id-token", nil },
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("tickSchedulesOnce error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
