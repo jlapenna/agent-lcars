@@ -182,6 +182,30 @@ jobs:
 
       - uses: ./.github/actions/setup-node-pnpm
 
+      # These are incident-derived safety, CLI, and artifact contracts. They
+      # used to run in an advisory `ci-tooling.yml` lane, which meant no person
+      # or system acted on failure. Keep the earned coverage in the required
+      # Verify path; policy/config assertions run through `check:contracts`
+      # below. The optional local console-cache diagnostic had no shipping
+      # consumer and was deleted with that advisory lane (#1605).
+      - name: Test repository symlink integrity
+        run: bash tools/check-repo-symlinks.test.sh
+
+      - name: Test E2E runner node-tar repair (#1435)
+        run: bash tools/e2e-runner/node-tar-health.test.sh
+
+      - name: Test hermetic E2E environment
+        run: node --test tools/e2e-hermetic-env.test.mjs
+
+      - name: Test e2e-docker isolation (#908)
+        run: bash tools/e2e-docker-isolation.test.sh
+
+      - name: Test Nx remote-cache read failure is non-fatal (#942)
+        run: bash tools/nx-remote-cache-read-failure.test.sh
+
+      - name: Test bounded Nx native binding cache (#1458)
+        run: bash tools/nx-native-file-cache.test.sh
+
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: 0.12.5

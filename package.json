@@ -4,7 +4,6 @@
   "license": "Apache-2.0",
   "scripts": {
     "check:contracts": "vitest run --config tools/contract-tests/vitest.config.mts",
-    "check:contracts:ci-self": "vitest run --config tools/contract-tests/ci-self/vitest.config.mts",
     "check:dependencies": "./tools/check-dependencies.sh",
     "check:labels": "node ./tools/sync-github-labels.mjs",
     "format": "./tools/nx format:write --all",
@@ -12,10 +11,6 @@
     "lint": "./tools/nx run-many -t lint --all",
     "postinstall": "patch-package; . tools/cloud-build-prebuild.sh",
     "prepare": "./tools/setup-git-hooks.sh",
-    "trajectory:collect": "node tools/trajectory-evaluation/cli.mjs collect",
-    "trajectory:compare": "node tools/trajectory-evaluation/cli.mjs compare --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json --variant tools/trajectory-evaluation/variants/issue-523-reliability-v1.json",
-    "trajectory:report": "node tools/trajectory-evaluation/cli.mjs report --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
-    "trajectory:validate": "node tools/trajectory-evaluation/cli.mjs validate --corpus tools/trajectory-evaluation/corpus/v1/issue-523.json",
     "tsc": "./tools/nx run-many -t typecheck",
     "lint:circular": "madge --circular --extensions ts,tsx --ts-config tsconfig.base.json --exclude '.*(dist|test|spec).*' libs/ apps/",
     "verify": "pnpm format:check && pnpm lint && pnpm lint:circular && ./tools/nx run-many -t test typecheck build --all",
