@@ -102,6 +102,17 @@ describe('FleetSnapshotBar', () => {
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent('4 online');
   });
 
+  it('renders authoritative Run lifecycle counts separately from scale-set capacity', () => {
+    renderBar({
+      ...EMPTY_ACTIVITY,
+      queue: { queued: 2, claimed: 1, running: 3 },
+    });
+
+    expect(screen.getByTestId('queue-lifecycle')).toHaveTextContent(
+      'Queue: 2 queued, 1 claimed, 3 running',
+    );
+  });
+
   it('renders the queue-stall alert when a run is stalled', () => {
     renderBar({
       ...EMPTY_ACTIVITY,

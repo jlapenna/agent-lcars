@@ -25,7 +25,7 @@ import {
  * - `LogicalWork`: one canonical task (`TaskRef` - repo + issue number,
  *   never a title or a run ID). What an operator actually wants to reason
  *   about: "what is happening with issue #42."
- * - `ExecutionAttempt`: one GitHub Actions workflow run. A task may have
+ * - `ExecutionAttempt`: one authoritative broker execution attempt. A task may have
  *   zero attempts (nothing dispatched yet), one normal attempt, or
  *   more than one (a genuine anomaly this model surfaces, never hides).
  *
@@ -46,7 +46,7 @@ export type LogicalWorkState =
 export type AttemptAttribution =
   'orchestrator' | 'run-marker' | 'legacy-title' | 'unattributed';
 
-/** One GitHub Actions workflow run, enriched with whatever dispatch
+/** One broker execution attempt, enriched with whatever dispatch
  * lineage could be attributed to it. Every field `AgentRun` already carries
  * is still here (this is a superset, not a projection) - nothing about the
  * underlying run is lost by wrapping it. */
@@ -95,7 +95,7 @@ export interface LogicalWork {
   url: string;
   selectedPipeline?: AgentPipeline;
   state: LogicalWorkState;
-  /** Every workflow run attributed to this task, oldest first. Never
+  /** Every execution attempt attributed to this task, oldest first. Never
    * shrunk by grouping - a duplicate/retry keeps every attempt visible. */
   attempts: ExecutionAttempt[];
   anomalies: LogicalWorkAnomaly[];
@@ -295,9 +295,9 @@ export interface ActivityMetrics {
   queuedAttempts: number;
   /** Raw workflow attempts currently running, across every task. */
   runningAttempts: number;
-  /** From `listSelfHostedRunnersForRepo` - physical capacity, not work.
-   * Undefined when the runner API was unavailable (matches `FleetSummary`
-   * itself being optional). */
+  /** From the server-owned autoscaler telemetry projection - physical
+   * capacity, not work. Undefined when that authoritative read failed
+   * (matches `FleetSummary` itself being optional). */
   onlineRunners?: number;
   busyRunners?: number;
 }

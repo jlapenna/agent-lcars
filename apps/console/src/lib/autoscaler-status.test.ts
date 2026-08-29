@@ -102,6 +102,36 @@ describe('getAutoscalerStatuses', () => {
     expect((await getAutoscalerStatuses()).statuses).toEqual([]);
   });
 
+  it('parses the additive queue-executor health record without treating it as scale-set capacity', async () => {
+    mockStore([
+      status(),
+      {
+        schemaVersion: 2,
+        kind: 'queue-executor',
+        executor: 'queue',
+        ready: true,
+        draining: false,
+        activeRuns: 2,
+        maxConcurrent: 3,
+        updatedAt: new Date().toISOString(),
+      },
+    ]);
+
+    const result = await getAutoscalerStatuses();
+
+    expect(result.statuses).toHaveLength(1);
+    expect(result.queueExecutor).toEqual({
+      schemaVersion: 2,
+      kind: 'queue-executor',
+      executor: 'queue',
+      ready: true,
+      draining: false,
+      activeRuns: 2,
+      maxConcurrent: 3,
+      updatedAt: expect.any(String),
+    });
+  });
+
   it('degrades without throwing when telemetry reads fail', async () => {
     (getAgentTelemetryReaderFirestore as Mock).mockRejectedValue(
       new Error('offline'),

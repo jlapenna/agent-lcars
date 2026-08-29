@@ -5,7 +5,7 @@ import type { AgentRun } from './agent-activity';
 import {
   classifyAgentRun,
   deriveSilentErrorDiagnoses,
-  indexSessionsByNumericRunId,
+  indexSessionsByRunId,
 } from './run-classification';
 
 function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
@@ -133,16 +133,16 @@ describe('deriveSilentErrorDiagnoses', () => {
   });
 });
 
-describe('indexSessionsByNumericRunId', () => {
-  it('joins by String(run.id) against the runId-keyed map', () => {
-    const runs = [makeRun({ id: 1 }), makeRun({ id: 2 })];
+describe('indexSessionsByRunId', () => {
+  it('joins exact broker and historic IDs against the runId-keyed map', () => {
+    const runs = [makeRun({ id: 'octo/example#42/r1' }), makeRun({ id: 2 })];
     const sessionsByRunId = new Map([
-      ['1', makeSessionDoc({ sessionId: 'a' })],
+      ['octo/example#42/r1', makeSessionDoc({ sessionId: 'a' })],
     ]);
 
-    const result = indexSessionsByNumericRunId(runs, sessionsByRunId);
+    const result = indexSessionsByRunId(runs, sessionsByRunId);
 
-    expect(result[1]?.sessionId).toBe('a');
+    expect(result['octo/example#42/r1']?.sessionId).toBe('a');
     expect(result[2]).toBeUndefined();
   });
 });

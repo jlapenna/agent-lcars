@@ -1,24 +1,26 @@
 import { parseDispatchMarker } from '@agent-lcars/dispatch-contracts';
-import type { Octokit } from '@octokit/rest';
+import {
+  isWorkAnchor,
+  type OrchestratorStore,
+  type Run as OrchestratorRun,
+  type Task,
+  taskKey,
+  type VersionedTask,
+} from '@agent-lcars/orchestrator';
+import { workSpecSchema } from '@agent-lcars/work';
 
 import {
-  getGithubClient,
-  getWatchedRepos,
-  repoItemKey,
-  repoKey,
-  type WatchedRepo,
-} from './github-client';
+  type AutoscalerScaleSetStatus,
+  getAutoscalerStatuses,
+} from './autoscaler-status';
+import { repoItemKey, type WatchedRepo } from './github-client';
+import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 // Re-exported from github-client.ts, which owns the server-side watched-repo
 // boundary; the pure integration shape itself lives in watched-repo.ts.
 export type { AgentPipeline } from './github-client';
 import type { AgentPipeline } from './github-client';
-import { agentIntegration } from './watched-repo';
-
-// Mirrors timeout-minutes in .github/workflows/claude.yml AND
-// .github/workflows/opencode.yml (both 90m) so the live-run progress bar
-// reflects the real kill budget regardless of which pipeline produced the
-// run.
+// Direct executors share the same 90-minute run lease budget.
 export const RUN_TIMEOUT_MINUTES = 90;
 
 // Mirrors claude.yml's `--max-turns 200` claude_args. opencode.yml has no
@@ -27,51 +29,30 @@ export const RUN_TIMEOUT_MINUTES = 90;
 // see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
-/** Resolves which workflow filename a `(repo, pipeline)` pair fetches from.
- * Undefined means this repo does not declare that agent integration. */
-function resolveWorkflowFile(
-  repo: WatchedRepo,
-  pipeline: AgentPipeline,
-): string | undefined {
-  return agentIntegration(repo, pipeline)?.workflowFile;
-}
-
 /** Exported so the panel can label the list as "last N" when it fills. */
 export const RECENT_RUN_LIMIT = 8;
+const ACTIVITY_TASK_LIMIT = 200;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
 
 export interface AgentRun {
-  id: number;
-  /** Which watched repo this run belongs to - threaded from the
-   * `(repo, pipeline)` fetch pair, never re-derived from the run itself. */
+  /** The exact orchestrator run id, suitable for telemetry joins. Legacy
+   * numeric GitHub Actions ids remain accepted only for historical UI tests. */
+  id: string | number;
+  /** The anchor's repository (a GitHub anchor itself, or a native Work
+   * item's declared target). It is presentation metadata, never runner
+   * capacity or execution-state truth. */
   repo: WatchedRepo;
-  /**
-   * Which workflow this run was fetched from. Derived from the fetch source
-   * (which workflow_id produced it), never string-sniffed from the title -
-   * titles are free text a human could edit.
-   */
+  /** The pipeline selected at admission and persisted on the run. */
   pipeline: AgentPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
   event: string;
   url: string;
-  /**
-   * Every lane caller in the fleet renders `#<issue/PR number>: <Agent>
-   * issue agent [dispatch:g<gen>:<intent>]` - one shape, pinned to
-   * `libs/dispatch-contracts`' `runNameLabel` by
-   * `tools/contract-tests/run-name-console-join.test.ts`. That leading
-   * `#<number>:` is what joins live runs to action items without any
-   * runner-side telemetry.
-   */
+  /** A derived operator label carrying the exact broker dispatch marker. */
   displayTitle: string;
-  /**
-   * Parsed from the leading `#<number>:` of displayTitle. Undefined for
-   * runs that predate the run-name rollout, and for the legacy `codex #N:`
-   * / `opencode #N:` prefixes retired in #1340 A-R2 - callers should fall
-   * back to a title-string match against `displayTitle` for those.
-   */
+  /** Present for GitHub anchors; absent for native Work. */
   issueNumber?: number;
   createdAt: string;
   updatedAt: string;
@@ -82,21 +63,16 @@ export interface AgentRun {
   elapsedSeconds: number;
 }
 
-/**
- * Reduced view of `listSelfHostedRunnersForRepo`. #2974 migrated every
- * workflow to autoscaler scale sets: runners are now ephemeral, register
- * with empty label arrays, and legitimately scale to zero when idle. There
- * is nothing meaningful left to show per-runner (the old per-runner
- * name/label badges), so only the fleet-wide aggregate is tracked.
- */
+/** The server-owned autoscaler telemetry aggregate. Runners are ephemeral,
+ * can scale to zero when idle, and have no useful repository affiliation. */
 export interface FleetSummary {
   online: number;
   busy: number;
 }
 
 export interface AgentActivity {
-  /** Every live (queued or running) workflow attempt, exactly as GitHub
-   * reports them - no representative-attempt collapsing: #306 removed the
+  /** Every live (queued or running) authoritative broker run, with no
+   * representative-attempt collapsing: #306 removed the
    * old "pick one representative attempt per (issue, pipeline) key and
    * silently drop the rest" behavior, since a duplicate dispatch (or a
    * genuine retry-in-flight) is exactly the kind of anomaly an operator
@@ -107,20 +83,84 @@ export interface AgentActivity {
    * this field itself is the raw, ungrouped truth. */
   liveRuns: AgentRun[];
   recentRuns: AgentRun[];
-  /** undefined = runner API unavailable (e.g. token lacks admin:read).
-   * Deduped by runner id across every watched repo (see `fleetByRepo` for
-   * the un-deduped per-repo view), so this never double-counts an
-   * org-level runner group shared across repos. */
+  /** undefined = the authoritative runner telemetry read failed. */
   fleet?: FleetSummary;
-  /** Per-repo runner counts, keyed by `repoKey()` - each repo's own
-   * `listSelfHostedRunnersForRepo` view, NOT deduped against the others (an
-   * org-shared runner genuinely shows up in both repos' own API response,
-   * so this reflects what each repo actually reports). Only present when
-   * more than one repo is watched; a single-repo config has nothing to
-   * break out. */
-  fleetByRepo?: Record<string, FleetSummary>;
+  /** Lifecycle counts from authoritative Run records, never scale-set
+   * telemetry. `claimed` remains pending until its executor starts it. */
+  queue?: QueueRunSummary;
   /** Human-readable notes when a section above degraded instead of crashing. */
   warnings: string[];
+}
+
+/** Reduces the autoscaler's current-state projection once for the entire
+ * fleet. It deliberately has no repository or provider input: scale-set
+ * telemetry is the control plane's authoritative runner truth. */
+export function fleetFromAutoscalerStatuses(
+  statuses: readonly AutoscalerScaleSetStatus[],
+): FleetSummary {
+  let online = 0;
+  let busy = 0;
+  for (const status of statuses) {
+    for (const runner of status.runners) {
+      online += 1;
+      if (runner.state === 'busy') busy += 1;
+    }
+  }
+  return { online, busy };
+}
+
+export interface QueueRunSummary {
+  queued: number;
+  claimed: number;
+  running: number;
+}
+
+/**
+ * Counts direct-executor lifecycle state from broker Runs. Scale-set status
+ * measures hosted-runner capacity and must not be used as queue occupancy.
+ */
+export function queueFromLiveRuns(
+  runs: readonly OrchestratorRun[],
+): QueueRunSummary {
+  const summary: QueueRunSummary = { queued: 0, claimed: 0, running: 0 };
+  for (const run of runs) {
+    if (run.state === 'running') {
+      summary.running += 1;
+    } else if (run.state === 'pending' && run.queue?.state === 'claimed') {
+      summary.claimed += 1;
+    } else if (run.state === 'pending') {
+      summary.queued += 1;
+    }
+  }
+  return summary;
+}
+
+/**
+ * The store deliberately pages task reads. Recent runs have no repository or
+ * provider partition, so following that cursor is what keeps older anchors
+ * from disappearing once the fleet exceeds one page.
+ */
+async function listAllActivityTasks(
+  store: Pick<OrchestratorStore, 'listTasks'>,
+): Promise<VersionedTask[]> {
+  const tasks: VersionedTask[] = [];
+  let before: { updatedAt: string; taskKey: string } | undefined;
+  do {
+    const page = await (before === undefined
+      ? store.listTasks(ACTIVITY_TASK_LIMIT)
+      : store.listTasks(ACTIVITY_TASK_LIMIT, before));
+    tasks.push(...page);
+    const last = page.at(-1);
+    before =
+      last === undefined
+        ? undefined
+        : {
+            updatedAt: last.task.updatedAt,
+            taskKey: taskKey(last.task.task),
+          };
+    if (page.length < ACTIVITY_TASK_LIMIT) return tasks;
+  } while (before !== undefined);
+  return tasks;
 }
 
 // One shape fleet-wide since #1340 A-R2. Before that, codex and opencode
@@ -271,248 +311,206 @@ export function duplicateLivePipelineGroups<T extends AgentRun>(
   return byPipeline;
 }
 
-interface WorkflowRunLike {
-  id: number;
-  status: string | null;
-  conclusion: string | null;
-  event: string;
-  html_url: string;
-  display_title: string;
-  created_at: string;
-  updated_at: string;
-  run_started_at?: string;
+function repositoryFromTarget(targetRepo: string): WatchedRepo | undefined {
+  const [owner, name, ...rest] = targetRepo.split('/');
+  return owner && name && rest.length === 0 ? { owner, name } : undefined;
 }
 
-function toConclusion(raw: string | null): AgentRunConclusion | undefined {
-  if (!raw) return undefined;
-  if (raw === 'success' || raw === 'failure' || raw === 'cancelled') return raw;
-  return 'other';
+function generationFromRunId(runId: string): string {
+  return runId.match(/\/r(\d+)$/u)?.[1] ?? '0';
 }
 
-function toAgentRun(
-  run: WorkflowRunLike,
-  repo: WatchedRepo,
-  pipeline: AgentPipeline,
-): AgentRun {
-  const status: AgentRunStatus =
-    run.status === 'completed'
-      ? 'completed'
-      : run.status === 'in_progress'
-        ? 'running'
-        : 'queued';
-  const startMs = new Date(
-    status === 'queued'
-      ? run.created_at
-      : (run.run_started_at ?? run.created_at),
-  ).getTime();
-  const endMs =
-    status === 'completed' ? new Date(run.updated_at).getTime() : Date.now();
+function statusFor(run: OrchestratorRun): AgentRunStatus {
+  return run.state === 'pending'
+    ? 'queued'
+    : run.state === 'running'
+      ? 'running'
+      : 'completed';
+}
+
+function conclusionFor(run: OrchestratorRun): AgentRunConclusion | undefined {
+  if (run.state === 'finished') return run.result?.ok ? 'success' : 'failure';
+  if (run.state === 'canceled') return 'cancelled';
+  return run.state === 'lost' ? 'failure' : undefined;
+}
+
+/** Projects one durable run with its owning task's metadata. Invalid native
+ * payloads are not guessed at: callers surface a single authoritative-data
+ * warning and retain the rest of the fleet feed. */
+export function agentRunFromOrchestrator(
+  run: OrchestratorRun,
+  task: Task,
+  now = Date.now(),
+): AgentRun | undefined {
+  const status = statusFor(run);
+  const elapsedSeconds = Math.max(
+    0,
+    Math.round(
+      ((status === 'completed' ? Date.parse(run.updatedAt) : now) -
+        Date.parse(run.createdAt)) /
+        1000,
+    ),
+  );
+  const generation = generationFromRunId(run.runId);
+  const marker = `[dispatch:g${generation}:${run.runId}]`;
+
+  if (!isWorkAnchor(run.task)) {
+    const repo = repositoryFromTarget(run.task.repo);
+    if (!repo) return undefined;
+    const spec = workSpecSchema.safeParse(
+      (task.work as Record<string, unknown> | undefined)?.['spec'],
+    );
+    const title = spec.success ? spec.data.title : `${run.pipeline} agent`;
+    return {
+      id: run.runId,
+      repo,
+      pipeline: run.pipeline as AgentPipeline,
+      status,
+      conclusion: conclusionFor(run),
+      event: run.executor ?? 'github-actions',
+      url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
+      displayTitle: `#${run.task.issue}: ${title} ${marker}`,
+      issueNumber: run.task.issue,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      elapsedSeconds,
+    };
+  }
+
+  const spec = workSpecSchema.safeParse(
+    (task.work as Record<string, unknown> | undefined)?.['spec'],
+  );
+  if (!spec.success) return undefined;
+  const repo = repositoryFromTarget(spec.data.target.repo);
+  if (!repo) return undefined;
   return {
-    id: run.id,
+    id: run.runId,
     repo,
-    pipeline,
+    pipeline: run.pipeline as AgentPipeline,
     status,
-    conclusion: toConclusion(run.conclusion),
-    event: run.event,
-    url: run.html_url,
-    displayTitle: run.display_title,
-    issueNumber: issueNumberFromDisplayTitle(run.display_title),
-    createdAt: run.created_at,
-    updatedAt: run.updated_at,
-    elapsedSeconds: Math.max(0, Math.round((endMs - startMs) / 1000)),
+    conclusion: conclusionFor(run),
+    event: run.executor ?? 'github-actions',
+    url: `/work/${run.task.workId}`,
+    displayTitle: `${spec.data.title} ${marker}`,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    elapsedSeconds,
   };
 }
 
-// Both claude.yml and opencode.yml still fire on every issue comment, while
-// the hosted control-plane controller handles label events. Most comment-triggered runs
-// skip at the job-level `if:` and complete in seconds with conclusion
-// `skipped`. During a busy comment stretch the
-// newest 50+ runs can ALL be skipped no-ops, so "recent real runs" cannot be
-// derived from a single recency-ordered page - query per real conclusion
-// instead (the API's `status` param also accepts conclusions) and merge.
-const RECENT_CONCLUSIONS = ['success', 'failure', 'cancelled'] as const;
-
-async function fetchLiveRuns(
-  octokit: Octokit,
-  repo: WatchedRepo,
-  pipeline: AgentPipeline,
-  workflowFile: string,
-): Promise<AgentRun[]> {
-  const response = await octokit.rest.actions.listWorkflowRuns({
-    owner: repo.owner,
-    repo: repo.name,
-    workflow_id: workflowFile,
-    per_page: 30,
-  });
-  return response.data.workflow_runs
-    .filter((run) => run.status !== 'completed')
-    .map((run) => toAgentRun(run, repo, pipeline));
-}
-
-async function fetchRecentRuns(
-  octokit: Octokit,
-  repo: WatchedRepo,
-  pipeline: AgentPipeline,
-  workflowFile: string,
-): Promise<AgentRun[]> {
-  const responses = await Promise.all(
-    RECENT_CONCLUSIONS.map((status) =>
-      octokit.rest.actions.listWorkflowRuns({
-        owner: repo.owner,
-        repo: repo.name,
-        workflow_id: workflowFile,
-        status,
-        per_page: RECENT_RUN_LIMIT,
-      }),
-    ),
-  );
-  return responses
-    .flatMap((response) => response.data.workflow_runs)
-    .map((run) => toAgentRun(run, repo, pipeline));
-}
-
-const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
-
 export async function getAgentActivity(): Promise<AgentActivity> {
-  const octokit = getGithubClient();
-  const repos = getWatchedRepos();
-
-  // One (repo, pipeline) pair per fetch, skipping pairs a repo has opted out
-  // of (see resolveWorkflowFile) - naive N-repo x M-pipeline fan-out,
-  // deliberately unthrottled for now (see #13, filed alongside this change).
-  const pairs = repos.flatMap((repo) =>
-    PIPELINES.flatMap((pipeline) => {
-      const workflowFile = resolveWorkflowFile(repo, pipeline);
-      return workflowFile ? [{ repo, pipeline, workflowFile }] : [];
-    }),
-  );
-
-  // Same defensive pattern as getActionItems: any half failing (API hiccup,
-  // missing token permission) degrades that section instead of crashing the
-  // whole dashboard. Live runs are always the newest rows, so one small
-  // unfiltered page per pair covers them. The runner fleet listing is
-  // fetched per repo - deduped by runner id before summing (below), since
-  // an org-level runner group shared across watched repos would otherwise
-  // be double-counted once for each repo that can see it.
-  const [liveResults, recentResults, runnerResults] = await Promise.all([
-    Promise.allSettled(
-      pairs.map(({ repo, pipeline, workflowFile }) =>
-        fetchLiveRuns(octokit, repo, pipeline, workflowFile),
-      ),
-    ),
-    Promise.allSettled(
-      pairs.map(({ repo, pipeline, workflowFile }) =>
-        fetchRecentRuns(octokit, repo, pipeline, workflowFile),
-      ),
-    ),
-    Promise.allSettled(
-      repos.map((repo) =>
-        octokit.rest.actions
-          .listSelfHostedRunnersForRepo({
-            owner: repo.owner,
-            repo: repo.name,
-            per_page: 100,
-          })
-          .then((response) => ({ repo, response })),
-      ),
-    ),
-  ]);
+  const { store } = createOrchestratorRuntime();
 
   const warnings: string[] = [];
+  const [liveRead, taskRead, autoscalerRead] = await Promise.allSettled([
+    store.listLiveRuns(),
+    listAllActivityTasks(store),
+    getAutoscalerStatuses(),
+  ]);
+  const autoscaler =
+    autoscalerRead.status === 'fulfilled'
+      ? autoscalerRead.value
+      : { statuses: [], warnings: ['Runner autoscaler status unavailable.'] };
 
-  let liveRuns: AgentRun[] = [];
-  for (const [i, result] of liveResults.entries()) {
-    if (result.status === 'fulfilled') {
-      liveRuns = liveRuns.concat(result.value);
-    } else {
-      console.error(
-        'agent-lcars: failed to list live agent runs (%s/%s):',
-        repoKey(pairs[i].repo),
-        pairs[i].pipeline,
-        result.reason,
-      );
-      warnings.push(
-        `Live agent runs unavailable for ${repoKey(pairs[i].repo)} (GitHub API request failed).`,
-      );
-    }
+  if (liveRead.status === 'rejected') {
+    console.error(
+      'agent-lcars: failed to list authoritative live runs:',
+      liveRead.reason,
+    );
+    warnings.push('Authoritative live run activity unavailable.');
   }
-  // No representative-attempt collapse here (#306) - every raw attempt
-  // survives in `liveRuns`. Duplicate/anomalous attempts are grouped explicitly by
-  // `logical-work.ts`'s `deriveLogicalWork`, never dropped by this fetch.
+  if (taskRead.status === 'rejected') {
+    console.error(
+      'agent-lcars: failed to list authoritative recent runs:',
+      taskRead.reason,
+    );
+    warnings.push('Authoritative recent run activity unavailable.');
+  }
 
-  let recentRuns: AgentRun[] = [];
-  for (const [i, result] of recentResults.entries()) {
-    if (result.status === 'fulfilled') {
-      recentRuns = recentRuns.concat(result.value);
-    } else {
-      console.error(
-        'agent-lcars: failed to list recent agent runs (%s/%s):',
-        repoKey(pairs[i].repo),
-        pairs[i].pipeline,
-        result.reason,
-      );
-      warnings.push(
-        `Recent agent runs unavailable for ${repoKey(pairs[i].repo)} (GitHub API request failed).`,
-      );
+  const taskByKey = new Map(
+    (taskRead.status === 'fulfilled' ? taskRead.value : []).map(({ task }) => [
+      taskKey(task.task),
+      task,
+    ]),
+  );
+  const invalidMetadata = { value: false };
+  const project = (run: OrchestratorRun, task: Task | undefined) => {
+    if (task === undefined) {
+      invalidMetadata.value = true;
+      return undefined;
     }
-  }
-  recentRuns = recentRuns
+    const projected = agentRunFromOrchestrator(run, task);
+    if (projected === undefined) invalidMetadata.value = true;
+    return projected;
+  };
+
+  const authoritativeLiveRuns =
+    liveRead.status === 'fulfilled' ? liveRead.value : [];
+  const liveRuns = (
+    await Promise.all(
+      authoritativeLiveRuns.map(async (run) => {
+        const known = taskByKey.get(taskKey(run.task));
+        if (known !== undefined) return project(run, known);
+        try {
+          return project(run, (await store.readTask(run.task))?.task);
+        } catch (error) {
+          console.error(
+            'agent-lcars: failed to read authoritative live run task:',
+            error,
+          );
+          invalidMetadata.value = true;
+          return undefined;
+        }
+      }),
+    )
+  ).filter((run): run is AgentRun => run !== undefined);
+
+  const recentSources = await Promise.all(
+    (taskRead.status === 'fulfilled' ? taskRead.value : []).map(
+      async ({ task }) => {
+        try {
+          return { task, runs: await store.listRuns(task.task) };
+        } catch (error) {
+          console.error(
+            'agent-lcars: failed to read authoritative task runs:',
+            error,
+          );
+          warnings.push('Authoritative recent run activity unavailable.');
+          return undefined;
+        }
+      },
+    ),
+  );
+  const recentRuns = recentSources
+    .flatMap((source) =>
+      source === undefined
+        ? []
+        : source.runs
+            .filter((run) => run.state !== 'pending' && run.state !== 'running')
+            .map((run) => project(run, source.task)),
+    )
+    .filter((run): run is AgentRun => run !== undefined)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, RECENT_RUN_LIMIT);
+  if (invalidMetadata.value) {
+    warnings.push('Authoritative run activity contains invalid task metadata.');
+  }
 
-  let fleet: FleetSummary | undefined;
-  let fleetByRepo: Record<string, FleetSummary> | undefined;
-  // Keyed by runner id (not summed inline): an org-level runner group
-  // registers identically against every repo it's shared with, so listing
-  // it per watched repo would otherwise count the same runner once per
-  // repo that can see it.
-  const runnersById = new Map<number, { status: string; busy: boolean }>();
-  let anyFleetResult = false;
-  const perRepoFleet: Record<string, FleetSummary> = {};
-  for (const [i, result] of runnerResults.entries()) {
-    if (result.status === 'fulfilled') {
-      anyFleetResult = true;
-      const repoTotal = { online: 0, busy: 0 };
-      for (const runner of result.value.response.data.runners) {
-        runnersById.set(runner.id, {
-          status: runner.status,
-          busy: runner.busy,
-        });
-        if (runner.status === 'online') {
-          repoTotal.online += 1;
-          if (runner.busy) repoTotal.busy += 1;
-        }
-      }
-      perRepoFleet[repoKey(repos[i])] = repoTotal;
-    } else {
-      console.error(
-        'agent-lcars: failed to list self-hosted runners (%s):',
-        repoKey(repos[i]),
-        result.reason,
-      );
-      warnings.push(
-        `Runner fleet status unavailable for ${repoKey(repos[i])} (GitHub API request failed).`,
-      );
-    }
-  }
-  if (anyFleetResult) {
-    fleet = { online: 0, busy: 0 };
-    for (const runner of runnersById.values()) {
-      if (runner.status === 'online') {
-        fleet.online += 1;
-        if (runner.busy) fleet.busy += 1;
-      }
-    }
-    if (repos.length > 1) {
-      fleetByRepo = perRepoFleet;
-    }
-  }
+  // A telemetry warning means the reader could not establish authoritative
+  // fleet state, so do not turn that into a misleading zero-runner result.
+  // Propagate its single fleet-level warning unchanged rather than emitting
+  // one synthetic failure per watched repository.
+  const fleet =
+    autoscaler.warnings.length === 0
+      ? fleetFromAutoscalerStatuses(autoscaler.statuses)
+      : undefined;
+  warnings.push(...autoscaler.warnings);
 
   return {
     liveRuns,
     recentRuns,
     fleet,
-    fleetByRepo,
+    queue: queueFromLiveRuns(authoritativeLiveRuns),
     warnings: Array.from(new Set(warnings)),
   };
 }

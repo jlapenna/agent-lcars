@@ -22,8 +22,8 @@ export function RecentOutcomesSection({
 }: {
   recentRuns: AgentRun[];
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
-   * `indexSessionsByNumericRunId` in run-classification.ts. */
-  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+   * `indexSessionsByRunId` in run-classification.ts. */
+  sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
 }) {
   // Recent outcomes are useful evidence only when there is evidence to
   // inspect. Suppressing the empty panel keeps the first viewport focused on

@@ -79,15 +79,15 @@ export function deriveSilentErrorDiagnoses(
  * one small helper shared by both page.tsx entry points instead of each
  * re-deriving the same `String(run.id)` join.
  */
-export function indexSessionsByNumericRunId(
+export function indexSessionsByRunId(
   runs: AgentRun[],
   sessionsByRunId: Map<string, IssueAgentSessionDoc>,
-): Record<number, IssueAgentSessionDoc> {
-  const result: Record<number, IssueAgentSessionDoc> = {};
+): Record<string, IssueAgentSessionDoc> {
+  const result: Record<string, IssueAgentSessionDoc> = {};
   for (const run of runs) {
     const session = sessionsByRunId.get(String(run.id));
     if (session) {
-      result[run.id] = session;
+      result[String(run.id)] = session;
     }
   }
   return result;

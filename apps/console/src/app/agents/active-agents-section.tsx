@@ -30,12 +30,12 @@ export function ActiveAgentsSection({
   sessionsByRunId = {},
 }: {
   liveRuns: AgentRun[];
-  itemsByRunId: Record<number, RunItemRef>;
+  itemsByRunId: Record<string, RunItemRef>;
   activeSessions: CliSession[];
   items: ActionItem[];
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
-   * `indexSessionsByNumericRunId` in run-classification.ts. */
-  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+   * `indexSessionsByRunId` in run-classification.ts. */
+  sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
 }) {
   const hasActivity = liveRuns.length > 0 || activeSessions.length > 0;
 

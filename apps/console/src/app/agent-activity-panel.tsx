@@ -293,10 +293,10 @@ export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
 }
 
 /**
- * A dimmed count chip when the fleet has any online runners; nothing at all
- * when it's scaled to zero. Since #2974's autoscaler scale-set migration,
- * zero registered runners is the normal idle state, not an outage, so it no
- * longer deserves any pixels.
+ * A dimmed scale-set capacity chip when the fleet has any online runners;
+ * nothing at all when it is scaled to zero. This is intentionally not direct
+ * queue-executor occupancy: queued/claimed/running work comes from durable
+ * orchestrator Run records elsewhere in the activity view.
  */
 export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
   if (fleet === undefined) {
@@ -309,7 +309,7 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
   if (fleet.online === 0) return null;
   return (
     <Text size="xs" c="dimmed" data-testid="fleet-chip">
-      {fleet.online} runner{fleet.online === 1 ? '' : 's'} active
+      {fleet.online} scale-set runner{fleet.online === 1 ? '' : 's'} active
       {fleet.busy > 0 ? ` (${fleet.busy} busy)` : ''}
     </Text>
   );
@@ -412,12 +412,14 @@ export function LiveRunRow({
             {taskHref ? 'Open task' : 'Inspect run'}
             {!taskHref && ' ↗'}
           </Anchor>
-          <CancelRunButton
-            repo={run.repo}
-            runId={run.id}
-            label={run.displayTitle}
-            className="operations-secondary-action"
-          />
+          {typeof run.id === 'number' && (
+            <CancelRunButton
+              repo={run.repo}
+              runId={run.id}
+              label={run.displayTitle}
+              className="operations-secondary-action"
+            />
+          )}
         </Group>
       </div>
     );
@@ -489,11 +491,13 @@ export function LiveRunRow({
               session
             </Anchor>
           )}
-          <CancelRunButton
-            repo={run.repo}
-            runId={run.id}
-            label={run.displayTitle}
-          />
+          {typeof run.id === 'number' && (
+            <CancelRunButton
+              repo={run.repo}
+              runId={run.id}
+              label={run.displayTitle}
+            />
+          )}
         </Group>
       </Group>
       {run.status === 'running' && (
@@ -563,8 +567,8 @@ export function LiveRunGroupList({
   variant = 'detail',
 }: {
   liveRuns: AgentRun[];
-  itemsByRunId?: Record<number, RunItemRef>;
-  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+  itemsByRunId?: Record<string, RunItemRef>;
+  sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   variant?: ActivityRowVariant;
 }) {
   return (
@@ -957,11 +961,11 @@ export function AgentActivityPanel({
 }: {
   activity: AgentActivity;
   cliSessions?: CliSession[];
-  itemsByRunId?: Record<number, RunItemRef>;
+  itemsByRunId?: Record<string, RunItemRef>;
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
-   * `indexSessionsByNumericRunId` in run-classification.ts. Absent/empty
+   * `indexSessionsByRunId` in run-classification.ts. Absent/empty
    * renders exactly as before this telemetry existed (PRD user story 16). */
-  sessionsByRunId?: Record<number, IssueAgentSessionDoc>;
+  sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   /** Keep the Bridge's active repository scope when opening full history. */
   repoFilter?: string;
 }) {

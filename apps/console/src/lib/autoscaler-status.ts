@@ -28,8 +28,23 @@ export interface AutoscalerScaleSetStatus {
   updatedAt: string;
 }
 
+/** Generic direct-executor health, intentionally separate from v1 scale-set
+ * capacity. Queue lifecycle counts belong to orchestrator Run records, not
+ * this host telemetry projection. */
+export interface QueueExecutorStatus {
+  schemaVersion: 2;
+  kind: 'queue-executor';
+  executor: 'queue';
+  ready: boolean;
+  draining: boolean;
+  activeRuns?: number;
+  maxConcurrent: number;
+  updatedAt: string;
+}
+
 export interface AutoscalerStatusResult {
   statuses: AutoscalerScaleSetStatus[];
+  queueExecutor?: QueueExecutorStatus;
   warnings: string[];
 }
 
@@ -107,6 +122,36 @@ function parseStatus(value: unknown): AutoscalerScaleSetStatus | undefined {
   };
 }
 
+function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const status = value as Record<string, unknown>;
+  if (
+    status['schemaVersion'] !== 2 ||
+    status['kind'] !== 'queue-executor' ||
+    status['executor'] !== 'queue' ||
+    typeof status['ready'] !== 'boolean' ||
+    typeof status['draining'] !== 'boolean' ||
+    (status['activeRuns'] !== undefined &&
+      typeof status['activeRuns'] !== 'number') ||
+    typeof status['maxConcurrent'] !== 'number' ||
+    typeof status['updatedAt'] !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 2,
+    kind: 'queue-executor',
+    executor: 'queue',
+    ready: status['ready'],
+    draining: status['draining'],
+    ...(typeof status['activeRuns'] === 'number'
+      ? { activeRuns: status['activeRuns'] }
+      : {}),
+    maxConcurrent: status['maxConcurrent'],
+    updatedAt: status['updatedAt'],
+  };
+}
+
 /**
  * Reads the autoscaler's bounded current-state projection. This is deliberately
  * uncached: status is polled separately by the small client panel so refreshing
@@ -117,8 +162,9 @@ export async function getAutoscalerStatuses(): Promise<AutoscalerStatusResult> {
     const firestore = await getAgentTelemetryReaderFirestore();
     const snapshot = await firestore.collection(RUNNER_STATUS_COLLECTION).get();
     const now = Date.now();
-    const statuses = snapshot.docs
-      .map((doc) => parseStatus(forClient(doc.data())))
+    const records = snapshot.docs.map((doc) => forClient(doc.data()));
+    const statuses = records
+      .map((record) => parseStatus(record))
       .filter((status): status is AutoscalerScaleSetStatus => {
         if (!status) return false;
         const updatedAt = Date.parse(status.updatedAt);
@@ -128,7 +174,21 @@ export async function getAutoscalerStatuses(): Promise<AutoscalerStatusResult> {
         );
       })
       .sort((a, b) => a.scaleSet.localeCompare(b.scaleSet));
-    return { statuses, warnings: [] };
+    const queueExecutor = records
+      .map((record) => parseQueueExecutor(record))
+      .find((status) => {
+        if (!status) return false;
+        const updatedAt = Date.parse(status.updatedAt);
+        return (
+          Number.isFinite(updatedAt) &&
+          now - updatedAt <= RUNNER_STATUS_STALENESS_MS
+        );
+      });
+    return {
+      statuses,
+      ...(queueExecutor === undefined ? {} : { queueExecutor }),
+      warnings: [],
+    };
   } catch (error) {
     console.error('agent-lcars: failed to list autoscaler status:', error);
     return {

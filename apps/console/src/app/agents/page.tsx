@@ -28,7 +28,7 @@ import {
   deriveLogicalWork,
   taskMetaFromItems,
 } from '../../lib/logical-work';
-import { indexSessionsByNumericRunId } from '../../lib/run-classification';
+import { indexSessionsByRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
@@ -85,7 +85,7 @@ async function AgentsPageBody({
   // run.id -> joined session doc, for every run this page renders (live and
   // recent alike) - powers Active Agents' budget gauges and Recent
   // Outcomes' classification/diagnosis (see agent-activity-panel.tsx).
-  const sessionsByRunId = indexSessionsByNumericRunId(
+  const sessionsByRunId = indexSessionsByRunId(
     [...activity.liveRuns, ...activity.recentRuns],
     runnerSessionsByRunId,
   );
@@ -108,7 +108,7 @@ async function AgentsPageBody({
     liveRunByNumber.get(repoItemKey(item.repo, item.number)) ??
     liveRunByTitle.get(item.title);
 
-  const itemsByRunId: Record<number, RunItemRef> = {};
+  const itemsByRunId: Record<string, RunItemRef> = {};
   for (const item of items) {
     const run = liveRunFor(item);
     if (run) {
