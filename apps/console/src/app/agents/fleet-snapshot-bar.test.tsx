@@ -131,7 +131,7 @@ describe('FleetSnapshotBar', () => {
     expect(screen.queryByTestId('activity-metrics-row')).toBeNull();
   });
 
-  it('renders logical-task, queued-attempt, and running-attempt counts as visibly distinct numbers (#306)', () => {
+  it('renders logical-task, queued-run, and running-run counts as visibly distinct numbers', () => {
     renderBar(EMPTY_ACTIVITY, 0, {
       logicalTaskCount: 2,
       queuedRuns: 1,
@@ -144,10 +144,10 @@ describe('FleetSnapshotBar', () => {
       '2 logical tasks',
     );
     expect(screen.getByTestId('metric-queued-attempts').textContent).toBe(
-      '1 queued attempt',
+      '1 queued run',
     );
     expect(screen.getByTestId('metric-running-attempts').textContent).toBe(
-      '3 running attempts',
+      '3 running runs',
     );
     expect(screen.getByTestId('metric-runner-occupancy').textContent).toBe(
       '2/5 runners busy',
