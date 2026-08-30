@@ -138,8 +138,10 @@ export type RunQueue = z.infer<typeof runQueueSchema>;
 export const runEventSchema = z.strictObject({
   at: isoUtc,
   to: runStateSchema,
-  /** Who caused it: `request`, `dispatch`, `report`, `operator`, or expiry. */
-  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry']),
+  /** Who caused it: `request`, `dispatch`, `report`, `operator`, `expiry`,
+   * or historical `infra`. New queue-native code does not produce `infra`,
+   * but persisted pre-cutover records must remain parseable. */
+  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry', 'infra']),
   note: z.string().max(1_024).optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;

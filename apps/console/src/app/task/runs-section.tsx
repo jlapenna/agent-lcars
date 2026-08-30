@@ -30,6 +30,7 @@ const EVENT_BY_LABELS: Record<RunEvent['by'], string> = {
   report: 'reported',
   operator: 'operator',
   expiry: 'lease expired',
+  infra: 'historical executor failure',
 };
 
 const KNOWN_PIPELINES = new Set<AgentPipeline>(['claude', 'codex', 'opencode']);
