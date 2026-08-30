@@ -34,11 +34,12 @@ resolve_archive_uri() {
     echo "Argument must be a gs://.../<session-id>.jsonl URI or a QueueExecutor run ID, got: $arg" >&2
     exit 1
   fi
-  prefix="gs://$TRANSCRIPTS_BUCKET/runs/$arg/"
+  # This tool can only resume Claude Code transcripts. A run may have archive
+  # directories for other providers too, so a run-ID shortcut must not select
+  # an arbitrary JSONL and hand it to `claude --resume`.
+  prefix="gs://$TRANSCRIPTS_BUCKET/runs/$arg/claude-code/"
   local matches=()
-  # `**` crosses the adapter directory beneath each run (for example,
-  # `.../claude-code/<session-id>.jsonl`).
-  mapfile -t matches < <(gcloud storage ls "${prefix}**/*.jsonl" 2>/dev/null || true)
+  mapfile -t matches < <(gcloud storage ls "${prefix}*.jsonl" 2>/dev/null || true)
   if [ ${#matches[@]} -eq 0 ]; then
     echo "No transcripts found under $prefix" >&2
     exit 1

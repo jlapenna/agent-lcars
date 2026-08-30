@@ -26,13 +26,18 @@ fi
 
 # QueueExecutor run IDs for GitHub anchors include `#` (for example,
 # octo/example#42/r1). The installed session-recovery command must accept
-# those IDs and use them unchanged for the archive lookup.
+# those IDs and use them unchanged for a Claude-only archive lookup, never
+# choosing a Codex/OpenCode JSONL from the same run.
 mkdir -p "$tmp/fake-bin" "$tmp/checkout" "$tmp/home"
 cat > "$tmp/fake-bin/gcloud" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${2:-}" in
   ls)
+    [ "${3:-}" = 'gs://agent-lcars-session-transcripts/runs/octo/example#42/r1/claude-code/*.jsonl' ] || {
+      echo "unexpected archive lookup: ${3:-}" >&2
+      exit 1
+    }
     printf '%s\n' 'gs://agent-lcars-session-transcripts/runs/octo/example#42/r1/claude-code/session-42.jsonl'
     ;;
   cp)
