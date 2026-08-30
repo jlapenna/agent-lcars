@@ -336,6 +336,30 @@ describe('getTaskDetail', () => {
     expect(result.runs).toEqual([lostRun, finishedRun, livePendingRun]);
   });
 
+  it('flags duplicate live native Runs without consulting hosted attempt history', async () => {
+    const running = orchestratorRun({ runId: 'run-1', state: 'running' });
+    const pending = orchestratorRun({ runId: 'run-2', state: 'pending' });
+    useAuthoritativeState([running, pending], { activeRunId: 'run-1' });
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.work.state).toBe('anomaly');
+    expect(result.work.anomalies).toEqual([
+      {
+        kind: 'duplicate-active-runs',
+        detail:
+          '2 claude runs are queued or running for the same task at once (run-1, run-2).',
+      },
+    ]);
+  });
+
   it('exposes an empty `runs` array for a task with no authoritative state', async () => {
     const issuesGet = vi.fn().mockResolvedValue(issueResponse());
     setupOctokit({ issuesGet });

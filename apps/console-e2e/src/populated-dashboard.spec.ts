@@ -277,17 +277,16 @@ test.describe('populated dashboard', () => {
     await expect(card).toBeVisible();
     await expect(card.getByTestId('logical-work-state')).toHaveText('anomaly');
 
-    // Both attempts remain visible on the canonical task page too - the
-    // anomaly banner explains why there are two of them. This duplicate-
-    // attempt anomaly is derived fresh from the live attempts themselves
-    // (duplicateAttemptAnomalies in logical-work.ts), independent of any
-    // orchestrator record, so it still renders correctly here.
-    const attempts = card.getByTestId('logical-work-attempts');
-    await expect(attempts.getByText(/queued/).first()).toBeVisible();
-    await expect(attempts.getByText(/running/).first()).toBeVisible();
+    // Both native Runs remain visible on the canonical task page too. The
+    // anomaly comes from durable Task/Run state, not a hosted-attempt title
+    // marker or an Actions API lookup.
+    const runs = card.getByTestId('runs-section');
+    await expect(runs).toContainText('Runs (2)');
+    await expect(runs.getByText(/pending/).first()).toBeVisible();
+    await expect(runs.getByText(/running/).first()).toBeVisible();
 
     const anomalies = card.getByTestId('logical-work-anomalies');
-    await expect(anomalies).toContainText('2 claude attempts');
+    await expect(anomalies).toContainText('2 claude runs');
 
     // The populated fixture is a real authoritative Task/Run record, so this
     // path cannot fall back to legacy GitHub workflow identity.

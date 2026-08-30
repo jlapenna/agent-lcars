@@ -208,10 +208,10 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
       {/* Gated on the agent, not just the source: `resume-archive` installs
           the JSONL under ~/.claude/projects and runs `claude --resume`, so
-          it cannot resume a Codex rollout. Since codex.yml started shipping
-          issue-agent docs with a transcriptGcsUri, offering this
-          unconditionally would hand out a command that silently can't work
-          on the session it's shown for. */}
+          it cannot resume a Codex rollout. Native session records include a
+          transcript URI for every provider, so offering this unconditionally
+          would hand out a command that silently cannot work for the session
+          shown. */}
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
         sessionAgent(doc) === 'claude-code' && (

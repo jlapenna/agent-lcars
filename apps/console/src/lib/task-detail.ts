@@ -22,6 +22,7 @@ import { enrichItems, type ItemEnrichment } from './item-enrichment';
 import {
   deriveLogicalWork,
   type LogicalWork,
+  type LogicalWorkAnomaly,
   type LogicalWorkState,
 } from './logical-work';
 import { taskRefKey } from './watched-repo';
@@ -261,19 +262,49 @@ function applyOrchestratorTruth(
 ): LogicalWork {
   if (!state) return work;
 
+  const anomalies = nativeRunAnomalies(state.runs);
   const orchestratorState = stateFromOrchestratorTask(state);
   const nextState: LogicalWorkState =
     work.state === 'unavailable'
       ? 'unavailable'
-      : humanNeeded
-        ? 'human-needed'
-        : orchestratorState;
+      : anomalies.length > 0
+        ? 'anomaly'
+        : humanNeeded
+          ? 'human-needed'
+          : orchestratorState;
 
   return {
     ...work,
     state: nextState,
+    anomalies,
     provenance: { kind: 'authoritative', revision: state.storageRevision },
   };
+}
+
+/** A duplicate live Run is durable broker state, not a hosted-workflow
+ * compatibility signal. Surface it on task detail just as the activity view
+ * does, so operators never lose an unsafe concurrent execution behind a
+ * single active-state badge. */
+function nativeRunAnomalies(
+  runs: readonly OrchestratorRun[],
+): LogicalWorkAnomaly[] {
+  const byPipeline = new Map<string, OrchestratorRun[]>();
+  for (const run of runs) {
+    if (run.state !== 'pending' && run.state !== 'running') continue;
+    const group = byPipeline.get(run.pipeline);
+    if (group) group.push(run);
+    else byPipeline.set(run.pipeline, [run]);
+  }
+  return Array.from(byPipeline).flatMap(([pipeline, group]) =>
+    group.length > 1
+      ? [
+          {
+            kind: 'duplicate-active-runs',
+            detail: `${group.length} ${pipeline} runs are queued or running for the same task at once (${group.map((run) => run.runId).join(', ')}).`,
+          },
+        ]
+      : [],
+  );
 }
 
 /** A run's own state, coarsened onto `LogicalWorkState`: `pending` means
