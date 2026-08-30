@@ -205,16 +205,13 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     // The fixed request id keeps that history stable under a retried seed.
     await expect(card).toContainText('authoritative state rev 2');
 
-    // Attempt presentation (#306's ExecutionAttempt UI): one running attempt
-    // bound to the fixture's own run-name marker - never collapsed, never a
-    // bare title guess. The marker is corroborated by authoritative state.
-    const attempts = card.getByTestId('logical-work-attempts');
-    await expect(attempts).toContainText('Execution attempts (1)');
-    await expect(attempts).toContainText('running');
-    await expect(attempts).toContainText('orchestrator');
-    await expect(attempts).toContainText('g1');
+    // Native Run presentation: one running authoritative Run, with no
+    // hosted-attempt title marker or compatibility attribution.
+    const runs = card.getByTestId('runs-section');
+    await expect(runs).toContainText('Runs (1)');
+    await expect(runs).toContainText('running');
 
-    // A clean single-run dispatch renders no anomaly banner at all.
+    // A clean single-Run dispatch renders no anomaly banner at all.
     await expect(card.getByTestId('logical-work-anomalies')).toHaveCount(0);
   });
 

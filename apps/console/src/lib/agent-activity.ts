@@ -1,4 +1,3 @@
-import { parseDispatchMarker } from '@agent-lcars/dispatch-contracts';
 import {
   isWorkAnchor,
   type Run as OrchestratorRun,
@@ -18,13 +17,12 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 // boundary; the pure integration shape itself lives in watched-repo.ts.
 export type { AgentPipeline } from './github-client';
 import type { AgentPipeline } from './github-client';
-// Direct executors share the same 90-minute run lease budget.
+// Direct workers share the same 90-minute Run lease budget.
 export const RUN_TIMEOUT_MINUTES = 90;
 
-// Mirrors claude.yml's `--max-turns 200` claude_args. opencode.yml has no
-// equivalent turn cap (its action takes no max_turns/max_steps input), so
-// the turn-budget gauge only ever renders for `pipeline === 'claude'` runs -
-// see LiveRunRow in agent-activity-panel.tsx.
+// Claude direct workers have a 200-turn budget. OpenCode has no equivalent
+// turn cap, so the turn-budget gauge only renders for `pipeline === 'claude'`
+// runs - see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
 /** Exported so the panel can label the list as "last N" when it fills. */
@@ -37,9 +35,9 @@ export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
 
 export interface AgentRun {
-  /** The exact orchestrator run id, suitable for telemetry joins. Legacy
-   * numeric GitHub Actions ids remain accepted only for historical UI tests. */
-  id: string | number;
+  /** The exact authoritative orchestrator run id, suitable for telemetry
+   * joins. */
+  id: string;
   /** The anchor's repository (a GitHub anchor itself, or a native Work
    * item's declared target). It is presentation metadata, never runner
    * capacity or execution-state truth. */
@@ -48,9 +46,8 @@ export interface AgentRun {
   pipeline: AgentPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
-  event: string;
   url: string;
-  /** A derived operator label carrying the exact broker dispatch marker. */
+  /** Operator-facing task title projected from the owning Task record. */
   displayTitle: string;
   /** Present for GitHub anchors; absent for native Work. */
   issueNumber?: number;
@@ -138,55 +135,9 @@ export function queueFromLiveRuns(
   return summary;
 }
 
-// One shape fleet-wide since #1340 A-R2. Before that, codex and opencode
-// callers prefixed their own pipeline name ahead of the join key
-// (`opencode #42: …`) and this regex carried an optional-prefix branch for
-// them; the pipeline is already known from the fetch source, so the prefix
-// was redundant everywhere it appeared.
-const DISPLAY_TITLE_NUMBER_RE = /^#(\d+):/;
-
-export function issueNumberFromDisplayTitle(
-  displayTitle: string,
-): number | undefined {
-  const match = displayTitle.match(DISPLAY_TITLE_NUMBER_RE);
-  return match ? Number(match[1]) : undefined;
-}
-
 /**
- * claude.yml/codex.yml/opencode.yml's `run-name` templates all append
- * `[dispatch:g<generation>:<intentId>]` after the `#<issue>:` join key -
- * the hosted orchestrator's own dispatch marker
- * (`orchestrator-dispatch.ts` mints the `broker_generation`/
- * `broker_intent_id` workflow-dispatch inputs — `intentId` is literally
- * the orchestrator run's own `runId` — and each workflow's `run-name`
- * template renders them into this exact string; the parse side is
- * `@agent-lcars/dispatch-contracts`' `parseDispatchMarker`).
- * Parsing it back out lets the console attribute a raw workflow run to the
- * exact dispatch generation/intent that dispatched it (see `logical-work.ts`'s
- * `toExecutionAttempt`) instead of only knowing the issue it worked.
- * Undefined for runs that predate the marker rollout, or any run dispatched
- * by hand outside it (a manual `workflow_dispatch` leaves the input blank,
- * which GitHub Actions renders as an empty `[dispatch:g:]`) - both cases
- * fall back to title/issue-number attribution only.
- */
-export type AttemptMarker = NonNullable<ReturnType<typeof parseDispatchMarker>>;
-
-/** Thin wrapper over the shared package's `parseDispatchMarker`, kept under
- * this name and signature because `tools/contract-tests/run-name-console-
- * join.test.ts` imports it directly to exercise this exact join. */
-export function attemptMarkerFromDisplayTitle(
-  displayTitle: string,
-): AttemptMarker | undefined {
-  return parseDispatchMarker(displayTitle);
-}
-
-/**
- * Direct link to the issue/PR a run worked, derived from its parsed
- * `issueNumber`. Always an `/issues/<N>` path - GitHub redirects that route
- * to `/pull/<N>` automatically when N is actually a PR, so one path covers
- * both kinds without the run needing to know which it is. Undefined for
- * runs that predate the run-name rollout (see `issueNumber`'s own doc) -
- * callers should fall back to the run's own title/url in that case.
+ * Direct link to the GitHub anchor of an authoritative run. Native Work runs
+ * have no issue anchor and therefore no GitHub URL.
  */
 export function issueUrlForRun(run: AgentRun): string | undefined {
   return run.issueNumber === undefined
@@ -219,10 +170,8 @@ export function findStalledQueuedRun(
  * pipelines racing the same item, or a stray duplicate dispatch. */
 export interface LiveRunGroup {
   /** `repoItemKey(repo, issueNumber)` for a run whose issue number parsed;
-   * a synthetic `run-<id>` key for one that didn't (predates the run-name
-   * rollout - see `AgentRun.issueNumber`'s own doc), so it still gets a
-   * (singleton) group of its own instead of colliding with every other
-   * unparsed run under one bucket. */
+   * a synthetic `run-<id>` key for native Work runs, so they never collide
+   * with issue-anchored activity. */
   key: string;
   issueNumber?: number;
   runs: AgentRun[];
@@ -291,10 +240,6 @@ function repositoryFromTarget(targetRepo: string): WatchedRepo | undefined {
   return owner && name && rest.length === 0 ? { owner, name } : undefined;
 }
 
-function generationFromRunId(runId: string): string {
-  return runId.match(/\/r(\d+)$/u)?.[1] ?? '0';
-}
-
 function statusFor(run: OrchestratorRun): AgentRunStatus {
   return run.state === 'pending'
     ? 'queued'
@@ -326,9 +271,6 @@ export function agentRunFromOrchestrator(
         1000,
     ),
   );
-  const generation = generationFromRunId(run.runId);
-  const marker = `[dispatch:g${generation}:${run.runId}]`;
-
   if (!isWorkAnchor(run.task)) {
     const repo = repositoryFromTarget(run.task.repo);
     if (!repo) return undefined;
@@ -342,9 +284,8 @@ export function agentRunFromOrchestrator(
       pipeline: run.pipeline as AgentPipeline,
       status,
       conclusion: conclusionFor(run),
-      event: 'queue',
       url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
-      displayTitle: `#${run.task.issue}: ${title} ${marker}`,
+      displayTitle: `#${run.task.issue}: ${title}`,
       issueNumber: run.task.issue,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
@@ -364,10 +305,9 @@ export function agentRunFromOrchestrator(
     pipeline: run.pipeline as AgentPipeline,
     status,
     conclusion: conclusionFor(run),
-    event: 'queue',
     url: `/work/${run.task.workId}`,
     workId: run.task.workId,
-    displayTitle: `${spec.data.title} ${marker}`,
+    displayTitle: spec.data.title,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     elapsedSeconds,

@@ -336,7 +336,6 @@ describe('getActionItems', () => {
       ...DEFAULT_REPO,
       agents: {
         codex: {
-          workflowFile: 'custom-codex.yml',
           label: 'agent:custom-codex',
           replyTrigger: '/custom-codex',
         },

@@ -52,9 +52,9 @@ export type ActionType =
   // telemetry shows a session-provable anomaly (an error result - expired
   // token, max-turns exhaustion, a crash - or essentially zero recorded
   // work: zero turns, or zero cost across at most one turn). Deliberately
-  // NOT "no PR/commit" - claude.yml's own server-side gates already fail
-  // the job before a run can report success with no deliverable evidence in
-  // GitHub state (#2497), so re-checking that here would just flood this
+  // NOT "no PR/commit" - the authoritative delivery gate already rejects a
+  // run with no deliverable evidence (#2497), so re-checking that here would
+  // just flood this
   // tier with routine comment-only replies. See run-status-classifier.ts
   // for the exact signature set. Derived by run-classification.ts's
   // deriveSilentErrorDiagnoses, not by classifyIssue below (this is the one
@@ -251,9 +251,8 @@ export function classifyIssue(
   // Label only, deliberately (#2802 decided: keep the label). An
   // assignee-pair fallback was tried as migration groundwork, but assignees
   // are additive-only — un-parking removes the label, never the assignees —
-  // so the pair kept items in Your Queue forever after they were answered,
-  // and claude.yml's deliverable check + pr-heal's park-check key on the
-  // label anyway (#3023).
+  // so the pair kept items in Your Queue forever after they were answered;
+  // delivery and parking continue to key on the label (#3023).
   const isHumanNeeded = labels.includes('status:needs-human');
 
   const actionTypes: ActionType[] = [];
@@ -275,8 +274,8 @@ export function classifyIssue(
   // items (for the comment preview) plus anything the agent fleet has
   // claimed via the assignee field (#2783) - issues AND PRs alike, since
   // every session now announces its takeover command where it works:
-  // claude.yml runs on their anchor issue/PR, interactive sessions per
-  // pr.md Step 0 and the SKILL.md claim guardrail.
+  // direct worker sessions on their anchor issue/PR, or interactive
+  // sessions per pr.md Step 0 and the SKILL.md claim guardrail.
   const wantsTakeover = assigneeLogins.includes(agentFleetLogin());
   if (isHumanNeeded || isPostDeploy || wantsTakeover) {
     const comments = enrichment?.comments ?? [];

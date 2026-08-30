@@ -22,8 +22,8 @@ const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
   const hasDispatchWork =
     metrics.logicalTaskCount > 0 ||
-    metrics.queuedAttempts > 0 ||
-    metrics.runningAttempts > 0;
+    metrics.queuedRuns > 0 ||
+    metrics.runningRuns > 0;
 
   if (!hasDispatchWork) {
     return (
@@ -40,12 +40,12 @@ function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
         {metrics.logicalTaskCount === 1 ? '' : 's'}
       </Text>
       <Text size="xs" c="dimmed" data-testid="metric-queued-attempts">
-        {metrics.queuedAttempts} queued attempt
-        {metrics.queuedAttempts === 1 ? '' : 's'}
+        {metrics.queuedRuns} queued run
+        {metrics.queuedRuns === 1 ? '' : 's'}
       </Text>
       <Text size="xs" c="dimmed" data-testid="metric-running-attempts">
-        {metrics.runningAttempts} running attempt
-        {metrics.runningAttempts === 1 ? '' : 's'}
+        {metrics.runningRuns} running run
+        {metrics.runningRuns === 1 ? '' : 's'}
       </Text>
       {metrics.onlineRunners !== undefined && (
         <Text size="xs" c="dimmed" data-testid="metric-runner-occupancy">

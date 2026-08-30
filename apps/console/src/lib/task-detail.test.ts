@@ -197,7 +197,7 @@ describe('getTaskDetail', () => {
     expect(result.warning).toMatch(/unavailable/);
   });
 
-  it('renders an open task with no attempts (idle)', async () => {
+  it('renders an open task with no authoritative run history', async () => {
     const issuesGet = vi.fn().mockResolvedValue(issueResponse());
     setupOctokit({ issuesGet });
     cachedActivity = EMPTY_ACTIVITY;
@@ -212,8 +212,8 @@ describe('getTaskDetail', () => {
     expect(result.anchorState).toBe('open');
     expect(result.work.title).toBe('Fix the thing');
     expect(result.item.body).toBe('Original task body');
-    expect(result.work.provenance).toEqual({ kind: 'legacy' });
-    expect(result.work.attempts).toEqual([]);
+    expect(result.work.provenance).toEqual({ kind: 'no-history' });
+    expect(result.runs).toEqual([]);
   });
 
   it('uses the board action classifier so task controls match the queue', async () => {
@@ -237,24 +237,9 @@ describe('getTaskDetail', () => {
     expect(result.item.labels).toContain('agent:codex');
   });
 
-  it('reports generatedAt as the older of the two cached sources it was built from, not the render time (Codex review on #375)', async () => {
+  it('reports generatedAt from the GitHub metadata source', async () => {
     const issuesGet = vi.fn().mockResolvedValue(issueResponse());
     setupOctokit({ issuesGet });
-    // Fixed well in the past - `getCachedTaskSource`'s own `fetchedAt` is a
-    // real `new Date().toISOString()` captured at call time, so it will
-    // always be newer than this. `oldestFetchedAt` must pick this older one,
-    // proving the result reflects the cache's real age rather than a bare
-    // `new Date()` at render time (which is what the pre-fix behavior
-    // amounted to - see task-detail.ts's own doc comment on `generatedAt`).
-    const OLD_ACTIVITY_FETCH = '2020-01-01T00:00:00Z';
-    vi.mocked(
-      // eslint-disable-next-line no-restricted-syntax -- imported dynamically so it evaluates AFTER the vi.mock factories above; a static import would bind the unmocked module.
-      (await import('./dashboard-data')).getCachedAgentActivity,
-    ).mockResolvedValueOnce({
-      data: EMPTY_ACTIVITY,
-      fetchedAt: OLD_ACTIVITY_FETCH,
-    });
-
     const result = await getTaskDetail(
       DEFAULT_REPO.owner,
       DEFAULT_REPO.name,
@@ -262,7 +247,7 @@ describe('getTaskDetail', () => {
     );
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
-    expect(result.generatedAt).toBe(OLD_ACTIVITY_FETCH);
+    expect(Date.parse(result.generatedAt)).toBeGreaterThan(0);
   });
 
   it('reports anchorState closed for a closed issue while still resolving the task', async () => {
@@ -282,7 +267,7 @@ describe('getTaskDetail', () => {
     expect(result.anchorState).toBe('closed');
   });
 
-  it('uses authoritative state from the orchestrator over the attempts-only fallback', async () => {
+  it('uses authoritative state from the orchestrator without an Actions fallback', async () => {
     useAuthoritativeState([orchestratorRun({ state: 'running' })], {
       activeRunId: 'intent-abc',
     });
@@ -290,24 +275,6 @@ describe('getTaskDetail', () => {
       .fn()
       .mockResolvedValue(issueResponse({ labels: ['agent:claude'] }));
     setupOctokit({ issuesGet });
-    cachedActivity = {
-      ...EMPTY_ACTIVITY,
-      liveRuns: [
-        {
-          id: 1,
-          repo: DEFAULT_REPO,
-          pipeline: 'claude',
-          status: 'running',
-          event: 'workflow_dispatch',
-          url: 'https://github.com/o/r/actions/runs/1',
-          displayTitle: '#42: Claude issue agent [dispatch:g1:intent-abc]',
-          issueNumber: 42,
-          createdAt: '2026-07-07T00:00:00Z',
-          updatedAt: '2026-07-07T00:00:00Z',
-          elapsedSeconds: 60,
-        },
-      ],
-    };
 
     const result = await getTaskDetail(
       DEFAULT_REPO.owner,
@@ -317,11 +284,10 @@ describe('getTaskDetail', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.work.provenance).toEqual({
-      kind: 'authoritative-v1',
+      kind: 'authoritative',
       revision: 7,
     });
-    expect(result.work.attempts).toHaveLength(1);
-    expect(result.work.attempts[0].attribution).toBe('orchestrator');
+    expect(result.work.runs).toEqual([]);
     expect(result.work.state).toBe('active');
   });
 
@@ -370,7 +336,31 @@ describe('getTaskDetail', () => {
     expect(result.runs).toEqual([lostRun, finishedRun, livePendingRun]);
   });
 
-  it('exposes an empty `runs` array for a task with no authoritative state, so the page falls back to legacy attempts', async () => {
+  it('flags duplicate live native Runs without consulting hosted attempt history', async () => {
+    const running = orchestratorRun({ runId: 'run-1', state: 'running' });
+    const pending = orchestratorRun({ runId: 'run-2', state: 'pending' });
+    useAuthoritativeState([running, pending], { activeRunId: 'run-1' });
+    const issuesGet = vi.fn().mockResolvedValue(issueResponse());
+    setupOctokit({ issuesGet });
+
+    const result = await getTaskDetail(
+      DEFAULT_REPO.owner,
+      DEFAULT_REPO.name,
+      42,
+    );
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.work.state).toBe('anomaly');
+    expect(result.work.anomalies).toEqual([
+      {
+        kind: 'duplicate-active-runs',
+        detail:
+          '2 claude runs are queued or running for the same task at once (run-1, run-2).',
+      },
+    ]);
+  });
+
+  it('exposes an empty `runs` array for a task with no authoritative state', async () => {
     const issuesGet = vi.fn().mockResolvedValue(issueResponse());
     setupOctokit({ issuesGet });
     cachedActivity = EMPTY_ACTIVITY;
@@ -383,67 +373,6 @@ describe('getTaskDetail', () => {
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.runs).toEqual([]);
-  });
-
-  it('reports a closed task as merged only for its attempt-persisted PR number', async () => {
-    useAuthoritativeState([
-      orchestratorRun({
-        state: 'finished',
-        result: {
-          ok: true,
-          ref: 'https://github.com/supersprinklesracing/sprinkles/pull/77',
-        },
-      }),
-    ]);
-    const issuesGet = vi
-      .fn()
-      .mockResolvedValue(issueResponse({ state: 'closed' }));
-    const graphql = vi.fn().mockResolvedValue({
-      repository: {
-        i42: {
-          __typename: 'Issue',
-          comments: { nodes: [] },
-          closedByPullRequestsReferences: {
-            nodes: [
-              {
-                number: 77,
-                url: 'https://github.com/supersprinklesracing/sprinkles/pull/77',
-                mergedAt: '2026-07-07T01:00:00Z',
-              },
-            ],
-          },
-        },
-      },
-    });
-    setupOctokit({ issuesGet, graphql });
-    cachedActivity = {
-      ...EMPTY_ACTIVITY,
-      recentRuns: [
-        {
-          id: 1,
-          repo: DEFAULT_REPO,
-          pipeline: 'claude',
-          status: 'completed',
-          conclusion: 'success',
-          event: 'workflow_dispatch',
-          url: 'https://github.com/o/r/actions/runs/1',
-          displayTitle: '#42: Claude issue agent [dispatch:g1:intent-abc]',
-          issueNumber: 42,
-          createdAt: '2026-07-07T00:00:00Z',
-          updatedAt: '2026-07-07T01:00:00Z',
-          elapsedSeconds: 3600,
-        },
-      ],
-    };
-
-    const result = await getTaskDetail(
-      DEFAULT_REPO.owner,
-      DEFAULT_REPO.name,
-      42,
-    );
-    expect(result.status).toBe('ok');
-    if (result.status !== 'ok') return;
-    expect(result.work.attempts[0].outcome).toBe('merged-deliverable');
   });
 
   it("threads the authoritative state's work.spec snapshot onto the result", async () => {

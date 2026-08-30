@@ -42,8 +42,8 @@ export function classifyAgentRun(
  * failure signature (error result) or recorded essentially no work (zero
  * turns, or zero cost across at most one turn) - see
  * `@agent-lcars/telemetry`'s `run-status-classifier.ts` for why this is
- * deliberately narrower than a "no PR/commit" check (claude.yml's own
- * server-side gates already cover that ground with better data). Used to
+ * deliberately narrower than a "no PR/commit" check (the authoritative
+ * Run outcome already covers that ground with better data). Used to
  * elevate those items into "Needs Your Action" (see page.tsx) even though
  * nothing in the item's own GitHub state (labels, checks, reviews) says
  * anything is wrong. A run whose `issueNumber` is unparseable, or with no

@@ -21,8 +21,6 @@ import {
 export type AgentPipeline = SharedAgentPipeline;
 
 export interface AgentIntegration {
-  /** Workflow dispatched through the repository's agent router. */
-  workflowFile: string;
   /** Durable GitHub control label that selects this executor. */
   label: string;
   /** Command that hands a parked thread back to this executor. */
@@ -39,7 +37,6 @@ export interface AgentIntegration {
 function integrationFromContract(pipeline: AgentPipeline): AgentIntegration {
   const contract = pipelineContract(pipeline);
   return {
-    workflowFile: contract.workflowFile,
     label: contract.label,
     replyTrigger: contract.replyTrigger,
     ...(contract.replyTriggerAliases.length > 0

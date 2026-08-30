@@ -13,10 +13,8 @@ import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
-// Re-exported so `run-binding.ts` (and its tests) can depend on this
-// module's own token-provider seam rather than reaching past it into
-// `github-app-tokens.ts` directly -- same reasoning as this file importing
-// it in the first place: "a token good for this repo", not how it's minted.
+// Re-exported so callers share the same repository-token seam rather than
+// reaching past this module into `github-app-tokens.ts` directly.
 export type { DispatchTokenProvider };
 
 /**

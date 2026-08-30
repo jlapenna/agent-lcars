@@ -5,7 +5,6 @@ import type {
   SessionAgent,
   SessionSource,
 } from '@agent-lcars/telemetry';
-import { workIdFromIntentId } from '@agent-lcars/work';
 import {
   Alert,
   Anchor,
@@ -25,7 +24,6 @@ import type {
   FleetSummary,
 } from '../lib/agent-activity';
 import {
-  attemptMarkerFromDisplayTitle,
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
   groupLiveRunsByIssue,
@@ -42,7 +40,6 @@ import {
 } from '../lib/github-client';
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
-import { CancelRunButton } from './cancel-run-button';
 import { Eyebrow } from './eyebrow';
 import { formatCost, formatDuration } from './format';
 import { lcarsPanelStyle } from './lcars';
@@ -53,13 +50,13 @@ import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
 // (@agent-lcars/telemetry's classifyRunStatus, wrapped for this app by
-// classifyAgentRun) rather than the raw GitHub conclusion - this is also
+// classifyAgentRun) rather than a presentation-local conclusion - this is also
 // where the old "cancelled at ~the timeout budget -> show 'timeout'
 // instead" special case now lives, moved into the classifier itself so
 // there's one source of truth instead of a UI-local re-derivation.
 // Exported (mirroring PipelineBadge/FleetChip's #3024 precedent) so
-// task/logical-work-card.tsx's per-attempt badge reuses the identical
-// mapping instead of a second hand-rolled status->color ternary.
+// run rows reuse the identical mapping instead of a second hand-rolled
+// status-to-color ternary.
 export const STATUS_LABELS: Record<RunStatusClassification, string> = {
   running: 'running',
   succeeded: 'success',
@@ -129,23 +126,16 @@ function taskHrefForRun(run: AgentRun, item?: RunItemRef): string | undefined {
 }
 
 /**
- * A native work item's run has no `#<N>:` issue join key (see
- * `issueNumberFromDisplayTitle`'s doc comment in agent-activity.ts) - its
- * dispatch marker's `intentId` IS the orchestrator run id
- * (`work:<ulid>/r<n>`) instead. Parsing the ULID back out of it links the
- * run to its `/work/<id>` detail page the same way `taskHrefForRun`/
- * `issueUrlForRun` link an issue-anchored run to its task or issue.
- * Undefined for any run without a native marker - legacy issue-anchored
- * runs, and runs dispatched by hand outside the fleet.
+ * A native work item's authoritative `workId` links directly to its detail
+ * page, the same way `taskHrefForRun`/`issueUrlForRun` link issue-anchored
+ * activity.
  */
 function workHrefForRun(run: AgentRun): string | undefined {
-  const marker = attemptMarkerFromDisplayTitle(run.displayTitle);
-  const workId = marker ? workIdFromIntentId(marker.intentId) : undefined;
-  return workId ? `/work/${workId}` : undefined;
+  return run.workId ? `/work/${run.workId}` : undefined;
 }
 
 function operationsRunTitle(run: AgentRun): string {
-  return run.displayTitle.replace(/\s+\[dispatch:[^\]]+\]\s*$/, '');
+  return run.displayTitle;
 }
 
 const PIPELINE_LABELS: Record<AgentPipeline, string> = {
@@ -183,11 +173,11 @@ export function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
 // Labels/colors for the *coding agent* that produced a session (#3123 phase
 // 1 - the discriminator + watcher/adapter seam this badge is the only
 // visible surface of so far; no non-claude-code agent ships yet). Distinct
-// from PIPELINE_LABELS/PIPELINE_COLORS above, which tag a GitHub Actions
-// *run* by which workflow dispatched it (claude.yml vs opencode.yml) - a
+// from PIPELINE_LABELS/PIPELINE_COLORS above, which tag an authoritative Run
+// by its selected provider - a
 // session's `agent` instead names which tool actually produced the
-// transcript, an orthogonal axis that matters once opencode.yml (or a
-// non-Claude CLI) starts shipping its own session docs.
+// transcript, an orthogonal axis that matters once OpenCode (or a non-Claude
+// CLI) starts shipping its own session docs.
 const AGENT_LABELS: Record<SessionAgent, string> = {
   'claude-code': 'claude code',
   codex: 'codex',
@@ -231,8 +221,8 @@ export function AgentBadge({ agent }: { agent: SessionAgent }) {
 }
 
 // How a session's transcript reached the console: streamed live off a
-// developer's machine by the watcher (`cli`) or shipped by an issue-agent
-// workflow run (`issue-agent`). Orthogonal to AGENT_* above (*which* tool
+// developer's machine by the watcher (`cli`) or reported by a worker
+// session (`issue-agent`). Orthogonal to AGENT_* above (*which* tool
 // wrote the transcript) - a codex session can arrive by either route.
 const SOURCE_LABELS: Record<SessionSource, string> = {
   cli: 'cli',
@@ -412,14 +402,6 @@ export function LiveRunRow({
             {taskHref ? 'Open task' : 'Inspect run'}
             {!taskHref && ' ↗'}
           </Anchor>
-          {typeof run.id === 'number' && (
-            <CancelRunButton
-              repo={run.repo}
-              runId={run.id}
-              label={run.displayTitle}
-              className="operations-secondary-action"
-            />
-          )}
         </Group>
       </div>
     );
@@ -491,13 +473,6 @@ export function LiveRunRow({
               session
             </Anchor>
           )}
-          {typeof run.id === 'number' && (
-            <CancelRunButton
-              repo={run.repo}
-              runId={run.id}
-              label={run.displayTitle}
-            />
-          )}
         </Group>
       </Group>
       {run.status === 'running' && (
@@ -510,8 +485,7 @@ export function LiveRunRow({
       )}
       {run.status === 'running' &&
         session &&
-        // opencode.yml has no turn cap (its action takes no max_turns
-        // input), so the turn gauge is claude-pipeline-only - see
+        // OpenCode has no turn cap, so the turn gauge is Claude-only - see
         // MAX_TURNS_BUDGET's doc comment.
         (run.pipeline === 'claude' || session.totalCostUsd !== undefined) && (
           <Group gap={6} wrap="wrap">
@@ -640,7 +614,7 @@ export function LiveRunGroupList({
  * A finished run row: unlike the old title-only text, the run's title is
  * now a real link to the issue/PR it worked (derived from `issueNumber`),
  * so a finished run can be followed straight to its outcome instead of only
- * to its raw Actions log. Runs that predate the run-name rollout
+ * to an opaque execution log. Runs without a GitHub anchor
  * (`issueUrlForRun` undefined) fall back to the run's own title/url - the
  * same target as the secondary "View run" link.
  *

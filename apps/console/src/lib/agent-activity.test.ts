@@ -88,7 +88,7 @@ beforeEach(() => {
 });
 
 describe('agentRunFromOrchestrator', () => {
-  it('projects GitHub and native anchors with exact broker dispatch markers', () => {
+  it('projects GitHub and native anchors from authoritative Task and Run records', () => {
     const github = agentRunFromOrchestrator(run(), githubTask(), NOW);
     const nativeRun = run({
       runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
@@ -102,16 +102,14 @@ describe('agentRunFromOrchestrator', () => {
       id: 'octo/example#42/r1',
       issueNumber: 42,
       status: 'running',
-      event: 'queue',
-      displayTitle: '#42: GitHub task 42 [dispatch:g1:octo/example#42/r1]',
+      displayTitle: '#42: GitHub task 42',
     });
     expect(native).toMatchObject({
       id: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
       workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
       status: 'queued',
       url: '/work/01J5Z3K9QX8F0N2B4V6C8D1E3G',
-      displayTitle:
-        'Native task [dispatch:g1:work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1]',
+      displayTitle: 'Native task',
     });
   });
 });
