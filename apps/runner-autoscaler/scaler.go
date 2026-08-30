@@ -609,7 +609,15 @@ func (a *Scaler) runnersChanged() {
 }
 
 func (a *Scaler) updateSchedulerDemand(now time.Time) {
-	current := a.runners.count()
+	// Keep the runner snapshot and coordinator publication in the same
+	// critical section as runner transitions. Without this, a reconciler can
+	// snapshot current=0, pause while a replacement is added and publishes
+	// current=1, then overwrite the coordinator with its stale zero. That can
+	// leave a protected lane looking unsatisfied and block lower-priority
+	// reservations until another callback happens to repair the snapshot.
+	a.runners.mu.Lock()
+	defer a.runners.mu.Unlock()
+	current := len(a.runners.idle) + len(a.runners.busy)
 	pending := max(0, min(a.maxRunners, a.minRunners+int(a.queuedJobs.Load()))-current)
 	if a.draining.Load() {
 		pending = 0
