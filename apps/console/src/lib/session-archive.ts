@@ -156,6 +156,16 @@ function runUrl(repo: WatchedRepo, runId: string): string {
   return `https://github.com/${repo.owner}/${repo.name}/actions/runs/${runId}`;
 }
 
+// Pre-queue session documents used GitHub Actions' numeric IDs. Keep those
+// retained records readable; broker run IDs are opaque strings and have no
+// Actions URL.
+function historicalWorkflowRunUrl(
+  repo: WatchedRepo,
+  runId: string,
+): string | undefined {
+  return /^[1-9][0-9]*$/u.test(runId) ? runUrl(repo, runId) : undefined;
+}
+
 /** Converts a stored doc into the archive table's row view-model. `now` is
  * injected (not read from the clock in here) so liveness recomputation
  * stays deterministic under test - see displayLiveness. */
@@ -194,7 +204,10 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     })),
     ...(doc.source === 'cli' && doc.host && { host: doc.host }),
     ...(doc.source === 'issue-agent' &&
-      doc.runId && { runId: doc.runId, runUrl: runUrl(repo, doc.runId) }),
+      doc.runId && {
+        runId: doc.runId,
+        runUrl: historicalWorkflowRunUrl(repo, doc.runId),
+      }),
     ...(doc.model && { model: doc.model }),
     turns: doc.turns,
     totalTokens: tokens,

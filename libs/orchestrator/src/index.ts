@@ -12,8 +12,6 @@ export {
   Orchestrator,
   type RequestInput,
   type SweepResult,
-  type TerminalRunEntry,
-  type TerminalSettleResult,
 } from './orchestrator';
 export * from './schedule-store';
 export * from './store';

@@ -845,7 +845,7 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
-  it('surfaces the takeover command on a agent-lcars-bot-assigned PR', async () => {
+  it('does not surface obsolete session-resume commands on an assigned PR', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(42, {
@@ -870,12 +870,10 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([42]);
-    expect(result.items[0].takeoverCommand).toBe(
-      '~/p/members/tools/claude-agent-session.sh resume abc-123',
-    );
+    expect(result.items[0].takeoverCommand).toBeUndefined();
   });
 
-  it('takes the newest takeover command when a thread has several', async () => {
+  it('does not extract obsolete session-resume commands from comments', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(45, {
@@ -894,9 +892,7 @@ describe('getActionItems', () => {
 
     const result = await getActionItems();
 
-    expect(result.items[0].takeoverCommand).toBe(
-      'fleet-claude-agent-session resume new-session',
-    );
+    expect(result.items[0].takeoverCommand).toBeUndefined();
   });
 
   it('surfaces assignee logins on the item (#3024 stale-claim detection)', async () => {
@@ -916,7 +912,7 @@ describe('getActionItems', () => {
     expect(result.items[0].assigneeLogins).toEqual(['agent-lcars-bot']);
   });
 
-  it('scans takeover for a agent-lcars-bot-assigned issue without the claude label (interactive claim)', async () => {
+  it('does not extract an obsolete session-resume command from an interactive claim', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(43, {
@@ -937,9 +933,7 @@ describe('getActionItems', () => {
 
     const result = await getActionItems();
 
-    expect(result.items[0].takeoverCommand).toBe(
-      '~/p/members/tools/claude-agent-session.sh resume def-456',
-    );
+    expect(result.items[0].takeoverCommand).toBeUndefined();
   });
 
   it('requests comments for a Claude-labeled issue nobody has claimed, but still finds no takeover command (#306)', async () => {

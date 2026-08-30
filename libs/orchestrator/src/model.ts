@@ -138,15 +138,8 @@ export type RunQueue = z.infer<typeof runQueueSchema>;
 export const runEventSchema = z.strictObject({
   at: isoUtc,
   to: runStateSchema,
-  /** Who caused it: `request`, `dispatch`, `report`, `operator`, `expiry`,
-   *  `infra`. `infra` is the executor itself failing rather than the agent
-   *  reporting anything -- the run's execution environment reached a
-   *  terminal state without a single step's worth of work reporting back
-   *  (see `settleTerminal`). Kept distinct from `report` on purpose: an
-   *  agent that ran and said "I failed" is a different fact from a run that
-   *  never got to say anything, and only the latter is worth auto-retrying
-   *  unchanged. */
-  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry', 'infra']),
+  /** Who caused it: `request`, `dispatch`, `report`, `operator`, or expiry. */
+  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry']),
   note: z.string().max(1_024).optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;

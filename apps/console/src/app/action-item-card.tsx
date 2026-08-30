@@ -39,7 +39,6 @@ import {
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { RetriggerButton } from './retrigger-button';
-import { TakeoverCommand } from './takeover-command';
 import { UnstickPrsButton } from './unstick-prs-button';
 
 const TRUNCATION_THRESHOLD = 400;
@@ -598,10 +597,6 @@ export function ActionItemCard({
             expandLabel="Show full response"
             linkLabel="View comment on GitHub"
           />
-        )}
-
-        {item.takeoverCommand && (
-          <TakeoverCommand command={item.takeoverCommand} />
         )}
 
         {replyOpen && (

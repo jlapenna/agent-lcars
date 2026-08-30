@@ -136,14 +136,18 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
         {doc.source === 'issue-agent' && doc.runId && (
           <Field label="Run">
-            <Anchor
-              href={`https://github.com/${repo.owner}/${repo.name}/actions/runs/${doc.runId}`}
-              target="_blank"
-              rel="noreferrer"
-              size="sm"
-            >
-              #{doc.runId} ↗
-            </Anchor>
+            {/^[1-9][0-9]*$/u.test(doc.runId) ? (
+              <Anchor
+                href={`https://github.com/${repo.owner}/${repo.name}/actions/runs/${doc.runId}`}
+                target="_blank"
+                rel="noreferrer"
+                size="sm"
+              >
+                #{doc.runId} ↗
+              </Anchor>
+            ) : (
+              doc.runId
+            )}
           </Field>
         )}
         {doc.source === 'issue-agent' && doc.issueNumber !== undefined && (

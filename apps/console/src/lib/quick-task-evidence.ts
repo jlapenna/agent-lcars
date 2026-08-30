@@ -23,7 +23,7 @@ export interface QuickTaskIssueDraft {
 }
 
 export interface QuickTaskSourceIdentity {
-  label: 'Task' | 'Pull request' | 'Workflow run' | 'Session';
+  label: 'Task' | 'Pull request' | 'Run' | 'Session';
   value: string;
 }
 

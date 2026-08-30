@@ -179,7 +179,7 @@ const SessionDetailView = withConsolePageShell(
                     detail.doc.runId
                       ? [
                           {
-                            label: 'Workflow run' as const,
+                            label: 'Run' as const,
                             value: `${detail.doc.repo.owner}/${detail.doc.repo.name}#${detail.doc.runId}`,
                           },
                         ]

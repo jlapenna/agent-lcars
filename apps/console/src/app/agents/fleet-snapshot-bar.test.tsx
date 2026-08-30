@@ -93,7 +93,7 @@ describe('FleetSnapshotBar', () => {
   it('summarizes inactive workflow lanes instead of rendering three zero badges', () => {
     renderBar(EMPTY_ACTIVITY);
 
-    expect(screen.getByText('No workflow runs active')).toBeTruthy();
+    expect(screen.getByText('No runs active')).toBeTruthy();
     expect(screen.queryByTestId('pipeline-badge-claude')).toBeNull();
   });
 

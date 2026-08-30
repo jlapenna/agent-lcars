@@ -8,7 +8,6 @@ import { repoItemKey, repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { ItemOverflowMenu } from '../item-overflow-menu';
 import { RelativeTime } from '../relative-time';
-import { TakeoverCommand } from '../takeover-command';
 import { AgentOperationsPanel } from './agent-operations-panel';
 
 /**
@@ -112,9 +111,6 @@ export function ClaimedIdleSection({
                   </Group>
                 }
               />
-              {item.takeoverCommand && (
-                <TakeoverCommand command={item.takeoverCommand} />
-              )}
             </Stack>
           );
         })}

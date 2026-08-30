@@ -328,19 +328,6 @@ describe('ActionItemCard', () => {
     expect(screen.queryByRole('button', { name: 'Unstick' })).toBeNull();
   });
 
-  it('makes takeover an explicit copy action without exposing the raw command', () => {
-    renderCard(
-      makeItem({
-        takeoverCommand: 'claude --resume abc123',
-      }),
-    );
-
-    expect(
-      screen.getByRole('button', { name: 'Copy takeover command' }),
-    ).toBeTruthy();
-    expect(screen.queryByText('claude --resume abc123')).toBeNull();
-  });
-
   describe('retrigger + reply pipeline routing (#3012)', () => {
     it('offers Retrigger for a claude-labeled issue', () => {
       renderCard(makeItem({ kind: 'issue', labels: ['agent:claude'] }));

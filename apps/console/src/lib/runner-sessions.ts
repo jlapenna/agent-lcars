@@ -7,7 +7,7 @@ import {
 } from '@agent-lcars/telemetry/server';
 
 /** Mirrors cli-sessions.ts's ACTIVE_WINDOW_HOURS: a runner session only
- * matters while there's a live/recent workflow run to join it to (In Flight
+ * matters while there's a live/recent broker run to join it to (In Flight
  * budget gauges, Recent Outcomes diagnosis) - the telemetry collection
  * itself keeps every doc until its own TTL, so an unbounded query would grow
  * forever as the fleet runs. */

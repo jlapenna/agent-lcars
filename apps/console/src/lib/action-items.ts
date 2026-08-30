@@ -93,8 +93,6 @@ export interface ActionItem {
    * page's stale-claim detection (see claimed-idle.ts); no console surface
    * needed it before that. */
   assigneeLogins: string[];
-  /** Newest `claude-agent-session[.sh] resume <id>` command the agent posted. */
-  takeoverCommand?: string;
   lastCommentBody?: string;
   lastCommentUrl?: string;
   /** Login of the newest comment's author - the possession signal. */
@@ -165,17 +163,6 @@ const LABELS_SHOWN_AS_ACTION_TYPES = new Set([
   'status:needs-human',
   'status:post-deploy-action',
 ]);
-
-// The lcars protocol skill (.agents/skills/lcars/lcars-protocol.md,
-// "Takeover comment") tells a dispatched agent to post its exact takeover
-// command in its first ack comment. Since
-// agent-lcars#1328 that is `fleet-claude-agent-session resume <id>` (the
-// PATH bin); historical comments say
-// `~/p/members/tools/claude-agent-session.sh resume <id>`. The pattern
-// matches both — `claude-agent-session` with an optional `.sh` — and each
-// new run posts a fresh command, so the newest match wins.
-const TAKEOVER_COMMAND_RE =
-  /(\S*claude-agent-session(?:\.sh)?\s+resume\s+[\w-]+)/;
 
 /** One item as returned by `issues.listForRepo`, which serves both issues
  * and PRs (a PR is an issue carrying a `pull_request` key). Verified against
@@ -269,32 +256,20 @@ export function classifyIssue(
   let lastCommentBody: string | undefined;
   let lastCommentUrl: string | undefined;
   let lastCommentAuthor: string | undefined;
-  let takeoverCommand: string | undefined;
   // Comment fetches cost one API call per item, so stay scoped: actionable
   // items (for the comment preview) plus anything the agent fleet has
   // claimed via the assignee field (#2783) - issues AND PRs alike, since
-  // every session now announces its takeover command where it works:
-  // direct worker sessions on their anchor issue/PR, or interactive
-  // sessions per pr.md Step 0 and the SKILL.md claim guardrail.
-  const wantsTakeover = assigneeLogins.includes(agentFleetLogin());
-  if (isHumanNeeded || isPostDeploy || wantsTakeover) {
+  if (
+    isHumanNeeded ||
+    isPostDeploy ||
+    assigneeLogins.includes(agentFleetLogin())
+  ) {
     const comments = enrichment?.comments ?? [];
     const last = comments[comments.length - 1];
     if (isHumanNeeded || isPostDeploy) {
       lastCommentBody = last?.body;
       lastCommentUrl = last?.url;
       lastCommentAuthor = last?.author;
-    }
-    // Newest match wins: each run posts a fresh takeover command, and the
-    // window is oldest-first, so scan backwards.
-    if (wantsTakeover) {
-      for (let i = comments.length - 1; i >= 0; i--) {
-        const match = comments[i].body.match(TAKEOVER_COMMAND_RE);
-        if (match) {
-          takeoverCommand = match[1];
-          break;
-        }
-      }
     }
   }
 
@@ -393,7 +368,6 @@ export function classifyIssue(
     actionTypes,
     labels: labels.filter((label) => !LABELS_SHOWN_AS_ACTION_TYPES.has(label)),
     assigneeLogins: assigneeLogins.filter((login) => login.length > 0),
-    takeoverCommand,
     lastCommentBody,
     lastCommentUrl,
     lastCommentAuthor,

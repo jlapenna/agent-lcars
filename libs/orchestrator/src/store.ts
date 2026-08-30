@@ -131,12 +131,7 @@ export interface OrchestratorStore {
    */
   listTasks(limit?: number, before?: TaskListCursor): Promise<VersionedTask[]>;
 
-  /** Every live (`pending`/`running`) run, lease or no lease. The feed for
-   *  settling runs whose *executor* is already terminal -- a fact only
-   *  something outside the orchestrator can observe, so the caller resolves
-   *  it and hands the verdicts back to
-   *  `Orchestrator.settleTerminalRuns`. Deliberately unfiltered by lease:
-   *  the whole point is to catch a run long before its lease runs out. */
+  /** Every live (`pending`/`running`) run, lease or no lease. */
   listLiveRuns(): Promise<Run[]>;
 
   /**

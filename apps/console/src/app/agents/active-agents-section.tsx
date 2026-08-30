@@ -3,7 +3,6 @@ import { Stack, Text } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';
-import { findItemForSession } from '../../lib/claimed-idle';
 import type { CliSession } from '../../lib/cli-sessions';
 import {
   CliSessionRow,
@@ -17,16 +16,13 @@ import { AgentOperationsPanel } from './agent-operations-panel';
  * fleet-focused counterpart to the home page's maintainer-focused "In
  * Flight" panel (see agent-activity-panel.tsx). Reuses the exact same
  * grouped-run/session rendering (LiveRunGroupList, CliSessionRow) for
- * visual consistency; the only addition here is surfacing a CLI session's
- * takeover command when it's working a claimed item that has one (joined
- * via findItemForSession/sessionReferencesItemNumber - see
- * claimed-idle.ts).
+ * visual consistency.
  */
 export function ActiveAgentsSection({
   liveRuns,
   itemsByRunId,
   activeSessions,
-  items,
+  items: _items,
   sessionsByRunId = {},
 }: {
   liveRuns: AgentRun[];
@@ -63,13 +59,7 @@ export function ActiveAgentsSection({
       {activeSessions.length > 0 && (
         <Stack gap="xs">
           {activeSessions.map((session) => (
-            <CliSessionRow
-              key={session.sessionId}
-              session={session}
-              takeoverCommand={
-                findItemForSession(session, items)?.takeoverCommand
-              }
-            />
+            <CliSessionRow key={session.sessionId} session={session} />
           ))}
         </Stack>
       )}

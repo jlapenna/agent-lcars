@@ -646,18 +646,10 @@ async function describeLostOutcome(
 }
 
 /**
- * Why a `lost` run was lost, in the reader's terms. Both settle paths reach
- * `lost` (see decide.ts's `expireLease` and `settleTerminal`), but for very
- * different reasons, and saying "no report before its lease expired" about a
- * run whose workflow died at `startup_failure` ten minutes in is simply
- * false. The run's own last event already records which path settled it and
- * what the evidence was, so read that rather than assuming.
+ * Why a `lost` run was lost, in the reader's terms. A broker run is lost
+ * only after its lease expires without a completion report.
  */
-function lostCause(run: Run): string {
-  const last = run.events.at(-1);
-  if (last?.by === 'infra') {
-    return `was lost (${last.note ?? 'its executor failed'}, no completion report)`;
-  }
+function lostCause(_run: Run): string {
   return 'was lost (no report before its lease expired)';
 }
 
