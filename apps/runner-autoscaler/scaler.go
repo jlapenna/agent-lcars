@@ -2439,6 +2439,7 @@ func (a *Scaler) EndDrain() {
 	scaleSet := a.scaleSetLabel()
 	drainingGauge.WithLabelValues(scaleSet).Set(0)
 	drainAutoClearedTotal.WithLabelValues(scaleSet).Inc()
+	a.updateSchedulerDemand(time.Now())
 }
 
 // stopPlacing refuses new placements for the rest of this process's life. It

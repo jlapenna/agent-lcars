@@ -1106,14 +1106,22 @@ func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
 }
 
 func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
+	fleet := newFleetCoordinator(1, nil, map[string]int{"watchdog-stuck": 1}, nil, []string{"watchdog-stuck"})
 	scaler := &Scaler{
 		scaleSetName: "watchdog-stuck",
+		maxRunners:   1,
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		fleet:        fleet,
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+	scaler.queuedJobs.Store(1)
 	scaler.draining.Store(true)
 	drainingGauge.WithLabelValues("watchdog-stuck").Set(1)
 	cleared := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck"))
+	scaler.updateSchedulerDemand(time.Unix(1234, 0))
+	if got := testutil.ToFloat64(pendingRunnersGauge.WithLabelValues("watchdog-stuck")); got != 0 {
+		t.Fatalf("pendingRunnersGauge while draining = %v, want 0", got)
+	}
 
 	scaler.EndDrain()
 	if scaler.draining.Load() {
@@ -1124,6 +1132,9 @@ func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
 		t.Errorf("drainAutoClearedTotal delta = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(pendingRunnersGauge.WithLabelValues("watchdog-stuck")); got != 1 {
+		t.Errorf("pendingRunnersGauge after EndDrain = %v, want 1", got)
 	}
 
 	// Calling again while already clear must not double-count the metric.
