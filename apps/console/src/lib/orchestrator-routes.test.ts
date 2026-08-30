@@ -469,4 +469,39 @@ describe('handleReconcile', () => {
     expect(commentBody.body).toContain(newRunId);
     expect(commentBody.body).toContain('attempt 2 of 3');
   });
+
+  it('preserves a pre-cutover executor cause when draining its pending outcome', async () => {
+    const { deps, clock, calls, store } = fixture();
+    const runId = await dispatchedRun(deps);
+    calls.length = 0;
+    clock.advanceMinutes(121);
+
+    const readRun = store.readRun.bind(store);
+    vi.spyOn(store, 'readRun').mockImplementation(async (id) => {
+      const run = await readRun(id);
+      if (id !== runId || run?.state !== 'lost') return run;
+      return {
+        ...run,
+        events: [
+          ...run.events,
+          {
+            at: clock.now(),
+            to: 'lost',
+            by: 'infra',
+            note: 'startup_failure',
+          },
+        ],
+      };
+    });
+
+    const result = await handleReconcile(deps);
+
+    expect(result.body['reported']).toEqual([runId]);
+    const commentCall = calls.find((call) => call.url.includes('/comments'));
+    const commentBody = JSON.parse(String(commentCall?.init.body)) as {
+      body: string;
+    };
+    expect(commentBody.body).toContain('startup_failure');
+    expect(commentBody.body).not.toContain('lease expired');
+  });
 });

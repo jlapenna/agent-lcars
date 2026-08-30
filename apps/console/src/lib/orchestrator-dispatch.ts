@@ -646,10 +646,17 @@ async function describeLostOutcome(
 }
 
 /**
- * Why a `lost` run was lost, in the reader's terms. A broker run is lost
- * only after its lease expires without a completion report.
+ * Why a `lost` run was lost, in the reader's terms. Queue-native runs reach
+ * `lost` only after their lease expires without a completion report. A
+ * persisted pre-cutover `infra` event instead records the executor's actual
+ * terminal cause; retain that read path while its pending outcome entries
+ * drain. New queue-native code does not write `infra` events.
  */
-function lostCause(_run: Run): string {
+function lostCause(run: Run): string {
+  const last = run.events.at(-1);
+  if (last?.by === 'infra') {
+    return `was lost (${last.note ?? 'its executor failed'}, no completion report)`;
+  }
   return 'was lost (no report before its lease expired)';
 }
 
