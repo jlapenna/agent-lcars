@@ -211,9 +211,8 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
  * `node sidecar.cjs runner resume --session-id <id> --transcript-uri
  * <gcsUri> --cwd <dir> [--projects-dir <dir>] [--project-id <id>]` --
  * downloads a prior session's transcript into Claude Code's local
- * session store, so a caller's own subsequent `claude --resume
- * <sessionId>` (direct mode) or `claude_args: --resume <sessionId>` (the
- * lane) finds it (sub-project 6). Prints the written path on success;
+ * session store, so the direct runner's subsequent `claude --resume
+ * <sessionId>` finds it. Prints the written path on success;
  * prints nothing (never throws, never exits nonzero) when a required
  * flag is missing, `--session-id` is not a safe identifier, or the
  * download fails -- fail-soft, matching `runner sidecar`/`runner

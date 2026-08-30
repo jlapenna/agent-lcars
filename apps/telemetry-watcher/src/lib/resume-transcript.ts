@@ -21,8 +21,8 @@ export interface ResumeTranscriptOptions {
 
 /**
  * Downloads a prior session's archived transcript into Claude Code's own
- * local session store for `cwd`, so a later `claude --resume <sessionId>`
- * (the lane's `claude_args`, or direct mode's literal CLI flag) finds it.
+ * local session store for `cwd`, so the QueueExecutor direct runner's later
+ * `claude --resume <sessionId>` finds it.
  * Fails soft -- returns `undefined`, never throws -- on any download or
  * filesystem failure: a resume that cannot be prepared degrades to a
  * fresh run, matching every other telemetry failure mode in this

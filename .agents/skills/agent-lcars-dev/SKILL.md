@@ -95,9 +95,9 @@ These override any default behavior:
     that human explicitly hands it off (adding an `agent:*` label or a
     recognized reply trigger IS that handoff).
   - **`agent-lcars-bot` assigned** means the agent fleet has claimed it. Before
-    touching such an issue, check for a live `claude.yml`/`codex.yml`/
-    `opencode.yml` run or a recent agent session comment; if neither
-    exists the claim is stale — take over and say so in an issue comment.
+    touching such an issue, check for a live QueueExecutor run or recent
+    agent-session evidence; if neither exists the claim is stale — take over
+    and say so in an issue comment.
   - **Claim before you start**: when beginning work on an issue from an
     interactive session, run `gh issue edit <N> --add-assignee agent-lcars-bot`
     AND post a session takeover comment on the issue (name the resume

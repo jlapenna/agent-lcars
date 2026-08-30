@@ -249,7 +249,7 @@ export async function finalizeSidecar(
     // RUNNER_CAPTURE_AGENTS — authenticated telemetry, started and stopped
     // the sidecar, and both steps reported success, while shipping zero
     // session docs with no warning anywhere. This pass has no reliable way
-    // to know which agent's workflow invoked it (runnerWatchRoots is
+    // to know which provider invocation produced it (runnerWatchRoots is
     // deliberately agent-agnostic — see its own doc comment), so this fires
     // for ANY zero-session finalize pass, not only OpenCode's: a genuinely
     // idle Claude/Codex run is rare enough that the extra visibility is

@@ -196,13 +196,9 @@ Deliberately **not** in the default `build` target's dependency chain (a
 separate `bundle` target, not depended on by anything on its own). CI runs the
 same standalone check before any canonical image publish can be promoted:
 esbuild inlines every dependency, so a transitive dep that cannot be inlined
-can break only at runtime. The old
-`publish-telemetry-tool.yml`
-workflow (publishing immutable semver-tagged releases to
-`gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
-both `agent-lcars`'s and `supersprinklesracing/sprinkles`'s `claude.yml` now
-use the runner-image bake-in exclusively (members migrated in
-[members#3414](https://github.com/supersprinklesracing/sprinkles/pull/3414)).
+can break only at runtime. QueueExecutor direct runners consume the bundle
+only from the runner image; there is no separately published or downloaded
+telemetry-tool runtime path.
 
 ## Deployment
 

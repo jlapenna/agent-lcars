@@ -1,6 +1,6 @@
 ---
 name: debug-agent-run
-description: Diagnose a dispatched headless agent run (claude.yml/codex.yml/opencode.yml) using the fleet's own observability instead of waiting on GitHub - the live runner container on laforge/janeway/spark, Loki, Prometheus, and the LiteLLM logs. Use when an agent run is slow, silent, stuck, or finished badly; when you want to know whether it has actually committed anything yet; when asking "is it working or hung"; or before concluding a run failed for a reason you have not measured.
+description: Diagnose a dispatched QueueExecutor/direct-runner agent run using the fleet's own observability instead of waiting on GitHub - the live runner container on laforge/janeway/spark, Loki, Prometheus, and the LiteLLM logs. Use when an agent run is slow, silent, stuck, or finished badly; when you want to know whether it has actually committed anything yet; when asking "is it working or hung"; or before concluding a run failed for a reason you have not measured.
 ---
 
 # Debugging a dispatched agent run

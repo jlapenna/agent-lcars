@@ -156,7 +156,7 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   const flags = parseRunnerFlags(argv);
   const issueNumber =
     flags.issueNumber !== undefined ? Number(flags.issueNumber) : undefined;
-  // Preserve the standard GitHub Actions fallback for generic CI callers;
+  // Preserve the generic GitHub repository fallback for local/CI diagnostics;
   // QueueExecutor supplies its run identity explicitly.
   const repo =
     parseOwnerRepo(flags.repo) ??

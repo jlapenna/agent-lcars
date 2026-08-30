@@ -13,8 +13,8 @@ const terraform = readFileSync(
   'utf8',
 );
 
-describe('Codex auth Terraform retirement (#761)', () => {
-  it('keeps only the Console broker on the central versioned GCS CAS store', () => {
+describe('QueueExecutor credential Terraform contract (#761)', () => {
+  it('keeps the Console broker scoped to the central versioned GCS CAS store', () => {
     expect(terraform).toContain(
       'resource "google_storage_bucket" "codex_auth"',
     );
@@ -38,7 +38,7 @@ describe('Codex auth Terraform retirement (#761)', () => {
     );
   });
 
-  it('contains no legacy Codex Secret Manager containers or runtime grants', () => {
+  it('contains no retired Secret Manager containers or runtime grants', () => {
     for (const retired of [
       'resource "google_secret_manager_secret" "codex_auth"',
       'resource "google_secret_manager_secret" "homelab_codex_auth"',
