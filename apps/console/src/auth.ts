@@ -1,9 +1,15 @@
 import 'server-only';
 
-import { isE2eTesting, isOnGoogleCloud } from '@agent-lcars/util-server';
+import {
+  isE2eTesting,
+  isOnGoogleCloud,
+  optional,
+  required,
+} from '@agent-lcars/util-server';
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';
 import NextAuth from 'next-auth';
+import { getToken } from 'next-auth/jwt';
 import GitHub from 'next-auth/providers/github';
 
 import { isAdminGithubLogin } from './lib/deployment';
@@ -26,16 +32,69 @@ async function getMockSession(userId: string): Promise<Session> {
   };
 }
 
+const SERVER_GITHUB_ACCESS_TOKEN = Symbol('server-github-access-token');
+
+type ServerSession = Session & {
+  [SERVER_GITHUB_ACCESS_TOKEN]?: string;
+};
+
+/**
+ * Returns the signed-in user's GitHub OAuth token only from a server-side
+ * session produced by this module. The symbol is never added by Auth.js's
+ * public session callback, so `/api/auth/session` cannot serialize it to the
+ * browser.
+ */
+export function githubAccessTokenFor(session: Session): string | undefined {
+  return (session as ServerSession)[SERVER_GITHUB_ACCESS_TOKEN];
+}
+
+async function attachServerGithubAccessToken(
+  session: Session,
+): Promise<Session> {
+  const secureCookie =
+    optional('AUTH_URL')?.startsWith('https://') ?? isOnGoogleCloud();
+  const token = await getToken({
+    req: { headers: new Headers(await headers()) },
+    secret: required('AUTH_SECRET'),
+    secureCookie,
+  });
+  if (typeof token?.githubAccessToken === 'string') {
+    Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN, {
+      configurable: false,
+      enumerable: false,
+      value: token.githubAccessToken,
+      writable: false,
+    });
+  }
+  return session;
+}
+
 const nextAuth = NextAuth({
-  providers: [GitHub],
+  providers: [
+    GitHub({
+      // Quick Tasks are created with the operator's token so GitHub records
+      // the signed-in human as the author. `repo` is required because the
+      // watched repository set includes private repositories.
+      authorization: { params: { scope: 'repo read:user user:email' } },
+    }),
+  ],
   callbacks: {
     signIn({ profile }) {
       return isAdminGithubLogin(profile?.login);
     },
-    jwt({ token, profile }) {
-      if (profile) {
+    jwt({ token, profile, account }) {
+      if (typeof profile?.login === 'string') {
         token.githubLogin = profile.login;
         token.isAdmin = isAdminGithubLogin(profile.login);
+      }
+      if (
+        account?.provider === 'github' &&
+        typeof account.access_token === 'string'
+      ) {
+        // Auth.js encrypts the JWT cookie with AUTH_SECRET. Keep this out of
+        // the public session callback; attachServerGithubAccessToken decodes
+        // it only for same-process server callers.
+        token.githubAccessToken = account.access_token;
       }
       return token;
     },
@@ -72,6 +131,10 @@ export const auth: typeof nextAuth.auth = (async (
   if ((args as unknown[]).length === 0) {
     const session = await testSession();
     if (session !== undefined) return session;
+    const authenticated = await nextAuth.auth();
+    return authenticated
+      ? attachServerGithubAccessToken(authenticated)
+      : authenticated;
   }
   return nextAuth.auth(...args);
 }) as typeof nextAuth.auth;

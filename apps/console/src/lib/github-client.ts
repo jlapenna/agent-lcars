@@ -139,6 +139,20 @@ const CONSOLE_GITHUB_CLIENT_PERMISSIONS: Record<string, string> = {
 
 let client: Octokit | undefined;
 
+/** A request-scoped client for mutations that GitHub must attribute to the
+ * signed-in console operator. It is deliberately not cached: the token is a
+ * per-session user credential, unlike the singleton App installation client
+ * below. Quick Task creation is the only current caller. */
+export function createGithubUserClient(accessToken: string): Octokit {
+  if (!accessToken) {
+    throw new Error('A GitHub user access token is required');
+  }
+  return new Octokit({
+    auth: accessToken,
+    request: { fetch: timeoutFetch },
+  });
+}
+
 export function getGithubClient(): Octokit {
   if (!client) {
     // `AGENT_CONSOLE_GITHUB_API_BASE_URL` is only ever set by the

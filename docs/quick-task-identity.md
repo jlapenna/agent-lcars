@@ -50,8 +50,14 @@ server derives both from trusted deployment configuration before it enters the
 existing claim and issue-create protocol.
 
 The issue is created in one GitHub write with both `intake:quick-task` and the
-selected repository integration's `agent:*` label. There is no intermediate
-unroutable issue and no follow-up label mutation.
+selected repository integration's `agent:*` label. That one write uses the
+signed-in console operator's GitHub OAuth token, so GitHub records the human
+who filed the task as its author; the App installation token still owns the
+claim-tag ledger and every background control-plane operation. The OAuth token
+stays inside Auth.js's encrypted HTTP-only JWT and is decoded only for a
+same-process server request; it is never included in the public session object.
+Because watched repositories may be private, sign-in requests the `repo` scope.
+There is no intermediate unroutable issue and no follow-up label mutation.
 
 The normalized request is hashed and persisted in the issue body as a hidden
 versioned marker:

@@ -923,6 +923,13 @@ interface QuickTaskClaim {
   claimantId: string;
 }
 
+type AppIssueCreate = ReturnType<
+  typeof getGithubClient
+>['rest']['issues']['create'];
+export type QuickTaskIssueCreator = (
+  parameters: Parameters<AppIssueCreate>[0],
+) => ReturnType<AppIssueCreate>;
+
 /**
  * Server-only input for the future multipart route. It is intentionally not
  * part of QuickTaskRequest: the existing action and broker wire contract stay
@@ -1347,6 +1354,7 @@ async function createQuickTaskOnce(
   request: NormalizedQuickTaskRequest,
   digest: string,
   evidenceLifecycle?: QuickTaskEvidenceLifecycle,
+  issueCreator?: QuickTaskIssueCreator,
 ): Promise<QuickTaskReceipt> {
   const integration = requireAgentIntegration(
     request.repository,
@@ -1406,7 +1414,9 @@ async function createQuickTaskOnce(
   }
 
   try {
-    const { data: issue } = await octokit.rest.issues.create({
+    const { data: issue } = await (
+      issueCreator ?? ((parameters) => octokit.rest.issues.create(parameters))
+    )({
       owner: request.repository.owner,
       repo: request.repository.name,
       title: request.title,
@@ -1460,6 +1470,7 @@ const inFlightQuickTasks = new Map<
 export function createQuickTask(
   rawRequest: QuickTaskRequest & { repository: WatchedRepo },
   evidenceLifecycle?: QuickTaskEvidenceLifecycle,
+  issueCreator?: QuickTaskIssueCreator,
 ): Promise<QuickTaskReceipt> {
   const request = normalizeQuickTaskRequest(rawRequest);
   const digest = quickTaskDigest(request);
@@ -1494,7 +1505,12 @@ export function createQuickTask(
     return pending.promise;
   }
 
-  const promise = createQuickTaskOnce(request, digest, evidenceLifecycle);
+  const promise = createQuickTaskOnce(
+    request,
+    digest,
+    evidenceLifecycle,
+    issueCreator,
+  );
   inFlightQuickTasks.set(key, { digest, evidenceLifecycle, promise });
   const cleanup = () => {
     if (inFlightQuickTasks.get(key)?.promise === promise) {

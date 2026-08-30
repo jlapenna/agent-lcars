@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { auth, createQuickTask, resolveWatchedRepo, createLifecycle } =
-  vi.hoisted(() => ({
-    auth: vi.fn(),
-    createQuickTask: vi.fn(),
-    resolveWatchedRepo: vi.fn(),
-    createLifecycle: vi.fn(),
-  }));
+const {
+  auth,
+  createQuickTask,
+  resolveWatchedRepo,
+  createLifecycle,
+  userIssueCreator,
+} = vi.hoisted(() => ({
+  auth: vi.fn(),
+  createQuickTask: vi.fn(),
+  resolveWatchedRepo: vi.fn(),
+  createLifecycle: vi.fn(),
+  userIssueCreator: vi.fn(),
+}));
 
 vi.mock('@/auth', () => ({ auth }));
 vi.mock('@/lib/backend-actions', () => ({
@@ -16,6 +22,9 @@ vi.mock('@/lib/backend-actions', () => ({
 vi.mock('@/lib/github-client', () => ({ resolveWatchedRepo }));
 vi.mock('@/lib/quick-task-evidence-lifecycle', () => ({
   createQuickTaskEvidenceLifecycle: createLifecycle,
+}));
+vi.mock('@/lib/quick-task-author', () => ({
+  quickTaskIssueCreatorFor: vi.fn(() => userIssueCreator),
 }));
 
 import { POST } from './route';
@@ -104,6 +113,7 @@ describe('POST /api/quick-task/v1', () => {
         ),
       }),
       expect.objectContaining({ intent }),
+      userIssueCreator,
     );
   });
 
