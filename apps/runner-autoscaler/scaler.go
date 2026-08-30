@@ -39,10 +39,11 @@ type Scaler struct {
 	// registrationURL is the non-secret GitHub organization/repository URL for
 	// this scale set's registration. The console publishes it as an optional
 	// operator link; it is never used for listener ownership or credentials.
-	registrationURL string
-	runners         runnerState
-	runnerImage     string
-	runnerMemory    int64
+	registrationURL     string
+	runners             runnerState
+	runnerImage         string
+	runnerImageFallback string
+	runnerMemory        int64
 	// runnerPidsLimit: see Config.RunnerPidsLimit. Zero means no limit.
 	runnerPidsLimit int64
 	// runnerShmSize: see Config.RunnerShmSize. Zero means Docker's own
@@ -1866,7 +1867,8 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	// alone are therefore insufficient for a long-lived control plane: verify
 	// the selected host immediately before minting the one-shot JIT config and
 	// recover the image on demand when pruning removed it.
-	if err := a.ensureRunnerImage(ctx, client, host); err != nil {
+	preparedImage, err := a.prepareRunnerImage(ctx, client, host)
+	if err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
 		return "", err
 	}
@@ -1891,7 +1893,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		client,
 		host,
 		&container.Config{
-			Image: a.runnerImage,
+			Image: preparedImage,
 			User:  "runner",
 			Cmd:   []string{"/home/runner/run.sh"},
 			Labels: map[string]string{
@@ -1962,50 +1964,23 @@ func isDigestRef(ref string) bool {
 	return strings.Contains(ref[at+1:], ":")
 }
 
-func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Client, host string) error {
+func (a *Scaler) prepareRunnerImage(ctx context.Context, client *dockerclient.Client, host string) (string, error) {
 	key := host + "\x00" + a.runnerImage
 	lockValue, _ := a.hostImageLocks.LoadOrStore(key, &sync.Mutex{})
 	lock := lockValue.(*sync.Mutex)
 	if !lockMutexContext(ctx, lock) {
-		return fmt.Errorf("waiting to prepare runner image %q on host %q: %w", a.runnerImage, host, ctx.Err())
+		return "", fmt.Errorf("waiting to prepare runner image %q on host %q: %w", a.runnerImage, host, ctx.Err())
 	}
 	defer lock.Unlock()
 
-	// A DIGEST reference is immutable, so a local hit is authoritative and
-	// re-pulling could never change the bytes. Skip the registry round-trip.
-	//
-	// A TAG is not. Treating a local hit as authoritative there is
-	// agent-lcars#139: the tag moves in the registry, every host keeps
-	// booting whatever it pulled first, and nothing surfaces the
-	// divergence. Observed 2026-07-27 with e2e-runner:latest -- four of five
-	// hosts served a stale image for hours while the fixed one sat published,
-	// and a CI job failed against code that had already been corrected. The
-	// only thing that ever refreshed a tag was the twice-daily prune
-	// deleting it locally so this function's not-found path finally ran,
-	// which also means a rebuilt image published to REMOVE something (a CVE
-	// fix, or #138 stripping the Docker CLI) did not take effect until an
-	// unrelated GC happened to fire.
-	//
-	// So: always pull for a tag. Layers are already local in the common
-	// case, making this a manifest check rather than a transfer.
-	if isDigestRef(a.runnerImage) {
-		inspectCtx, cancelInspect := context.WithTimeout(ctx, dockerInspectTimeout)
-		_, err := client.ImageInspect(inspectCtx, a.runnerImage)
-		cancelInspect()
-		if err == nil {
-			return nil
-		} else if !cerrdefs.IsNotFound(err) {
-			return fmt.Errorf("failed to inspect runner image %q on host %q: %w", a.runnerImage, host, err)
-		}
-	}
+	return resolveRunnerImageForHost(ctx, client, host, runnerImageSpec{
+		primary: a.runnerImage, fallback: a.runnerImageFallback, pool: a.scaleSetLabel(),
+	}, a.logger)
+}
 
-	a.logger.Info("Refreshing runner image on selected host",
-		slog.String("host", host), slog.String("image", a.runnerImage))
-	if err := pullRunnerImage(ctx, client, a.runnerImage, host); err != nil {
-		return err
-	}
-	logDigests(ctx, a.logger, DockerHost{Name: host, Client: client}, a.runnerImage)
-	return nil
+func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Client, host string) error {
+	_, err := a.prepareRunnerImage(ctx, client, host)
+	return err
 }
 
 // pullRunnerImage establishes the exact runner image on one host. Mutable
@@ -2114,13 +2089,15 @@ func (a *Scaler) createContainerWithImageRecovery(
 		slog.String("image", a.runnerImage),
 		slog.String("error", err.Error()),
 	)
-	if prepareErr := a.ensureRunnerImage(ctx, client, host); prepareErr != nil {
+	preparedImage, prepareErr := a.prepareRunnerImage(ctx, client, host)
+	if prepareErr != nil {
 		return response, fmt.Errorf(
 			"runner image disappeared before container creation (%v) and recovery failed: %w",
 			err,
 			prepareErr,
 		)
 	}
+	config.Image = preparedImage
 	return create()
 }
 

@@ -58,7 +58,7 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 
 	eligible := make([]string, 0, len(order))
 	for _, host := range order {
-		if err := directRunnerPreflightHostImages(ctx, newClient, host, targets[host], images, mounts); err != nil {
+		if err := directRunnerPreflightHostImages(ctx, newClient, host, targets[host], images, mounts, logger); err != nil {
 			logger.Warn("Direct queue host is ineligible; excluding it from queue launch", slog.String("host", host), slog.String("error", err.Error()))
 			continue
 		}
@@ -79,19 +79,22 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 // then claim a run whose selected image cannot actually start with its
 // permanent mounts. The adapter registry is also the launch contract, so an
 // unrelated scale-set image cannot make a direct-queue host ineligible.
-func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]string, error) {
-	images := make([]string, 0, len(directRunnerAdapters))
+func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]runnerImageSpec, error) {
+	images := make([]runnerImageSpec, 0, len(directRunnerAdapters))
 	seen := make(map[string]bool, len(directRunnerAdapters))
 	for _, adapter := range directRunnerAdapters {
-		image, err := directRunnerImageFor(resolved, adapter.pipeline)
+		config, err := directRunnerConfigFor(resolved, adapter.pipeline)
 		if err != nil {
 			return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)
 		}
-		if seen[image] {
+		key := config.RunnerImage + "\x00" + config.RunnerImageFallback
+		if seen[key] {
 			continue
 		}
-		seen[image] = true
-		images = append(images, image)
+		seen[key] = true
+		images = append(images, runnerImageSpec{
+			primary: config.RunnerImage, fallback: config.RunnerImageFallback, pool: "direct-" + adapter.pipeline,
+		})
 	}
 	if len(images) == 0 {
 		return nil, fmt.Errorf("no configured scale set to source a direct-runner preflight image")
@@ -99,10 +102,10 @@ func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]string,
 	return images, nil
 }
 
-func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []string, mounts []directRunnerCredentialMount) error {
+func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []runnerImageSpec, mounts []directRunnerCredentialMount, logger *slog.Logger) error {
 	for _, image := range images {
-		if err := directRunnerPreflightHost(ctx, newClient, host, target, image, mounts); err != nil {
-			return fmt.Errorf("image %q: %w", image, err)
+		if err := directRunnerPreflightHost(ctx, newClient, host, target, image, mounts, logger); err != nil {
+			return fmt.Errorf("image %q: %w", image.primary, err)
 		}
 	}
 	return nil
@@ -113,7 +116,7 @@ func directRunnerPreflightHostImages(ctx context.Context, newClient func(string)
 // check as the same `runner` user used by direct work. The container is always
 // force-removed after create, including a failed start, wait timeout, or a
 // non-zero check result, so the readiness check never leaves host artifacts.
-func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target, image string, mounts []directRunnerCredentialMount) (err error) {
+func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, image runnerImageSpec, mounts []directRunnerCredentialMount, logger *slog.Logger) (err error) {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("connecting: %w", err)
@@ -123,7 +126,8 @@ func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*doc
 	// mutable image here as part of this host's admission probe instead of
 	// racing its background pull on a fresh host. A host with a failed pull is
 	// excluded before it can claim any provider's work.
-	if err := pullRunnerImage(ctx, client, image, host); err != nil {
+	preparedImage, err := resolveRunnerImageForHost(ctx, client, host, image, logger)
+	if err != nil {
 		return err
 	}
 
@@ -135,7 +139,7 @@ func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*doc
 	}
 	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
 	created, err := client.ContainerCreate(createCtx, &container.Config{
-		Image:       image,
+		Image:       preparedImage,
 		User:        "runner",
 		Entrypoint:  []string{"/bin/sh"},
 		Cmd:         append([]string{"-ec", "for path do test -f \"$path\" && test -r \"$path\" || exit 1; done", "--"}, paths...),

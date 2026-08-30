@@ -40,13 +40,14 @@ type fakeDockerServer struct {
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
-	listDelay        time.Duration
-	inspectDelay     time.Duration
-	imagePresent     bool
-	imagePulls       int
-	pullStreamError  bool
-	containerCreates int
-	createFailures   []int
+	listDelay              time.Duration
+	inspectDelay           time.Duration
+	imagePresent           bool
+	imagePulls             int
+	pullStreamError        bool
+	pullStreamErrorMessage string
+	containerCreates       int
+	createFailures         []int
 	// lastCreate captures the most recent /containers/create request body so
 	// a test can assert exactly what a caller (e.g. launchDirectRunner) sent
 	// -- image, env, labels, bind mounts -- without a real docker daemon.
@@ -256,6 +257,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.imagePulls++
 		failStream := f.pullStreamError
+		failMessage := f.pullStreamErrorMessage
 		if !failStream {
 			f.imagePresent = true
 		}
@@ -265,7 +267,13 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 			// A real daemon reports registry/auth/manifest failures INSIDE the
 			// progress stream with HTTP 200, not as a transport error.
 			_, _ = w.Write([]byte("{\"status\":\"Pulling from library/x\"}\n"))
-			_, _ = w.Write([]byte("{\"errorDetail\":{\"message\":\"manifest unknown\"},\"error\":\"manifest unknown\"}\n"))
+			if failMessage == "" {
+				failMessage = "manifest unknown"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"errorDetail": map[string]string{"message": failMessage},
+				"error":       failMessage,
+			})
 			return
 		}
 		_, _ = w.Write([]byte("{\"status\":\"Pull complete\"}\n"))
@@ -342,6 +350,13 @@ func (f *fakeDockerServer) pullCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.imagePulls
+}
+
+func (f *fakeDockerServer) setPullStreamError(message string) {
+	f.mu.Lock()
+	f.pullStreamError = message != ""
+	f.pullStreamErrorMessage = message
+	f.mu.Unlock()
 }
 
 func (f *fakeDockerServer) setCreateFailures(statuses ...int) {

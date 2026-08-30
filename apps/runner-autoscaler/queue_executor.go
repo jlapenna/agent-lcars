@@ -439,7 +439,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	if len(order) == 0 {
 		return fmt.Errorf("no docker hosts configured to launch a direct-mode runner")
 	}
-	runnerImage, err := directRunnerImageFor(resolved, l.pipeline)
+	runnerConfig, err := directRunnerConfigFor(resolved, l.pipeline)
 	if err != nil {
 		return err
 	}
@@ -457,7 +457,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerConfig.RunnerImage, runnerConfig.RunnerImageFallback, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -477,18 +477,26 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 // same convention GitHub-mode dispatch already uses to route a job to a
 // scale set); fall back to the first configured scale set otherwise.
 func directRunnerImageFor(resolved resolvedOrchestratorConfig, pipeline string) (string, error) {
+	config, err := directRunnerConfigFor(resolved, pipeline)
+	if err != nil {
+		return "", err
+	}
+	return config.RunnerImage, nil
+}
+
+func directRunnerConfigFor(resolved resolvedOrchestratorConfig, pipeline string) (Config, error) {
 	pipeline = strings.ToLower(strings.TrimSpace(pipeline))
 	for _, c := range resolved.ScaleSets {
 		for _, label := range c.Labels {
 			if strings.ToLower(label) == pipeline {
-				return c.RunnerImage, nil
+				return c, nil
 			}
 		}
 	}
 	if len(resolved.ScaleSets) > 0 {
-		return resolved.ScaleSets[0].RunnerImage, nil
+		return resolved.ScaleSets[0], nil
 	}
-	return "", fmt.Errorf("no configured scale set to source a direct-runner image for pipeline %q", pipeline)
+	return Config{}, fmt.Errorf("no configured scale set to source a direct-runner image for pipeline %q", pipeline)
 }
 
 // directRunnerMaxConcurrent bounds how many direct-mode containers
@@ -748,7 +756,7 @@ func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target
 // uses for GitHub-mode runners), and on capacity, creates and starts the
 // container. Returns an error (never fatal to the caller's round-robin) if
 // this host is unreachable, full, or the create/start call fails.
-func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, providerCredentialBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
+func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, runnerImageFallback, writerKeyHostPath string, providerCredentialBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("host %q: connecting: %w", host, err)
@@ -765,6 +773,12 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 	}
 	if len(running) >= maxConcurrent {
 		return fmt.Errorf("host %q: at direct-runner capacity (%d/%d)", host, len(running), maxConcurrent)
+	}
+	preparedImage, err := resolveRunnerImageForHost(ctx, client, host, runnerImageSpec{
+		primary: runnerImage, fallback: runnerImageFallback, pool: "direct-" + strings.ToLower(strings.TrimSpace(l.pipeline)),
+	}, logger)
+	if err != nil {
+		return err
 	}
 
 	name := fmt.Sprintf("direct-runner-%s-%s", dockerSafeNamePart(l.pipeline), uuid.NewString()[:8])
@@ -800,7 +814,7 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 
 	createCtx, cancelCreate := context.WithTimeout(ctx, dockerContainerOperationTimeout)
 	created, err := client.ContainerCreate(createCtx, &container.Config{
-		Image: runnerImage,
+		Image: preparedImage,
 		User:  "runner",
 		Env:   env,
 		Labels: map[string]string{

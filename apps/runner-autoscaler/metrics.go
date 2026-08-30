@@ -139,6 +139,20 @@ var (
 		},
 		[]string{"scale_set", "host"},
 	)
+	runnerImageFallbackActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_runner_image_fallback_active",
+			Help: "1 after a pool used its configured cached immutable runner image because the registry was unavailable; cleared by the next successful primary image refresh.",
+		},
+		[]string{"pool", "host"},
+	)
+	runnerImageFallbackUses = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_runner_image_fallback_uses_total",
+			Help: "Total runner image preparations that used an explicitly configured cached immutable fallback during a registry outage.",
+		},
+		[]string{"pool", "host"},
+	)
 	runnerDiedIdleTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "github_runner_autoscaler_runner_died_idle_total",
@@ -378,6 +392,8 @@ func registerMetrics() {
 			jobsCompletedCounter,
 			runnerStartDuration,
 			runnerStartFailures,
+			runnerImageFallbackActive,
+			runnerImageFallbackUses,
 			runnerDiedIdleTotal,
 			trackedRunnerMismatchTotal,
 			githubUnavailableRunnersReapedTotal,
