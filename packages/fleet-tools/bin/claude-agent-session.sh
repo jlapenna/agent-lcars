@@ -17,8 +17,9 @@ command.
 Arguments:
   gs://.../<session-id>.jsonl  An exact transcript URI.
   <run-id>                    A QueueExecutor run ID, such as
-                              work:<ulid>/r1. The archive must contain one
-                              transcript; otherwise pass the exact URI.
+                              work:<ulid>/r1 or octo/example#42/r1. The
+                              archive must contain one transcript; otherwise
+                              pass the exact URI.
 EOF
   exit 1
 }
@@ -29,7 +30,7 @@ resolve_archive_uri() {
     echo "$arg"
     return 0
   fi
-  if [[ ! "$arg" =~ ^[A-Za-z0-9._:/-]+$ ]] || [[ "$arg" == *..* ]]; then
+  if [[ ! "$arg" =~ ^[A-Za-z0-9._:/#-]+$ ]] || [[ "$arg" == *..* ]]; then
     echo "Argument must be a gs://.../<session-id>.jsonl URI or a QueueExecutor run ID, got: $arg" >&2
     exit 1
   fi
