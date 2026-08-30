@@ -70,7 +70,7 @@ test.describe('mobile console layout contracts @mobile-layout', () => {
       const itemMenu = page.getByRole('menu');
       await expect(itemMenu).toBeVisible();
       await expect(
-        itemMenu.getByRole('menuitem', { name: 'Rebase onto base branch' }),
+        itemMenu.getByRole('menuitem', { name: 'Approve & Rebase' }),
       ).toBeVisible();
       await expect(
         itemMenu.getByRole('menuitem', { name: 'Mute' }),
