@@ -56,6 +56,17 @@ is "All repositories".
 > file had described as select-repositories when one installation was not
 > (#1381).
 
+The Sprinkles `claude-agent-github` WIF provider admits only the workflow paths
+for `ci.yml`, `e2e.yml`, `deploy.yml`, `deploy-rules-and-indexes.yml`,
+`deploy-qbp-appsscript.yml`, and `config-reconcile.yml`. Each prefix ends at
+the `@` delimiter, so a similarly prefixed sibling filename cannot match, while
+the branch, tag, or SHA suffix after `@` is intentionally unrestricted.
+Admission to the provider is only the first gate; a workflow still needs an
+explicit service-account impersonation binding. The byte-exact condition is
+source-owned by homelab Terraform and mirrored in the IAM contract model here
+so live drift detection covers both accidental widening and a stale declared
+boundary (#1620).
+
 ## `CLAUDE_CODE_OAUTH_TOKEN` (QueueExecutor)
 
 A long-lived OAuth token for the maintainer's Claude subscription. It does
