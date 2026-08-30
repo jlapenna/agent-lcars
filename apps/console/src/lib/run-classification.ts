@@ -11,7 +11,7 @@ import { repoItemKey } from './github-client';
  * Bridges the console's `AgentRun`/`IssueAgentSessionDoc` types to the pure
  * classifier in `@agent-lcars/telemetry` (which stays app-agnostic - libs
  * must not import from apps), and supplies the one caller-owned input the
- * classifier needs: the workflow's wall-clock kill budget. This is the
+ * classifier needs: the executor's wall-clock budget. This is the
  * single place `RUN_TIMEOUT_MINUTES` and a run's fields get turned into a
  * classification - every row that renders a run's status calls this rather
  * than re-deriving it.
