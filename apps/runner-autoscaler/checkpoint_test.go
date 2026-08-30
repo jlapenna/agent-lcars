@@ -237,7 +237,7 @@ func TestCheckpointRestoreStatusIsOneHot(t *testing.T) {
 
 func TestFleetCoordinatorRestoreDropsExpiredCooldowns(t *testing.T) {
 	now := time.Unix(1785702300, 0).UTC()
-	fleet := newFleetCoordinator(0, nil, nil, nil)
+	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
 	fleet.restore(checkpointFleet{
 		OverloadedUntil: map[string]time.Time{
 			"spark": now.Add(time.Minute),
@@ -371,7 +371,7 @@ func TestQuiescePreservesIdleRunnersAndCheckpoints(t *testing.T) {
 	scaler.runners.markBusy("runner-busy")
 
 	runtimes := []*scaleSetRuntime{{config: Config{ScaleSetName: "myset"}, scaler: scaler}}
-	fleet := newFleetCoordinator(0, nil, nil, nil)
+	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
 	store.setSnapshot(orchestratorSnapshot(runtimes, fleet))
 
 	done := make(chan struct{})
@@ -416,7 +416,7 @@ func TestQuiesceCheckpointsEvenIfGenerationHangs(t *testing.T) {
 	}
 	scaler.runners.addIdle("runner-idle", "host-a", "i1", time.Unix(1785702000, 0))
 	runtimes := []*scaleSetRuntime{{config: Config{ScaleSetName: "myset"}, scaler: scaler}}
-	store.setSnapshot(orchestratorSnapshot(runtimes, newFleetCoordinator(0, nil, nil, nil)))
+	store.setSnapshot(orchestratorSnapshot(runtimes, newFleetCoordinator(0, nil, nil, nil, nil)))
 
 	timeoutsBefore := testutil.ToFloat64(quiesceGenerationTimeouts)
 	// A done channel that never closes, standing in for a listener wedged on

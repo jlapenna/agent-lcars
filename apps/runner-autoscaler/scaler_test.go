@@ -1588,7 +1588,7 @@ func readinessScaler(t *testing.T, metricName string, maxAge time.Duration, hand
 	metrics := httptest.NewServer(handler)
 	t.Cleanup(metrics.Close)
 
-	fleet := newFleetCoordinator(4, nil, map[string]int{"set": 1}, []string{"set"})
+	fleet := newFleetCoordinator(4, nil, map[string]int{"set": 1}, nil, []string{"set"})
 	fleet.readinessRequired = map[string]bool{"roamer": true}
 
 	return &Scaler{

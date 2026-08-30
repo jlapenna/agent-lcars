@@ -59,6 +59,32 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	}
 }
 
+func TestOrchestratorConfigResolvesSchedulingPriority(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    runner_image: example/default:latest",
+		"    runner_image: example/default:latest\n    priority: 10", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Priorities["default"]; got != 10 {
+		t.Fatalf("default priority = %d, want 10", got)
+	}
+	if got := resolved.Priorities["e2e"]; got != 0 {
+		t.Fatalf("e2e default priority = %d, want 0", got)
+	}
+}
+
+func TestOrchestratorConfigRejectsNegativeSchedulingPriority(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    runner_image: example/default:latest",
+		"    runner_image: example/default:latest\n    priority: -1", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "priority must be at least 0") {
+		t.Fatalf("load error = %v, want priority validation error", err)
+	}
+}
+
 func TestOrchestratorConfigResolvesMemorySafetyMargin(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin: 0.25", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
@@ -856,7 +882,7 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 	}
 
 	hosts := []DockerHost{{Name: "janeway"}}
-	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.Weights, nil)
+	fleet := newFleetCoordinator(resolved.Raw.Fleet.MaxRunners, resolved.RunnerLimits, resolved.Weights, resolved.Priorities, nil)
 	runtimes, err := buildOrchestratorRuntimes(resolved, hosts, hosts, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)

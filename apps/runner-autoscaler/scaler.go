@@ -231,7 +231,7 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 		return a.fleet
 	}
 	a.localFleetOnce.Do(func() {
-		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
+		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, map[string]int{a.scaleSetName: 1}, nil, []string{a.scaleSetName})
 	})
 	return a.localFleet
 }
@@ -604,7 +604,17 @@ func (a *Scaler) updateRunnerMetrics() {
 // updateRunnerMetrics.
 func (a *Scaler) runnersChanged() {
 	a.updateRunnerMetrics()
+	a.updateSchedulerDemand(time.Now())
 	a.checkpoint()
+}
+
+func (a *Scaler) updateSchedulerDemand(now time.Time) {
+	current := a.runners.count()
+	pending := max(0, min(a.maxRunners, a.minRunners+int(a.queuedJobs.Load()))-current)
+	if a.draining.Load() {
+		pending = 0
+	}
+	a.coordinator().updateDemand(a.scaleSetLabel(), pending, current, now)
 }
 
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
@@ -626,10 +636,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	desiredRunnersGauge.WithLabelValues(scaleSet).Set(float64(targetRunnerCount))
 	minRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.minRunners))
 	maxRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.maxRunners))
-	pendingRunnersGauge.WithLabelValues(scaleSet).Set(float64(max(0, targetRunnerCount-currentCount)))
-	defer func() {
-		pendingRunnersGauge.WithLabelValues(scaleSet).Set(float64(max(0, targetRunnerCount-a.runners.count())))
-	}()
+	a.updateSchedulerDemand(time.Now())
 	defer a.runnersChanged()
 
 	switch {

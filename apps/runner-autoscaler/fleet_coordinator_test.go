@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestFleetReservationMakesHostLimitAtomicAcrossScalers(t *testing.T) {
@@ -16,7 +18,7 @@ func TestFleetReservationMakesHostLimitAtomicAcrossScalers(t *testing.T) {
 	fake.setContainers([]container.Summary{})
 	host := DockerHost{Name: "janeway", Client: fake.client(t)}
 	fleet := newFleetCoordinator(24, map[string]int{"janeway": 1},
-		map[string]int{"default": 1, "e2e": 1}, []string{"default", "e2e"})
+		map[string]int{"default": 1, "e2e": 1}, nil, []string{"default", "e2e"})
 	newScaler := func(name string) *Scaler {
 		return &Scaler{
 			scaleSetName: name, maxRunners: 8, dockerHosts: []DockerHost{host},
@@ -41,7 +43,7 @@ func TestFleetReservationEnforcesGlobalLimit(t *testing.T) {
 	fake.setContainers([]container.Summary{})
 	host := DockerHost{Name: "host", Client: fake.client(t)}
 	fleet := newFleetCoordinator(1, nil,
-		map[string]int{"a": 1, "b": 1}, []string{"a", "b"})
+		map[string]int{"a": 1, "b": 1}, nil, []string{"a", "b"})
 	newScaler := func(name string) *Scaler {
 		return &Scaler{
 			scaleSetName: name, maxRunners: 1, dockerHosts: []DockerHost{host}, logger: slog.Default(),
@@ -58,6 +60,59 @@ func TestFleetReservationEnforcesGlobalLimit(t *testing.T) {
 	}
 }
 
+func TestFleetReservationProtectsOneRunnerForHigherPriorityDemand(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	fake.setContainers([]container.Summary{})
+	host := DockerHost{Name: "host", Client: fake.client(t)}
+	fleet := newFleetCoordinator(2, map[string]int{"host": 2},
+		map[string]int{"default": 1, "protected": 1},
+		map[string]int{"default": 0, "protected": 10},
+		[]string{"default", "protected"})
+	newScaler := func(name string) *Scaler {
+		return &Scaler{
+			scaleSetName: name, maxRunners: 2, dockerHosts: []DockerHost{host}, logger: slog.Default(),
+			runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}}, fleet: fleet,
+		}
+	}
+
+	fleet.updateDemand("protected", 2, 0, time.Unix(100, 0))
+	if _, err := fleet.reserve(context.Background(), newScaler("default")); !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("ordinary reservation error = %v, want capacity deferral", err)
+	}
+
+	protected, err := fleet.reserve(context.Background(), newScaler("protected"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One active protected runner satisfies the minimum-service reservation;
+	// its second pending job must not monopolize the other fleet slot.
+	fleet.updateDemand("protected", 1, 1, time.Unix(101, 0))
+	protected.release("protected")
+	ordinary, err := fleet.reserve(context.Background(), newScaler("default"))
+	if err != nil {
+		t.Fatalf("ordinary reservation after protected service = %v", err)
+	}
+	ordinary.release("default")
+}
+
+func TestFleetDemandPublishesUninterruptedPendingTimestamp(t *testing.T) {
+	fleet := newFleetCoordinator(1, nil, nil, nil, nil)
+	label := "pending-timestamp-test"
+	first := time.Unix(1234, 0)
+	fleet.updateDemand(label, 2, 0, first)
+	if got := testutil.ToFloat64(pendingSinceTimestampGauge.WithLabelValues(label)); got != 1234 {
+		t.Fatalf("pending timestamp = %v, want 1234", got)
+	}
+	fleet.updateDemand(label, 1, 0, time.Unix(9999, 0))
+	if got := testutil.ToFloat64(pendingSinceTimestampGauge.WithLabelValues(label)); got != 1234 {
+		t.Fatalf("uninterrupted pending timestamp = %v, want original 1234", got)
+	}
+	fleet.updateDemand(label, 0, 0, time.Unix(10000, 0))
+	if got := testutil.ToFloat64(pendingSinceTimestampGauge.WithLabelValues(label)); got != 0 {
+		t.Fatalf("cleared pending timestamp = %v, want 0", got)
+	}
+}
+
 func TestRetiredHostIsCordonedFromNewPlacements(t *testing.T) {
 	retired := newFakeDockerServer(t)
 	active := newFakeDockerServer(t)
@@ -65,7 +120,7 @@ func TestRetiredHostIsCordonedFromNewPlacements(t *testing.T) {
 	active.setContainers([]container.Summary{})
 	retiredHost := DockerHost{Name: "retired", Client: retired.client(t)}
 	activeHost := DockerHost{Name: "active", Client: active.client(t)}
-	fleet := newFleetCoordinator(2, nil, map[string]int{"set": 1}, []string{"set"})
+	fleet := newFleetCoordinator(2, nil, map[string]int{"set": 1}, nil, []string{"set"})
 	scaler := &Scaler{
 		scaleSetName: "set", maxRunners: 2,
 		dockerHosts: []DockerHost{activeHost, retiredHost}, placementHosts: []DockerHost{activeHost},
@@ -99,7 +154,7 @@ func TestFleetReservationsAreAtomicUnderConcurrentGoroutines(t *testing.T) {
 	hostB := DockerHost{Name: "host-b", Client: fake.client(t)}
 	const fleetMax = 50 // effectively unbounded; the invariant under test is per-host exclusivity, not this cap.
 	fleet := newFleetCoordinator(fleetMax, nil,
-		map[string]int{"set-a": 1, "set-b": 1}, []string{"set-a", "set-b"})
+		map[string]int{"set-a": 1, "set-b": 1}, nil, []string{"set-a", "set-b"})
 	newScaler := func(name string) *Scaler {
 		return &Scaler{
 			scaleSetName: name, maxRunners: fleetMax,
