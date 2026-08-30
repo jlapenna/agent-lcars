@@ -845,56 +845,6 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
-  it('does not surface obsolete session-resume commands on an assigned PR', async () => {
-    const listForRepo = pagedListForRepo({
-      'supersprinklesracing/sprinkles': [
-        makeItem(42, {
-          pull_request: {},
-          assignees: [{ login: 'agent-lcars-bot' }],
-          comments: 1,
-        }),
-      ],
-    });
-    const graphql = mockGraphql({
-      42: prNode({
-        comments: [
-          {
-            body: 'Session takeover:\n```\n~/p/members/tools/claude-agent-session.sh resume abc-123\n```',
-            author: 'claude[bot]',
-          },
-        ],
-      }),
-    });
-    setupOctokit({ listForRepo, graphql });
-
-    const result = await getActionItems();
-
-    expect(result.items.map((i) => i.number)).toEqual([42]);
-    expect(result.items[0].takeoverCommand).toBeUndefined();
-  });
-
-  it('does not extract obsolete session-resume commands from comments', async () => {
-    const listForRepo = pagedListForRepo({
-      'supersprinklesracing/sprinkles': [
-        makeItem(45, {
-          assignees: [{ login: 'agent-lcars-bot' }],
-          comments: 2,
-        }),
-      ],
-    });
-    const graphql = mockGraphql({
-      45: issueNode([
-        { body: 'tools/claude-agent-session.sh resume old-session' },
-        { body: 'fleet-claude-agent-session resume new-session' },
-      ]),
-    });
-    setupOctokit({ listForRepo, graphql });
-
-    const result = await getActionItems();
-
-    expect(result.items[0].takeoverCommand).toBeUndefined();
-  });
-
   it('surfaces assignee logins on the item (#3024 stale-claim detection)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
@@ -912,36 +862,7 @@ describe('getActionItems', () => {
     expect(result.items[0].assigneeLogins).toEqual(['agent-lcars-bot']);
   });
 
-  it('does not extract an obsolete session-resume command from an interactive claim', async () => {
-    const listForRepo = pagedListForRepo({
-      'supersprinklesracing/sprinkles': [
-        makeItem(43, {
-          assignees: [{ login: 'agent-lcars-bot' }],
-          comments: 1,
-        }),
-      ],
-    });
-    const graphql = mockGraphql({
-      43: issueNode([
-        {
-          body: '~/p/members/tools/claude-agent-session.sh resume def-456',
-          author: 'jlapenna',
-        },
-      ]),
-    });
-    setupOctokit({ listForRepo, graphql });
-
-    const result = await getActionItems();
-
-    expect(result.items[0].takeoverCommand).toBeUndefined();
-  });
-
-  it('requests comments for a Claude-labeled issue nobody has claimed, but still finds no takeover command (#306)', async () => {
-    // Dispatched-but-unclaimed (runner never started): there is no session
-    // yet, so there is no takeover command to find - the claim assignee,
-    // not the dispatch label, is what says a session exists (#2783). #306
-    // still requests the comment window for an agent-labeled item - one
-    // batched GraphQL query per repo, not a new per-item call.
+  it('requests comments for a Claude-labeled issue nobody has claimed (#306)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(44, { labels: ['agent:claude'], comments: 3 }),
@@ -953,7 +874,6 @@ describe('getActionItems', () => {
     const result = await getActionItems();
 
     expect(result.items.map((i) => i.number)).toEqual([44]);
-    expect(result.items[0].takeoverCommand).toBeUndefined();
     expect(graphql.queries[0]).toContain('comments(');
   });
 

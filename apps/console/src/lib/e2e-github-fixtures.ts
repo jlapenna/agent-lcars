@@ -363,8 +363,8 @@ export function reassignFixtureIssuePipeline(
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
  * writes through `AGENT_CONSOLE_GITHUB_API_BASE_URL` - the claim tag/ref
  * ledger and the issue itself. Execution state is seeded through the
- * authoritative Task/Run fixture boundary, never synthesized as an Actions
- * workflow run.
+ * authoritative Task/Run fixture boundary, never synthesized from a GitHub
+ * Actions attempt.
  *
  * Lives on `globalThis` for the same reason `POPULATED_KEY` does: Next
  * bundles `/api/e2e/github/*` and `/api/e2e/seed` as separate route modules
