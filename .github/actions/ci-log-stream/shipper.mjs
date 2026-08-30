@@ -16,6 +16,10 @@ const DEFAULTS = Object.freeze({
   maxBatchBytes: 512 * 1024,
   maxBatchLines: 1000,
   maxPartialLineBytes: 256 * 1024,
+  // A page can be observed while the runner is still appending one line. Only
+  // flush an unterminated line when it has been stable long enough to be real
+  // output rather than a torn read of the action that is stopping us.
+  partialLineQuietMs: 1000,
   // job-daemon.sh gives a stopped child five seconds to exit. Keep one
   // in-flight push plus the final shutdown push inside that outer bound.
   pushTimeoutMs: 2000,
@@ -149,11 +153,25 @@ export class PageLogShipper {
       carry: '',
       decoder: new StringDecoder('utf8'),
       droppingOversizedLine: false,
+      lastGrowthAt: undefined,
       identity,
       stepName: this.stepNames.get(identity) ?? filename,
     };
     this.files.set(filename, state);
     return state;
+  }
+
+  continueAcrossRotation(previousState, state) {
+    if (!previousState || state.offset !== 0) return;
+
+    state.carry = previousState.carry;
+    previousState.carry = '';
+    state.decoder = previousState.decoder;
+    previousState.decoder = new StringDecoder('utf8');
+    state.droppingOversizedLine = previousState.droppingOversizedLine;
+    previousState.droppingOversizedLine = false;
+    state.lastGrowthAt = previousState.lastGrowthAt;
+    state.stepName = previousState.stepName;
   }
 
   processDecoded(state, decoded, { final = false } = {}) {
@@ -247,6 +265,7 @@ export class PageLogShipper {
     );
     let budget = this.config.maxReadBytesPerTick;
     let totalBytesRead = 0;
+    let previousState;
 
     for (const filename of filenames) {
       if (budget <= 0) break;
@@ -266,6 +285,11 @@ export class PageLogShipper {
         state.decoder = new StringDecoder('utf8');
         state.droppingOversizedLine = false;
       }
+
+      // The runner rotates page files by bytes, not by lines. Preserve the
+      // decoder and carry so a timestamp or UTF-8 sequence split at the page
+      // boundary is reconstructed exactly once.
+      this.continueAcrossRotation(previousState, state);
 
       while (state.offset < fileSize && budget > 0) {
         const length = Math.min(
@@ -288,11 +312,13 @@ export class PageLogShipper {
         if (bytesRead === 0) break;
 
         state.offset += bytesRead;
+        state.lastGrowthAt = this.now();
         budget -= bytesRead;
         totalBytesRead += bytesRead;
         const decoded = state.decoder.write(buffer.subarray(0, bytesRead));
         this.processDecoded(state, decoded);
       }
+      previousState = state;
     }
     return totalBytesRead;
   }
@@ -364,8 +390,15 @@ export class PageLogShipper {
     await this.pushAvailable(options);
   }
 
-  enqueuePartialLines() {
+  enqueuePartialLines({ minimumAgeMs = 0 } = {}) {
     for (const state of this.files.values()) {
+      if (
+        minimumAgeMs > 0 &&
+        state.lastGrowthAt !== undefined &&
+        this.now() - state.lastGrowthAt < minimumAgeMs
+      ) {
+        continue;
+      }
       this.processDecoded(state, state.decoder.end(), { final: true });
     }
   }
@@ -378,7 +411,9 @@ export class PageLogShipper {
       if (bytesRead === 0) break;
     }
 
-    this.enqueuePartialLines();
+    this.enqueuePartialLines({
+      minimumAgeMs: this.config.partialLineQuietMs,
+    });
     while (this.queue.length > 0 && this.now() < deadline) {
       const before = this.queue.length;
       await this.pushAvailable({ force: true, deadline });

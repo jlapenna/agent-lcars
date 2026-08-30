@@ -159,6 +159,32 @@ test('reads double-digit page rotations in numeric order', async () => {
   );
 });
 
+test('reassembles a line split across a page rotation', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  await writeFile(
+    path.join(directory, 'job_all_0.log'),
+    '2026-08-30T04:00:00Z cache result: 6/',
+  );
+  await writeFile(
+    path.join(directory, 'job_all_1.log'),
+    '7 hit\n2026-08-30T04:00:01Z next line\n',
+  );
+
+  const shipper = makeShipper(directory, loki.endpoint);
+  await shipper.tick();
+
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    [
+      '2026-08-30T04:00:00Z cache result: 6/7 hit',
+      '2026-08-30T04:00:01Z next line',
+    ],
+  );
+});
+
 test('selects the cumulative job pages instead of duplicating per-step pages', async () => {
   const directory = await temporaryDirectory();
   const loki = await lokiServer();
@@ -259,6 +285,19 @@ test('flushes a final unterminated line without changing its bytes', async () =>
   );
 });
 
+test('does not flush a recently growing partial line during shutdown', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  await writeFile(path.join(directory, 'job_step_0.log'), '2026-08-30T04:00');
+  const shipper = makeShipper(directory, loki.endpoint, {
+    config: { partialLineQuietMs: 1000 },
+  });
+
+  await shipper.shutdown();
+
+  assert.equal(loki.requests.length, 0);
+});
+
 test('drains more than one read tick before shutdown flushes', async () => {
   const directory = await temporaryDirectory();
   const loki = await lokiServer();
@@ -266,7 +305,10 @@ test('drains more than one read tick before shutdown flushes', async () => {
     { length: 20 },
     (_, index) => `shutdown line ${index}`,
   );
-  await writeFile(path.join(directory, 'job_all_0.log'), lines.join('\n'));
+  await writeFile(
+    path.join(directory, 'job_all_0.log'),
+    `${lines.join('\n')}\n`,
+  );
   const shipper = makeShipper(directory, loki.endpoint, {
     config: {
       maxReadBytesPerTick: 32,
