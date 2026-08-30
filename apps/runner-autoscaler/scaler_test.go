@@ -707,6 +707,24 @@ func TestScoreHostLoadSwapNeverHardOverloads(t *testing.T) {
 func TestReconcileTrackedRunners(t *testing.T) {
 	running := &container.State{Status: container.StateRunning, Running: true}
 	exited := &container.State{Status: container.StateExited, Running: false}
+	recentCleanExit := &container.State{
+		Status:     container.StateExited,
+		Running:    false,
+		ExitCode:   0,
+		FinishedAt: time.Now().Add(-5 * time.Second).Format(time.RFC3339Nano),
+	}
+	oldCleanExit := &container.State{
+		Status:     container.StateExited,
+		Running:    false,
+		ExitCode:   0,
+		FinishedAt: time.Now().Add(-runnerCompletionSettleGrace - time.Second).Format(time.RFC3339Nano),
+	}
+	recentFailedExit := &container.State{
+		Status:     container.StateExited,
+		Running:    false,
+		ExitCode:   1,
+		FinishedAt: time.Now().Add(-5 * time.Second).Format(time.RFC3339Nano),
+	}
 
 	cases := []struct {
 		name        string
@@ -728,6 +746,26 @@ func TestReconcileTrackedRunners(t *testing.T) {
 			name:       "exited idle container is pruned",
 			state:      runnerTrackedStateIdle,
 			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, exited) },
+			wantPruned: true,
+			wantReason: runnerDeadReasonNotRunning,
+		},
+		{
+			name:       "recent successful JIT exit waits for listener completion",
+			state:      runnerTrackedStateIdle,
+			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, recentCleanExit) },
+			wantPruned: false,
+		},
+		{
+			name:       "successful idle exit is pruned after listener settlement window",
+			state:      runnerTrackedStateIdle,
+			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, oldCleanExit) },
+			wantPruned: true,
+			wantReason: runnerDeadReasonNotRunning,
+		},
+		{
+			name:       "recent failed idle exit is pruned immediately",
+			state:      runnerTrackedStateIdle,
+			setup:      func(f *fakeDockerServer) { f.setInspect("c1", http.StatusOK, recentFailedExit) },
 			wantPruned: true,
 			wantReason: runnerDeadReasonNotRunning,
 		},
