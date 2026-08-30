@@ -113,7 +113,7 @@ describe('SessionTable', () => {
     expect(screen.queryByTestId('session-card-meta')).toBeNull();
   });
 
-  it('links the run for an issue-agent session in the table only (dropped as card noise)', () => {
+  it('links a historical numeric Actions run in the table only (dropped as card noise)', () => {
     renderTable([
       makeRow({
         source: 'issue-agent',
@@ -126,6 +126,19 @@ describe('SessionTable', () => {
     expect(links[0].getAttribute('href')).toBe(
       'https://github.com/o/r/actions/runs/999',
     );
+  });
+
+  it('renders an opaque native run ID as text when it has no Actions URL', () => {
+    const runId = 'supersprinklesracing/sprinkles#42/r1';
+    renderTable([
+      makeRow({
+        source: 'issue-agent',
+        runId,
+      }),
+    ]);
+
+    expect(screen.getByText(runId).closest('a')).toBeNull();
+    expect(screen.queryByRole('link', { name: /run/ })).toBeNull();
   });
 
   it('shows a formatted cost when the row has one', () => {

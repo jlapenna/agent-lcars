@@ -152,8 +152,7 @@ export function repoDisplayName(repo: {
 }
 
 /** Cross-repo-safe join/dedupe key for issue and PR numbers, which only
- * disambiguate within a single repo. GitHub Actions run ids are already
- * globally unique across repos and never need this. */
+ * disambiguate within a single repo. */
 export function repoItemKey(repo: RepositoryRef, number: number): string {
   return taskRefKey({ repository: repo, issueNumber: number });
 }

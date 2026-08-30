@@ -104,7 +104,7 @@ export function FleetSnapshotBar({
             ))
           ) : (
             <Text size="sm" c="dimmed">
-              No workflow runs active
+              No runs active
             </Text>
           )}
           <Group gap={6} wrap="nowrap">

@@ -100,14 +100,20 @@ test.describe('populated dashboard', () => {
       page.getByText('3 unresolved review threads').first(),
     ).toBeVisible();
 
-    // The takeover command the fleet posts on a claimed item.
+    // Claimed work retains its native status-comment preview, but the retired
+    // GitHub-comment-derived live resume command is not rendered.
     await page
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
       .getByRole('link')
       .click();
     await expect(
-      page.getByText(/claude-agent-session\.sh resume/).first(),
+      page.getByText(
+        'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
+      ),
     ).toBeVisible();
+    await expect(
+      page.getByText(/claude-agent-session(?:\.sh)? resume/),
+    ).toHaveCount(0);
   });
 
   test('retrigger and pipeline reassignment use broker-safe GitHub writes', async ({
@@ -304,6 +310,9 @@ test.describe('populated dashboard', () => {
     // no seeded fixture produced before this one. `exact` because the
     // session title contains the substring "issue-agent" too.
     await expect(row.getByText('agent', { exact: true })).toBeVisible();
+    const nativeRunId = `supersprinklesracing/sprinkles#${E2E_ITEM_NUMBERS.silentError}/r1`;
+    await expect(row.getByText(nativeRunId, { exact: true })).toBeVisible();
+    await expect(row.getByRole('link', { name: /run/ })).toHaveCount(0);
 
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
     const header = page.getByTestId('session-header');

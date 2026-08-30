@@ -456,6 +456,7 @@ describe('getActionItems', () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].lastCommentAuthor).toBe('jlapenna');
+    expect(graphql.queries[0]).toContain('comments(');
   });
 
   it('paginates the open-item listing and collects every item', async () => {
@@ -845,60 +846,6 @@ describe('getActionItems', () => {
     ).toBe(true);
   });
 
-  it('surfaces the takeover command on a agent-lcars-bot-assigned PR', async () => {
-    const listForRepo = pagedListForRepo({
-      'supersprinklesracing/sprinkles': [
-        makeItem(42, {
-          pull_request: {},
-          assignees: [{ login: 'agent-lcars-bot' }],
-          comments: 1,
-        }),
-      ],
-    });
-    const graphql = mockGraphql({
-      42: prNode({
-        comments: [
-          {
-            body: 'Session takeover:\n```\n~/p/members/tools/claude-agent-session.sh resume abc-123\n```',
-            author: 'claude[bot]',
-          },
-        ],
-      }),
-    });
-    setupOctokit({ listForRepo, graphql });
-
-    const result = await getActionItems();
-
-    expect(result.items.map((i) => i.number)).toEqual([42]);
-    expect(result.items[0].takeoverCommand).toBe(
-      '~/p/members/tools/claude-agent-session.sh resume abc-123',
-    );
-  });
-
-  it('takes the newest takeover command when a thread has several', async () => {
-    const listForRepo = pagedListForRepo({
-      'supersprinklesracing/sprinkles': [
-        makeItem(45, {
-          assignees: [{ login: 'agent-lcars-bot' }],
-          comments: 2,
-        }),
-      ],
-    });
-    const graphql = mockGraphql({
-      45: issueNode([
-        { body: 'tools/claude-agent-session.sh resume old-session' },
-        { body: 'fleet-claude-agent-session resume new-session' },
-      ]),
-    });
-    setupOctokit({ listForRepo, graphql });
-
-    const result = await getActionItems();
-
-    expect(result.items[0].takeoverCommand).toBe(
-      'fleet-claude-agent-session resume new-session',
-    );
-  });
-
   it('surfaces assignee logins on the item (#3024 stale-claim detection)', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
@@ -916,51 +863,23 @@ describe('getActionItems', () => {
     expect(result.items[0].assigneeLogins).toEqual(['agent-lcars-bot']);
   });
 
-  it('scans takeover for a agent-lcars-bot-assigned issue without the claude label (interactive claim)', async () => {
-    const listForRepo = pagedListForRepo({
-      'supersprinklesracing/sprinkles': [
-        makeItem(43, {
-          assignees: [{ login: 'agent-lcars-bot' }],
-          comments: 1,
-        }),
-      ],
-    });
-    const graphql = mockGraphql({
-      43: issueNode([
-        {
-          body: '~/p/members/tools/claude-agent-session.sh resume def-456',
-          author: 'jlapenna',
-        },
-      ]),
-    });
-    setupOctokit({ listForRepo, graphql });
-
-    const result = await getActionItems();
-
-    expect(result.items[0].takeoverCommand).toBe(
-      '~/p/members/tools/claude-agent-session.sh resume def-456',
-    );
-  });
-
-  it('requests comments for a Claude-labeled issue nobody has claimed, but still finds no takeover command (#306)', async () => {
-    // Dispatched-but-unclaimed (runner never started): there is no session
-    // yet, so there is no takeover command to find - the claim assignee,
-    // not the dispatch label, is what says a session exists (#2783). #306
-    // still requests the comment window for an agent-labeled item - one
-    // batched GraphQL query per repo, not a new per-item call.
+  it('does not request comments for active agent work without a status preview', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(44, { labels: ['agent:claude'], comments: 3 }),
+        makeItem(45, {
+          assignees: [{ login: 'agent-lcars-bot' }],
+          comments: 2,
+        }),
       ],
     });
-    const graphql = mockGraphql({ 44: issueNode() });
+    const graphql = mockGraphql();
     setupOctokit({ listForRepo, graphql });
 
     const result = await getActionItems();
 
-    expect(result.items.map((i) => i.number)).toEqual([44]);
-    expect(result.items[0].takeoverCommand).toBeUndefined();
-    expect(graphql.queries[0]).toContain('comments(');
+    expect(result.items.map((i) => i.number).sort()).toEqual([44, 45]);
+    expect(graphql.queries[0]).not.toContain('comments(');
   });
 
   it('surfaces a dispatched-but-unclaimed OpenCode-labeled issue (#3012)', async () => {

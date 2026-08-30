@@ -109,6 +109,13 @@ describe('SessionHeader', () => {
     expect(screen.queryByTestId('cli-summary-note')).toBeNull();
   });
 
+  it('renders an opaque broker run ID without an Actions link', () => {
+    renderHeader(agentDoc({ runId: 'sprinkles/4829/r-queue-123' }));
+
+    expect(screen.getByText('sprinkles/4829/r-queue-123')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /r-queue-123/ })).toBeNull();
+  });
+
   it('renders a full token breakdown including cost-weighted cache tokens', () => {
     renderHeader(cliDoc());
     expect(

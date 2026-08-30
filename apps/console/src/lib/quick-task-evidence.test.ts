@@ -103,7 +103,7 @@ describe('Quick Task evidence composition', () => {
         screenshot: 'https://example.invalid/screenshot.png',
         source: {
           route: '/inbox',
-          identities: 'Task: org/repo#42\nWorkflow run: org/repo#1234',
+          identities: 'Task: org/repo#42\nRun: org/repo#1234',
           capturedAt: 'invalid timestamp',
         },
       },
@@ -114,7 +114,7 @@ describe('Quick Task evidence composition', () => {
       '## Screenshot\nhttps://example.invalid/screenshot.png',
     );
     expect(body).toContain('- Task: org/repo#42');
-    expect(body).toContain('- Workflow run: org/repo#1234');
+    expect(body).toContain('- Run: org/repo#1234');
     expect(body).not.toContain('Captured:');
 
     expect(

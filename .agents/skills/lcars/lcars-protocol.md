@@ -9,9 +9,11 @@ deliverables live once in the shared `agent-protocol` skill.
 ## Console dependency on protocol vocabulary
 
 `apps/console` consumes the exact `status:needs-human`, `agent-lcars-bot`,
-`jlapenna`, attempt-marker, and Claude takeover-command vocabulary emitted by
-workers. Change those values only in the shared protocol and the corresponding
-console/workflow contract tests, never in a repository-local doctrine copy.
+`jlapenna`, and attempt-marker vocabulary emitted by workers. Session recovery
+is native/archive-only operator recovery from session records; it does not
+consume worker takeover commands. Change those values only in the shared
+protocol and corresponding console contract tests, never in repository-local
+doctrine copy.
 
 ## Dispatch and reconciliation
 

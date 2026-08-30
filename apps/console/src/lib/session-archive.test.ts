@@ -170,6 +170,16 @@ describe('toSessionRow', () => {
     );
   });
 
+  it('does not invent an Actions URL for an opaque broker run ID', () => {
+    const row = toSessionRow(
+      agentDoc({ runId: 'sprinkles/4829/r-queue-123' }),
+      now,
+    );
+
+    expect(row.runId).toBe('sprinkles/4829/r-queue-123');
+    expect(row.runUrl).toBeUndefined();
+  });
+
   it('uses useful task context instead of opaque IDs for titleless sessions', () => {
     expect(
       toSessionRow(agentDoc({ title: undefined, issueNumber: 7 }), now).title,

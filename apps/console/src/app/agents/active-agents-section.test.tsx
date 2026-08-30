@@ -3,7 +3,6 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';
 import type { CliSession } from '../../lib/cli-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
@@ -72,21 +71,6 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
     totalTokens: 10,
     startedAt: '2026-07-18T00:00:00.000Z',
     lastActivityAt: '2026-07-18T00:00:00.000Z',
-    ...overrides,
-  };
-}
-
-function makeItem(overrides: Partial<ActionItem> = {}): ActionItem {
-  return {
-    kind: 'issue',
-    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
-    number: 1,
-    title: 'Fix the thing',
-    url: 'https://github.com/supersprinklesracing/sprinkles/issues/1',
-    updatedAt: '2026-07-18T00:00:00.000Z',
-    actionTypes: [],
-    labels: [],
-    assigneeLogins: [],
     ...overrides,
   };
 }
@@ -171,51 +155,5 @@ describe('ActiveAgentsSection', () => {
       </MantineProvider>,
     );
     expect(screen.getByTestId('cli-session-abc')).toBeTruthy();
-  });
-
-  it('surfaces the takeover command of the item a session is working', () => {
-    render(
-      <MantineProvider>
-        <ActiveAgentsSection
-          liveRuns={[]}
-          itemsByRunId={{}}
-          activeSessions={[
-            makeSession({
-              sessionId: 'abc',
-              pr: { number: 99, url: 'https://github.com/o/r/pull/99' },
-            }),
-          ]}
-          items={[
-            makeItem({
-              number: 99,
-              kind: 'pr',
-              takeoverCommand: 'claude --resume abc123',
-            }),
-          ]}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByTestId('cli-session-abc')).toHaveTextContent(
-      'claude --resume abc123',
-    );
-  });
-
-  it('renders no takeover text when the matched item has none', () => {
-    render(
-      <MantineProvider>
-        <ActiveAgentsSection
-          liveRuns={[]}
-          itemsByRunId={{}}
-          activeSessions={[
-            makeSession({
-              sessionId: 'abc',
-              pr: { number: 99, url: 'https://github.com/o/r/pull/99' },
-            }),
-          ]}
-          items={[makeItem({ number: 99, kind: 'pr' })]}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByTestId('cli-session-abc')).toHaveTextContent('');
   });
 });

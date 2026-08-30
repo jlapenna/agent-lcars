@@ -112,9 +112,9 @@ function alias(number: number): string {
 export interface EnrichmentRequest {
   number: number;
   isPr: boolean;
-  /** Only parked/fleet-claimed items need a comment scan - see
-   * `classifyIssue`. Requesting the window for everything would multiply
-   * node cost across the whole board for data nobody reads. */
+  /** Only status-preview items need a comment scan - see `classifyIssue`.
+   * Requesting the window for everything would multiply node cost across the
+   * whole board for data nobody reads. */
   wantsComments: boolean;
   /** Fetch exact merged-PR relationships for outcome reporting. */
   wantsMergedDeliverables?: boolean;

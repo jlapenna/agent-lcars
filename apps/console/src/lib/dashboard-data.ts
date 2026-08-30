@@ -11,10 +11,9 @@ import { GITHUB_DATA_TAG } from './cache-tags';
  * Every navigation between Queue and Agents, and every Refresh click, used
  * to re-run the whole GitHub fetch. #147/#148 removed the search API's
  * 30-req/min ceiling and #151 collapsed the per-item N+1, but a load still
- * costs ~30 core-budget requests - and ~26 of those are `getAgentActivity`'s
- * workflow-run listings, which cannot be batched at all (GitHub's GraphQL
- * schema has no way to list a workflow's runs). Those are paid on every
- * load forever, which is exactly what a cache is for.
+ * costs core-budget requests for GitHub issue/PR metadata plus authoritative
+ * broker task and run reads. Those are paid on every load, which is exactly
+ * what a cache is for.
  *
  * Uses Next 16's native `"use cache"` rather than the legacy
  * `unstable_cache`: on this version the latter's entries were not reliably
@@ -41,8 +40,8 @@ import { GITHUB_DATA_TAG } from './cache-tags';
  * one serves the cached value AND kicks off a background refetch. For a
  * human clicking between Queue and Agents that is every single load, so the
  * cache removes the *blocking* but not the *requests* - which is most of
- * why it exists, given ~26 of the ~30 per load are `getAgentActivity`'s
- * workflow-run listings that cannot be batched at all.
+ * why it exists: it prevents repeated GitHub metadata and authoritative
+ * broker-state reads during ordinary navigation.
  *
  * `revalidate: 30` means loads inside a 30s window are genuinely free.
  * `expire: 60` bounds how stale a served value can get; `stale: 30` is the

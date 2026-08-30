@@ -114,15 +114,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
       { author: MAINTAINER, body: 'Filing this so it does not get lost.' },
       {
         author: FLEET,
-        // Deliberately carries a takeover command: the card renders one
-        // whenever the fleet holds the assignee, and it had never been seen
-        // rendered next to a real comment preview. This one keeps the
-        // retired sprinkles-era spelling on purpose — action-items.ts's
-        // RESUME_COMMAND pattern still matches historical comments, and
-        // populated-dashboard.spec.ts asserts on exactly this legacy form.
-        // The runFailed fixture below carries the canonical
-        // `fleet-claude-agent-session resume <id>` spelling.
-        body: 'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.\n\n`~/p/sprinkles/tools/claude-agent-session.sh resume e2e-fixture-session-id`',
+        body: 'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
       },
     ],
   },
@@ -138,13 +130,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     comments: [
       {
         author: FLEET,
-        // Canonical takeover spelling (agent-lcars#1328): the fleet-tools
-        // `fleet-claude-agent-session resume <id>` command replaced the
-        // per-repo claude-agent-session.sh script, so the e2e path must
-        // exercise the spelling agents actually post today. The humanNeeded
-        // fixture above retains the legacy spelling for back-compat
-        // coverage of historical comments.
-        body: 'CI is red on the E2E job; re-running.\n\n`fleet-claude-agent-session resume e2e-fixture-pr-session`',
+        body: 'CI is red on the E2E job; re-running.',
       },
     ],
     pr: {
@@ -373,8 +359,8 @@ export function reassignFixtureIssuePipeline(
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
  * writes through `AGENT_CONSOLE_GITHUB_API_BASE_URL` - the claim tag/ref
  * ledger and the issue itself. Execution state is seeded through the
- * authoritative Task/Run fixture boundary, never synthesized as an Actions
- * workflow run.
+ * authoritative Task/Run fixture boundary, never synthesized from a GitHub
+ * Actions attempt.
  *
  * Lives on `globalThis` for the same reason `POPULATED_KEY` does: Next
  * bundles `/api/e2e/github/*` and `/api/e2e/seed` as separate route modules

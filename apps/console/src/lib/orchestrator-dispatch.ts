@@ -646,12 +646,11 @@ async function describeLostOutcome(
 }
 
 /**
- * Why a `lost` run was lost, in the reader's terms. Both settle paths reach
- * `lost` (see decide.ts's `expireLease` and `settleTerminal`), but for very
- * different reasons, and saying "no report before its lease expired" about a
- * run whose workflow died at `startup_failure` ten minutes in is simply
- * false. The run's own last event already records which path settled it and
- * what the evidence was, so read that rather than assuming.
+ * Why a `lost` run was lost, in the reader's terms. Queue-native runs reach
+ * `lost` only after their lease expires without a completion report. A
+ * persisted pre-cutover `infra` event instead records the executor's actual
+ * terminal cause; retain that read path while its pending outcome entries
+ * drain. New queue-native code does not write `infra` events.
  */
 function lostCause(run: Run): string {
   const last = run.events.at(-1);

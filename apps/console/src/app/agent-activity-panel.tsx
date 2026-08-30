@@ -46,7 +46,6 @@ import { lcarsPanelStyle } from './lcars';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
 import { SessionStatusLine } from './session-status-line';
-import { TakeoverCommand } from './takeover-command';
 
 // Labels/colors are keyed by the run-status classifier's own output
 // (@agent-lcars/telemetry's classifyRunStatus, wrapped for this app by
@@ -779,18 +778,9 @@ function cliSessionLabel(session: CliSession): string {
 
 export function CliSessionRow({
   session,
-  takeoverCommand,
   variant = 'detail',
 }: {
   session: CliSession;
-  /**
-   * The takeover command of the action item this session is working, when
-   * one exists (see claimed-idle.ts's sessionReferencesItemNumber join,
-   * used by the /agents page's Active Agents section). The home page's
-   * In Flight panel never passes this - CLI sessions there render exactly
-   * as before.
-   */
-  takeoverCommand?: string;
   variant?: ActivityRowVariant;
 }) {
   const { host, artifacts } = session;
@@ -896,7 +886,6 @@ export function CliSessionRow({
           last active <RelativeTime iso={session.lastActivityAt} />
         </Text>
       </Group>
-      {takeoverCommand && <TakeoverCommand command={takeoverCommand} />}
       {host && artifacts && artifacts.length > 0 && (
         <Stack gap={2}>
           <Group gap={6} wrap="wrap">
