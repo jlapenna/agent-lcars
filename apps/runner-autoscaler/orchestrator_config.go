@@ -175,6 +175,10 @@ type ScaleSetConfigFile struct {
 	MinRunners int    `yaml:"min_runners"`
 	MaxRunners int    `yaml:"max_runners"`
 	Weight     int    `yaml:"weight,omitempty"`
+	// Priority protects one minimum-service runner for this scale set while
+	// it has pending demand. Higher numbers take precedence; equal priorities
+	// retain weighted round-robin ordering. Zero is the default ordinary tier.
+	Priority int `yaml:"priority,omitempty"`
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.
 	FileMounts []string `yaml:"file_mounts,omitempty"`
@@ -302,6 +306,7 @@ type resolvedOrchestratorConfig struct {
 	Cooldown          time.Duration
 	ScaleSets         []Config
 	Weights           map[string]int
+	Priorities        map[string]int
 }
 
 func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
@@ -478,6 +483,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 		return fmt.Errorf("at least one of scale_sets or registrations must be set")
 	}
 	r.Weights = map[string]int{}
+	r.Priorities = map[string]int{}
 	seenSets := map[string]bool{}
 	maxSum := 0
 
@@ -596,6 +602,9 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		if s.Weight < 1 {
 			return nil, 0, fmt.Errorf("scale set %q weight must be at least 1", s.Name)
 		}
+		if s.Priority < 0 {
+			return nil, 0, fmt.Errorf("scale set %q priority must be at least 0", s.Name)
+		}
 		if len(s.Labels) == 0 {
 			return nil, 0, fmt.Errorf("scale set %q requires at least one label", s.Name)
 		}
@@ -630,6 +639,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		}
 		maxSum += s.MaxRunners
 		r.Weights[s.Name] = s.Weight
+		r.Priorities[s.Name] = s.Priority
 		out = append(out, Config{
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage, RunnerImageFallback: s.RunnerImageFallback,

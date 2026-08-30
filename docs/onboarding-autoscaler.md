@@ -80,6 +80,7 @@ scale_sets: # the PRIMARY registration's own scale sets
     min_runners: 0
     max_runners: 8
     weight: 1
+    priority: 0 # optional; higher tiers protect one minimum-service runner
   # ... more scale sets for the primary registration.
 
 registrations: # every OTHER registration -- see §2 below
@@ -129,7 +130,23 @@ registrations:
         min_runners: 0
         max_runners: 2
         weight: 1
+        priority: 0
 ```
+
+`weight` orders scale sets that are actively trying to reserve at the same
+instant. `priority` also persists across listener retry callbacks: while a
+higher-priority scale set has pending demand and no active/in-flight runner,
+lower tiers yield the next safe fleet slot. As soon as the higher tier has one
+runner, other work may use every remaining slot, so priority provides bounded
+minimum service rather than fleet monopolization. Keep the default at `0` and
+use a higher tier only for short, branch-protection-critical lanes whose runner
+image and host eligibility are at least as reliable as the ordinary lane.
+
+Queue age is observable as
+`time() - github_runner_autoscaler_scheduler_pending_since_timestamp_seconds`
+for scale sets whose timestamp is nonzero. The timestamp resets only after the
+runner deficit reaches zero, so listener retry callbacks cannot hide a
+continuously starved queue.
 
 ### Choosing a scale set: don't just reuse whichever pool already has the right label
 

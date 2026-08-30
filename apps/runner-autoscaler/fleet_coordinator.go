@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -15,6 +16,8 @@ type FleetCoordinator struct {
 	reservations      map[string]int
 	reservedMemory    map[string]int64
 	startInFlight     map[string]bool
+	scaleSetDemand    map[string]schedulerDemand
+	priorities        map[string]int
 	lastFleetCounts   map[string]int
 	hostRunnerLimits  map[string]int
 	mainsRequired     map[string]bool
@@ -31,6 +34,13 @@ type FleetCoordinator struct {
 	placementCursor int
 }
 
+type schedulerDemand struct {
+	pending      int
+	active       int
+	reservations int
+	pendingSince time.Time
+}
+
 // hostReservation tracks one in-flight placement decision so its release
 // (on success or failure) always decrements the matching reservation counter
 // exactly once, even if release is called from multiple defers.
@@ -41,14 +51,65 @@ type hostReservation struct {
 	once   sync.Once
 }
 
-func newFleetCoordinator(maxRunners int, limits map[string]int, weights map[string]int, order []string) *FleetCoordinator {
+func newFleetCoordinator(maxRunners int, limits map[string]int, weights, priorities map[string]int, order []string) *FleetCoordinator {
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
-		reservations: map[string]int{}, reservedMemory: map[string]int64{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
+		reservations: map[string]int{}, reservedMemory: map[string]int64{}, startInFlight: map[string]bool{},
+		scaleSetDemand: map[string]schedulerDemand{}, priorities: priorities, lastFleetCounts: map[string]int{},
 		hostRunnerLimits: limits, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		gate: newWeightedPlacementGate(weights, order),
 	}
+}
+
+// updateDemand persists the listener's latest runner deficit between GitHub
+// callbacks. The weighted gate can only order callers that happen to wait at
+// the same instant; this state lets reserve protect one service slot for a
+// higher-priority lane even while that lane is between retry callbacks.
+func (f *FleetCoordinator) updateDemand(scaleSet string, pending, active int, now time.Time) {
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	demand := f.scaleSetDemand[scaleSet]
+	if pending > 0 && demand.pending == 0 {
+		demand.pendingSince = now
+	}
+	if pending == 0 {
+		demand.pendingSince = time.Time{}
+	}
+	demand.pending = max(0, pending)
+	demand.active = max(0, active)
+	f.scaleSetDemand[scaleSet] = demand
+	f.mu.Unlock()
+
+	pendingRunnersGauge.WithLabelValues(scaleSet).Set(float64(demand.pending))
+	if demand.pendingSince.IsZero() {
+		pendingSinceTimestampGauge.WithLabelValues(scaleSet).Set(0)
+	} else {
+		pendingSinceTimestampGauge.WithLabelValues(scaleSet).Set(float64(demand.pendingSince.Unix()))
+	}
+}
+
+// higherPriorityDemandLocked returns a higher-priority scale set that still
+// needs its minimum service share. One active or in-flight runner satisfies
+// that share, so ordinary/default work can keep using every remaining slot;
+// this is not strict priority and cannot monopolize the fleet.
+func (f *FleetCoordinator) higherPriorityDemandLocked(scaleSet string) string {
+	priority := f.priorities[scaleSet]
+	winner := ""
+	winnerPriority := priority
+	for name, demand := range f.scaleSetDemand {
+		candidatePriority := f.priorities[name]
+		if candidatePriority <= priority || demand.pending == 0 || demand.active+demand.reservations > 0 {
+			continue
+		}
+		if candidatePriority > winnerPriority || (candidatePriority == winnerPriority && (winner == "" || name < winner)) {
+			winner = name
+			winnerPriority = candidatePriority
+		}
+	}
+	return winner
 }
 
 // snapshot records the fleet telemetry a restart cannot re-derive instantly.
@@ -115,6 +176,11 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 	// different hosts remain concurrent.
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	scaleSet := scaler.scaleSetLabel()
+	if protected := f.higherPriorityDemandLocked(scaleSet); protected != "" {
+		placementBlocked.WithLabelValues(scaleSet, placementReasonPriorityReservation).Inc()
+		return nil, fmt.Errorf("%w: reserving the next safe slot for higher-priority scale set %q", errFleetAtCapacity, protected)
+	}
 	host, err := scaler.pickHostLocked(ctx, f)
 	if err != nil {
 		return nil, err
@@ -122,7 +188,10 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 	f.reservations[host]++
 	f.reservedMemory[host] += scaler.runnerMemory
 	f.startInFlight[host] = true
-	reservationGauge.WithLabelValues(scaler.scaleSetName, host).Inc()
+	demand := f.scaleSetDemand[scaleSet]
+	demand.reservations++
+	f.scaleSetDemand[scaleSet] = demand
+	reservationGauge.WithLabelValues(scaleSet, host).Inc()
 	return &hostReservation{fleet: f, host: host, memory: scaler.runnerMemory}, nil
 }
 
@@ -142,6 +211,11 @@ func (r *hostReservation) release(scaleSet string) {
 			}
 		}
 		r.fleet.startInFlight[r.host] = false
+		demand := r.fleet.scaleSetDemand[scaleSet]
+		if demand.reservations > 0 {
+			demand.reservations--
+		}
+		r.fleet.scaleSetDemand[scaleSet] = demand
 		r.fleet.mu.Unlock()
 		reservationGauge.WithLabelValues(scaleSet, r.host).Dec()
 	})

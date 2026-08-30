@@ -43,7 +43,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	if err != nil {
 		return fmt.Errorf("connecting fleet docker hosts: %w", err)
 	}
-	fleet := newFleetCoordinator(0, nil, nil, nil)
+	fleet := newFleetCoordinator(0, nil, nil, nil, nil)
 	configureFleet(fleet, resolved)
 	managedHosts := placementHosts
 
@@ -492,6 +492,7 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.metricsViaSSH = resolved.MetricsViaSSH
 	fleet.readinessRequired = resolved.ReadinessRequired
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
+	fleet.priorities = resolved.Priorities
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
 }

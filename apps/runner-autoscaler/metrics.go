@@ -22,6 +22,10 @@ import (
 const (
 	placementReasonFleetLimit = "fleet_limit"
 	placementReasonHostLimits = "host_limits"
+	// A lower-priority scale set yielded the next safe capacity slot while a
+	// higher-priority scale set had pending demand and no runner of its own.
+	// This is a scheduler decision, not a host admission failure.
+	placementReasonPriorityReservation = "priority_reservation"
 	// Every otherwise-eligible host lacked enough physical-memory budget for
 	// the candidate's declared reservation after running and in-flight runner
 	// reservations plus the configured safety margin were accounted for.
@@ -281,7 +285,8 @@ var (
 		Name: "github_runner_autoscaler_placement_blocked_total",
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
-			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ".",
+			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
+			placementReasonPriorityReservation + ".",
 	}, []string{"scale_set", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
@@ -298,6 +303,10 @@ var (
 	pendingRunnersGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_scheduler_pending_runners",
 		Help: "Runner deficit still waiting for a safe fleet placement.",
+	}, []string{"scale_set"})
+	pendingSinceTimestampGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_scheduler_pending_since_timestamp_seconds",
+		Help: "Unix timestamp when the current uninterrupted runner deficit began, or 0 when no runner is pending.",
 	}, []string{"scale_set"})
 	githubUnavailableRunnersGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_github_unavailable_runners",
@@ -437,6 +446,7 @@ func registerMetrics() {
 			listenerRestarts,
 			quiesceGenerationTimeouts,
 			pendingRunnersGauge,
+			pendingSinceTimestampGauge,
 			githubUnavailableRunnersGauge,
 			runnerStatusProbeUpGauge,
 			fleetMaxRunnersGauge,

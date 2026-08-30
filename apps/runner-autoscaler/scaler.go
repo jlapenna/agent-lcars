@@ -231,7 +231,7 @@ func (a *Scaler) coordinator() *FleetCoordinator {
 		return a.fleet
 	}
 	a.localFleetOnce.Do(func() {
-		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, map[string]int{a.scaleSetName: 1}, []string{a.scaleSetName})
+		a.localFleet = newFleetCoordinator(a.maxRunners, a.hostRunnerLimits, map[string]int{a.scaleSetName: 1}, nil, []string{a.scaleSetName})
 	})
 	return a.localFleet
 }
@@ -604,7 +604,25 @@ func (a *Scaler) updateRunnerMetrics() {
 // updateRunnerMetrics.
 func (a *Scaler) runnersChanged() {
 	a.updateRunnerMetrics()
+	a.updateSchedulerDemand(time.Now())
 	a.checkpoint()
+}
+
+func (a *Scaler) updateSchedulerDemand(now time.Time) {
+	// Keep the runner snapshot and coordinator publication in the same
+	// critical section as runner transitions. Without this, a reconciler can
+	// snapshot current=0, pause while a replacement is added and publishes
+	// current=1, then overwrite the coordinator with its stale zero. That can
+	// leave a protected lane looking unsatisfied and block lower-priority
+	// reservations until another callback happens to repair the snapshot.
+	a.runners.mu.Lock()
+	defer a.runners.mu.Unlock()
+	current := len(a.runners.idle) + len(a.runners.busy)
+	pending := max(0, min(a.maxRunners, a.minRunners+int(a.queuedJobs.Load()))-current)
+	if a.draining.Load() {
+		pending = 0
+	}
+	a.coordinator().updateDemand(a.scaleSetLabel(), pending, current, now)
 }
 
 func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, error) {
@@ -626,10 +644,7 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	desiredRunnersGauge.WithLabelValues(scaleSet).Set(float64(targetRunnerCount))
 	minRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.minRunners))
 	maxRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.maxRunners))
-	pendingRunnersGauge.WithLabelValues(scaleSet).Set(float64(max(0, targetRunnerCount-currentCount)))
-	defer func() {
-		pendingRunnersGauge.WithLabelValues(scaleSet).Set(float64(max(0, targetRunnerCount-a.runners.count())))
-	}()
+	a.updateSchedulerDemand(time.Now())
 	defer a.runnersChanged()
 
 	switch {
@@ -2432,6 +2447,7 @@ func (a *Scaler) EndDrain() {
 	scaleSet := a.scaleSetLabel()
 	drainingGauge.WithLabelValues(scaleSet).Set(0)
 	drainAutoClearedTotal.WithLabelValues(scaleSet).Inc()
+	a.updateSchedulerDemand(time.Now())
 }
 
 // stopPlacing refuses new placements for the rest of this process's life. It

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1106,14 +1107,22 @@ func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
 }
 
 func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
+	fleet := newFleetCoordinator(1, nil, map[string]int{"watchdog-stuck": 1}, nil, []string{"watchdog-stuck"})
 	scaler := &Scaler{
 		scaleSetName: "watchdog-stuck",
+		maxRunners:   1,
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		fleet:        fleet,
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+	scaler.queuedJobs.Store(1)
 	scaler.draining.Store(true)
 	drainingGauge.WithLabelValues("watchdog-stuck").Set(1)
 	cleared := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck"))
+	scaler.updateSchedulerDemand(time.Unix(1234, 0))
+	if got := testutil.ToFloat64(pendingRunnersGauge.WithLabelValues("watchdog-stuck")); got != 0 {
+		t.Fatalf("pendingRunnersGauge while draining = %v, want 0", got)
+	}
 
 	scaler.EndDrain()
 	if scaler.draining.Load() {
@@ -1125,11 +1134,70 @@ func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
 	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
 		t.Errorf("drainAutoClearedTotal delta = %v, want 1", got)
 	}
+	if got := testutil.ToFloat64(pendingRunnersGauge.WithLabelValues("watchdog-stuck")); got != 1 {
+		t.Errorf("pendingRunnersGauge after EndDrain = %v, want 1", got)
+	}
 
 	// Calling again while already clear must not double-count the metric.
 	scaler.EndDrain()
 	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
 		t.Errorf("drainAutoClearedTotal delta after a second EndDrain = %v, want still 1 (idempotent)", got)
+	}
+}
+
+func TestSchedulerDemandPublicationSerializesWithRunnerTransitions(t *testing.T) {
+	fleet := newFleetCoordinator(1, nil, map[string]int{"protected": 1}, map[string]int{"protected": 10}, []string{"protected"})
+	scaler := &Scaler{
+		scaleSetName: "protected",
+		maxRunners:   1,
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		fleet:        fleet,
+	}
+	scaler.queuedJobs.Store(1)
+
+	// Stop the first publication after it has taken the runner snapshot. A
+	// concurrent replacement transition must not pass that snapshot and
+	// publish newer demand first; otherwise the delayed zero-runner snapshot
+	// can overwrite it when the coordinator becomes available again.
+	fleet.mu.Lock()
+	publicationDone := make(chan struct{})
+	go func() {
+		scaler.updateSchedulerDemand(time.Unix(1234, 0))
+		close(publicationDone)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for scaler.runners.mu.TryLock() {
+		scaler.runners.mu.Unlock()
+		if time.Now().After(deadline) {
+			fleet.mu.Unlock()
+			t.Fatal("demand publication never entered the runner-state critical section")
+		}
+		runtime.Gosched()
+	}
+
+	transitionDone := make(chan struct{})
+	go func() {
+		scaler.runners.addIdle("replacement", "host-a", "container-a", time.Now())
+		scaler.updateSchedulerDemand(time.Unix(1235, 0))
+		close(transitionDone)
+	}()
+	select {
+	case <-transitionDone:
+		fleet.mu.Unlock()
+		t.Fatal("runner transition passed an older in-flight demand publication")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	fleet.mu.Unlock()
+	<-publicationDone
+	<-transitionDone
+
+	fleet.mu.Lock()
+	demand := fleet.scaleSetDemand["protected"]
+	fleet.mu.Unlock()
+	if demand.active != 1 || demand.pending != 0 {
+		t.Fatalf("final scheduler demand = active %d, pending %d; want active 1, pending 0", demand.active, demand.pending)
 	}
 }
 
@@ -1588,7 +1656,7 @@ func readinessScaler(t *testing.T, metricName string, maxAge time.Duration, hand
 	metrics := httptest.NewServer(handler)
 	t.Cleanup(metrics.Close)
 
-	fleet := newFleetCoordinator(4, nil, map[string]int{"set": 1}, []string{"set"})
+	fleet := newFleetCoordinator(4, nil, map[string]int{"set": 1}, nil, []string{"set"})
 	fleet.readinessRequired = map[string]bool{"roamer": true}
 
 	return &Scaler{
