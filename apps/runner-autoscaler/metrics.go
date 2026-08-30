@@ -22,6 +22,10 @@ import (
 const (
 	placementReasonFleetLimit = "fleet_limit"
 	placementReasonHostLimits = "host_limits"
+	// Every otherwise-eligible host lacked enough physical-memory budget for
+	// the candidate's declared reservation after running and in-flight runner
+	// reservations plus the configured safety margin were accounted for.
+	placementReasonMemoryReservation = "memory_reservation"
 	// Every eligible host was withheld by its operator-defined readiness
 	// gate. Distinct from unreachability: these hosts answered fine, the
 	// operator's own signal said not to use them.
@@ -234,6 +238,20 @@ var (
 		},
 		[]string{"host"},
 	)
+	hostMemoryReservedGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_memory_reserved_bytes",
+			Help: "Aggregate declared memory reservation of running and in-flight autoscaled runners on a host, observed during placement.",
+		},
+		[]string{"host"},
+	)
+	hostMemoryBudgetGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_memory_budget_bytes",
+			Help: "Docker-reported physical host memory available to declared runner reservations after the configured safety margin.",
+		},
+		[]string{"host"},
+	)
 	drainingGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_draining",
@@ -263,7 +281,7 @@ var (
 		Name: "github_runner_autoscaler_placement_blocked_total",
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
-			placementReasonReadiness + ", " + placementReasonOverload + ".",
+			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ".",
 	}, []string{"scale_set", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
@@ -408,6 +426,8 @@ func registerMetrics() {
 			hostCooldownGauge,
 			hostLoadPenaltyGauge,
 			hostFleetRunnersGauge,
+			hostMemoryReservedGauge,
+			hostMemoryBudgetGauge,
 			drainingGauge,
 			drainAutoClearedTotal,
 			placementDecisions,

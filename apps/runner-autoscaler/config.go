@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -99,6 +100,10 @@ type Config struct {
 	// verbatim in runOrchestrator).
 	HostLoadPolicy   hostLoadPolicy
 	HostMemoryExempt []string
+	// MemorySafetyMargin is the fraction of Docker-reported physical host
+	// memory that placement leaves outside declared runner reservations. A
+	// value of 0.10 keeps ten percent free; zero selects the default.
+	MemorySafetyMargin float64
 	// ReadinessMetricsURL, ReadinessMetric and ReadinessMaxAge configure the
 	// per-host readiness gate consulted for hosts that set
 	// require_readiness. See FleetPlacementFile for the semantics and
@@ -138,6 +143,9 @@ func (c *Config) defaults() {
 	// disable" impossible.
 	if c.HostLoadPolicy.loadHard == 0 {
 		c.HostLoadPolicy = defaultHostLoadPolicy()
+	}
+	if c.MemorySafetyMargin == 0 {
+		c.MemorySafetyMargin = defaultMemorySafetyMargin
 	}
 }
 
@@ -197,6 +205,9 @@ func (c *Config) Validate() error {
 	}
 	if !(p.cpuSoft < p.cpuHard && p.psiSoft < p.psiHard && p.memoryHard < p.memorySoft && p.swapSoft < p.swapHard) {
 		return fmt.Errorf("host pressure thresholds are not ordered correctly")
+	}
+	if math.IsNaN(c.MemorySafetyMargin) || math.IsInf(c.MemorySafetyMargin, 0) || c.MemorySafetyMargin <= 0 || c.MemorySafetyMargin >= 1 {
+		return fmt.Errorf("memory safety margin must be greater than 0 and less than 1")
 	}
 	return nil
 }

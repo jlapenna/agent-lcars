@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -479,6 +480,101 @@ func TestPickHostAllOverloadedFleetReportsCapacityBlocked(t *testing.T) {
 	// other work, not pressured.
 	if got := testutil.ToFloat64(hostLimits) - beforeHostLimits; got != 0 {
 		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 0", placementReasonHostLimits, got)
+	}
+}
+
+const gibibyte = int64(1024 * 1024 * 1024)
+
+func memoryBoundScaler(t *testing.T, name string, memoryTotal, candidateMemory int64, containers []container.Summary) *Scaler {
+	t.Helper()
+	fake := newFakeDockerServer(t)
+	fake.setMemoryTotal(memoryTotal)
+	fake.setContainers(containers)
+	return &Scaler{
+		scaleSetName: name,
+		runnerMemory: candidateMemory,
+		dockerHosts:  []DockerHost{{Name: "janeway", Client: fake.client(t)}},
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func reservedRunner(id string, memory int64) container.Summary {
+	return container.Summary{
+		ID: id,
+		Labels: map[string]string{
+			runnerScaleSetLabelKey: "e2e",
+			runnerMemoryLabelKey:   strconv.FormatInt(memory, 10),
+		},
+	}
+}
+
+// Janeway's 16 GiB physical-memory case is the regression that exposed this
+// missing admission dimension: runner_limit=2 alone must not admit two 12 GiB
+// E2E reservations while also preserving a host safety margin.
+func TestPickHostRejectsSecondTwelveGiBReservationOnSixteenGiBHost(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 12*gibibyte, []container.Summary{reservedRunner("first", 12*gibibyte)})
+	blocked := placementBlocked.WithLabelValues("e2e", placementReasonMemoryReservation)
+	before := testutil.ToFloat64(blocked)
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want memory-capacity failure", host, err)
+	}
+	for _, detail := range []string{"reserved=12884901888", "candidate=12884901888", "physical=17179869184"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Errorf("error %q missing useful detail %q", err, detail)
+		}
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Fatalf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonMemoryReservation, got)
+	}
+}
+
+func TestPickHostMixedSizeRunnerUsesSafeRemainingCapacity(t *testing.T) {
+	scaler := memoryBoundScaler(t, "small", 16*gibibyte, 2*gibibyte, []container.Summary{reservedRunner("e2e", 12*gibibyte)})
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if host != "janeway" {
+		t.Fatalf("pickHost() = %q, want janeway: 12 GiB + 2 GiB fits its 90%% reservation budget", host)
+	}
+}
+
+func TestPickHostIncludesInFlightMemoryReservations(t *testing.T) {
+	scaler := memoryBoundScaler(t, "candidate", 16*gibibyte, 4*gibibyte, nil)
+	fleet := scaler.coordinator()
+	fleet.reservedMemory["janeway"] = 12 * gibibyte
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want in-flight memory reservation to block placement", host, err)
+	}
+	if !strings.Contains(err.Error(), "reserved=12884901888") {
+		t.Fatalf("error %q does not report in-flight reservation", err)
+	}
+}
+
+func TestPickHostHonorsConfiguredMemorySafetyMargin(t *testing.T) {
+	scaler := memoryBoundScaler(t, "small", 16*gibibyte, 2*gibibyte, []container.Summary{reservedRunner("e2e", 12*gibibyte)})
+	scaler.memorySafetyMargin = 0.25
+
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() with 25%% margin = (%q, %v), want capacity failure", host, err)
+	}
+}
+
+func TestDeclaredRunnerMemoryInspectsPreLabelContainer(t *testing.T) {
+	fake := newFakeDockerServer(t)
+	fake.setInspectMemory("legacy", 6*gibibyte)
+	memory, err := declaredRunnerMemory(context.Background(), fake.client(t), container.Summary{ID: "legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if memory != 6*gibibyte {
+		t.Fatalf("declaredRunnerMemory() = %d, want %d", memory, 6*gibibyte)
 	}
 }
 
@@ -1317,6 +1413,16 @@ func TestRunnerHostConfig(t *testing.T) {
 			t.Fatalf("Binds = %#v", hc.Binds)
 		}
 	})
+}
+
+func TestRunnerLabelsIncludeExactMemoryReservation(t *testing.T) {
+	labels := runnerLabels("e2e", "sprinkles", 12*gibibyte)
+	if labels[runnerScaleSetLabelKey] != "e2e" || labels[runnerRegistrationLabelKey] != "sprinkles" {
+		t.Fatalf("runner ownership labels = %#v", labels)
+	}
+	if got := labels[runnerMemoryLabelKey]; got != "12884901888" {
+		t.Fatalf("memory reservation label = %q, want exact byte value", got)
+	}
 }
 
 // TestEnsureRunnerImageRejectsStreamedPullError is the other half of #139's

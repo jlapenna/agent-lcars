@@ -13,6 +13,7 @@ type FleetCoordinator struct {
 	mu                sync.Mutex
 	maxRunners        int
 	reservations      map[string]int
+	reservedMemory    map[string]int64
 	startInFlight     map[string]bool
 	lastFleetCounts   map[string]int
 	hostRunnerLimits  map[string]int
@@ -34,15 +35,16 @@ type FleetCoordinator struct {
 // (on success or failure) always decrements the matching reservation counter
 // exactly once, even if release is called from multiple defers.
 type hostReservation struct {
-	fleet *FleetCoordinator
-	host  string
-	once  sync.Once
+	fleet  *FleetCoordinator
+	host   string
+	memory int64
+	once   sync.Once
 }
 
 func newFleetCoordinator(maxRunners int, limits map[string]int, weights map[string]int, order []string) *FleetCoordinator {
 	return &FleetCoordinator{
 		maxRunners:   maxRunners,
-		reservations: map[string]int{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
+		reservations: map[string]int{}, reservedMemory: map[string]int64{}, startInFlight: map[string]bool{}, lastFleetCounts: map[string]int{},
 		hostRunnerLimits: limits, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		gate: newWeightedPlacementGate(weights, order),
@@ -118,9 +120,10 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 		return nil, err
 	}
 	f.reservations[host]++
+	f.reservedMemory[host] += scaler.runnerMemory
 	f.startInFlight[host] = true
 	reservationGauge.WithLabelValues(scaler.scaleSetName, host).Inc()
-	return &hostReservation{fleet: f, host: host}, nil
+	return &hostReservation{fleet: f, host: host, memory: scaler.runnerMemory}, nil
 }
 
 func (r *hostReservation) release(scaleSet string) {
@@ -131,6 +134,12 @@ func (r *hostReservation) release(scaleSet string) {
 		r.fleet.mu.Lock()
 		if r.fleet.reservations[r.host] > 0 {
 			r.fleet.reservations[r.host]--
+		}
+		if r.memory > 0 {
+			r.fleet.reservedMemory[r.host] -= r.memory
+			if r.fleet.reservedMemory[r.host] < 0 {
+				r.fleet.reservedMemory[r.host] = 0
+			}
 		}
 		r.fleet.startInFlight[r.host] = false
 		r.fleet.mu.Unlock()

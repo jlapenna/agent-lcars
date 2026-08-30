@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -142,19 +143,22 @@ type FleetPlacementFile struct {
 	// would fail the gate OPEN -- the one outcome it exists to prevent.
 	ReadinessMaxAge  string   `yaml:"readiness_max_age,omitempty"`
 	HostMemoryExempt []string `yaml:"host_memory_exempt,omitempty"`
-	LoadSoft         float64  `yaml:"load_soft,omitempty"`
-	LoadBusy         float64  `yaml:"load_busy,omitempty"`
-	LoadHard         float64  `yaml:"load_hard,omitempty"`
-	CPUSoft          float64  `yaml:"cpu_soft,omitempty"`
-	CPUHard          float64  `yaml:"cpu_hard,omitempty"`
-	PSISoft          float64  `yaml:"psi_soft,omitempty"`
-	PSIHard          float64  `yaml:"psi_hard,omitempty"`
-	MemorySoft       float64  `yaml:"memory_soft,omitempty"`
-	MemoryHard       float64  `yaml:"memory_hard,omitempty"`
-	SwapSoft         float64  `yaml:"swap_soft,omitempty"`
-	SwapHard         float64  `yaml:"swap_hard,omitempty"`
-	OverloadCooldown string   `yaml:"overload_cooldown,omitempty"`
-	TelemetryPenalty int      `yaml:"telemetry_penalty,omitempty"`
+	// MemorySafetyMargin is the fraction of Docker-reported physical host
+	// memory that aggregate runner reservations may not consume.
+	MemorySafetyMargin float64 `yaml:"memory_safety_margin,omitempty"`
+	LoadSoft           float64 `yaml:"load_soft,omitempty"`
+	LoadBusy           float64 `yaml:"load_busy,omitempty"`
+	LoadHard           float64 `yaml:"load_hard,omitempty"`
+	CPUSoft            float64 `yaml:"cpu_soft,omitempty"`
+	CPUHard            float64 `yaml:"cpu_hard,omitempty"`
+	PSISoft            float64 `yaml:"psi_soft,omitempty"`
+	PSIHard            float64 `yaml:"psi_hard,omitempty"`
+	MemorySoft         float64 `yaml:"memory_soft,omitempty"`
+	MemoryHard         float64 `yaml:"memory_hard,omitempty"`
+	SwapSoft           float64 `yaml:"swap_soft,omitempty"`
+	SwapHard           float64 `yaml:"swap_hard,omitempty"`
+	OverloadCooldown   string  `yaml:"overload_cooldown,omitempty"`
+	TelemetryPenalty   int     `yaml:"telemetry_penalty,omitempty"`
 }
 
 type ScaleSetConfigFile struct {
@@ -425,6 +429,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 	if len(p.HostMemoryExempt) == 0 {
 		p.HostMemoryExempt = []string{"spark"}
+	}
+	if p.MemorySafetyMargin == 0 {
+		p.MemorySafetyMargin = defaultMemorySafetyMargin
+	}
+	if math.IsNaN(p.MemorySafetyMargin) || math.IsInf(p.MemorySafetyMargin, 0) || p.MemorySafetyMargin < 0 || p.MemorySafetyMargin >= 1 {
+		return fmt.Errorf("fleet.placement.memory_safety_margin must be greater than 0 and less than 1")
 	}
 	if strings.Count(p.HostMetricsURLTemplate, "%s") != 1 {
 		return fmt.Errorf("fleet.placement.host_metrics_url_template must contain exactly one %%s")
