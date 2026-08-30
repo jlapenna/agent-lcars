@@ -237,3 +237,58 @@ test('flushes a final unterminated line without changing its bytes', async () =>
     '2026-08-30T04:00:00Z final line without newline',
   );
 });
+
+test('drains more than one read tick before shutdown flushes', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  const lines = Array.from(
+    { length: 20 },
+    (_, index) => `shutdown line ${index}`,
+  );
+  await writeFile(path.join(directory, 'job_all_0.log'), lines.join('\n'));
+  const shipper = makeShipper(directory, loki.endpoint, {
+    config: {
+      maxReadBytesPerTick: 32,
+      readChunkBytes: 32,
+      shutdownBudgetMs: 10_000,
+    },
+  });
+
+  await shipper.shutdown();
+
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    lines,
+  );
+});
+
+test('drops one oversized partial line without retaining it in memory', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  await writeFile(
+    path.join(directory, 'job_all_0.log'),
+    `${'x'.repeat(10_000)}\nline after oversized output\n`,
+  );
+  const shipper = makeShipper(directory, loki.endpoint, {
+    config: {
+      maxReadBytesPerTick: 64,
+      readChunkBytes: 64,
+      maxPartialLineBytes: 100,
+    },
+  });
+
+  for (let index = 0; index < 200; index += 1) await shipper.tick();
+
+  assert.equal(shipper.droppedLines, 1);
+  assert.ok(
+    [...shipper.files.values()].every((state) => state.carry.length <= 100),
+  );
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    ['line after oversized output'],
+  );
+});

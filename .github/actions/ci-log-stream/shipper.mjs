@@ -15,6 +15,7 @@ const DEFAULTS = Object.freeze({
   maxQueueBytes: 2 * 1024 * 1024,
   maxBatchBytes: 512 * 1024,
   maxBatchLines: 1000,
+  maxPartialLineBytes: 256 * 1024,
   // job-daemon.sh gives a stopped child five seconds to exit. Keep one
   // in-flight push plus the final shutdown push inside that outer bound.
   pushTimeoutMs: 2000,
@@ -135,11 +136,44 @@ export class PageLogShipper {
       offset: 0,
       carry: '',
       decoder: new StringDecoder('utf8'),
+      droppingOversizedLine: false,
       identity,
       stepName: this.stepNames.get(identity) ?? filename,
     };
     this.files.set(filename, state);
     return state;
+  }
+
+  processDecoded(state, decoded, { final = false } = {}) {
+    let text = decoded;
+    if (state.droppingOversizedLine) {
+      const newlineIndex = text.indexOf('\n');
+      if (newlineIndex === -1) return;
+      state.droppingOversizedLine = false;
+      text = text.slice(newlineIndex + 1);
+    }
+
+    const lines = `${state.carry}${text}`.split('\n');
+    state.carry = lines.pop() ?? '';
+    for (const rawLine of lines) {
+      const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+      if (Buffer.byteLength(line) > this.config.maxPartialLineBytes) {
+        this.droppedLines += 1;
+      } else {
+        this.enqueue(line, state);
+      }
+    }
+
+    if (Buffer.byteLength(state.carry) > this.config.maxPartialLineBytes) {
+      state.carry = '';
+      state.droppingOversizedLine = true;
+      this.droppedLines += 1;
+    }
+
+    if (final && !state.droppingOversizedLine && state.carry) {
+      this.enqueue(state.carry, state);
+      state.carry = '';
+    }
   }
 
   async selectPageIdentity(filenames) {
@@ -182,7 +216,7 @@ export class PageLogShipper {
       entries = await readdir(this.pageDirectory, { withFileTypes: true });
     } catch (error) {
       await this.diagnose(`page discovery failed: ${error.message}`);
-      return;
+      return 0;
     }
 
     let filenames = entries
@@ -190,7 +224,7 @@ export class PageLogShipper {
       .map((entry) => entry.name)
       .sort();
     const selectedIdentity = await this.selectPageIdentity(filenames);
-    if (!selectedIdentity) return;
+    if (!selectedIdentity) return 0;
     // The runner writes every line to both a cumulative job record and an
     // ephemeral per-step record. At shipper startup the cumulative identity
     // is the largest because checkout has already completed. Follow only that
@@ -200,6 +234,7 @@ export class PageLogShipper {
       (filename) => pageIdentity(filename) === selectedIdentity,
     );
     let budget = this.config.maxReadBytesPerTick;
+    let totalBytesRead = 0;
 
     for (const filename of filenames) {
       if (budget <= 0) break;
@@ -217,6 +252,7 @@ export class PageLogShipper {
         state.offset = 0;
         state.carry = '';
         state.decoder = new StringDecoder('utf8');
+        state.droppingOversizedLine = false;
       }
 
       while (state.offset < fileSize && budget > 0) {
@@ -241,17 +277,12 @@ export class PageLogShipper {
 
         state.offset += bytesRead;
         budget -= bytesRead;
+        totalBytesRead += bytesRead;
         const decoded = state.decoder.write(buffer.subarray(0, bytesRead));
-        const lines = `${state.carry}${decoded}`.split('\n');
-        state.carry = lines.pop() ?? '';
-        for (const rawLine of lines) {
-          this.enqueue(
-            rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine,
-            state,
-          );
-        }
+        this.processDecoded(state, decoded);
       }
     }
+    return totalBytesRead;
   }
 
   async pushAvailable({ force = false } = {}) {
@@ -315,10 +346,23 @@ export class PageLogShipper {
 
   enqueuePartialLines() {
     for (const state of this.files.values()) {
-      const decoded = state.decoder.end();
-      const line = `${state.carry}${decoded}`;
-      state.carry = '';
-      if (line) this.enqueue(line, state);
+      this.processDecoded(state, state.decoder.end(), { final: true });
+    }
+  }
+
+  async shutdown() {
+    const deadline = this.now() + this.config.shutdownBudgetMs;
+    while (this.now() < deadline) {
+      const bytesRead = await this.readAvailable();
+      await this.pushAvailable({ force: true });
+      if (bytesRead === 0) break;
+    }
+
+    this.enqueuePartialLines();
+    while (this.queue.length > 0 && this.now() < deadline) {
+      const before = this.queue.length;
+      await this.pushAvailable({ force: true });
+      if (this.queue.length >= before) await sleep(100);
     }
   }
 
@@ -336,14 +380,7 @@ export class PageLogShipper {
       await sleep(this.config.pollIntervalMs);
     }
 
-    await this.readAvailable();
-    this.enqueuePartialLines();
-    const deadline = this.now() + this.config.shutdownBudgetMs;
-    while (this.queue.length > 0 && this.now() < deadline) {
-      const before = this.queue.length;
-      await this.pushAvailable({ force: true });
-      if (this.queue.length >= before) await sleep(100);
-    }
+    await this.shutdown();
     await this.diagnose(
       `shipper stopped; queued=${this.queue.length} dropped=${this.droppedLines}`,
     );
