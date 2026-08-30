@@ -57,10 +57,12 @@ The Loki stream uses only low-cardinality labels:
 
 Run ID, run attempt, job name, step name, commit SHA, and an optional Agent
 LCARS attempt ID are structured metadata, not labels. The shipper rescans for
-rotated pages, bounds its in-memory queue at 2 MiB, uses no disk spool, drops
-new lines under sustained backpressure, and never changes the job result when
-Loki or the runner helper is unavailable. The `gha-ci` Loki stream has 48-hour
-retention; GitHub's completed job archive remains the longer-lived record.
+rotated pages and follows the cumulative job record rather than the duplicate
+per-step records. It bounds its in-memory queue at 2 MiB, uses no disk spool,
+drops new lines under sustained backpressure, and never changes the job result
+when Loki or the runner helper is unavailable. The `gha-ci` Loki stream has
+48-hour retention; GitHub's completed job archive remains the longer-lived
+record.
 
 ## Consume a published surface
 

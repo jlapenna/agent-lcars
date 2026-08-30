@@ -64,6 +64,7 @@ export class PageLogShipper {
 
     this.files = new Map();
     this.stepNames = new Map();
+    this.selectedIdentity = undefined;
     this.queue = [];
     this.queueBytes = 0;
     this.droppedLines = 0;
@@ -141,6 +142,40 @@ export class PageLogShipper {
     return state;
   }
 
+  async selectPageIdentity(filenames) {
+    if (this.selectedIdentity) return this.selectedIdentity;
+
+    const candidates = new Map();
+    for (const filename of filenames) {
+      try {
+        const fileStat = await stat(path.join(this.pageDirectory, filename));
+        const identity = pageIdentity(filename);
+        const candidate = candidates.get(identity) ?? {
+          identity,
+          bytes: 0,
+          createdAt: fileStat.birthtimeMs,
+        };
+        candidate.bytes += fileStat.size;
+        candidate.createdAt = Math.min(
+          candidate.createdAt,
+          fileStat.birthtimeMs,
+        );
+        candidates.set(identity, candidate);
+      } catch (error) {
+        await this.diagnose(
+          `selection stat failed for ${filename}: ${error.message}`,
+        );
+      }
+    }
+
+    const selected = [...candidates.values()].sort(
+      (left, right) =>
+        right.bytes - left.bytes || left.createdAt - right.createdAt,
+    )[0];
+    if (selected) this.selectedIdentity = selected.identity;
+    return this.selectedIdentity;
+  }
+
   async readAvailable() {
     let entries;
     try {
@@ -150,10 +185,20 @@ export class PageLogShipper {
       return;
     }
 
-    const filenames = entries
+    let filenames = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
       .map((entry) => entry.name)
       .sort();
+    const selectedIdentity = await this.selectPageIdentity(filenames);
+    if (!selectedIdentity) return;
+    // The runner writes every line to both a cumulative job record and an
+    // ephemeral per-step record. At shipper startup the cumulative identity
+    // is the largest because checkout has already completed. Follow only that
+    // identity (including its numbered rotations) so Loki matches the final
+    // archive instead of containing every line twice.
+    filenames = filenames.filter(
+      (filename) => pageIdentity(filename) === selectedIdentity,
+    );
     let budget = this.config.maxReadBytesPerTick;
 
     for (const filename of filenames) {

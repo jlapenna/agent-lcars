@@ -138,6 +138,30 @@ test('rediscovers synthetic rotated pages and retains the step name', async () =
   );
 });
 
+test('selects the cumulative job pages instead of duplicating per-step pages', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  const sharedLine = '2026-08-30T04:00:01Z checkout output';
+  await writeFile(
+    path.join(directory, 'job_all_0.log'),
+    `2026-08-30T04:00:00Z setup output\n${sharedLine}\n`,
+  );
+  await writeFile(
+    path.join(directory, 'job_checkout_0.log'),
+    `${sharedLine}\n`,
+  );
+
+  const shipper = makeShipper(directory, loki.endpoint);
+  await shipper.tick();
+
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    ['2026-08-30T04:00:00Z setup output', sharedLine],
+  );
+});
+
 test('ships every line across synthetic page rotation beyond 8 MiB', async () => {
   const directory = await temporaryDirectory();
   const loki = await lokiServer();
