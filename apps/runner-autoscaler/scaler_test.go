@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,6 +61,16 @@ func TestDockerSafeNamePart(t *testing.T) {
 		if got := dockerSafeNamePart(in); got != want {
 			t.Errorf("dockerSafeNamePart(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRunnerEnvironmentIncludesPhysicalHost(t *testing.T) {
+	want := []string{
+		"ACTIONS_RUNNER_INPUT_JITCONFIG=opaque-jit-config",
+		"AGENT_LCARS_RUNNER_HOST=laforge",
+	}
+	if got := runnerEnvironment("opaque-jit-config", "laforge"); !slices.Equal(got, want) {
+		t.Fatalf("runnerEnvironment() = %q, want %q", got, want)
 	}
 }
 

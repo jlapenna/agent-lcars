@@ -1,0 +1,22 @@
+name: Stream live CI logs
+description: >-
+  Internal fail-soft lifecycle for shipping this runner's GitHub Actions page
+  logs to Loki while a long job is still running.
+
+inputs:
+  mode:
+    description: Start or stop the in-job shipper.
+    required: true
+  loki-url:
+    description: Loki push API endpoint reachable from trusted fleet runners.
+    required: false
+    default: http://homelab.lan.jlapenna.net:3100/loki/api/v1/push
+
+runs:
+  using: composite
+  steps:
+    - name: ${{ inputs.mode }} live CI log stream
+      shell: bash
+      env:
+        AGENT_LCARS_CI_LOG_LOKI_URL: ${{ inputs.loki-url }}
+      run: bash "$GITHUB_ACTION_PATH/lifecycle.sh" "${{ inputs.mode }}"

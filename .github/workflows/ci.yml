@@ -35,6 +35,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The runner writes already-masked live output to rotating page files.
+      # Start immediately after checkout so this long gate is observable
+      # before GitHub makes the completed job archive available. The action
+      # cleanly no-ops on the hosted fork-PR carve-out above.
+      - name: Start live CI log stream
+        continue-on-error: true
+        uses: ./.github/actions/ci-log-stream
+        with:
+          mode: start
+
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.14.3
@@ -273,6 +283,13 @@ jobs:
       # by the canonical homelab controller.
       - name: Smoke test telemetry-watcher bundle
         run: ./tools/telemetry-watcher-standalone-smoke.sh
+
+      - name: Stop live CI log stream
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/ci-log-stream
+        with:
+          mode: stop
 
   # `Verify` is the branch-ruleset check. It must always report: GitHub
   # treats a skipped required job as passing, so the draft decision belongs in

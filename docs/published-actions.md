@@ -38,9 +38,29 @@ QueueExecutor instead.
 
 ## Not consumer surfaces
 
-| Tier     | Names             |
-| -------- | ----------------- |
-| Internal | `setup-node-pnpm` |
+| Tier     | Names                              |
+| -------- | ---------------------------------- |
+| Internal | `setup-node-pnpm`, `ci-log-stream` |
+
+## Live CI logs
+
+The internal `ci-log-stream` action makes the long `Full verification` job
+observable before GitHub publishes its completed log archive. On trusted fleet
+runners it tails the runner's already-secret-masked rotating page logs and
+pushes them directly to Loki; GitHub-hosted fork jobs cleanly no-op.
+
+The Loki stream uses only low-cardinality labels:
+
+```logql
+{job="gha-ci", repo="jlapenna/agent-lcars", workflow="CI", runner_host="laforge"}
+```
+
+Run ID, run attempt, job name, step name, commit SHA, and an optional Agent
+LCARS attempt ID are structured metadata, not labels. The shipper rescans for
+rotated pages, bounds its in-memory queue at 2 MiB, uses no disk spool, drops
+new lines under sustained backpressure, and never changes the job result when
+Loki or the runner helper is unavailable. The `gha-ci` Loki stream has 48-hour
+retention; GitHub's completed job archive remains the longer-lived record.
 
 ## Consume a published surface
 

@@ -1942,6 +1942,17 @@ func runnerBinds(fileMounts []FileMount) []string {
 	return binds
 }
 
+// runnerEnvironment preserves the opaque GitHub JIT registration payload and
+// exposes the autoscaler's placement decision inside the one-shot runner. The
+// latter is deliberately an environment field rather than a Loki label chosen
+// by workflow code: only the autoscaler knows the physical Docker host.
+func runnerEnvironment(encodedJITConfig, host string) []string {
+	return []string{
+		fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", encodedJITConfig),
+		fmt.Sprintf("AGENT_LCARS_RUNNER_HOST=%s", host),
+	}
+}
+
 // runnerHostConfig builds the HostConfig for a newly created runner
 // container. Extracted from startRunner (mirroring runnerBinds above) so the
 // resource-limit wiring is unit-testable without a live Docker API. A zero
@@ -2038,9 +2049,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			User:   "runner",
 			Cmd:    []string{"/home/runner/run.sh"},
 			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.runnerMemory),
-			Env: []string{
-				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", jit.EncodedJITConfig),
-			},
+			Env:    runnerEnvironment(jit.EncodedJITConfig, host),
 		},
 		hostConfig,
 		name,
