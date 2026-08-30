@@ -29,8 +29,13 @@ type Config struct {
 	GitHubApp       scaleset.GitHubAppAuth
 	Token           string
 	RunnerImage     string
-	LogLevel        string
-	LogFormat       string
+	// RunnerImageFallback is an optional, explicitly promotion-verified
+	// same-repository digest. It is used only when refreshing RunnerImage's
+	// mutable tag fails because the registry is unavailable and the exact
+	// digest is already cached on the selected host.
+	RunnerImageFallback string
+	LogLevel            string
+	LogFormat           string
 	// RegistrationName is a homelab addition (homelab#97): which GitHub
 	// registration (account/repo + App credentials) this scale set belongs
 	// to -- primaryRegistrationName for the top-level github/scale_sets
@@ -176,6 +181,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RunnerImage == "" {
 		return fmt.Errorf("runner image is required")
+	}
+	if err := validateRunnerImageFallback(c.RunnerImage, c.RunnerImageFallback); err != nil {
+		return err
 	}
 	if _, _, err := ParseDockerHosts(c.DockerHosts); err != nil {
 		return err

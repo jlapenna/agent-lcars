@@ -56,6 +56,30 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	}
 }
 
+func TestLoadOrchestratorConfigResolvesRunnerImageFallback(t *testing.T) {
+	fallback := "example/default@sha256:" + strings.Repeat("a", 64)
+	body := strings.Replace(validOrchestratorYAML,
+		"    runner_image: example/default:latest",
+		"    runner_image: example/default:latest\n    runner_image_fallback: "+fallback, 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.ScaleSets[0].RunnerImageFallback; got != fallback {
+		t.Fatalf("runner image fallback = %q, want %q", got, fallback)
+	}
+}
+
+func TestLoadOrchestratorConfigRejectsUnsafeRunnerImageFallback(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML,
+		"    runner_image: example/default:latest",
+		"    runner_image: example/default:latest\n    runner_image_fallback: example/other@sha256:"+strings.Repeat("b", 64), 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("load error = %v, want repository mismatch", err)
+	}
+}
+
 func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway\n      metrics_via_ssh: true", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
