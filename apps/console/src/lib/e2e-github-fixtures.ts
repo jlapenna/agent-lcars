@@ -114,10 +114,6 @@ const FIXTURE_ITEMS: FixtureItem[] = [
       { author: MAINTAINER, body: 'Filing this so it does not get lost.' },
       {
         author: FLEET,
-        // Deliberately carries a takeover command: the card renders one
-        // whenever the fleet holds the assignee, and it had never been seen
-        // rendered next to a real comment preview. This one keeps the
-        // retired sprinkles-era spelling on purpose — action-items.ts's
         body: 'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
       },
     ],

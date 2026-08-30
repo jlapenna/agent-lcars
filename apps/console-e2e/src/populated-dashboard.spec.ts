@@ -100,14 +100,20 @@ test.describe('populated dashboard', () => {
       page.getByText('3 unresolved review threads').first(),
     ).toBeVisible();
 
-    // The takeover command the fleet posts on a claimed item.
+    // Claimed work retains its native status-comment preview, but the retired
+    // GitHub-comment-derived live resume command is not rendered.
     await page
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
       .getByRole('link')
       .click();
     await expect(
-      page.getByText(/claude-agent-session\.sh resume/).first(),
+      page.getByText(
+        'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
+      ),
     ).toBeVisible();
+    await expect(
+      page.getByText(/claude-agent-session(?:\.sh)? resume/),
+    ).toHaveCount(0);
   });
 
   test('retrigger and pipeline reassignment use broker-safe GitHub writes', async ({

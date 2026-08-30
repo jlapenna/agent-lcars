@@ -256,21 +256,14 @@ export function classifyIssue(
   let lastCommentBody: string | undefined;
   let lastCommentUrl: string | undefined;
   let lastCommentAuthor: string | undefined;
-  // Comment fetches cost one API call per item, so stay scoped: actionable
-  // items (for the comment preview) plus anything the agent fleet has
-  // claimed via the assignee field (#2783) - issues AND PRs alike, since
-  if (
-    isHumanNeeded ||
-    isPostDeploy ||
-    assigneeLogins.includes(agentFleetLogin())
-  ) {
+  // Comment windows add up to 100 response nodes per item, so stay scoped to
+  // the two status previews that render the newest comment.
+  if (isHumanNeeded || isPostDeploy) {
     const comments = enrichment?.comments ?? [];
     const last = comments[comments.length - 1];
-    if (isHumanNeeded || isPostDeploy) {
-      lastCommentBody = last?.body;
-      lastCommentUrl = last?.url;
-      lastCommentAuthor = last?.author;
-    }
+    lastCommentBody = last?.body;
+    lastCommentUrl = last?.url;
+    lastCommentAuthor = last?.author;
   }
 
   let draft: boolean | undefined;
@@ -629,9 +622,6 @@ export async function getActionItems(): Promise<ActionItemsResult> {
     {
       repo: WatchedRepo;
       requests: EnrichmentRequest[];
-      // Depends only on `repo`, not the individual issue - computed once
-      // per repo-grouped batch instead of once per issue.
-      agentLabels: string[];
     }
   >();
   for (const issue of issuesToClassify) {
@@ -641,28 +631,20 @@ export async function getActionItems(): Promise<ActionItemsResult> {
       group = {
         repo: issue.repo,
         requests: [],
-        agentLabels: supportedAgentLabels(issue.repo),
       };
       byRepo.set(key, group);
     }
     const labels = issue.labels.map((label) =>
       typeof label === 'string' ? label : (label.name ?? ''),
     );
-    const assignees = (issue.assignees ?? []).map((a) => a?.login ?? '');
-    // The first three conditions mirror classifyIssue's own condition for
-    // reading comments at all (last-comment preview / takeover command).
-    // The fourth (#306): any item carrying an agent pipeline label may have
-    // agent activity worth previewing even before the fleet claims it, and
-    // `toEnrichment` (item-enrichment.ts) only ever scans a comment window
-    // this app actually fetched.
+    // Only status-preview consumers read the newest comment. Fleet assignment
+    // and agent labels select active work, but do not render comment data.
     group.requests.push({
       number: issue.number,
       isPr: Boolean(issue.pull_request),
       wantsComments:
         labels.includes('status:needs-human') ||
-        labels.includes('status:post-deploy-action') ||
-        assignees.includes(agentFleetLogin()) ||
-        group.agentLabels.some((label) => labels.includes(label)),
+        labels.includes('status:post-deploy-action'),
     });
   }
 

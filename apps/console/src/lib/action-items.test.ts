@@ -456,6 +456,7 @@ describe('getActionItems', () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].lastCommentAuthor).toBe('jlapenna');
+    expect(graphql.queries[0]).toContain('comments(');
   });
 
   it('paginates the open-item listing and collects every item', async () => {
@@ -862,19 +863,23 @@ describe('getActionItems', () => {
     expect(result.items[0].assigneeLogins).toEqual(['agent-lcars-bot']);
   });
 
-  it('requests comments for a Claude-labeled issue nobody has claimed (#306)', async () => {
+  it('does not request comments for active agent work without a status preview', async () => {
     const listForRepo = pagedListForRepo({
       'supersprinklesracing/sprinkles': [
         makeItem(44, { labels: ['agent:claude'], comments: 3 }),
+        makeItem(45, {
+          assignees: [{ login: 'agent-lcars-bot' }],
+          comments: 2,
+        }),
       ],
     });
-    const graphql = mockGraphql({ 44: issueNode() });
+    const graphql = mockGraphql();
     setupOctokit({ listForRepo, graphql });
 
     const result = await getActionItems();
 
-    expect(result.items.map((i) => i.number)).toEqual([44]);
-    expect(graphql.queries[0]).toContain('comments(');
+    expect(result.items.map((i) => i.number).sort()).toEqual([44, 45]);
+    expect(graphql.queries[0]).not.toContain('comments(');
   });
 
   it('surfaces a dispatched-but-unclaimed OpenCode-labeled issue (#3012)', async () => {
