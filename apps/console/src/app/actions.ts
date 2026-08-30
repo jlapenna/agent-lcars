@@ -28,6 +28,7 @@ import {
 import { GITHUB_DATA_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
+import { quickTaskIssueCreatorFor } from '../lib/quick-task-author';
 import type {
   QuickTaskReceipt,
   QuickTaskRequest,
@@ -216,15 +217,19 @@ export async function dispatchUnstickPrs(
 export async function createQuickTask(
   request: QuickTaskRequest,
 ): Promise<QuickTaskResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
     if (!request?.repository) {
       throw new ActionError('Quick Task repository is required', 400);
     }
-    const receipt = await createQuickTaskLib({
-      ...request,
-      repository: resolveWatchedRepo(request.repository),
-    });
+    const receipt = await createQuickTaskLib(
+      {
+        ...request,
+        repository: resolveWatchedRepo(request.repository),
+      },
+      undefined,
+      quickTaskIssueCreatorFor(session),
+    );
     revalidateDashboard();
     return { ok: true, ...receipt };
   } catch (error) {

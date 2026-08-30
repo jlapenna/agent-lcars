@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { ActionError, createQuickTask } from '@/lib/backend-actions';
 import { resolveWatchedRepo } from '@/lib/github-client';
+import { quickTaskIssueCreatorFor } from '@/lib/quick-task-author';
 import {
   composeQuickTaskEvidenceIssueBody,
   composeQuickTaskIssueBody,
@@ -142,6 +143,7 @@ export async function POST(request: Request) {
         description: body,
       },
       lifecycle,
+      quickTaskIssueCreatorFor(session),
     );
     return NextResponse.json(receipt, { status: 201 });
   } catch (error) {

@@ -1624,6 +1624,26 @@ describe('createQuickTask', () => {
     });
   });
 
+  it('uses the signed-in user creator for the issue while the App client owns the claim ledger', async () => {
+    const { createIssue: appCreateIssue, createTag, createRef } = mockOctokit();
+    const userCreateIssue = vi.fn().mockResolvedValue({
+      data: { number: 99, html_url: 'https://github.com/x/y/issues/99' },
+    });
+
+    await createQuickTask(request, undefined, userCreateIssue);
+
+    expect(userCreateIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: request.repository.owner,
+        repo: request.repository.name,
+        labels: ['intake:quick-task', 'agent:claude'],
+      }),
+    );
+    expect(appCreateIssue).not.toHaveBeenCalled();
+    expect(createTag).toHaveBeenCalledTimes(1);
+    expect(createRef).toHaveBeenCalledTimes(1);
+  });
+
   it('puts the selected pipeline label in the same creation write', async () => {
     const { createIssue } = mockOctokit();
 

@@ -32,6 +32,7 @@ import {
 } from './actions';
 
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
+const userIssueCreator = vi.fn();
 
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
@@ -84,6 +85,9 @@ vi.mock('@/lib/auth-guards', () => ({
 }));
 
 vi.mock('../auth', () => ({ auth: vi.fn() }));
+vi.mock('../lib/quick-task-author', () => ({
+  quickTaskIssueCreatorFor: vi.fn(() => userIssueCreator),
+}));
 
 const DEFAULT_REPO = {
   owner: 'supersprinklesracing',
@@ -370,7 +374,11 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
         ...QUICK_TASK_RECEIPT,
       });
-      expect(createQuickTaskLib).toHaveBeenCalledWith(QUICK_TASK_REQUEST);
+      expect(createQuickTaskLib).toHaveBeenCalledWith(
+        QUICK_TASK_REQUEST,
+        undefined,
+        userIssueCreator,
+      );
       expect(revalidatePath).toHaveBeenCalledWith('/');
       expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
     });
@@ -380,10 +388,14 @@ describe('agent-lcars Server Actions', () => {
 
       await createQuickTask({ ...QUICK_TASK_REQUEST, pipeline: 'opencode' });
 
-      expect(createQuickTaskLib).toHaveBeenCalledWith({
-        ...QUICK_TASK_REQUEST,
-        pipeline: 'opencode',
-      });
+      expect(createQuickTaskLib).toHaveBeenCalledWith(
+        {
+          ...QUICK_TASK_REQUEST,
+          pipeline: 'opencode',
+        },
+        undefined,
+        userIssueCreator,
+      );
     });
 
     it('createQuickTask preserves the previewed evidence body across the Server Action boundary', async () => {
@@ -406,10 +418,14 @@ The refresh path has browser coverage.
 
       await createQuickTask({ ...QUICK_TASK_REQUEST, description });
 
-      expect(createQuickTaskLib).toHaveBeenCalledWith({
-        ...QUICK_TASK_REQUEST,
-        description,
-      });
+      expect(createQuickTaskLib).toHaveBeenCalledWith(
+        {
+          ...QUICK_TASK_REQUEST,
+          description,
+        },
+        undefined,
+        userIssueCreator,
+      );
     });
 
     it('closeIssue returns { ok: true } and revalidates', async () => {

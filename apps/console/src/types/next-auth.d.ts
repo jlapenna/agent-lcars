@@ -17,5 +17,8 @@ declare module 'next-auth' {
 declare module 'next-auth/jwt' {
   interface JWT {
     githubLogin?: string;
+    /** Encrypted inside Auth.js's HTTP-only JWT cookie; never exposed by the
+     * public session callback. */
+    githubAccessToken?: string;
   }
 }
