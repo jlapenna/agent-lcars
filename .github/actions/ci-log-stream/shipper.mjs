@@ -26,6 +26,8 @@ const DEFAULTS = Object.freeze({
   initialBackoffMs: 500,
   maxBackoffMs: 30_000,
   shutdownBudgetMs: 2500,
+  shutdownQuietPollMs: 250,
+  shutdownIdlePasses: 2,
   maxDiagnosticBytes: 64 * 1024,
 });
 
@@ -405,10 +407,21 @@ export class PageLogShipper {
 
   async shutdown() {
     const deadline = this.now() + this.config.shutdownBudgetMs;
+    let idlePasses = 0;
     while (this.now() < deadline) {
       const bytesRead = await this.readAvailable();
       await this.pushAvailable({ force: true, deadline });
-      if (bytesRead === 0) break;
+      if (bytesRead > 0) {
+        idlePasses = 0;
+        continue;
+      }
+
+      idlePasses += 1;
+      if (idlePasses >= this.config.shutdownIdlePasses) break;
+      const remainingMs = deadline - this.now();
+      if (remainingMs > 0) {
+        await sleep(Math.min(this.config.shutdownQuietPollMs, remainingMs));
+      }
     }
 
     this.enqueuePartialLines({

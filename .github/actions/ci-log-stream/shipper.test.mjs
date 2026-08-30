@@ -1,6 +1,6 @@
 /* eslint-disable vitest/no-import-node-test -- exercise the dependency-free shipper with the same Node runtime used by the action. */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -324,6 +324,39 @@ test('drains more than one read tick before shutdown flushes', async () => {
       request.streams[0].values.map((value) => value[1]),
     ),
     lines,
+  );
+});
+
+test('waits for a quiet EOF and drains output appended during shutdown', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  const pagePath = path.join(directory, 'job_all_0.log');
+  await writeFile(pagePath, 'line before shutdown\n');
+  const shipper = makeShipper(directory, loki.endpoint, {
+    now: Date.now,
+    config: {
+      shutdownBudgetMs: 1000,
+      shutdownQuietPollMs: 25,
+      shutdownIdlePasses: 2,
+    },
+  });
+
+  const append = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      appendFile(pagePath, 'line buffered during shutdown\n').then(
+        resolve,
+        reject,
+      );
+    }, 10);
+  });
+  await shipper.shutdown();
+  await append;
+
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    ['line before shutdown', 'line buffered during shutdown'],
   );
 });
 
