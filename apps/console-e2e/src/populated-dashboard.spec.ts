@@ -310,6 +310,9 @@ test.describe('populated dashboard', () => {
     // no seeded fixture produced before this one. `exact` because the
     // session title contains the substring "issue-agent" too.
     await expect(row.getByText('agent', { exact: true })).toBeVisible();
+    const nativeRunId = `supersprinklesracing/sprinkles#${E2E_ITEM_NUMBERS.silentError}/r1`;
+    await expect(row.getByText(nativeRunId, { exact: true })).toBeVisible();
+    await expect(row.getByRole('link', { name: /run/ })).toHaveCount(0);
 
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
     const header = page.getByTestId('session-header');

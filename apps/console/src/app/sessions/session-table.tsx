@@ -245,16 +245,20 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                   {row.source === 'cli' && row.host && (
                     <Text size="xs">{row.host}</Text>
                   )}
-                  {row.source === 'issue-agent' && row.runUrl && (
-                    <Anchor
-                      href={row.runUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="xs"
-                    >
-                      run ↗
-                    </Anchor>
-                  )}
+                  {row.source === 'issue-agent' &&
+                    row.runId &&
+                    (row.runUrl ? (
+                      <Anchor
+                        href={row.runUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        size="xs"
+                      >
+                        run ↗
+                      </Anchor>
+                    ) : (
+                      <Text size="xs">{row.runId}</Text>
+                    ))}
                 </TableTd>
                 <TableTd>
                   <Text size="xs" c="dimmed">

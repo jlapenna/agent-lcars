@@ -103,10 +103,10 @@ Firestore authority lease on a shared document that a headless agent could
 inspect or contend with directly — `libs/orchestrator/README.md` is the
 whole contract if you need more than this summary.
 
-## Session archive recovery
+## Operator-side session archive recovery
 
-> The shared agent protocol's takeover section specifies the handoff line to
-> post. This section describes the one supported recovery mechanism.
+This section describes the one supported operator-side recovery mechanism:
+recover a completed run from its durable archive.
 
 `fleet-claude-agent-session` (packages/fleet-tools) is Claude-specific,
 archive-only recovery. Use:
