@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import {
+  approveAndRebase,
   assignPipeline,
   clearHumanNeeded,
   closeIssue,
+  mergePr,
   reassignPipeline,
   rebasePr,
   updateIssueContent,
@@ -18,8 +20,10 @@ import { ItemOverflowMenu } from './item-overflow-menu';
 // 'use server' actions - out of scope here, matching the pattern in
 // action-items-board.test.tsx.
 vi.mock('./actions', () => ({
+  approveAndRebase: vi.fn(),
   assignPipeline: vi.fn(),
   closeIssue: vi.fn(),
+  mergePr: vi.fn(),
   clearHumanNeeded: vi.fn(),
   reassignPipeline: vi.fn(),
   rebasePr: vi.fn(),
@@ -157,6 +161,114 @@ describe('ItemOverflowMenu', () => {
 
     expect(screen.getByText('Clear needs-human')).toBeTruthy();
     expect(screen.queryByText('Close issue')).toBeNull();
+  });
+
+  it('approves and merges a review-requested PR from the overflow menu', async () => {
+    (mergePr as Mock).mockResolvedValue({ ok: true });
+    renderMenu(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        mergeableState: 'clean',
+      }),
+    );
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Approve & Merge'));
+
+    await waitFor(() => expect(mergePr).toHaveBeenCalledWith(DEFAULT_REPO, 42));
+    expect(modals.openConfirmModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Merge #42?',
+        labels: { confirm: 'Approve & Merge', cancel: 'Cancel' },
+      }),
+    );
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ message: '#42 merged', color: 'green' }),
+    );
+  });
+
+  it('surfaces a failed overflow-menu approval as a red notification', async () => {
+    (mergePr as Mock).mockResolvedValue({
+      ok: false,
+      message: 'Required check failed',
+    });
+    renderMenu(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        mergeableState: 'clean',
+      }),
+    );
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Approve & Merge'));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Required check failed',
+          color: 'red',
+        }),
+      ),
+    );
+  });
+
+  it('uses approve and rebase for a behind review-requested PR', async () => {
+    (approveAndRebase as Mock).mockResolvedValue({ ok: true });
+    renderMenu(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        mergeableState: 'behind',
+      }),
+    );
+    await openMenu();
+
+    expect(screen.queryByText('Rebase onto base branch')).toBeNull();
+    fireEvent.click(screen.getByText('Approve & Rebase'));
+
+    await waitFor(() =>
+      expect(approveAndRebase).toHaveBeenCalledWith(DEFAULT_REPO, 42),
+    );
+    expect(mergePr).not.toHaveBeenCalled();
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '#42 approved, branch updated, auto-merge enabled',
+        color: 'green',
+      }),
+    );
+  });
+
+  it('withholds review actions from a draft PR', () => {
+    renderMenu(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        mergeableState: 'draft',
+        draft: true,
+      }),
+    );
+
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it.each([
+    ['CI runs', { mergeableState: 'clean' as const, ciRunning: true }],
+    ['the branch conflicts', { mergeableState: 'dirty' as const }],
+  ])('disables direct approval while %s', async (_reason, state) => {
+    renderMenu(
+      makeItem({
+        kind: 'pr',
+        actionTypes: ['review-requested'],
+        ...state,
+      }),
+    );
+    await openMenu();
+
+    expect(
+      screen.getByText('Approve & Merge').closest('button'),
+    ).toBeDisabled();
   });
 
   it('closes the issue via confirm modal, then notifies', async () => {

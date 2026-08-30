@@ -17,16 +17,18 @@ import { IconDotsVertical } from '@tabler/icons-react';
 import { type FormEvent, useState, useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
-import { type Pipeline } from '../lib/primary-action';
+import { derivePrimaryAction, type Pipeline } from '../lib/primary-action';
 import {
   matchingAgentPipelines,
   selectedAgentPipeline,
   supportedAgentPipelines,
 } from '../lib/watched-repo';
 import {
+  approveAndRebase,
   assignPipeline,
   clearHumanNeeded,
   closeIssue,
+  mergePr,
   reassignPipeline,
   rebasePr,
   updateIssueContent,
@@ -61,10 +63,18 @@ export function ItemOverflowMenu({
   const canClose = item.kind === 'issue';
   const canClearHumanNeeded = item.actionTypes.includes('needs-human');
   const canMute = Boolean(onToggleMute);
+  const primaryAction = derivePrimaryAction(item);
+  const reviewAction =
+    primaryAction?.kind === 'approve-merge' ||
+    primaryAction?.kind === 'approve-rebase'
+      ? primaryAction.kind
+      : undefined;
+  const canReview = reviewAction !== undefined;
   // 'behind' is the MERGEABLE_WARNINGS/action-item-card.tsx state for
   // "Base branch has moved" - the one mergeable_state a maintainer can
   // resolve with a single click rather than a trip to GitHub.
-  const canRebase = item.kind === 'pr' && item.mergeableState === 'behind';
+  const canRebase =
+    item.kind === 'pr' && item.mergeableState === 'behind' && !canReview;
   // Only issues carry a pipeline label (claude.yml/codex.yml/opencode.yml
   // dispatch off `issues: labeled`, not PRs) - an issue with none of the
   // three has never been handed to an agent, so there's nothing to
@@ -93,6 +103,7 @@ export function ItemOverflowMenu({
     !canClose &&
     !canClearHumanNeeded &&
     !canMute &&
+    !canReview &&
     !canRebase &&
     !canAssign &&
     !canReassign
@@ -213,6 +224,63 @@ export function ItemOverflowMenu({
     });
   };
 
+  const handleReviewAction = () => {
+    startTransition(async () => {
+      const result =
+        reviewAction === 'approve-rebase'
+          ? await approveAndRebase(item.repo, item.number)
+          : await mergePr(item.repo, item.number);
+      if (!result.ok) {
+        showErrorToast(result.message);
+        return;
+      }
+      notifications.show({
+        message:
+          reviewAction === 'approve-rebase'
+            ? `#${item.number} approved, branch updated, auto-merge enabled`
+            : `#${item.number} merged`,
+        color: 'green',
+      });
+    });
+  };
+
+  const confirmReviewAction = () => {
+    const rebasing = reviewAction === 'approve-rebase';
+    modals.openConfirmModal({
+      title: `${rebasing ? 'Rebase' : 'Merge'} #${item.number}?`,
+      children: (
+        <Text size="sm">
+          {rebasing ? (
+            <>
+              This approves &ldquo;{item.title}&rdquo;, updates its branch from
+              main, and turns on auto-merge so it squash-merges on its own once
+              checks pass.
+            </>
+          ) : (
+            <>
+              This approves and squash-merges &ldquo;{item.title}&rdquo; into
+              main. This can&rsquo;t be undone from here.
+            </>
+          )}
+        </Text>
+      ),
+      labels: {
+        confirm: rebasing ? 'Approve & Rebase' : 'Approve & Merge',
+        cancel: 'Cancel',
+      },
+      confirmProps: { color: 'red' },
+      onConfirm: handleReviewAction,
+    });
+  };
+
+  // Match ActionItemCard's primary controls: a behind branch uses the
+  // approve/rebase path and may run while CI is stale; a direct merge waits
+  // for current CI and refuses known conflicts. GitHub remains authoritative
+  // for every other BLOCKED/UNKNOWN case after the approval is submitted.
+  const reviewActionDisabled =
+    reviewAction === 'approve-merge' &&
+    (item.ciRunning || item.mergeableState === 'dirty');
+
   const editUnchanged =
     editTitle.trim() === item.title && editBody === (item.body ?? '');
 
@@ -233,6 +301,16 @@ export function ItemOverflowMenu({
         </Menu.Target>
         <Menu.Dropdown>
           {canEdit && <Menu.Item onClick={openEdit}>Edit issue</Menu.Item>}
+          {canReview && (
+            <Menu.Item
+              disabled={reviewActionDisabled}
+              onClick={confirmReviewAction}
+            >
+              {reviewAction === 'approve-rebase'
+                ? 'Approve & Rebase'
+                : 'Approve & Merge'}
+            </Menu.Item>
+          )}
           {canRebase && (
             <Menu.Item onClick={handleRebase}>
               Rebase onto base branch
