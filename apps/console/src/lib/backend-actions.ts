@@ -927,7 +927,7 @@ type AppIssueCreate = ReturnType<
   typeof getGithubClient
 >['rest']['issues']['create'];
 export type QuickTaskIssueCreator = (
-  parameters: Parameters<AppIssueCreate>[0],
+  parameters: NonNullable<Parameters<AppIssueCreate>[0]>,
 ) => ReturnType<AppIssueCreate>;
 
 /**

@@ -57,7 +57,10 @@ claim-tag ledger and every background control-plane operation. The OAuth token
 stays inside Auth.js's encrypted HTTP-only JWT and is decoded only for a
 same-process server request; it is never included in the public session object.
 Because watched repositories may be private, sign-in requests the `repo` scope.
-There is no intermediate unroutable issue and no follow-up label mutation.
+Before the write, that same user token must report repository push permission;
+GitHub otherwise accepts the issue while silently discarding its labels. The
+console fails closed in that case, so there is no intermediate unroutable issue
+and no follow-up label mutation.
 
 The normalized request is hashed and persisted in the issue body as a hidden
 versioned marker:

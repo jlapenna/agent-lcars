@@ -4,12 +4,14 @@ const {
   githubAccessTokenFor,
   createGithubUserClient,
   createIssue,
+  getRepository,
   isE2eTesting,
   isOnGoogleCloud,
 } = vi.hoisted(() => ({
   githubAccessTokenFor: vi.fn(),
   createGithubUserClient: vi.fn(),
   createIssue: vi.fn(),
+  getRepository: vi.fn(),
   isE2eTesting: vi.fn(() => false),
   isOnGoogleCloud: vi.fn(() => false),
 }));
@@ -33,8 +35,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   githubAccessTokenFor.mockReturnValue('operator-oauth-token');
   createGithubUserClient.mockReturnValue({
-    rest: { issues: { create: createIssue } },
+    rest: {
+      issues: { create: createIssue },
+      repos: { get: getRepository },
+    },
   });
+  getRepository.mockResolvedValue({ data: { permissions: { push: true } } });
   isE2eTesting.mockReturnValue(false);
   isOnGoogleCloud.mockReturnValue(false);
 });
@@ -47,11 +53,27 @@ describe('quickTaskIssueCreatorFor', () => {
     await creator?.({ owner: 'jlapenna', repo: 'agent-lcars', title: 'Task' });
 
     expect(createGithubUserClient).toHaveBeenCalledWith('operator-oauth-token');
+    expect(getRepository).toHaveBeenCalledWith({
+      owner: 'jlapenna',
+      repo: 'agent-lcars',
+    });
     expect(createIssue).toHaveBeenCalledWith({
       owner: 'jlapenna',
       repo: 'agent-lcars',
       title: 'Task',
     });
+  });
+
+  it('rejects before creation when GitHub would silently drop labels', async () => {
+    getRepository.mockResolvedValue({ data: { permissions: { push: false } } });
+
+    const creator = quickTaskIssueCreatorFor(session);
+    await expect(
+      creator?.({ owner: 'jlapenna', repo: 'agent-lcars', title: 'Task' }),
+    ).rejects.toThrow(
+      'Your GitHub account cannot apply Quick Task labels in jlapenna/agent-lcars',
+    );
+    expect(createIssue).not.toHaveBeenCalled();
   });
 
   it('fails closed when a production session predates the OAuth token claim', () => {

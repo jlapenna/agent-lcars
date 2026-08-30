@@ -28,5 +28,22 @@ export function quickTaskIssueCreatorFor(
   }
 
   const client = createGithubUserClient(accessToken);
-  return (parameters) => client.rest.issues.create(parameters);
+  return async (parameters) => {
+    const { data: repository } = await client.rest.repos.get({
+      owner: parameters.owner,
+      repo: parameters.repo,
+    });
+    if (repository.permissions?.push !== true) {
+      // GitHub permits a user without push access to create an issue but
+      // silently drops labels from that create request. A Quick Task without
+      // both routing labels is stranded, so reject before the issue write;
+      // backend-actions then releases the claim (and rolls back evidence) as
+      // a definitive 403.
+      throw new ActionError(
+        `Your GitHub account cannot apply Quick Task labels in ${parameters.owner}/${parameters.repo}`,
+        403,
+      );
+    }
+    return client.rest.issues.create(parameters);
+  };
 }
