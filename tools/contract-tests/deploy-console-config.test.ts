@@ -40,6 +40,20 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 describe('console deployment workflow', () => {
+  it('caches each top-level console build artifact without overlapping outputs', async () => {
+    const project = JSON.parse(
+      await readFile('apps/console/project.json', 'utf8'),
+    ) as {
+      targets: { build: { outputs: string[] } };
+    };
+
+    // Nx expands this one-level glob to sibling roots, including hidden
+    // `.next` and `.nx-helpers` directories. Declaring the output root beside
+    // either child makes cache restore remove/copy overlapping paths in
+    // parallel, which can leave the deployable `.next/static` tree hollow.
+    expect(project.targets.build.outputs).toEqual(['{options.outputPath}/*']);
+  });
+
   it('searches the newest App Hosting builds for the deployed archive', async () => {
     const workflow = await readFile(
       '.github/workflows/deploy-console.yml',
