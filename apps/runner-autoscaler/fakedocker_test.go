@@ -32,7 +32,10 @@ type fakeDockerServer struct {
 	// here 404s, which is what cleanupOrphans sees as a top error.
 	tops       map[string]container.TopResponse
 	containers []container.Summary // ContainerList response
-	removed    []string            // IDs passed to ContainerRemove, in call order
+	// memoryTotal is the Docker /info MemTotal value used by reservation-aware
+	// placement tests.
+	memoryTotal int64
+	removed     []string // IDs passed to ContainerRemove, in call order
 	// removeForced records whether each ContainerRemove request asked Docker to
 	// force deletion. Queue retention must remain false here: a state race
 	// should be refused by Docker rather than ending a live direct runner.
@@ -85,15 +88,19 @@ type createdContainerRequest struct {
 // (404 for not-found, anything else e.g. 500 for a generic/transport-ish
 // failure) with no state.
 type inspectStub struct {
-	status int
-	state  *container.State
+	status     int
+	state      *container.State
+	hostConfig *container.HostConfig
 }
 
 // newFakeDockerServer starts the fake server and registers its teardown with
 // t.Cleanup.
 func newFakeDockerServer(t *testing.T) *fakeDockerServer {
 	t.Helper()
-	f := &fakeDockerServer{inspect: make(map[string]inspectStub), inspectCalls: make(map[string]int), tops: make(map[string]container.TopResponse)}
+	f := &fakeDockerServer{
+		inspect: make(map[string]inspectStub), inspectCalls: make(map[string]int), tops: make(map[string]container.TopResponse),
+		memoryTotal: 64 * 1024 * 1024 * 1024,
+	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -126,6 +133,15 @@ func (f *fakeDockerServer) setInspect(containerID string, status int, state *con
 	f.inspect[containerID] = inspectStub{status: status, state: state}
 }
 
+func (f *fakeDockerServer) setInspectMemory(containerID string, memory int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	stub := f.inspect[containerID]
+	stub.status = http.StatusOK
+	stub.hostConfig = &container.HostConfig{Resources: container.Resources{Memory: memory}}
+	f.inspect[containerID] = stub
+}
+
 func (f *fakeDockerServer) inspectCallCount(containerID string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -153,6 +169,12 @@ func (f *fakeDockerServer) setContainers(cs []container.Summary) {
 	f.containers = cs
 }
 
+func (f *fakeDockerServer) setMemoryTotal(bytes int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.memoryTotal = bytes
+}
+
 // removedIDs returns the container IDs passed to ContainerRemove so far, in
 // call order.
 func (f *fakeDockerServer) removedIDs() []string {
@@ -177,6 +199,17 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Api-Version", "1.47")
 		w.Header().Set("OSType", "linux")
 		w.WriteHeader(http.StatusOK)
+
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info"):
+		f.mu.Lock()
+		memoryTotal := f.memoryTotal
+		containers := len(f.containers)
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ID": "fake", "Containers": containers, "MemTotal": memoryTotal,
+			"DriverStatus": [][2]string{}, "Plugins": map[string]any{},
+		})
 
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/json"):
 		f.mu.Lock()
@@ -230,7 +263,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(container.InspectResponse{
-			ContainerJSONBase: &container.ContainerJSONBase{ID: id, State: stub.state},
+			ContainerJSONBase: &container.ContainerJSONBase{ID: id, State: stub.state, HostConfig: stub.hostConfig},
 		})
 
 	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/containers/"):

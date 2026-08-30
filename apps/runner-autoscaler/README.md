@@ -380,6 +380,61 @@ verdict per gated host, and exhausting the fleet through the gate increments
 `github_runner_autoscaler_placement_blocked_total{reason="readiness"}` rather
 than reporting those hosts as unreachable.
 
+## Aggregate reserved-memory admission
+
+`runner_memory` is both the Docker cgroup limit for one runner and its
+scheduler reservation. Before placing a memory-bounded runner, the scheduler
+sums the declared reservations of every running autoscaled runner on that host
+plus starts currently in flight, then checks the candidate against the host's
+physical memory as reported by Docker. A configurable safety-margin fraction
+is kept outside that budget:
+
+```yaml
+fleet:
+  placement:
+    memory_safety_margin: 0.10 # default: reserve ten percent for the host
+
+scale_sets:
+  - name: e2e
+    runner_memory: 12g
+```
+
+The margin must be greater than zero and less than one. Admission is
+candidate-sized rather than a global runner-count reduction: if a 12 GiB E2E
+runner does not fit but a 2 GiB runner does, the smaller scale set can still use
+the remaining capacity. For example, one 12 GiB reservation on a 16 GiB host
+allows a 2 GiB candidate with the default margin but rejects a second 12 GiB
+candidate.
+
+New runner containers record their exact reservation in the
+`autoscaler.runner-memory-bytes` Docker label. That makes accounting stable
+across live config reloads. During a rolling upgrade, older containers without
+the label are inspected for their actual Docker memory limit until they drain.
+In-flight reservations are held under the same fleet coordinator lock as host
+selection, closing the count/admit race across scale sets and registrations.
+
+A scale set without `runner_memory` retains the historical unbounded behavior
+and does not consume a declared reservation; set the field on every workload
+that should participate in this safety model. If Docker cannot report physical
+memory or an existing runner's reservation, a memory-bounded candidate is
+withheld from that host rather than guessed onto it.
+
+Observability:
+`github_runner_autoscaler_host_memory_reserved_bytes{host}` reports running
+plus in-flight declared reservations observed during placement;
+`github_runner_autoscaler_host_memory_budget_bytes{host}` reports physical
+memory after the safety margin; and exhausting all otherwise-eligible hosts
+increments
+`github_runner_autoscaler_placement_blocked_total{reason="memory_reservation"}`.
+The placement log includes physical, budget, running, in-flight, and candidate
+byte values for each rejected host.
+
+This is admission control, not a replacement for the runtime overload gate
+below. Reserved-memory admission answers whether declared worst-case limits fit
+before a container starts; CPU, PSI, available-memory, and swap telemetry still
+react to measured host behavior after workloads are running. Both checks must
+pass for a bounded candidate to be placed.
+
 ## Host load / overload admission
 
 Every placement scores each candidate host's load, CPU utilization, CPU/memory

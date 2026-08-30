@@ -44,6 +44,9 @@ type Scaler struct {
 	runnerImage         string
 	runnerImageFallback string
 	runnerMemory        int64
+	// memorySafetyMargin is the fraction of physical host memory kept outside
+	// aggregate declared runner reservations during placement.
+	memorySafetyMargin float64
 	// runnerPidsLimit: see Config.RunnerPidsLimit. Zero means no limit.
 	runnerPidsLimit int64
 	// runnerShmSize: see Config.RunnerShmSize. Zero means Docker's own
@@ -140,6 +143,8 @@ const (
 	// clean exit is still reconciled by the next one-minute pass.
 	runnerCompletionSettleGrace = 30 * time.Second
 )
+
+const defaultMemorySafetyMargin = 0.10
 
 func cleanRunnerExitIsSettling(state *container.State, now time.Time) bool {
 	if state == nil || state.Running || state.ExitCode != 0 {
@@ -1068,19 +1073,58 @@ func (a *Scaler) pickHost(ctx context.Context) (string, error) {
 // wall that a fixed number of retries within this call cannot resolve.
 var errFleetAtCapacity = errors.New("no docker host has placement capacity right now")
 
+// declaredRunnerMemory returns the reservation attached to a running runner.
+// New containers carry the exact byte value as a label so a live config reload
+// cannot rewrite history. Containers created before that label existed are
+// inspected once per placement until they drain, preserving correct admission
+// during a rolling deployment of this capability.
+func declaredRunnerMemory(ctx context.Context, client *dockerclient.Client, runner container.Summary) (int64, error) {
+	if raw, ok := runner.Labels[runnerMemoryLabelKey]; ok {
+		memory, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || memory < 0 {
+			return 0, fmt.Errorf("runner %q has invalid %s label %q", runner.ID, runnerMemoryLabelKey, raw)
+		}
+		return memory, nil
+	}
+	if strings.TrimSpace(runner.ID) == "" {
+		return 0, errors.New("runner container is missing an id and memory reservation label")
+	}
+	inspected, err := client.ContainerInspect(ctx, runner.ID)
+	if err != nil {
+		return 0, fmt.Errorf("inspecting legacy runner %q memory reservation: %w", runner.ID, err)
+	}
+	if inspected.HostConfig == nil {
+		return 0, fmt.Errorf("legacy runner %q inspect response has no host config", runner.ID)
+	}
+	if inspected.HostConfig.Memory < 0 {
+		return 0, fmt.Errorf("legacy runner %q has invalid negative memory limit %d", runner.ID, inspected.HostConfig.Memory)
+	}
+	return inspected.HostConfig.Memory, nil
+}
+
+func (a *Scaler) resolvedMemorySafetyMargin() float64 {
+	if a.memorySafetyMargin > 0 {
+		return a.memorySafetyMargin
+	}
+	return defaultMemorySafetyMargin
+}
+
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
 	placementHosts := a.placementHostSet()
 
 	type pingResult struct {
-		host         DockerHost
-		ok           bool
-		eligible     bool
-		err          error
-		load         hostLoad
-		loadErr      error
-		fleetRunners int
+		host                  DockerHost
+		ok                    bool
+		eligible              bool
+		err                   error
+		load                  hostLoad
+		loadErr               error
+		fleetRunners          int
+		hostMemoryBytes       int64
+		runningReservedMemory int64
+		memoryErr             error
 		// readinessBlocked distinguishes "this host was withheld by its
 		// readiness gate" from "this host is unreachable", so exhausting the
 		// fleet reports the real cause instead of blaming the network.
@@ -1103,14 +1147,40 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			cancel()
 			load, loadErr := a.currentHostLoad(ctx, dh.Name)
 			fleetRunners := 0
+			runningReservedMemory := int64(0)
+			var memoryErr error
 			if err == nil {
 				allRunners, listErr := dh.Client.ContainerList(ctx, container.ListOptions{
 					Filters: filters.NewArgs(filters.Arg("label", runnerScaleSetLabelKey)),
 				})
 				if listErr != nil {
 					loadErr = errors.Join(loadErr, fmt.Errorf("counting fleet runners: %w", listErr))
+					if a.runnerMemory > 0 {
+						memoryErr = errors.Join(memoryErr, fmt.Errorf("inventorying running memory reservations: %w", listErr))
+					}
 				} else {
 					fleetRunners = len(allRunners)
+				}
+				if a.runnerMemory > 0 && listErr == nil {
+					for _, runner := range allRunners {
+						memory, runnerMemoryErr := declaredRunnerMemory(ctx, dh.Client, runner)
+						if runnerMemoryErr != nil {
+							memoryErr = errors.Join(memoryErr, runnerMemoryErr)
+							break
+						}
+						runningReservedMemory += memory
+					}
+				}
+			}
+			hostMemoryBytes := int64(0)
+			if err == nil && a.runnerMemory > 0 {
+				info, infoErr := dh.Client.Info(ctx)
+				if infoErr != nil {
+					memoryErr = errors.Join(memoryErr, fmt.Errorf("reading Docker host memory: %w", infoErr))
+				} else if info.MemTotal <= 0 {
+					memoryErr = errors.Join(memoryErr, fmt.Errorf("Docker reported invalid physical memory %d", info.MemTotal))
+				} else {
+					hostMemoryBytes = info.MemTotal
 				}
 			}
 			eligible := err == nil && placementHosts[dh.Name]
@@ -1131,7 +1201,12 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
 				}
 			}
-			ch <- pingResult{host: dh, ok: err == nil, eligible: eligible, err: err, load: load, loadErr: loadErr, fleetRunners: fleetRunners, readinessBlocked: readinessBlocked}
+			ch <- pingResult{
+				host: dh, ok: err == nil, eligible: eligible, err: err,
+				load: load, loadErr: loadErr, fleetRunners: fleetRunners,
+				hostMemoryBytes: hostMemoryBytes, runningReservedMemory: runningReservedMemory,
+				memoryErr: memoryErr, readinessBlocked: readinessBlocked,
+			}
 		}(h)
 	}
 
@@ -1150,11 +1225,19 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	var results []pingResult
 	hostLoads := make(map[string]hostLoad, len(a.dockerHosts))
 	fleetCounts := make(map[string]int, len(a.dockerHosts))
+	hostMemoryBytes := make(map[string]int64, len(a.dockerHosts))
+	hostRunningReservedMemory := make(map[string]int64, len(a.dockerHosts))
+	hostMemoryErrors := make(map[string]error, len(a.dockerHosts))
 	scaleSet := a.scaleSetLabel()
 	for res := range ch {
 		results = append(results, res)
 		if res.ok {
 			fleetCounts[res.host.Name] = res.fleetRunners
+			hostMemoryBytes[res.host.Name] = res.hostMemoryBytes
+			hostRunningReservedMemory[res.host.Name] = res.runningReservedMemory
+			if res.memoryErr != nil {
+				hostMemoryErrors[res.host.Name] = res.memoryErr
+			}
 			hostFleetRunnersGauge.WithLabelValues(res.host.Name).Set(float64(res.fleetRunners))
 			if res.loadErr != nil {
 				res.load.penalty = a.policy().telemetryPenalty
@@ -1244,6 +1327,52 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	if len(withinHostLimits) == 0 {
 		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
+	}
+
+	// runner_memory is both the Docker cgroup limit and the scheduler's
+	// reservation. Admit the candidate only where running containers plus
+	// in-flight starts leave the configured fraction of physical memory
+	// untouched. Candidates without runner_memory retain the historical
+	// unbounded behavior; operators must declare a requirement before it can
+	// participate in reservation accounting.
+	if a.runnerMemory > 0 {
+		margin := a.resolvedMemorySafetyMargin()
+		var withinMemoryBudget []DockerHost
+		var blockedDetails []string
+		for _, h := range withinHostLimits {
+			total := hostMemoryBytes[h.Name]
+			running := hostRunningReservedMemory[h.Name]
+			inFlight := fleet.reservedMemory[h.Name]
+			reserved := running + inFlight
+			budget := int64(float64(total) * (1 - margin))
+			hostMemoryReservedGauge.WithLabelValues(h.Name).Set(float64(reserved))
+			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
+
+			if memoryErr := hostMemoryErrors[h.Name]; memoryErr != nil {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
+				a.logger.Warn("Host memory inventory unavailable; refusing memory-bounded placement",
+					slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", a.runnerMemory), slog.Any("error", memoryErr))
+				continue
+			}
+			if reserved+a.runnerMemory > budget {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d physical=%d", h.Name, reserved, a.runnerMemory, budget, total))
+				a.logger.Info("Host lacks aggregate reserved-memory capacity for runner",
+					slog.String("host", h.Name),
+					slog.Int64("physical_memory_bytes", total),
+					slog.Int64("memory_budget_bytes", budget),
+					slog.Int64("running_reserved_bytes", running),
+					slog.Int64("in_flight_reserved_bytes", inFlight),
+					slog.Int64("candidate_reserved_bytes", a.runnerMemory),
+					slog.Float64("memory_safety_margin", margin))
+				continue
+			}
+			withinMemoryBudget = append(withinMemoryBudget, h)
+		}
+		if len(withinMemoryBudget) == 0 {
+			placementBlocked.WithLabelValues(scaleSet, placementReasonMemoryReservation).Inc()
+			return "", fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", a.runnerMemory, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+		}
+		withinHostLimits = withinMemoryBudget
 	}
 
 	// Hard-overloaded hosts (and hosts still inside their post-overload
@@ -1539,12 +1668,24 @@ func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
 // GitHub deregistration never cross-kill another set's runners.
 const (
 	runnerScaleSetLabelKey = "autoscaler.scale-set"
+	// runnerMemoryLabelKey records the exact reservation used for this
+	// container. Reading the label avoids an inspect per runner during every
+	// placement; pre-feature containers fall back to ContainerInspect.
+	runnerMemoryLabelKey = "autoscaler.runner-memory-bytes"
 	// runnerRegistrationLabelKey is a homelab#97 addition: which GitHub
 	// registration (account/repo) minted this runner. Purely descriptive --
 	// ownership/orphan-cleanup logic keys off runnerScaleSetLabelKey alone,
 	// since scale-set names are already process-wide unique.
 	runnerRegistrationLabelKey = "autoscaler.registration"
 )
+
+func runnerLabels(scaleSet, registration string, memory int64) map[string]string {
+	return map[string]string{
+		runnerScaleSetLabelKey:     scaleSet,
+		runnerRegistrationLabelKey: registration,
+		runnerMemoryLabelKey:       strconv.FormatInt(memory, 10),
+	}
+}
 
 const (
 	// orphanSweepInterval is how often RunOrphanSweeper reaps runner
@@ -1893,13 +2034,10 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		client,
 		host,
 		&container.Config{
-			Image: preparedImage,
-			User:  "runner",
-			Cmd:   []string{"/home/runner/run.sh"},
-			Labels: map[string]string{
-				runnerScaleSetLabelKey:     a.scaleSetName,
-				runnerRegistrationLabelKey: a.registrationName,
-			},
+			Image:  preparedImage,
+			User:   "runner",
+			Cmd:    []string{"/home/runner/run.sh"},
+			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.runnerMemory),
 			Env: []string{
 				fmt.Sprintf("ACTIONS_RUNNER_INPUT_JITCONFIG=%s", jit.EncodedJITConfig),
 			},

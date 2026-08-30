@@ -30,6 +30,8 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 	desiredRunnersGauge.WithLabelValues("test-scaleset").Set(2)
 	runnerImageFallbackActive.WithLabelValues("test-pool", "test-host").Set(1)
 	runnerImageFallbackUses.WithLabelValues("test-pool", "test-host").Inc()
+	hostMemoryReservedGauge.WithLabelValues("test-host").Set(12 << 30)
+	hostMemoryBudgetGauge.WithLabelValues("test-host").Set(14 << 30)
 	setCheckpointRestoreStatus(checkpointRestoreAbsent)
 
 	// Give the server a brief moment to start
@@ -93,6 +95,8 @@ func TestMetricsAndHealthzServer(t *testing.T) {
 		"github_runner_autoscaler_checkpoint_restore_status",
 		"github_runner_autoscaler_runner_image_fallback_active",
 		"github_runner_autoscaler_runner_image_fallback_uses_total",
+		"github_runner_autoscaler_host_memory_reserved_bytes",
+		"github_runner_autoscaler_host_memory_budget_bytes",
 	} {
 		if !strings.Contains(string(metricsBody), metric) {
 			t.Errorf("expected /metrics response to contain %s", metric)

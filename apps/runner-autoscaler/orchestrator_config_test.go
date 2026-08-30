@@ -54,6 +54,30 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	if len(resolved.ScaleSets) != 2 || resolved.Weights["default"] != 1 {
 		t.Fatalf("unexpected resolved scale sets: %#v", resolved.ScaleSets)
 	}
+	if got := resolved.Raw.Fleet.Placement.MemorySafetyMargin; got != defaultMemorySafetyMargin {
+		t.Fatalf("memory safety margin = %v, want default %v", got, defaultMemorySafetyMargin)
+	}
+}
+
+func TestOrchestratorConfigResolvesMemorySafetyMargin(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin: 0.25", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Raw.Fleet.Placement.MemorySafetyMargin; got != 0.25 {
+		t.Fatalf("memory safety margin = %v, want 0.25", got)
+	}
+}
+
+func TestOrchestratorConfigRejectsInvalidMemorySafetyMargin(t *testing.T) {
+	for _, margin := range []string{"-0.1", "1", "1.1", ".nan", ".inf"} {
+		body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin: "+margin, 1)
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "memory_safety_margin") {
+			t.Fatalf("margin %s error = %v, want memory_safety_margin complaint", margin, err)
+		}
+	}
 }
 
 func TestLoadOrchestratorConfigResolvesRunnerImageFallback(t *testing.T) {
@@ -817,6 +841,7 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
     readiness_metrics_url: http://readiness.example.invalid/metrics
     readiness_metric: host_ci_ready
     readiness_max_age: 5m`, 1)
+	body = strings.Replace(body, "    readiness_max_age: 5m", "    readiness_max_age: 5m\n    memory_safety_margin: 0.25", 1)
 
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err != nil {
@@ -861,6 +886,9 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 		}
 		if got := s.hostMetricsTimeouts["janeway"]; got != 5*time.Second {
 			t.Errorf("scale set %q: metrics timeout = %v, want 5s", s.scaleSetName, got)
+		}
+		if got := s.memorySafetyMargin; got != 0.25 {
+			t.Errorf("scale set %q: memorySafetyMargin = %v, want 0.25", s.scaleSetName, got)
 		}
 	}
 

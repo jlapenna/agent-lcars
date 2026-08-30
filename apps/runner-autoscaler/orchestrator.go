@@ -420,6 +420,7 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		}
 		c.HostLoadPolicy = resolved.Placement
 		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
+		c.MemorySafetyMargin = resolved.Raw.Fleet.Placement.MemorySafetyMargin
 		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
 		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
 		c.ReadinessMaxAge = resolved.ReadinessMaxAge
@@ -601,6 +602,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		hostLoadPolicy:      c.HostLoadPolicy,
 		hostMetricsTimeouts: c.HostMetricsTimeouts,
 		hostMemoryExempt:    stringSet(c.HostMemoryExempt),
+		memorySafetyMargin:  c.MemorySafetyMargin,
 		readinessMetricsURL: c.ReadinessMetricsURL,
 		readinessMetric:     c.ReadinessMetric,
 		readinessMaxAge:     c.ReadinessMaxAge,
