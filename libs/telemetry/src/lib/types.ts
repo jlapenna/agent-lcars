@@ -44,13 +44,9 @@ export interface SessionDeliverables {
 /**
  * Claude Code's headless result-message summary, captured from a terminal
  * `type: "result"` transcript line (issue-agent/headless `-p` runs write one
- * when the session ends). Field names/semantics mirror the signatures
- * `.github/workflows/claude.yml`'s own "Verify Claude run status" /
- * "Report failure on the issue" steps already grep out of the raw Actions
- * log (`is_error`, and the literal `subtype` value `error_max_turns` next to
- * its `--max-turns 200` budget) — reusing them here means the run-status
- * classifier's diagnoses match a heuristic already proven correct in
- * production, not a freshly-invented shape.
+ * when the session ends). Its `is_error` and `error_max_turns` values are
+ * the CLI's own result contract, which lets the run-status classifier use
+ * the same concrete evidence as the QueueExecutor runtime.
  */
 export interface SessionResult {
   /** 'success' | 'error_max_turns' | 'error_during_execution' (Claude Code's
@@ -221,13 +217,13 @@ export interface CliSessionDoc extends BaseSessionDoc {
 export interface IssueAgentSessionDoc extends BaseSessionDoc {
   source: 'issue-agent';
   runId?: string;
-  /** The orchestrator run ID (`broker_intent_id`) — the join key from a
-   * work item to its sessions. `runId` is the GitHub Actions run id. */
+  /** The QueueExecutor attempt ID — the join key from a work item to its
+   * sessions. `runId` identifies the claimed execution. */
   intentId?: string;
   issueNumber?: number;
   /** `gs://` URI of this run's archived session data (Slice 2's runner-mode
-   * shipper — see claude.yml's "Finalize telemetry sidecar" step,
-   * apps/telemetry-watcher/src/lib/finalize.ts, and issue #24).
+   * shipper — see `apps/telemetry-watcher/src/lib/finalize.ts` and issue
+   * #24).
    * Issue-agent sessions
    * only: `cli` docs are built from a transcript already on local disk, so
    * there is no runner-container-destroyed-on-exit problem to solve for
@@ -270,12 +266,11 @@ export interface BuildSessionDocOptions {
    *
    * Runner mode is the only such context: the container exists to run one
    * dispatch job, so every transcript on it is by construction an
-   * `issue-agent` session. Claude's transcripts say so themselves (the
-   * reducer keys off `entrypoint: 'claude-code-github-action'`), but that
-   * marker is Claude-specific — Codex rollout JSONL has no equivalent, so
-   * `codexAdapter` always reports `source: 'cli'`. Without this override a
-   * Codex run's telemetry would land as a CLI session: no `runId`, no
-   * `issueNumber`, no `repo`, and 30-day instead of 365-day retention.
+   * `issue-agent` session. Providers do not share a transcript provenance
+   * marker, so the runtime supplies this authoritative context. Without
+   * this override, a provider transcript would land as a CLI session: no
+   * `runId`, no `issueNumber`, no `repo`, and 30-day instead of 365-day
+   * retention.
    */
   forceSource?: SessionSummary['source'];
   /** `issue-agent` sessions only. */

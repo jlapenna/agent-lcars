@@ -189,12 +189,10 @@ describe('classifyRunStatus', () => {
 
   // The success branch only flags `silent-error` on session-PROVABLE
   // anomalies (an error result, zero turns, or zero cost across at most one
-  // turn) - never on "no PR/commit", since claude.yml's own server-side
-  // gates ("Verify Claude run status" / "Verify a deliverable exists")
-  // already fail the job before a run can report `success` with no
-  // deliverable evidence in GitHub state. A comment-only @claude-reply or a
-  // post-deploy-verify run is therefore expected to classify as plain
-  // `succeeded`, not `silent-error`.
+  // turn) - never on "no PR/commit": direct-runner success settles the
+  // current Work API lease/result contract and does not require a GitHub
+  // deliverable. A comment-only reply or valid non-code run therefore
+  // classifies as plain `succeeded`, not `silent-error`.
   describe('conclusion: success', () => {
     it('with no session: succeeded, no diagnosis (graceful degradation)', () => {
       expect(classifyRunStatus(run({ conclusion: 'success' }))).toEqual({

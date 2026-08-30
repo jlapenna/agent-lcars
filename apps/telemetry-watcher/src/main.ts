@@ -94,8 +94,8 @@ function runHostWatcher(): void {
 
 /**
  * `node sidecar.cjs runner sidecar --run-id <id> --issue-number <n>
- * --projects-dir <dir>` — claude.yml's mid-run telemetry sidecar (issue
- * #3107 follow-up 5, `bundle` target in project.json). Fail-soft is a hard
+ * --projects-dir <dir>` — the QueueExecutor's mid-run telemetry sidecar
+ * (issue #3107 follow-up 5, `bundle` target in project.json). Fail-soft is a hard
  * requirement here, same as the finalize shipping step this complements: a
  * telemetry bug must never fail the agent job it's instrumenting. Every
  * branch below either starts the long-lived daemon or exits 0, and the
@@ -118,8 +118,8 @@ function runRunnerSidecar(argv: string[]): void {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
     // Intentionally does not exit — the daemon's own interval keeps the
-    // process alive until claude.yml's "Finalize telemetry sidecar" step
-    // kills it by PID. That kill now happens via sidecar-lifecycle.sh's
+    // process alive until sidecar-lifecycle.sh's `finalize` mode stops it by
+    // PID. That stop happens via
     // `finalize` mode calling the generic job-daemon.sh's `stop`, which
     // owns the PID file in its own per-name state dir (agent-lcars#1246
     // moved PID tracking out of this script's own state dir) — only after
@@ -136,8 +136,8 @@ function runRunnerSidecar(argv: string[]): void {
 
 /**
  * `node sidecar.cjs runner finalize --run-id <id> --issue-number <n>
- * --projects-dir <dir>` — claude.yml's "Finalize telemetry sidecar" step
- * (issue #24), run once "Run Claude Code" has already exited. Reuses the
+ * --projects-dir <dir>` — QueueExecutor's final telemetry pass (issue #24),
+ * run once the provider has exited. Reuses the
  * same bundle/entrypoint as sidecar (no second download needed), but
  * does a single reduce/upload/upsert pass instead of starting a long-lived
  * daemon — see `finalize.ts` for why liveness is hardcoded to `'ended'`
@@ -211,9 +211,8 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
  * `node sidecar.cjs runner resume --session-id <id> --transcript-uri
  * <gcsUri> --cwd <dir> [--projects-dir <dir>] [--project-id <id>]` --
  * downloads a prior session's transcript into Claude Code's local
- * session store, so a caller's own subsequent `claude --resume
- * <sessionId>` (direct mode) or `claude_args: --resume <sessionId>` (the
- * lane) finds it (sub-project 6). Prints the written path on success;
+ * session store, so the direct runner's subsequent `claude --resume
+ * <sessionId>` finds it. Prints the written path on success;
  * prints nothing (never throws, never exits nonzero) when a required
  * flag is missing, `--session-id` is not a safe identifier, or the
  * download fails -- fail-soft, matching `runner sidecar`/`runner

@@ -5,7 +5,7 @@ CLI sessions on a workstation and reports summary-only telemetry to the
 `agent-telemetry` Firestore store the [Agent LCARS](../console)
 reads from.
 
-## CI issue-agent telemetry paths
+## QueueExecutor issue-agent telemetry paths
 
 Interactive (`source: 'cli'`) telemetry is this daemon's normal host-watcher
 mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry is
@@ -22,10 +22,10 @@ sync: the image build is the only "release" step, replacing a
 publish-then-pin scheme whose pin silently went stale for months (#29).
 
 1. **Mid-run, live (`runner sidecar` — issue #3107 follow-up 5):**
-   claude.yml's "Start telemetry sidecar" step backgrounds it —
+   `direct-runner.sh` backgrounds it —
    `node sidecar.cjs runner sidecar --run-id <id>
 --issue-number <n> --projects-dir "$HOME/.claude/projects"` — for the
-   duration of "Run Claude Code". It reuses `WatcherDaemon` wholesale (see
+   duration of the provider invocation. It reuses `WatcherDaemon` wholesale (see
    `src/lib/runner.ts`'s `startSidecar`) on a ~10s tick with **no
    allowlist restriction** (`@agent-lcars/telemetry`'s `runnerWatchRoots`
    allowlists both roots with `['*']`) — a runner container
@@ -37,8 +37,8 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
    tokens while the job is running.
 
 2. **Finalize, authoritative (`runner finalize` — issue #24):**
-   claude.yml's "Finalize telemetry sidecar" step runs once "Run Claude
-   Code" exits: kills the sidecar process above (waiting, bounded, for it
+   `direct-runner.sh` finalizes once the provider exits: it stops the
+   sidecar process above (waiting, bounded, for it
    to actually stop first — see that step's comments), then does one last
    reduce pass with liveness hardcoded to `'ended'`, uploads the raw
    transcript to `AGENT_TELEMETRY_TRANSCRIPTS_BUCKET`, and upserts the
@@ -48,13 +48,11 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
    never gets a browsable archived transcript.
 
 3. **Resume, pre-run (`runner resume` — native work items sub-project 6):**
-   `agent-lane.yml`'s "Resume prior session" step runs it before "Run
-   Claude Code", when the dispatched work carries a resume request —
+   `direct-runner.sh` runs it before the provider when the dispatched work
+   carries a resume request —
    `node sidecar.cjs runner resume --session-id <id> --transcript-uri
 <gcsUri> --cwd <dir>` — to download a prior session's archived
-   transcript into Claude Code's local session store, so the step's own
-   `--session-id` is later spliced into `claude_args` as `--resume
-<sessionId>` and finds it. See `src/main.ts`'s
+   transcript into the provider's local session store. See `src/main.ts`'s
    `_runRunnerResumeForTesting`. Fail-soft like the two modes above:
    prints nothing and never exits nonzero on a missing flag, an unsafe
    session id, or a failed download — a broken resume degrades to a fresh
@@ -166,9 +164,9 @@ scope). `runner sidecar` mode (above) adds a third path,
 **tried after the writer-key-JSON path**: if `AGENT_TELEMETRY_PROJECT_ID`
 is set but `AGENT_TELEMETRY_WRITER_KEY_JSON` is not, the store falls back to
 ambient Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
-set by claude.yml's "Start telemetry sidecar" step to the
-agent-telemetry-writer SA's short-lived WIF credentials file) instead of a
-key JSON blob — see `src/lib/create-store.ts`.
+set by the QueueExecutor direct runner to the agent-telemetry-writer SA's
+short-lived credentials file) instead of a key JSON blob — see
+`src/lib/create-store.ts`.
 
 ## Running
 
@@ -179,8 +177,8 @@ key JSON blob — see `src/lib/create-store.ts`.
 ## Bundle (runner sidecar)
 
 The `bundle` Nx target produces the single self-contained file the
-`claude-agent-lcars` runner image bakes in and claude.yml's telemetry steps
-run — esbuild with `thirdParty: true` and no `external` list, so every
+runner image bakes in and `direct-runner.sh` runs — esbuild with
+`thirdParty: true` and no `external` list, so every
 dependency (including `@google-cloud/firestore`, which is pure JS — no
 native bindings in its transitive tree) is inlined into one `.cjs` file with
 zero runtime `node_modules` dependency:
@@ -198,13 +196,9 @@ Deliberately **not** in the default `build` target's dependency chain (a
 separate `bundle` target, not depended on by anything on its own). CI runs the
 same standalone check before any canonical image publish can be promoted:
 esbuild inlines every dependency, so a transitive dep that cannot be inlined
-can break only at runtime. The old
-`publish-telemetry-tool.yml`
-workflow (publishing immutable semver-tagged releases to
-`gs://agent-lcars-tools/telemetry/`, curl-downloaded per job) is gone —
-both `agent-lcars`'s and `supersprinklesracing/sprinkles`'s `claude.yml` now
-use the runner-image bake-in exclusively (members migrated in
-[members#3414](https://github.com/supersprinklesracing/sprinkles/pull/3414)).
+can break only at runtime. QueueExecutor direct runners consume the bundle
+only from the runner image; there is no separately published or downloaded
+telemetry-tool runtime path.
 
 ## Deployment
 

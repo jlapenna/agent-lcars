@@ -74,9 +74,8 @@ export interface WatcherDaemonOptions {
    * instance upserts. `buildSessionDoc` only ever reads these for
    * `issue-agent` docs, so a host-watcher instance simply never sets them. */
   runId?: string;
-  /** Runner-mode only, see `runId`. Orchestrator run ID (`broker_intent_id`)
-   * — the join key a work item needs to find its sessions. Distinct from
-   * `runId`, the GitHub Actions run id. */
+  /** Runner-mode only, see `runId`. Work intent ID — the join key a work
+   * item needs to find its sessions. */
   intentId?: string;
   /** Runner-mode only, see `runId`. */
   issueNumber?: number;
@@ -87,9 +86,7 @@ export interface WatcherDaemonOptions {
   forceSource?: SessionSummary['source'];
   /** Runner-mode only, see `runId`. Threaded into `buildSessionDoc`'s
    * options for `issue-agent` docs, which can't derive repo from a git
-   * remote the way CLI sessions do (see `resolveGitRepo` below) — a CI
-   * container's checkout may not have a real `origin` remote, but the
-   * workflow already knows its own repo, so it's just told here. */
+   * remote the way CLI sessions do (see `resolveGitRepo` below). */
   repo?: { owner: string; name: string };
   /** Optional Antigravity summary-DB source (#3123 phase 3), alongside the
    * file-based `watchRoots` above — see `config.ts`'s `loadConfig`

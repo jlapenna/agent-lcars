@@ -50,18 +50,16 @@ export interface StartSidecarOptions {
  * Reuses `WatcherDaemon` wholesale (its per-tick read/stat/reduce/store
  * error handling is already fail-soft — see daemon.spec.ts) rather than
  * reimplementing discovery/liveness here. Every doc is forced to
- * `source: 'issue-agent'`: Claude's reducer infers that from the
- * transcript's own `claude-code-github-action` entrypoint marker, but Codex
- * emits no equivalent, so the marker can't be the sole signal.
+ * `source: 'issue-agent'`: the QueueExecutor's claimed run is the
+ * authoritative provenance, independent of provider transcript shape.
  *
  * Runner (`issue-agent`) sessions have no artifact story yet (see
  * `libs/telemetry/src/lib/types.ts`), so `shareDir` is intentionally
  * left unset — `buildSessionDoc` would drop artifacts for `issue-agent`
  * docs anyway, but skipping the scan avoids the pointless filesystem work.
  *
- * The final, authoritative upsert for this run comes from claude.yml's
- * "Finalize telemetry sidecar" step (after "Run Claude Code" ends, issue
- * #24) — that step kills this daemon by PID, then invokes `runner finalize`
+ * The final, authoritative upsert comes after the provider exits (issue
+ * #24): the direct runner stops this daemon, then invokes `runner finalize`
  * (see `finalize.ts`), which marks the session `ended` and attaches
  * `transcriptGcsUri`; this function only ever produces intermediate
  * `live`/`idle` snapshots. Callers must kill the returned daemon (`stop()`)
@@ -89,14 +87,9 @@ export function startSidecar(options: StartSidecarOptions): WatcherDaemon {
   const daemon = new WatcherDaemon({
     // The single runner-mode watch-root contract (@agent-lcars/telemetry,
     // #645) — both captured agents' transcript roots, unconditionally. A
-    // dispatch workflow only ever runs one of them, and the other root
-    // simply discovers nothing — cheaper and far less error-prone than
-    // having each workflow declare which agent it is. Until codex.yml
-    // existed this watched only Claude, which meant a Codex run would have
-    // shipped no telemetry at all: no turns, no tokens, no session row in
-    // the console. `finalizeSidecar` (finalize.ts) imports this exact same
-    // function rather than hand-copying the array, so the two passes can
-    // never drift apart the way they used to.
+    // QueueExecutor runs only one provider, so the other roots simply
+    // discover nothing. Keeping the shared root definition prevents the
+    // sidecar and finalizer from drifting.
     watchRoots: runnerWatchRoots({
       claudeProjectsDir: config.claudeProjectsDir,
       codexSessionsDir: config.codexSessionsDir,

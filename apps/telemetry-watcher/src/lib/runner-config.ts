@@ -23,9 +23,7 @@ export interface RunnerConfig extends Pick<
    * `defaultClaudeProjectsDir()` (`~/.claude/projects`, optionally
    * overridden by `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`) - deliberately NOT
    * `loadConfig().watchRoots[0].path`, since `AGENT_TELEMETRY_WATCH_ROOTS`
-   * (the host watcher's multi-root override) has no bearing on runner mode;
-   * claude.yml's "Start telemetry sidecar" step also passes
-   * `--projects-dir "$HOME/.claude/projects"` explicitly and defensively.
+   * (the host watcher's multi-root override) has no bearing on runner mode.
    * Runner mode has no allowlist concept (see `@agent-lcars/telemetry`'s
    * `runnerWatchRoots` doc comment), so this is the only discovery knob
    * that matters here. */
@@ -40,11 +38,10 @@ export interface RunnerConfig extends Pick<
   opencodeExportsDir: string;
   /** Exact checkout directory OpenCode sessions must report to be captured. */
   opencodeWorkspaceDir: string;
-  /** GitHub Actions run id — tags every doc this run ships as `runId`. */
+  /** QueueExecutor run ID — tags every doc this run ships as `runId`. */
   runId?: string;
-  /** Orchestrator run ID (`broker_intent_id`) — tags every doc this run
-   * ships as `intentId`, the join key a work item needs to find its
-   * sessions. Distinct from `runId`, the GitHub Actions run id. */
+  /** Work intent ID — tags every doc this run ships as `intentId`, the join
+   * key a work item needs to find its sessions. */
   intentId?: string;
   /** Anchor issue/PR number — tags every doc this run ships as
    * `issueNumber`. */
@@ -84,8 +81,7 @@ interface RunnerFlags {
 /**
  * Minimal `--flag value` parser for the sidecar CLI's own 6 flags
  * (`--run-id`, `--intent-id`, `--issue-number`, `--projects-dir`,
- * `--codex-sessions-dir`, `--repo` — see claude.yml's/codex.yml's "Start
- * telemetry sidecar" step). Deliberately hand-rolled
+ * `--codex-sessions-dir`, `--repo`). Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in
  * project.json) for a command with a handful of flags. Unknown flags are
@@ -160,9 +156,8 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   const flags = parseRunnerFlags(argv);
   const issueNumber =
     flags.issueNumber !== undefined ? Number(flags.issueNumber) : undefined;
-  // GITHUB_REPOSITORY (`owner/repo`) is injected by GitHub Actions into
-  // every job/step automatically, so this fallback needs no workflow YAML
-  // changes to start populating `repo` for issue-agent sessions.
+  // Preserve the generic GitHub repository fallback for local/CI diagnostics;
+  // QueueExecutor supplies its run identity explicitly.
   const repo =
     parseOwnerRepo(flags.repo) ??
     parseOwnerRepo(process.env['GITHUB_REPOSITORY']);

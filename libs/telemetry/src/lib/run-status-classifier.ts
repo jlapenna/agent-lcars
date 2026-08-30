@@ -1,7 +1,7 @@
 import { SessionResult } from './types';
 
 /**
- * GitHub Actions run status/conclusion — mirrors the console's own
+ * Authoritative executor run status/conclusion — mirrors the console's own
  * `AgentRunStatus`/`AgentRunConclusion` (apps/console/src/lib/
  * agent-activity.ts) but redeclared here rather than imported: this lib is
  * app-agnostic (libs must not depend on apps), and the two unions are
@@ -16,10 +16,9 @@ export interface ClassifierRunInput {
   /** Queued: seconds waiting for a runner. Running: seconds since start.
    * Completed: total run duration. Matches `AgentRun.elapsedSeconds`. */
   elapsedSeconds: number;
-  /** The workflow's `timeout-minutes` kill budget (90 for claude.yml and
-   * opencode.yml as of #3024) — pass the caller's own constant; this module
-   * doesn't hardcode it so it can't silently drift from the workflow files
-   * it's meant to explain. */
+  /** The executor's wall-clock run budget. Pass the caller-owned value: this
+   * module does not hardcode a lease or runner limit that could drift from
+   * the direct-runner's current contract. */
   timeoutMinutes: number;
 }
 
@@ -51,9 +50,9 @@ export interface RunStatusClassifierResult {
 
 /**
  * A cancelled run at (or near) the timeout budget almost certainly WAS the
- * timeout kill, not a manual/API cancel — the workflow's kill posts nothing
- * to the issue by itself, so elapsed-time-vs-budget is the only signal
- * telling the two apart. This is the exact heuristic Phase 0 already shipped
+ * timeout kill, not a manual/API cancel — a terminal result alone does not
+ * distinguish the two, so elapsed-time-vs-budget is the only signal telling
+ * them apart. This is the exact heuristic Phase 0 already shipped
  * in apps/console/src/app/agent-activity-panel.tsx
  * (`isLikelyTimeout`/`LIKELY_TIMEOUT_FRACTION`) — moved here so that file can
  * delegate to this single source of truth instead of re-declaring it.
@@ -66,21 +65,18 @@ const AUTH_ERROR_DIAGNOSIS =
   'Session errored during startup with ~$0 cost — looks like an expired or invalid OAuth token/API key.';
 const CRASH_DIAGNOSIS =
   'Session errored during execution (not a startup/auth failure, not max-turns) — check the run log for details.';
-// A `success` conclusion has ALREADY passed two server-side gates in
-// claude.yml before the console ever sees it: "Verify Claude run status"
-// (fails the job on an is_error/$0 startup crash) and "Verify a deliverable
-// exists" (fails the job unless GitHub state shows a PR/commit/closed-issue/
-// status:needs-human label, #2497). So this diagnosis is deliberately NOT a
-// "no PR or commit" re-check of GitHub state — that would just re-litigate
-// a gate that already ran, with worse data (a comment-only reply, a
-// playbook run with no announce comment, or a session merely reading past
-// comments would all false-positive on transcript text). Its job is
-// narrower: catch the cases those GitHub-state gates can't see at all,
-// because they're facts about the SESSION, not the repo — an error result
-// the job step didn't propagate, or a session that did essentially nothing
-// (zero turns, or zero cost across at most one turn) despite exiting clean.
+// A `success` conclusion means the authoritative executor settled the run
+// successfully. For native QueueExecutor work, that is the direct runner
+// settling its leased run through the Work API's result contract; success is
+// not conditional on a PR, commit, or other GitHub side effect. This
+// diagnosis therefore deliberately does NOT re-check GitHub deliverables:
+// comment-only replies and valid non-code work would false-positive. Its job
+// is narrower: catch facts about the SESSION that the result contract cannot
+// establish — an error result that was not propagated, or a session that did
+// essentially nothing (zero turns, or zero cost across at most one turn)
+// despite exiting clean.
 const ZERO_USAGE_DIAGNOSIS =
-  'GitHub reported success, but the session shows a failure signature or recorded essentially no work (zero turns, or zero cost across at most one turn) — worth a second look despite the green conclusion.';
+  'The executor reported success, but the session shows a failure signature or recorded essentially no work (zero turns, or zero cost across at most one turn) — worth a second look despite the green conclusion.';
 
 function isMaxTurnsSignature(session: ClassifierSessionInput): boolean {
   return session.result?.subtype === 'error_max_turns';
@@ -143,14 +139,15 @@ export function isLikelyTimeoutRun(run: ClassifierRunInput): boolean {
 }
 
 /**
- * Classifies a GitHub Actions run's outcome using its own conclusion/timing
+ * Classifies an authoritative executor run's outcome using its own
+ * conclusion/timing
  * plus (when available) the joined session telemetry that conclusion alone
  * can't see through — the known incident signatures the PRD calls out:
  * expired OAuth token, max-turns exhaustion, and a timeout kill mislabeled
  * by a bare `cancelled` conclusion. A `success`-with-no-deliverable check is
- * deliberately NOT one of them — see `ZERO_USAGE_DIAGNOSIS`'s doc comment
- * for why claude.yml's own server-side gates already cover that ground with
- * better data than this classifier has access to.
+ * deliberately NOT one of them — the direct-runner lease/result contract does
+ * not require a GitHub deliverable, and `ZERO_USAGE_DIAGNOSIS` explains why
+ * only session-provable anomalies are classified here.
  *
  * Pure and total: every branch is covered, including an absent `session`
  * (the join can't happen yet, or ever, for a given run) and an unexpected

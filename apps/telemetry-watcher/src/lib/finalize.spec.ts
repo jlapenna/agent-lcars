@@ -23,7 +23,7 @@ const CODEX_TRANSCRIPT = [
       cwd: '/home/runner/_work/agent-lcars/agent-lcars',
       model: 'gpt-5.6',
       approval_policy: 'on-request',
-      instructions: 'Port codex.yml',
+      instructions: 'Port the queue runtime',
     },
   }),
   JSON.stringify({
@@ -42,9 +42,8 @@ const CODEX_TRANSCRIPT = [
   }),
 ].join('\n');
 
-/** Same fixture shape as runner.spec.ts's ISSUE_AGENT_TRANSCRIPT — the
- * `entrypoint: 'claude-code-github-action'` marker is what the reducer keys
- * off of to tag `source: 'issue-agent'`. */
+/** Same fixture shape as runner.spec.ts's ISSUE_AGENT_TRANSCRIPT. The
+ * QueueExecutor finalizer supplies `source: 'issue-agent'`. */
 const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
   [
     JSON.stringify({
@@ -55,7 +54,6 @@ const ISSUE_AGENT_TRANSCRIPT = (sessionId: string, timestamp: string) =>
       sessionId,
       cwd: '/home/runner/work/members/members',
       gitBranch: 'main',
-      entrypoint: 'claude-code-github-action',
       message: { role: 'user', content: [{ type: 'text', text: 'go' }] },
     }),
     JSON.stringify({

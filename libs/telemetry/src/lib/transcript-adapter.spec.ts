@@ -70,7 +70,7 @@ describe('claudeCodeAdapter', () => {
 
       expect(summary.sessionId).toBe('session-normal-1');
       expect(summary.agent).toBe('claude-code');
-      expect(summary.source).toBe('issue-agent');
+      expect(summary.source).toBe('cli');
     });
   });
 });

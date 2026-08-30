@@ -29,8 +29,7 @@ for fixture in seed-pnpm10 hit-pnpm10 miss-pnpm10; do
   require_equal_package_manager "$fixture_dir/$fixture/package.json" 'pnpm@10.34.5'
 done
 
-# The production build uses the runner user's normal pnpm store. If a workflow
-# forces a different store directory, the lower-layer seed cannot be reused.
+# The production build uses the runner user's normal pnpm store.
 grep -Fqx 'COPY pnpm-seed/package.json pnpm-seed/pnpm-lock.yaml ./' "$dockerfile"
 grep -Fqx 'RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store' "$dockerfile"
 grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/' "$dockerfile"
@@ -47,14 +46,6 @@ if rg -q '^FROM --platform=.* AS pnpm(10-)?store-seed$' "$dockerfile"; then
   echo 'pnpm seeds must build for the target image architecture, not a fixed builder platform' >&2
   exit 1
 fi
-if rg -q '/home/runner/_work/\.pnpm-store' \
-  "$repo_root/.github/workflows/claude.yml" \
-  "$repo_root/.github/workflows/codex.yml" \
-  "$repo_root/.github/workflows/opencode.yml"; then
-  echo 'agent workflows must use the seeded default pnpm store, not a workspace override' >&2
-  exit 1
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
   echo 'docker is required to prove pnpm store lower-layer behavior' >&2
   exit 1
