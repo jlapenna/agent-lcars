@@ -10,6 +10,7 @@ set -uo pipefail
 bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script="$bin_dir/job-daemon.sh"
 test_root="$(mktemp -d)"
+ZOMBIE_PARENT_PID=
 
 fail() {
   echo "FAIL: $1" >&2
@@ -22,6 +23,9 @@ fail() {
 # can never leak a live `sleep` process past this script's own exit.
 cleanup() {
   local pid_file pid
+  if [ -n "$ZOMBIE_PARENT_PID" ]; then
+    kill "$ZOMBIE_PARENT_PID" 2>/dev/null || true
+  fi
   if [ -d "$test_root" ]; then
     while IFS= read -r -d '' pid_file; do
       pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -189,5 +193,48 @@ test "$outside_before_count" -eq "$outside_after_count" \
   || fail "a '..' name changed the contents of the state root's parent directory"
 
 echo "job-daemon.test.sh: case 6 ok (unsafe names rejected, nothing touched)"
+
+# --- Case 7: an exited but unreaped daemon does not consume the full bound --
+root7="$test_root/zombie"
+mkdir -p "$root7/zombie"
+zombie_pid_path="$test_root/zombie.pid"
+python3 - "$zombie_pid_path" <<'PY' &
+import os
+import sys
+import time
+
+child = os.fork()
+if child == 0:
+    os._exit(0)
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(str(child))
+time.sleep(30)
+PY
+ZOMBIE_PARENT_PID=$!
+for _ in $(seq 1 50); do
+  [ -s "$zombie_pid_path" ] && break
+  sleep 0.1
+done
+zombie_pid="$(cat "$zombie_pid_path" 2>/dev/null || true)"
+test -n "$zombie_pid" || fail "zombie fixture did not publish its child pid"
+for _ in $(seq 1 50); do
+  grep -Eq '^State:[[:space:]]+Z' "/proc/$zombie_pid/status" 2>/dev/null && break
+  sleep 0.1
+done
+grep -Eq '^State:[[:space:]]+Z' "/proc/$zombie_pid/status" 2>/dev/null || \
+  fail "zombie fixture child never entered zombie state"
+echo "$zombie_pid" >"$root7/zombie/daemon.pid"
+
+started_ns="$(date +%s%N)"
+AGENT_LCARS_JOB_DAEMON_STATE_ROOT="$root7" "$script" stop zombie >/dev/null || \
+  fail "stopping an unreaped daemon failed"
+elapsed_ms=$((( $(date +%s%N) - started_ns ) / 1000000))
+test "$elapsed_ms" -lt 2000 || \
+  fail "an exited-but-unreaped daemon consumed ${elapsed_ms}ms of the stop bound"
+
+kill "$ZOMBIE_PARENT_PID" 2>/dev/null || true
+wait "$ZOMBIE_PARENT_PID" 2>/dev/null || true
+ZOMBIE_PARENT_PID=
+echo "job-daemon.test.sh: case 7 ok (zombie recognized as stopped)"
 
 echo "job-daemon.test.sh: all cases passed"

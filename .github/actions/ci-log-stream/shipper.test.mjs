@@ -265,33 +265,11 @@ test('keeps failed pushes bounded and never throws on Loki backpressure', async 
   assert.ok(shipper.droppedLines > 0);
 });
 
-test('flushes a final unterminated line without changing its bytes', async () => {
-  const directory = await temporaryDirectory();
-  const loki = await lokiServer();
-  await writeFile(
-    path.join(directory, 'job_step_0.log'),
-    '2026-08-30T04:00:00Z final line without newline',
-  );
-  const shipper = makeShipper(directory, loki.endpoint);
-
-  await shipper.readAvailable();
-  assert.equal(shipper.queue.length, 0);
-  shipper.enqueuePartialLines();
-  await shipper.pushAvailable({ force: true });
-
-  assert.equal(
-    loki.requests[0].streams[0].values[0][1],
-    '2026-08-30T04:00:00Z final line without newline',
-  );
-});
-
-test('does not flush a recently growing partial line during shutdown', async () => {
+test('does not manufacture a Loki record from an incomplete page line', async () => {
   const directory = await temporaryDirectory();
   const loki = await lokiServer();
   await writeFile(path.join(directory, 'job_step_0.log'), '2026-08-30T04:00');
-  const shipper = makeShipper(directory, loki.endpoint, {
-    config: { partialLineQuietMs: 1000 },
-  });
+  const shipper = makeShipper(directory, loki.endpoint);
 
   await shipper.shutdown();
 

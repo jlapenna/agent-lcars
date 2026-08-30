@@ -117,6 +117,19 @@ case "$pid" in
     ;;
 esac
 
+process_is_running() {
+  kill -0 "$1" 2>/dev/null || return 1
+  # A runner container's PID 1 may not reap an orphan immediately. kill -0
+  # still succeeds for that zombie, even though the daemon has completed all
+  # shutdown work and cannot make further progress. Treat it as stopped so the
+  # bounded poll does not burn its entire grace window.
+  if [ -r "/proc/$1/status" ] &&
+    grep -Eq '^State:[[:space:]]+Z' "/proc/$1/status" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
 # Bounded wait, not a blocking `wait`: this pid was disowned by a previous
 # `start` invocation (possibly a different process entirely, since jobs
 # are not inherited across shells), so it is not this shell's child and
@@ -126,7 +139,7 @@ esac
 # in bounded time so it composes with a synchronous step run after it.
 kill "$pid" 2>/dev/null
 for _ in $(seq 1 25); do
-  kill -0 "$pid" 2>/dev/null || break
+  process_is_running "$pid" || break
   sleep 0.2
 done
 echo "job-daemon: stopped '$NAME' (pid $pid)."
