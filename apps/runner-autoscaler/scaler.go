@@ -132,7 +132,25 @@ const (
 	dockerContainerOperationTimeout = 30 * time.Second
 	dockerContainerWaitTimeout      = 2 * time.Minute
 	dockerImagePullTimeout          = 90 * time.Second
+	// A JIT runner exits immediately after its one job, while the scale-set
+	// listener delivers JobCompleted on a separate stream. Docker can win
+	// that race by a few seconds. Give a clean exit one listener-settlement
+	// window before classifying it as a dead tracked runner; a genuinely idle
+	// clean exit is still reconciled by the next one-minute pass.
+	runnerCompletionSettleGrace = 30 * time.Second
 )
+
+func cleanRunnerExitIsSettling(state *container.State, now time.Time) bool {
+	if state == nil || state.Running || state.ExitCode != 0 {
+		return false
+	}
+	finishedAt, err := time.Parse(time.RFC3339Nano, state.FinishedAt)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(finishedAt)
+	return age >= 0 && age < runnerCompletionSettleGrace
+}
 
 // beginTeardown marks a runner as being removed. Must be called BEFORE the
 // call that drops it from a.runners, so the untracked window is never
@@ -731,6 +749,14 @@ func (a *Scaler) reconcileRunners(ctx context.Context, includeBusy bool) {
 		if inspectErr != nil && !cerrdefs.IsNotFound(inspectErr) {
 			a.logger.Warn("Could not inspect tracked runner; keeping it tracked",
 				slog.String("name", e.name), slog.String("host", e.ref.host), slog.String("error", inspectErr.Error()))
+			continue
+		}
+		if inspectErr == nil && cleanRunnerExitIsSettling(info.State, time.Now()) {
+			// Do not remove, deregister, or increment mismatch/dead-idle
+			// counters yet. HandleJobCompleted owns normal JIT completion and
+			// will settle this entry as soon as its listener event arrives.
+			a.logger.Debug("Deferring clean runner exit while listener completion settles",
+				slog.String("name", e.name), slog.String("host", e.ref.host), slog.String("finishedAt", info.State.FinishedAt))
 			continue
 		}
 		reason := "container no longer exists"
