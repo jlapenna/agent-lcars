@@ -1,6 +1,6 @@
 /* eslint-disable vitest/no-import-node-test -- exercise the dependency-free shipper with the same Node runtime used by the action. */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -265,33 +265,11 @@ test('keeps failed pushes bounded and never throws on Loki backpressure', async 
   assert.ok(shipper.droppedLines > 0);
 });
 
-test('flushes a final unterminated line without changing its bytes', async () => {
-  const directory = await temporaryDirectory();
-  const loki = await lokiServer();
-  await writeFile(
-    path.join(directory, 'job_step_0.log'),
-    '2026-08-30T04:00:00Z final line without newline',
-  );
-  const shipper = makeShipper(directory, loki.endpoint);
-
-  await shipper.readAvailable();
-  assert.equal(shipper.queue.length, 0);
-  shipper.enqueuePartialLines();
-  await shipper.pushAvailable({ force: true });
-
-  assert.equal(
-    loki.requests[0].streams[0].values[0][1],
-    '2026-08-30T04:00:00Z final line without newline',
-  );
-});
-
-test('does not flush a recently growing partial line during shutdown', async () => {
+test('does not manufacture a Loki record from an incomplete page line', async () => {
   const directory = await temporaryDirectory();
   const loki = await lokiServer();
   await writeFile(path.join(directory, 'job_step_0.log'), '2026-08-30T04:00');
-  const shipper = makeShipper(directory, loki.endpoint, {
-    config: { partialLineQuietMs: 1000 },
-  });
+  const shipper = makeShipper(directory, loki.endpoint);
 
   await shipper.shutdown();
 
@@ -324,6 +302,39 @@ test('drains more than one read tick before shutdown flushes', async () => {
       request.streams[0].values.map((value) => value[1]),
     ),
     lines,
+  );
+});
+
+test('waits for a quiet EOF and drains output appended during shutdown', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  const pagePath = path.join(directory, 'job_all_0.log');
+  await writeFile(pagePath, 'line before shutdown\n');
+  const shipper = makeShipper(directory, loki.endpoint, {
+    now: Date.now,
+    config: {
+      shutdownBudgetMs: 1000,
+      shutdownQuietPollMs: 25,
+      shutdownIdlePasses: 2,
+    },
+  });
+
+  const append = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      appendFile(pagePath, 'line buffered during shutdown\n').then(
+        resolve,
+        reject,
+      );
+    }, 10);
+  });
+  await shipper.shutdown();
+  await append;
+
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    ['line before shutdown', 'line buffered during shutdown'],
   );
 });
 

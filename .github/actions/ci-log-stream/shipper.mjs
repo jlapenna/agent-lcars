@@ -16,16 +16,14 @@ const DEFAULTS = Object.freeze({
   maxBatchBytes: 512 * 1024,
   maxBatchLines: 1000,
   maxPartialLineBytes: 256 * 1024,
-  // A page can be observed while the runner is still appending one line. Only
-  // flush an unterminated line when it has been stable long enough to be real
-  // output rather than a torn read of the action that is stopping us.
-  partialLineQuietMs: 1000,
   // job-daemon.sh gives a stopped child five seconds to exit. Keep one
   // in-flight push plus the final shutdown push inside that outer bound.
   pushTimeoutMs: 2000,
   initialBackoffMs: 500,
   maxBackoffMs: 30_000,
   shutdownBudgetMs: 2500,
+  shutdownQuietPollMs: 250,
+  shutdownIdlePasses: 2,
   maxDiagnosticBytes: 64 * 1024,
 });
 
@@ -153,7 +151,6 @@ export class PageLogShipper {
       carry: '',
       decoder: new StringDecoder('utf8'),
       droppingOversizedLine: false,
-      lastGrowthAt: undefined,
       identity,
       stepName: this.stepNames.get(identity) ?? filename,
     };
@@ -170,11 +167,10 @@ export class PageLogShipper {
     previousState.decoder = new StringDecoder('utf8');
     state.droppingOversizedLine = previousState.droppingOversizedLine;
     previousState.droppingOversizedLine = false;
-    state.lastGrowthAt = previousState.lastGrowthAt;
     state.stepName = previousState.stepName;
   }
 
-  processDecoded(state, decoded, { final = false } = {}) {
+  processDecoded(state, decoded) {
     let text = decoded;
     if (state.droppingOversizedLine) {
       const newlineIndex = text.indexOf('\n');
@@ -198,11 +194,6 @@ export class PageLogShipper {
       state.carry = '';
       state.droppingOversizedLine = true;
       this.droppedLines += 1;
-    }
-
-    if (final && !state.droppingOversizedLine && state.carry) {
-      this.enqueue(state.carry, state);
-      state.carry = '';
     }
   }
 
@@ -312,7 +303,6 @@ export class PageLogShipper {
         if (bytesRead === 0) break;
 
         state.offset += bytesRead;
-        state.lastGrowthAt = this.now();
         budget -= bytesRead;
         totalBytesRead += bytesRead;
         const decoded = state.decoder.write(buffer.subarray(0, bytesRead));
@@ -390,30 +380,29 @@ export class PageLogShipper {
     await this.pushAvailable(options);
   }
 
-  enqueuePartialLines({ minimumAgeMs = 0 } = {}) {
-    for (const state of this.files.values()) {
-      if (
-        minimumAgeMs > 0 &&
-        state.lastGrowthAt !== undefined &&
-        this.now() - state.lastGrowthAt < minimumAgeMs
-      ) {
-        continue;
-      }
-      this.processDecoded(state, state.decoder.end(), { final: true });
-    }
-  }
-
   async shutdown() {
     const deadline = this.now() + this.config.shutdownBudgetMs;
+    let idlePasses = 0;
     while (this.now() < deadline) {
       const bytesRead = await this.readAvailable();
       await this.pushAvailable({ force: true, deadline });
-      if (bytesRead === 0) break;
+      if (bytesRead > 0) {
+        idlePasses = 0;
+        continue;
+      }
+
+      idlePasses += 1;
+      if (idlePasses >= this.config.shutdownIdlePasses) break;
+      const remainingMs = deadline - this.now();
+      if (remainingMs > 0) {
+        await sleep(Math.min(this.config.shutdownQuietPollMs, remainingMs));
+      }
     }
 
-    this.enqueuePartialLines({
-      minimumAgeMs: this.config.partialLineQuietMs,
-    });
+    // The runner can be in the middle of appending its current page line while
+    // the stop action waits for this process. Only newline-terminated records
+    // are known to be complete; never manufacture a final Loki line from the
+    // decoder carry at this boundary.
     while (this.queue.length > 0 && this.now() < deadline) {
       const before = this.queue.length;
       await this.pushAvailable({ force: true, deadline });
