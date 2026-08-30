@@ -98,6 +98,18 @@ func TestConfigDefaultsUseInternalRunnerMirror(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsDigestRunnerImage(t *testing.T) {
+	cfg := Config{
+		RegistrationURL: "https://github.com/org/repo",
+		ScaleSetName:    "test-scaleset",
+		Token:           "ghp_secret",
+		RunnerImage:     "registry.example/runner@sha256:0123456789abcdef",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Config.Validate() accepted a digest runner image")
+	}
+}
+
 func TestBuildLabels(t *testing.T) {
 	t.Run("default to scale set name", func(t *testing.T) {
 		cfg := Config{ScaleSetName: "my-scale-set"}

@@ -584,6 +584,9 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		if s.Name == "" || s.RunnerImage == "" {
 			return nil, 0, fmt.Errorf("registration %q scale_sets[%d] requires name and runner_image", registrationName, i)
 		}
+		if isDigestImageReference(s.RunnerImage) {
+			return nil, 0, fmt.Errorf("scale set %q runner_image must be a mutable tag, not a digest: %q", s.Name, s.RunnerImage)
+		}
 		if seenSets[s.Name] {
 			return nil, 0, fmt.Errorf("duplicate scale set %q", s.Name)
 		}

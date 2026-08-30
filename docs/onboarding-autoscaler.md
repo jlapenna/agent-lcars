@@ -214,7 +214,10 @@ publisher above.
 
 `runner_image` is normally the existing shared JIT image
 (`docker-registry.lan.jlapenna.net/homelab-runner:jit-node24`) — reuse it
-unless this registration genuinely needs different baked-in tooling.
+unless this registration genuinely needs different baked-in tooling. It must
+be a mutable tag, not an `@sha256:...` digest: the autoscaler refreshes the
+configured tag before every placement so runners follow the registry's current
+tip of tree.
 
 ## 3. Vault the private key and wire its deployment
 

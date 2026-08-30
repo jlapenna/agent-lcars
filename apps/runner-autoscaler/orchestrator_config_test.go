@@ -85,6 +85,19 @@ func TestOrchestratorConfigRejectsNegativeSchedulingPriority(t *testing.T) {
 	}
 }
 
+func TestLoadOrchestratorConfigRejectsDigestRunnerImage(t *testing.T) {
+	body := strings.Replace(
+		validOrchestratorYAML,
+		"runner_image: example/default:latest",
+		"runner_image: example/default@sha256:0123456789abcdef",
+		1,
+	)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "must be a mutable tag") {
+		t.Fatalf("digest runner image error = %v, want mutable-tag validation", err)
+	}
+}
+
 func TestOrchestratorConfigResolvesMemorySafetyMargin(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin: 0.25", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))

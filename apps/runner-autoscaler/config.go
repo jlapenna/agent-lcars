@@ -144,6 +144,14 @@ func (c *Config) defaults() {
 	}
 }
 
+// isDigestImageReference rejects Docker's immutable @digest reference form.
+// The autoscaler always refreshes the configured runner-image tag before a
+// placement so a runner follows the registry's current tip of tree; accepting
+// a digest would create an unsupported pinned selection path.
+func isDigestImageReference(image string) bool {
+	return strings.Contains(image, "@")
+}
+
 // FileMount is a homelab addition: one host file exposed read-only inside
 // spawned runners. See Config.FileMounts.
 type FileMount struct {
@@ -184,6 +192,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RunnerImage == "" {
 		return fmt.Errorf("runner image is required")
+	}
+	if isDigestImageReference(c.RunnerImage) {
+		return fmt.Errorf("runner image must be a mutable tag, not a digest: %q", c.RunnerImage)
 	}
 	if _, _, err := ParseDockerHosts(c.DockerHosts); err != nil {
 		return err
