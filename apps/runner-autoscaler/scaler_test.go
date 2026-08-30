@@ -1354,29 +1354,6 @@ func TestEnsureRunnerImageRefreshesMutableTags(t *testing.T) {
 	}
 }
 
-// TestEnsureRunnerImageTrustsDigestCache is the other half: a digest
-// reference is immutable, so a local hit IS authoritative and re-pulling
-// could not change the bytes. Skipping it keeps the refresh above from
-// costing a registry round-trip on every placement for pinned images.
-func TestEnsureRunnerImageTrustsDigestCache(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	scaler := &Scaler{
-		runnerImage: "registry.example/runner@sha256:" + strings.Repeat("a", 64),
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	client := fake.client(t)
-
-	if err := scaler.ensureRunnerImage(context.Background(), client, "spark"); err != nil {
-		t.Fatalf("ensureRunnerImage after prune: %v", err)
-	}
-	if err := scaler.ensureRunnerImage(context.Background(), client, "spark"); err != nil {
-		t.Fatalf("ensureRunnerImage with cached digest: %v", err)
-	}
-	if got := fake.pullCount(); got != 1 {
-		t.Fatalf("digest pulls = %d, want exactly 1 (immutable ref may be cached)", got)
-	}
-}
-
 // TestCreateContainerRecoversImageEvictedAfterInspect reproduces #478 at the
 // Docker API boundary: image preparation/inspection succeeded, an external
 // prune removed the image before ContainerCreate, and the daemon returned
@@ -1389,7 +1366,7 @@ func TestCreateContainerRecoversImageEvictedAfterInspect(t *testing.T) {
 	fake.mu.Unlock()
 	fake.setCreateFailures(http.StatusNotFound)
 	scaler := &Scaler{
-		runnerImage: "registry.example/runner@sha256:" + strings.Repeat("a", 64),
+		runnerImage: "registry.example/runner:test",
 		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
@@ -1439,19 +1416,6 @@ func TestCreateContainerDoesNotRetryUnrelatedFailure(t *testing.T) {
 	}
 	if got := fake.pullCount(); got != 0 {
 		t.Fatalf("image pulls = %d, want no image recovery for unrelated failure", got)
-	}
-}
-
-func TestIsDigestRef(t *testing.T) {
-	for ref, want := range map[string]bool{
-		"registry.example/runner:test":                              false,
-		"registry.example:5000/ns/runner:test":                      false,
-		"registry.example/runner@sha256:" + strings.Repeat("a", 64): true,
-		"runner@sha256:" + strings.Repeat("b", 64):                  true,
-	} {
-		if got := isDigestRef(ref); got != want {
-			t.Errorf("isDigestRef(%q) = %v, want %v", ref, got, want)
-		}
 	}
 }
 
@@ -1535,110 +1499,6 @@ func TestEnsureRunnerImageRejectsStreamedPullError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "manifest unknown") {
 		t.Errorf("error should surface the daemon's message, got: %v", err)
-	}
-}
-
-func TestRunnerImageFallbackUsesOnlyConfiguredCachedDigestDuringOutage(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	client := fake.client(t)
-	primary := "registry.example/runner:latest"
-	fallback := "registry.example/runner@sha256:" + strings.Repeat("a", 64)
-	spec := runnerImageSpec{primary: primary, fallback: fallback, pool: "fallback-test"}
-
-	// Establish a cached image, then model the exact registry 502 observed
-	// during Spark's outage.
-	if _, err := resolveRunnerImageForHost(context.Background(), client, "host-a", spec, discardLogger()); err != nil {
-		t.Fatalf("initial primary pull: %v", err)
-	}
-	fake.setPullStreamError("unexpected status from HEAD request: 502 Bad Gateway")
-	got, err := resolveRunnerImageForHost(context.Background(), client, "host-a", spec, discardLogger())
-	if err != nil {
-		t.Fatalf("outage fallback: %v", err)
-	}
-	if got != fallback {
-		t.Fatalf("prepared image = %q, want configured digest %q", got, fallback)
-	}
-
-	// Registry recovery always returns the pool to the mutable promotion tag.
-	fake.setPullStreamError("")
-	got, err = resolveRunnerImageForHost(context.Background(), client, "host-a", spec, discardLogger())
-	if err != nil {
-		t.Fatalf("recovered primary pull: %v", err)
-	}
-	if got != primary {
-		t.Fatalf("prepared image after recovery = %q, want primary %q", got, primary)
-	}
-}
-
-func TestRunnerImageFallbackFailsClosedForNonOutageAndMissingCache(t *testing.T) {
-	primary := "registry.example/runner:latest"
-	fallback := "registry.example/runner@sha256:" + strings.Repeat("b", 64)
-	spec := runnerImageSpec{primary: primary, fallback: fallback, pool: "fallback-fail-test"}
-
-	t.Run("manifest error is not an outage", func(t *testing.T) {
-		fake := newFakeDockerServer(t)
-		fake.imagePresent = true
-		fake.setPullStreamError("manifest unknown")
-		if _, err := resolveRunnerImageForHost(context.Background(), fake.client(t), "host-a", spec, discardLogger()); err == nil || !strings.Contains(err.Error(), "manifest unknown") {
-			t.Fatalf("error = %v, want manifest failure", err)
-		}
-	})
-
-	t.Run("outage without cached fallback", func(t *testing.T) {
-		fake := newFakeDockerServer(t)
-		fake.setPullStreamError("502 Bad Gateway")
-		if _, err := resolveRunnerImageForHost(context.Background(), fake.client(t), "host-a", spec, discardLogger()); err == nil || !strings.Contains(err.Error(), "is not cached") {
-			t.Fatalf("error = %v, want missing-cache refusal", err)
-		}
-	})
-}
-
-func TestValidateRunnerImageFallback(t *testing.T) {
-	digest := "registry.example:5000/team/runner@sha256:" + strings.Repeat("c", 64)
-	for _, tc := range []struct {
-		name     string
-		primary  string
-		fallback string
-		wantErr  bool
-	}{
-		{name: "disabled", primary: "registry.example/runner:latest"},
-		{name: "same repository digest", primary: "registry.example:5000/team/runner:latest", fallback: digest},
-		{name: "fallback is mutable", primary: "registry.example/runner:latest", fallback: "registry.example/runner:old", wantErr: true},
-		{name: "digest malformed", primary: "registry.example/runner:latest", fallback: "registry.example/runner@sha256:abc", wantErr: true},
-		{name: "repository differs", primary: "registry.example/other:latest", fallback: digest, wantErr: true},
-		{name: "primary already immutable", primary: digest, fallback: digest, wantErr: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateRunnerImageFallback(tc.primary, tc.fallback)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("validateRunnerImageFallback() error = %v, wantErr %v", err, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestRegistryUnavailableClassification(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "standard 500", err: errors.New("unexpected status from HEAD request: 500 Internal Server Error"), want: true},
-		{name: "standard 502", err: errors.New("unexpected status from HEAD request: 502 Bad Gateway"), want: true},
-		{name: "nonstandard 599", err: errors.New("unexpected status from POST request to https://registry.example/v2/: 599 Network Connect Timeout Error"), want: true},
-		{name: "network failure", err: errors.New("dial tcp: connection refused"), want: true},
-		{name: "authentication failure", err: errors.New("unexpected status from HEAD request: 401 Unauthorized"), want: false},
-		{name: "registry port is not status", err: errors.New("unexpected status from HEAD request to https://registry.example:503/v2/runner/manifests/latest: 401 Unauthorized"), want: false},
-		{name: "numeric tag is not status", err: errors.New("pulling registry.example/runner:500: manifest unknown"), want: false},
-		{name: "missing manifest", err: errors.New("manifest unknown"), want: false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := registryUnavailable(tc.err); got != tc.want {
-				t.Fatalf("registryUnavailable(%q) = %v, want %v", tc.err, got, tc.want)
-			}
-		})
 	}
 }
 

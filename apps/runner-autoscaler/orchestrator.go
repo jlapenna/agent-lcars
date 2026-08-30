@@ -594,8 +594,8 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 	}
 	scaler := &Scaler{
 		scaleSetName: c.ScaleSetName, registrationName: c.RegistrationName, registrationURL: c.RegistrationURL, logger: logger.With("component", "scaler"),
-		runners:     runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
-		runnerImage: c.RunnerImage, runnerImageFallback: c.RunnerImageFallback,
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		runnerImage:  c.RunnerImage,
 		runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,

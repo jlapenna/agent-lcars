@@ -85,6 +85,19 @@ func TestOrchestratorConfigRejectsNegativeSchedulingPriority(t *testing.T) {
 	}
 }
 
+func TestLoadOrchestratorConfigRejectsDigestRunnerImage(t *testing.T) {
+	body := strings.Replace(
+		validOrchestratorYAML,
+		"runner_image: example/default:latest",
+		"runner_image: example/default@sha256:0123456789abcdef",
+		1,
+	)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "must be a mutable tag") {
+		t.Fatalf("digest runner image error = %v, want mutable-tag validation", err)
+	}
+}
+
 func TestOrchestratorConfigResolvesMemorySafetyMargin(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    memory_safety_margin: 0.25", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
@@ -103,30 +116,6 @@ func TestOrchestratorConfigRejectsInvalidMemorySafetyMargin(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "memory_safety_margin") {
 			t.Fatalf("margin %s error = %v, want memory_safety_margin complaint", margin, err)
 		}
-	}
-}
-
-func TestLoadOrchestratorConfigResolvesRunnerImageFallback(t *testing.T) {
-	fallback := "example/default@sha256:" + strings.Repeat("a", 64)
-	body := strings.Replace(validOrchestratorYAML,
-		"    runner_image: example/default:latest",
-		"    runner_image: example/default:latest\n    runner_image_fallback: "+fallback, 1)
-	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := resolved.ScaleSets[0].RunnerImageFallback; got != fallback {
-		t.Fatalf("runner image fallback = %q, want %q", got, fallback)
-	}
-}
-
-func TestLoadOrchestratorConfigRejectsUnsafeRunnerImageFallback(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML,
-		"    runner_image: example/default:latest",
-		"    runner_image: example/default:latest\n    runner_image_fallback: example/other@sha256:"+strings.Repeat("b", 64), 1)
-	_, err := loadOrchestratorConfig(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("load error = %v, want repository mismatch", err)
 	}
 }
 
