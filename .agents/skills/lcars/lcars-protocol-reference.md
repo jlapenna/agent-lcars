@@ -103,57 +103,36 @@ Firestore authority lease on a shared document that a headless agent could
 inspect or contend with directly — `libs/orchestrator/README.md` is the
 whole contract if you need more than this summary.
 
-## Session-resume: why each pipeline's handoff line differs
+## Session archive recovery
 
-> Which line to actually post is in
-> the shared agent protocol's takeover section.
-> This is the background for why the three pipelines differ.
+> The shared agent protocol's takeover section specifies the handoff line to
+> post. This section describes the one supported recovery mechanism.
 
-`fleet-claude-agent-session` (packages/fleet-tools) is Claude-specific by
-construction: it discovers transcripts only under `~/.claude/projects`, authenticates with
-`CLAUDE_CODE_OAUTH_TOKEN`, and hands off to `claude --resume`. The console's
-`TAKEOVER_COMMAND_RE` (`apps/console/src/lib/action-items.ts`) is
-`/(\S*claude-agent-session(?:\.sh)?\s+resume\s+[\w-]+)/` — it matches the
-bin name (and historical `.sh` paths) and requires whitespace after `resume`, so it does not
-match `resume-archive`, and it does not generalize per agent. A Codex or
-OpenCode run that borrowed the name would be posting a command that cannot
-work; naming the gap honestly is the correct outcome, not a hole to paper
-over.
+`fleet-claude-agent-session` (packages/fleet-tools) is Claude-specific,
+archive-only recovery. Use:
 
-The two non-Claude pipelines' situations genuinely differ, and a takeover
-comment should say which one it is rather than treating "no resume tooling"
-as identical for both:
+```sh
+fleet-claude-agent-session resume-archive <gs://.../<session-id>.jsonl|run-id>
+```
 
-- **Codex:** no live-resume command, but the run's transcript IS archived to
-  GCS once the job ends (`codex.yml`'s telemetry sidecar +
-  `libs/telemetry/src/lib/codex-transcript-adapter.ts`), and the session's
-  console page shows an "Archived transcript" note naming that `gs://` URI
-  (`apps/console/src/app/sessions/[id]/session-header.tsx`). The console does
-  **not** render the transcript's contents: `getSessionDetail`
-  (`apps/console/src/lib/session-detail.ts`) only fetches and parses one when
-  `sessionAgent(doc) === 'claude-code'`. So say the transcript is archived to
-  GCS, not that it is "viewable in the console" — `gcloud storage cat` on that
-  URI prints the raw JSONL, the same tool `resume-archive` uses. No
-  `resume-archive` equivalent exists for Codex today.
-- **OpenCode:** no live-resume command exists, but the runner sidecar uses
-  OpenCode's supported `session list`/sanitized `export` CLI surface to
-  materialize a bounded set of exact-workspace sessions from its SQLite-backed
-  store. Capture uses pure mode and archives only a strict metadata allowlist,
-  never message bodies or tool input/output. The OpenCode adapter ships summary
-  telemetry and finalize archives each export under
-  `runs/<run-id>/opencode/<session-id>.jsonl`. The archive is durable but not
-  timeline-renderable in the console (`renderable: false`). Privileged capture
-  accepts only the root-owned runner-image `/usr/local/bin/opencode`, built
-  from an exact GitHub release artifact after its reviewed SHA-256 verifies;
-  it never consults PATH or an action-installed, runner-writable CLI. The
-  bootstrap lane invokes that same image binary. The separate post-agent trajectory
-  artifact does not inherit the telemetry writer credential.
+The tool accepts either an exact archived transcript URI or one QueueExecutor
+run ID (for example, `work:<ulid>/r1` or `octo/example#42/r1`). It resolves a
+single archive, downloads it into the current checkout's
+`~/.claude/projects/` directory, and prints the matching local
+`claude --resume` command. It never discovers a live runner, uses runner OAuth
+credentials, or reaches into an ephemeral container; the archive is the only
+supported session-recovery boundary.
 
-**Why this section is written so defensively:** it used to say the script did
-not exist in this repo at all, and stayed that way long after it landed. Every
-pipeline's agents read that and posted "resume tooling is not yet available" —
-exactly the string `TAKEOVER_COMMAND_RE` cannot match — so the takeover
-affordance stayed dark on this repo's own issues while working for every other
-repo the fleet watches. `resume` also only reaches a session while its JIT
-runner is alive, which is why `resume-archive` must be mentioned alongside it
-rather than instead of it.
+Do not post the retired `fleet-claude-agent-session resume <id>` command or
+describe a live JIT resume path. Console cleanup for that old command parser
+is tracked separately; it is not a compatibility promise for agents to rely
+on.
+
+For other pipelines, state the actual archive behavior without inventing a
+resume command:
+
+- **Codex:** its completed run transcript is archived to GCS. The console can
+  show the archive URI, but no Codex archive-resume tool exists today.
+- **OpenCode:** the runner captures a bounded, sanitized metadata export under
+  `runs/<run-id>/opencode/<session-id>.jsonl`; it is durable but not
+  timeline-renderable and has no resume command.
