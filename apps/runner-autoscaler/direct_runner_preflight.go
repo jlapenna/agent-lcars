@@ -79,22 +79,20 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 // then claim a run whose selected image cannot actually start with its
 // permanent mounts. The adapter registry is also the launch contract, so an
 // unrelated scale-set image cannot make a direct-queue host ineligible.
-func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]runnerImageSpec, error) {
-	images := make([]runnerImageSpec, 0, len(directRunnerAdapters))
+func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]string, error) {
+	images := make([]string, 0, len(directRunnerAdapters))
 	seen := make(map[string]bool, len(directRunnerAdapters))
 	for _, adapter := range directRunnerAdapters {
 		config, err := directRunnerConfigFor(resolved, adapter.pipeline)
 		if err != nil {
 			return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)
 		}
-		key := config.RunnerImage + "\x00" + config.RunnerImageFallback
+		key := config.RunnerImage
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		images = append(images, runnerImageSpec{
-			primary: config.RunnerImage, fallback: config.RunnerImageFallback, pool: "direct-" + adapter.pipeline,
-		})
+		images = append(images, config.RunnerImage)
 	}
 	if len(images) == 0 {
 		return nil, fmt.Errorf("no configured scale set to source a direct-runner preflight image")
@@ -102,10 +100,10 @@ func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]runnerI
 	return images, nil
 }
 
-func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []runnerImageSpec, mounts []directRunnerCredentialMount, logger *slog.Logger) error {
+func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []string, mounts []directRunnerCredentialMount, logger *slog.Logger) error {
 	for _, image := range images {
 		if err := directRunnerPreflightHost(ctx, newClient, host, target, image, mounts, logger); err != nil {
-			return fmt.Errorf("image %q: %w", image.primary, err)
+			return fmt.Errorf("image %q: %w", image, err)
 		}
 	}
 	return nil
@@ -116,7 +114,7 @@ func directRunnerPreflightHostImages(ctx context.Context, newClient func(string)
 // check as the same `runner` user used by direct work. The container is always
 // force-removed after create, including a failed start, wait timeout, or a
 // non-zero check result, so the readiness check never leaves host artifacts.
-func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, image runnerImageSpec, mounts []directRunnerCredentialMount, logger *slog.Logger) (err error) {
+func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target, runnerImage string, mounts []directRunnerCredentialMount, logger *slog.Logger) (err error) {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("connecting: %w", err)
@@ -126,7 +124,7 @@ func directRunnerPreflightHost(ctx context.Context, newClient func(string) (*doc
 	// mutable image here as part of this host's admission probe instead of
 	// racing its background pull on a fresh host. A host with a failed pull is
 	// excluded before it can claim any provider's work.
-	preparedImage, err := resolveRunnerImageForHost(ctx, client, host, image, logger)
+	preparedImage, err := prepareRunnerImageForHost(ctx, client, host, runnerImage, logger)
 	if err != nil {
 		return err
 	}

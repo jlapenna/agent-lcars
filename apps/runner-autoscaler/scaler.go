@@ -39,11 +39,10 @@ type Scaler struct {
 	// registrationURL is the non-secret GitHub organization/repository URL for
 	// this scale set's registration. The console publishes it as an optional
 	// operator link; it is never used for listener ownership or credentials.
-	registrationURL     string
-	runners             runnerState
-	runnerImage         string
-	runnerImageFallback string
-	runnerMemory        int64
+	registrationURL string
+	runners         runnerState
+	runnerImage     string
+	runnerMemory    int64
 	// memorySafetyMargin is the fraction of physical host memory kept outside
 	// aggregate declared runner reservations during placement.
 	memorySafetyMargin float64
@@ -2113,19 +2112,6 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	return name, nil
 }
 
-// isDigestRef reports whether an image reference pins a content digest
-// (name@sha256:...), which makes it immutable and therefore safe to serve
-// from the local cache without consulting the registry.
-func isDigestRef(ref string) bool {
-	at := strings.LastIndex(ref, "@")
-	if at < 0 {
-		return false
-	}
-	// Guard against a digest-looking fragment inside a registry host:port or
-	// path segment by requiring the '@' to precede an algo:hex form.
-	return strings.Contains(ref[at+1:], ":")
-}
-
 func (a *Scaler) prepareRunnerImage(ctx context.Context, client *dockerclient.Client, host string) (string, error) {
 	key := host + "\x00" + a.runnerImage
 	lockValue, _ := a.hostImageLocks.LoadOrStore(key, &sync.Mutex{})
@@ -2135,9 +2121,7 @@ func (a *Scaler) prepareRunnerImage(ctx context.Context, client *dockerclient.Cl
 	}
 	defer lock.Unlock()
 
-	return resolveRunnerImageForHost(ctx, client, host, runnerImageSpec{
-		primary: a.runnerImage, fallback: a.runnerImageFallback, pool: a.scaleSetLabel(),
-	}, a.logger)
+	return prepareRunnerImageForHost(ctx, client, host, a.runnerImage, a.logger)
 }
 
 func (a *Scaler) ensureRunnerImage(ctx context.Context, client *dockerclient.Client, host string) error {

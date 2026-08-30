@@ -784,7 +784,7 @@ func TestLaunchDirectRunnerOnHostLogsPlacementWithoutToken(t *testing.T) {
 		runToken: "super-secret-run-token",
 		pipeline: "claude",
 	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, logger)
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, logger)
 	if err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
@@ -820,7 +820,7 @@ func TestLaunchDirectRunnerOnHostCreatesAndStartsWithEnv(t *testing.T) {
 		pipeline:   "claude",
 		consoleURL: "https://lcars.test",
 	}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
 	if err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
@@ -883,7 +883,7 @@ func TestLaunchCodexDirectRunnerMountsNoProviderCredential(t *testing.T) {
 		pipeline:   "codex",
 		consoleURL: "https://lcars.test",
 	}
-	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/codex-image:latest", "", "/secrets/telemetry-writer.json", nil, 1, l, discardLogger()); err != nil {
+	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/codex-image:latest", "/secrets/telemetry-writer.json", nil, 1, l, discardLogger()); err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
 	created := f.getLastCreate()
@@ -923,7 +923,7 @@ func TestLaunchOpenCodeDirectRunnerMountsOnlyProviderCredential(t *testing.T) {
 		consoleURL: "https://lcars.test",
 	}
 	opencodeBind := "/secrets/opencode-llm-api-key:" + directRunnerOpenCodeTokenMountPath + ":ro"
-	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/opencode-image:latest", "", "/secrets/telemetry-writer.json", []string{opencodeBind}, 1, l, discardLogger()); err != nil {
+	if err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/opencode-image:latest", "/secrets/telemetry-writer.json", []string{opencodeBind}, 1, l, discardLogger()); err != nil {
 		t.Fatalf("launchDirectRunnerOnHost: %v", err)
 	}
 
@@ -965,7 +965,7 @@ func TestLaunchDirectRunnerOnHostAtCapacity(t *testing.T) {
 	f.mu.Unlock()
 
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX02/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
 	if err == nil {
 		t.Fatalf("expected an error when the host is already at its direct-runner cap")
 	}
@@ -1221,26 +1221,6 @@ func TestLaunchDirectRunnerCodexDoesNotRequireClaudeTokenPath(t *testing.T) {
 	}
 }
 
-func TestLaunchDirectRunnerUsesConfiguredCachedFallbackDuringRegistryOutage(t *testing.T) {
-	f := newFakeDockerServer(t)
-	f.imagePresent = true
-	f.setPullStreamError("502 Bad Gateway")
-	newClient := func(string) (*dockerclient.Client, error) { return f.client(t), nil }
-	fallback := "registry/claude-image@sha256:" + strings.Repeat("d", 64)
-	l := directRunnerLaunch{runID: "work:01QUEUEFALLBACKTEST/r1", runToken: "t", pipeline: "claude"}
-
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target",
-		"registry/claude-image:latest", fallback, "/secrets/telemetry-writer.json",
-		[]string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"},
-		1, l, discardLogger())
-	if err != nil {
-		t.Fatalf("launchDirectRunnerOnHost: %v", err)
-	}
-	if got := f.getLastCreate().Image; got != fallback {
-		t.Fatalf("direct runner image = %q, want fallback %q", got, fallback)
-	}
-}
-
 // TestLaunchDirectRunnerOnHostRemovesContainerOnStartFailure mirrors
 // Scaler.startRunner's own cleanup-on-start-failure: a container that was
 // created but never started must not be left behind as a stopped ghost.
@@ -1250,7 +1230,7 @@ func TestLaunchDirectRunnerOnHostRemovesContainerOnStartFailure(t *testing.T) {
 	newClient := func(target string) (*dockerclient.Client, error) { return f.client(t), nil }
 
 	l := directRunnerLaunch{runID: "work:01QUEUEEXECUTORTESTFIX04/r1", runToken: "t", pipeline: "claude"}
-	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
+	err := launchDirectRunnerOnHost(context.Background(), newClient, "host-a", "unused-target", "registry/claude-image:latest", "/secrets/telemetry-writer.json", []string{"/secrets/claude-code-oauth-token:" + directRunnerClaudeTokenMountPath + ":ro"}, 1, l, discardLogger())
 	if err == nil {
 		t.Fatalf("expected an error when ContainerStart fails")
 	}

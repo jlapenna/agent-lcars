@@ -162,11 +162,10 @@ type FleetPlacementFile struct {
 }
 
 type ScaleSetConfigFile struct {
-	Name                string   `yaml:"name"`
-	Labels              []string `yaml:"labels"`
-	RunnerImage         string   `yaml:"runner_image"`
-	RunnerImageFallback string   `yaml:"runner_image_fallback,omitempty"`
-	RunnerMemory        string   `yaml:"runner_memory,omitempty"`
+	Name         string   `yaml:"name"`
+	Labels       []string `yaml:"labels"`
+	RunnerImage  string   `yaml:"runner_image"`
+	RunnerMemory string   `yaml:"runner_memory,omitempty"`
 	// PidsLimit and ShmSize are homelab additions restoring what e2e.yml's
 	// dropped job-level `container:` block carried (homelab#148); see
 	// Config.RunnerPidsLimit / Config.RunnerShmSize.
@@ -582,12 +581,8 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 	for i := range files {
 		s := files[i]
 		s.Name, s.RunnerImage = strings.TrimSpace(s.Name), strings.TrimSpace(s.RunnerImage)
-		s.RunnerImageFallback = strings.TrimSpace(s.RunnerImageFallback)
 		if s.Name == "" || s.RunnerImage == "" {
 			return nil, 0, fmt.Errorf("registration %q scale_sets[%d] requires name and runner_image", registrationName, i)
-		}
-		if err := validateRunnerImageFallback(s.RunnerImage, s.RunnerImageFallback); err != nil {
-			return nil, 0, fmt.Errorf("scale set %q: %w", s.Name, err)
 		}
 		if seenSets[s.Name] {
 			return nil, 0, fmt.Errorf("duplicate scale set %q", s.Name)
@@ -642,7 +637,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		r.Priorities[s.Name] = s.Priority
 		out = append(out, Config{
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
-			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage, RunnerImageFallback: s.RunnerImageFallback,
+			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
 			RunnerMemory: s.RunnerMemory, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
 			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
 			FileMounts: fileMounts,

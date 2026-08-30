@@ -598,29 +598,6 @@ checkpoint exists to make safe. The image creates
 `/var/lib/runner-autoscaler` owned by the runtime uid so a named volume
 mounted there inherits writable ownership.
 
-Each scale set may also declare an outage-only immutable image fallback:
-
-```yaml
-scale_sets:
-  - name: default
-    runner_image: registry.example/runner:latest
-    runner_image_fallback: registry.example/runner@sha256:<64-hex-digest>
-```
-
-The primary tag remains authoritative and is refreshed before every
-placement. The fallback must be a same-repository SHA-256 digest, is never
-pulled on demand, and is used only when the primary refresh fails for a
-registry/network availability reason and that exact digest is already cached
-on the selected host. Authentication failures, missing manifests, malformed
-digests, different repositories, and missing local cache all fail closed.
-The next successful primary refresh automatically clears fallback mode.
-
-`github_runner_autoscaler_runner_image_fallback_active{pool,host}` exposes
-the current degraded mode for alerting, while
-`github_runner_autoscaler_runner_image_fallback_uses_total{pool,host}` counts
-each fallback preparation. The same contract covers GitHub scale-set runners,
-direct queue launch, and the direct-runner startup preflight.
-
 ## Live configuration reload
 
 Send the running orchestrator `SIGHUP` after atomically replacing

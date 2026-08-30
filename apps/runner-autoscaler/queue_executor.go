@@ -457,7 +457,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerConfig.RunnerImage, runnerConfig.RunnerImageFallback, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerConfig.RunnerImage, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -756,7 +756,7 @@ func cleanupExitedDirectRunnersOnHost(ctx context.Context, newClient func(target
 // uses for GitHub-mode runners), and on capacity, creates and starts the
 // container. Returns an error (never fatal to the caller's round-robin) if
 // this host is unreachable, full, or the create/start call fails.
-func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, runnerImageFallback, writerKeyHostPath string, providerCredentialBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
+func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string) (*dockerclient.Client, error), host, target, runnerImage, writerKeyHostPath string, providerCredentialBinds []string, maxConcurrent int, l directRunnerLaunch, logger *slog.Logger) error {
 	client, err := newClient(target)
 	if err != nil {
 		return fmt.Errorf("host %q: connecting: %w", host, err)
@@ -774,9 +774,7 @@ func launchDirectRunnerOnHost(ctx context.Context, newClient func(target string)
 	if len(running) >= maxConcurrent {
 		return fmt.Errorf("host %q: at direct-runner capacity (%d/%d)", host, len(running), maxConcurrent)
 	}
-	preparedImage, err := resolveRunnerImageForHost(ctx, client, host, runnerImageSpec{
-		primary: runnerImage, fallback: runnerImageFallback, pool: "direct-" + strings.ToLower(strings.TrimSpace(l.pipeline)),
-	}, logger)
+	preparedImage, err := prepareRunnerImageForHost(ctx, client, host, runnerImage, logger)
 	if err != nil {
 		return err
 	}
