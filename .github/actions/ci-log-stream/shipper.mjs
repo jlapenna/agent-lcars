@@ -38,6 +38,18 @@ function pageIdentity(filename) {
   return filename.replace(/_\d+\.log$/u, '');
 }
 
+function pageNumber(filename) {
+  const match = /_(\d+)\.log$/u.exec(filename);
+  return match ? Number(match[1]) : 0;
+}
+
+function comparePageNames(left, right) {
+  return (
+    pageIdentity(left).localeCompare(pageIdentity(right)) ||
+    pageNumber(left) - pageNumber(right)
+  );
+}
+
 function groupName(line) {
   const match = /##\[group\](?:Run )?(.+)$/u.exec(line);
   return match?.[1]?.trim();
@@ -222,7 +234,7 @@ export class PageLogShipper {
     let filenames = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
       .map((entry) => entry.name)
-      .sort();
+      .sort(comparePageNames);
     const selectedIdentity = await this.selectPageIdentity(filenames);
     if (!selectedIdentity) return 0;
     // The runner writes every line to both a cumulative job record and an
@@ -285,11 +297,14 @@ export class PageLogShipper {
     return totalBytesRead;
   }
 
-  async pushAvailable({ force = false } = {}) {
+  async pushAvailable({ force = false, deadline } = {}) {
     if (this.queue.length === 0) return true;
     if (!force && this.now() < this.retryAt) return false;
 
     while (this.queue.length > 0) {
+      const remainingMs =
+        deadline === undefined ? undefined : deadline - this.now();
+      if (remainingMs !== undefined && remainingMs <= 0) return false;
       const batch = [];
       let batchBytes = 0;
       for (const entry of this.queue) {
@@ -316,7 +331,12 @@ export class PageLogShipper {
               },
             ],
           }),
-          signal: AbortSignal.timeout(this.config.pushTimeoutMs),
+          signal: AbortSignal.timeout(
+            Math.max(
+              1,
+              Math.min(this.config.pushTimeoutMs, remainingMs ?? Infinity),
+            ),
+          ),
         });
         if (!response.ok) {
           throw new Error(`Loki returned HTTP ${response.status}`);
@@ -354,14 +374,14 @@ export class PageLogShipper {
     const deadline = this.now() + this.config.shutdownBudgetMs;
     while (this.now() < deadline) {
       const bytesRead = await this.readAvailable();
-      await this.pushAvailable({ force: true });
+      await this.pushAvailable({ force: true, deadline });
       if (bytesRead === 0) break;
     }
 
     this.enqueuePartialLines();
     while (this.queue.length > 0 && this.now() < deadline) {
       const before = this.queue.length;
-      await this.pushAvailable({ force: true });
+      await this.pushAvailable({ force: true, deadline });
       if (this.queue.length >= before) await sleep(100);
     }
   }

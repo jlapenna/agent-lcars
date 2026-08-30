@@ -20,7 +20,7 @@ async function temporaryDirectory() {
   return directory;
 }
 
-async function lokiServer(statuses = [204]) {
+async function lokiServer(statuses = [204], responseDelayMs = 0) {
   const requests = [];
   let requestIndex = 0;
   const server = http.createServer((request, response) => {
@@ -33,7 +33,10 @@ async function lokiServer(statuses = [204]) {
       requests.push(JSON.parse(body));
       const status = statuses[Math.min(requestIndex, statuses.length - 1)];
       requestIndex += 1;
-      response.writeHead(status).end();
+      setTimeout(
+        () => response.writeHead(status, { connection: 'close' }).end(),
+        responseDelayMs,
+      );
     });
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -135,6 +138,24 @@ test('rediscovers synthetic rotated pages and retains the step name', async () =
   assert.equal(
     loki.requests[1].streams[0].values[0][2].step_name,
     'generate 9MB fixture',
+  );
+});
+
+test('reads double-digit page rotations in numeric order', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer();
+  await writeFile(path.join(directory, 'job_all_10.log'), 'page ten\n');
+  await writeFile(path.join(directory, 'job_all_2.log'), 'page two\n');
+  await writeFile(path.join(directory, 'job_all_1.log'), 'page one\n');
+
+  const shipper = makeShipper(directory, loki.endpoint);
+  await shipper.tick();
+
+  assert.deepEqual(
+    loki.requests.flatMap((request) =>
+      request.streams[0].values.map((value) => value[1]),
+    ),
+    ['page one', 'page two', 'page ten'],
   );
 });
 
@@ -291,4 +312,25 @@ test('drops one oversized partial line without retaining it in memory', async ()
     ),
     ['line after oversized output'],
   );
+});
+
+test('bounds slow successful shutdown pushes by the shutdown deadline', async () => {
+  const directory = await temporaryDirectory();
+  const loki = await lokiServer([204], 60);
+  await writeFile(path.join(directory, 'job_all_0.log'), 'one\ntwo\nthree\n');
+  const shipper = makeShipper(directory, loki.endpoint, {
+    now: Date.now,
+    config: {
+      maxBatchLines: 1,
+      pushTimeoutMs: 200,
+      shutdownBudgetMs: 80,
+    },
+  });
+
+  const startedAt = Date.now();
+  await shipper.shutdown();
+
+  assert.ok(Date.now() - startedAt < 180);
+  assert.ok(shipper.queue.length > 0);
+  assert.ok(loki.requests.length <= 2);
 });
