@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -14,7 +15,10 @@ import (
 	dockerclient "github.com/docker/docker/client"
 )
 
-var http5xxStatusPattern = regexp.MustCompile(`(?i)(?:status[^\r\n]*|^|:\s*)\b5[0-9]{2}\b`)
+var (
+	directHTTP5xxStatusPattern = regexp.MustCompile(`(?i)\bstatus(?:\s+code)?\s*(?::|=)?\s*5[0-9]{2}\b`)
+	dockerHTTP5xxStatusPattern = regexp.MustCompile(`(?i)\bstatus\s+from\s+\S+\s+request(?:\s+to\s+\S+)?:\s*5[0-9]{2}(?:\s|$)`)
+)
 
 type runnerImageSpec struct {
 	primary  string
@@ -71,8 +75,14 @@ func registryUnavailable(err error) bool {
 		return true
 	}
 	message := strings.ToLower(err.Error())
-	if http5xxStatusPattern.MatchString(message) {
+	if directHTTP5xxStatusPattern.MatchString(message) || dockerHTTP5xxStatusPattern.MatchString(message) {
 		return true
+	}
+	for statusCode := 500; statusCode <= 599; statusCode++ {
+		statusText := strings.ToLower(http.StatusText(statusCode))
+		if statusText != "" && strings.Contains(message, fmt.Sprintf("%d %s", statusCode, statusText)) {
+			return true
+		}
 	}
 	for _, marker := range []string{
 		"connection refused",

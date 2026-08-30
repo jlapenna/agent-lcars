@@ -1443,6 +1443,8 @@ func TestRegistryUnavailableClassification(t *testing.T) {
 		{name: "nonstandard 599", err: errors.New("unexpected status from POST request to https://registry.example/v2/: 599 Network Connect Timeout Error"), want: true},
 		{name: "network failure", err: errors.New("dial tcp: connection refused"), want: true},
 		{name: "authentication failure", err: errors.New("unexpected status from HEAD request: 401 Unauthorized"), want: false},
+		{name: "registry port is not status", err: errors.New("unexpected status from HEAD request to https://registry.example:503/v2/runner/manifests/latest: 401 Unauthorized"), want: false},
+		{name: "numeric tag is not status", err: errors.New("pulling registry.example/runner:500: manifest unknown"), want: false},
 		{name: "missing manifest", err: errors.New("manifest unknown"), want: false},
 	}
 
