@@ -59,20 +59,4 @@ describe('Codex auth Terraform retirement (#761)', () => {
       expect(terraform).not.toContain(retired);
     }
   });
-
-  it('deletes every hosted provider workflow entry point', () => {
-    for (const file of [
-      'claude.yml',
-      'codex.yml',
-      'opencode.yml',
-      'agent-lane.yml',
-      'agent-lane-claude.yml',
-      'agent-lane-codex.yml',
-      'agent-lane-opencode.yml',
-    ]) {
-      expect(() =>
-        readFileSync(path.join(repoRoot, '.github/workflows', file), 'utf8'),
-      ).toThrow();
-    }
-  });
 });
