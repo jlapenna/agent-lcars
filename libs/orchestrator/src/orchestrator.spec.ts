@@ -435,6 +435,47 @@ describe('auto-retry on loss', () => {
     });
   });
 
+  it('does not classify a first caller request as a live automatic retry duplicate', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const original = await started(orchestrator, 'ordinary-request');
+    clock.advanceMinutes(121);
+    const swept = await orchestrator.sweepExpired();
+    const automaticRunId = swept.retried[0]?.newRunId as string;
+    const callerKey = `retry:${original.run.runId}`;
+
+    const whileAutomaticIsLive = await orchestrator.request({
+      taskId: TASK,
+      requestId: callerKey,
+      pipeline: original.run.pipeline,
+    });
+    expect(whileAutomaticIsLive).toMatchObject({
+      refused: true,
+      reason: 'task-busy',
+      existingRun: expect.objectContaining({ runId: automaticRunId }),
+    });
+
+    await orchestrator.report(automaticRunId, { ok: true });
+    const callerRun = await orchestrator.request({
+      taskId: TASK,
+      requestId: callerKey,
+      pipeline: original.run.pipeline,
+    });
+    if (isRefusal(callerRun)) throw new Error('caller request was refused');
+    const callerRunId = decidedRun(callerRun).runId;
+    expect((await store.readRun(callerRunId))?.requestSource).toBe('caller');
+
+    const replay = await orchestrator.request({
+      taskId: TASK,
+      requestId: callerKey,
+      pipeline: original.run.pipeline,
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: callerRunId }),
+    });
+  });
+
   it('stops retrying once a task has lost 3 runs in a row (budget exhausted)', async () => {
     const { clock, store, orchestrator } = fixture();
     await started(orchestrator, 'req-1');

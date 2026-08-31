@@ -2,8 +2,10 @@ import {
   isLive,
   isWorkAnchor,
   type OutboxEntry,
+  requestHistoryKey,
   type RequestSource,
   type Run,
+  runRequestHistoryKey,
   type RunResult,
   type Task,
   type TaskId,
@@ -90,13 +92,16 @@ export interface RequestRunInput {
  * A request to work a task.
  *
  * - No live run → start one, take the lock, enqueue its dispatch.
- * - Same requestId as the task's live run → that run, idempotently.
+ * - Same request source/id as the task's live run → that run, idempotently.
  * - Any other live run → refused: the lock is held.
  */
 export function requestRun(input: RequestRunInput): Decision | Refusal {
   const { now, taskId, activeRun, requestId } = input;
   if (activeRun !== undefined && isLive(activeRun.state)) {
-    if (activeRun.requestId === requestId) {
+    if (
+      runRequestHistoryKey(activeRun) ===
+      requestHistoryKey(input.requestSource ?? 'caller', requestId)
+    ) {
       return refused('duplicate-request', activeRun);
     }
     return refused('task-busy', activeRun);
