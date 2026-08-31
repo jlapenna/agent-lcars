@@ -131,7 +131,7 @@ jobs:
         run: bash packages/fleet-tools/tests/package-install.test.sh
 
       - name: Test generic OIDC POST transport (#1340)
-        run: bash .github/actions/request-control-plane/request.test.sh
+        run: bash .github/actions/oidc-post/oidc-post.test.sh
 
       - name: Reject retired control-plane dispatch admission
         run: bash tools/no-legacy-control-plane-request.test.sh

@@ -95,7 +95,7 @@ const PUBLISHED = {
   // JSON, one POST per line under a single minted token) is the
   // mint-once-reuse batch shape post-deploy-verify's per-issue loop needs,
   // and both empty means a bodyless POST (the reconcile endpoint's shape).
-  'request-control-plane': {
+  'oidc-post': {
     inputs: {
       endpoint: { required: true },
       audience: { required: true },

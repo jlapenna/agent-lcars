@@ -1,4 +1,4 @@
-name: Request control plane
+name: OIDC POST
 description: >-
   Mint a GitHub Actions OIDC token for the given audience and POST a
   caller-assembled JSON payload (or a bodyless request) to an Agent LCARS
@@ -57,4 +57,4 @@ runs:
         PAYLOAD: ${{ inputs.payload }}
         PAYLOADS: ${{ inputs.payloads }}
         TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
-      run: bash "$GITHUB_ACTION_PATH/request.sh"
+      run: bash "$GITHUB_ACTION_PATH/oidc-post.sh"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hermetic tests for request.sh: a PATH-shimmed curl records every
+# Hermetic tests for oidc-post.sh: a PATH-shimmed curl records every
 # invocation and plays back canned token-mint and POST responses, so the
 # real script logic (token mint, header/body assembly, bodyless POST,
 # response output encoding, batch attempt-all semantics, loud failure) runs
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 action_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-script="$action_dir/request.sh"
+script="$action_dir/oidc-post.sh"
 
 # The runner evaluates expression syntax anywhere in action metadata,
 # including descriptions. Repository vars are unavailable while loading a
@@ -43,7 +43,7 @@ if [ "${MULTILINE_RESPONSE:-}" = 'json' ]; then
   exit "$status"
 fi
 if [ "${MULTILINE_RESPONSE:-}" = 'delimiter' ]; then
-  printf 'request-control-plane-response\n{"ok":true}'
+  printf 'oidc-post-response\n{"ok":true}'
   exit "$status"
 fi
 printf '%s\n' "${line#* }"
@@ -171,10 +171,10 @@ test "$(sed -n '2,3p' "$workdir/github-output")" = $'{"accepted":\ntrue}' ||
 run $'0 unused' PAYLOAD='{"issue": 7}' MULTILINE_RESPONSE=delimiter
 test "$status" = 0 || fail "delimiter-collision response must succeed"
 test "$(sed -n '1p' "$workdir/github-output")" = \
-  'response<<request-control-plane-response_' ||
+  'response<<oidc-post-response_' ||
   fail "output delimiter must not collide with a response line"
 test "$(sed -n '2,3p' "$workdir/github-output")" = \
-  $'request-control-plane-response\n{"ok":true}' ||
+  $'oidc-post-response\n{"ok":true}' ||
   fail "delimiter-collision response must remain intact"
 
-echo "ok - request-control-plane request.sh"
+echo "ok - oidc-post oidc-post.sh"

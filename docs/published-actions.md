@@ -22,7 +22,7 @@ their operating constraints.
 | `merge-live-base`       | Merge the live base into a PR head before validation.              |
 | `setup-nx-remote-cache` | Configure trusted Nx jobs for the shared L2 cache.                 |
 | `deploy-verify`         | Poll a deployed URL and optionally annotate deployment status.     |
-| `request-control-plane` | Send an OIDC-authenticated request and expose its single response. |
+| `oidc-post`             | Send an OIDC-authenticated request and expose its single response. |
 
 ## Published reusable workflows
 
@@ -100,7 +100,7 @@ accepts.
   An action that relies on a sibling path must declare that dependency in its
   manifest.
 
-`request-control-plane` exposes the exact response body through its `response`
+`oidc-post` exposes the exact response body through its `response`
 output for a successful bodyless or `payload` request. Batch `payloads` mode
 has no singular response, so its output is empty. The action does not parse or
 assign endpoint-specific meaning to either response shape. GitHub-anchor
