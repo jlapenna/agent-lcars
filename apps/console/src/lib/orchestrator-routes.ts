@@ -104,10 +104,13 @@ function internalError(context: string, error: unknown): RouteResult {
   return { status: 500, body: { error: 'internal' } };
 }
 
-export async function handleWebhookDelivery(
+/** Projection ingestion is presentation-only. It must never turn a durable
+ * user work request into a failed webhook delivery. A later webhook or the
+ * explicit bounded backfill will retry the exact server-side refresh. */
+async function refreshGithubAnchorProjectionSafely(
   deps: OrchestratorRouteDeps,
   input: { event: string; deliveryId: string; payload: unknown },
-): Promise<RouteResult> {
+): Promise<void> {
   try {
     const deletedAnchor = githubAnchorProjectionDeletionFromDelivery(input);
     if (deletedAnchor !== undefined) {
@@ -115,16 +118,30 @@ export async function handleWebhookDelivery(
         deps.refreshGithubAnchorProjection ??
         refreshCurrentGithubAnchorProjection
       )(deletedAnchor, { deleted: true });
-    } else {
-      for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
-        await (
-          deps.refreshGithubAnchorProjection ??
-          refreshCurrentGithubAnchorProjection
-        )(anchor);
-      }
+      return;
     }
+    for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
+      await (
+        deps.refreshGithubAnchorProjection ??
+        refreshCurrentGithubAnchorProjection
+      )(anchor);
+    }
+  } catch (error) {
+    console.error(
+      `agent-lcars: projection refresh failed after webhook admission (${input.event}/${input.deliveryId})`,
+      error,
+    );
+  }
+}
+
+export async function handleWebhookDelivery(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+): Promise<RouteResult> {
+  try {
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
+      await refreshGithubAnchorProjectionSafely(deps, input);
       return { status: 200, body: { ignored: interpreted.reason } };
     }
 
@@ -148,9 +165,11 @@ export async function handleWebhookDelivery(
 
     if (isRefusal(outcome)) {
       if (outcome.reason === 'task-busy') {
+        await refreshGithubAnchorProjectionSafely(deps, input);
         return { status: 200, body: { refused: 'task-busy' } };
       }
       if (outcome.reason === 'duplicate-request') {
+        await refreshGithubAnchorProjectionSafely(deps, input);
         return {
           status: 200,
           body: { duplicate: true, runId: outcome.existingRun?.runId },
@@ -169,6 +188,7 @@ export async function handleWebhookDelivery(
     const drained = await deps.drain();
     // `request()` never refuses this outcome without carrying a run.
     const { runId } = decidedRun(outcome);
+    await refreshGithubAnchorProjectionSafely(deps, input);
     return {
       status: 200,
       body: {

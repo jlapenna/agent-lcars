@@ -18,6 +18,7 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 export const ANCHOR_RECONCILE_PAGE_SIZE = 100;
 export const ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY = 10;
+export const ANCHOR_RECONCILE_REFRESH_CONCURRENCY = 16;
 
 export class AnchorProjectionBackfillLimitError extends Error {
   override readonly name = 'AnchorProjectionBackfillLimitError';
@@ -231,6 +232,27 @@ export interface GithubAnchorProjectionRefreshDeps {
 
 const MAX_REFRESH_GENERATION_RETRIES = 3;
 
+async function mapWithBoundedConcurrency<T, R>(input: {
+  values: readonly T[];
+  concurrency: number;
+  map(value: T): Promise<R>;
+}): Promise<R[]> {
+  const results: R[] = new Array(input.values.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(input.concurrency, input.values.length) },
+    async () => {
+      while (true) {
+        const index = next++;
+        if (index >= input.values.length) return;
+        results[index] = await input.map(input.values[index] as T);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 /** One fence-protected exact refresh path for webhook invalidations and
  * backfill candidates. No webhook payload is merged into persisted state. */
 export async function refreshGithubAnchorProjection(
@@ -396,16 +418,21 @@ export async function reconcileGithubAnchorProjections(
         }
         anchorsForPage.push(projection.anchor);
       }
-      for (const anchor of anchorsForPage) {
-        const refreshed = await refreshGithubAnchorProjection(deps, anchor);
-        if (refreshed === undefined) {
-          throw new Error(
-            `GitHub anchor backfill unexpectedly removed ${anchor.repo}#${anchor.issue}`,
-          );
-        }
-        allProjections.push(refreshed);
-        anchors++;
-      }
+      const refreshed = await mapWithBoundedConcurrency({
+        values: anchorsForPage,
+        concurrency: ANCHOR_RECONCILE_REFRESH_CONCURRENCY,
+        map: async (anchor) => {
+          const projection = await refreshGithubAnchorProjection(deps, anchor);
+          if (projection === undefined) {
+            throw new Error(
+              `GitHub anchor backfill unexpectedly removed ${anchor.repo}#${anchor.issue}`,
+            );
+          }
+          return projection;
+        },
+      });
+      allProjections.push(...refreshed);
+      anchors += refreshed.length;
       if (issues.length < ANCHOR_RECONCILE_PAGE_SIZE) {
         complete = true;
         break;

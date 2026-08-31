@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY,
   ANCHOR_RECONCILE_PAGE_SIZE,
+  ANCHOR_RECONCILE_REFRESH_CONCURRENCY,
   AnchorProjectionBackfillLimitError,
   compareSelectedGithubAnchorProjections,
   enrichBackfillAnchors,
@@ -240,18 +241,32 @@ describe('reconcileGithubAnchorProjections', () => {
     expect(load).toHaveBeenCalledWith({ repo: REPO, issue: 42 });
   });
 
-  it('accepts exactly 1,000 anchors only after an empty sentinel page', async () => {
+  it('refreshes exactly 1,000 anchors with bounded exact-read concurrency', async () => {
     const listOpenIssues = vi.fn(async (_repository: string, page: number) =>
       page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY
-        ? Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor)
+        ? Array.from(
+            { length: ANCHOR_RECONCILE_PAGE_SIZE },
+            (_value, index) => ({
+              ...anchor,
+              number: (page - 1) * ANCHOR_RECONCILE_PAGE_SIZE + index + 1,
+            }),
+          )
         : [],
     );
+    let inFlight = 0;
+    let maxInFlight = 0;
     await expect(
       reconcileGithubAnchorProjections({
         store: new MemoryStore(),
         repositories: [REPO],
         listOpenIssues,
-        load: async () => projection(),
+        load: async (current) => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await Promise.resolve();
+          inFlight--;
+          return { ...projection(), anchor: current };
+        },
         now: () => '2026-08-30T12:00:01.000Z',
       }),
     ).resolves.toMatchObject({ anchors: 1000 });
@@ -259,6 +274,7 @@ describe('reconcileGithubAnchorProjections', () => {
       REPO,
       ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY + 1,
     );
+    expect(maxInFlight).toBe(ANCHOR_RECONCILE_REFRESH_CONCURRENCY);
   });
 
   it('rejects a non-empty sentinel instead of silently truncating', async () => {
@@ -268,10 +284,16 @@ describe('reconcileGithubAnchorProjections', () => {
         repositories: [REPO],
         listOpenIssues: vi.fn(async (_repository: string, page: number) =>
           page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY
-            ? Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor)
+            ? Array.from(
+                { length: ANCHOR_RECONCILE_PAGE_SIZE },
+                (_value, index) => ({
+                  ...anchor,
+                  number: (page - 1) * ANCHOR_RECONCILE_PAGE_SIZE + index + 1,
+                }),
+              )
             : [anchor],
         ),
-        load: async () => projection(),
+        load: async (current) => ({ ...projection(), anchor: current }),
         now: () => '2026-08-30T12:00:01.000Z',
       }),
     ).rejects.toBeInstanceOf(AnchorProjectionBackfillLimitError);
