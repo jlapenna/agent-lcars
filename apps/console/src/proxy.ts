@@ -35,6 +35,7 @@ export const publicRoutes = [
   '/api/logs/error',
   '/api/control-plane/reconcile',
   '/api/control-plane/request',
+  '/api/control-plane/projections/reconcile',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
 ];

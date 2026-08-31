@@ -43,10 +43,6 @@ import {
  * here is a different, sanctioned kind of dependency). */
 export const E2E_FIXTURE_REPOSITORY = 'supersprinklesracing/sprinkles';
 
-/** Mirrors `controlPlaneRepository()`'s default. The checked E2E environment
- * intentionally does not override it. */
-export const E2E_CONTROL_PLANE_REPOSITORY = 'jlapenna/agent-lcars';
-
 function firestoreStore(): FirestoreStore {
   return new FirestoreStore({
     projectId: process.env['PROJECT_ID'] ?? 'demo-no-project',

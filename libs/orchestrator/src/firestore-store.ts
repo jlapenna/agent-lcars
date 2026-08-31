@@ -2,6 +2,7 @@ import {
   type CollectionReference,
   type DocumentReference,
   FieldPath,
+  FieldValue,
   Firestore,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
@@ -9,6 +10,8 @@ import { z } from 'zod';
 import { type Decision, isRefusal, type Refusal } from './decide';
 import {
   byOutboxClaimFairness,
+  type GithubAnchorProjection,
+  githubAnchorProjectionSchema,
   isLive,
   isWorkAnchor,
   type LeasedOutboxEntry,
@@ -111,6 +114,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #migrationTasks: CollectionReference;
   readonly #migrationRuns: CollectionReference;
   readonly #migrationOutbox: CollectionReference;
+  readonly #githubAnchors: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
@@ -136,6 +140,7 @@ export class FirestoreStore implements OrchestratorStore {
     this.#migrationOutbox = this.#migrationFirestore.collection(
       `${prefix}outbox`,
     );
+    this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
   }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -220,7 +225,7 @@ export class FirestoreStore implements OrchestratorStore {
     const { decision, expectedRevision } = input;
     const taskRef = this.#taskRef(decision.task.task);
 
-    await this.#firestore.runTransaction(async (tx) => {
+    return this.#firestore.runTransaction(async (tx) => {
       // All reads before all writes, per Firestore transaction rules. Run/
       // outbox refs are computed below, after the read -- ref construction
       // isn't itself a read, so this still respects that ordering.
@@ -244,6 +249,83 @@ export class FirestoreStore implements OrchestratorStore {
       for (const entry of decision.outbox) {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
+    });
+  }
+
+  async beginGithubAnchorProjectionRefresh(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<number> {
+    const ref = this.#githubAnchorRef(anchor);
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      const generation =
+        typeof snapshot.data()?.['refreshGeneration'] === 'number'
+          ? snapshot.data()?.['refreshGeneration'] + 1
+          : 1;
+      tx.set(ref, { refreshGeneration: generation }, { merge: true });
+      return generation;
+    });
+  }
+
+  async applyGithubAnchorProjectionRefresh(input: {
+    anchor: GithubAnchorProjection['anchor'];
+    generation: number;
+    projection?: GithubAnchorProjection;
+  }): Promise<boolean> {
+    const ref = this.#githubAnchorRef(input.anchor);
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (snapshot.data()?.['refreshGeneration'] !== input.generation) {
+        return false;
+      }
+      if (input.projection === undefined) {
+        tx.set(ref, { refreshGeneration: input.generation });
+        return true;
+      }
+      const next = githubAnchorProjectionSchema.parse(input.projection);
+      if (taskKey(next.anchor) !== taskKey(input.anchor)) {
+        throw new Error(
+          'GitHub anchor refresh projection does not match its fence',
+        );
+      }
+      tx.set(ref, {
+        projection: next,
+        refreshGeneration: input.generation,
+        ...(next.state === 'open'
+          ? { openUpdatedAt: next.sourceUpdatedAt }
+          : { openUpdatedAt: FieldValue.delete() }),
+      });
+      return true;
+    });
+  }
+
+  async readGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection | undefined> {
+    const snapshot = await this.#githubAnchorRef(anchor).get();
+    const projection = snapshot.data()?.['projection'];
+    return projection === undefined
+      ? undefined
+      : githubAnchorProjectionSchema.parse(projection);
+  }
+
+  async listOpenGithubAnchorProjections(
+    limit = 200,
+  ): Promise<GithubAnchorProjection[]> {
+    // `openUpdatedAt` is present only on open anchors. Ordering this single
+    // field is served by Firestore's automatic index and bounds the read at
+    // the datastore without a state+order composite index.
+    const snapshot = await this.#githubAnchors
+      .orderBy('openUpdatedAt', 'desc')
+      .limit(limit)
+      .get();
+    return snapshot.docs.flatMap((doc) => {
+      const projection = githubAnchorProjectionSchema.parse(
+        doc.data()['projection'],
+      );
+      // A pre-fence document may retain its old index field. Never present a
+      // closed snapshot as an open queue item while the backfill refreshes it.
+      return projection.state === 'open' ? [projection] : [];
     });
   }
 
@@ -702,5 +784,11 @@ export class FirestoreStore implements OrchestratorStore {
 
   #outboxRef(entryId: string): DocumentReference {
     return this.#outbox.doc(encodeURIComponent(entryId));
+  }
+
+  #githubAnchorRef(
+    anchor: GithubAnchorProjection['anchor'],
+  ): DocumentReference {
+    return this.#githubAnchors.doc(encodeURIComponent(taskKey(anchor)));
   }
 }

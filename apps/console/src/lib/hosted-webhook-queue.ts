@@ -10,6 +10,11 @@ export interface GitHubWebhookEnvelope {
   deliveryId: string;
   eventName: string;
   signature: string;
+  /** Starts a new durable retry lifecycle after a projection repair reaches
+   * its Cloud Tasks retry budget. This is independent from the new task's
+   * retry count, and travels as an internal task header so each successor can
+   * allocate a distinct name after its own retry budget is exhausted. */
+  repairGeneration?: number;
 }
 
 export interface WebhookTask {
@@ -80,13 +85,24 @@ export async function enqueueGitHubWebhook(
   const target = `${required('AUTH_URL').replace(/\/$/u, '')}/api/control-plane/webhook/process`;
   try {
     await queue.enqueue({
-      taskId: `github-${envelope.deliveryId.toLowerCase()}`,
+      taskId: `github-${envelope.deliveryId.toLowerCase()}${
+        envelope.repairGeneration === undefined
+          ? ''
+          : `-repair-${envelope.repairGeneration}`
+      }`,
       url: target,
       headers: {
         'content-type': 'application/json',
         'x-github-delivery': envelope.deliveryId,
         'x-github-event': envelope.eventName,
         'x-hub-signature-256': envelope.signature,
+        ...(envelope.repairGeneration === undefined
+          ? {}
+          : {
+              'x-agent-lcars-projection-repair-generation': String(
+                envelope.repairGeneration,
+              ),
+            }),
       },
       body: envelope.rawBody,
     });

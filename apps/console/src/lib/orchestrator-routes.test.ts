@@ -14,6 +14,7 @@ import {
   handleReconcile,
   handleWebhookDelivery,
   type OrchestratorRouteDeps,
+  ProjectionRefreshError,
 } from './orchestrator-routes';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
@@ -113,6 +114,24 @@ function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function completeIssuePayload(overrides: Record<string, unknown> = {}) {
+  return labeledIssuePayload({
+    issue: {
+      number: ISSUE.issue,
+      title: 'Persist this webhook anchor',
+      body: 'Queue rendering must read the control-plane projection.',
+      html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}`,
+      state: 'open',
+      updated_at: T0,
+      user: { login: 'jlapenna' },
+      labels: [{ name: 'bug' }],
+      assignees: [],
+    },
+    label: { name: 'bug' },
+    ...overrides,
+  });
+}
+
 /** Drives a full label-delivery -> request -> dispatch cycle and returns the
  *  resulting runId, for tests that need an already-running run to build on. */
 async function dispatchedRun(
@@ -128,6 +147,47 @@ async function dispatchedRun(
 }
 
 describe('handleWebhookDelivery', () => {
+  it('uses a complete unassigned delivery as an exact projection refresh signal', async () => {
+    const { deps } = fixture();
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    deps.refreshGithubAnchorProjection = refresh;
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'anchor-only-delivery',
+      payload: completeIssuePayload(),
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'no-trigger-label' },
+    });
+    expect(refresh).toHaveBeenCalledWith(ISSUE);
+  });
+
+  it('refreshes the affected PR after a submitted or dismissed review', async () => {
+    const { deps } = fixture();
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    deps.refreshGithubAnchorProjection = refresh;
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'pull_request_review',
+      deliveryId: 'review-state-delivery',
+      payload: {
+        action: 'dismissed',
+        repository: { full_name: REPO },
+        pull_request: { number: ISSUE.issue },
+        review: { id: 1234 },
+      },
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-event' },
+    });
+    expect(refresh).toHaveBeenCalledWith(ISSUE);
+  });
+
   it('ignores a delivery with no trigger label', async () => {
     const { deps } = fixture();
     const result = await handleWebhookDelivery(deps, {
@@ -138,6 +198,24 @@ describe('handleWebhookDelivery', () => {
     expect(result).toEqual({
       status: 200,
       body: { ignored: 'no-trigger-label' },
+    });
+  });
+
+  it('keeps a projection-only refresh failure retryable', async () => {
+    const { deps } = fixture();
+    deps.refreshGithubAnchorProjection = vi
+      .fn()
+      .mockRejectedValue(new Error('projection store unavailable'));
+
+    await expect(
+      handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'projection-refresh-retry',
+        payload: completeIssuePayload(),
+      }),
+    ).rejects.toMatchObject({
+      name: ProjectionRefreshError.name,
+      message: 'Projection refresh failed for issues/projection-refresh-retry',
     });
   });
 

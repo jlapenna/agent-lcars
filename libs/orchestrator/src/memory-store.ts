@@ -1,5 +1,6 @@
 import { type Decision, isRefusal, type Refusal } from './decide';
 import type {
+  GithubAnchorProjection,
   LeasedOutboxEntry,
   OutboxEntry,
   RequestSource,
@@ -9,6 +10,7 @@ import type {
 } from './model';
 import {
   byOutboxClaimFairness,
+  githubAnchorProjectionSchema,
   isLive,
   isWorkAnchor,
   requestHistoryKey,
@@ -44,6 +46,10 @@ export class MemoryStore implements OrchestratorStore {
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
   readonly #outbox = new Map<string, OutboxEntry>();
+  readonly #githubAnchorProjections = new Map<
+    string,
+    { projection?: GithubAnchorProjection; refreshGeneration: number }
+  >();
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
@@ -136,6 +142,76 @@ export class MemoryStore implements OrchestratorStore {
 
   #requestKey(id: TaskId, source: RequestSource, requestId: string): string {
     return JSON.stringify([taskKey(id), requestHistoryKey(source, requestId)]);
+  }
+
+  async beginGithubAnchorProjectionRefresh(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<number> {
+    const key = taskKey(anchor);
+    const current = this.#githubAnchorProjections.get(key);
+    const refreshGeneration = (current?.refreshGeneration ?? 0) + 1;
+    this.#githubAnchorProjections.set(key, {
+      ...(current?.projection === undefined
+        ? {}
+        : { projection: structuredClone(current.projection) }),
+      refreshGeneration,
+    });
+    return refreshGeneration;
+  }
+
+  async applyGithubAnchorProjectionRefresh(input: {
+    anchor: GithubAnchorProjection['anchor'];
+    generation: number;
+    projection?: GithubAnchorProjection;
+  }): Promise<boolean> {
+    const key = taskKey(input.anchor);
+    const current = this.#githubAnchorProjections.get(key);
+    if (current?.refreshGeneration !== input.generation) return false;
+    if (input.projection === undefined) {
+      this.#githubAnchorProjections.set(key, {
+        refreshGeneration: input.generation,
+      });
+      return true;
+    }
+    if (taskKey(input.projection.anchor) !== key) {
+      throw new Error(
+        'GitHub anchor refresh projection does not match its fence',
+      );
+    }
+    this.#githubAnchorProjections.set(key, {
+      projection: structuredClone(
+        githubAnchorProjectionSchema.parse(input.projection),
+      ),
+      refreshGeneration: input.generation,
+    });
+    return true;
+  }
+
+  async readGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection | undefined> {
+    const projection = this.#githubAnchorProjections.get(
+      taskKey(anchor),
+    )?.projection;
+    return projection === undefined ? undefined : structuredClone(projection);
+  }
+
+  async listOpenGithubAnchorProjections(
+    limit = 200,
+  ): Promise<GithubAnchorProjection[]> {
+    return structuredClone(
+      [...this.#githubAnchorProjections.values()]
+        .flatMap((entry) =>
+          entry.projection === undefined ? [] : [entry.projection],
+        )
+        .filter((projection) => projection.state === 'open')
+        .sort(
+          (left, right) =>
+            right.sourceUpdatedAt.localeCompare(left.sourceUpdatedAt) ||
+            taskKey(right.anchor).localeCompare(taskKey(left.anchor)),
+        )
+        .slice(0, limit),
+    );
   }
 
   async claimPendingOutbox(input: {

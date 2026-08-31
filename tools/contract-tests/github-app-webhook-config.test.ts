@@ -59,7 +59,14 @@ describe('GitHub App webhook configuration', () => {
         if (path === '/app' && !options?.method) {
           return response({
             slug: 'agent-lcars',
-            events: ['issues', 'issue_comment', 'pull_request'],
+            events: [
+              'check_run',
+              'issue_comment',
+              'issues',
+              'pull_request',
+              'pull_request_review',
+              'pull_request_review_thread',
+            ],
             hook_attributes: { active: true, url: webhookUrl },
           });
         }
@@ -78,7 +85,14 @@ describe('GitHub App webhook configuration', () => {
       app: 'agent-lcars',
       url: webhookUrl,
       contentType: 'json',
-      events: ['issue_comment', 'issues', 'pull_request'],
+      events: [
+        'check_run',
+        'issue_comment',
+        'issues',
+        'pull_request',
+        'pull_request_review',
+        'pull_request_review_thread',
+      ],
     });
     const patch = fetchImpl.mock.calls.find(
       ([url, options]) =>
@@ -147,7 +161,14 @@ describe('GitHub App webhook configuration', () => {
           if (path === '/app' && !options?.method) {
             return response({
               slug: 'agent-lcars',
-              events: ['issues', 'issue_comment', 'pull_request'],
+              events: [
+                'check_run',
+                'issue_comment',
+                'issues',
+                'pull_request',
+                'pull_request_review',
+                'pull_request_review_thread',
+              ],
               ...(hookAttributes ? { hook_attributes: hookAttributes } : {}),
             });
           }
@@ -172,7 +193,13 @@ describe('GitHub App webhook configuration', () => {
     const fetchImpl = vi.fn(async () =>
       response({
         slug: 'agent-lcars',
-        events: ['issues', 'pull_request'],
+        events: [
+          'check_run',
+          'issues',
+          'pull_request',
+          'pull_request_review',
+          'pull_request_review_thread',
+        ],
         hook_attributes: { active: true },
       }),
     );

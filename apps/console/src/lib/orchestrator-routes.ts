@@ -11,6 +11,11 @@ import {
   defaultDispatchRequestId,
   type parseHostedDispatchRequestBody,
 } from '@/lib/control-plane-request';
+import {
+  githubAnchorProjectionAnchorsFromDelivery,
+  githubAnchorProjectionDeletionFromDelivery,
+} from '@/lib/github-anchor-projection';
+import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-reconcile';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 
@@ -19,15 +24,23 @@ import { interpretDelivery } from '@/lib/orchestrator-ingest';
  * `app/api/**` so they can be driven directly in tests without Next.js's
  * Request/Response plumbing. Each route file is a thin shell: verify auth,
  * parse the body, call the matching handler here, forward its
- * `{status, body}` verbatim. No handler here ever throws -- an unexpected
- * failure is caught and turned into a 500 with an opaque body so nothing
- * from `error` (which may carry request internals) reaches the caller.
+ * `{status, body}` verbatim. Unexpected failures are caught and turned into
+ * a 500 with an opaque body so nothing from `error` (which may carry request
+ * internals) reaches the caller. A projection-only refresh failure is the
+ * narrow exception: it deliberately reaches the Cloud Tasks shell so that
+ * the durable delivery remains retryable.
  */
 
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   drain: () => Promise<DrainOutboxResult>;
+  /** Test seam for the exact server-side refresh; production uses the shared
+   * reconciler rather than interpreting partial webhook payloads. */
+  refreshGithubAnchorProjection?: (
+    anchor: TaskId,
+    input?: { deleted?: boolean },
+  ) => Promise<void>;
 }
 
 export type HostedDispatchRequestBody = ReturnType<
@@ -35,6 +48,13 @@ export type HostedDispatchRequestBody = ReturnType<
 >;
 
 type RouteResult = { status: number; body: Record<string, unknown> };
+
+/** A projection-only failure must outlive the generic poison-delivery cap:
+ * no work admission was attempted, and a deleted anchor may never emit a
+ * later event or appear in the open-anchor backfill. */
+export class ProjectionRefreshError extends Error {
+  override readonly name = 'ProjectionRefreshError';
+}
 
 /**
  * A label re-request has no reply text of its own.  Put this opaque marker
@@ -93,6 +113,41 @@ function internalError(context: string, error: unknown): RouteResult {
   return { status: 500, body: { error: 'internal' } };
 }
 
+/** Projection ingestion is presentation-only after a durable work admission.
+ * Projection-only deliveries deliberately rethrow so Cloud Tasks retries a
+ * failed tombstone/snapshot instead of permanently acknowledging it. */
+async function refreshGithubAnchorProjection(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+): Promise<void> {
+  const deletedAnchor = githubAnchorProjectionDeletionFromDelivery(input);
+  if (deletedAnchor !== undefined) {
+    await (
+      deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
+    )(deletedAnchor, { deleted: true });
+    return;
+  }
+  for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
+    await (
+      deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
+    )(anchor);
+  }
+}
+
+async function refreshGithubAnchorProjectionAfterAdmission(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+): Promise<void> {
+  try {
+    await refreshGithubAnchorProjection(deps, input);
+  } catch (error) {
+    console.error(
+      `agent-lcars: projection refresh failed after webhook admission (${input.event}/${input.deliveryId})`,
+      error,
+    );
+  }
+}
+
 export async function handleWebhookDelivery(
   deps: OrchestratorRouteDeps,
   input: { event: string; deliveryId: string; payload: unknown },
@@ -100,6 +155,14 @@ export async function handleWebhookDelivery(
   try {
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
+      try {
+        await refreshGithubAnchorProjection(deps, input);
+      } catch (error) {
+        throw new ProjectionRefreshError(
+          `Projection refresh failed for ${input.event}/${input.deliveryId}`,
+          { cause: error },
+        );
+      }
       return { status: 200, body: { ignored: interpreted.reason } };
     }
 
@@ -123,9 +186,11 @@ export async function handleWebhookDelivery(
 
     if (isRefusal(outcome)) {
       if (outcome.reason === 'task-busy') {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
         return { status: 200, body: { refused: 'task-busy' } };
       }
       if (outcome.reason === 'duplicate-request') {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
         return {
           status: 200,
           body: { duplicate: true, runId: outcome.existingRun?.runId },
@@ -144,6 +209,7 @@ export async function handleWebhookDelivery(
     const drained = await deps.drain();
     // `request()` never refuses this outcome without carrying a run.
     const { runId } = decidedRun(outcome);
+    await refreshGithubAnchorProjectionAfterAdmission(deps, input);
     return {
       status: 200,
       body: {
@@ -152,6 +218,7 @@ export async function handleWebhookDelivery(
       },
     };
   } catch (error) {
+    if (error instanceof ProjectionRefreshError) throw error;
     return internalError('webhook delivery', error);
   }
 }

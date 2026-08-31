@@ -8,7 +8,7 @@ import {
 import { expectMobileBridgeHeader } from './util/console-layout';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
 import {
-  E2E_CONTROL_PLANE_REPOSITORY,
+  E2E_FIXTURE_REPOSITORY,
   readActiveOrchestratorRun,
 } from './util/orchestrator-seed';
 
@@ -134,7 +134,7 @@ test.describe('populated dashboard', () => {
       .poll(() =>
         readActiveOrchestratorRun({
           issue: E2E_ITEM_NUMBERS.humanNeeded,
-          repository: E2E_CONTROL_PLANE_REPOSITORY,
+          repository: E2E_FIXTURE_REPOSITORY,
         }),
       )
       .toMatchObject({ pipeline: 'claude', state: 'running' });
@@ -150,7 +150,7 @@ test.describe('populated dashboard', () => {
       .poll(() =>
         readActiveOrchestratorRun({
           issue: E2E_ITEM_NUMBERS.humanNeeded,
-          repository: E2E_CONTROL_PLANE_REPOSITORY,
+          repository: E2E_FIXTURE_REPOSITORY,
         }),
       )
       .toMatchObject({ pipeline: 'codex', state: 'running' });

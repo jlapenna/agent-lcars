@@ -52,6 +52,22 @@ describe('hosted GitHub webhook queue', () => {
     });
   });
 
+  it('carries a repair generation in the successor task envelope', async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    const queue: WebhookTaskQueue = { enqueue };
+
+    await enqueueGitHubWebhook({ ...envelope, repairGeneration: 2 }, queue);
+
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: `github-${envelope.deliveryId}-repair-2`,
+        headers: expect.objectContaining({
+          'x-agent-lcars-projection-repair-generation': '2',
+        }),
+      }),
+    );
+  });
+
   it('propagates failures that did not establish durable ownership', async () => {
     const error = Object.assign(new Error('unavailable'), { code: 14 });
     const queue: WebhookTaskQueue = {

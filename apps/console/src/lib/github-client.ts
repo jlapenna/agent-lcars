@@ -29,8 +29,8 @@ export {
 };
 
 // The dashboard fans out ~26 GitHub calls per load across
-// agent-activity.ts/action-items.ts/item-enrichment.ts (see #13, filed
-// alongside the original unthrottled fan-out). A 429/secondary-rate-limit
+// explicit detail and bounded control actions (see #13, filed alongside the
+// original unthrottled fan-out). A 429/secondary-rate-limit
 // used to just be a rejected promise that degraded that section to a
 // warning banner; retry a small bounded number of times first so a single
 // rate-limited call doesn't need the whole section to fail.
@@ -122,16 +122,18 @@ const ThrottledOctokit = Octokit.plugin(retry, throttling);
  * for the Quick Task claim protocol, `repos.get`'s metadata). Requesting a
  * permission the GitHub App itself was never granted fails EVERY mint for
  * EVERY request, not just the one call site that needed it -- so this
- * deliberately excludes `checks`/`administration`, the two gaps #1284's
- * permission audit found. Runner fleet status no longer needs
+ * deliberately excludes `administration`, the gap #1284's permission audit
+ * found. `checks:read` is required solely by the explicitly invoked anchor
+ * projection backfill to persist check-run state; it is never a queue-render
+ * read. Runner fleet status no longer needs
  * `administration:read`: it comes from the control plane's autoscaler
  * telemetry, rather than GitHub's repository-scoped runner endpoint. The
- * remaining `checks:read` gap is `item-enrichment.ts`'s GraphQL
- * `statusCheckRollup` field, which degrades through partial-GraphQL-error
- * handling rather than crashing -- see that file's own comments.
+ * Queue discovery no longer requires checks or GraphQL: its data comes from
+ * the webhook-backed control-plane projection.
  */
 const CONSOLE_GITHUB_CLIENT_PERMISSIONS: Record<string, string> = {
   actions: 'write',
+  checks: 'read',
   contents: 'write',
   issues: 'write',
   pull_requests: 'write',

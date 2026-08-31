@@ -1,5 +1,6 @@
 import type { Decision, Refusal } from './decide';
 import type {
+  GithubAnchorProjection,
   LeasedOutboxEntry,
   RequestSource,
   Run,
@@ -62,6 +63,37 @@ export interface OrchestratorStore {
     /** Revision the decision was computed against; undefined = task is new. */
     expectedRevision: number | undefined;
   }): Promise<void>;
+
+  /**
+   * Starts one bounded exact-GitHub refresh for an anchor. The returned
+   * generation is a fence: only its matching apply may replace the stored
+   * snapshot. A later webhook/backfill refresh therefore makes any older
+   * in-flight GitHub read harmless without interpreting partial deliveries.
+   */
+  beginGithubAnchorProjectionRefresh(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<number>;
+
+  /** Replaces the projection only if this refresh generation is still live. */
+  applyGithubAnchorProjectionRefresh(input: {
+    anchor: GithubAnchorProjection['anchor'];
+    generation: number;
+    /** Omitted only for an explicit GitHub deletion tombstone. */
+    projection?: GithubAnchorProjection;
+  }): Promise<boolean>;
+
+  /** Reads one stored GitHub-anchor projection for webhook signal updates.
+   * This is a point lookup, never a queue-discovery primitive. */
+  readGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection | undefined>;
+
+  /** Every currently-open GitHub anchor known to the control plane, newest
+   * source update first. Phase 2 will use this bounded server-owned feed for
+   * Bridge, Inbox, and Agents after the explicit projection backfill. */
+  listOpenGithubAnchorProjections(
+    limit?: number,
+  ): Promise<GithubAnchorProjection[]>;
 
   /**
    * Atomically leases up to `limit` pending or expired outbox entries. Every
