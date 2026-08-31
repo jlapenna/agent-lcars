@@ -291,6 +291,14 @@ or can exhaust its turn/time budget at any moment, and every unpushed byte
 is lost with it — this is not a hypothetical, it is the single most common
 way a headless run silently loses real, correct work.
 
+Verification is proportional. A repository's fast local checks and focused
+unit/type/lint tests establish the coherent slice; **local E2E is optional,
+not deliverable proof**. CI owns required E2E: push the ready slice so its
+repository workflow can select and run the browser gate. Run local E2E only
+when it materially helps diagnose or reproduce a specific browser failure;
+never hold a ready push or PR open solely to complete it. Repository-local
+instructions define the command and any additional focused verification.
+
 For every ready, non-parked pull request you open, **do not request human
 review**. Fleet repositories require zero approving reviews for agent-authored
 PRs; a review request is friction, not a handoff. Immediately arm squash

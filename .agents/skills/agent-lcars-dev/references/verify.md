@@ -35,9 +35,14 @@ the rest.
 
 ## Console e2e
 
-`pnpm verify` does **not** run the console e2e suite. When a change touches
-anything the dashboard renders or fetches — `apps/console/src/lib`, a Server
-Action, the e2e GitHub fixture — run it too:
+`pnpm verify` does **not** run the console e2e suite locally. **CI owns the
+required E2E gate:** its E2E job conservatively selects affected console and
+harness changes on every push and runs the hermetic suite. Local E2E is
+optional diagnostic evidence, useful for reproducing or iterating on a
+specific browser failure, but it is never required before pushing or part of
+deliverable proof.
+
+When a local reproduction is useful, use the same hermetic entrypoint as CI:
 
 ```bash
 ./tools/nx run @agent-lcars/console-e2e:e2e-local
@@ -76,9 +81,9 @@ multi-minute feedback loop:
 None of these are reliably caught by unit tests or typecheck (#537). Treat
 any change that adds/removes a `'use client'` directive, moves a component
 across the server/client line, or touches `apps/console/src/app`'s
-navigation/layout as boundary-adjacent, and run `console-e2e:e2e-local`
-(above) before pushing it — not just when one of the four examples above
-literally recurs, but as a standing habit for anything boundary-shaped.
+navigation/layout as boundary-adjacent. CI will run the browser gate for that
+change; run `console-e2e:e2e-local` (above) locally only when debugging or
+reproducing a boundary failure.
 
 Use `'use server'` only for exported Server Functions/Actions; it is not a
 general replacement for `server-only`. Vitest aliases `server-only` to a
@@ -89,9 +94,10 @@ module enters the client graph.
 An `apps/console`-affected push also gets a fast production `next build`
 smoke in the pre-push hook (`tools/console-build-smoke.sh`), which catches
 class 1 and prerenderable cases of class 3 in well under a minute. It is
-not a substitute for `e2e-local`: a build can't see anything that only
+not a substitute for CI's E2E gate: a build can't see anything that only
 breaks at request time on a non-prerendered route or in a real browser
-(class 4 stays e2e-only until #503 is understood).
+(class 4 stays browser-e2e-only until #503 is understood). Local E2E remains
+available for focused diagnosis, but is not required to deliver the change.
 
 Use that target, not `:e2e` directly. It sets up the same environment CI's
 "Prepare E2E environment" step does (materializing `.env.e2e` from

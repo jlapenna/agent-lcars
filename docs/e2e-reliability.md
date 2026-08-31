@@ -56,7 +56,11 @@ not become the default assertion for an entire page.
 
 ## Harness rules
 
-- Use `./tools/nx run @agent-lcars/console-e2e:e2e-local` so the documented
+- CI owns the required E2E gate. Its E2E workflow conservatively selects
+  affected console and harness changes and runs the hermetic suite. Local E2E
+  is optional; do not make it a delivery prerequisite.
+- When local reproduction is useful, use
+  `./tools/nx run @agent-lcars/console-e2e:e2e-local` so the documented
   credential-free environment is created consistently.
 - Give each host-direct run a run-scoped Nx L1 cache. Another worktree must not
   be able to delete build output while the suite is using it.
@@ -83,8 +87,9 @@ the Homelab Terraform workflow and need their own reviewed plan and apply.
    artifacts.
 3. For a browser failure, inspect the Playwright report, trace, screenshot, and
    error context together.
-4. Reproduce the smallest stable test locally with `E2E_GREP`, then run the
-   complete local E2E target before delivery.
+4. When local reproduction will speed diagnosis, use `E2E_GREP` for the
+   smallest stable test. Push the fix once the proportional local checks pass;
+   CI owns the complete required E2E run.
 5. Fix the product contract or harness cause. Never regenerate a baseline only
    to turn the check green.
 
