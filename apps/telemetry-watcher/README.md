@@ -174,6 +174,38 @@ short-lived credentials file) instead of a key JSON blob — see
 ./tools/nx run @agent-lcars/telemetry-watcher:serve
 ```
 
+## Session schema backfill
+
+`session-schema-backfill-cli` is the only supported repair path for telemetry
+documents written before explicit provider, repository, and archive
+renderability metadata became mandatory. First inventory at most 200 current
+documents with the telemetry writer identity, then prepare a reviewed JSON
+manifest with an explicit `sessionId`, `agent`, `repo`, and (for issue-agent
+sessions) `renderable` value for each record. It never guesses from a primary
+repo, an archive URI, or a provider default. The command is dry-run by default;
+`--apply` is the separately approved write step.
+
+```bash
+./tools/nx run @agent-lcars/telemetry-watcher:session-schema-backfill-cli
+node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --inventory --limit 200
+node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --inventory --limit 200 --cursor '<nextCursor from the prior page>'
+node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --manifest reviewed-sessions.json
+node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --manifest reviewed-sessions.json --apply
+```
+
+Inventory is document-ID ordered, asks Firestore for at most `limit + 1`, and
+prints `hasMore` plus `nextCursor`. Repeat the bounded command with that cursor
+until `hasMore` is `false`; a first page alone is not clean-inventory proof.
+The manifest is an operator-reviewed record, not generated data: for example,
+`{"sessions":[{"sessionId":"...","agent":"codex","repo":{"owner":"jlapenna","name":"agent-lcars"}}]}`.
+This is a one-time #1632 migration boundary. Keep the CLI and its fixed store
+only until inventory, dry-run, apply, and a clean follow-up inventory are
+recorded; phase 2 removes this target and the legacy readers together. On
+`--apply`, each record is re-read and validated inside one Firestore
+transaction before its fixed metadata patch is written, so a concurrent
+watcher update conflicts rather than being overwritten. It is not a general
+Firestore administration surface.
+
 ## Bundle (runner sidecar)
 
 The `bundle` Nx target produces the single self-contained file the

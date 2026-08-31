@@ -21,9 +21,10 @@ describe('createStoreFromConfig', () => {
       firestoreEmulatorHost: 'localhost:8080',
     });
 
-    expect(firestoreSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ emulatorHost: 'localhost:8080' }),
-    );
+    expect(firestoreSpy).toHaveBeenCalledWith({
+      projectId: 'demo-agent-telemetry',
+      emulatorHost: 'localhost:8080',
+    });
   });
 
   it('uses real Firestore credentials when a project id and writer key are configured', () => {
