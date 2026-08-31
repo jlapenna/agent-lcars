@@ -138,9 +138,9 @@ async function refreshGithubAnchorProjectionAfterAdmission(
   try {
     await refreshGithubAnchorProjection(deps, input);
   } catch (error) {
-    console.error(
-      `agent-lcars: projection refresh failed after webhook admission (${input.event}/${input.deliveryId})`,
-      error,
+    throw new ProjectionRefreshError(
+      `Projection refresh failed after admission for ${input.event}/${input.deliveryId}`,
+      { cause: error },
     );
   }
 }

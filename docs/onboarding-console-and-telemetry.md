@@ -131,9 +131,10 @@ set in this repo's `apphosting.yaml`): a JSON array of
 ]
 ```
 
-- Leaving `AGENT_LCARS_WATCHED_REPOS` unset reproduces today's
-  single-repo behavior exactly (`DEFAULT_WATCHED_REPOS`) — it must be set
-  explicitly to add a second repo, not just left to "pick up" the new one.
+- `AGENT_LCARS_WATCHED_REPOS` is required and must exactly match
+  `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`. The console rejects a missing or
+  divergent repository configuration rather than silently watching a default
+  repository that webhook ingestion does not admit.
 - `alias` is purely cosmetic: when set, the UI's repo badges/titles
   (`repoDisplayName()`) show it instead of the `owner/name` form
   `repoKey()` produces. It never affects GitHub API calls, URLs, or the

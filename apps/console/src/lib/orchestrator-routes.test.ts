@@ -99,6 +99,7 @@ function fixture(
         fetchImpl,
         now: () => clock.now(),
       }),
+    refreshGithubAnchorProjection: vi.fn().mockResolvedValue(undefined),
   };
   return { clock, store, orchestrator, deps, calls };
 }
@@ -270,6 +271,28 @@ describe('handleWebhookDelivery', () => {
 
     const run = await store.readRun(runId);
     expect(run?.state).toBe('running'); // confirmed by the drain
+  });
+
+  it('keeps an admitted trigger-label delivery retryable when projection refresh fails', async () => {
+    const { deps, store } = fixture();
+    deps.refreshGithubAnchorProjection = vi
+      .fn()
+      .mockRejectedValue(new Error('projection store unavailable'));
+
+    await expect(
+      handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'admitted-projection-refresh-retry',
+        payload: completeIssuePayload({ label: { name: 'agent:claude' } }),
+      }),
+    ).rejects.toMatchObject({
+      name: ProjectionRefreshError.name,
+      message:
+        'Projection refresh failed after admission for issues/admitted-projection-refresh-retry',
+    });
+    // The retry is safe: the first admission is already durable and the same
+    // delivery id is idempotent in the orchestrator.
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
   });
 
   it('treats a redelivery of the same deliveryId as a duplicate, no second run', async () => {

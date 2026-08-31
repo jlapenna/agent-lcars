@@ -676,11 +676,16 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
 
   afterEach(() => {
     delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+    delete process.env['AGENT_LCARS_WATCHED_REPOS'];
   });
 
   it('admits a second repository once the allow-list env var lists it', () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${REPO},${SECOND_REPO}`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'other-org', name: 'other-repo' },
+    ]);
 
     const result = interpretDelivery({
       event: 'issues',
@@ -702,6 +707,10 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
   it('still ignores a repository absent from the configured allow-list', () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${REPO},${SECOND_REPO}`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'other-org', name: 'other-repo' },
+    ]);
 
     const result = interpretDelivery({
       event: 'issues',

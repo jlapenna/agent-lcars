@@ -249,6 +249,10 @@ describe('schedules routes', () => {
     const otherRepo = 'other-org/other-repo';
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${controlPlaneRepository()},${otherRepo}`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'other-org', name: 'other-repo' },
+    ]);
     try {
       const ctx = context();
       const r = await call(ctx, 'PUT', `/schedules/${ID}`, {
@@ -258,6 +262,7 @@ describe('schedules routes', () => {
       expect(r.status).toBe(201);
     } finally {
       delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
     }
   });
 

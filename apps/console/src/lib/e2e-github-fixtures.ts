@@ -24,8 +24,7 @@ import type { AgentPipeline } from './watched-repo';
 const MAINTAINER = maintainerLogin();
 const FLEET = agentFleetLogin();
 
-/** The single repo the e2e environment watches (`DEFAULT_WATCHED_REPOS`,
- * since `tools/e2e/ci.env` sets no `AGENT_LCARS_WATCHED_REPOS`). */
+/** The single repo explicitly configured by `tools/e2e/ci.env`. */
 export const E2E_FIXTURE_REPO = {
   owner: 'supersprinklesracing',
   name: 'sprinkles',

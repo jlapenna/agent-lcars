@@ -47,6 +47,7 @@ vi.mock('./github-client', async (importOriginal) => {
     ...actual,
     getGithubClient: vi.fn(),
     getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
+    primaryWatchedRepo: vi.fn(() => DEFAULT_REPO),
   };
 });
 

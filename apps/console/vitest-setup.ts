@@ -1,6 +1,21 @@
 // Vitest sibling of test-setup.ts (#2933/#2959/#2997/#3002/#3004).
 import { cleanup } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
+
+const TEST_HOME_REPOSITORY = 'jlapenna/agent-lcars';
+const TEST_WATCHED_REPOS = JSON.stringify([
+  { owner: 'jlapenna', name: 'agent-lcars' },
+]);
+
+// Repository identity is intentionally explicit in every deployed runtime.
+// Supply the same complete configuration to each unit test; individual tests
+// can still delete or replace a variable to assert malformed-config failures.
+beforeEach(() => {
+  process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] ??= TEST_HOME_REPOSITORY;
+  process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] ??=
+    TEST_HOME_REPOSITORY;
+  process.env['AGENT_LCARS_WATCHED_REPOS'] ??= TEST_WATCHED_REPOS;
+});
 
 // @testing-library/react only self-registers its per-test `cleanup()` when
 // it finds a global `afterEach` (dist/index.js: `typeof afterEach ===

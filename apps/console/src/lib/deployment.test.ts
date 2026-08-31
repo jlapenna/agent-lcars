@@ -23,6 +23,7 @@ const VARS = [
   'AGENT_LCARS_ARTIFACT_SHARE_BASE_URL',
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORY',
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
+  'AGENT_LCARS_WATCHED_REPOS',
   'AGENT_LCARS_CONSOLE_URL',
 ] as const;
 
@@ -31,8 +32,8 @@ afterEach(() => {
 });
 
 // The point of this module is that a fork changes config, not source. These
-// assert both halves: the override is honored, and the fallback keeps this
-// deployment working with nothing set.
+// Identity configuration is explicit; these assert parsing and admission
+// boundaries without allowing an unset deployment to silently drift.
 describe('deployment config', () => {
   it('reads the maintainer login from the environment', () => {
     process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone-else';
@@ -96,22 +97,26 @@ describe('deployment config', () => {
     });
   });
 
-  // #1190 slice 1: `controlPlaneRepositories` generalizes the single pinned
-  // repository into an allow-list, provably unchanged in production -- the
-  // unset case must still resolve to exactly the one home repo.
   describe('controlPlaneRepositories', () => {
-    it('defaults to exactly the home repo when unset', () => {
+    it('reads the explicit matching home-repo configuration', () => {
       expect(controlPlaneRepositories()).toEqual(['jlapenna/agent-lcars']);
     });
 
-    it('defaults to a single-var override wrapped in an array', () => {
-      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/controller';
-      expect(controlPlaneRepositories()).toEqual(['owner/controller']);
+    it('fails closed when the control-plane repository list is absent', () => {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+      expect(() => controlPlaneRepositories()).toThrow(
+        'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
+      );
     });
 
     it('parses a comma-separated list from the environment', () => {
       process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
         'jlapenna/agent-lcars, other-org/other-repo ,third-org/third-repo';
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+        { owner: 'other-org', name: 'other-repo' },
+        { owner: 'third-org', name: 'third-repo' },
+      ]);
       expect(controlPlaneRepositories()).toEqual([
         'jlapenna/agent-lcars',
         'other-org/other-repo',
@@ -141,13 +146,21 @@ describe('deployment config', () => {
         /must list at least one owner\/name repository/,
       );
     });
+
+    it('rejects a control-plane list that differs from watched repositories', () => {
+      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+        'jlapenna/agent-lcars,other-org/other-repo';
+      expect(() => controlPlaneRepositories()).toThrow(
+        'must exactly match AGENT_LCARS_WATCHED_REPOS',
+      );
+    });
   });
 
   // Exact, case-sensitive membership -- GitHub full names are
   // case-preserving, and the old equality check this replaces never
   // case-folded either.
   describe('isControlPlaneRepository', () => {
-    it('admits exactly the default home repo when nothing is configured', () => {
+    it('admits exactly the explicit home repository', () => {
       expect(isControlPlaneRepository('jlapenna/agent-lcars')).toBe(true);
       expect(isControlPlaneRepository('someone-else/other-repo')).toBe(false);
     });
@@ -164,6 +177,10 @@ describe('deployment config', () => {
     it('admits every repository configured in the allow-list', () => {
       process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
         'jlapenna/agent-lcars,other-org/other-repo';
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+        { owner: 'other-org', name: 'other-repo' },
+      ]);
       expect(isControlPlaneRepository('jlapenna/agent-lcars')).toBe(true);
       expect(isControlPlaneRepository('other-org/other-repo')).toBe(true);
       expect(isControlPlaneRepository('unlisted-org/unlisted-repo')).toBe(
@@ -172,7 +189,7 @@ describe('deployment config', () => {
     });
   });
 
-  it('falls back to this deployment when nothing is configured', () => {
+  it('uses the remaining deployment identity defaults', () => {
     expect(maintainerLogin()).toBe('jlapenna');
     expect(agentFleetLogin()).toBe('agent-lcars-bot');
     expect(consoleDescription()).toBe(

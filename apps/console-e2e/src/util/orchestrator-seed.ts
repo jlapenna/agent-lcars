@@ -33,8 +33,7 @@ import {
  * visible on the very next request the app server serves.
  */
 
-/** The one repo this e2e suite watches (`DEFAULT_WATCHED_REPOS`, since
- * `tools/e2e/ci.env` sets no `AGENT_LCARS_WATCHED_REPOS`) - mirrors
+/** The one repo explicitly configured in `tools/e2e/ci.env` - mirrors
  * `E2E_FIXTURE_REPO` in the frontend app's `lib/e2e-github-fixtures.ts`
  * (duplicated for the same module-boundary reason `seed.ts`'s other
  * mirrored constants are: this `platform:web` e2e project cannot import
