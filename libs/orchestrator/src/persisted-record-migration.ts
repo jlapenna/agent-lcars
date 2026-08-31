@@ -171,6 +171,19 @@ function invalidCursor(message: string): PersistedMigrationCursorError {
   return new PersistedMigrationCursorError(message);
 }
 
+/** A migration cursor is eventually used with `collection.doc(id)`, so it
+ * must name exactly one direct Firestore document rather than a path or a
+ * Firestore-reserved identifier. Keep this validation at the binary cursor
+ * boundary so malformed caller input reaches the route's declared 400. */
+function isDirectFirestoreDocumentId(documentId: string): boolean {
+  return (
+    !documentId.includes('/') &&
+    documentId !== '.' &&
+    documentId !== '..' &&
+    !/^__.*__$/u.test(documentId)
+  );
+}
+
 /** Opaque, kind-bound cursor. Its binary one-byte kind prefix leaves the raw
  * document-id bytes untouched before base64url encoding, so every valid
  * Firestore-sized id can advance this bounded census. */
@@ -179,7 +192,11 @@ export function encodePersistedMigrationCursor(
   documentId: string,
 ): string {
   const documentIdBytes = Buffer.from(documentId, 'utf8');
-  if (documentIdBytes.length === 0 || documentIdBytes.length > 1_500) {
+  if (
+    documentIdBytes.length === 0 ||
+    documentIdBytes.length > 1_500 ||
+    !isDirectFirestoreDocumentId(documentId)
+  ) {
     throw invalidCursor('Invalid persisted orchestrator inventory document id');
   }
   const cursor = Buffer.concat([
@@ -210,6 +227,9 @@ export function decodePersistedMigrationCursor(
     throw invalidCursor('Invalid persisted orchestrator inventory cursor');
   }
   const documentId = cursorBytes.subarray(1).toString('utf8');
+  if (!isDirectFirestoreDocumentId(documentId)) {
+    throw invalidCursor('Invalid persisted orchestrator inventory cursor');
+  }
   // Require the exact canonical form emitted above: it rejects malformed UTF-8
   // and non-canonical base64url rather than letting replacement characters
   // become a different anchor id.

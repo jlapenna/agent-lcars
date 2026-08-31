@@ -221,6 +221,17 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
           cursor: encodePersistedMigrationCursor('task', 'not-a-task'),
         }),
       ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
+      const directPathCursor = Buffer.concat([
+        Buffer.from([0x74]),
+        Buffer.from('a/b', 'utf8'),
+      ]).toString('base64url');
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: directPathCursor,
+        }),
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
     });
 
     it('does no partial write when a reviewed multi-record manifest is stale', async () => {

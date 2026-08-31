@@ -10,6 +10,7 @@ import {
   manifestId,
   PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
   PersistedMigrationConflict,
+  PersistedMigrationCursorError,
 } from './persisted-record-migration';
 
 const T = '2026-08-15T12:00:00.000Z';
@@ -130,6 +131,20 @@ describe('persisted orchestrator record inventory', () => {
       PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
     );
     expect(decodePersistedMigrationCursor(cursor, 'task')).toBe(documentId);
+  });
+
+  it('rejects cursor ids that cannot name one direct Firestore document', () => {
+    const directPathCursor = Buffer.concat([
+      Buffer.from([0x74]),
+      Buffer.from('a/b', 'utf8'),
+    ]).toString('base64url');
+
+    expect(() =>
+      decodePersistedMigrationCursor(directPathCursor, 'task'),
+    ).toThrow(PersistedMigrationCursorError);
+    expect(() => encodePersistedMigrationCursor('task', 'a/b')).toThrow(
+      PersistedMigrationCursorError,
+    );
   });
 
   it('fingerprints special numbers and Firestore value types distinctly', () => {
