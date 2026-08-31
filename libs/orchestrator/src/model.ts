@@ -43,6 +43,96 @@ export const githubAnchorSchema = z.strictObject({
 });
 export type GithubAnchor = z.infer<typeof githubAnchorSchema>;
 
+/**
+ * The console-facing snapshot of a GitHub anchor. GitHub remains the source
+ * of this metadata, but a webhook delivery writes the snapshot into the
+ * control plane so the queue never has to enumerate repositories at render
+ * time. It intentionally contains presentation and routing facts only;
+ * Task/Run remain the lifecycle authority.
+ */
+export const githubAnchorProjectionSchema = z.strictObject({
+  anchor: githubAnchorSchema,
+  kind: z.enum(['issue', 'pr']),
+  state: z.enum(['open', 'closed']),
+  title: z.string().min(1).max(256),
+  body: z.string().max(65_536),
+  url: z.string().min(1).max(2_048),
+  author: z.string().min(1).max(256).optional(),
+  labels: z.array(z.string().min(1).max(256)).max(256),
+  assigneeLogins: z.array(z.string().min(1).max(256)).max(256),
+  lastComment: z
+    .object({
+      body: z.string().max(65_536),
+      url: z.string().min(1).max(2_048),
+      author: z.string().min(1).max(256).optional(),
+    })
+    .optional(),
+  parentNumber: z.number().int().positive().max(GITHUB_ISSUE_MAX).optional(),
+  subIssues: z
+    .object({
+      total: z.number().int().nonnegative(),
+      completed: z.number().int().nonnegative(),
+    })
+    .optional(),
+  linkedIssueNumbers: z
+    .array(z.number().int().positive().max(GITHUB_ISSUE_MAX))
+    .max(256)
+    .optional(),
+  draft: z.boolean().optional(),
+  mergeableState: z
+    .enum([
+      'clean',
+      'dirty',
+      'blocked',
+      'unstable',
+      'behind',
+      'draft',
+      'unknown',
+    ])
+    .optional(),
+  requestedReviewerLogins: z
+    .array(z.string().min(1).max(256))
+    .max(256)
+    .optional(),
+  failingChecks: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(256),
+        url: z.string().min(1).max(2_048),
+      }),
+    )
+    .max(100)
+    .optional(),
+  checkRuns: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(256),
+        url: z.string().min(1).max(2_048),
+        status: z.string().min(1).max(64),
+        conclusion: z.string().max(64).nullable(),
+      }),
+    )
+    .max(100)
+    .optional(),
+  ciRunning: z.boolean().optional(),
+  unresolvedReviewThreadCount: z.number().int().nonnegative().optional(),
+  /** IDs are retained only for the bounded review-thread window so webhook
+   * redeliveries can update the count idempotently after cutover. */
+  unresolvedReviewThreadIds: z
+    .array(z.string().min(1).max(256))
+    .max(100)
+    .optional(),
+  checksTruncated: z.boolean().optional(),
+  reviewThreadsTruncated: z.boolean().optional(),
+  /** GitHub's own updated_at, used to reject an out-of-order webhook. */
+  sourceUpdatedAt: isoUtc,
+  /** When this control plane accepted the delivery. */
+  observedAt: isoUtc,
+});
+export type GithubAnchorProjection = z.infer<
+  typeof githubAnchorProjectionSchema
+>;
+
 /** Crockford base32, 26 characters: a ULID. Excludes I, L, O, U. */
 export const WORK_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 

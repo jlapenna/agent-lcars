@@ -314,6 +314,7 @@ describe('getGithubClient auth', () => {
       privateKeyPem: FAKE_PRIVATE_KEY_PEM,
       permissions: {
         actions: 'write',
+        checks: 'read',
         contents: 'write',
         issues: 'write',
         pull_requests: 'write',

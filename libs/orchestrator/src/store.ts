@@ -1,5 +1,6 @@
 import type { Decision, Refusal } from './decide';
 import type {
+  GithubAnchorProjection,
   LeasedOutboxEntry,
   RequestSource,
   Run,
@@ -62,6 +63,30 @@ export interface OrchestratorStore {
     /** Revision the decision was computed against; undefined = task is new. */
     expectedRevision: number | undefined;
   }): Promise<void>;
+
+  /**
+   * Writes the webhook-backed presentation projection for an issue or PR.
+   * This is deliberately independent from Task creation: an actionable
+   * anchor can be waiting for a human before it has ever been dispatched.
+   * Implementations must not let an older GitHub `updated_at` overwrite a
+   * newer stored projection.
+   */
+  upsertGithubAnchorProjection(
+    projection: GithubAnchorProjection,
+  ): Promise<void>;
+
+  /** Reads one stored GitHub-anchor projection for webhook signal updates.
+   * This is a point lookup, never a queue-discovery primitive. */
+  readGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection | undefined>;
+
+  /** Every currently-open GitHub anchor known to the control plane, newest
+   * source update first. The console uses this bounded server-owned feed for
+   * Bridge, Inbox, and Agents; it never enumerates GitHub repositories. */
+  listOpenGithubAnchorProjections(
+    limit?: number,
+  ): Promise<GithubAnchorProjection[]>;
 
   /**
    * Atomically leases up to `limit` pending or expired outbox entries. Every

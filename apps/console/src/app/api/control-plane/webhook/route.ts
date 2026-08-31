@@ -5,7 +5,13 @@ import { isControlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 
-const ADMITTED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request']);
+const ADMITTED_EVENTS = new Set([
+  'issues',
+  'issue_comment',
+  'pull_request',
+  'check_run',
+  'pull_request_review_thread',
+]);
 
 // Only the field this route actually reads. Fuller payload parsing and the
 // admission decision itself live behind the queue, in the process route's

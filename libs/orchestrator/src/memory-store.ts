@@ -1,5 +1,6 @@
 import { type Decision, isRefusal, type Refusal } from './decide';
 import type {
+  GithubAnchorProjection,
   LeasedOutboxEntry,
   OutboxEntry,
   RequestSource,
@@ -44,6 +45,7 @@ export class MemoryStore implements OrchestratorStore {
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
   readonly #outbox = new Map<string, OutboxEntry>();
+  readonly #githubAnchorProjections = new Map<string, GithubAnchorProjection>();
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
@@ -136,6 +138,45 @@ export class MemoryStore implements OrchestratorStore {
 
   #requestKey(id: TaskId, source: RequestSource, requestId: string): string {
     return JSON.stringify([taskKey(id), requestHistoryKey(source, requestId)]);
+  }
+
+  async upsertGithubAnchorProjection(
+    projection: GithubAnchorProjection,
+  ): Promise<void> {
+    const key = taskKey(projection.anchor);
+    const current = this.#githubAnchorProjections.get(key);
+    if (
+      current !== undefined &&
+      current.sourceUpdatedAt > projection.sourceUpdatedAt
+    ) {
+      return;
+    }
+    this.#githubAnchorProjections.set(
+      key,
+      structuredClone({ ...current, ...projection }),
+    );
+  }
+
+  async readGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection | undefined> {
+    const projection = this.#githubAnchorProjections.get(taskKey(anchor));
+    return projection === undefined ? undefined : structuredClone(projection);
+  }
+
+  async listOpenGithubAnchorProjections(
+    limit = 200,
+  ): Promise<GithubAnchorProjection[]> {
+    return structuredClone(
+      [...this.#githubAnchorProjections.values()]
+        .filter((projection) => projection.state === 'open')
+        .sort(
+          (left, right) =>
+            right.sourceUpdatedAt.localeCompare(left.sourceUpdatedAt) ||
+            taskKey(right.anchor).localeCompare(taskKey(left.anchor)),
+        )
+        .slice(0, limit),
+    );
   }
 
   async claimPendingOutbox(input: {

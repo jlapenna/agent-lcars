@@ -63,6 +63,17 @@ describe('POST /api/control-plane/webhook repository admission', () => {
     expect(enqueueGitHubWebhook).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['check_run', 'pull_request_review_thread'])(
+    'admits the %s projection signal event for a configured repository',
+    async (event) => {
+      const response = await POST(
+        webhookRequest(HOME_REPO, { 'x-github-event': event }),
+      );
+      expect(response.status).toBe(202);
+      expect(enqueueGitHubWebhook).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('ignores a repository outside the control plane by default', async () => {
     const response = await POST(webhookRequest('someone-else/other-repo'));
     expect(response.status).toBe(202);

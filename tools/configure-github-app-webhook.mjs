@@ -6,7 +6,13 @@ import { pathToFileURL } from 'node:url';
 
 const API_VERSION = '2022-11-28';
 const EXPECTED_APP_SLUG = 'agent-lcars';
-const REQUIRED_EVENTS = ['issue_comment', 'issues', 'pull_request'];
+const REQUIRED_EVENTS = [
+  'check_run',
+  'issue_comment',
+  'issues',
+  'pull_request',
+  'pull_request_review_thread',
+];
 
 function required(name) {
   const value = process.env[name]?.trim();

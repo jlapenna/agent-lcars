@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { type Decision, isRefusal, type Refusal } from './decide';
 import {
   byOutboxClaimFairness,
+  type GithubAnchorProjection,
+  githubAnchorProjectionSchema,
   isLive,
   isWorkAnchor,
   type LeasedOutboxEntry,
@@ -111,6 +113,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #migrationTasks: CollectionReference;
   readonly #migrationRuns: CollectionReference;
   readonly #migrationOutbox: CollectionReference;
+  readonly #githubAnchors: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
@@ -136,6 +139,7 @@ export class FirestoreStore implements OrchestratorStore {
     this.#migrationOutbox = this.#migrationFirestore.collection(
       `${prefix}outbox`,
     );
+    this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
   }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -245,6 +249,60 @@ export class FirestoreStore implements OrchestratorStore {
         tx.set(this.#outboxRef(entry.entryId), entry);
       }
     });
+  }
+
+  async upsertGithubAnchorProjection(
+    projection: GithubAnchorProjection,
+  ): Promise<void> {
+    const ref = this.#githubAnchorRef(projection.anchor);
+    await this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      const current = snapshot.exists
+        ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
+        : undefined;
+      if (
+        current !== undefined &&
+        current.sourceUpdatedAt > projection.sourceUpdatedAt
+      ) {
+        return;
+      }
+      const next =
+        current === undefined ? projection : { ...current, ...projection };
+      // Preserve signals that arrive in their own webhook event (check runs,
+      // comments and review threads) while replacing the complete anchor
+      // fields. Closing an anchor still removes `openUpdatedAt`, so the queue
+      // query cannot retain a stale open record after a close webhook.
+      tx.set(ref, {
+        projection: next,
+        ...(next.state === 'open'
+          ? { openUpdatedAt: next.sourceUpdatedAt }
+          : {}),
+      });
+    });
+  }
+
+  async readGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection | undefined> {
+    const snapshot = await this.#githubAnchorRef(anchor).get();
+    return snapshot.exists
+      ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
+      : undefined;
+  }
+
+  async listOpenGithubAnchorProjections(
+    limit = 200,
+  ): Promise<GithubAnchorProjection[]> {
+    // `openUpdatedAt` is present only on open anchors. Ordering this single
+    // field is served by Firestore's automatic index and bounds the read at
+    // the datastore without a state+order composite index.
+    const snapshot = await this.#githubAnchors
+      .orderBy('openUpdatedAt', 'desc')
+      .limit(limit)
+      .get();
+    return snapshot.docs.map((doc) =>
+      githubAnchorProjectionSchema.parse(doc.data()['projection']),
+    );
   }
 
   async claimPendingOutbox(input: {
@@ -702,5 +760,11 @@ export class FirestoreStore implements OrchestratorStore {
 
   #outboxRef(entryId: string): DocumentReference {
     return this.#outbox.doc(encodeURIComponent(entryId));
+  }
+
+  #githubAnchorRef(
+    anchor: GithubAnchorProjection['anchor'],
+  ): DocumentReference {
+    return this.#githubAnchors.doc(encodeURIComponent(taskKey(anchor)));
   }
 }

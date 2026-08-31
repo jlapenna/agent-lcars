@@ -113,6 +113,24 @@ function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function completeIssuePayload(overrides: Record<string, unknown> = {}) {
+  return labeledIssuePayload({
+    issue: {
+      number: ISSUE.issue,
+      title: 'Persist this webhook anchor',
+      body: 'Queue rendering must read the control-plane projection.',
+      html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}`,
+      state: 'open',
+      updated_at: T0,
+      user: { login: 'jlapenna' },
+      labels: [{ name: 'bug' }],
+      assignees: [],
+    },
+    label: { name: 'bug' },
+    ...overrides,
+  });
+}
+
 /** Drives a full label-delivery -> request -> dispatch cycle and returns the
  *  resulting runId, for tests that need an already-running run to build on. */
 async function dispatchedRun(
@@ -128,6 +146,72 @@ async function dispatchedRun(
 }
 
 describe('handleWebhookDelivery', () => {
+  it('writes a complete webhook anchor before ignoring an unassigned label', async () => {
+    const { deps, store } = fixture();
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'anchor-only-delivery',
+      payload: completeIssuePayload(),
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'no-trigger-label' },
+    });
+    await expect(store.listOpenGithubAnchorProjections()).resolves.toEqual([
+      expect.objectContaining({
+        anchor: ISSUE,
+        title: 'Persist this webhook anchor',
+        labels: ['bug'],
+      }),
+    ]);
+  });
+
+  it('updates a stored PR check signal without any render-time GitHub read', async () => {
+    const { deps, store } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-anchor-delivery',
+      payload: {
+        repository: { full_name: REPO },
+        pull_request: {
+          ...completeIssuePayload().issue,
+          draft: false,
+          requested_reviewers: [],
+          mergeable_state: 'clean',
+        },
+      },
+    });
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'check_run',
+      deliveryId: 'check-run-delivery',
+      payload: {
+        repository: { full_name: REPO },
+        check_run: {
+          name: 'Verify',
+          html_url: `https://github.com/${REPO}/runs/1`,
+          status: 'completed',
+          conclusion: 'failure',
+          pull_requests: [{ number: ISSUE.issue }],
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-event' },
+    });
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      kind: 'pr',
+      failingChecks: [{ name: 'Verify' }],
+      ciRunning: false,
+    });
+  });
+
   it('ignores a delivery with no trigger label', async () => {
     const { deps } = fixture();
     const result = await handleWebhookDelivery(deps, {
