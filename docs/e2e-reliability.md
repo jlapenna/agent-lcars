@@ -56,9 +56,9 @@ not become the default assertion for an entire page.
 
 ## Harness rules
 
-- CI owns the required E2E gate. It selects affected console and harness
-  changes, runs the hermetic suite, and blocks `Verify` on a failure. Local
-  E2E is optional; do not make it a delivery prerequisite.
+- CI owns the required E2E gate. Its E2E workflow conservatively selects
+  affected console and harness changes and runs the hermetic suite. Local E2E
+  is optional; do not make it a delivery prerequisite.
 - When local reproduction is useful, use
   `./tools/nx run @agent-lcars/console-e2e:e2e-local` so the documented
   credential-free environment is created consistently.

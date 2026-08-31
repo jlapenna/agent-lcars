@@ -23,9 +23,9 @@
 #
 # What it does NOT catch: a bug that only manifests at request time on a
 # route the build doesn't prerender, or a purely client-side/browser
-# navigation bug (#503's cross-page DOM duplication) - CI's required E2E
-# gate catches those. `console-e2e:e2e-local` remains an optional diagnostic
-# reproduction tool (see verify.md's Console e2e section).
+# navigation bug (#503's cross-page DOM duplication) - those need CI's E2E
+# gate. `console-e2e:e2e-local` remains an optional diagnostic reproduction
+# tool (see verify.md's Console e2e section).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

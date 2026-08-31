@@ -29,10 +29,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # CI's workflow_run conclusion is a rollup of every job in that run. Gate
-  # deployment on Verify instead: it already requires the selected E2E result
-  # as well as the standard verification gate, while unrelated advisory jobs
-  # cannot block a healthy production deployment.
+  # CI's workflow_run conclusion is a rollup of every job in that run,
+  # including E2E (timeout-minutes: 30, not a required merge gate) -- a
+  # timed-out E2E job reports "cancelled", which drags the whole run's
+  # conclusion to "cancelled" even when Verify (the actual required check
+  # gating the merge that triggered this run) passed cleanly (#543). Gate
+  # deploy on Verify's own job conclusion instead of the run's rollup, so a
+  # slow/hung non-required job can't silently block production deploys.
   gate:
     if: |
       github.event_name == 'workflow_dispatch' ||
