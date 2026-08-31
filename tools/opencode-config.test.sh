@@ -75,6 +75,8 @@ done < <(jq -r '.provider.homelab.models | to_entries[] | "\(.key) \(.value.limi
 # recreating the retired copy-on-every-run design.
 jq -e '.provider.homelab.options.apiKey == "{file:/run/secrets/opencode-llm-api-key}"' "$config" >/dev/null ||
   fail "the OpenCode provider must read its LiteLLM key from the file mount, never an agent-inherited environment variable"
+jq -e '.skills == ["/opt/repo-tools/plugins/repo-tools/skills"]' "$config" >/dev/null ||
+  fail "OpenCode must load repo-tools skills from the shared runner checkout"
 grep -Fq '/repo/agents/opencode/opencode.json' "$runner_dockerfile" ||
   fail "runner image no longer installs the shared opencode.json"
 grep -Fq '/home/runner/.config/opencode/opencode.json' "$runner_dockerfile" ||
@@ -83,6 +85,8 @@ grep -Fq '/repo/agents/opencode/instructions.md' "$runner_dockerfile" ||
   fail "runner image no longer installs the OpenCode standing instructions"
 grep -Fq '/home/runner/.config/opencode/instructions.md' "$runner_dockerfile" ||
   fail "runner image does not preserve opencode.json's relative instructions path"
+grep -Fq 'https://github.com/jlapenna/repo-tools.git /opt/repo-tools' "$runner_dockerfile" ||
+  fail "runner image no longer provides the shared repo-tools checkout for OpenCode"
 grep -Fq '/usr/local/lib/agent-lcars/install-opencode-release.sh' "$runner_dockerfile" ||
   fail "runner image must use its reviewed OpenCode release installer"
 if grep -Fq 'https://opencode.ai/install' "$runner_dockerfile"; then
