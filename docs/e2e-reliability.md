@@ -24,8 +24,8 @@ not user-facing regressions. They fell into four distinct classes:
 3. **Harness failure:** checkout, Git LFS, cache lifetime, environment setup,
    emulator startup, or another prerequisite fails before the product is
    exercised.
-4. **Gate-policy failure:** the E2E workflow is red but is not a required check,
-   so the change can merge despite the apparent safety signal.
+4. **Gate-policy failure:** the E2E workflow is red but branch policy does not
+   require it, so the change can merge despite the apparent safety signal.
 
 Treating every class as "refresh the baselines" hid the cause and made the
 suite expensive to trust. A refresh can be correct only after a human has
@@ -75,9 +75,9 @@ not become the default assertion for an entire page.
   branch policy. A post-merge run is a safety net, not a substitute for a PR
   gate.
 
-The last item is a governance decision: Agent LCARS currently requires
-`Verify`, while E2E is not a required check. Branch-policy changes are owned by
-the Homelab Terraform workflow and need their own reviewed plan and apply.
+Agent LCARS currently requires `E2E`, `Verify`, and `Runner image pnpm-store
+seed`. Branch-policy changes are owned by the Homelab Terraform workflow and
+need their own reviewed plan and apply.
 
 ## Triage a failure
 
