@@ -27,6 +27,16 @@ async function requested(orchestrator: Orchestrator, taskId = TASK) {
     taskId,
     requestId: 'request-1',
     pipeline: 'codex',
+    work: {
+      origin: { principal: 'test:orchestrator-dispatch', channel: 'api' },
+      spec: {
+        title: 'Dispatch test work',
+        description: 'Current Work payload for the dispatch test.',
+        pipeline: 'codex',
+        target:
+          'repo' in taskId ? { repo: taskId.repo } : { workId: taskId.workId },
+      },
+    },
   });
   if (isRefusal(outcome)) {
     throw new Error(`unexpected refusal: ${outcome.reason}`);

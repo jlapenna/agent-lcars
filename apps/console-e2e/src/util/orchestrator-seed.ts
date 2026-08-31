@@ -81,6 +81,18 @@ export async function seedOrchestratorTask(params: {
     requestId: params.requestId,
     pipeline: params.pipeline,
     params: { mode: 'implement' },
+    work: {
+      origin: { principal: 'e2e:orchestrator-seed', channel: 'github' },
+      spec: {
+        title: `E2E fixture issue #${params.issue}`,
+        description: 'Authoritative E2E fixture work.',
+        pipeline: params.pipeline,
+        target: {
+          repo: params.repository ?? E2E_FIXTURE_REPOSITORY,
+          issue: params.issue,
+        },
+      },
+    },
   });
   if ('refused' in outcome && outcome.reason !== 'duplicate-request') {
     throw new Error(
