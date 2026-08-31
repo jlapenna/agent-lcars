@@ -27,12 +27,27 @@ export function buildQueueView(
     activity.recentRuns,
     runnerSessionsByRunId,
   );
+  const newestRunByIssue = new Map<string, AgentRun>();
+  for (const run of activity.recentRuns) {
+    if (run.issueNumber === undefined) continue;
+    const key = repoItemKey(run.repo, run.issueNumber);
+    const previous = newestRunByIssue.get(key);
+    if (
+      previous === undefined ||
+      run.updatedAt > previous.updatedAt ||
+      (run.updatedAt === previous.updatedAt &&
+        run.createdAt > previous.createdAt) ||
+      (run.updatedAt === previous.updatedAt &&
+        run.createdAt === previous.createdAt &&
+        String(run.id) > String(previous.id))
+    ) {
+      newestRunByIssue.set(key, run);
+    }
+  }
   const failedRunByIssue = new Set(
-    activity.recentRuns
-      .filter(
-        (run) => run.issueNumber !== undefined && run.conclusion === 'failure',
-      )
-      .map((run) => repoItemKey(run.repo, run.issueNumber as number)),
+    [...newestRunByIssue.entries()]
+      .filter(([, run]) => run.conclusion === 'failure')
+      .map(([key]) => key),
   );
   const items = rawItems.map((item) => {
     const key = repoItemKey(item.repo, item.number);

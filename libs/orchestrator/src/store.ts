@@ -19,6 +19,22 @@ import type {
  *  while still making a crashed drain retryable promptly. */
 export const OUTBOX_LEASE_MS = 5 * 60_000;
 
+/** An opaque continuation point for the durable open-anchor feed.  Keeping
+ * the source timestamp and anchor together makes the ordering total without
+ * asking a console reader to know how a storage implementation keys docs. */
+export interface OpenGithubAnchorProjectionCursor {
+  readonly sourceUpdatedAt: string;
+  readonly anchor: GithubAnchorProjection['anchor'];
+}
+
+/** One bounded page from the control plane's open GitHub-anchor projection
+ * feed.  A queue reader must follow `nextCursor` rather than assuming a
+ * single page contains every actionable anchor. */
+export interface OpenGithubAnchorProjectionPage {
+  readonly projections: GithubAnchorProjection[];
+  readonly nextCursor?: OpenGithubAnchorProjectionCursor;
+}
+
 /**
  * Durability boundary. One method per question the decision layer asks, one
  * method to apply a decision atomically. Implementations must guarantee:
@@ -94,6 +110,15 @@ export interface OrchestratorStore {
   listOpenGithubAnchorProjections(
     limit?: number,
   ): Promise<GithubAnchorProjection[]>;
+
+  /** A bounded, cursor-paginated form of the open-anchor feed.  This is the
+   * console queue's discovery primitive: selection happens after every page
+   * has been read from the persisted control plane, never after a truncated
+   * prefix and never by falling back to GitHub. */
+  listOpenGithubAnchorProjectionPage(input: {
+    limit: number;
+    cursor?: OpenGithubAnchorProjectionCursor;
+  }): Promise<OpenGithubAnchorProjectionPage>;
 
   /**
    * Atomically leases up to `limit` pending or expired outbox entries. Every

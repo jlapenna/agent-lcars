@@ -146,6 +146,29 @@ async function dispatchedRun(
 }
 
 describe('handleWebhookDelivery', () => {
+  it('invalidates the queue only after a webhook projection refresh completes', async () => {
+    const { deps } = fixture();
+    const calls: string[] = [];
+    deps.refreshGithubAnchorProjection = vi.fn(async () => {
+      calls.push('refresh');
+    });
+    deps.invalidateAuthoritativeQueue = () => {
+      calls.push('invalidate');
+    };
+
+    await expect(
+      handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'queue-cache-after-projection',
+        payload: completeIssuePayload(),
+      }),
+    ).resolves.toEqual({
+      status: 200,
+      body: { ignored: 'no-trigger-label' },
+    });
+    expect(calls).toEqual(['refresh', 'invalidate']);
+  });
+
   it('uses a complete unassigned delivery as an exact projection refresh signal', async () => {
     const { deps } = fixture();
     const refresh = vi.fn().mockResolvedValue(undefined);

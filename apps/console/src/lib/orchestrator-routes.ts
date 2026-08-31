@@ -37,6 +37,9 @@ export interface OrchestratorRouteDeps {
     anchor: TaskId,
     input?: { deleted?: boolean },
   ) => Promise<void>;
+  /** Invoked only after the durable projection refresh has completed. The
+   * hosted webhook route binds this to the console queue cache tag. */
+  invalidateAuthoritativeQueue?: () => void | Promise<void>;
 }
 
 type RouteResult = { status: number; body: Record<string, unknown> };
@@ -117,6 +120,7 @@ async function refreshGithubAnchorProjection(
     await (
       deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
     )(deletedAnchor, { deleted: true });
+    await deps.invalidateAuthoritativeQueue?.();
     return;
   }
   for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
@@ -124,6 +128,7 @@ async function refreshGithubAnchorProjection(
       deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
     )(anchor);
   }
+  await deps.invalidateAuthoritativeQueue?.();
 }
 
 async function refreshGithubAnchorProjectionAfterAdmission(
