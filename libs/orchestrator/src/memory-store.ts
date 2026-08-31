@@ -1,9 +1,11 @@
 import { type Decision, isRefusal, type Refusal } from './decide';
+<<<<<<< HEAD
 import type {
   LeasedOutboxEntry,
   OutboxEntry,
   RequestSource,
   Run,
+  TaskDocument,
   TaskId,
 } from './model';
 import {
@@ -13,6 +15,19 @@ import {
   requestHistoryKey,
   taskKey,
 } from './model';
+import {
+  fingerprint,
+  inventoryPersistedRecord,
+  manifestId,
+  PERSISTED_MIGRATION_PAGE_MAX,
+  PersistedMigrationConflict,
+  type PersistedMigrationEntry,
+  type PersistedMigrationPreview,
+  type PersistedRecordKind,
+  type PersistedRecordPage,
+  type PersistedRecordSelector,
+  validateManifest,
+} from './persisted-record-migration';
 import {
   type OrchestratorStore,
   type RequestTransactionState,
@@ -333,4 +348,143 @@ export class MemoryStore implements OrchestratorStore {
         .slice(0, limit ?? 200),
     );
   }
+
+  async inventoryPersistedRecords(input: {
+    kind: PersistedRecordKind;
+    limit: number;
+    cursor?: string;
+  }): Promise<PersistedRecordPage> {
+    if (
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > PERSISTED_MIGRATION_PAGE_MAX
+    ) {
+      throw new Error(
+        `Persisted orchestrator inventory page size must be 1-${PERSISTED_MIGRATION_PAGE_MAX}`,
+      );
+    }
+    const records = this.#migrationRecords(input.kind);
+    const cursor =
+      input.cursor === undefined ? undefined : decodeCursor(input.cursor);
+    const after =
+      cursor === undefined
+        ? 0
+        : records.findIndex(({ documentId }) => documentId === cursor) + 1;
+    if (after < 0)
+      throw new Error('Invalid persisted orchestrator inventory cursor');
+    const page = records.slice(after, after + input.limit);
+    const hasMore = records.length > after + page.length;
+    return {
+      kind: input.kind,
+      records: page.map(({ value }) =>
+        inventoryPersistedRecord(input.kind, value),
+      ),
+      hasMore,
+      ...(hasMore && page.length > 0
+        ? { nextCursor: encodeCursor(page.at(-1)?.documentId ?? '') }
+        : {}),
+    };
+  }
+
+  async previewPersistedMigration(
+    entries: readonly PersistedMigrationEntry[],
+  ): Promise<PersistedMigrationPreview> {
+    const validated = validateManifest(entries);
+    return { manifestId: manifestId(validated), entries: validated.length };
+  }
+
+  async applyPersistedMigration(input: {
+    entries: readonly PersistedMigrationEntry[];
+    reviewedManifestId: string;
+  }): Promise<PersistedMigrationPreview> {
+    const entries = validateManifest(input.entries);
+    const id = manifestId(entries);
+    if (id !== input.reviewedManifestId) {
+      throw new PersistedMigrationConflict(
+        'reviewed manifest id does not match the submitted entries',
+      );
+    }
+    // Validate the complete bounded manifest before changing any map, the
+    // in-memory equivalent of FirestoreStore's all-reads-before-writes
+    // transaction. This makes the reference store useful for dry-run and
+    // conflict tests without widening its normal API.
+    for (const entry of entries) {
+      const current = this.#migrationValue(entry.selector);
+      if (current === undefined) {
+        throw new PersistedMigrationConflict(
+          `persisted ${entry.selector.kind} record disappeared`,
+        );
+      }
+      if (fingerprint(current) !== entry.expectedFingerprint) {
+        throw new PersistedMigrationConflict(
+          `persisted ${entry.selector.kind} record changed after inventory`,
+        );
+      }
+    }
+    for (const entry of entries) this.#setMigrationValue(entry);
+    return { manifestId: id, entries: entries.length };
+  }
+
+  #migrationRecords(kind: PersistedRecordKind): {
+    documentId: string;
+    value: TaskDocument | Run | OutboxEntry;
+  }[] {
+    const values =
+      kind === 'task'
+        ? [...this.#tasks.entries()].map(([key, value]) => ({
+            documentId: encodeURIComponent(key),
+            value,
+          }))
+        : kind === 'run'
+          ? [...this.#runs.entries()].map(([key, value]) => ({
+              documentId: encodeURIComponent(key),
+              value,
+            }))
+          : [...this.#outbox.entries()].map(([key, value]) => ({
+              documentId: encodeURIComponent(key),
+              value,
+            }));
+    return values.sort((left, right) =>
+      left.documentId.localeCompare(right.documentId),
+    );
+  }
+
+  #migrationValue(
+    selector: PersistedRecordSelector,
+  ): TaskDocument | Run | OutboxEntry | undefined {
+    if (selector.kind === 'task')
+      return this.#tasks.get(taskKey(selector.task));
+    if (selector.kind === 'run') return this.#runs.get(selector.runId);
+    return this.#outbox.get(selector.entryId);
+  }
+
+  #setMigrationValue(entry: PersistedMigrationEntry): void {
+    if (entry.selector.kind === 'task') {
+      this.#tasks.set(
+        taskKey(entry.selector.task),
+        structuredClone(entry.replacement as TaskDocument),
+      );
+    } else if (entry.selector.kind === 'run') {
+      this.#runs.set(
+        entry.selector.runId,
+        structuredClone(entry.replacement as Run),
+      );
+    } else {
+      this.#outbox.set(
+        entry.selector.entryId,
+        structuredClone(entry.replacement as OutboxEntry),
+      );
+    }
+  }
+}
+
+function encodeCursor(documentId: string): string {
+  return Buffer.from(documentId, 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: string): string {
+  if (!/^[A-Za-z0-9_-]{1,512}$/u.test(cursor)) {
+    throw new Error('Invalid persisted orchestrator inventory cursor');
+  }
+  return Buffer.from(cursor, 'base64url').toString('utf8');
 }

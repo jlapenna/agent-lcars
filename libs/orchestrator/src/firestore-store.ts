@@ -18,10 +18,23 @@ import {
   type RequestSource,
   type Run,
   runStateSchema,
+  taskDocumentSchema,
   type TaskId,
   taskKey,
-  taskSchema,
 } from './model';
+import {
+  fingerprint,
+  inventoryPersistedRecord,
+  manifestId,
+  PERSISTED_MIGRATION_PAGE_MAX,
+  PersistedMigrationConflict,
+  type PersistedMigrationEntry,
+  type PersistedMigrationPreview,
+  type PersistedRecordKind,
+  type PersistedRecordPage,
+  type PersistedRecordSelector,
+  validateManifest,
+} from './persisted-record-migration';
 import {
   type OrchestratorStore,
   type RequestTransactionState,
@@ -34,10 +47,7 @@ import {
  *  can never drift from `model.ts`'s own notion of "live". */
 const LIVE_STATES = runStateSchema.options.filter(isLive);
 
-const taskDocSchema = z.strictObject({
-  task: taskSchema,
-  revision: z.number().int().nonnegative(),
-});
+const taskDocSchema = taskDocumentSchema;
 
 export interface FirestoreStoreOptions {
   readonly projectId: string;
@@ -481,6 +491,104 @@ export class FirestoreStore implements OrchestratorStore {
       .slice(0, limit ?? 200);
   }
 
+  async inventoryPersistedRecords(input: {
+    kind: PersistedRecordKind;
+    limit: number;
+    cursor?: string;
+  }): Promise<PersistedRecordPage> {
+    if (
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > PERSISTED_MIGRATION_PAGE_MAX
+    ) {
+      throw new Error(
+        `Persisted orchestrator inventory page size must be 1-${PERSISTED_MIGRATION_PAGE_MAX}`,
+      );
+    }
+    const collection = this.#collectionFor(input.kind);
+    let query = collection.orderBy(FieldPath.documentId());
+    if (input.cursor !== undefined) {
+      query = query.startAfter(decodeCursor(input.cursor));
+    }
+    // The extra document makes `hasMore` truthful at the exact page boundary
+    // without scanning an unbounded collection.
+    const snapshot = await query.limit(input.limit + 1).get();
+    const documents = snapshot.docs.slice(0, input.limit);
+    const hasMore = snapshot.docs.length > documents.length;
+    return {
+      kind: input.kind,
+      records: documents.map((document) => {
+        const record = inventoryPersistedRecord(input.kind, document.data());
+        return record.selector === undefined
+          ? { ...record, opaqueDocumentId: document.id }
+          : record;
+      }),
+      hasMore,
+      ...(hasMore && documents.length > 0
+        ? { nextCursor: encodeCursor(documents.at(-1)?.id ?? '') }
+        : {}),
+    };
+  }
+
+  async previewPersistedMigration(
+    entries: readonly PersistedMigrationEntry[],
+  ): Promise<PersistedMigrationPreview> {
+    const validated = validateManifest(entries);
+    return { manifestId: manifestId(validated), entries: validated.length };
+  }
+
+  async applyPersistedMigration(input: {
+    entries: readonly PersistedMigrationEntry[];
+    reviewedManifestId: string;
+  }): Promise<PersistedMigrationPreview> {
+    const entries = validateManifest(input.entries);
+    const id = manifestId(entries);
+    if (id !== input.reviewedManifestId) {
+      throw new PersistedMigrationConflict(
+        'reviewed manifest id does not match the submitted entries',
+      );
+    }
+    await this.#firestore.runTransaction(async (tx) => {
+      // Read every fixed manifest target first. Firestore retries the whole
+      // transaction on a concurrent write; each retry compares the current
+      // raw fingerprint before any write, so no reviewed replacement can
+      // overwrite a record changed after the inventory.
+      const snapshots = await Promise.all(
+        entries.map((entry) => tx.get(this.#migrationRef(entry.selector))),
+      );
+      for (const [index, snapshot] of snapshots.entries()) {
+        const entry = entries[index];
+        if (entry === undefined) throw new Error('missing manifest entry');
+        if (!snapshot.exists) {
+          throw new PersistedMigrationConflict(
+            `persisted ${entry.selector.kind} record disappeared`,
+          );
+        }
+        if (fingerprint(snapshot.data()) !== entry.expectedFingerprint) {
+          throw new PersistedMigrationConflict(
+            `persisted ${entry.selector.kind} record changed after inventory`,
+          );
+        }
+      }
+      for (const entry of entries) {
+        tx.set(this.#migrationRef(entry.selector), entry.replacement);
+      }
+    });
+    return { manifestId: id, entries: entries.length };
+  }
+
+  #collectionFor(kind: PersistedRecordKind): CollectionReference {
+    if (kind === 'task') return this.#tasks;
+    if (kind === 'run') return this.#runs;
+    return this.#outbox;
+  }
+
+  #migrationRef(selector: PersistedRecordSelector): DocumentReference {
+    if (selector.kind === 'task') return this.#taskRef(selector.task);
+    if (selector.kind === 'run') return this.#runRef(selector.runId);
+    return this.#outboxRef(selector.entryId);
+  }
+
   #taskRef(id: TaskId): DocumentReference {
     return this.#tasks.doc(encodeURIComponent(taskKey(id)));
   }
@@ -515,4 +623,15 @@ export class FirestoreStore implements OrchestratorStore {
   #outboxRef(entryId: string): DocumentReference {
     return this.#outbox.doc(encodeURIComponent(entryId));
   }
+}
+
+function encodeCursor(documentId: string): string {
+  return Buffer.from(documentId, 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: string): string {
+  if (!/^[A-Za-z0-9_-]{1,512}$/u.test(cursor)) {
+    throw new Error('Invalid persisted orchestrator inventory cursor');
+  }
+  return Buffer.from(cursor, 'base64url').toString('utf8');
 }

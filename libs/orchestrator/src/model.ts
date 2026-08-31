@@ -251,6 +251,15 @@ export const taskSchema = z.strictObject({
 });
 export type Task = z.infer<typeof taskSchema>;
 
+/** The durable task document includes the mutex revision alongside its task.
+ * Kept next to {@link taskSchema} so every persisted-record tool validates
+ * exactly the same fixed document shape as the normal store. */
+export const taskDocumentSchema = z.strictObject({
+  task: taskSchema,
+  revision: z.number().int().nonnegative(),
+});
+export type TaskDocument = z.infer<typeof taskDocumentSchema>;
+
 /**
  * Effects that must survive the transaction that decided them. A worker
  * drains this; the decision and its side effect are never in one step.

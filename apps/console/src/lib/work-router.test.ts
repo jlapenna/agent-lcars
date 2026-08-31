@@ -1,4 +1,5 @@
 import {
+  encodePersistedMigrationCursor,
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
@@ -26,6 +27,10 @@ const operator = {
   scopes: new Set(['work.operator'] as const),
   pipelines: ['claude'],
   via: 'session' as const,
+};
+const migrationOperator = {
+  ...operator,
+  scopes: new Set(['work.operator', 'work.migrate'] as const),
 };
 const cronTick = {
   principal: 'svc:telemetry-writer',
@@ -863,4 +868,92 @@ describe('GitHub-anchor dispatch route', () => {
       });
     },
   );
+});
+
+describe('persisted orchestrator migration routes', () => {
+  it('requires a dedicated migration scope and defaults a reviewed manifest to dry-run', async () => {
+    const ctx = context({ principal: migrationOperator });
+    const store = ctx.runtime.store as MemoryStore;
+    const task = {
+      task: { repo: 'octo/example', issue: 7 },
+      runCount: 0,
+      updatedAt: '2026-08-26T10:00:00.000Z',
+    };
+    await store.apply({
+      decision: { task, outbox: [] },
+      expectedRevision: undefined,
+    });
+
+    const denied = await call(
+      context({ principal: { ...operator, scopes: new Set<never>() } }),
+      'GET',
+      '/orchestrator-migration/task',
+    );
+    expect(denied.status).toBe(401);
+
+    const ordinaryOperator = await call(
+      context(),
+      'GET',
+      '/orchestrator-migration/task',
+    );
+    expect(ordinaryOperator.status).toBe(401);
+
+    for (const cursor of [
+      'not-a-cursor',
+      encodePersistedMigrationCursor('run', 'not-a-task'),
+      encodePersistedMigrationCursor('task', 'not-a-task'),
+      Buffer.concat([Buffer.from([0x74]), Buffer.from('a/b', 'utf8')]).toString(
+        'base64url',
+      ),
+    ]) {
+      const rejected = await call(
+        ctx,
+        'GET',
+        `/orchestrator-migration/task?limit=1&cursor=${cursor}`,
+      );
+      expect(rejected.status).toBe(400);
+    }
+
+    const inventory = await call(
+      ctx,
+      'GET',
+      '/orchestrator-migration/task?limit=1',
+    );
+    expect(inventory.status).toBe(200);
+    const record = inventory.json.records[0] as {
+      selector: { kind: 'task'; task: typeof task.task };
+      fingerprint: string;
+    };
+    const entry = {
+      selector: record.selector,
+      expectedFingerprint: record.fingerprint,
+      replacement: {
+        task: { ...task, consecutiveLost: 0, work: { reviewed: true } },
+        revision: 1,
+      },
+    };
+    const dryRun = await call(ctx, 'POST', '/orchestrator-migration', {
+      entries: [entry],
+    });
+    expect(dryRun.status).toBe(200);
+    expect(dryRun.json).toMatchObject({ mode: 'dry-run', entries: 1 });
+    expect((await store.readTask(task.task))?.task.work).toBeUndefined();
+
+    const refusedApply = await call(ctx, 'POST', '/orchestrator-migration', {
+      mode: 'apply',
+      entries: [entry],
+    });
+    expect(refusedApply.status).toBe(409);
+
+    const apply = await call(ctx, 'POST', '/orchestrator-migration', {
+      mode: 'apply',
+      entries: [entry],
+      reviewedManifestId: dryRun.json.manifestId,
+      confirmation: 'apply-reviewed-manifest',
+    });
+    expect(apply.status).toBe(200);
+    expect((await store.readTask(task.task))?.task.work).toEqual({
+      reviewed: true,
+    });
+  });
 });
