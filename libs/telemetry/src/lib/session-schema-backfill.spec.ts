@@ -15,6 +15,17 @@ describe('session schema backfill', () => {
     ).toEqual(['agent', 'repo', 'renderable']);
   });
 
+  it('reports invalid enum, source, and empty repository values as gaps', () => {
+    expect(
+      sessionSchemaGaps({
+        sessionId: 's1',
+        source: 'infra',
+        agent: '',
+        repo: { owner: ' ', name: '' },
+      }),
+    ).toEqual(['source', 'agent', 'repo']);
+  });
+
   it('backfills only explicit values without provider or repository inference', () => {
     const legacy = {
       sessionId: 's1',

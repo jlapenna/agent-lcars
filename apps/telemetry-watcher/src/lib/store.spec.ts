@@ -3,7 +3,11 @@ import { FieldValue, Timestamp } from '@google-cloud/firestore';
 import { FakeFirestore } from 'firestore-jest-mock';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFirestoreStore } from './store';
+import {
+  createFirestoreStore,
+  createSessionSchemaMigrationStore,
+  MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE,
+} from './store';
 
 let fakeFirestore: InstanceType<typeof FakeFirestore>;
 
@@ -104,5 +108,81 @@ describe('createFirestoreStore', () => {
       .get();
     expect(snap.data()).not.toHaveProperty('status');
     expect(snap.data()).not.toHaveProperty('statusUpdatedAt');
+  });
+});
+
+describe('createSessionSchemaMigrationStore', () => {
+  beforeEach(() => {
+    fakeFirestore = new FakeFirestore(
+      {
+        sessions: [
+          { id: 'session-1', sessionId: 'session-1', source: 'cli' },
+          { id: 'session-2', sessionId: 'session-2', source: 'cli' },
+        ],
+      },
+      { mutable: true },
+    );
+  });
+
+  it('returns a bounded page and proves when a continuation is required', async () => {
+    const store = createSessionSchemaMigrationStore({
+      projectId: 'test-project',
+    });
+
+    const page = await store.inventory({ limit: 1 });
+
+    expect(page.records).toHaveLength(1);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toBe('session-1');
+    await expect(
+      store.inventory({ limit: MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE + 1 }),
+    ).rejects.toThrow('page size');
+  });
+
+  it('re-reads and patches an explicit backfill in one transaction', async () => {
+    const store = createSessionSchemaMigrationStore({
+      projectId: 'test-project',
+    });
+
+    await expect(
+      store.applySchemaBackfill({
+        sessionId: 'session-1',
+        agent: 'codex',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      }),
+    ).resolves.toEqual({ changed: true });
+
+    const snapshot = await fakeFirestore
+      .collection('sessions')
+      .doc('session-1')
+      .get();
+    expect(snapshot.data()).toMatchObject({
+      agent: 'codex',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+    });
+  });
+
+  it('rejects a conflicting current value without overwriting it', async () => {
+    const store = createSessionSchemaMigrationStore({
+      projectId: 'test-project',
+    });
+    await fakeFirestore
+      .collection('sessions')
+      .doc('session-1')
+      .set({ agent: 'claude-code' }, { merge: true });
+
+    await expect(
+      store.applySchemaBackfill({
+        sessionId: 'session-1',
+        agent: 'codex',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      }),
+    ).rejects.toThrow('conflicting agent');
+
+    const snapshot = await fakeFirestore
+      .collection('sessions')
+      .doc('session-1')
+      .get();
+    expect(snapshot.data()?.['agent']).toBe('claude-code');
   });
 });

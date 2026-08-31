@@ -1,4 +1,4 @@
-import { SessionAgent, SessionDoc } from './types';
+import { SESSION_AGENTS, SessionAgent, SessionDoc } from './types';
 
 export interface SessionRepository {
   owner: string;
@@ -30,26 +30,30 @@ function sameRepo(left: SessionRepository, right: SessionRepository): boolean {
   return left.owner === right.owner && left.name === right.name;
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 /** Lists the current-schema fields absent from an untyped stored document.
- * It is intentionally a migration-only reader: normal application reads use
- * the strict `SessionDoc` type and have no compatibility branch. */
+ * It is intentionally a migration-only reader. Runtime compatibility readers
+ * remain in place until the phase-2 migration proof is complete. */
 export function sessionSchemaGaps(document: unknown): SessionSchemaGap[] {
   if (!isRecord(document)) return ['source'];
   const gaps: SessionSchemaGap[] = [];
-  if (typeof document['source'] !== 'string') gaps.push('source');
-  if (typeof document['agent'] !== 'string') gaps.push('agent');
+  const source = document['source'];
+  if (source !== 'cli' && source !== 'issue-agent') gaps.push('source');
+  if (!SESSION_AGENTS.includes(document['agent'] as SessionAgent)) {
+    gaps.push('agent');
+  }
   const repo = document['repo'];
   if (
     !isRecord(repo) ||
-    typeof repo['owner'] !== 'string' ||
-    typeof repo['name'] !== 'string'
+    !isNonEmptyString(repo['owner']) ||
+    !isNonEmptyString(repo['name'])
   ) {
     gaps.push('repo');
   }
-  if (
-    document['source'] === 'issue-agent' &&
-    typeof document['renderable'] !== 'boolean'
-  ) {
+  if (source === 'issue-agent' && typeof document['renderable'] !== 'boolean') {
     gaps.push('renderable');
   }
   return gaps;

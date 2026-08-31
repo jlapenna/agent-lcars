@@ -10,10 +10,9 @@ import * as fs from 'fs';
 import { loadSharedConfig } from './lib/config';
 import {
   createSessionSchemaMigrationStore,
+  MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE,
   SessionSchemaMigrationStore,
 } from './lib/store';
-
-const MAX_BACKFILL_SESSIONS = 200;
 
 interface Manifest {
   sessions: SessionSchemaBackfill[];
@@ -23,6 +22,7 @@ interface Flags {
   manifest?: string;
   inventory?: boolean;
   limit?: number;
+  cursor?: string;
   apply?: boolean;
 }
 
@@ -80,6 +80,8 @@ function parseFlags(argv: string[]): Flags {
       flags.manifest = argv[++index];
     } else if (value === '--limit' && argv[index + 1]) {
       flags.limit = Number(argv[++index]);
+    } else if (value === '--cursor' && argv[index + 1]) {
+      flags.cursor = argv[++index];
     }
   }
   return flags;
@@ -117,10 +119,10 @@ function readManifest(path: string): Manifest {
   const manifest = parsed as Manifest;
   if (
     manifest.sessions.length === 0 ||
-    manifest.sessions.length > MAX_BACKFILL_SESSIONS
+    manifest.sessions.length > MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE
   ) {
     throw new Error(
-      `Manifest must contain 1-${MAX_BACKFILL_SESSIONS} explicit sessions`,
+      `Manifest must contain 1-${MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE} explicit sessions`,
     );
   }
   if (
@@ -136,17 +138,35 @@ function readManifest(path: string): Manifest {
 async function inventory(
   store: SessionSchemaMigrationStore,
   limit: number,
+  cursor: string | undefined,
 ): Promise<void> {
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_BACKFILL_SESSIONS) {
+  if (
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE
+  ) {
     throw new Error(
-      `--limit must be an integer from 1 to ${MAX_BACKFILL_SESSIONS}`,
+      `--limit must be an integer from 1 to ${MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE}`,
     );
   }
-  const records = (await store.inventory(limit)).map((snapshot) => ({
+  const page = await store.inventory({ limit, cursor: cursor ?? undefined });
+  const records = page.records.map((snapshot) => ({
     sessionId: snapshot.sessionId,
     gaps: sessionSchemaGaps(snapshot.data),
   }));
-  process.stdout.write(`${JSON.stringify({ limit, records }, null, 2)}\n`);
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        limit,
+        cursor: cursor ?? null,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor ?? null,
+        records,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 async function backfill(
@@ -156,18 +176,24 @@ async function backfill(
 ): Promise<void> {
   const results: { sessionId: string; changed: boolean }[] = [];
   for (const entry of manifest.sessions) {
-    const data = await store.get(entry.sessionId);
-    if (data === undefined) {
-      throw new Error(`Session ${entry.sessionId} was not found`);
+    if (apply) {
+      // The store transaction re-reads and validates before writing so this
+      // cannot turn a reviewed manifest into a stale read/overwrite race.
+      const result = await store.applySchemaBackfill(entry);
+      results.push({ sessionId: entry.sessionId, changed: result.changed });
+    } else {
+      const data = await store.get(entry.sessionId);
+      if (data === undefined) {
+        throw new Error(`Session ${entry.sessionId} was not found`);
+      }
+      const storedDocument = data as Record<string, unknown>;
+      const patch = sessionSchemaBackfillPatch(storedDocument, entry);
+      const changed = Object.entries(patch).some(
+        ([key, value]) =>
+          JSON.stringify(storedDocument[key]) !== JSON.stringify(value),
+      );
+      results.push({ sessionId: entry.sessionId, changed });
     }
-    const storedDocument = data as Record<string, unknown>;
-    const patch = sessionSchemaBackfillPatch(storedDocument, entry);
-    const changed = Object.entries(patch).some(
-      ([key, value]) =>
-        JSON.stringify(storedDocument[key]) !== JSON.stringify(value),
-    );
-    if (apply && changed) await store.patchSchema(entry.sessionId, patch);
-    results.push({ sessionId: entry.sessionId, changed });
   }
   process.stdout.write(
     `${JSON.stringify({ mode: apply ? 'apply' : 'dry-run', results }, null, 2)}\n`,
@@ -182,9 +208,16 @@ async function main(): Promise<void> {
   if (flags.inventory && flags.manifest) {
     throw new Error('--inventory and --manifest cannot be combined');
   }
+  if (!flags.inventory && flags.cursor !== undefined) {
+    throw new Error('--cursor is only valid with --inventory');
+  }
   const store = migrationStore();
   if (flags.inventory) {
-    await inventory(store, flags.limit ?? MAX_BACKFILL_SESSIONS);
+    await inventory(
+      store,
+      flags.limit ?? MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE,
+      flags.cursor,
+    );
     return;
   }
   await backfill(

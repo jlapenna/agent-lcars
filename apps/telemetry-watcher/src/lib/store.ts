@@ -1,10 +1,21 @@
 import { logger } from '@agent-lcars/logging';
-import { isSafeIdentifier, SessionWrite } from '@agent-lcars/telemetry';
-import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
+import {
+  isSafeIdentifier,
+  type SessionSchemaBackfill,
+  sessionSchemaBackfillPatch,
+  type SessionWrite,
+} from '@agent-lcars/telemetry';
+import {
+  FieldPath,
+  FieldValue,
+  Firestore,
+  Timestamp,
+} from '@google-cloud/firestore';
 
 const AGENT_TELEMETRY_DATABASE_ID =
   process.env['AGENT_TELEMETRY_DATABASE_ID'] ?? '(default)';
 const SESSIONS_COLLECTION = 'sessions';
+export const MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE = 200;
 
 function assertSafeSessionId(sessionId: string): void {
   if (!isSafeIdentifier(sessionId)) {
@@ -24,16 +35,22 @@ export interface SessionStore {
  * access: inventory is bounded and writes are fixed metadata patches on an
  * explicitly named `sessions/{sessionId}` document. */
 export interface SessionSchemaMigrationStore {
-  inventory(limit: number): Promise<{ sessionId: string; data: unknown }[]>;
+  inventory(input: {
+    limit: number;
+    cursor?: string;
+  }): Promise<SessionSchemaMigrationInventoryPage>;
   get(sessionId: string): Promise<unknown | undefined>;
-  patchSchema(
-    sessionId: string,
-    patch: {
-      agent: string;
-      repo: { owner: string; name: string };
-      renderable?: boolean;
-    },
-  ): Promise<void>;
+  /** Re-reads and validates within a Firestore transaction before patching,
+   * so an operator can never overwrite a concurrent watcher update. */
+  applySchemaBackfill(
+    backfill: SessionSchemaBackfill,
+  ): Promise<{ changed: boolean }>;
+}
+
+export interface SessionSchemaMigrationInventoryPage {
+  records: { sessionId: string; data: unknown }[];
+  hasMore: boolean;
+  nextCursor?: string;
 }
 
 export interface FirestoreStoreOptions {
@@ -106,16 +123,37 @@ export function createSessionSchemaMigrationStore(
     ...(options.emulatorHost && { host: options.emulatorHost, ssl: false }),
   });
   return {
-    async inventory(limit) {
-      const snapshots = await firestore
+    async inventory({ limit, cursor }) {
+      if (
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE
+      ) {
+        throw new Error(
+          `Session schema migration page size must be 1-${MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE}`,
+        );
+      }
+      let query = firestore
         .collection(SESSIONS_COLLECTION)
-        .orderBy('lastActivityAt', 'desc')
-        .limit(limit)
-        .get();
-      return snapshots.docs.map((snapshot) => ({
-        sessionId: snapshot.id,
-        data: snapshot.data(),
-      }));
+        .orderBy(FieldPath.documentId());
+      if (cursor !== undefined) query = query.startAfter(cursor);
+      // The document ID order covers records that lack newer timestamp
+      // fields. Fetching one extra proves whether a bounded page has another
+      // page, while the caller's explicit cursor walks every record.
+      const snapshots = await query.limit(limit + 1).get();
+      const documents = snapshots.docs.slice(0, limit);
+      const hasMore = snapshots.docs.length > documents.length;
+      return {
+        records: documents.map((snapshot) => ({
+          sessionId: snapshot.id,
+          data: snapshot.data(),
+        })),
+        hasMore,
+        ...(hasMore &&
+          documents.length > 0 && {
+            nextCursor: documents.at(-1)?.id,
+          }),
+      };
     },
     async get(sessionId) {
       assertSafeSessionId(sessionId);
@@ -125,12 +163,30 @@ export function createSessionSchemaMigrationStore(
         .get();
       return snapshot.exists ? snapshot.data() : undefined;
     },
-    async patchSchema(sessionId, patch) {
-      assertSafeSessionId(sessionId);
-      await firestore
+    async applySchemaBackfill(backfill) {
+      assertSafeSessionId(backfill.sessionId);
+      const reference = firestore
         .collection(SESSIONS_COLLECTION)
-        .doc(sessionId)
-        .set(patch, { merge: true });
+        .doc(backfill.sessionId);
+      return firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(reference);
+        if (!snapshot.exists) {
+          throw new Error(`Session ${backfill.sessionId} was not found`);
+        }
+        // This validates the transaction's current snapshot, not a prior
+        // dry-run read. A conflicting concurrent writer therefore aborts
+        // rather than being overwritten by stale migration intent.
+        const data = snapshot.data();
+        if (data === undefined) {
+          throw new Error(`Session ${backfill.sessionId} has no data`);
+        }
+        const patch = sessionSchemaBackfillPatch(data, backfill);
+        const changed = Object.entries(patch).some(
+          ([key, value]) => JSON.stringify(data[key]) !== JSON.stringify(value),
+        );
+        if (changed) transaction.set(reference, patch, { merge: true });
+        return { changed };
+      });
     },
   };
 }
