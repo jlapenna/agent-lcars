@@ -4,10 +4,14 @@ import { type Run, type Task, taskKey } from '@agent-lcars/orchestrator';
 import { required } from '@agent-lcars/util-server';
 import { Firestore } from '@google-cloud/firestore';
 
-import { E2E_FIXTURE_REPO, E2E_ITEM_NUMBERS } from './e2e-github-fixtures';
+import {
+  E2E_FIXTURE_REPO,
+  E2E_ITEM_NUMBERS,
+  populatedGithubAnchorProjections,
+} from './e2e-github-fixtures';
 
 const COLLECTION_PREFIX = 'orchestrator-';
-const COLLECTIONS = ['tasks', 'runs', 'outbox'] as const;
+const COLLECTIONS = ['tasks', 'runs', 'outbox', 'github-anchors'] as const;
 const REPOSITORY = `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`;
 
 /** Stable ids let the telemetry fixture join the exact authoritative Run it
@@ -330,6 +334,7 @@ export async function resetE2eOrchestratorFixtures(): Promise<void> {
 export async function seedPopulatedE2eOrchestratorFixtures(): Promise<void> {
   const firestore = fixtureFirestore();
   const { tasks, runs } = populatedFixture();
+  const anchors = populatedGithubAnchorProjections();
   const batch = firestore.batch();
   for (const task of tasks) {
     batch.set(
@@ -348,6 +353,17 @@ export async function seedPopulatedE2eOrchestratorFixtures(): Promise<void> {
         .collection(`${COLLECTION_PREFIX}runs`)
         .doc(encodeURIComponent(run.runId)),
       run,
+    );
+  }
+  for (const projection of anchors) {
+    batch.set(
+      firestore
+        .collection(`${COLLECTION_PREFIX}github-anchors`)
+        .doc(encodeURIComponent(taskKey(projection.anchor))),
+      {
+        projection,
+        openUpdatedAt: projection.sourceUpdatedAt,
+      },
     );
   }
   await batch.commit();

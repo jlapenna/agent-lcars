@@ -6,7 +6,7 @@ import { repoKey } from './watched-repo';
 /**
  * True when a CLI session is plausibly working the given item - either
  * through its joined PR (the strong signal: a transcript-recorded PR
- * number, or a live branch->PR search result, see `cli-sessions.ts`) or
+ * number) or
  * because the number appears in the session's branch name (this repo's
  * branch convention is `<slug>-<issueNumber>`, e.g. this very page's own
  * `agent-lcars-agents-page-3024` - useful for a session still working an

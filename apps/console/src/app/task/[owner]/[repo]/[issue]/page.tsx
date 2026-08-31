@@ -129,7 +129,7 @@ const TaskDetailView = withConsolePageShell(
  * the open-item board currently shows. A task that closes, merges, or
  * otherwise leaves the inbox keeps working here - see `task-detail.ts`'s
  * own doc comment for why this deliberately does not depend on
- * `getCachedActionItems`'s open-item listing.
+ * the authoritative queue's open-anchor listing.
  */
 async function TaskDetailPageContent({ params }: PageProps) {
   const session = await auth();

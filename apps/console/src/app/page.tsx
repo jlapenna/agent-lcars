@@ -8,8 +8,8 @@ import { auth } from '../auth';
 import type { ActionItem } from '../lib/action-items';
 import { getCliSessions } from '../lib/cli-sessions';
 import {
-  getCachedActionItems,
   getCachedAgentActivity,
+  getCachedQueueItems,
   oldestFetchedAt,
 } from '../lib/dashboard-data';
 import {
@@ -95,23 +95,22 @@ async function IndexBody({
 }) {
   const [
     {
-      data: { items: rawItems, warnings: itemWarnings },
+      data: { items: rawItems },
       fetchedAt: itemsFetchedAt,
     },
     { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
-    getCachedActionItems(),
+    getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
   ]);
-  // Deduped: parallel fetchers can degrade the same way (e.g. one rate-limit
-  // hit per PR-join), and each unique problem only needs saying once.
+  // Deduped: independent authoritative reads can fail independently, and
+  // each unique problem only needs saying once.
   const warnings = Array.from(
     new Set([
-      ...itemWarnings,
       ...activity.warnings,
       ...cliSessionWarnings,
       ...runnerSessionWarnings,

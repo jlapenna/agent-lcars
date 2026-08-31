@@ -5,13 +5,16 @@ import type {
   SessionAgent,
   SessionLiveness,
 } from '@agent-lcars/telemetry';
-import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
+import {
+  displayLiveness,
+  totalTokens,
+} from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import { getGithubClient, repoKey, type WatchedRepo } from './github-client';
+import type { WatchedRepo } from './watched-repo';
 
 /** Sessions with no activity in this window don't render at all - the
  * telemetry collection keeps one doc per session forever, and the dashboard
@@ -104,51 +107,6 @@ function prFromDeliverables(doc: CliSessionDoc): JoinedPr | undefined {
   };
 }
 
-// GitHub caps a page at 100. The watched repos carry single-digit open PRs,
-// so this bounds the loop rather than expecting to reach it.
-const PULLS_PER_PAGE = 100;
-const PULLS_MAX_PAGES = 5;
-
-/**
- * Every open PR in the repo, keyed by its head branch - a live lookup rather
- * than a stored field, since a CLI session's branch can grow a PR after the
- * session doc was last written.
- *
- * This used to be one `search.issuesAndPullRequests` call per branch
- * (`is:pr is:open head:<branch>`). #147 took the action-item board off the
- * search API's 30-req/min budget and left this as the console's only
- * remaining search call; listing open PRs once and joining in memory removes
- * it too, and turns N branch lookups into one request per repo.
- *
- * `pulls.list` carries `head.ref` (verified against the live API), which is
- * the same branch the search qualifier matched on.
- */
-export async function listOpenPrsByBranch(
-  repo: WatchedRepo,
-): Promise<Map<string, JoinedPr>> {
-  const octokit = getGithubClient();
-  const byBranch = new Map<string, JoinedPr>();
-  for (let page = 1; page <= PULLS_MAX_PAGES; page++) {
-    const { data } = await octokit.rest.pulls.list({
-      owner: repo.owner,
-      repo: repo.name,
-      state: 'open',
-      per_page: PULLS_PER_PAGE,
-      page,
-    });
-    for (const pr of data) {
-      // First write wins, matching the old `per_page: 1` search: if two open
-      // PRs somehow share a head ref, take the one GitHub lists first rather
-      // than letting a later page silently reassign the branch.
-      if (pr.head?.ref && !byBranch.has(pr.head.ref)) {
-        byBranch.set(pr.head.ref, { number: pr.number, url: pr.html_url });
-      }
-    }
-    if (data.length < PULLS_PER_PAGE) break;
-  }
-  return byBranch;
-}
-
 export interface CliSessionsResult {
   sessions: CliSession[];
   /** Human-readable notes when the store or a join degraded instead of
@@ -158,26 +116,16 @@ export interface CliSessionsResult {
 
 /**
  * Fetches recently-active `source: 'cli'` session docs from the
- * agent-telemetry store and attaches each one's PR when it has one.
- *
- * PR attachment is deliberately cheap: the doc's own `deliverables.prNumbers`
- * costs nothing, and the live branch->PR search runs only for *active*
- * sessions still missing a PR (a branch can grow a PR after the doc was
- * written). Searching for every doc - the original behavior - fired one
- * GitHub search per session per page load, which at 200+ docs blew through
- * the search API's ~30 req/min budget and flooded the warnings banner with
- * the resulting failures.
+ * agent-telemetry store. A PR link comes only from the session's recorded
+ * deliverable; Bridge and Agents never enumerate GitHub to infer one.
  *
  * A recorded deliverable never overrides liveness. CLI sessions are commonly
  * long-lived or resumed for later work, so a merged PR only describes one
  * thing the session produced; it does not prove that the still-running
  * process has ended. The watcher/process signals remain authoritative.
  *
- * One malformed doc or one failed PR lookup degrades that single session
- * instead of crashing the whole list, matching the defensive pattern in
- * `agent-activity.ts` / `action-items.ts`. A store-level failure (e.g. no
- * telemetry infra reachable) degrades to an empty list rather than crashing
- * the dashboard - the existing GitHub-derived view must still work.
+ * A store-level failure (e.g. no telemetry infra reachable) degrades to an
+ * empty list rather than crashing the dashboard.
  */
 export async function getCliSessions(): Promise<CliSessionsResult> {
   const now = new Date();
@@ -211,43 +159,11 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
     ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
   ].slice(0, MAX_SESSIONS);
 
-  const warnings: string[] = [];
-  // One open-PR listing per repo, fetched once and shared by every session
-  // that needs a branch join - keyed by repo, not branch, because that is
-  // now the unit of work. Two watched repos could legitimately share a
-  // branch-naming convention, so the join itself stays repo-scoped.
-  const prsByRepo = new Map<string, Promise<Map<string, JoinedPr>>>();
-  const openPrsFor = (repo: WatchedRepo): Promise<Map<string, JoinedPr>> => {
-    const key = repoKey(repo);
-    let pending = prsByRepo.get(key);
-    if (!pending) {
-      pending = listOpenPrsByBranch(repo).catch((error) => {
-        console.error(
-          'agent-lcars: failed to list open PRs for branch joins (%s):',
-          key,
-          error,
-        );
-        warnings.push(`PR lookup failed for ${key}.`);
-        // An empty map degrades to "no PR attached" for this repo's
-        // sessions, matching the previous per-branch failure behavior.
-        return new Map<string, JoinedPr>();
-      });
-      prsByRepo.set(key, pending);
-    }
-    return pending;
-  };
-  const sessions = await Promise.all(
-    capped.map(async ([doc, session]) => {
-      session.pr = prFromDeliverables(doc);
-      if (!session.pr && doc.repo && doc.branch && isActive(session.liveness)) {
-        const branch = doc.branch;
-        const openPrs = await openPrsFor(doc.repo);
-        session.pr = openPrs.get(branch);
-      }
-      return session;
-    }),
-  );
+  const sessions = capped.map(([doc, session]) => {
+    const pr = prFromDeliverables(doc);
+    return { ...session, ...(pr === undefined ? {} : { pr }) };
+  });
 
   sessions.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
-  return { sessions, warnings };
+  return { sessions, warnings: [] };
 }

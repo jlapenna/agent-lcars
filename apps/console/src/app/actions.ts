@@ -24,7 +24,7 @@ import {
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
-import { GITHUB_DATA_TAG } from '../lib/cache-tags';
+import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
 import type { Pipeline } from '../lib/primary-action';
 import { quickTaskIssueCreatorFor } from '../lib/quick-task-author';
@@ -80,16 +80,16 @@ export type QuickTaskResult =
 
 /**
  * Everything a mutation has to invalidate. `revalidatePath` alone would
- * re-render the page against the still-cached GitHub read (see
- * lib/dashboard-data.ts), so a merge or a reply could appear not to have
- * happened until the cache lifetime elapsed.
+ * re-render the page against the still-cached authoritative projection (see
+ * lib/dashboard-data.ts), so a queued webhook update could appear not to
+ * have happened until the cache lifetime elapsed.
  *
  * `updateTag`, not `revalidateTag`: this runs inside a Server Action, and
  * read-your-own-writes is exactly the semantic a mutation needs - the
  * caller must see its own effect on the very next render.
  */
 function revalidateDashboard() {
-  updateTag(GITHUB_DATA_TAG);
+  updateTag(AUTHORITATIVE_QUEUE_TAG);
   revalidatePath('/');
 }
 

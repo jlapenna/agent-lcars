@@ -45,9 +45,8 @@ test.describe('Agent Activity panel CLI sessions @smoke', () => {
     await expect(idleRow).not.toContainText('e2e-fixture-host-2');
     await expect(idleRow).not.toContainText('claude-opus-4-8');
     await expect(idleRow).not.toContainText('3 turns');
-    // No PR fixture is registered for the idle session's branch — the
-    // GitHub fixture route (api/e2e/github/search/issues) legitimately
-    // returns no match, so no "PR #" link should render for this row.
+    // Session branches are not GitHub queue-discovery input, so no "PR #"
+    // link renders without a recorded deliverable.
     await expect(idleRow.getByRole('link', { name: /PR #/ })).toHaveCount(0);
     await expect(
       idleRow.getByRole('link', { name: 'Open session' }),

@@ -27,15 +27,26 @@ export function buildQueueView(
     activity.recentRuns,
     runnerSessionsByRunId,
   );
+  const failedRunByIssue = new Set(
+    activity.recentRuns
+      .filter(
+        (run) => run.issueNumber !== undefined && run.conclusion === 'failure',
+      )
+      .map((run) => repoItemKey(run.repo, run.issueNumber as number)),
+  );
   const items = rawItems.map((item) => {
-    const diagnosis = silentErrorByIssue.get(
-      repoItemKey(item.repo, item.number),
-    );
-    if (!diagnosis) return item;
+    const key = repoItemKey(item.repo, item.number);
+    const diagnosis = silentErrorByIssue.get(key);
+    const actionTypes = [
+      ...item.actionTypes,
+      ...(failedRunByIssue.has(key) ? (['run-failed'] as const) : []),
+      ...(diagnosis ? (['silent-error'] as const) : []),
+    ];
+    if (actionTypes.length === item.actionTypes.length) return item;
     return {
       ...item,
-      actionTypes: [...item.actionTypes, 'silent-error' as const],
-      silentErrorDiagnosis: diagnosis,
+      actionTypes,
+      ...(diagnosis === undefined ? {} : { silentErrorDiagnosis: diagnosis }),
     };
   });
 

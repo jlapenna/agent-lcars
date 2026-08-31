@@ -2,21 +2,12 @@ import type { CliSessionDoc } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { getCliSessions } from './cli-sessions';
-import { getGithubClient } from './github-client';
+import { getCliSessions, MAX_SESSIONS } from './cli-sessions';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
   listSessionDocs: vi.fn(),
 }));
-
-vi.mock('./github-client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./github-client')>();
-  return {
-    ...actual,
-    getGithubClient: vi.fn(),
-  };
-});
 
 const minutesAgo = (minutes: number) =>
   new Date(Date.now() - minutes * 60 * 1000).toISOString();
@@ -45,35 +36,11 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   };
 }
 
-/** The branch->PR join reads one `pulls.list` per repo and matches on
- * `head.ref` - it no longer issues a search per branch (#13). */
-function mockOpenPulls(pulls: unknown[] = []) {
-  const listMock = vi.fn().mockResolvedValue({ data: pulls });
-  (getGithubClient as Mock).mockReturnValue({
-    rest: { pulls: { list: listMock } },
-  });
-  return listMock;
-}
-
-function mockPullsGet(merged: boolean | Error) {
-  const getMock =
-    merged instanceof Error
-      ? vi.fn().mockRejectedValue(merged)
-      : vi.fn().mockResolvedValue({ data: { merged } });
-  (getGithubClient as Mock).mockReturnValue({
-    rest: {
-      pulls: { get: getMock, list: vi.fn().mockResolvedValue({ data: [] }) },
-    },
-  });
-  return getMock;
-}
-
 describe('getCliSessions', () => {
   afterEach(() => vi.resetAllMocks());
 
   it('passes a lastActivityAt cutoff to the store instead of listing everything', async () => {
     (listSessionDocs as Mock).mockResolvedValue([]);
-    mockOpenPulls();
 
     await getCliSessions();
 
@@ -87,60 +54,30 @@ describe('getCliSessions', () => {
     expect(cutoffAgeHours).toBeCloseTo(24, 1);
   });
 
-  it('joins an active session branch to an open PR when one exists', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([makeCliDoc()]);
-    const listMock = mockOpenPulls([
-      {
-        number: 2600,
-        html_url: 'https://github.com/o/r/pull/2600',
-        head: { ref: 'feat/agent-lcars-cli-sessions' },
-      },
+  it('does not infer a PR from any active session branch', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      makeCliDoc({ sessionId: 'session-a', branch: 'feat/alpha' }),
+      makeCliDoc({
+        sessionId: 'session-b',
+        repo: undefined,
+        branch: 'feat/repo-less',
+        lastActivityAt: minutesAgo(2),
+      }),
     ]);
 
     const { sessions, warnings } = await getCliSessions();
 
-    expect(warnings).toEqual([]);
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0]).toMatchObject({
-      sessionId: 'session-1',
-      liveness: 'live',
-      host: 'joes-workstation',
-      branch: 'feat/agent-lcars-cli-sessions',
-      turns: 3,
-      totalTokens: 1200,
-      pr: { number: 2600, url: 'https://github.com/o/r/pull/2600' },
-    });
-    expect(listMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner: 'supersprinklesracing',
-        repo: 'sprinkles',
-        state: 'open',
-      }),
-    );
-  });
-
-  it('uses the persisted explicit agent', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ sessionId: 'claude-session', agent: 'claude-code' }),
-      makeCliDoc({ sessionId: 'opencode-session', agent: 'opencode' }),
+    expect(sessions.map((session) => session.pr)).toEqual([
+      undefined,
+      undefined,
     ]);
-    mockOpenPulls();
-
-    const { sessions } = await getCliSessions();
-
-    expect(sessions.find((s) => s.sessionId === 'claude-session')?.agent).toBe(
-      'claude-code',
-    );
-    expect(
-      sessions.find((s) => s.sessionId === 'opencode-session')?.agent,
-    ).toBe('opencode');
+    expect(warnings).toEqual([]);
   });
 
-  it('uses the transcript-recorded PR without asking GitHub at all when present', async () => {
+  it('uses the transcript-recorded PR when its repository is recorded', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ deliverables: { prNumbers: [2650, 2662], commitShas: [] } }),
     ]);
-    const listMock = mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
@@ -148,10 +85,9 @@ describe('getCliSessions', () => {
       number: 2662,
       url: 'https://github.com/supersprinklesracing/sprinkles/pull/2662',
     });
-    expect(listMock).not.toHaveBeenCalled();
   });
 
-  it('keeps a repo-less CLI session host-scoped without GitHub PR links', async () => {
+  it('does not fabricate a deliverable PR link for a legacy repo-less session', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         repo: undefined,
@@ -159,255 +95,98 @@ describe('getCliSessions', () => {
         deliverables: { prNumbers: [270], commitShas: [] },
       }),
     ]);
-    const listMock = mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
     expect(sessions[0].pr).toBeUndefined();
-    expect(listMock).not.toHaveBeenCalled();
   });
 
-  it('does not query GitHub for a repo-less CLI branch', async () => {
+  it('uses the persisted explicit agent', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ repo: undefined, branch: 'fix/no-repo' }),
+      makeCliDoc({ sessionId: 'claude-session', agent: 'claude-code' }),
+      makeCliDoc({ sessionId: 'opencode-session', agent: 'opencode' }),
     ]);
-    const listMock = mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
-    expect(sessions[0].pr).toBeUndefined();
-    expect(listMock).not.toHaveBeenCalled();
+    expect(
+      sessions.find((session) => session.sessionId === 'claude-session')?.agent,
+    ).toBe('claude-code');
+    expect(
+      sessions.find((session) => session.sessionId === 'opencode-session')
+        ?.agent,
+    ).toBe('opencode');
   });
 
-  it('keeps an idle running session visible when a recorded PR has merged', async () => {
+  it('keeps liveness independent of a transcript-recorded PR', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         liveness: 'idle',
         lastActivityAt: minutesAgo(42),
         deliverables: { prNumbers: [2843], commitShas: [] },
       }),
-    ]);
-    const getMock = mockPullsGet(true);
-
-    const { sessions } = await getCliSessions();
-
-    expect(sessions[0].liveness).toBe('idle');
-    expect(sessions[0].pr).toEqual({
-      number: 2843,
-      url: 'https://github.com/supersprinklesracing/sprinkles/pull/2843',
-    });
-    expect(getMock).not.toHaveBeenCalled();
-  });
-
-  it('keeps a live session visible when an earlier transcript-recorded PR has merged', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
-        liveness: 'live',
-        lastActivityAt: minutesAgo(1),
-        deliverables: { prNumbers: [2843], commitShas: [] },
-      }),
-    ]);
-    const getMock = mockPullsGet(true);
-
-    const { sessions } = await getCliSessions();
-
-    expect(sessions[0].liveness).toBe('live');
-    expect(sessions[0].pr).toEqual({
-      number: 2843,
-      url: 'https://github.com/supersprinklesracing/sprinkles/pull/2843',
-    });
-    expect(getMock).not.toHaveBeenCalled();
-  });
-
-  it('keeps liveness as-is when the transcript-recorded PR is still open', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({
-        liveness: 'idle',
-        lastActivityAt: minutesAgo(20),
-        deliverables: { prNumbers: [2843], commitShas: [] },
-      }),
-    ]);
-    mockPullsGet(false);
-
-    const { sessions } = await getCliSessions();
-
-    expect(sessions[0].liveness).toBe('idle');
-  });
-
-  it('never checks merge state for a finished session, even with a recorded PR', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({
+        sessionId: 'ended',
         liveness: 'ended',
         lastActivityAt: minutesAgo(120),
         deliverables: { prNumbers: [2843], commitShas: [] },
       }),
     ]);
-    const getMock = mockPullsGet(true);
 
     const { sessions } = await getCliSessions();
 
-    expect(sessions[0].liveness).toBe('ended');
-    expect(getMock).not.toHaveBeenCalled();
+    expect(
+      sessions.find((session) => session.sessionId === 'session-1')?.liveness,
+    ).toBe('idle');
+    expect(
+      sessions.find((session) => session.sessionId === 'ended')?.liveness,
+    ).toBe('ended');
   });
 
-  it('never looks up PRs for ended sessions, even with a branch', async () => {
+  it('recomputes liveness from activity recency instead of trusting stored liveness', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ liveness: 'ended', lastActivityAt: minutesAgo(120) }),
-    ]);
-    const listMock = mockOpenPulls();
-
-    const { sessions } = await getCliSessions();
-
-    expect(sessions[0].liveness).toBe('ended');
-    expect(sessions[0].pr).toBeUndefined();
-    expect(listMock).not.toHaveBeenCalled();
-  });
-
-  it("lists a repo's open PRs once for many sessions, and warns once when it fails", async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ sessionId: 'session-1' }),
-      makeCliDoc({ sessionId: 'session-2', lastActivityAt: minutesAgo(2) }),
-    ]);
-    const listMock = vi.fn().mockRejectedValue(new Error('502'));
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { list: listMock } },
-    });
-
-    const { sessions, warnings } = await getCliSessions();
-
-    expect(sessions).toHaveLength(2);
-    expect(listMock).toHaveBeenCalledTimes(1);
-    expect(warnings).toEqual([
-      'PR lookup failed for supersprinklesracing/sprinkles.',
-    ]);
-  });
-
-  it('joins each session to the open PR whose head ref matches its branch', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ sessionId: 'session-a', branch: 'feat/alpha' }),
-      makeCliDoc({
-        sessionId: 'session-b',
-        branch: 'feat/beta',
-        lastActivityAt: minutesAgo(2),
-      }),
-      makeCliDoc({
-        sessionId: 'session-c',
-        branch: 'feat/no-pr',
-        lastActivityAt: minutesAgo(3),
-      }),
-    ]);
-    const listMock = mockOpenPulls([
-      {
-        number: 11,
-        html_url: 'https://github.com/o/r/pull/11',
-        head: { ref: 'feat/alpha' },
-      },
-      {
-        number: 22,
-        html_url: 'https://github.com/o/r/pull/22',
-        head: { ref: 'feat/beta' },
-      },
-    ]);
-
-    const { sessions, warnings } = await getCliSessions();
-    const byId = new Map(sessions.map((s) => [s.sessionId, s.pr?.number]));
-
-    expect(byId.get('session-a')).toBe(11);
-    expect(byId.get('session-b')).toBe(22);
-    expect(byId.get('session-c')).toBeUndefined();
-    // Three sessions across one repo still cost exactly one request.
-    expect(listMock).toHaveBeenCalledTimes(1);
-    expect(warnings).toEqual([]);
-  });
-
-  it('recomputes liveness from activity recency instead of trusting the stored value', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      // A live session whose watcher process check wrongly wrote 'ended'
-      // (containerized sessions - the watcher cannot see their /proc).
       makeCliDoc({ sessionId: 'mislabeled', liveness: 'ended' }),
-      // A stored 'live' frozen by a stopped watcher hours ago.
       makeCliDoc({
         sessionId: 'frozen',
         liveness: 'live',
         lastActivityAt: minutesAgo(120),
-        branch: undefined,
       }),
     ]);
-    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
-    const byId = new Map(sessions.map((s) => [s.sessionId, s.liveness]));
+    const byId = new Map(
+      sessions.map((session) => [session.sessionId, session.liveness]),
+    );
     expect(byId.get('mislabeled')).toBe('live');
     expect(byId.get('frozen')).toBe('ended');
   });
 
-  it('caps the list, keeping active sessions ahead of ended ones', async () => {
+  it('caps the list while keeping active sessions ahead of ended ones', async () => {
     const docs = [
-      // 25 ended sessions, newest first (as the store returns them)...
-      ...Array.from({ length: 25 }, (_, i) =>
+      ...Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
         makeCliDoc({
-          sessionId: `ended-${i}`,
+          sessionId: `ended-${index}`,
           liveness: 'ended',
-          lastActivityAt: minutesAgo(61 + i),
-          branch: undefined,
+          lastActivityAt: minutesAgo(61 + index),
         }),
       ),
-      // ...and one live session older than all of them.
-      makeCliDoc({
-        sessionId: 'live-tail',
-        lastActivityAt: minutesAgo(2),
-        branch: undefined,
-      }),
+      makeCliDoc({ sessionId: 'live-tail', lastActivityAt: minutesAgo(2) }),
     ];
     (listSessionDocs as Mock).mockResolvedValue(docs);
-    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
-    expect(sessions).toHaveLength(20);
-    expect(sessions.map((s) => s.sessionId)).toContain('live-tail');
+    expect(sessions).toHaveLength(MAX_SESSIONS);
+    expect(sessions.map((session) => session.sessionId)).toContain('live-tail');
   });
 
-  it('passes through the agent-declared status and its own age, distinct from lastActivityAt (#1257)', async () => {
-    const lastActivityAt = minutesAgo(1);
+  it('passes through status, artifacts, and cost-weighted tokens', async () => {
     const statusUpdatedAt = minutesAgo(40);
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
-        lastActivityAt,
         status: 'waiting on CI for #1247',
         statusUpdatedAt,
-      }),
-    ]);
-    mockOpenPulls();
-
-    const { sessions } = await getCliSessions();
-    expect(sessions[0].status).toBe('waiting on CI for #1247');
-    expect(sessions[0].statusUpdatedAt).toBe(statusUpdatedAt);
-    expect(sessions[0].statusUpdatedAt).not.toBe(sessions[0].lastActivityAt);
-  });
-
-  it('leaves status and statusUpdatedAt undefined when the doc has none (#1257)', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([makeCliDoc()]);
-    mockOpenPulls();
-
-    const { sessions } = await getCliSessions();
-    expect(sessions[0].status).toBeUndefined();
-    expect(sessions[0].statusUpdatedAt).toBeUndefined();
-  });
-
-  it('passes through discovered artifacts', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ artifacts: ['report.md', 'chart.png'] }),
-    ]);
-    mockOpenPulls();
-
-    const { sessions } = await getCliSessions();
-    expect(sessions[0].artifacts).toEqual(['report.md', 'chart.png']);
-  });
-
-  it('cost-weights cache-creation and cache-read tokens in totalTokens', async () => {
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({
+        artifacts: ['report.md', 'chart.png'],
         tokens: {
           inputTokens: 1000,
           outputTokens: 200,
@@ -416,46 +195,32 @@ describe('getCliSessions', () => {
         },
       }),
     ]);
-    mockOpenPulls();
 
     const { sessions } = await getCliSessions();
-    expect(sessions[0].totalTokens).toBe(6_575);
+
+    expect(sessions[0]).toMatchObject({
+      status: 'waiting on CI for #1247',
+      statusUpdatedAt,
+      artifacts: ['report.md', 'chart.png'],
+      totalTokens: 6575,
+    });
   });
 
-  it('filters out non-CLI session docs', async () => {
+  it('filters non-CLI sessions and degrades cleanly when the store fails', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc(),
-      {
+      makeCliDoc({
         sessionId: 'runner-1',
         source: 'issue-agent',
         liveness: 'ended',
-        startedAt: minutesAgo(60),
-        lastActivityAt: minutesAgo(60),
-        turns: 1,
-        toolCallCounts: {},
-        tokens: {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
-        },
-        deliverables: { prNumbers: [], commitShas: [] },
-      },
+      }),
     ]);
-    mockOpenPulls();
+    expect((await getCliSessions()).sessions).toHaveLength(1);
 
-    const { sessions } = await getCliSessions();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].sessionId).toBe('session-1');
-  });
-
-  it('degrades to an empty list with a warning when the store fails', async () => {
     (listSessionDocs as Mock).mockRejectedValue(new Error('boom'));
-
-    const { sessions, warnings } = await getCliSessions();
-    expect(sessions).toEqual([]);
-    expect(warnings).toEqual([
-      'CLI sessions unavailable (agent-telemetry store failed).',
-    ]);
+    await expect(getCliSessions()).resolves.toEqual({
+      sessions: [],
+      warnings: ['CLI sessions unavailable (agent-telemetry store failed).'],
+    });
   });
 });

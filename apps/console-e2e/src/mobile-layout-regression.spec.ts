@@ -52,7 +52,7 @@ test.describe('mobile console layout contracts @mobile-layout', () => {
       await page.goto('/inbox');
       const inbox = page.getByRole('region', { name: 'Decision Inbox' });
       const reviewRow = inbox.getByTestId(
-        `queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`,
+        `queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`,
       );
       await expect(inbox.locator('.queue-workspace__list')).toBeVisible();
       await expect(reviewRow).toBeVisible();
@@ -64,7 +64,7 @@ test.describe('mobile console layout contracts @mobile-layout', () => {
       await expect(detail).toBeVisible();
       await detail
         .getByRole('button', {
-          name: `More actions for #${E2E_ITEM_NUMBERS.reviewRequested}`,
+          name: `More actions for #${E2E_ITEM_NUMBERS.humanNeeded}`,
         })
         .click();
       const itemMenu = page.getByRole('menu');

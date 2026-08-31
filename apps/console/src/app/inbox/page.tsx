@@ -6,8 +6,8 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import type { ActionItem } from '../../lib/action-items';
 import {
-  getCachedActionItems,
   getCachedAgentActivity,
+  getCachedQueueItems,
   oldestFetchedAt,
 } from '../../lib/dashboard-data';
 import {
@@ -51,18 +51,18 @@ async function InboxBody({
 }) {
   const [
     {
-      data: { items, warnings: itemWarnings },
+      data: { items },
       fetchedAt: itemsFetchedAt,
     },
     { data: activity, fetchedAt: activityFetchedAt },
     { sessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
-    getCachedActionItems(),
+    getCachedQueueItems(),
     getCachedAgentActivity(),
     getRunnerSessionsByRunId(),
   ]);
   const warnings = Array.from(
-    new Set([...itemWarnings, ...activity.warnings, ...runnerSessionWarnings]),
+    new Set([...activity.warnings, ...runnerSessionWarnings]),
   );
   const queueView = buildQueueView(items, activity, sessionsByRunId);
   const matchesFilter = (repo: { owner: string; name: string }) =>
