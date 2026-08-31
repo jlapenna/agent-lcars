@@ -494,25 +494,39 @@ export async function reconcileGithubAnchorProjections(
   const persistedOpen = await deps.store.listOpenGithubAnchorProjections(
     maxPersistedOpen + 1,
   );
-  if (persistedOpen.length > maxPersistedOpen) {
-    throw new Error(
-      `GitHub anchor projection reconciliation found more than ${maxPersistedOpen} stored open anchors; clear the stale set before cutover.`,
-    );
-  }
-  await mapWithBoundedConcurrency({
+  const configuredRepositories = new Set(deps.repositories);
+  const revalidated = await mapWithBoundedConcurrency({
     values: persistedOpen.filter(
       (projection) => !authoritativeKeys.has(projectionKey(projection)),
     ),
     concurrency: ANCHOR_RECONCILE_REFRESH_CONCURRENCY,
     map: async (projection) => {
-      await refreshGithubAnchorProjection(deps, projection.anchor, {
-        deleted: true,
-      });
+      // A removed repository has no authoritative listing in this run and
+      // can be tombstoned outright. For a configured repository, however,
+      // an anchor may have opened or reopened after its page was listed:
+      // revalidate it exactly before deciding it is stale.
+      if (!configuredRepositories.has(projection.anchor.repo)) {
+        await refreshGithubAnchorProjection(deps, projection.anchor, {
+          deleted: true,
+        });
+        return undefined;
+      }
+      return refreshGithubAnchorProjection(deps, projection.anchor);
     },
   });
+  for (const projection of revalidated) {
+    if (projection?.state !== 'open') continue;
+    authoritativeKeys.add(projectionKey(projection));
+    allProjections.push(projection);
+  }
   const remainingOpen = await deps.store.listOpenGithubAnchorProjections(
     maxPersistedOpen + 1,
   );
+  if (remainingOpen.length > maxPersistedOpen) {
+    throw new Error(
+      `GitHub anchor projection reconciliation found more than ${maxPersistedOpen} stored open anchors after stale cleanup; increase the reviewed bound before cutover.`,
+    );
+  }
   const staleKeys = remainingOpen
     .map(projectionKey)
     .filter((key) => !authoritativeKeys.has(key));

@@ -302,6 +302,47 @@ describe('reconcileGithubAnchorProjections', () => {
     ]);
   });
 
+  it('revalidates a configured-repository anchor absent from its earlier page', async () => {
+    const store = new MemoryStore();
+    const reopenedAnchor = { repo: REPO, issue: 77 };
+    const generation =
+      await store.beginGithubAnchorProjectionRefresh(reopenedAnchor);
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor: reopenedAnchor,
+      generation,
+      projection: {
+        ...projection('Reopened after listing'),
+        anchor: reopenedAnchor,
+        url: `https://github.com/${REPO}/issues/77`,
+      },
+    });
+    const load = vi.fn(async (current) => ({
+      ...projection(
+        current.issue === 77 ? 'Reopened after listing' : anchor.title,
+      ),
+      anchor: current,
+      url: `https://github.com/${current.repo}/issues/${current.issue}`,
+    }));
+
+    await expect(
+      reconcileGithubAnchorProjections({
+        store,
+        repositories: [REPO],
+        listOpenIssues: vi.fn().mockResolvedValue([anchor]),
+        load,
+        now: () => '2026-08-30T12:00:01.000Z',
+      }),
+    ).resolves.toEqual({ repositories: 1, anchors: 1 });
+
+    expect(load).toHaveBeenCalledWith(reopenedAnchor);
+    await expect(
+      store.readGithubAnchorProjection(reopenedAnchor),
+    ).resolves.toMatchObject({
+      state: 'open',
+      title: 'Reopened after listing',
+    });
+  });
+
   it('refreshes exactly 1,000 anchors with bounded exact-read concurrency', async () => {
     const listOpenIssues = vi.fn(async (_repository: string, page: number) =>
       page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY

@@ -10,6 +10,9 @@ export interface GitHubWebhookEnvelope {
   deliveryId: string;
   eventName: string;
   signature: string;
+  /** Starts a new durable retry lifecycle after a projection repair reaches
+   * its Cloud Tasks retry budget. */
+  repairGeneration?: number;
 }
 
 export interface WebhookTask {
@@ -80,7 +83,11 @@ export async function enqueueGitHubWebhook(
   const target = `${required('AUTH_URL').replace(/\/$/u, '')}/api/control-plane/webhook/process`;
   try {
     await queue.enqueue({
-      taskId: `github-${envelope.deliveryId.toLowerCase()}`,
+      taskId: `github-${envelope.deliveryId.toLowerCase()}${
+        envelope.repairGeneration === undefined
+          ? ''
+          : `-repair-${envelope.repairGeneration}`
+      }`,
       url: target,
       headers: {
         'content-type': 'application/json',

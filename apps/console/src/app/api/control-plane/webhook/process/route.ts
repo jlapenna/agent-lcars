@@ -2,6 +2,7 @@ import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
+import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 import {
   handleWebhookDelivery,
   ProjectionRefreshError,
@@ -119,6 +120,27 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Unlike an admission failure, this delivery has not created work and
       // may be the only durable signal for a close/delete. Keep the queued
       // task retryable past the generic poison-delivery acknowledgement cap.
+      if (attempt >= MAX_PROCESS_ATTEMPTS) {
+        // Cloud Tasks itself has a finite retry lifecycle. Before this task
+        // can be retired, create a separately named durable successor with
+        // the same authenticated envelope and a fresh queue retry budget.
+        // If this enqueue fails, return 500 so the current task remains.
+        await enqueueGitHubWebhook({
+          rawBody,
+          deliveryId: deliveryId as string,
+          eventName: eventName as string,
+          signature: header(request, 'x-hub-signature-256'),
+          repairGeneration: attempt,
+        });
+        console.error(
+          `agent-lcars: handed projection-only webhook repair to durable successor after ${attempt} attempts`,
+          error,
+        );
+        return NextResponse.json(
+          { outcome: 'projection_repair_requeued', attempt },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
       console.error(
         `agent-lcars: retaining projection-only webhook repair after ${attempt} attempts`,
         error,

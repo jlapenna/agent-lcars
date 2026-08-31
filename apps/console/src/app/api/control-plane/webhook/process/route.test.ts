@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   createOrchestratorRuntime,
+  enqueueGitHubWebhook,
   handleWebhookDelivery,
   ProjectionRefreshError,
 } = vi.hoisted(() => {
@@ -11,12 +12,14 @@ const {
   }
   return {
     createOrchestratorRuntime: vi.fn(),
+    enqueueGitHubWebhook: vi.fn(),
     handleWebhookDelivery: vi.fn(),
     ProjectionRefreshError,
   };
 });
 
 vi.mock('@/lib/orchestrator-runtime', () => ({ createOrchestratorRuntime }));
+vi.mock('@/lib/hosted-webhook-queue', () => ({ enqueueGitHubWebhook }));
 vi.mock('@/lib/orchestrator-routes', () => ({
   handleWebhookDelivery,
   ProjectionRefreshError,
@@ -44,6 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env['AGENT_LCARS_WEBHOOK_SECRET'] = 'test-webhook-secret';
   createOrchestratorRuntime.mockReturnValue({});
+  enqueueGitHubWebhook.mockResolvedValue({ outcome: 'enqueued' });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -53,18 +57,24 @@ afterEach(() => {
 });
 
 describe('POST /api/control-plane/webhook/process', () => {
-  it('retains a projection-only repair after the generic retry cap', async () => {
+  it('hands a projection-only repair to a durable successor at the retry cap', async () => {
     handleWebhookDelivery.mockRejectedValue(
       new ProjectionRefreshError('GitHub exact refresh unavailable'),
     );
 
     const response = await POST(request('9'));
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      error: 'Projection refresh pending repair',
+      outcome: 'projection_repair_requeued',
       attempt: 10,
     });
+    expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: 'projection-refresh-delivery',
+        repairGeneration: 10,
+      }),
+    );
     expect(handleWebhookDelivery).toHaveBeenCalledWith(
       {},
       expect.objectContaining({

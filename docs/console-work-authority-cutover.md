@@ -33,7 +33,11 @@ render-time compatibility path.
    `/api/control-plane/projections/reconcile`.
 2. The endpoint uses the GitHub App to read up to 1,000 open anchors per
    configured control-plane repository, validates each current GitHub shape,
-   and writes it through `OrchestratorStore.upsertGithubAnchorProjection`.
+   and writes it through a generation-fenced exact refresh: it first claims
+   `beginGithubAnchorProjectionRefresh`, reads the current GitHub anchor,
+   then applies only the matching generation with
+   `applyGithubAnchorProjectionRefresh`. A missing anchor is an explicit
+   fenced tombstone, so an older in-flight read cannot restore it.
    It returns HTTP 409 rather than claiming success if any repository exceeds
    that bounded limit. This read is available only through the explicit
    cutover endpoint; queue rendering never imports it.
@@ -53,5 +57,7 @@ render-time compatibility path.
    endpoint, and their temporary proxy allowlist. Normal webhook deliveries
    continue maintaining the projection.
 
-The projection stores GitHub `updated_at` and rejects older deliveries, so a
-late redelivery cannot undo a newer label, assignee, title, or close event.
+Each invalidation increments a per-anchor refresh generation before its exact
+GitHub read. Only the current generation may apply, so a late delivery or
+older in-flight read cannot undo a newer label, assignee, title, or close
+event.
