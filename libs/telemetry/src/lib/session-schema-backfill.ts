@@ -19,7 +19,10 @@ const GITHUB_REPOSITORY_COMPONENT_RE = /^[\w.-]+$/u;
 export interface SessionSchemaBackfill {
   sessionId: string;
   agent: SessionAgent;
-  repo: SessionRepository;
+  /** Required for a GitHub-backed issue-agent anchor. CLI sessions may be
+   * host-scoped with no repository evidence, so a CLI agent-only repair must
+   * not invent one. */
+  repo?: SessionRepository;
   /** Required only for an `issue-agent` document with an archived
    * `transcriptGcsUri`, where it is the capture-time statement about that
    * archive's timeline capability. */
@@ -78,8 +81,14 @@ export function sessionSchemaGaps(document: unknown): SessionSchemaGap[] {
   if (!SESSION_AGENTS.includes(document['agent'] as SessionAgent)) {
     gaps.push('agent');
   }
+  // CLI sessions are host-scoped and may have no repository evidence. An
+  // issue-agent session, by contrast, is a GitHub-work anchor and must name
+  // its repository. Do not turn absent CLI provenance into a guessed repo.
   const repo = document['repo'];
-  if (!isCanonicalSessionRepository(repo)) {
+  if (
+    (source === 'issue-agent' || repo !== undefined) &&
+    !isCanonicalSessionRepository(repo)
+  ) {
     gaps.push('repo');
   }
   if (
@@ -116,12 +125,15 @@ export function backfillSessionSchema(
   if (document['agent'] !== undefined && document['agent'] !== backfill.agent) {
     throw new Error(`Session ${backfill.sessionId} has a conflicting agent`);
   }
-  if (!isCanonicalSessionRepository(backfill.repo)) {
+  if (
+    (source === 'issue-agent' || backfill.repo !== undefined) &&
+    !isCanonicalSessionRepository(backfill.repo)
+  ) {
     throw new Error(
       `Session ${backfill.sessionId} requires a canonical GitHub repo`,
     );
   }
-  if (document['repo'] !== undefined) {
+  if (document['repo'] !== undefined && backfill.repo !== undefined) {
     const repo = document['repo'];
     if (
       !isRecord(repo) ||
@@ -150,7 +162,7 @@ export function backfillSessionSchema(
       ...document,
       source,
       agent: backfill.agent,
-      repo: backfill.repo,
+      ...(backfill.repo && { repo: backfill.repo }),
       renderable: backfill.renderable,
     } as SessionDoc;
   }
@@ -158,7 +170,7 @@ export function backfillSessionSchema(
     ...document,
     source,
     agent: backfill.agent,
-    repo: backfill.repo,
+    ...(backfill.repo && { repo: backfill.repo }),
   } as SessionDoc;
 }
 
@@ -167,7 +179,7 @@ export function backfillSessionSchema(
  * rewriting counters, timestamps, or archive references during backfill. */
 export interface SessionSchemaBackfillPatch {
   agent: SessionAgent;
-  repo: SessionRepository;
+  repo?: SessionRepository;
   renderable?: boolean;
 }
 
@@ -178,7 +190,7 @@ export function sessionSchemaBackfillPatch(
   const migrated = backfillSessionSchema(document, backfill);
   return {
     agent: backfill.agent,
-    repo: backfill.repo,
+    ...(backfill.repo && { repo: backfill.repo }),
     ...(migrated.source === 'issue-agent' &&
       hasArchivedTranscript(migrated) && {
         renderable: backfill.renderable,

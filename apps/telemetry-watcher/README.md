@@ -177,13 +177,14 @@ short-lived credentials file) instead of a key JSON blob — see
 ## Session schema backfill
 
 `session-schema-backfill-cli` is the only supported repair path for telemetry
-documents written before explicit provider, repository, and archive
+documents written before explicit provider, issue-agent repository, and archive
 renderability metadata became mandatory. First inventory at most 200 current
 documents with the telemetry writer identity, then prepare a reviewed JSON
-manifest with an explicit `sessionId`, `agent`, `repo`, and (for issue-agent
-sessions) `renderable` value for each record. It never guesses from a primary
-repo, an archive URI, or a provider default. The command is dry-run by default;
-`--apply` is the separately approved write step.
+manifest with an explicit `sessionId`, `agent`, and (for issue-agent sessions)
+`repo` and `renderable` values for each record that has evidence-backed metadata
+to enrich. CLI sessions are legitimately host-scoped and may have no repository
+identity; do not invent one. The command is dry-run by default; `--apply` is
+the separately approved write step.
 
 ```bash
 ./tools/nx run @agent-lcars/telemetry-watcher:session-schema-backfill-cli
@@ -209,7 +210,8 @@ generated data: for example,
 `{"sessions":[{"sessionId":"...","agent":"codex","repo":{"owner":"jlapenna","name":"agent-lcars"}}]}`.
 This is a one-time #1632 migration boundary. Keep the CLI and its fixed store
 only until inventory, dry-run, apply, and a clean follow-up inventory are
-recorded; phase 2 removes this target and the legacy readers together. On
+recorded; phase 2 removes the retired readers and this target while retaining
+the supported host-scoped CLI record model. On
 `--apply`, each record is re-read and validated inside one Firestore
 transaction before its fixed metadata patch is written, so a concurrent
 watcher update conflicts rather than being overwritten. It is not a general
