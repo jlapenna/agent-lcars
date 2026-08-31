@@ -1,5 +1,13 @@
 import { revalidatePath, updateTag } from 'next/cache';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
 import { auth } from '../auth';
 import {
@@ -16,6 +24,11 @@ import {
   updatePrBranch,
 } from '../lib/backend-actions';
 import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
+import {
+  configureTestWatchedRepos,
+  TEST_HOME_REPOSITORY,
+  TEST_SPRINKLES_REPOSITORY,
+} from '../test-support/watched-repos';
 import {
   approveAndRebase,
   clearHumanNeeded,
@@ -105,10 +118,18 @@ const QUICK_TASK_RECEIPT = {
 
 describe('agent-lcars Server Actions', () => {
   beforeEach(() => {
+    configureTestWatchedRepos([
+      TEST_HOME_REPOSITORY,
+      TEST_SPRINKLES_REPOSITORY,
+    ]);
     vi.clearAllMocks();
     (auth as Mock).mockResolvedValue({
       user: { id: 'admin-1', isAdmin: true },
     });
+  });
+
+  afterEach(() => {
+    configureTestWatchedRepos([TEST_HOME_REPOSITORY]);
   });
 
   // Server Actions must not `throw` for expected/user-facing errors: Next.js

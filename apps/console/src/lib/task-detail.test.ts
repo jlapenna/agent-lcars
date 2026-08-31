@@ -1,5 +1,18 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
+import {
+  configureTestWatchedRepos,
+  TEST_HOME_REPOSITORY,
+  TEST_SPRINKLES_REPOSITORY,
+} from '../test-support/watched-repos';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
@@ -65,11 +78,16 @@ vi.mock('./dashboard-data', () => ({
 const { getTaskDetail } = await import('./task-detail');
 
 beforeEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY, TEST_SPRINKLES_REPOSITORY]);
   authoritativeResult = {
     states: new Map(),
     unavailableTaskKeys: new Set<string>(),
     warnings: [],
   };
+});
+
+afterEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY]);
 });
 
 function setupOctokit({

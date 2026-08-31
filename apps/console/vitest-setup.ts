@@ -3,14 +3,9 @@ import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
 
 const TEST_HOME_REPOSITORY = 'jlapenna/agent-lcars';
-const TEST_WATCHED_REPOSITORIES = [
+const TEST_WATCHED_REPOS = JSON.stringify([
   { owner: 'jlapenna', name: 'agent-lcars' },
-  { owner: 'supersprinklesracing', name: 'sprinkles', alias: 'sprinkles' },
-] as const;
-const TEST_WATCHED_REPOS = JSON.stringify(TEST_WATCHED_REPOSITORIES);
-const TEST_CONTROL_PLANE_REPOSITORIES = TEST_WATCHED_REPOSITORIES.map(
-  ({ owner, name }) => `${owner}/${name}`,
-).join(',');
+]);
 
 // Repository identity is intentionally explicit in every deployed runtime.
 // Supply the same complete configuration to each unit test; individual tests
@@ -18,7 +13,7 @@ const TEST_CONTROL_PLANE_REPOSITORIES = TEST_WATCHED_REPOSITORIES.map(
 beforeEach(() => {
   process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] ??= TEST_HOME_REPOSITORY;
   process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] ??=
-    TEST_CONTROL_PLANE_REPOSITORIES;
+    TEST_HOME_REPOSITORY;
   process.env['AGENT_LCARS_WATCHED_REPOS'] ??= TEST_WATCHED_REPOS;
 });
 
