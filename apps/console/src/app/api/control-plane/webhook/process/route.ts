@@ -51,6 +51,28 @@ function parseAttempt(retryCount: string | null): number {
   return Number.isSafeInteger(parsed) ? parsed + 1 : 1;
 }
 
+/** The durable repair generation is carried separately from Cloud Tasks'
+ * per-task retry count. A successor begins at retry one, so reusing the
+ * retry count would recreate the same named repair task after every
+ * lifecycle. This header is supplied only by our task enqueue path; malformed
+ * values are a deterministic delivery error rather than a reason to choose an
+ * arbitrary task name. */
+function parseRepairGeneration(value: string | null): number {
+  if (value === null) return 0;
+  if (!/^\d+$/u.test(value)) {
+    throw new PermanentAdmissionError(
+      'x-agent-lcars-projection-repair-generation must be a nonnegative integer',
+    );
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new PermanentAdmissionError(
+      'x-agent-lcars-projection-repair-generation must be a safe integer',
+    );
+  }
+  return parsed;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = Buffer.from(await request.arrayBuffer());
   if (
@@ -69,9 +91,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   );
   let deliveryId: string | undefined;
   let eventName: string | undefined;
+  let repairGeneration = 0;
   try {
     deliveryId = header(request, 'x-github-delivery');
     eventName = header(request, 'x-github-event');
+    repairGeneration = parseRepairGeneration(
+      request.headers.get('x-agent-lcars-projection-repair-generation'),
+    );
     let payload: unknown;
     try {
       payload = JSON.parse(rawBody.toString('utf8'));
@@ -130,10 +156,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           deliveryId: deliveryId as string,
           eventName: eventName as string,
           signature: header(request, 'x-hub-signature-256'),
-          repairGeneration: attempt,
+          repairGeneration: repairGeneration + 1,
         });
         console.error(
-          `agent-lcars: handed projection-only webhook repair to durable successor after ${attempt} attempts`,
+          `agent-lcars: handed projection-only webhook repair generation ${repairGeneration + 1} to a durable successor after ${attempt} attempts`,
           error,
         );
         return NextResponse.json(

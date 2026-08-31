@@ -30,12 +30,15 @@ vi.mock('@/lib/github-webhook-auth', () => ({
 
 import { POST } from './route';
 
-function request(retryCount: string): Request {
+function request(retryCount: string, repairGeneration?: string): Request {
   return new Request('https://console.test/api/control-plane/webhook/process', {
     method: 'POST',
     body: JSON.stringify({ repository: { full_name: 'jlapenna/agent-lcars' } }),
     headers: {
       'x-cloudtasks-taskretrycount': retryCount,
+      ...(repairGeneration === undefined
+        ? {}
+        : { 'x-agent-lcars-projection-repair-generation': repairGeneration }),
       'x-github-delivery': 'projection-refresh-delivery',
       'x-github-event': 'issues',
       'x-hub-signature-256': 'sha256=ignored-by-mock',
@@ -72,7 +75,7 @@ describe('POST /api/control-plane/webhook/process', () => {
     expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
       expect.objectContaining({
         deliveryId: 'projection-refresh-delivery',
-        repairGeneration: 10,
+        repairGeneration: 1,
       }),
     );
     expect(handleWebhookDelivery).toHaveBeenCalledWith(
@@ -80,6 +83,22 @@ describe('POST /api/control-plane/webhook/process', () => {
       expect.objectContaining({
         event: 'issues',
         deliveryId: 'projection-refresh-delivery',
+      }),
+    );
+  });
+
+  it('advances the predecessor repair generation after the successor exhausts its own retries', async () => {
+    handleWebhookDelivery.mockRejectedValue(
+      new ProjectionRefreshError('GitHub exact refresh unavailable'),
+    );
+
+    const response = await POST(request('9', '1'));
+
+    expect(response.status).toBe(200);
+    expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: 'projection-refresh-delivery',
+        repairGeneration: 2,
       }),
     );
   });
