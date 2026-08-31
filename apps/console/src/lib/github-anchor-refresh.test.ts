@@ -2,9 +2,12 @@ import {
   type GithubAnchorProjection,
   MemoryStore,
 } from '@agent-lcars/orchestrator';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { refreshGithubAnchorProjection } from './github-anchor-refresh';
+import {
+  enrichGithubAnchorProjections,
+  refreshGithubAnchorProjection,
+} from './github-anchor-refresh';
 
 const anchor = { repo: 'jlapenna/agent-lcars', issue: 42 } as const;
 const projection = (title = 'Refresh the anchor'): GithubAnchorProjection => ({
@@ -30,6 +33,50 @@ function deferred<T>() {
 }
 
 describe('refreshGithubAnchorProjection', () => {
+  it('enriches an issue refresh with its latest comment', async () => {
+    const issue: GithubAnchorProjection = {
+      ...projection(),
+      kind: 'issue',
+    };
+    const graphql = vi.fn().mockResolvedValue({
+      repository: {
+        i42: {
+          body: 'The current issue body.',
+          comments: {
+            nodes: [
+              {
+                body: 'The current comment.',
+                url: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-42',
+                createdAt: '2026-08-31T12:00:00.000Z',
+                updatedAt: '2026-08-31T12:01:00.000Z',
+                author: { login: 'agent-lcars[bot]' },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const [enriched] = await enrichGithubAnchorProjections(
+      anchor.repo,
+      [issue],
+      { graphql },
+    );
+
+    expect(enriched).toMatchObject({
+      body: 'The current issue body.',
+      lastComment: {
+        body: 'The current comment.',
+        author: 'agent-lcars[bot]',
+        createdAt: '2026-08-31T12:00:00.000Z',
+      },
+    });
+    expect(graphql).toHaveBeenCalledWith(
+      expect.stringContaining('... on Issue { body comments(last: 1)'),
+      { owner: 'jlapenna', name: 'agent-lcars' },
+    );
+  });
+
   it('turns a non-delete exact-load 404 into a fenced tombstone', async () => {
     const store = new MemoryStore();
     const generation = await store.beginGithubAnchorProjectionRefresh(anchor);

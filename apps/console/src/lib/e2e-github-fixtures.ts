@@ -690,6 +690,87 @@ export function issueComments(number: number) {
   }));
 }
 
+/** Exact GraphQL-anchor detail used only by the control-plane refresh seam.
+ * It deliberately has no list/query discovery surface: callers name each
+ * already-known anchor and receive the same bounded detail GitHub returns. */
+export function githubAnchorGraphqlDetail(number: number) {
+  const quickTask = quickTaskState().issues.find(
+    (candidate) => candidate.number === number,
+  );
+  if (quickTask) {
+    return {
+      body: quickTask.body,
+      comments: {
+        nodes: quickTask.comments.map((comment) => ({
+          body: comment.body,
+          url: `${itemUrl(number, 'issues')}#issuecomment-${number}`,
+          createdAt: quickTask.createdAt,
+          updatedAt: quickTask.createdAt,
+          author: { login: comment.author },
+        })),
+      },
+    };
+  }
+
+  if (!populatedFixturesEnabled()) return undefined;
+  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  if (!item) return undefined;
+  const edited = issueContentEdits().get(number);
+  const comments = item.comments ?? [];
+  const detail = {
+    body: edited?.body ?? item.body,
+    comments: {
+      nodes: comments.map((comment, index) => ({
+        body: comment.body,
+        url: `${itemUrl(number, item.isPr ? 'pull' : 'issues')}#issuecomment-${number * 100 + index}`,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt,
+        author: { login: comment.author },
+      })),
+    },
+  };
+  if (!item.pr) return detail;
+
+  const reviewThreads = item.pr.reviewThreads ?? [];
+  const checks = item.checkRuns ?? [];
+  return {
+    ...detail,
+    isDraft: item.pr.draft,
+    mergeStateStatus: item.pr.mergeableState,
+    reviewRequests: {
+      nodes: item.pr.requestedReviewers.map((login) => ({
+        requestedReviewer: { login },
+      })),
+    },
+    reviewThreads: {
+      totalCount: reviewThreads.length,
+      nodes: reviewThreads.map((isResolved, index) => ({
+        id: `PRRT_e2e_${number}_${index}`,
+        isResolved,
+      })),
+    },
+    commits: {
+      nodes: [
+        {
+          commit: {
+            statusCheckRollup: {
+              contexts: {
+                totalCount: checks.length,
+                nodes: checks.map((check, index) => ({
+                  name: check.name,
+                  status: check.status,
+                  conclusion: check.conclusion,
+                  detailsUrl: `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/runs/${number}-${index}`,
+                })),
+              },
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
 /** `GET /repos/{owner}/{repo}/pulls/{number}` */
 export function pullRequest(number: number) {
   const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);

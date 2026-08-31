@@ -13,6 +13,7 @@ import {
   E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION,
   getQuickTaskClaimRefSha,
   getQuickTaskClaimTag,
+  githubAnchorGraphqlDetail,
   issue,
   issueComments,
   pullRequest,
@@ -148,6 +149,50 @@ export async function POST(
     return NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   const { path } = await params;
+  // Exact control-plane refreshes use GitHub GraphQL for presentation fields
+  // that REST issue detail omits. This accepts only explicitly aliased anchor
+  // reads; it is not a queue/list discovery fixture.
+  if (path.length === 1 && path[0] === 'graphql') {
+    const body = (await req.json()) as {
+      query?: unknown;
+      variables?: { owner?: unknown; name?: unknown };
+      owner?: unknown;
+      name?: unknown;
+    };
+    const variables = body.variables ?? body;
+    if (
+      typeof body.query !== 'string' ||
+      variables.owner !== E2E_FIXTURE_REPO.owner ||
+      variables.name !== E2E_FIXTURE_REPO.name
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid GraphQL anchor refresh fixture request' },
+        { status: 422 },
+      );
+    }
+    const aliases = Array.from(
+      body.query.matchAll(
+        /([A-Za-z_]\w*):\s*issueOrPullRequest\(number:\s*(\d+)\)/gu,
+      ),
+      ([, alias, number]) => ({ alias, number: Number(number) }),
+    );
+    if (aliases.length === 0) {
+      return NextResponse.json(
+        { message: 'Invalid GraphQL anchor refresh fixture request' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json({
+      data: {
+        repository: Object.fromEntries(
+          aliases.map(({ alias, number }) => [
+            alias,
+            githubAnchorGraphqlDetail(number) ?? null,
+          ]),
+        ),
+      },
+    });
+  }
   // The broker's outbox drain uses raw fetch rather than Octokit. These two
   // handlers keep retrigger/reassignment coverage inside the same local
   // GitHub boundary while validating the production request shape.
