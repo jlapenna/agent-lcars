@@ -5,7 +5,6 @@ import {
   deriveItemState,
   latestRun,
   toItemView,
-  toItemViewSafe,
   toWorkSummary,
 } from './derive';
 
@@ -150,29 +149,6 @@ describe('toItemView', () => {
         runs: [],
       }),
     ).toThrow();
-  });
-});
-
-describe('toItemViewSafe', () => {
-  it('returns a view for a valid work payload', () => {
-    const view = toItemViewSafe({
-      workId: WORK_ID,
-      task: task(),
-      runs: [run(1, 'finished', { result: { ok: true } })],
-    });
-    expect(view?.state).toBe('done');
-    expect(view?.spec.title).toBe('t');
-  });
-
-  it('returns undefined when the payload is missing spec', () => {
-    const view = toItemViewSafe({
-      workId: WORK_ID,
-      task: task({
-        work: { origin: { principal: 'user:x', channel: 'api' } },
-      }),
-      runs: [],
-    });
-    expect(view).toBeUndefined();
   });
 });
 

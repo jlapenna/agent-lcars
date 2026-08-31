@@ -34,7 +34,7 @@ export function deriveItemState(
   if (isLive(latest.state)) return 'running';
   if (latest.state === 'finished') return latest.result?.ok ? 'done' : 'parked';
   // lost: the sweep retries until the budget is spent, then leaves it.
-  return (task.consecutiveLost ?? 0) > MAX_AUTO_RETRIES ? 'parked' : 'running';
+  return task.consecutiveLost > MAX_AUTO_RETRIES ? 'parked' : 'running';
 }
 
 export interface ItemRunView {
@@ -172,37 +172,4 @@ export function toWorkSummary(input: {
           }),
     })),
   };
-}
-
-/**
- * `toItemView`, but for a caller that must survive a task whose `work` is
- * absent or only partially populated. The orchestrator persists `Task.work`
- * as an optional loose record -- a native task can legitimately reach the
- * store with no `work`, or one that predates a field this schema now
- * requires -- so a listing that projects every native task must not let one
- * bad payload 500 the whole page. Returns `undefined` instead of throwing;
- * the caller decides what to do with a skipped item (typically: log and
- * omit it).
- */
-export function toItemViewSafe(input: {
-  workId: string;
-  task: Task;
-  runs: readonly Run[];
-  sessions?: readonly ItemSessionView[];
-}): ItemView | undefined {
-  const result = workPayloadSchema.safeParse(input.task.work);
-  return result.success ? toItemView(input) : undefined;
-}
-
-/**
- * Safe all-anchor variant for listings. A legacy GitHub task (or malformed
- * persisted payload) is not work-console data yet, so it is omitted rather
- * than allowing one bad document to fail the complete projection page.
- */
-export function toWorkSummarySafe(input: {
-  task: Task;
-  runs: readonly Run[];
-}): WorkSummary | undefined {
-  const result = workPayloadSchema.safeParse(input.task.work);
-  return result.success ? toWorkSummary(input) : undefined;
 }

@@ -7,8 +7,7 @@ import {
   isWorkAnchor,
 } from '@agent-lcars/orchestrator';
 import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
-import type { ItemView } from '@agent-lcars/work/derive';
-import { deriveItemState, toItemViewSafe } from '@agent-lcars/work/derive';
+import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
@@ -128,27 +127,18 @@ export const workRouter = os.router({
     // database, so it runs only over the items that survive the filters
     // and the limit rather than over every native task ever created.
     //
-    // `toItemViewSafe` rather than `toItemView`: every strict Task carries a
-    // Work record, but a partially corrupted Work payload must not 500 the
-    // whole listing. Skip it and log once instead.
-    const unjoined = (
-      await Promise.all(
-        native.map(async ({ workId, task }) => {
-          const view = toItemViewSafe({
-            workId,
-            task,
-            runs: await context.runtime.store.listRuns({ workId }),
-          });
-          if (view === undefined) {
-            console.warn(
-              'agent-lcars: skipping native task with an invalid work payload',
-              { workId },
-            );
-          }
-          return view;
+    // Tasks are persisted in the current strict shape. A corrupt record is
+    // a data-integrity failure, not a reason to silently omit work from a
+    // control-plane response.
+    const unjoined = await Promise.all(
+      native.map(async ({ workId, task }) =>
+        toItemView({
+          workId,
+          task,
+          runs: await context.runtime.store.listRuns({ workId }),
         }),
-      )
-    ).filter((item): item is ItemView => item !== undefined);
+      ),
+    );
     const page = unjoined
       .filter((item) => input.state === undefined || item.state === input.state)
       .filter(

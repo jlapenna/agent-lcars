@@ -32,6 +32,8 @@ describe('strict persisted-record cutover residue guard', () => {
       'PersistedMigration',
       'parsePersistedRun',
       'persistedRunSchema',
+      'toItemViewSafe',
+      'toWorkSummarySafe',
       "by: 'infra'",
       'work.migrate',
     ];
@@ -51,5 +53,7 @@ describe('strict persisted-record cutover residue guard', () => {
     );
     expect(source).toContain("jq -r '.pipeline // empty'");
     expect(source).not.toContain('.spec.pipeline');
+    expect(source).toContain("jq -r '.anchor.target_repo'");
+    expect(source).not.toContain('.anchor.target_repo //');
   });
 });

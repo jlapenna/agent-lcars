@@ -270,6 +270,10 @@ describe('items routes', () => {
     const otherRepo = 'other-org/other-repo';
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${controlPlaneRepository()},${otherRepo}`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'other-org', name: 'other-repo' },
+    ]);
     try {
       const ctx = context();
       const r = await call(ctx, 'PUT', `/items/${ID}`, {
@@ -279,6 +283,7 @@ describe('items routes', () => {
       expect(r.json).toMatchObject({ state: 'running' });
     } finally {
       delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
     }
   });
 
@@ -534,12 +539,11 @@ describe('items routes', () => {
     expect(r.json.items.map((i: { id: string }) => i.id)).toEqual([ID]);
   });
 
-  it('degrades a native task with an invalid work payload instead of 500ing the whole list', async () => {
+  it('fails the list when a persisted task violates the current Work shape', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });
-    // A corrupted Work record lacks its spec. `toItemView`'s strict parse
-    // would throw and 500 the whole listing; the list handler must skip just
-    // this item instead.
+    // A corrupted Work record lacks its spec. Current records must not be
+    // silently omitted from the control-plane response.
     await ctx.runtime.orchestrator.request({
       taskId: { workId: OTHER_ID },
       requestId: OTHER_ID,
@@ -548,8 +552,7 @@ describe('items routes', () => {
     });
 
     const r = await call(ctx, 'GET', '/items');
-    expect(r.status).toBe(200);
-    expect(r.json.items.map((i: { id: string }) => i.id)).toEqual([ID]);
+    expect(r.status).toBe(500);
   });
 
   it('narrows the listing by state, principal, and repo', async () => {

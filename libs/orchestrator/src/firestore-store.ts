@@ -26,6 +26,8 @@ import {
   taskKey,
 } from './model';
 import {
+  type OpenGithubAnchorProjectionCursor,
+  type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
   type RequestTransactionState,
   StoreConflict,
@@ -228,7 +230,12 @@ export class FirestoreStore implements OrchestratorStore {
           'GitHub anchor refresh projection does not match its fence',
         );
       }
-      tx.set(ref, {
+      // The refresh fence was created above, so this is always an update of
+      // an existing document. `update` both replaces the projection map
+      // exactly (rather than retaining removed optional fields) and is the
+      // Firestore write form that permits the top-level delete sentinel used
+      // to remove this anchor from the open-order index.
+      tx.update(ref, {
         projection: next,
         refreshGeneration: input.generation,
         ...(next.state === 'open'
@@ -252,21 +259,48 @@ export class FirestoreStore implements OrchestratorStore {
   async listOpenGithubAnchorProjections(
     limit = 200,
   ): Promise<GithubAnchorProjection[]> {
+    return (await this.listOpenGithubAnchorProjectionPage({ limit }))
+      .projections;
+  }
+
+  async listOpenGithubAnchorProjectionPage(input: {
+    limit: number;
+    cursor?: OpenGithubAnchorProjectionCursor;
+  }): Promise<OpenGithubAnchorProjectionPage> {
     // `openUpdatedAt` is present only on open anchors. Ordering this single
-    // field is served by Firestore's automatic index and bounds the read at
-    // the datastore without a state+order composite index.
-    const snapshot = await this.#githubAnchors
+    // field plus document id gives this cursor a stable total order without
+    // an application-maintained composite index. Each datastore read remains
+    // bounded; callers follow nextCursor until selection is complete.
+    let query = this.#githubAnchors
       .orderBy('openUpdatedAt', 'desc')
-      .limit(limit)
-      .get();
-    return snapshot.docs.flatMap((doc) => {
-      const projection = githubAnchorProjectionSchema.parse(
-        doc.data()['projection'],
+      .orderBy(FieldPath.documentId(), 'desc')
+      .limit(input.limit);
+    if (input.cursor !== undefined) {
+      query = query.startAfter(
+        input.cursor.sourceUpdatedAt,
+        encodeURIComponent(taskKey(input.cursor.anchor)),
       );
-      // A pre-fence document may retain its old index field. Never present a
-      // closed snapshot as an open queue item while the backfill refreshes it.
-      return projection.state === 'open' ? [projection] : [];
-    });
+    }
+    const snapshot = await query.get();
+    const entries = snapshot.docs.map((doc) => ({
+      projection: githubAnchorProjectionSchema.parse(doc.data()['projection']),
+    }));
+    const last = entries.at(-1)?.projection;
+    return {
+      projections: entries.flatMap(({ projection }) => {
+        // A pre-fence document may retain its old index field. Never present a
+        // closed snapshot as an open queue item while the backfill refreshes it.
+        return projection.state === 'open' ? [projection] : [];
+      }),
+      ...(last !== undefined && snapshot.size === input.limit
+        ? {
+            nextCursor: {
+              sourceUpdatedAt: last.sourceUpdatedAt,
+              anchor: last.anchor,
+            },
+          }
+        : {}),
+    };
   }
 
   async claimPendingOutbox(input: {

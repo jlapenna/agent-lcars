@@ -16,6 +16,8 @@ import {
   taskKey,
 } from './model';
 import {
+  type OpenGithubAnchorProjectionCursor,
+  type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
   type RequestTransactionState,
   StoreConflict,
@@ -182,6 +184,48 @@ export class MemoryStore implements OrchestratorStore {
   async listOpenGithubAnchorProjections(
     limit = 200,
   ): Promise<GithubAnchorProjection[]> {
+    return this.#sortedOpenGithubAnchorProjections().slice(0, limit);
+  }
+
+  async listOpenGithubAnchorProjectionPage(input: {
+    limit: number;
+    cursor?: OpenGithubAnchorProjectionCursor;
+  }): Promise<OpenGithubAnchorProjectionPage> {
+    const all = this.#sortedOpenGithubAnchorProjections();
+    const cursor = input.cursor;
+    const cursorIndex =
+      cursor === undefined
+        ? -1
+        : all.findIndex(
+            (projection) =>
+              cursor.sourceUpdatedAt.localeCompare(projection.sourceUpdatedAt) >
+                0 ||
+              (cursor.sourceUpdatedAt === projection.sourceUpdatedAt &&
+                taskKey(cursor.anchor).localeCompare(
+                  taskKey(projection.anchor),
+                ) > 0),
+          );
+    // A projection can be refreshed between pages.  Treat the opaque cursor
+    // as an ordering boundary rather than requiring its old snapshot to
+    // still exist, exactly like Firestore's startAfter values do.
+    const start =
+      cursor === undefined ? 0 : cursorIndex === -1 ? all.length : cursorIndex;
+    const projections = all.slice(start, start + input.limit);
+    const last = projections.at(-1);
+    return {
+      projections,
+      ...(last !== undefined && start + input.limit < all.length
+        ? {
+            nextCursor: {
+              sourceUpdatedAt: last.sourceUpdatedAt,
+              anchor: structuredClone(last.anchor),
+            },
+          }
+        : {}),
+    };
+  }
+
+  #sortedOpenGithubAnchorProjections(): GithubAnchorProjection[] {
     return structuredClone(
       [...this.#githubAnchorProjections.values()]
         .flatMap((entry) =>
@@ -192,8 +236,7 @@ export class MemoryStore implements OrchestratorStore {
           (left, right) =>
             right.sourceUpdatedAt.localeCompare(left.sourceUpdatedAt) ||
             taskKey(right.anchor).localeCompare(taskKey(left.anchor)),
-        )
-        .slice(0, limit),
+        ),
     );
   }
 

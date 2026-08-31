@@ -61,13 +61,11 @@ function view(schedule: Schedule) {
 
 /**
  * `view`, but for a caller that must survive a schedule whose stored
- * `spec` no longer validates -- mirrors `toItemViewSafe`
- * (`libs/work/src/derive.ts`). A `spec` tightened out from under an
+ * `spec` no longer validates. A `spec` tightened out from under an
  * already-stored schedule, or a hand-edited document, is exactly the
  * "invalid" case the tick handler already disables a schedule for; a
  * listing or a single `get`/`enable`/`disable` must not 500 over it the
- * way the strict `view` above would. Unlike `toItemViewSafe` (which omits
- * the whole item), this omits only `spec` -- the rest of the schedule
+ * way the strict `view` above would. This omits only `spec` -- the rest of the schedule
  * (id, cron, enabled, watermark) is still meaningful, and the operator
  * needs it to find and fix -- or simply disable -- the broken row.
  */

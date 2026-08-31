@@ -58,7 +58,7 @@ PIPELINE="$(jq -r '.pipeline // empty' <<<"$brief")"
 case "$ANCHOR_TYPE" in
   work)
     WORK="$(jq -c '{id, spec}' <<<"$brief")"
-    TARGET_REPO="$(jq -r '.anchor.target_repo // .spec.target.repo' <<<"$brief")"
+    TARGET_REPO="$(jq -r '.anchor.target_repo' <<<"$brief")"
     ISSUE=''
     ;;
   github)
