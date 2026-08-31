@@ -5,7 +5,12 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { resolvePrincipal, type WorkGrant } from './work-grants';
 
 export type WorkScope =
-  'work.operator' | 'work.executor' | 'work.cron' | 'work.reaper';
+  | 'work.operator'
+  | 'work.executor'
+  | 'work.cron'
+  | 'work.reaper'
+  /** One-shot persisted-record migration only. Never implied by operator. */
+  | 'work.migrate';
 
 export interface WorkPrincipal {
   principal: string;

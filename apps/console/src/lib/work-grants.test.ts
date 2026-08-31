@@ -108,6 +108,20 @@ describe('grant scopes', () => {
     expect(grants[0]?.scopes).toEqual(['work.cron']);
   });
 
+  it('accepts work.migrate only when explicitly granted', () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'user:jlapenna',
+          subjects: ['github:jlapenna'],
+          pipelines: ['claude'],
+          scopes: ['work.operator', 'work.migrate'],
+        },
+      ]),
+    );
+    expect(grants[0]?.scopes).toEqual(['work.operator', 'work.migrate']);
+  });
+
   it('rejects an explicit empty scopes list as a config error rather than silently treating it as none', () => {
     expect(() =>
       parseWorkGrants(

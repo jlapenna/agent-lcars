@@ -5,8 +5,12 @@ import { FirestoreScheduleStore } from './firestore-schedule-store';
 import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
-import { outboxEntrySchema, taskSchema } from './model';
+import { outboxEntrySchema, taskKey, taskSchema } from './model';
 import { Orchestrator } from './orchestrator';
+import {
+  encodePersistedMigrationCursor,
+  PersistedMigrationCursorError,
+} from './persisted-record-migration';
 import {
   runOrchestratorStoreContract,
   runScheduleStoreContract,
@@ -139,6 +143,248 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       databaseId: '(default)',
       collectionPrefix: `orchestrator-test-${Date.now()}-${prefixCounter}-`,
       emulatorHost: emulatorHost ?? 'localhost:8080',
+    });
+  });
+
+  describe('persisted-record migration boundary', () => {
+    function migrationStore() {
+      prefixCounter += 1;
+      return new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix: `orchestrator-migration-test-${Date.now()}-${prefixCounter}-`,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+    }
+
+    async function seedTask(store: FirestoreStore, issue: number) {
+      const task = {
+        task: { repo: 'octo/example', issue },
+        runCount: 0,
+        updatedAt: '2026-08-15T12:00:00.000Z',
+      };
+      await store.apply({
+        decision: { task, outbox: [] },
+        expectedRevision: undefined,
+      });
+      return task;
+    }
+
+    it('pages a real Firestore collection and rejects invalid, cross-kind, or foreign cursors', async () => {
+      const store = migrationStore();
+      await Promise.all([
+        seedTask(store, 1),
+        seedTask(store, 2),
+        seedTask(store, 3),
+      ]);
+
+      const first = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 2,
+      });
+      expect(first.records).toHaveLength(2);
+      expect(first.hasMore).toBe(true);
+      expect(first.nextCursor).toBeDefined();
+      const second = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      expect(second.records).toHaveLength(1);
+      expect(second.hasMore).toBe(false);
+      expect(
+        new Set(
+          [...first.records, ...second.records].map((record) =>
+            JSON.stringify(record.selector),
+          ),
+        ),
+      ).toHaveLength(3);
+
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: 'not-a-cursor',
+        }),
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: encodePersistedMigrationCursor('run', 'not-a-task'),
+        }),
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: encodePersistedMigrationCursor('task', 'not-a-task'),
+        }),
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
+      const directPathCursor = Buffer.concat([
+        Buffer.from([0x74]),
+        Buffer.from('a/b', 'utf8'),
+      ]).toString('base64url');
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: directPathCursor,
+        }),
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
+    });
+
+    it('does no partial write when a reviewed multi-record manifest is stale', async () => {
+      const store = migrationStore();
+      const firstTask = await seedTask(store, 10);
+      const secondTask = await seedTask(store, 11);
+      const inventory = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 10,
+      });
+      const entries = await Promise.all(
+        inventory.records.map(async (record) => {
+          if (record.selector?.kind !== 'task') throw new Error('missing task');
+          const current = await store.readTask(record.selector.task);
+          if (current === undefined) throw new Error('missing stored task');
+          return {
+            selector: record.selector,
+            expectedFingerprint: record.fingerprint,
+            replacement: {
+              task: {
+                ...current.task,
+                consecutiveLost: 0,
+                work: { reviewed: true },
+              },
+              revision: current.revision,
+            },
+          } as const;
+        }),
+      );
+      const preview = await store.previewPersistedMigration(entries);
+
+      const changed = await store.readTask(secondTask.task);
+      if (changed === undefined) throw new Error('missing second task');
+      await store.apply({
+        decision: {
+          task: { ...changed.task, updatedAt: '2026-08-16T12:00:00.000Z' },
+          outbox: [],
+        },
+        expectedRevision: changed.revision,
+      });
+
+      await expect(
+        store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        }),
+      ).rejects.toThrow('changed after inventory');
+      // The first document was valid, but FirestoreStore validates every
+      // target before issuing any write, so the stale second entry leaves it
+      // untouched too.
+      expect((await store.readTask(firstTask.task))?.task.work).toBeUndefined();
+    });
+
+    it('applies a reviewed Firestore manifest through the transaction boundary', async () => {
+      const store = migrationStore();
+      const task = await seedTask(store, 12);
+      const page = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      });
+      const record = page.records[0];
+      if (record?.selector?.kind !== 'task') throw new Error('missing task');
+      const current = await store.readTask(record.selector.task);
+      if (current === undefined) throw new Error('missing stored task');
+      const entries = [
+        {
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+          replacement: {
+            task: {
+              ...current.task,
+              consecutiveLost: 0,
+              work: { reviewed: true },
+            },
+            revision: current.revision,
+          },
+        },
+      ] as const;
+      const preview = await store.previewPersistedMigration(entries);
+
+      await expect(
+        store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        }),
+      ).resolves.toMatchObject({ entries: 1 });
+      expect((await store.readTask(task.task))?.task).toMatchObject({
+        consecutiveLost: 0,
+        work: { reviewed: true },
+      });
+    });
+
+    it('keeps full-width Firestore int64 values distinct for stale manifests', async () => {
+      prefixCounter += 1;
+      const prefix = `orchestrator-migration-int64-${Date.now()}-${prefixCounter}-`;
+      const store = new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix: prefix,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+      const taskId = { repo: 'octo/example', issue: 13 } as const;
+      const raw = new Firestore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        host: emulatorHost ?? 'localhost:8080',
+        ssl: false,
+      });
+      const ref = raw
+        .collection(`${prefix}tasks`)
+        .doc(encodeURIComponent(taskKey(taskId)));
+      const task = {
+        task: taskId,
+        runCount: 0,
+        updatedAt: '2026-08-15T12:00:00.000Z',
+      };
+      await ref.set({ task, revision: 9_007_199_254_740_992n });
+
+      const first = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      });
+      const record = first.records[0];
+      if (record?.selector?.kind !== 'task') throw new Error('missing task');
+      expect(record.selector.task).toEqual(taskId);
+
+      // These adjacent int64 values both round to the same JavaScript number
+      // with the default client. The migration client must fingerprint their
+      // exact BigInt representations, then reject this stale replacement.
+      await ref.update({ revision: 9_007_199_254_740_993n });
+      const second = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      });
+      expect(second.records[0]?.fingerprint).not.toBe(record.fingerprint);
+
+      const entries = [
+        {
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+          replacement: {
+            task: { ...task, consecutiveLost: 0, work: { reviewed: true } },
+            revision: 1,
+          },
+        },
+      ] as const;
+      const preview = await store.previewPersistedMigration(entries);
+      await expect(
+        store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        }),
+      ).rejects.toThrow('changed after inventory');
     });
   });
 });

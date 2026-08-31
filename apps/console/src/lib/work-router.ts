@@ -14,6 +14,7 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { githubDispatchRouter } from './github-dispatch-router';
+import { orchestratorMigrationRouter } from './orchestrator-migration-router';
 import { scheduleRouter } from './schedule-router';
 import {
   forbiddenReason,
@@ -287,11 +288,12 @@ export const workRouter = os.router({
 });
 
 /**
- * The OpenAPI (RESTful) adapter serving items, schedules, and GitHub-anchor
- * dispatches under one handler. Their contracts already carry the full path,
- * so nesting them under organizational keys here is not a URL prefix. Error
- * codes map to HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP`
- * (`UNAUTHORIZED` 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
+ * The OpenAPI (RESTful) adapter serving items, schedules, GitHub-anchor
+ * dispatches, and the temporary operator-only migration route under one
+ * handler. Their contracts already carry the full path, so nesting them
+ * under organizational keys here is not a URL prefix. Error codes map to
+ * HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP` (`UNAUTHORIZED`
+ * 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
  * `TOO_MANY_REQUESTS` 429), which is exactly what this API wants -- so no
  * `errorStatusMap` override.
  */
@@ -301,6 +303,7 @@ export function createWorkHandler(): OpenAPIHandler<WorkContext> {
       items: workRouter,
       schedules: scheduleRouter,
       dispatches: githubDispatchRouter,
+      orchestratorMigration: orchestratorMigrationRouter,
     },
     {
       routingInterceptors: [

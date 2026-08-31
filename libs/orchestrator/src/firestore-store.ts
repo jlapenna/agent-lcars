@@ -18,10 +18,26 @@ import {
   type RequestSource,
   type Run,
   runStateSchema,
+  taskDocumentSchema,
   type TaskId,
   taskKey,
-  taskSchema,
 } from './model';
+import {
+  decodePersistedMigrationCursor,
+  encodePersistedMigrationCursor,
+  fingerprint,
+  inventoryPersistedRecord,
+  manifestId,
+  PERSISTED_MIGRATION_PAGE_MAX,
+  PersistedMigrationConflict,
+  PersistedMigrationCursorError,
+  type PersistedMigrationEntry,
+  type PersistedMigrationPreview,
+  type PersistedRecordKind,
+  type PersistedRecordPage,
+  type PersistedRecordSelector,
+  validateManifest,
+} from './persisted-record-migration';
 import {
   type OrchestratorStore,
   type RequestTransactionState,
@@ -34,10 +50,33 @@ import {
  *  can never drift from `model.ts`'s own notion of "live". */
 const LIVE_STATES = runStateSchema.options.filter(isLive);
 
-const taskDocSchema = z.strictObject({
-  task: taskSchema,
-  revision: z.number().int().nonnegative(),
-});
+const taskDocSchema = taskDocumentSchema;
+
+/** The migration client decodes every Firestore integer as bigint. Current
+ * schemas intentionally consume normal JavaScript numbers, so only values
+ * whose exact value survives the conversion are normalized for shape
+ * classification. Unsafe integers stay bigint and are reported as invalid;
+ * their raw BigInt representation remains the stale-write fingerprint. */
+function normalizeFirestoreIntegerValues(value: unknown): unknown {
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isSafeInteger(asNumber) ? asNumber : value;
+  }
+  if (Array.isArray(value)) return value.map(normalizeFirestoreIntegerValues);
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, child]) => [
+        key,
+        normalizeFirestoreIntegerValues(child),
+      ]),
+    );
+  }
+  return value;
+}
 
 export interface FirestoreStoreOptions {
   readonly projectId: string;
@@ -62,22 +101,41 @@ export interface FirestoreStoreOptions {
  */
 export class FirestoreStore implements OrchestratorStore {
   readonly #firestore: Firestore;
+  /** Migration reads must preserve every Firestore int64 exactly. This stays
+   * separate from the normal store client: ordinary Task/Run schemas use
+   * JavaScript numbers and must not start receiving bigint values. */
+  readonly #migrationFirestore: Firestore;
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
   readonly #outbox: CollectionReference;
+  readonly #migrationTasks: CollectionReference;
+  readonly #migrationRuns: CollectionReference;
+  readonly #migrationOutbox: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
-    this.#firestore = new Firestore({
+    const firestoreOptions = {
       projectId: options.projectId,
       databaseId: options.databaseId,
       ...(options.emulatorHost === undefined
         ? {}
         : { host: options.emulatorHost, ssl: false }),
+    };
+    this.#firestore = new Firestore(firestoreOptions);
+    this.#migrationFirestore = new Firestore({
+      ...firestoreOptions,
+      useBigInt: true,
     });
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
+    this.#migrationTasks = this.#migrationFirestore.collection(
+      `${prefix}tasks`,
+    );
+    this.#migrationRuns = this.#migrationFirestore.collection(`${prefix}runs`);
+    this.#migrationOutbox = this.#migrationFirestore.collection(
+      `${prefix}outbox`,
+    );
   }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -479,6 +537,136 @@ export class FirestoreStore implements OrchestratorStore {
       .map((doc) => parsePersistedRun(doc.data()))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit ?? 200);
+  }
+
+  async inventoryPersistedRecords(input: {
+    kind: PersistedRecordKind;
+    limit: number;
+    cursor?: string;
+  }): Promise<PersistedRecordPage> {
+    if (
+      !Number.isInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > PERSISTED_MIGRATION_PAGE_MAX
+    ) {
+      throw new Error(
+        `Persisted orchestrator inventory page size must be 1-${PERSISTED_MIGRATION_PAGE_MAX}`,
+      );
+    }
+    const collection = this.#migrationCollectionFor(input.kind);
+    let query = collection.orderBy(FieldPath.documentId());
+    if (input.cursor !== undefined) {
+      const documentId = decodePersistedMigrationCursor(
+        input.cursor,
+        input.kind,
+      );
+      // A well-formed cursor for another or nonexistent record must not
+      // silently become a new first page. Verify it belongs to this fixed
+      // collection before using it as a query boundary.
+      if (!(await collection.doc(documentId).get()).exists) {
+        throw new PersistedMigrationCursorError(
+          'Invalid persisted orchestrator inventory cursor',
+        );
+      }
+      query = query.startAfter(documentId);
+    }
+    // The extra document makes `hasMore` truthful at the exact page boundary
+    // without scanning an unbounded collection.
+    const snapshot = await query.limit(input.limit + 1).get();
+    const documents = snapshot.docs.slice(0, input.limit);
+    const hasMore = snapshot.docs.length > documents.length;
+    return {
+      kind: input.kind,
+      consistency: 'page-only',
+      records: documents.map((document) => {
+        const raw = document.data();
+        // Normalization is only for the current schema census. Raw values
+        // remain BigInt-capable for the fingerprint used by the later
+        // transaction, so an unsafe Firestore int64 can never collapse into
+        // a rounded JavaScript number between inventory and apply.
+        return {
+          ...inventoryPersistedRecord(
+            input.kind,
+            normalizeFirestoreIntegerValues(raw),
+          ),
+          fingerprint: fingerprint(raw),
+        };
+      }),
+      hasMore,
+      ...(hasMore && documents.length > 0
+        ? {
+            nextCursor: encodePersistedMigrationCursor(
+              input.kind,
+              documents.at(-1)?.id ?? '',
+            ),
+          }
+        : {}),
+    };
+  }
+
+  async previewPersistedMigration(
+    entries: readonly PersistedMigrationEntry[],
+  ): Promise<PersistedMigrationPreview> {
+    const validated = validateManifest(entries);
+    return { manifestId: manifestId(validated), entries: validated.length };
+  }
+
+  async applyPersistedMigration(input: {
+    entries: readonly PersistedMigrationEntry[];
+    reviewedManifestId: string;
+  }): Promise<PersistedMigrationPreview> {
+    const entries = validateManifest(input.entries);
+    const id = manifestId(entries);
+    if (id !== input.reviewedManifestId) {
+      throw new PersistedMigrationConflict(
+        'reviewed manifest id does not match the submitted entries',
+      );
+    }
+    await this.#migrationFirestore.runTransaction(async (tx) => {
+      // Read every fixed manifest target first. Firestore retries the whole
+      // transaction on a concurrent write; each retry compares the current
+      // raw fingerprint before any write, so no reviewed replacement can
+      // overwrite a record changed after the inventory.
+      const snapshots = await Promise.all(
+        entries.map((entry) => tx.get(this.#migrationRef(entry.selector))),
+      );
+      for (const [index, snapshot] of snapshots.entries()) {
+        const entry = entries[index];
+        if (entry === undefined) throw new Error('missing manifest entry');
+        if (!snapshot.exists) {
+          throw new PersistedMigrationConflict(
+            `persisted ${entry.selector.kind} record disappeared`,
+          );
+        }
+        if (fingerprint(snapshot.data()) !== entry.expectedFingerprint) {
+          throw new PersistedMigrationConflict(
+            `persisted ${entry.selector.kind} record changed after inventory`,
+          );
+        }
+      }
+      for (const entry of entries) {
+        tx.set(this.#migrationRef(entry.selector), entry.replacement);
+      }
+    });
+    return { manifestId: id, entries: entries.length };
+  }
+
+  #migrationCollectionFor(kind: PersistedRecordKind): CollectionReference {
+    if (kind === 'task') return this.#migrationTasks;
+    if (kind === 'run') return this.#migrationRuns;
+    return this.#migrationOutbox;
+  }
+
+  #migrationRef(selector: PersistedRecordSelector): DocumentReference {
+    if (selector.kind === 'task') {
+      return this.#migrationTasks.doc(
+        encodeURIComponent(taskKey(selector.task)),
+      );
+    }
+    if (selector.kind === 'run') {
+      return this.#migrationRuns.doc(encodeURIComponent(selector.runId));
+    }
+    return this.#migrationOutbox.doc(encodeURIComponent(selector.entryId));
   }
 
   #taskRef(id: TaskId): DocumentReference {
