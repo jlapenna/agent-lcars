@@ -70,11 +70,8 @@ jobs:
     with:
       bot-logins: ${{ vars.AGENT_BOT_LOGINS }}
       fleet-login: ${{ vars.AGENT_FLEET_LOGIN }}
-      # Self-hosted, the general-purpose lcars-default pool - NOT
-      # claude-agent-lcars, which backs 90-180 minute agent sessions.
-      # Sharing that pool would queue this glue work behind an in-flight
-      # agent run, the same antipattern sprinkles' own claude-automerge.yml
-      # was moved off of.
+      # Self-hosted, general-purpose lcars-default pool. Glue work stays off
+      # the QueueExecutor direct-container route.
       runs-on: '["lcars-default"]'
       # The required CI checks in the Protect main ruleset.
       required-checks: '["Verify","Runner image pnpm-store seed"]'

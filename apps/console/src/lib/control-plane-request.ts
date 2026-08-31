@@ -80,6 +80,8 @@ const hostedDispatchRequestSchema = z
      *  {@link defaultDispatchRequestId} when absent. */
     requestId: z.string().min(1).max(128).optional(),
   })
+  // #1633 owns migration of this residual workflow endpoint to the
+  // contract-first Work API after its external consumers move.
   .strict();
 
 /**

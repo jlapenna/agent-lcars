@@ -9,5 +9,5 @@ lane, owner-visible notice, summary, and exact restore command appear on every
 affected run. A skipped required check is intentional control-flag semantics.
 
 Names and steady-state values are declared in `config/github-variables.json`.
-Runner-selection variables are retired except `AGENT_RUNNER_LABEL`, which is a
-shared workflow input rather than an operational switch.
+Runner selection is fixed by the current QueueExecutor/direct-container route;
+no provider runner-label variable is supported.

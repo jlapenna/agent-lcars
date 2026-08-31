@@ -176,13 +176,9 @@ func TestDirectRunnerPreflightRefusesHostWhenImagePullReportsFailure(t *testing.
 	}
 }
 
-func TestDirectRunnerPreflightRequiresEveryConfiguredDirectRunnerImage(t *testing.T) {
+func TestDirectRunnerPreflightIgnoresGitHubScaleSetImages(t *testing.T) {
 	configureDirectRunnerPreflightMounts(t)
 	fake := newFakeDockerServer(t)
-	// The first configured image starts, while a pipeline-specific second
-	// image cannot. A host must be excluded before it can claim work for that
-	// second pipeline, rather than being marked ready from the first image.
-	fake.setStartFailures(0, 500)
 	resolved := resolvedOrchestratorConfig{
 		DockerHosts: []string{"host=host-target"},
 		ScaleSets: []Config{
@@ -191,16 +187,19 @@ func TestDirectRunnerPreflightRequiresEveryConfiguredDirectRunnerImage(t *testin
 		},
 	}
 
-	_, err := directRunnerPreflightHosts(context.Background(), resolved, func(string) (*dockerclient.Client, error) {
+	selected, err := directRunnerPreflightHosts(context.Background(), resolved, func(string) (*dockerclient.Client, error) {
 		return fake.client(t), nil
 	}, discardLogger())
-	if err == nil || !strings.Contains(err.Error(), "no configured Docker host passed") {
-		t.Fatalf("preflight error = %v, want no eligible host", err)
+	if err != nil {
+		t.Fatalf("preflight error = %v", err)
 	}
-	if fake.createCount() != 2 || fake.startCount() != 2 || fake.waitCount() != 1 {
-		t.Fatalf("every configured image must be probed: creates/starts/waits = %d/%d/%d, want 2/2/1", fake.createCount(), fake.startCount(), fake.waitCount())
+	if got := strings.Join(selected.DockerHosts, ","); got != "host=host-target" {
+		t.Fatalf("eligible launch hosts = %q, want host=host-target", got)
 	}
-	if len(fake.removedIDs()) != 2 {
-		t.Fatalf("every image probe must clean up: removals=%v", fake.removedIDs())
+	if fake.createCount() != 1 || fake.startCount() != 1 || fake.waitCount() != 1 {
+		t.Fatalf("single queue image must be probed: creates/starts/waits = %d/%d/%d, want 1/1/1", fake.createCount(), fake.startCount(), fake.waitCount())
+	}
+	if len(fake.removedIDs()) != 1 {
+		t.Fatalf("single image probe must clean up: removals=%v", fake.removedIDs())
 	}
 }

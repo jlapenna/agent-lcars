@@ -438,9 +438,8 @@ const nativeRunBriefSchema = z.strictObject({
   ...runBriefSharedSchema,
 });
 
-/** GitHub issue and PR anchors use the same queue route as native Work. A
- * stored derived Work spec is optional because legacy GitHub tasks predate
- * that projection; the direct runner can still prepare from `anchor.issue`. */
+/** GitHub issue and PR anchors carry the Work specification that every
+ * QueueExecutor direct runner uses to prepare its dispatch. */
 const githubRunBriefSchema = z.strictObject({
   anchor: z.strictObject({
     type: z.literal('github'),
@@ -448,7 +447,7 @@ const githubRunBriefSchema = z.strictObject({
     issue: z.number().int().positive(),
     html_url: z.string(),
   }),
-  work: z.strictObject({ spec: workSpecSchema }).optional(),
+  work: z.strictObject({ spec: workSpecSchema }),
   ...runBriefSharedSchema,
 });
 
@@ -496,18 +495,6 @@ export const runsContract = {
     .input(
       z.strictObject({
         runner: z.string().min(1).max(256),
-        // Accepted only while the deployed queue-executor image rolls from
-        // the former caller-selected claim contract. The router deliberately
-        // ignores it: authenticated work.executor grant pipelines are the
-        // sole claim capability source. Remove after that image and its
-        // Homelab configuration send runner-only claim requests.
-        pipelines: z
-          .array(z.string().min(1).max(64))
-          .min(1)
-          .optional()
-          .describe(
-            'Deprecated transition field. Ignored; claim eligibility comes from the authenticated executor grant. Remove after the queue-executor image and Homelab deployment use runner-only requests.',
-          ),
       }),
     )
     .output(runClaimResponseSchema.optional()),

@@ -408,8 +408,7 @@ candidate.
 
 New runner containers record their exact reservation in the
 `autoscaler.runner-memory-bytes` Docker label. That makes accounting stable
-across live config reloads. During a rolling upgrade, older containers without
-the label are inspected for their actual Docker memory limit until they drain.
+across live config reloads; a missing label is a current-image contract error.
 In-flight reservations are held under the same fleet coordinator lock as host
 selection, closing the count/admit race across scale sets and registrations.
 

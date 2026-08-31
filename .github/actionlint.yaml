@@ -5,6 +5,5 @@
 # non-provider workflow that later pins one literally.
 self-hosted-runner:
   labels:
-    - claude-agent-lcars
     - lcars-default
     - lcars-ci

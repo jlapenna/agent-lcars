@@ -257,9 +257,7 @@ async function renewCodexLease(
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
     // The executor's authenticated grant is the only claim capability
-    // source. `pipelines` is an accepted-but-ignored transition field for
-    // old queue-executor images; a caller cannot widen, narrow, or otherwise
-    // choose the pipeline set by sending a body field that competes with
+    // source; a caller cannot choose a pipeline set that competes with
     // server-side authorization.
     // Passing the executor grant directly to the transactional store is what
     // prevents an ungranted run from reaching `claimed` (and therefore ever
@@ -342,6 +340,9 @@ export const runsRouter = os.router({
 
     if (!isWorkAnchor(run.task)) {
       const parsed = workSpecSchema.safeParse(task?.task.work?.['spec']);
+      if (!parsed.success) {
+        throw errors.UNAUTHORIZED({ message: 'run has no dispatchable spec' });
+      }
       return {
         anchor: {
           type: 'github' as const,
@@ -349,7 +350,7 @@ export const runsRouter = os.router({
           issue: run.task.issue,
           html_url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
         },
-        ...(parsed.success ? { work: { spec: parsed.data } } : {}),
+        work: { spec: parsed.data },
         ...shared,
       };
     }

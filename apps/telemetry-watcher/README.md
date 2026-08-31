@@ -11,8 +11,8 @@ Interactive (`source: 'cli'`) telemetry is this daemon's normal host-watcher
 mode, described below. CI issue-agent (`source: 'issue-agent'`) telemetry is
 provided by the standalone runner bundle (this app's `bundle` Nx target,
 esbuild-bundled with every dependency inlined including
-`@google-cloud/firestore`), baked into the self-hosted `claude-agent-lcars`
-runner image at `/usr/local/lib/agent-lcars/sidecar.cjs`
+`@google-cloud/firestore`), baked into the self-hosted runner image at
+`/usr/local/lib/agent-lcars/sidecar.cjs`
 (this repo's own `apps/runner-autoscaler/runner-image/Dockerfile` builds
 it from this repo's own `main` at image-build time — see issue #30; that
 Dockerfile is the single source, and the former hand-synced duplicate in

@@ -107,7 +107,7 @@ if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
   # regardless of what the caller happened to pass as REPLY.
   REPLY=''
 elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
-  # Sub-project 5: a GitHub-anchored task that carries a work payload.
+  # A GitHub-anchored task carries a Work payload.
   # The task text comes from WORK.spec -- the issue is evidence for
   # linking (number, html_url, labels, assignees, state, and -- via the
   # merge below -- whether this anchor is actually a PR) and, in reply
@@ -126,17 +126,13 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   # title/body overridden from WORK.spec. No `type` is set here on
   # purpose -- the downstream anchor.type fallback ($anchor.type // (if
   # $anchor.pull_request then "pull-request" else "issue" end)) infers it
-  # from the merged $anchor.pull_request exactly as the legacy (no-WORK)
-  # branch below already relies on, so a PR-backed anchor keeps its
+  # from the merged $anchor.pull_request, so a PR-backed anchor keeps its
   # "pull-request" type instead of being hardcoded to "issue".
   anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
     '$i + { title: $w.spec.title, body: $w.spec.description }')"
 else
-  # Legacy: no work payload yet on this task (pre-sub-project-5, or a task
-  # created through the internal-request path -- see the design spec's
-  # "handleDispatchRequest is not a derivation site" note). Unchanged.
-  anchor_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE")"
-  comments_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+  echo "::error::WORK is required for every dispatch" >&2
+  exit 1
 fi
 
 if ! jq -e 'type == "object" or . == null' <<<"${PRIOR_TERMINAL_STATE:-null}" >/dev/null; then

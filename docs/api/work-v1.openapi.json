@@ -2517,16 +2517,6 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
-                  },
-                  "pipelines": {
-                    "description": "Deprecated transition field. Ignored; claim eligibility comes from the authenticated executor grant. Remove after the queue-executor image and Homelab deployment use runner-only requests.",
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 64
-                    }
                   }
                 },
                 "required": ["runner"],
@@ -2861,6 +2851,7 @@
                       },
                       "required": [
                         "anchor",
+                        "work",
                         "pipeline",
                         "mode",
                         "reply",

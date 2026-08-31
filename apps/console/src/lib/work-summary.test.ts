@@ -96,15 +96,4 @@ describe('listWorkSummaries', () => {
       'jlapenna/agent-lcars#1',
     );
   });
-
-  it('omits legacy tasks that have no work payload instead of failing the page', async () => {
-    const { store, orchestrator } = fixture();
-    await orchestrator.request({
-      taskId: { repo: 'jlapenna/agent-lcars', issue: 3 },
-      requestId: 'legacy',
-      pipeline: 'claude',
-    });
-    const page = await listWorkSummaries(store, { limit: 10 });
-    expect(page.items).toEqual([]);
-  });
 });

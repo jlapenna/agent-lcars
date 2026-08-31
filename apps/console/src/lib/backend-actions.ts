@@ -467,24 +467,9 @@ export async function dispatchUnstickPrs(
   }
 }
 
-/** A Retry click always falls back to this pipeline when the orchestrator
- * has no prior run to read a pipeline from (a legacy-era task never worked
- * under `@agent-lcars/orchestrator`, or a task the fleet has never touched
- * at all). */
-const RETRIGGER_FALLBACK_PIPELINE: Pipeline = 'claude';
-
-export interface RetriggerOutcome {
-  /** True when no prior orchestrator run existed for this task, so the
-   * dispatch pipeline fell back to {@link RETRIGGER_FALLBACK_PIPELINE}
-   * instead of reading the task's own history. */
-  pipelineFallback: boolean;
-}
-
 /** The pipeline of a task's most recently created orchestrator run, or
- * `undefined` when the task has no run history yet (see
- * {@link RETRIGGER_FALLBACK_PIPELINE}). Falls back to `undefined` (rather
- * than trusting an unrecognized string) for a run whose `pipeline` field
- * predates the current pipeline vocabulary. */
+ * `undefined` when the task has no authoritative supported pipeline.
+ * Unrecognized historical values are never used for a fresh request. */
 function latestOrchestratorPipeline(
   runs: { pipeline: string; createdAt: string }[],
 ): Pipeline | undefined {
@@ -512,7 +497,7 @@ export async function retriggerIssue(
   callerId: string,
   note?: string,
   actorLogin?: string,
-): Promise<RetriggerOutcome> {
+): Promise<void> {
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
   }
@@ -525,8 +510,13 @@ export async function retriggerIssue(
     store.readTask(taskId),
   ]);
   const previousPipeline = latestOrchestratorPipeline(runs);
-  const pipelineFallback = previousPipeline === undefined;
-  const pipeline = previousPipeline ?? RETRIGGER_FALLBACK_PIPELINE;
+  if (previousPipeline === undefined) {
+    throw new ActionError(
+      'No authoritative pipeline is recorded for this task; assign an agent before retrying',
+      409,
+    );
+  }
+  const pipeline = previousPipeline;
   const integration = requireAgentIntegration(repo, pipeline);
 
   await clearNeedsHumanLabel(repo, issueNumber);
@@ -545,7 +535,7 @@ export async function retriggerIssue(
       body: trimmedNote,
     });
     if (containsReplyTrigger(trimmedNote, integration)) {
-      return { pipelineFallback };
+      return;
     }
   }
 
@@ -588,7 +578,7 @@ export async function retriggerIssue(
     throw new ActionError('Retrigger could not be processed', 500);
   }
   await drain();
-  return { pipelineFallback };
+  return;
 }
 
 // The console's "hand this off to a different agent" action (#143) - e.g. a

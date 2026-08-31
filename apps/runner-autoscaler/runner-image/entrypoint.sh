@@ -53,10 +53,12 @@ fi
 
 # agent-lcars#1330: point the runner at the baked action-archive cache so
 # `uses:` tarballs resolve locally instead of from codeload (outage
-# resilience). Guarded: a runner image built before the bake simply skips it.
-if [ -d /opt/actions-archive-cache ]; then
-  export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache
+# resilience). Every supported image has this baked contract.
+if [ ! -d /opt/actions-archive-cache ]; then
+  echo "FATAL: current runner image requires /opt/actions-archive-cache" >&2
+  exit 1
 fi
+export ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=/opt/actions-archive-cache
 
 # Execute the runner's standard run script with passed arguments
 exec /home/runner/run.sh "$@"

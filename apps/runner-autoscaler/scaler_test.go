@@ -578,15 +578,10 @@ func TestPickHostHonorsConfiguredMemorySafetyMargin(t *testing.T) {
 	}
 }
 
-func TestDeclaredRunnerMemoryInspectsPreLabelContainer(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	fake.setInspectMemory("legacy", 6*gibibyte)
-	memory, err := declaredRunnerMemory(context.Background(), fake.client(t), container.Summary{ID: "legacy"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if memory != 6*gibibyte {
-		t.Fatalf("declaredRunnerMemory() = %d, want %d", memory, 6*gibibyte)
+func TestDeclaredRunnerMemoryRequiresReservationLabel(t *testing.T) {
+	_, err := declaredRunnerMemory(container.Summary{ID: "missing-label"})
+	if err == nil || !strings.Contains(err.Error(), runnerMemoryLabelKey) {
+		t.Fatalf("declaredRunnerMemory() error = %v, want missing reservation label", err)
 	}
 }
 

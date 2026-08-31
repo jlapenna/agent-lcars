@@ -1087,12 +1087,10 @@ func (a *Scaler) pickHost(ctx context.Context) (string, error) {
 // wall that a fixed number of retries within this call cannot resolve.
 var errFleetAtCapacity = errors.New("no docker host has placement capacity right now")
 
-// declaredRunnerMemory returns the reservation attached to a running runner.
-// New containers carry the exact byte value as a label so a live config reload
-// cannot rewrite history. Containers created before that label existed are
-// inspected once per placement until they drain, preserving correct admission
-// during a rolling deployment of this capability.
-func declaredRunnerMemory(ctx context.Context, client *dockerclient.Client, runner container.Summary) (int64, error) {
+// declaredRunnerMemory returns the exact reservation attached to a running
+// runner. Every supported runner image supplies this label, so admission never
+// guesses from a container's mutable inspect response.
+func declaredRunnerMemory(runner container.Summary) (int64, error) {
 	if raw, ok := runner.Labels[runnerMemoryLabelKey]; ok {
 		memory, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || memory < 0 {
@@ -1100,20 +1098,7 @@ func declaredRunnerMemory(ctx context.Context, client *dockerclient.Client, runn
 		}
 		return memory, nil
 	}
-	if strings.TrimSpace(runner.ID) == "" {
-		return 0, errors.New("runner container is missing an id and memory reservation label")
-	}
-	inspected, err := client.ContainerInspect(ctx, runner.ID)
-	if err != nil {
-		return 0, fmt.Errorf("inspecting legacy runner %q memory reservation: %w", runner.ID, err)
-	}
-	if inspected.HostConfig == nil {
-		return 0, fmt.Errorf("legacy runner %q inspect response has no host config", runner.ID)
-	}
-	if inspected.HostConfig.Memory < 0 {
-		return 0, fmt.Errorf("legacy runner %q has invalid negative memory limit %d", runner.ID, inspected.HostConfig.Memory)
-	}
-	return inspected.HostConfig.Memory, nil
+	return 0, fmt.Errorf("runner %q is missing required %s label", runner.ID, runnerMemoryLabelKey)
 }
 
 func (a *Scaler) resolvedMemorySafetyMargin() float64 {
@@ -1177,7 +1162,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 				}
 				if a.runnerMemory > 0 && listErr == nil {
 					for _, runner := range allRunners {
-						memory, runnerMemoryErr := declaredRunnerMemory(ctx, dh.Client, runner)
+						memory, runnerMemoryErr := declaredRunnerMemory(runner)
 						if runnerMemoryErr != nil {
 							memoryErr = errors.Join(memoryErr, runnerMemoryErr)
 							break
@@ -1683,8 +1668,8 @@ func (a *Scaler) hostMetrics(ctx context.Context, host string) ([]byte, error) {
 const (
 	runnerScaleSetLabelKey = "autoscaler.scale-set"
 	// runnerMemoryLabelKey records the exact reservation used for this
-	// container. Reading the label avoids an inspect per runner during every
-	// placement; pre-feature containers fall back to ContainerInspect.
+	// container. The current runner image requires this label for every
+	// placement reservation.
 	runnerMemoryLabelKey = "autoscaler.runner-memory-bytes"
 	// runnerRegistrationLabelKey is a homelab#97 addition: which GitHub
 	// registration (account/repo) minted this runner. Purely descriptive --
