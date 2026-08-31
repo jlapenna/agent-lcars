@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
+  dispatchesContract,
   itemsContract,
   runBriefSchema,
   runsContract,
@@ -31,6 +32,31 @@ describe('itemsContract', () => {
       'list',
       'redispatch',
     ]);
+  });
+});
+
+describe('dispatchesContract.github', () => {
+  it('requires an explicit GitHub anchor, Work spec, mode, and request id', () => {
+    expect(Object.keys(dispatchesContract)).toEqual(['github']);
+    const [rawShape] = dispatchesContract.github['~orpc'].inputSchemas ?? [];
+    const shape = rawShape as z.ZodTypeAny | undefined;
+    const input = {
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 1633 },
+      spec: {
+        title: 'Dispatch an anchor',
+        description: 'Through Work API.',
+        pipeline: 'claude',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+      mode: 'implement',
+      requestId: 'workflow-run:123:dispatch:1633',
+    };
+    expect(shape?.parse(input)).toEqual(input);
+    expect(() => {
+      const { requestId: _requestId, ...withoutIdempotency } = input;
+      shape?.parse(withoutIdempotency);
+    }).toThrow();
+    expect(() => shape?.parse({ ...input, mode: 'reply' })).toThrow();
   });
 });
 
@@ -205,7 +231,7 @@ describe('runsContract.brief resume field', () => {
 });
 
 describe('generateWorkOpenApi', () => {
-  it('emits the items, schedules, and runs REST routes with bearer and run-token security', async () => {
+  it('emits the items, dispatches, schedules, and runs REST routes with bearer and run-token security', async () => {
     const doc = (await generateWorkOpenApi()) as {
       openapi: string;
       paths: Record<string, Record<string, unknown>>;
@@ -214,6 +240,7 @@ describe('generateWorkOpenApi', () => {
     expect(doc.openapi).toMatch(/^3\./);
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
+        '/dispatches/github',
         '/items',
         '/items/{id}',
         '/items/{id}/cancel',
@@ -290,6 +317,7 @@ describe('generateWorkOpenApi', () => {
       'GET /items': ['200'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409', '429'],
+      'POST /dispatches/github': ['200', '400', '403'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],
       'GET /schedules': ['200'],

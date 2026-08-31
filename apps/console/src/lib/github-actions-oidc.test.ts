@@ -20,8 +20,11 @@ import {
   assertReconcileOidcClaims,
   assertRequestOidcClaims,
   assertSessionPinTickOidcClaims,
+  assertWorkApiOidcClaims,
+  githubActionsWorkSubject,
   verifyReconcileOidcToken,
   verifyRequestOidcToken,
+  verifyWorkApiOidcToken,
 } from './github-actions-oidc';
 
 // Matches the constants inlined into github-actions-oidc.ts (formerly
@@ -32,6 +35,7 @@ const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
 // Matches the constant inlined into github-actions-oidc.ts for #1215's
 // internal-workflow request path.
 const REQUEST_OIDC_AUDIENCE = 'agent-lcars-dispatch-request';
+const WORK_API_OIDC_AUDIENCE = 'agent-lcars-work';
 
 const repository = 'jlapenna/agent-lcars';
 // #1190: a second repository admitted only once it is added to the
@@ -332,5 +336,56 @@ describe('verifyRequestOidcToken repository allow-list (#1215)', () => {
       expect.anything(),
       expect.objectContaining({ audience: REQUEST_OIDC_AUDIENCE }),
     );
+  });
+});
+
+describe('GitHub Actions Work API OIDC claims (#1633)', () => {
+  afterEach(() => {
+    jwtVerify.mockReset();
+  });
+
+  it('uses the normal Work API audience and returns the signed caller repository', async () => {
+    const claims = { ...requestClaims, aud: WORK_API_OIDC_AUDIENCE };
+    expect(assertWorkApiOidcClaims(claims, repository)).toEqual({
+      repository,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
+    expect(githubActionsWorkSubject(repository)).toBe(
+      'github-actions:jlapenna/agent-lcars',
+    );
+
+    jwtVerify.mockResolvedValue({ payload: claims });
+    await expect(
+      verifyWorkApiOidcToken('token', [repository]),
+    ).resolves.toEqual({
+      repository,
+      repositoryId: 1_307_149_765,
+      runId: 93_099_054_125,
+    });
+    expect(jwtVerify).toHaveBeenCalledWith(
+      'token',
+      expect.anything(),
+      expect.objectContaining({ audience: WORK_API_OIDC_AUDIENCE }),
+    );
+  });
+
+  it('requires both an allow-listed repository and a protected-main workflow', async () => {
+    jwtVerify.mockResolvedValue({
+      payload: {
+        ...requestClaims,
+        repository: secondRepo,
+        workflow_ref: `${secondRepo}/.github/workflows/pr-heal.yml@refs/heads/main`,
+      },
+    });
+    await expect(verifyWorkApiOidcToken('token', [repository])).rejects.toThrow(
+      'allow-listed',
+    );
+    expect(() =>
+      assertWorkApiOidcClaims(
+        { ...requestClaims, ref: 'refs/heads/feature' },
+        repository,
+      ),
+    ).toThrow('ref');
   });
 });

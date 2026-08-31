@@ -2,8 +2,15 @@ import 'server-only';
 
 import { auth } from '@/auth';
 import { codexAuthStore } from '@/lib/codex-auth-store';
-import { controlPlaneRepository } from '@/lib/deployment';
-import { verifySessionPinTickOidcToken } from '@/lib/github-actions-oidc';
+import {
+  controlPlaneRepositories,
+  controlPlaneRepository,
+} from '@/lib/deployment';
+import {
+  githubActionsWorkSubject,
+  verifySessionPinTickOidcToken,
+  verifyWorkApiOidcToken,
+} from '@/lib/github-actions-oidc';
 import {
   createDispatchTokenProvider,
   DIRECT_RUNNER_PERMISSIONS,
@@ -63,6 +70,16 @@ async function handle(request: Request): Promise<Response> {
     verifyGoogleIdToken,
     verifySessionPinTickOidcToken: (token) =>
       verifySessionPinTickOidcToken(token, controlPlaneRepository()),
+    verifyGithubActionsWorkOidcToken: async (token) => {
+      const identity = await verifyWorkApiOidcToken(
+        token,
+        controlPlaneRepositories(),
+      );
+      return {
+        repository: identity.repository,
+        subject: githubActionsWorkSubject(identity.repository),
+      };
+    },
     session: async () => (await auth()) as { user?: { login?: string } } | null,
     grants: workGrants,
   });

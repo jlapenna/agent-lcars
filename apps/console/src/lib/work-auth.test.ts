@@ -21,6 +21,9 @@ function deps(over: Partial<WorkAuthDeps> = {}): WorkAuthDeps {
     verifySessionPinTickOidcToken: async () => {
       throw new Error('not a session-pin-tick token');
     },
+    verifyGithubActionsWorkOidcToken: async () => {
+      throw new Error('not a GitHub Actions Work API token');
+    },
     session: async () => null,
     grants: () => grants,
     ...over,
@@ -131,6 +134,37 @@ describe('authenticateWorkRequest', () => {
     });
     expect(p?.scopes.has('work.reaper')).toBe(true);
   });
+  it('maps a verified GitHub Actions identity through its ordinary Work grant', async () => {
+    const oidcGrants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'workflow:member-automation',
+          subjects: ['github-actions:other-org/other-repo'],
+          pipelines: ['claude', 'codex', 'opencode'],
+        },
+      ]),
+    );
+    const p = await authenticateWorkRequest(
+      req({ authorization: 'Bearer t' }),
+      deps({
+        verifyGoogleIdToken: async () => {
+          throw new Error('not Google');
+        },
+        verifyGithubActionsWorkOidcToken: async () => ({
+          repository: 'other-org/other-repo',
+          subject: 'github-actions:other-org/other-repo',
+        }),
+        grants: () => oidcGrants,
+      }),
+    );
+    expect(p).toMatchObject({
+      principal: 'workflow:member-automation',
+      subject: 'github-actions:other-org/other-repo',
+      sourceRepository: 'other-org/other-repo',
+      via: 'oidc',
+    });
+    expect(p?.scopes.has('work.operator')).toBe(true);
+  });
   it('refuses a bearer no verifier accepts', async () => {
     const p = await authenticateWorkRequest(
       req({ authorization: 'Bearer t' }),
@@ -140,6 +174,9 @@ describe('authenticateWorkRequest', () => {
         },
         verifySessionPinTickOidcToken: async () => {
           throw new Error('not session-pin-tick either');
+        },
+        verifyGithubActionsWorkOidcToken: async () => {
+          throw new Error('not Work API OIDC either');
         },
       }),
     );
