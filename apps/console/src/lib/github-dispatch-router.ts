@@ -54,6 +54,17 @@ export const githubDispatchRouter = os.router({
     if (input.runbook !== undefined) params['runbook'] = input.runbook;
     if (input.context !== undefined) params['context'] = input.context;
 
+    // A caller can retry after the run has settled (for example after losing
+    // the original HTTP response), when readActiveRun no longer sees it.
+    // The task's durable run history is therefore the idempotency ledger for
+    // this operation, not merely its live mutex.
+    const previous = (await context.runtime.store.listRuns(input.anchor)).find(
+      (run) => run.requestId === input.requestId,
+    );
+    if (previous !== undefined) {
+      return { outcome: 'duplicate' as const, runId: previous.runId };
+    }
+
     const outcome = await context.runtime.orchestrator.request({
       taskId: input.anchor,
       requestId: input.requestId,

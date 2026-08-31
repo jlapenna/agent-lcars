@@ -677,6 +677,45 @@ describe('GitHub-anchor dispatch route', () => {
     });
   });
 
+  it.each([true, false])(
+    'returns the original run when a request is replayed after it settles (%s)',
+    async (ok) => {
+      const ctx = context({ principal: githubActionsOperator });
+      const first = await call(ctx, 'POST', '/dispatches/github', input);
+      expect(first.json).toMatchObject({ outcome: 'accepted' });
+
+      await ctx.runtime.orchestrator.report('jlapenna/agent-lcars#1633/r1', {
+        ok,
+      });
+
+      const replay = await call(ctx, 'POST', '/dispatches/github', input);
+      expect(replay.status).toBe(200);
+      expect(replay.json).toEqual({
+        outcome: 'duplicate',
+        runId: 'jlapenna/agent-lcars#1633/r1',
+      });
+      expect(await ctx.runtime.store.listRuns(anchor)).toHaveLength(1);
+    },
+  );
+
+  it('allows a different request ID after a prior request settles', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    await call(ctx, 'POST', '/dispatches/github', input);
+    await ctx.runtime.orchestrator.report('jlapenna/agent-lcars#1633/r1', {
+      ok: true,
+    });
+
+    const next = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      requestId: 'workflow-run:124:dispatch:1633',
+    });
+    expect(next.status).toBe(200);
+    expect(next.json).toMatchObject({
+      outcome: 'accepted',
+      runId: 'jlapenna/agent-lcars#1633/r2',
+    });
+  });
+
   it('preserves the signed caller-repository boundary and requires the Work target to equal the anchor', async () => {
     const ctx = context({ principal: githubActionsOperator });
     const foreign = await call(ctx, 'POST', '/dispatches/github', {
