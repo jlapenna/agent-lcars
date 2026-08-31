@@ -72,7 +72,7 @@ export const orchestratorMigrationRouter = os.router({
         });
         return { mode: 'apply' as const, ...applied };
       } catch (error) {
-        if (error instanceof PersistedMigrationConflict) {
+        if (PersistedMigrationConflict.is(error)) {
           throw errors.CONFLICT({ message: error.message });
         }
         throw error;

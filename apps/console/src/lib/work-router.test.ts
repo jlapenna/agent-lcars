@@ -8,7 +8,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -954,5 +954,49 @@ describe('persisted orchestrator migration routes', () => {
     expect((await store.readTask(task.task))?.task.work).toEqual({
       reviewed: true,
     });
+  });
+
+  it('maps a conflict from a separately bundled store module to 409', async () => {
+    const ctx = context({ principal: migrationOperator });
+    const store = ctx.runtime.store as MemoryStore;
+    const task = {
+      task: { repo: 'octo/example', issue: 8 },
+      runCount: 0,
+      updatedAt: '2026-08-26T10:00:00.000Z',
+    };
+    await store.apply({
+      decision: { task, outbox: [] },
+      expectedRevision: undefined,
+    });
+    const record = (
+      await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      })
+    ).records[0];
+    if (record?.selector?.kind !== 'task') throw new Error('missing task');
+    const entries = [
+      {
+        selector: record.selector,
+        expectedFingerprint: record.fingerprint,
+        replacement: {
+          task: { ...task, consecutiveLost: 0, work: { reviewed: true } },
+          revision: 1,
+        },
+      },
+    ];
+    vi.spyOn(store, 'applyPersistedMigration').mockRejectedValueOnce(
+      Object.assign(new Error('stale manifest'), {
+        name: 'PersistedMigrationConflict',
+      }),
+    );
+    const response = await call(ctx, 'POST', '/orchestrator-migration', {
+      mode: 'apply',
+      entries,
+      reviewedManifestId: 'a'.repeat(64),
+      confirmation: 'apply-reviewed-manifest',
+    });
+    expect(response.status).toBe(409);
+    expect(response.json.message).toContain('stale manifest');
   });
 });

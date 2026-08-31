@@ -249,6 +249,16 @@ export class PersistedMigrationConflict extends Error {
   constructor(message: string) {
     super(message);
   }
+
+  /** The app bundle can load the store and route through different copies of
+   * this library. Keep conflict mapping narrow but resilient across that
+   * module boundary, just like {@link PersistedMigrationCursorError}. */
+  static is(error: unknown): error is PersistedMigrationConflict {
+    return (
+      error instanceof PersistedMigrationConflict ||
+      (error instanceof Error && error.name === 'PersistedMigrationConflict')
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
