@@ -58,6 +58,34 @@ function staleThenCurrent(
 }
 
 describe('refreshGithubAnchorProjection', () => {
+  it('turns a non-delete exact-load 404 into a fenced tombstone', async () => {
+    const store = new MemoryStore();
+    const initialGeneration = await store.beginGithubAnchorProjectionRefresh(
+      projection().anchor,
+    );
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor: projection().anchor,
+      generation: initialGeneration,
+      projection: projection(),
+    });
+
+    await expect(
+      refreshGithubAnchorProjection(
+        {
+          store,
+          load: async () =>
+            Promise.reject(
+              Object.assign(new Error('Not Found'), { status: 404 }),
+            ),
+        },
+        projection().anchor,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.readGithubAnchorProjection(projection().anchor),
+    ).resolves.toBeUndefined();
+  });
+
   it('keeps a newer webhook refresh over an older in-flight backfill fetch', async () => {
     const store = new MemoryStore();
     const older = deferred<GithubAnchorProjection>();

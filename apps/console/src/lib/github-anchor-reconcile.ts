@@ -234,6 +234,15 @@ export interface GithubAnchorProjectionRefreshDeps {
 
 const MAX_REFRESH_GENERATION_RETRIES = 3;
 
+function isGithubNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status: unknown }).status === 404
+  );
+}
+
 async function mapWithBoundedConcurrency<T, R>(input: {
   values: readonly T[];
   concurrency: number;
@@ -265,7 +274,17 @@ export async function refreshGithubAnchorProjection(
   for (let attempt = 0; attempt < MAX_REFRESH_GENERATION_RETRIES; attempt++) {
     const generation =
       await deps.store.beginGithubAnchorProjectionRefresh(anchor);
-    const projection = input.deleted ? undefined : await deps.load(anchor);
+    let projection: GithubAnchorProjection | undefined;
+    if (!input.deleted) {
+      try {
+        projection = await deps.load(anchor);
+      } catch (error) {
+        // A non-delete signal can race an issue/PR deletion. Treat GitHub's
+        // exact 404 as the same fenced tombstone used by an explicit delete
+        // delivery; retrying it forever would retain stale queue state.
+        if (!isGithubNotFound(error)) throw error;
+      }
+    }
     const applied = await deps.store.applyGithubAnchorProjectionRefresh({
       anchor,
       generation,
