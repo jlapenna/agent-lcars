@@ -596,7 +596,9 @@ async function isAnchorOpen(
  * any), read by the caller alongside its own `anchorTarget` lookup so this
  * never re-reads the same document:
  *
- * - it's the deterministic auto-retry (`requestId === 'retry:<lostRunId>'`)
+ * - it's the source-tagged deterministic auto-retry
+ *   (`requestSource === 'auto-retry'` and
+ *   `requestId === 'retry:<lostRunId>'`)
  *   -> name it and report the attempt count;
  * - it's some other live run (an operator's manual request raced the
  *   auto-retry and won, or landed after the budget was already exhausted)
@@ -620,7 +622,10 @@ async function describeLostOutcome(
   const activeRun =
     activeRunId === undefined ? undefined : await store.readRun(activeRunId);
 
-  if (activeRun?.requestId === `retry:${run.runId}`) {
+  if (
+    activeRun?.requestSource === 'auto-retry' &&
+    activeRun.requestId === `retry:${run.runId}`
+  ) {
     const attempt = (task?.consecutiveLost ?? 0) + 1;
     return {
       body:
