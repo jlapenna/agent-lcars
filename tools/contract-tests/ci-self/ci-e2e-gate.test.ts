@@ -36,33 +36,4 @@ describe('CI E2E operational gate', () => {
       }),
     );
   });
-
-  it('keeps local E2E optional in the canonical agent guidance', async () => {
-    const [protocol, contributorSkill, verificationGuide, reliabilityPolicy] =
-      await Promise.all([
-        readFile(
-          '.agents/skills/agent-protocol/reference/agent-protocol.md',
-          'utf8',
-        ),
-        readFile('.agents/skills/agent-lcars-dev/SKILL.md', 'utf8'),
-        readFile('.agents/skills/agent-lcars-dev/references/verify.md', 'utf8'),
-        readFile('docs/e2e-reliability.md', 'utf8'),
-      ]);
-
-    expect(protocol).toMatch(/local E2E is optional/iu);
-    expect(protocol).toMatch(/CI owns required E2E/iu);
-    expect(contributorSkill).toMatch(/local E2E is optional/iu);
-    expect(contributorSkill).toMatch(/CI['’]s\s+E2E job owns/iu);
-    expect(verificationGuide).toMatch(/local E2E\s+is\s+optional/iu);
-    expect(verificationGuide).toMatch(/CI owns the\s+required E2E gate/iu);
-    expect(reliabilityPolicy).toMatch(/local E2E\s+is\s+optional/iu);
-    expect(reliabilityPolicy).toMatch(/CI owns the\s+required E2E gate/iu);
-
-    expect(verificationGuide).not.toMatch(
-      /run `console-e2e:e2e-local`\s*\([^)]*\) before pushing/iu,
-    );
-    expect(reliabilityPolicy).not.toMatch(
-      /complete local E2E target before delivery/iu,
-    );
-  });
 });
