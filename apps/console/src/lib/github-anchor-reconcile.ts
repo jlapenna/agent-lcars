@@ -31,6 +31,9 @@ interface RawAnchorDetails {
     nodes?: ({
       body?: string;
       url?: string;
+      id?: string;
+      createdAt?: string;
+      updatedAt?: string;
       author?: { login?: string } | null;
     } | null)[];
   } | null;
@@ -89,10 +92,10 @@ async function enrichBackfillAnchors(
         (
           projection,
         ) => `${anchorAlias(projection.anchor.issue)}: issueOrPullRequest(number: ${projection.anchor.issue}) {
-          ... on Issue { body comments(last: 1) { nodes { body url author { login } } } }
+          ... on Issue { body comments(last: 1) { nodes { id body url createdAt updatedAt author { login } } } }
           ... on PullRequest {
             body isDraft mergeStateStatus
-            comments(last: 1) { nodes { body url author { login } } }
+            comments(last: 1) { nodes { id body url createdAt updatedAt author { login } } }
             reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
             reviewThreads(first: 100) { totalCount nodes { id isResolved } }
             commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { name status conclusion detailsUrl } } } } } } }
@@ -132,12 +135,20 @@ async function enrichBackfillAnchors(
         ...(detail.body === undefined || detail.body === null
           ? {}
           : { body: detail.body }),
-        ...(latestComment?.body === undefined || latestComment.url === undefined
+        ...(latestComment?.body === undefined ||
+        latestComment.url === undefined ||
+        latestComment.id === undefined ||
+        latestComment.createdAt === undefined
           ? {}
           : {
               lastComment: {
+                id: latestComment.id,
                 body: latestComment.body,
                 url: latestComment.url,
+                createdAt: latestComment.createdAt,
+                ...(latestComment.updatedAt === undefined
+                  ? {}
+                  : { updatedAt: latestComment.updatedAt }),
                 ...(latestComment.author?.login === undefined
                   ? {}
                   : { author: latestComment.author.login }),

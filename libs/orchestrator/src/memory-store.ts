@@ -10,6 +10,7 @@ import type {
 } from './model';
 import {
   byOutboxClaimFairness,
+  githubAnchorProjectionSchema,
   isLive,
   isWorkAnchor,
   requestHistoryKey,
@@ -154,7 +155,11 @@ export class MemoryStore implements OrchestratorStore {
     }
     this.#githubAnchorProjections.set(
       key,
-      structuredClone(mergeGithubAnchorSnapshot(current, projection)),
+      structuredClone(
+        githubAnchorProjectionSchema.parse(
+          mergeGithubAnchorSnapshot(current, projection),
+        ),
+      ),
     );
   }
 
@@ -167,7 +172,10 @@ export class MemoryStore implements OrchestratorStore {
     const key = taskKey(anchor);
     const next = update(this.#githubAnchorProjections.get(key));
     if (next !== undefined) {
-      this.#githubAnchorProjections.set(key, structuredClone(next));
+      this.#githubAnchorProjections.set(
+        key,
+        structuredClone(githubAnchorProjectionSchema.parse(next)),
+      );
     }
   }
 

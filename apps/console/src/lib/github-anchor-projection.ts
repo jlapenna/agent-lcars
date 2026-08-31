@@ -15,6 +15,11 @@ const commentSchema = z.object({
   html_url: z.string().min(1).max(2_048),
   user: userSchema.optional().nullable(),
 });
+const issueCommentSchema = commentSchema.extend({
+  id: z.union([z.string().min(1).max(256), z.number().int().positive()]),
+  created_at: z.iso.datetime({ offset: false }),
+  updated_at: z.iso.datetime({ offset: false }).optional(),
+});
 const labelSchema = z.union([
   z.string().min(1).max(256),
   z.object({ name: z.string().min(1).max(256) }),
@@ -51,6 +56,14 @@ const issuesPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
   issue: anchorSchema,
   comment: commentSchema.optional(),
+});
+const issueCommentPayloadSchema = z.object({
+  action: z.string().min(1).max(64),
+  repository: z.object({ full_name: z.string().min(1).max(140) }),
+  issue: z.object({
+    number: z.number().int().positive(),
+  }),
+  comment: issueCommentSchema,
 });
 const pullRequestPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
@@ -98,7 +111,6 @@ function toProjection(input: {
   anchor: z.infer<typeof anchorSchema>;
   kind: 'issue' | 'pr';
   observedAt: string;
-  comment?: z.infer<typeof commentSchema>;
 }): GithubAnchorProjection {
   const mergeableState = input.anchor.mergeable_state?.toLowerCase();
   const linked = linkedIssueNumbers(
@@ -120,17 +132,6 @@ function toProjection(input: {
     assigneeLogins: (input.anchor.assignees ?? []).flatMap((assignee) =>
       assignee?.login === undefined ? [] : [assignee.login],
     ),
-    ...(input.comment === undefined
-      ? {}
-      : {
-          lastComment: {
-            body: input.comment.body,
-            url: input.comment.html_url,
-            ...(input.comment.user?.login === undefined
-              ? {}
-              : { author: input.comment.user.login }),
-          },
-        }),
     ...(parent === undefined ? {} : { parentNumber: parent }),
     ...(input.anchor.sub_issues_summary === undefined ||
     input.anchor.sub_issues_summary === null
@@ -174,7 +175,7 @@ export function githubAnchorProjectionFromDelivery(input: {
   const parse =
     input.event === 'pull_request'
       ? pullRequestPayloadSchema.safeParse(input.payload)
-      : input.event === 'issues' || input.event === 'issue_comment'
+      : input.event === 'issues'
         ? issuesPayloadSchema.safeParse(input.payload)
         : undefined;
   if (
@@ -190,9 +191,6 @@ export function githubAnchorProjectionFromDelivery(input: {
       anchor: parse.data.pull_request,
       kind: 'pr',
       observedAt: input.observedAt,
-      ...(parse.data.comment === undefined
-        ? {}
-        : { comment: parse.data.comment }),
     });
   }
   return toProjection({
@@ -200,9 +198,6 @@ export function githubAnchorProjectionFromDelivery(input: {
     anchor: parse.data.issue,
     kind: parse.data.issue.pull_request === undefined ? 'issue' : 'pr',
     observedAt: input.observedAt,
-    ...(parse.data.comment === undefined
-      ? {}
-      : { comment: parse.data.comment }),
   });
 }
 
@@ -223,6 +218,15 @@ export interface GithubAnchorProjectionSignal {
   anchor: GithubAnchorProjection['anchor'];
   checkRun?: NonNullable<GithubAnchorProjection['checkRuns']>[number];
   reviewThread?: { id: string; resolved: boolean };
+  comment?: {
+    action: 'created' | 'edited' | 'deleted';
+    id: string;
+    body: string;
+    url: string;
+    author?: string;
+    createdAt: string;
+    updatedAt?: string;
+  };
 }
 
 const reviewThreadPayloadSchema = z.object({
@@ -243,6 +247,38 @@ export function githubAnchorProjectionSignalFromDelivery(input: {
   event: string;
   payload: unknown;
 }): GithubAnchorProjectionSignal[] {
+  if (input.event === 'issue_comment') {
+    const parsed = issueCommentPayloadSchema.safeParse(input.payload);
+    if (
+      !parsed.success ||
+      !isControlPlaneRepository(parsed.data.repository.full_name) ||
+      !['created', 'edited', 'deleted'].includes(parsed.data.action)
+    ) {
+      return [];
+    }
+    const { comment } = parsed.data;
+    return [
+      {
+        anchor: {
+          repo: parsed.data.repository.full_name,
+          issue: parsed.data.issue.number,
+        },
+        comment: {
+          action: parsed.data.action as 'created' | 'edited' | 'deleted',
+          id: String(comment.id),
+          body: comment.body,
+          url: comment.html_url,
+          ...(comment.user?.login === undefined
+            ? {}
+            : { author: comment.user.login }),
+          createdAt: comment.created_at,
+          ...(comment.updated_at === undefined
+            ? {}
+            : { updatedAt: comment.updated_at }),
+        },
+      },
+    ];
+  }
   if (input.event === 'check_run') {
     const parsed = checkRunPayloadSchema.safeParse(input.payload);
     if (

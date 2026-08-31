@@ -62,9 +62,12 @@ export const githubAnchorProjectionSchema = z.strictObject({
   assigneeLogins: z.array(z.string().min(1).max(256)).max(256),
   lastComment: z
     .object({
+      id: z.string().min(1).max(256).optional(),
       body: z.string().max(65_536),
       url: z.string().min(1).max(2_048),
       author: z.string().min(1).max(256).optional(),
+      createdAt: isoUtc.optional(),
+      updatedAt: isoUtc.optional(),
     })
     .optional(),
   parentNumber: z.number().int().positive().max(GITHUB_ISSUE_MAX).optional(),

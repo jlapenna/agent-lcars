@@ -40,6 +40,8 @@ export type HostedDispatchRequestBody = ReturnType<
 
 type RouteResult = { status: number; body: Record<string, unknown> };
 
+const REVIEW_THREAD_ID_LIMIT = 100;
+
 /**
  * A label re-request has no reply text of its own.  Put this opaque marker
  * into the queued run's `context` parameter so the native runtime can
@@ -114,18 +116,104 @@ export async function handleWebhookDelivery(
       await deps.store.updateGithubAnchorProjection(
         signal.anchor,
         (current) => {
-          if (current?.kind !== 'pr') return undefined;
-          if (signal.reviewThread !== undefined) {
-            const unresolved = new Set(current.unresolvedReviewThreadIds ?? []);
-            if (signal.reviewThread.resolved) {
-              unresolved.delete(signal.reviewThread.id);
-            } else {
-              unresolved.add(signal.reviewThread.id);
+          if (current === undefined) return undefined;
+          if (signal.comment !== undefined) {
+            const latest = current.lastComment;
+            const isLatest = latest?.id === signal.comment.id;
+            if (signal.comment.action === 'created') {
+              if (
+                latest?.createdAt !== undefined &&
+                latest.createdAt > signal.comment.createdAt
+              ) {
+                return undefined;
+              }
+              return {
+                ...current,
+                lastComment: {
+                  id: signal.comment.id,
+                  body: signal.comment.body,
+                  url: signal.comment.url,
+                  ...(signal.comment.author === undefined
+                    ? {}
+                    : { author: signal.comment.author }),
+                  createdAt: signal.comment.createdAt,
+                  ...(signal.comment.updatedAt === undefined
+                    ? {}
+                    : { updatedAt: signal.comment.updatedAt }),
+                },
+                observedAt: new Date().toISOString(),
+              };
+            }
+            if (!isLatest) {
+              // Older comment edit/deletes must not overwrite the preview.
+              // An identity-less legacy preview could be the affected latest
+              // comment, so clear it rather than serving stale/deleted text.
+              if (latest?.id !== undefined) return undefined;
+              const { lastComment: _lastComment, ...withoutLastComment } =
+                current;
+              return {
+                ...withoutLastComment,
+                observedAt: new Date().toISOString(),
+              };
+            }
+            if (signal.comment.action === 'deleted') {
+              const { lastComment: _lastComment, ...withoutLastComment } =
+                current;
+              return {
+                ...withoutLastComment,
+                observedAt: new Date().toISOString(),
+              };
             }
             return {
               ...current,
-              unresolvedReviewThreadIds: [...unresolved],
-              unresolvedReviewThreadCount: unresolved.size,
+              lastComment: {
+                ...latest,
+                body: signal.comment.body,
+                url: signal.comment.url,
+                ...(signal.comment.author === undefined
+                  ? {}
+                  : { author: signal.comment.author }),
+                ...(signal.comment.updatedAt === undefined
+                  ? {}
+                  : { updatedAt: signal.comment.updatedAt }),
+              },
+              observedAt: new Date().toISOString(),
+            };
+          }
+          if (current.kind !== 'pr') return undefined;
+          if (signal.reviewThread !== undefined) {
+            const unresolved = new Set(current.unresolvedReviewThreadIds ?? []);
+            const currentCount =
+              current.unresolvedReviewThreadCount ?? unresolved.size;
+            if (signal.reviewThread.resolved) {
+              const known = unresolved.delete(signal.reviewThread.id);
+              const canBeOmitted = current.reviewThreadsTruncated === true;
+              if (!known && !canBeOmitted) return undefined;
+              return {
+                ...current,
+                unresolvedReviewThreadIds: [...unresolved],
+                unresolvedReviewThreadCount: Math.max(0, currentCount - 1),
+                ...(canBeOmitted ? { reviewThreadsTruncated: true } : {}),
+                observedAt: new Date().toISOString(),
+              };
+            }
+            if (unresolved.has(signal.reviewThread.id)) return undefined;
+            const retained = [...unresolved];
+            if (retained.length < REVIEW_THREAD_ID_LIMIT) {
+              retained.push(signal.reviewThread.id);
+            } else {
+              return {
+                ...current,
+                unresolvedReviewThreadIds: retained,
+                unresolvedReviewThreadCount: currentCount + 1,
+                reviewThreadsTruncated: true,
+                observedAt: new Date().toISOString(),
+              };
+            }
+            return {
+              ...current,
+              unresolvedReviewThreadIds: retained,
+              unresolvedReviewThreadCount: currentCount + 1,
               observedAt: new Date().toISOString(),
             };
           }

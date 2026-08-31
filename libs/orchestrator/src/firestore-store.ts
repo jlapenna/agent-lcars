@@ -267,7 +267,9 @@ export class FirestoreStore implements OrchestratorStore {
       ) {
         return;
       }
-      const next = mergeGithubAnchorSnapshot(current, projection);
+      const next = githubAnchorProjectionSchema.parse(
+        mergeGithubAnchorSnapshot(current, projection),
+      );
       // Preserve signals that arrive in their own webhook event (check runs,
       // comments and review threads) while replacing the complete anchor
       // fields. Closing an anchor still removes `openUpdatedAt`, so the queue
@@ -293,7 +295,11 @@ export class FirestoreStore implements OrchestratorStore {
       const current = snapshot.exists
         ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
         : undefined;
-      const next = update(current);
+      const updated = update(current);
+      const next =
+        updated === undefined
+          ? undefined
+          : githubAnchorProjectionSchema.parse(updated);
       if (next === undefined) return;
       tx.set(ref, {
         projection: next,

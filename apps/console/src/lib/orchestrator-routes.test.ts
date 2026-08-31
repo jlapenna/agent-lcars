@@ -131,6 +131,32 @@ function completeIssuePayload(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function issueCommentPayload(input: {
+  action: 'created' | 'edited' | 'deleted';
+  id: number;
+  body: string;
+  createdAt: string;
+  updatedAt?: string;
+  pullRequest?: boolean;
+}) {
+  return {
+    action: input.action,
+    repository: { full_name: REPO },
+    issue: {
+      ...completeIssuePayload().issue,
+      ...(input.pullRequest ? { pull_request: { url: 'ignored' } } : {}),
+    },
+    comment: {
+      id: input.id,
+      body: input.body,
+      html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}#issuecomment-${input.id}`,
+      user: { login: 'jlapenna' },
+      created_at: input.createdAt,
+      ...(input.updatedAt === undefined ? {} : { updated_at: input.updatedAt }),
+    },
+  };
+}
+
 /** Drives a full label-delivery -> request -> dispatch cycle and returns the
  *  resulting runId, for tests that need an already-running run to build on. */
 async function dispatchedRun(
@@ -209,6 +235,191 @@ describe('handleWebhookDelivery', () => {
       kind: 'pr',
       failingChecks: [{ name: 'Verify' }],
       ciRunning: false,
+    });
+  });
+
+  it('keeps complete PR metadata through a partial issue-comment delivery', async () => {
+    const { deps, store } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-anchor-delivery',
+      payload: {
+        repository: { full_name: REPO },
+        pull_request: {
+          ...completeIssuePayload().issue,
+          draft: true,
+          mergeable_state: 'blocked',
+          requested_reviewers: [{ login: 'jlapenna' }],
+        },
+      },
+    });
+
+    await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'partial-pr-comment',
+      payload: issueCommentPayload({
+        action: 'created',
+        id: 1,
+        body: 'Comment must not erase PR state.',
+        createdAt: '2026-08-15T12:01:00.000Z',
+        pullRequest: true,
+      }),
+    });
+
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      kind: 'pr',
+      draft: true,
+      mergeableState: 'blocked',
+      requestedReviewerLogins: ['jlapenna'],
+      lastComment: { id: '1', body: 'Comment must not erase PR state.' },
+    });
+  });
+
+  it('caps review-thread identities and safely handles an omitted thread resolution', async () => {
+    const { deps, store } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-anchor-delivery',
+      payload: {
+        repository: { full_name: REPO },
+        pull_request: {
+          ...completeIssuePayload().issue,
+          draft: false,
+          requested_reviewers: [],
+          mergeable_state: 'clean',
+        },
+      },
+    });
+    await store.updateGithubAnchorProjection(ISSUE, (current) => ({
+      ...current!,
+      unresolvedReviewThreadIds: Array.from(
+        { length: 100 },
+        (_value, index) => `PRRT_${index}`,
+      ),
+      unresolvedReviewThreadCount: 100,
+      reviewThreadsTruncated: true,
+    }));
+    const threadPayload = (resolved: boolean) => ({
+      repository: { full_name: REPO },
+      pull_request: { number: ISSUE.issue },
+      thread: { id: 'PRRT_100', is_resolved: resolved },
+    });
+
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request_review_thread',
+      deliveryId: 'thread-over-cap',
+      payload: threadPayload(false),
+    });
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      unresolvedReviewThreadCount: 101,
+      unresolvedReviewThreadIds: expect.any(Array),
+      reviewThreadsTruncated: true,
+    });
+    expect(
+      (await store.readGithubAnchorProjection(ISSUE))
+        ?.unresolvedReviewThreadIds,
+    ).toHaveLength(100);
+
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request_review_thread',
+      deliveryId: 'thread-over-cap-resolved',
+      payload: threadPayload(true),
+    });
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      unresolvedReviewThreadCount: 100,
+      reviewThreadsTruncated: true,
+    });
+  });
+
+  it('updates comment previews only for the latest known comment lifecycle', async () => {
+    const { deps, store } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'issue-anchor',
+      payload: completeIssuePayload(),
+    });
+    const deliver = (
+      action: 'created' | 'edited' | 'deleted',
+      id: number,
+      body: string,
+    ) =>
+      handleWebhookDelivery(deps, {
+        event: 'issue_comment',
+        deliveryId: `comment-${action}-${id}-${body}`,
+        payload: issueCommentPayload({
+          action,
+          id,
+          body,
+          createdAt: `2026-08-15T12:0${id}:00.000Z`,
+        }),
+      });
+    await deliver('created', 1, 'First comment');
+    await deliver('created', 2, 'Actual latest comment');
+    await deliver('edited', 1, 'Edited historical comment');
+    await deliver('deleted', 1, 'Deleted historical comment');
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      lastComment: { id: '2', body: 'Actual latest comment' },
+    });
+    await deliver('edited', 2, 'Edited actual latest comment');
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      lastComment: { id: '2', body: 'Edited actual latest comment' },
+    });
+    await deliver('deleted', 2, 'Deleted actual latest comment');
+    expect(
+      (await store.readGithubAnchorProjection(ISSUE))?.lastComment,
+    ).toBeUndefined();
+  });
+
+  it('keeps concurrent check-run signals from dropping either update', async () => {
+    const { deps, store } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-anchor-delivery',
+      payload: {
+        repository: { full_name: REPO },
+        pull_request: {
+          ...completeIssuePayload().issue,
+          draft: false,
+          requested_reviewers: [],
+          mergeable_state: 'clean',
+        },
+      },
+    });
+    await Promise.all(
+      ['Verify', 'E2E'].map((name) =>
+        handleWebhookDelivery(deps, {
+          event: 'check_run',
+          deliveryId: `concurrent-${name}`,
+          payload: {
+            repository: { full_name: REPO },
+            check_run: {
+              name,
+              html_url: `https://github.com/${REPO}/runs/${name}`,
+              status: 'completed',
+              conclusion: 'failure',
+              pull_requests: [{ number: ISSUE.issue }],
+            },
+          },
+        }),
+      ),
+    );
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      checkRuns: expect.arrayContaining([
+        expect.objectContaining({ name: 'Verify' }),
+        expect.objectContaining({ name: 'E2E' }),
+      ]),
     });
   });
 

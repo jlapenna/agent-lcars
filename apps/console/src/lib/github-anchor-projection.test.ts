@@ -50,7 +50,7 @@ describe('githubAnchorProjectionFromDelivery', () => {
     });
   });
 
-  it('projects pull requests and an issue-comment anchor without another read', () => {
+  it('projects full pull requests while treating issue comments as signals', () => {
     const pull = githubAnchorProjectionFromDelivery({
       event: 'pull_request',
       payload: {
@@ -71,7 +71,41 @@ describe('githubAnchorProjectionFromDelivery', () => {
     });
 
     expect(pull).toMatchObject({ kind: 'pr', draft: true });
-    expect(comment).toMatchObject({ kind: 'pr', anchor: { issue: 42 } });
+    expect(comment).toBeUndefined();
+  });
+
+  it('converts comment lifecycle events into identity-bearing signals', () => {
+    expect(
+      githubAnchorProjectionSignalFromDelivery({
+        event: 'issue_comment',
+        payload: {
+          action: 'edited',
+          repository: { full_name: REPO },
+          issue: { number: 42 },
+          comment: {
+            id: 99,
+            body: 'Corrected latest preview.',
+            html_url: `https://github.com/${REPO}/issues/42#issuecomment-99`,
+            user: { login: 'jlapenna' },
+            created_at: '2026-08-30T11:00:00.000Z',
+            updated_at: '2026-08-30T12:00:00.000Z',
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        anchor: { repo: REPO, issue: 42 },
+        comment: {
+          action: 'edited',
+          id: '99',
+          body: 'Corrected latest preview.',
+          url: `https://github.com/${REPO}/issues/42#issuecomment-99`,
+          author: 'jlapenna',
+          createdAt: '2026-08-30T11:00:00.000Z',
+          updatedAt: '2026-08-30T12:00:00.000Z',
+        },
+      },
+    ]);
   });
 
   it('turns a check-run webhook into a stored-PR update without queue discovery', () => {
