@@ -1,4 +1,4 @@
-import type { Decision } from './decide';
+import type { Decision, Refusal } from './decide';
 import type { LeasedOutboxEntry, Run, Task, TaskId } from './model';
 import { taskKey } from './model';
 
@@ -15,9 +15,10 @@ export const OUTBOX_LEASE_MS = 5 * 60_000;
  * - `apply` fails if the task changed since it was read (`expectedRevision`),
  *   so two racing writers cannot both take the lock.
  *
- * That compare-and-set is the entire concurrency story. There are no leases
- * on the storage layer itself — the task document's revision is the lock's
- * ground truth, and Firestore transactions provide it natively.
+ * `apply`'s compare-and-set and `transactRequest`'s atomic history lookup
+ * are the concurrency boundary. There are no leases on the storage layer
+ * itself — the task document's revision is the lock's ground truth, and
+ * Firestore transactions provide both guarantees natively.
  */
 export interface OrchestratorStore {
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
@@ -25,6 +26,24 @@ export interface OrchestratorStore {
   /** The task's live run, if its `activeRunId` points at one. */
   readActiveRun(id: TaskId): Promise<Run | undefined>;
   listRuns(id: TaskId): Promise<Run[]>;
+
+  /**
+   * Atomically reads a task's current lock and durable request-id ledger,
+   * decides a new request, and (when accepted) commits it. `requestId` is
+   * checked against every historical run before the live mutex so a retried
+   * request maps to its original terminal run even if another request has
+   * since taken the lock.
+   *
+   * Implementations must run `decide` and the accepted decision's writes in
+   * one transaction. This is deliberately a store primitive rather than a
+   * route concern: every `Orchestrator.request()` caller gets the same
+   * durable idempotency contract.
+   */
+  transactRequest(input: {
+    taskId: TaskId;
+    requestId: string;
+    decide(state: RequestTransactionState): Decision | Refusal;
+  }): Promise<Decision | Refusal>;
   apply(input: {
     decision: Decision;
     /** Revision the decision was computed against; undefined = task is new. */
@@ -171,6 +190,14 @@ export interface TaskListCursor {
 export interface VersionedTask {
   readonly task: Task;
   readonly revision: number;
+}
+
+/** The single consistent snapshot supplied to a request transaction. */
+export interface RequestTransactionState {
+  readonly task: VersionedTask | undefined;
+  readonly activeRun: Run | undefined;
+  /** A previous run for this task with the caller's exact request id. */
+  readonly previousRun: Run | undefined;
 }
 
 /** Thrown by `apply` when the compare-and-set loses. Callers retry by

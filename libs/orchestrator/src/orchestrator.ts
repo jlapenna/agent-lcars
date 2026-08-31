@@ -8,6 +8,7 @@ import {
   isRefusal,
   MAX_AUTO_RETRIES,
   type Refusal,
+  refused,
   renewLease,
   reportResult,
   requestRun,
@@ -57,18 +58,32 @@ export class Orchestrator {
   ) {}
 
   async request(input: RequestInput): Promise<Decision | Refusal> {
-    return this.transact(input.taskId, async (task, activeRun) =>
-      requestRun({
-        now: this.clock.now(),
-        task: task?.task,
-        taskId: input.taskId,
-        activeRun,
-        requestId: input.requestId,
-        pipeline: input.pipeline,
-        ...(input.params === undefined ? {} : { params: input.params }),
-        ...(input.work === undefined ? {} : { work: input.work }),
-      }),
-    );
+    // Firestore may replay a transaction callback after a concurrent commit;
+    // capture time once so every replay evaluates the same pure request.
+    const now = this.clock.now();
+    return this.store.transactRequest({
+      taskId: input.taskId,
+      requestId: input.requestId,
+      decide: ({ task, activeRun, previousRun }) => {
+        // The historical check precedes the live mutex. A retry remains a
+        // duplicate even after its original run settled and a newer request
+        // took the task lock; transactRequest keeps this check and minting
+        // the replacement run in the same store transaction.
+        if (previousRun !== undefined) {
+          return refused('duplicate-request', previousRun);
+        }
+        return requestRun({
+          now,
+          task: task?.task,
+          taskId: input.taskId,
+          activeRun,
+          requestId: input.requestId,
+          pipeline: input.pipeline,
+          ...(input.params === undefined ? {} : { params: input.params }),
+          ...(input.work === undefined ? {} : { work: input.work }),
+        });
+      },
+    });
   }
 
   async confirmDispatch(runId: string): Promise<Decision | Refusal> {

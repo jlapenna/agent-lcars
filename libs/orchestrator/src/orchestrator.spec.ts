@@ -128,6 +128,55 @@ describe('the per-task mutex', () => {
     });
   });
 
+  it('atomically maps overlapping same-id requests to one run', async () => {
+    const { store, orchestrator } = fixture();
+    const input = {
+      taskId: TASK,
+      requestId: 'same-request',
+      pipeline: 'claude',
+    };
+    const [left, right] = await Promise.all([
+      orchestrator.request(input),
+      orchestrator.request(input),
+    ]);
+
+    const outcomes = [left, right];
+    const accepted = outcomes.find((outcome) => !isRefusal(outcome));
+    const duplicate = outcomes.find(
+      (outcome) => isRefusal(outcome) && outcome.reason === 'duplicate-request',
+    );
+    if (accepted === undefined || isRefusal(accepted)) {
+      throw new Error('expected one accepted request');
+    }
+    expect(duplicate).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({
+        runId: decidedRun(accepted).runId,
+      }),
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+  });
+
+  it('returns a terminal request-id match even when a newer run holds the lock', async () => {
+    const { store, orchestrator } = fixture();
+    const first = await started(orchestrator, 'retry-after-settlement');
+    await orchestrator.report(first.run.runId, { ok: true });
+    await started(orchestrator, 'newer-request');
+
+    const replay = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'retry-after-settlement',
+      pipeline: 'claude',
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: first.run.runId }),
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
   it('allows the same task to be worked again after each terminal state', async () => {
     const { clock, orchestrator } = fixture();
     // finished → free

@@ -121,6 +121,55 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('atomically maps overlapping same-id requests to the sole run', async () => {
+        const { store, orchestrator } = await fixture();
+        const input = {
+          taskId: TASK,
+          requestId: 'same-request',
+          pipeline: 'claude',
+        };
+        const [left, right] = await Promise.all([
+          orchestrator.request(input),
+          orchestrator.request(input),
+        ]);
+        const outcomes = [left, right];
+        const accepted = outcomes.find((outcome) => !isRefusal(outcome));
+        const duplicate = outcomes.find(
+          (outcome) =>
+            isRefusal(outcome) && outcome.reason === 'duplicate-request',
+        );
+        if (accepted === undefined || isRefusal(accepted)) {
+          throw new Error('expected one accepted request');
+        }
+        expect(duplicate).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({
+            runId: decidedRun(accepted).runId,
+          }),
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+      });
+
+      it('returns the terminal request-id match before a newer live run', async () => {
+        const { store, orchestrator } = await fixture();
+        const first = await started(orchestrator, 'terminal-retry');
+        await orchestrator.report(first.run.runId, { ok: true });
+        await started(orchestrator, 'newer-request');
+
+        const replay = await orchestrator.request({
+          taskId: TASK,
+          requestId: 'terminal-retry',
+          pipeline: 'claude',
+        });
+        expect(replay).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: first.run.runId }),
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+      });
+
       it('frees the task after each terminal state so it can be worked again', async () => {
         const { clock, orchestrator } = await fixture();
         // finished -> free
