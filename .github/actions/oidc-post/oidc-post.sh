@@ -12,7 +12,7 @@ TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-60}"
 REQUEST_RESPONSE=""
 
 if [ -n "$PAYLOAD" ] && [ -n "$PAYLOADS" ]; then
-  echo "::error title=request-control-plane::Provide payload or payloads, not both."
+  echo "::error title=oidc-post::Provide payload or payloads, not both."
   exit 1
 fi
 
@@ -21,7 +21,7 @@ fi
 # instead of a bare unbound-variable error.
 if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] ||
   [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-  echo "::error title=request-control-plane::No OIDC token environment; grant the calling job 'permissions: id-token: write'."
+  echo "::error title=oidc-post::No OIDC token environment; grant the calling job 'permissions: id-token: write'."
   exit 1
 fi
 
@@ -42,7 +42,7 @@ post() {
   local response
   if ! response="$(curl "${args[@]}" "$ENDPOINT" 2>&1)"; then
     printf '%s\n' "$response" >&2
-    echo "::error title=request-control-plane::POST $ENDPOINT failed (response body above)."
+    echo "::error title=oidc-post::POST $ENDPOINT failed (response body above)."
     return 1
   fi
   REQUEST_RESPONSE="$response"
@@ -54,7 +54,7 @@ write_response() {
   # JSON. Grow the delimiter until it cannot collide with a response line,
   # so a multiline response cannot terminate its own output block.
   [ -n "${GITHUB_OUTPUT:-}" ] || return 0
-  local delimiter='request-control-plane-response'
+  local delimiter='oidc-post-response'
   while grep -Fqx "$delimiter" <<<"$REQUEST_RESPONSE"; do
     delimiter="${delimiter}_"
   done
@@ -74,7 +74,7 @@ if [ -n "$PAYLOADS" ]; then
     post "$line" || failed=$((failed + 1))
   done <<<"$PAYLOADS"
   if [ "$failed" -gt 0 ]; then
-    echo "::error title=request-control-plane::$failed of $total POSTs to $ENDPOINT failed."
+    echo "::error title=oidc-post::$failed of $total POSTs to $ENDPOINT failed."
     exit 1
   fi
   echo "POST $ENDPOINT succeeded for all $total payloads."

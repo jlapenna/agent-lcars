@@ -52,11 +52,11 @@ jobs:
       # verified by work-auth.ts's fourth branch (work.reaper scope, no
       # grant-list entry needed -- this is a hardcoded OIDC principal).
       # Minted by hand rather than through
-      # .github/actions/request-control-plane: that action mints a token
+      # .github/actions/oidc-post: that action mints a token
       # and POSTs it in the same step, but the token here needs to survive
       # into a later step that runs the pin sweep script (which itself
       # issues two GETs, not a POST) -- the same
-      # OIDC-mint-then-jq-parse shape that action's own request.sh uses
+      # OIDC-mint-then-jq-parse shape that action's own oidc-post.sh uses
       # internally, just without its single-step POST wrapper.
       - name: Mint a session-pin-tick bearer
         id: pin-tick-token
