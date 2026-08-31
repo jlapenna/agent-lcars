@@ -3,8 +3,21 @@ import type {
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
-import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
+import {
+  configureTestWatchedRepos,
+  TEST_HOME_REPOSITORY,
+  TEST_SPRINKLES_REPOSITORY,
+} from '../test-support/watched-repos';
 import {
   DEFAULT_ARCHIVE_DAYS,
   getSessionArchive,
@@ -17,6 +30,14 @@ vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
   listSessionDocs: vi.fn(),
 }));
+
+beforeEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY, TEST_SPRINKLES_REPOSITORY]);
+});
+
+afterEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY]);
+});
 
 function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {

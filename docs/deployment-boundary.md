@@ -26,19 +26,19 @@ file is the map.
 The **only** module in console source that names this instance. Everything
 else asks it:
 
-| Value                    | Env var                                | This deployment                  |
-| ------------------------ | -------------------------------------- | -------------------------------- |
-| console admin logins     | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`      | `jlapenna,lizsprinkles`          |
-| maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`       | `jlapenna`                       |
-| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `agent-lcars-bot`                |
-| artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net` |
-| control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `jlapenna/agent-lcars`           |
-| watched repos            | `AGENT_LCARS_WATCHED_REPOS`            | see `github-client.ts`           |
-| this console's own URL   | `AGENT_LCARS_CONSOLE_URL`              | `https://lcars.jlapenna.net`     |
+| Value                    | Env var                                | This deployment                     |
+| ------------------------ | -------------------------------------- | ----------------------------------- |
+| console admin logins     | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`      | `jlapenna,lizsprinkles`             |
+| maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`       | `jlapenna`                          |
+| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `agent-lcars-bot`                   |
+| artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net`    |
+| control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `jlapenna/agent-lcars`              |
+| watched repos            | `AGENT_LCARS_WATCHED_REPOS`            | required; matches control-plane set |
+| this console's own URL   | `AGENT_LCARS_CONSOLE_URL`              | `https://lcars.jlapenna.net`        |
 
-Each falls back to this deployment's value, so nothing breaks when a var is
-unset. `apphosting.yaml` sets them explicitly anyway, so what production
-runs with is visible in config rather than only in source.
+Repository identity is explicit: the watched and control-plane sets are both
+required and must match exactly. `apphosting.yaml` records that shared set so
+what production runs with is visible in config rather than only in source.
 
 Server-only. `@agent-lcars/util-server` must never reach a client bundle, which is
 why `shareArtifactUrl` lives here rather than in `format.ts` — that module

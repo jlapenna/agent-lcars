@@ -17,7 +17,7 @@ const AUTHENTICATED_VIEWS = [
   { name: 'Bridge', path: '/', current: 'deck' },
   {
     name: 'selected inbox item',
-    path: `/inbox?item=supersprinklesracing%2Fsprinkles%23${E2E_ITEM_NUMBERS.reviewRequested}`,
+    path: `/inbox?item=supersprinklesracing%2Fsprinkles%23${E2E_ITEM_NUMBERS.humanNeeded}`,
     current: 'inbox',
   },
   { name: 'Agents', path: '/agents', current: 'agents' },

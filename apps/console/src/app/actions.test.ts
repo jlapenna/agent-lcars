@@ -1,5 +1,13 @@
 import { revalidatePath, updateTag } from 'next/cache';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
 import { auth } from '../auth';
 import {
@@ -15,7 +23,12 @@ import {
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
 } from '../lib/backend-actions';
-import { GITHUB_DATA_TAG } from '../lib/cache-tags';
+import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
+import {
+  configureTestWatchedRepos,
+  TEST_HOME_REPOSITORY,
+  TEST_SPRINKLES_REPOSITORY,
+} from '../test-support/watched-repos';
 import {
   approveAndRebase,
   clearHumanNeeded,
@@ -105,10 +118,18 @@ const QUICK_TASK_RECEIPT = {
 
 describe('agent-lcars Server Actions', () => {
   beforeEach(() => {
+    configureTestWatchedRepos([
+      TEST_HOME_REPOSITORY,
+      TEST_SPRINKLES_REPOSITORY,
+    ]);
     vi.clearAllMocks();
     (auth as Mock).mockResolvedValue({
       user: { id: 'admin-1', isAdmin: true },
     });
+  });
+
+  afterEach(() => {
+    configureTestWatchedRepos([TEST_HOME_REPOSITORY]);
   });
 
   // Server Actions must not `throw` for expected/user-facing errors: Next.js
@@ -260,7 +281,7 @@ describe('agent-lcars Server Actions', () => {
 
       await expect(mergePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('rebasePr returns { ok: true } and revalidates', async () => {
@@ -269,7 +290,7 @@ describe('agent-lcars Server Actions', () => {
       await expect(rebasePr(DEFAULT_REPO, 42)).resolves.toEqual({ ok: true });
       expect(updatePrBranch).toHaveBeenCalledWith(DEFAULT_REPO, 42);
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('approveAndRebase returns { ok: true } and revalidates', async () => {
@@ -279,7 +300,7 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('replyToItem returns { ok: true } and revalidates', async () => {
@@ -289,7 +310,7 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
       });
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('replyToItem forwards the item labels to postComment for mention routing', async () => {
@@ -344,7 +365,7 @@ describe('agent-lcars Server Actions', () => {
         userIssueCreator,
       );
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('createQuickTask forwards an explicit pipeline', async () => {
@@ -400,7 +421,7 @@ The refresh path has browser coverage.
       });
       expect(closeIssueLib).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('updateIssueContent returns { ok: true } and revalidates', async () => {
@@ -416,7 +437,7 @@ The refresh path has browser coverage.
         content,
       );
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
     it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
@@ -427,7 +448,7 @@ The refresh path has browser coverage.
       });
       expect(clearHumanNeededLabel).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
-      expect(updateTag).toHaveBeenCalledWith(GITHUB_DATA_TAG);
+      expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
   });
 

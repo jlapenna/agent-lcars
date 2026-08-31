@@ -1,6 +1,8 @@
 import { required } from '@agent-lcars/util-server';
+import { revalidateTag } from 'next/cache';
 import { NextResponse } from 'next/server';
 
+import { AUTHORITATIVE_QUEUE_TAG } from '@/lib/cache-tags';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 import {
@@ -106,11 +108,22 @@ export async function POST(request: Request): Promise<NextResponse> {
         cause: error,
       });
     }
-    const result = await handleWebhookDelivery(createOrchestratorRuntime(), {
-      event: eventName,
-      deliveryId,
-      payload,
-    });
+    const result = await handleWebhookDelivery(
+      {
+        ...createOrchestratorRuntime(),
+        // Unlike a Server Action, a Route Handler does not promise
+        // read-your-own-writes. Mark the projection cache stale only after the
+        // webhook has written its durable snapshot, so a post-mutation render
+        // cannot refill this tag from the pre-webhook projection.
+        invalidateAuthoritativeQueue: () =>
+          revalidateTag(AUTHORITATIVE_QUEUE_TAG, 'max'),
+      },
+      {
+        event: eventName,
+        deliveryId,
+        payload,
+      },
+    );
     console.info(
       'agent-lcars: orchestrator webhook delivery processed',
       result,

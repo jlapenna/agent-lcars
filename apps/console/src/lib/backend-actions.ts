@@ -9,6 +9,7 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { isRefusal } from '@agent-lcars/orchestrator';
 
+import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
 import {
   getGithubClient,
@@ -88,6 +89,20 @@ export function isNotFound(error: unknown): boolean {
   );
 }
 
+/** Console writes receive the authoritative GitHub mutation response before
+ * the asynchronous webhook. Refresh the same durable projection that the
+ * webhook owns so the following render observes that write; this is an exact
+ * control-plane read, not a render-time compatibility lookup. */
+async function refreshGithubMutation(
+  repo: WatchedRepo,
+  issueNumber: number,
+): Promise<void> {
+  await refreshCurrentGithubAnchorProjection({
+    repo: repoKey(repo),
+    issue: issueNumber,
+  });
+}
+
 // Replying or retriggering hands the ball back to the agent. The agent
 // applies `status:needs-human`; handing work back clears it centrally. Also
 // exposed as its own console action for stale trackers that need no reply.
@@ -123,6 +138,7 @@ export async function clearNeedsHumanLabel(
     // on.
     return;
   }
+  await refreshGithubMutation(repo, issueNumber);
   // A label write is invisible to the orchestrator (it tracks no GitHub
   // label state at all - see model.ts), but it may be running behind on an
   // unrelated expired lease. Catch it up now rather than waiting on the
@@ -177,6 +193,7 @@ export async function approveAndMergePr(
     pull_number: prNumber,
     merge_method: 'squash',
   });
+  await refreshGithubMutation(repo, prNumber);
 
   // The orchestrator has no notion of a merged PR either (#1183 - see
   // model.ts). What still helps is catching up any unrelated run whose
@@ -201,6 +218,7 @@ export async function updatePrBranch(
     repo: repo.name,
     pull_number: prNumber,
   });
+  await refreshGithubMutation(repo, prNumber);
 }
 
 // GitHub's REST API has no "enable auto-merge" endpoint - only the GraphQL
@@ -264,6 +282,7 @@ export async function approveAndRebasePr(
     mergeMethod: 'SQUASH',
     headers: { [REPO_HEADER]: repoKey(repo) },
   });
+  await refreshGithubMutation(repo, prNumber);
 }
 
 // The console's "Done" affordance for a loop that's simply finished (stale
@@ -280,6 +299,7 @@ export async function closeIssue(
     issue_number: issueNumber,
     state: 'closed',
   });
+  await refreshGithubMutation(repo, issueNumber);
   // The orchestrator tracks no GitHub issue-state field at all (#1183 - see
   // model.ts's doc comment: a durable per-task mutex, not a projection of
   // GitHub state), so this close does not change anything it needs to
@@ -387,6 +407,7 @@ export async function updateIssueContent(
     title,
     body,
   });
+  await refreshGithubMutation(repo, issueNumber);
 }
 
 const DEFAULT_BRANCH = 'main';
@@ -644,6 +665,7 @@ export async function reassignPipeline(
       )
       .concat(targetIntegration.label),
   });
+  await refreshGithubMutation(repo, issueNumber);
 
   const runtime = createOrchestratorRuntime();
   const { store, orchestrator, drain } = runtime;
@@ -735,6 +757,7 @@ export async function assignPipeline(
       .filter((label) => label !== 'status:ready-for-agent')
       .concat(targetIntegration.label),
   });
+  await refreshGithubMutation(repo, issueNumber);
 }
 
 const QUICK_TASK_LABEL = 'intake:quick-task';
@@ -1265,6 +1288,7 @@ async function createQuickTaskOnce(
       body: `${request.description}\n\n${formatQuickTaskMarker({ requestId: request.requestId, digest })}`,
       labels: [QUICK_TASK_LABEL, integration.label],
     });
+    await refreshGithubMutation(request.repository, issue.number);
     return receiptFor(request, issue.number);
   } catch (error) {
     if (isDefinitiveCreateFailure(error)) {

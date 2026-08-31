@@ -51,6 +51,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env['AGENT_LCARS_WEBHOOK_SECRET'];
   delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
+  delete process.env['AGENT_LCARS_WATCHED_REPOS'];
 });
 
 describe('POST /api/control-plane/webhook repository admission', () => {
@@ -87,6 +88,10 @@ describe('POST /api/control-plane/webhook repository admission', () => {
   it('admits a second repository once the allow-list env var lists it', async () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${HOME_REPO},other-org/other-repo`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'other-org', name: 'other-repo' },
+    ]);
 
     const response = await POST(webhookRequest('other-org/other-repo'));
     expect(response.status).toBe(202);
@@ -99,6 +104,10 @@ describe('POST /api/control-plane/webhook repository admission', () => {
   it('still refuses a repository not in the configured allow-list', async () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${HOME_REPO},other-org/other-repo`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'other-org', name: 'other-repo' },
+    ]);
 
     const response = await POST(webhookRequest('unlisted-org/unlisted-repo'));
     expect(response.status).toBe(202);

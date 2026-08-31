@@ -1,10 +1,6 @@
+import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
+
 import { agentFleetLogin, maintainerLogin } from './deployment';
-import {
-  E2E_FIXTURE_BRANCH,
-  E2E_FIXTURE_PR_NUMBER,
-  E2E_FIXTURE_PR_TITLE,
-  E2E_FIXTURE_PR_URL,
-} from './e2e-fixtures';
 import type { AgentPipeline } from './watched-repo';
 
 /**
@@ -17,24 +13,18 @@ import type { AgentPipeline } from './watched-repo';
  *
  * Off by default. A spec opts in by POSTing `{action: 'seed-populated'}` to
  * `/api/e2e/seed`. That route now seeds agent activity from authoritative
- * broker Tasks/Runs; this GitHub boundary supplies only issue and PR metadata.
- *
- * The one thing served unconditionally is the branch->PR join
- * `getCliSessions()` needs, which predates this file and which
- * `agent-activity-cli-sessions.spec.ts` depends on - see `openPulls`, which
- * serves it now that the console no longer calls the search API.
+ * broker Tasks/Runs and webhook-anchor projections; this GitHub boundary
+ * supplies only explicit issue/PR detail and mutation metadata.
  */
 
 // Resolved from deployment config, NOT hardcoded: `tools/e2e/ci.env` sets
 // AGENT_LCARS_ADMIN_GITHUB_LOGIN to a dummy value, so a literal 'jlapenna'
-// here would no longer match what classifyIssue() compares
-// `requested_reviewers` against, nor what the assignee search queries ask
-// for -- the fixtures would build items the app then refuses to classify.
+// here would no longer match the author/assignee metadata in the durable
+// queue fixture.
 const MAINTAINER = maintainerLogin();
 const FLEET = agentFleetLogin();
 
-/** The single repo the e2e environment watches (`DEFAULT_WATCHED_REPOS`,
- * since `tools/e2e/ci.env` sets no `AGENT_LCARS_WATCHED_REPOS`). */
+/** The single repo explicitly configured by `tools/e2e/ci.env`. */
 export const E2E_FIXTURE_REPO = {
   owner: 'supersprinklesracing',
   name: 'sprinkles',
@@ -258,7 +248,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     isPr: false,
     // No board-qualifying label/assignee on purpose - see this number's own
     // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments)
-    // via item-enrichment.ts and readable via GET /issues/{number}
+    // via an explicit bounded detail read
     // (task-detail.ts), both of which key off FIXTURE_ITEMS directly rather
     // than the filtered board.
     labels: [],
@@ -267,6 +257,85 @@ const FIXTURE_ITEMS: FixtureItem[] = [
     updatedAt: minutesAgo(1),
   },
 ];
+
+/**
+ * The populated console fixture writes the same durable webhook-shaped
+ * anchors the production queue reads. The GitHub HTTP fixture remains only
+ * for explicit detail and mutation requests.
+ */
+export function populatedGithubAnchorProjections(): GithubAnchorProjection[] {
+  const observedAt = new Date().toISOString();
+  return FIXTURE_ITEMS.map((item) => {
+    const comments = item.comments ?? [];
+    const lastComment = comments.at(-1);
+    const unresolvedReviewThreadIds = (item.pr?.reviewThreads ?? []).flatMap(
+      (resolved, index) =>
+        resolved ? [] : [`PRRT_e2e_${item.number}_${index}`],
+    );
+    const checkRuns = (item.checkRuns ?? []).map((check, index) => ({
+      id: String(item.number * 1000 + index),
+      name: check.name,
+      url: `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/runs/${item.number}-${index}`,
+      status: check.status,
+      conclusion: check.conclusion,
+      updatedAt: item.updatedAt,
+    }));
+    const linkedIssueNumbers = Array.from(
+      item.body.matchAll(
+        /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)/giu,
+      ),
+      (match) => Number(match[1]),
+    );
+    return {
+      anchor: {
+        repo: `${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}`,
+        issue: item.number,
+      },
+      kind: item.isPr ? ('pr' as const) : ('issue' as const),
+      state: 'open' as const,
+      title: item.title,
+      body: item.body,
+      url: itemUrl(item.number, item.isPr ? 'pull' : 'issues'),
+      author: item.author,
+      labels: item.labels,
+      assigneeLogins: item.assignees,
+      ...(lastComment === undefined
+        ? {}
+        : {
+            lastComment: {
+              id: String(item.number * 100 + comments.length - 1),
+              body: lastComment.body,
+              url: `${itemUrl(item.number, item.isPr ? 'pull' : 'issues')}#issuecomment-${item.number * 100 + comments.length - 1}`,
+              author: lastComment.author,
+              createdAt: item.updatedAt,
+            },
+          }),
+      ...(linkedIssueNumbers.length === 0 ? {} : { linkedIssueNumbers }),
+      ...(item.isPr
+        ? {
+            draft: item.pr?.draft ?? false,
+            mergeableState: item.pr?.mergeableState as NonNullable<
+              GithubAnchorProjection['mergeableState']
+            >,
+            requestedReviewerLogins: item.pr?.requestedReviewers ?? [],
+            checkRuns,
+            failingChecks: checkRuns
+              .filter(
+                (check) =>
+                  check.status === 'completed' &&
+                  check.conclusion === 'failure',
+              )
+              .map(({ name, url }) => ({ name, url })),
+            ciRunning: checkRuns.some((check) => check.status !== 'completed'),
+            unresolvedReviewThreadCount: unresolvedReviewThreadIds.length,
+            unresolvedReviewThreadIds,
+          }
+        : {}),
+      sourceUpdatedAt: item.updatedAt,
+      observedAt,
+    };
+  });
+}
 
 /**
  * Populated mode is a per-server-process toggle rather than a module-level
@@ -529,30 +598,12 @@ export function quickTaskIssue(number: number) {
  * `GET /repos/{o}/{r}/issues?state=all` - what
  * `backend-actions.ts`'s `findExistingQuickTask` scans for the request-ID
  * marker before ever attempting a create, which is the entire idempotency
- * mechanism under test. Deliberately does NOT merge in the curated
- * `FIXTURE_ITEMS` (unlike `openIssues()`'s `state=open` board listing):
- * none of them ever carry a `quick-task-request` marker, so including them
- * would only add noise, never change which issue a retry resolves to.
+ * mechanism under test. It deliberately does not merge the curated queue
+ * anchors: none carry a `quick-task-request` marker, so they could only add
+ * noise and must not act as a fixture queue fallback.
  */
 export function quickTaskListingIssues() {
   return quickTaskState().issues.map(quickTaskIssueRestShape);
-}
-
-function quickTaskGraphqlEntries(): Record<string, unknown> {
-  const repository: Record<string, unknown> = {};
-  for (const item of quickTaskState().issues) {
-    repository[`i${item.number}`] = {
-      __typename: 'Issue',
-      comments: {
-        nodes: item.comments.map((comment, index) => ({
-          body: comment.body,
-          url: `${itemUrl(item.number, 'issues')}#issuecomment-${item.number}${index}`,
-          author: { login: comment.author },
-        })),
-      },
-    };
-  }
-  return repository;
 }
 
 function quickTaskIssueComments(number: number) {
@@ -569,8 +620,12 @@ function quickTaskIssueComments(number: number) {
   }));
 }
 
-/** The `issues.listForRepo` row shape - which serves issues and PRs alike,
- * with a PR carrying a `pull_request` key. */
+/** Exact issue-detail response shape, with a PR carrying `pull_request`.
+ *
+ * Console mutations feed this shape through the same anchor-projection
+ * parser as webhook deliveries, so it must include the complete GitHub
+ * issue state rather than only the fields the former mutation preconditions
+ * happened to inspect. */
 function issueFor(item: FixtureItem) {
   const edited = issueContentEdits().get(item.number);
   return {
@@ -579,6 +634,7 @@ function issueFor(item: FixtureItem) {
     body: edited?.body ?? item.body,
     html_url: itemUrl(item.number, item.isPr ? 'pull' : 'issues'),
     user: { login: item.author },
+    state: 'open',
     updated_at: item.updatedAt,
     labels: item.labels.map((name) => ({ name })),
     assignees: item.assignees.map((login) => ({ login })),
@@ -612,16 +668,6 @@ export function updateFixtureIssueContent(
   return issueFor(item);
 }
 
-/** `GET /repos/{owner}/{repo}/issues?state=open` - the board's item universe
- * since #13 replaced the per-qualifier search fan-out. Deliberately returns
- * every fixture item regardless of label/assignee: selecting which of them
- * belong on the board is `isBoardItem`'s job in the app, and a fixture that
- * pre-filtered would hide a regression in exactly that predicate. */
-export function openIssues() {
-  if (!populatedFixturesEnabled()) return [];
-  return FIXTURE_ITEMS.map(issueFor);
-}
-
 /** Individual issue read used by rendered mutation flows such as retrigger
  * and atomic pipeline reassignment, and by the canonical `/task/<owner>/
  * <repo>/<issue>` detail page (task-detail.ts) - which is why a Quick
@@ -633,120 +679,6 @@ export function issue(number: number) {
   if (!populatedFixturesEnabled()) return undefined;
   const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
   return item ? issueFor(item) : undefined;
-}
-
-/**
- * `GET /repos/{owner}/{repo}/pulls?state=open`. Two consumers read this now:
- * `requested_reviewers` answers the board predicate the issue listing can't
- * express, and `head.ref` answers `getCliSessions()`'s branch->PR join.
- *
- * The branch->PR entry is served UNCONDITIONALLY - it predates populated
- * mode and `agent-activity-cli-sessions.spec.ts` depends on it in the zero
- * state. It used to come from the `/search/issues` stub, which this replaced
- * when the console stopped calling the search API at all.
- */
-export function openPulls() {
-  const branchJoinPr = {
-    number: E2E_FIXTURE_PR_NUMBER,
-    title: E2E_FIXTURE_PR_TITLE,
-    html_url: E2E_FIXTURE_PR_URL,
-    head: { ref: E2E_FIXTURE_BRANCH },
-    requested_reviewers: [],
-  };
-  if (!populatedFixturesEnabled()) return [branchJoinPr];
-  return [
-    branchJoinPr,
-    ...FIXTURE_ITEMS.filter((item) => item.isPr).map((item) => ({
-      number: item.number,
-      title: item.title,
-      html_url: itemUrl(item.number, 'pull'),
-      // Distinct from the join branch above: these exist to be selected by
-      // the review-requested predicate, not to be joined to a session.
-      head: { ref: `e2e-fixture-branch-${item.number}` },
-      requested_reviewers: (item.pr?.requestedReviewers ?? []).map((login) => ({
-        login,
-      })),
-    })),
-  ];
-}
-
-/**
- * `POST /graphql` - the batched per-item enrichment query.
- *
- * Replaces what used to be a per-item REST fan-out (issueComments +
- * pullRequest + checkRuns). This deliberately does NOT parse the query: it
- * answers with a node for every fixture item, keyed by the same `i<number>`
- * alias the app builds, and lets the app pick out the ones it asked for.
- * Extra aliases in the response are ignored by the caller, and a fixture
- * that tried to interpret GraphQL for real would be far more fragile than
- * the thing it is standing in for.
- *
- * Enum values are SCREAMING_CASE exactly as the real API returns them, so
- * the lowercasing in `item-enrichment.ts` stays exercised end to end rather
- * than being bypassed by a conveniently pre-lowercased fixture.
- */
-export function enrichmentGraphql() {
-  // Quick Task-created issues are merged in unconditionally (unlike the
-  // FIXTURE_ITEMS loop below): `getTaskDetail`'s comment read must
-  // work regardless of whether populated mode is on, the same as `issue()`
-  // above.
-  const repository: Record<string, unknown> = quickTaskGraphqlEntries();
-  if (!populatedFixturesEnabled()) return { repository };
-
-  for (const item of FIXTURE_ITEMS) {
-    const comments = {
-      nodes: (item.comments ?? []).map((comment, index) => ({
-        body: comment.body,
-        url: `${itemUrl(item.number, item.isPr ? 'pull' : 'issues')}#issuecomment-${item.number * 100 + index}`,
-        author: { login: comment.author },
-      })),
-    };
-    if (!item.isPr) {
-      repository[`i${item.number}`] = { __typename: 'Issue', comments };
-      continue;
-    }
-    const runs = item.checkRuns ?? [];
-    repository[`i${item.number}`] = {
-      __typename: 'PullRequest',
-      isDraft: item.pr?.draft ?? false,
-      mergeStateStatus: (item.pr?.mergeableState ?? 'unknown').toUpperCase(),
-      body: item.body,
-      comments,
-      reviewRequests: {
-        nodes: (item.pr?.requestedReviewers ?? []).map((login) => ({
-          requestedReviewer: { login },
-        })),
-      },
-      reviewThreads: {
-        totalCount: (item.pr?.reviewThreads ?? []).length,
-        nodes: (item.pr?.reviewThreads ?? []).map((isResolved) => ({
-          isResolved,
-        })),
-      },
-      commits: {
-        nodes: [
-          {
-            commit: {
-              statusCheckRollup: {
-                contexts: {
-                  totalCount: runs.length,
-                  nodes: runs.map((run) => ({
-                    name: run.name,
-                    status: run.status.toUpperCase(),
-                    conclusion: run.conclusion
-                      ? run.conclusion.toUpperCase()
-                      : null,
-                    detailsUrl: 'https://github.com/check',
-                  })),
-                },
-              },
-            },
-          },
-        ],
-      },
-    };
-  }
-  return { repository };
 }
 
 /** `GET /repos/{owner}/{repo}/issues/{number}/comments` */
@@ -763,6 +695,87 @@ export function issueComments(number: number) {
   }));
 }
 
+/** Exact GraphQL-anchor detail used only by the control-plane refresh seam.
+ * It deliberately has no list/query discovery surface: callers name each
+ * already-known anchor and receive the same bounded detail GitHub returns. */
+export function githubAnchorGraphqlDetail(number: number) {
+  const quickTask = quickTaskState().issues.find(
+    (candidate) => candidate.number === number,
+  );
+  if (quickTask) {
+    return {
+      body: quickTask.body,
+      comments: {
+        nodes: quickTask.comments.map((comment) => ({
+          body: comment.body,
+          url: `${itemUrl(number, 'issues')}#issuecomment-${number}`,
+          createdAt: quickTask.createdAt,
+          updatedAt: quickTask.createdAt,
+          author: { login: comment.author },
+        })),
+      },
+    };
+  }
+
+  if (!populatedFixturesEnabled()) return undefined;
+  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  if (!item) return undefined;
+  const edited = issueContentEdits().get(number);
+  const comments = item.comments ?? [];
+  const detail = {
+    body: edited?.body ?? item.body,
+    comments: {
+      nodes: comments.map((comment, index) => ({
+        body: comment.body,
+        url: `${itemUrl(number, item.isPr ? 'pull' : 'issues')}#issuecomment-${number * 100 + index}`,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt,
+        author: { login: comment.author },
+      })),
+    },
+  };
+  if (!item.pr) return detail;
+
+  const reviewThreads = item.pr.reviewThreads ?? [];
+  const checks = item.checkRuns ?? [];
+  return {
+    ...detail,
+    isDraft: item.pr.draft,
+    mergeStateStatus: item.pr.mergeableState,
+    reviewRequests: {
+      nodes: item.pr.requestedReviewers.map((login) => ({
+        requestedReviewer: { login },
+      })),
+    },
+    reviewThreads: {
+      totalCount: reviewThreads.length,
+      nodes: reviewThreads.map((isResolved, index) => ({
+        id: `PRRT_e2e_${number}_${index}`,
+        isResolved,
+      })),
+    },
+    commits: {
+      nodes: [
+        {
+          commit: {
+            statusCheckRollup: {
+              contexts: {
+                totalCount: checks.length,
+                nodes: checks.map((check, index) => ({
+                  name: check.name,
+                  status: check.status,
+                  conclusion: check.conclusion,
+                  detailsUrl: `https://github.com/${E2E_FIXTURE_REPO.owner}/${E2E_FIXTURE_REPO.name}/runs/${number}-${index}`,
+                })),
+              },
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
 /** `GET /repos/{owner}/{repo}/pulls/{number}` */
 export function pullRequest(number: number) {
   const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
@@ -777,19 +790,6 @@ export function pullRequest(number: number) {
     head: { sha: item.pr.headSha },
     requested_reviewers: item.pr.requestedReviewers.map((login) => ({ login })),
   };
-}
-
-/** `GET /repos/{owner}/{repo}/commits/{ref}/check-runs` */
-export function checkRuns(ref: string) {
-  const item = FIXTURE_ITEMS.find((candidate) => candidate.pr?.headSha === ref);
-  const runs = (item?.checkRuns ?? []).map((run, index) => ({
-    id: index + 1,
-    name: run.name,
-    status: run.status,
-    conclusion: run.conclusion,
-    html_url: `${itemUrl(item?.number ?? 0, 'pull')}/checks`,
-  }));
-  return { total_count: runs.length, check_runs: runs };
 }
 
 /** `GET /repos/{owner}/{repo}/actions/runners` */

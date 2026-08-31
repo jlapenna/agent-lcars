@@ -77,4 +77,36 @@ describe('GitHub anchor projection refresh generations', () => {
     ).resolves.toBeUndefined();
     await expect(store.listOpenGithubAnchorProjections()).resolves.toEqual([]);
   });
+
+  it('returns every open projection through a bounded continuation feed', async () => {
+    const store = new MemoryStore();
+    for (const issue of [1, 2, 3]) {
+      const nextAnchor = { ...anchor, issue };
+      const generation =
+        await store.beginGithubAnchorProjectionRefresh(nextAnchor);
+      await store.applyGithubAnchorProjectionRefresh({
+        anchor: nextAnchor,
+        generation,
+        projection: {
+          ...base,
+          anchor: nextAnchor,
+          sourceUpdatedAt: `2026-08-30T12:0${issue}:00.000Z`,
+        },
+      });
+    }
+
+    const first = await store.listOpenGithubAnchorProjectionPage({ limit: 2 });
+    const second = await store.listOpenGithubAnchorProjectionPage({
+      limit: 2,
+      cursor: first.nextCursor,
+    });
+
+    expect(
+      first.projections.map((projection) => projection.anchor.issue),
+    ).toEqual([3, 2]);
+    expect(
+      second.projections.map((projection) => projection.anchor.issue),
+    ).toEqual([1]);
+    expect(second.nextCursor).toBeUndefined();
+  });
 });

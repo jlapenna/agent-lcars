@@ -5,6 +5,3 @@
  * matches the branch the GitHub fixture route joins to a PR.
  */
 export const E2E_FIXTURE_BRANCH = 'e2e-agent-lcars-fixture-branch';
-export const E2E_FIXTURE_PR_NUMBER = 4242;
-export const E2E_FIXTURE_PR_TITLE = 'feat: e2e fixture branch';
-export const E2E_FIXTURE_PR_URL = `https://github.com/supersprinklesracing/sprinkles/pull/${E2E_FIXTURE_PR_NUMBER}`;

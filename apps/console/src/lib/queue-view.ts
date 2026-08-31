@@ -27,15 +27,41 @@ export function buildQueueView(
     activity.recentRuns,
     runnerSessionsByRunId,
   );
+  const newestRunByIssue = new Map<string, AgentRun>();
+  for (const run of activity.recentRuns) {
+    if (run.issueNumber === undefined) continue;
+    const key = repoItemKey(run.repo, run.issueNumber);
+    const previous = newestRunByIssue.get(key);
+    if (
+      previous === undefined ||
+      run.updatedAt > previous.updatedAt ||
+      (run.updatedAt === previous.updatedAt &&
+        run.createdAt > previous.createdAt) ||
+      (run.updatedAt === previous.updatedAt &&
+        run.createdAt === previous.createdAt &&
+        String(run.id) > String(previous.id))
+    ) {
+      newestRunByIssue.set(key, run);
+    }
+  }
+  const failedRunByIssue = new Set(
+    [...newestRunByIssue.entries()]
+      .filter(([, run]) => run.conclusion === 'failure')
+      .map(([key]) => key),
+  );
   const items = rawItems.map((item) => {
-    const diagnosis = silentErrorByIssue.get(
-      repoItemKey(item.repo, item.number),
-    );
-    if (!diagnosis) return item;
+    const key = repoItemKey(item.repo, item.number);
+    const diagnosis = silentErrorByIssue.get(key);
+    const actionTypes = [
+      ...item.actionTypes,
+      ...(failedRunByIssue.has(key) ? (['run-failed'] as const) : []),
+      ...(diagnosis ? (['silent-error'] as const) : []),
+    ];
+    if (actionTypes.length === item.actionTypes.length) return item;
     return {
       ...item,
-      actionTypes: [...item.actionTypes, 'silent-error' as const],
-      silentErrorDiagnosis: diagnosis,
+      actionTypes,
+      ...(diagnosis === undefined ? {} : { silentErrorDiagnosis: diagnosis }),
     };
   });
 

@@ -489,10 +489,9 @@ export const REPO_HEADER = 'x-agent-lcars-repo';
  *    more fragile).
  * 2. GraphQL requests (`octokit.graphql(query, variables)`) carry no
  *    owner/repo in their URL at all (`POST /graphql` always) -- `variables`
- *    is where a query's own `$owner`/`$name` arguments land, so a query
- *    that declares and passes them (see `item-enrichment.ts`'s
- *    `buildQuery`, called with `{owner: repo.owner, name: repo.name}`) is
- *    still recoverable this way with no call-site change.
+ *    is where an exact query's own `$owner`/`$name` arguments land, so a
+ *    call that declares and passes them is still recoverable this way with
+ *    no call-site-specific token routing.
  * 3. Neither shape fits `search.issuesAndPullRequests` (the repo lives
  *    inside a `repo:owner/name` qualifier embedded in the free-text `q`
  *    string, not a structured parameter) or a GraphQL mutation keyed by an

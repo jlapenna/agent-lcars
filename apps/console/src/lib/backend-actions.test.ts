@@ -29,6 +29,14 @@ import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
+const { refreshCurrentGithubAnchorProjection } = vi.hoisted(() => ({
+  refreshCurrentGithubAnchorProjection: vi.fn(),
+}));
+
+vi.mock('./github-anchor-refresh', () => ({
+  refreshCurrentGithubAnchorProjection,
+}));
+
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
 const DEFAULT_REPO_KEY = `${DEFAULT_REPO.owner}/${DEFAULT_REPO.name}`;
@@ -39,6 +47,7 @@ vi.mock('./github-client', async (importOriginal) => {
     ...actual,
     getGithubClient: vi.fn(),
     getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
+    primaryWatchedRepo: vi.fn(() => DEFAULT_REPO),
   };
 });
 
@@ -48,6 +57,7 @@ vi.mock('./orchestrator-runtime', () => ({
 
 beforeEach(() => {
   (createOrchestratorRuntime as Mock).mockReset();
+  refreshCurrentGithubAnchorProjection.mockReset();
 });
 
 /** Builds a fresh orchestrator runtime the same shape
@@ -115,6 +125,10 @@ describe('closeIssue', () => {
       repo: 'sprinkles',
       issue_number: 2709,
       state: 'closed',
+    });
+    expect(refreshCurrentGithubAnchorProjection).toHaveBeenCalledWith({
+      repo: DEFAULT_REPO_KEY,
+      issue: 2709,
     });
   });
 

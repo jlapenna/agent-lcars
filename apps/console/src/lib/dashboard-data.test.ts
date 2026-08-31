@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   e2eTesting: true,
-  getActionItems: vi.fn(),
+  getAuthoritativeQueueItems: vi.fn(),
   getAgentActivity: vi.fn(),
   cacheLife: vi.fn(),
   cacheTag: vi.fn(),
@@ -15,12 +15,14 @@ vi.mock('next/cache', () => ({
   cacheLife: mocks.cacheLife,
   cacheTag: mocks.cacheTag,
 }));
-vi.mock('./action-items', () => ({ getActionItems: mocks.getActionItems }));
+vi.mock('./authoritative-queue', () => ({
+  getAuthoritativeQueueItems: mocks.getAuthoritativeQueueItems,
+}));
 vi.mock('./agent-activity', () => ({
   getAgentActivity: mocks.getAgentActivity,
 }));
 
-const { getCachedActionItems, getCachedAgentActivity } =
+const { getCachedQueueItems, getCachedAgentActivity } =
   // eslint-disable-next-line no-restricted-syntax -- imported dynamically so it evaluates AFTER the vi.mock factories above; a static import would bind the unmocked module.
   await import('./dashboard-data');
 
@@ -31,15 +33,15 @@ describe('dashboard data cache boundary', () => {
   });
 
   it('reads every E2E fixture generation fresh without entering Next cache', async () => {
-    mocks.getActionItems
+    mocks.getAuthoritativeQueueItems
       .mockResolvedValueOnce({ items: [{ number: 20001, title: 'body A' }] })
       .mockResolvedValueOnce({ items: [{ number: 20001, title: 'body B' }] });
     mocks.getAgentActivity
       .mockResolvedValueOnce({ recentRuns: [{ id: 1 }] })
       .mockResolvedValueOnce({ recentRuns: [{ id: 2 }] });
 
-    const firstItems = await getCachedActionItems();
-    const secondItems = await getCachedActionItems();
+    const firstItems = await getCachedQueueItems();
+    const secondItems = await getCachedQueueItems();
     const firstActivity = await getCachedAgentActivity();
     const secondActivity = await getCachedAgentActivity();
 
@@ -57,15 +59,15 @@ describe('dashboard data cache boundary', () => {
 
   it('retains the existing cache policy outside E2E', async () => {
     mocks.e2eTesting = false;
-    mocks.getActionItems.mockResolvedValue({ items: [] });
+    mocks.getAuthoritativeQueueItems.mockResolvedValue({ items: [] });
     mocks.getAgentActivity.mockResolvedValue({ recentRuns: [] });
 
-    await getCachedActionItems();
+    await getCachedQueueItems();
     await getCachedAgentActivity();
 
     expect(mocks.cacheTag).toHaveBeenCalledTimes(2);
-    expect(mocks.cacheTag).toHaveBeenNthCalledWith(1, 'github-data');
-    expect(mocks.cacheTag).toHaveBeenNthCalledWith(2, 'github-data');
+    expect(mocks.cacheTag).toHaveBeenNthCalledWith(1, 'authoritative-queue');
+    expect(mocks.cacheTag).toHaveBeenNthCalledWith(2, 'authoritative-queue');
     expect(mocks.cacheLife).toHaveBeenCalledTimes(2);
   });
 });

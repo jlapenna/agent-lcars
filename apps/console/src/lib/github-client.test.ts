@@ -3,7 +3,6 @@ import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  DEFAULT_WATCHED_REPOS,
   getWatchedRepos,
   repoDisplayName,
   repoItemKey,
@@ -349,8 +348,9 @@ describe('getGithubClient auth', () => {
 });
 
 describe('getWatchedRepos', () => {
-  it('falls back to the default single-repo list when unset', () => {
-    expect(getWatchedRepos()).toEqual(DEFAULT_WATCHED_REPOS);
+  it('fails closed when repository configuration is absent', () => {
+    delete process.env[ENV_KEY];
+    expect(() => getWatchedRepos()).toThrow(ENV_KEY);
   });
 
   it('parses a valid JSON array from the env var', () => {

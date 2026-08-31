@@ -1,8 +1,24 @@
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
+import {
+  configureTestWatchedRepos,
+  TEST_HOME_REPOSITORY,
+  TEST_SPRINKLES_REPOSITORY,
+} from '../test-support/watched-repos';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
+const { readGithubAnchorProjection } = vi.hoisted(() => ({
+  readGithubAnchorProjection: vi.fn(),
+}));
 
 // `getCachedTaskSource` (task-detail.ts) is a real `"use cache"` function
 // exercised directly by these tests (unlike `getCachedAgentActivity`,
@@ -39,6 +55,11 @@ let authoritativeResult = {
 vi.mock('./authoritative-task-state', () => ({
   readAuthoritativeTaskStates: vi.fn(async () => authoritativeResult),
 }));
+vi.mock('./orchestrator-runtime', () => ({
+  createOrchestratorRuntime: () => ({
+    store: { readGithubAnchorProjection },
+  }),
+}));
 vi.mock('./dashboard-data', () => ({
   DASHBOARD_CACHE_LIFE: { stale: 30, revalidate: 30, expire: 60 },
   getCachedAgentActivity: vi.fn(async () => ({
@@ -57,11 +78,16 @@ vi.mock('./dashboard-data', () => ({
 const { getTaskDetail } = await import('./task-detail');
 
 beforeEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY, TEST_SPRINKLES_REPOSITORY]);
   authoritativeResult = {
     states: new Map(),
     unavailableTaskKeys: new Set<string>(),
     warnings: [],
   };
+});
+
+afterEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY]);
 });
 
 function setupOctokit({
@@ -74,6 +100,35 @@ function setupOctokit({
   (getGithubClient as Mock).mockReturnValue({
     rest: { issues: { get: issuesGet } },
     graphql: graphql ?? vi.fn().mockResolvedValue({ repository: {} }),
+  });
+  readGithubAnchorProjection.mockImplementation(async (anchor) => {
+    try {
+      const { data: issue } = await issuesGet({
+        owner: DEFAULT_REPO.owner,
+        repo: DEFAULT_REPO.name,
+        issue_number: anchor.issue,
+      });
+      return {
+        anchor,
+        kind: issue.pull_request === undefined ? 'issue' : 'pr',
+        state: issue.state === 'closed' ? 'closed' : 'open',
+        title: issue.title,
+        body: issue.body ?? '',
+        url: issue.html_url,
+        ...(issue.user?.login === undefined
+          ? {}
+          : { author: issue.user.login }),
+        labels: issue.labels ?? [],
+        assigneeLogins: (issue.assignees ?? []).flatMap((assignee) =>
+          assignee?.login === undefined ? [] : [assignee.login],
+        ),
+        sourceUpdatedAt: issue.updated_at ?? '2026-07-07T00:00:00.000Z',
+        observedAt: '2026-07-07T00:00:00.000Z',
+      };
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return undefined;
+      throw error;
+    }
   });
 }
 

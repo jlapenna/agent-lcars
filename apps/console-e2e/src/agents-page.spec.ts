@@ -14,11 +14,9 @@ useCliSessionFixtures();
 // @smoke: a minimal render check for the new agent-focused /agents route
 // (#3024) - active agent rows are the working set; no-result secondary
 // panels intentionally disappear so the seeded CLI sessions can own the
-// first viewport. getActionItems() always returns an empty list in this e2e
-// environment (the github fixture route at api/e2e/github only answers the
-// branch->PR search getCliSessions() needs, not the action-item search
-// queries - see that route's own doc comment), so stale claims are exercised
-// only via their focused unit tests.
+// first viewport. This suite intentionally seeds no authoritative GitHub
+// anchors, so the page has no claimed-idle or outcome rows. Queue projections
+// are always seeded through the orchestrator emulator.
 test.describe('/agents page @smoke', () => {
   test('renders activity, cross-links to home, and lists active CLI sessions', async ({
     page,

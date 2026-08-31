@@ -1,6 +1,9 @@
 import 'server-only';
 
-import { optional } from '@agent-lcars/util-server';
+import { optional, required } from '@agent-lcars/util-server';
+
+import { repoKey } from './watched-repo';
+import { getWatchedRepos } from './watched-repos-config';
 
 /**
  * Every value that describes *this particular deployment* of the console
@@ -102,9 +105,7 @@ export function consoleUrl(): string {
  * callers must carry this exact repository claim, and reconciliation only
  * scans this repository. */
 export function controlPlaneRepository(): string {
-  return (
-    optional('AGENT_LCARS_CONTROL_PLANE_REPOSITORY') ?? 'jlapenna/agent-lcars'
-  );
+  return required('AGENT_LCARS_CONTROL_PLANE_REPOSITORY');
 }
 
 /** `owner/name`: one non-empty owner segment, one non-empty name segment,
@@ -116,16 +117,16 @@ const OWNER_NAME_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
  * webhook deliveries, completion/task-state lookups (see
  * {@link isControlPlaneRepository}). Parsed once from
  * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` (a comma-separated `owner/name`
- * list) when set; otherwise exactly {@link controlPlaneRepository}'s single
- * entry, so an unset var reproduces today's single-repo behavior exactly.
+ * list). It must exactly match `AGENT_LCARS_WATCHED_REPOS`: accepting an
+ * anchor whose durable projection the queue will not render is an invalid
+ * deployment, not a degraded single-repository mode.
  *
  * Misconfiguration throws rather than silently admitting the world: a typo'd
  * or empty entry here is a security-relevant bug, not a degrade-gracefully
  * case (mirrors `github-client.ts`'s `parseWatchedReposJson`).
  */
 export function controlPlaneRepositories(): string[] {
-  const raw = optional('AGENT_LCARS_CONTROL_PLANE_REPOSITORIES');
-  if (raw === undefined) return [controlPlaneRepository()];
+  const raw = required('AGENT_LCARS_CONTROL_PLANE_REPOSITORIES');
 
   const entries = raw
     .split(',')
@@ -133,7 +134,7 @@ export function controlPlaneRepositories(): string[] {
     .filter((entry) => entry.length > 0);
   if (entries.length === 0) {
     throw new Error(
-      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES must list at least one owner/name repository when set',
+      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES must list at least one owner/name repository',
     );
   }
   for (const entry of entries) {
@@ -142,6 +143,15 @@ export function controlPlaneRepositories(): string[] {
         `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES entry ${JSON.stringify(entry)} is not a valid owner/name repository`,
       );
     }
+  }
+  const watched = getWatchedRepos().map(repoKey);
+  if (
+    entries.length !== watched.length ||
+    entries.some((entry) => !watched.includes(entry))
+  ) {
+    throw new Error(
+      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES must exactly match AGENT_LCARS_WATCHED_REPOS',
+    );
   }
   return entries;
 }

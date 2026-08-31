@@ -11,7 +11,7 @@ import {
   githubAnchorProjectionAnchorsFromDelivery,
   githubAnchorProjectionDeletionFromDelivery,
 } from '@/lib/github-anchor-projection';
-import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-reconcile';
+import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 
@@ -37,6 +37,9 @@ export interface OrchestratorRouteDeps {
     anchor: TaskId,
     input?: { deleted?: boolean },
   ) => Promise<void>;
+  /** Invoked only after the durable projection refresh has completed. The
+   * hosted webhook route binds this to the console queue cache tag. */
+  invalidateAuthoritativeQueue?: () => void | Promise<void>;
 }
 
 type RouteResult = { status: number; body: Record<string, unknown> };
@@ -117,6 +120,7 @@ async function refreshGithubAnchorProjection(
     await (
       deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
     )(deletedAnchor, { deleted: true });
+    await deps.invalidateAuthoritativeQueue?.();
     return;
   }
   for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
@@ -124,6 +128,7 @@ async function refreshGithubAnchorProjection(
       deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
     )(anchor);
   }
+  await deps.invalidateAuthoritativeQueue?.();
 }
 
 async function refreshGithubAnchorProjectionAfterAdmission(
@@ -133,9 +138,9 @@ async function refreshGithubAnchorProjectionAfterAdmission(
   try {
     await refreshGithubAnchorProjection(deps, input);
   } catch (error) {
-    console.error(
-      `agent-lcars: projection refresh failed after webhook admission (${input.event}/${input.deliveryId})`,
-      error,
+    throw new ProjectionRefreshError(
+      `Projection refresh failed after admission for ${input.event}/${input.deliveryId}`,
+      { cause: error },
     );
   }
 }

@@ -43,6 +43,21 @@ function activity(liveRuns: AgentRun[] = []): AgentActivity {
   return { liveRuns, recentRuns: [], warnings: [] };
 }
 
+function terminalRun(
+  issueNumber: number,
+  conclusion: NonNullable<AgentRun['conclusion']>,
+  updatedAt: string,
+): AgentRun {
+  return {
+    ...liveRun(issueNumber),
+    id: `run-${issueNumber}-${conclusion}-${updatedAt}`,
+    status: 'completed',
+    conclusion,
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}
+
 describe('buildQueueView', () => {
   it('keeps the Inbox and Bridge ownership buckets mutually exclusive', () => {
     const view = buildQueueView(
@@ -72,5 +87,21 @@ describe('buildQueueView', () => {
     expect(view.yourQueue).toEqual([]);
     expect(view.waitingOnDeploy).toEqual([]);
     expect(view.rest).toEqual([]);
+  });
+
+  it('does not retain run-failed after a newer successful retry for the same anchor', () => {
+    const view = buildQueueView(
+      [item(1, ['ready-for-agent'])],
+      {
+        ...activity(),
+        recentRuns: [
+          terminalRun(1, 'failure', '2026-07-31T00:00:00.000Z'),
+          terminalRun(1, 'success', '2026-07-31T01:00:00.000Z'),
+        ],
+      },
+      new Map(),
+    );
+
+    expect(view.items[0]?.actionTypes).toEqual(['ready-for-agent']);
   });
 });

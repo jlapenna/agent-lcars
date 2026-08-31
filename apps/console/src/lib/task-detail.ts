@@ -1,30 +1,31 @@
-import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
-import { isE2eTesting } from '@agent-lcars/util-server';
+import type {
+  GithubAnchorProjection,
+  Run as OrchestratorRun,
+} from '@agent-lcars/orchestrator';
 import type { WorkSpec } from '@agent-lcars/work';
-import { cacheLife, cacheTag } from 'next/cache';
 
-import { type ActionItem, classifyIssue } from './action-items';
+import {
+  type ActionItem,
+  actionItemFromGithubAnchorProjection,
+} from './action-items';
 import {
   type AuthoritativeTaskState,
   readAuthoritativeTaskStates,
 } from './authoritative-task-state';
-import { isNotFound } from './backend-actions';
-import { GITHUB_DATA_TAG } from './cache-tags';
-import { DASHBOARD_CACHE_LIFE, type Fetched } from './dashboard-data';
 import {
-  getGithubClient,
   repoItemKey,
+  repoKey,
   resolveWatchedRepo,
   UnwatchedRepoError,
   type WatchedRepo,
 } from './github-client';
-import { enrichItems, type ItemEnrichment } from './item-enrichment';
 import {
   deriveLogicalWork,
   type LogicalWork,
   type LogicalWorkAnomaly,
   type LogicalWorkState,
 } from './logical-work';
+import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { taskRefKey } from './watched-repo';
 
 export type TaskDetailResult =
@@ -36,8 +37,7 @@ export type TaskDetailResult =
       item: ActionItem;
       repo: WatchedRepo;
       anchorState: 'open' | 'closed';
-      /** GitHub issue/PR metadata cache timestamp. Execution history is read
-       * separately from the authoritative control plane. */
+      /** Server-owned anchor projection timestamp. */
       generatedAt: string;
       /** The task's `work.spec` snapshot, when one has been derived
        *  (sub-project 5) -- see `AuthoritativeTaskState.spec`. */
@@ -46,113 +46,11 @@ export type TaskDetailResult =
   | { status: 'not-found' }
   | { status: 'error'; warning: string };
 
-interface GithubIssueLike {
-  number: number;
-  title: string;
-  body?: string | null;
-  html_url: string;
-  state: string;
-  updated_at?: string;
-  user?: { login?: string } | null;
-  assignees?: ({ login?: string } | null)[] | null;
-  pull_request?: unknown;
-  labels: (string | { name?: string })[];
-}
-
-/**
- * Fetches the exact issue/PR plus its comment-window enrichment, cached
- * under the same `GITHUB_DATA_TAG`/`DASHBOARD_CACHE_LIFE`
- * window as the rest of the dashboard's GitHub reads (see
- * `dashboard-data.ts`'s `getCachedActionItems`/`getCachedAgentActivity`).
- * Scoped to a single task lookup rather than widening the open-items-only
- * `getCachedActionItems` - a closed/merged task this route must still
- * resolve was never on that board to begin with.
- *
- * Without this boundary the page's Refresh button (which busts
- * `GITHUB_DATA_TAG`) had nothing of this page's own to bust: the issue/PR
- * half of the page was always fresh (uncached), but attempts still came from
- * the cached `getCachedAgentActivity()`, so a click could leave the
- * attempts list showing up to `DASHBOARD_CACHE_LIFE`-stale data with no way
- * to force it current.
- *
- * Returns the same `Fetched<T>` shape `getCachedActionItems`/
- * `getCachedAgentActivity` do, timestamped INSIDE the cached function so the
- * timestamp is cached alongside the data it describes (see `Fetched`'s own
- * doc comment) - a cache hit must report the data's real age, not the
- * render time.
- */
-async function fetchTaskSource(
-  repo: WatchedRepo,
-  issueNumber: number,
-): Promise<
-  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
-> {
-  const octokit = getGithubClient();
-  const { data: issue } = await octokit.rest.issues.get({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-  });
-
-  const isPr = Boolean(issue.pull_request);
-  // Reuses the same batched GraphQL enrichment the dashboard's board uses
-  // (item-enrichment.ts) rather than a bespoke comment fetch.
-  const enrichment = await enrichItems(repo, [
-    {
-      number: issueNumber,
-      isPr,
-      wantsComments: true,
-      wantsMergedDeliverables: true,
-    },
-  ]);
-
-  return {
-    data: { issue, itemEnrichment: enrichment.byNumber.get(issueNumber) },
-    fetchedAt: new Date().toISOString(),
-  };
-}
-
-async function getProductionCachedTaskSource(
-  repo: WatchedRepo,
-  issueNumber: number,
-): Promise<
-  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
-> {
-  'use cache';
-  cacheTag(GITHUB_DATA_TAG);
-  cacheLife(DASHBOARD_CACHE_LIFE);
-  return fetchTaskSource(repo, issueNumber);
-}
-
-/** See dashboard-data.ts's E2E cache-bypass rationale. */
-function getCachedTaskSource(
-  repo: WatchedRepo,
-  issueNumber: number,
-): Promise<
-  Fetched<{ issue: GithubIssueLike; itemEnrichment?: ItemEnrichment }>
-> {
-  return isE2eTesting()
-    ? fetchTaskSource(repo, issueNumber)
-    : getProductionCachedTaskSource(repo, issueNumber);
-}
-
 /**
  * Loads everything the `/task/<owner>/<repo>/<issue>` canonical detail page
- * needs, by fetching the exact issue/PR directly rather than depending on
- * the cached open-item board (see `getCachedActionItems`). This is
- * deliberate: the whole point of this route (#306/#264) is that it keeps
- * working once a task closes/merges and drops off the board - a route that
- * only ever looked the task up in `getCachedActionItems`'s open-item
- * listing would 404 for exactly the case it exists to fix.
- *
- * Attempts still come from the cached `getCachedAgentActivity()` (live runs
- * plus the newest 8 recent runs across every watched repo/pipeline) rather
- * than a fresh per-task Actions API fetch - GitHub's API has no way to list
- * "runs for issue N" directly (see agent-activity.ts's own top comment), and
- * this page must not add its own uncapped per-item Actions fan-out. A task
- * whose most recent attempt aged out of that global top-8 window shows an
- * intent history with no attempts rather than a full one - the same known
- * limitation the dashboard's "Recently finished" disclosure already has.
+ * needs from the durable anchor projection plus its Task/Run state. Closed
+ * anchors remain addressable in the projection store; no render path queries
+ * GitHub or substitutes a live GitHub response when projection data is absent.
  */
 export async function getTaskDetail(
   owner: string,
@@ -167,39 +65,33 @@ export async function getTaskDetail(
     throw error;
   }
 
-  let issue: GithubIssueLike;
-  let itemEnrichment: ItemEnrichment | undefined;
-  let sourceFetchedAt: string;
+  const anchor: GithubAnchorProjection['anchor'] = {
+    repo: repoKey(repo),
+    issue: issueNumber,
+  };
+  let projection: GithubAnchorProjection | undefined;
   try {
-    const source = await getCachedTaskSource(repo, issueNumber);
-    issue = source.data.issue;
-    itemEnrichment = source.data.itemEnrichment;
-    sourceFetchedAt = source.fetchedAt;
+    const { store } = createOrchestratorRuntime();
+    projection = await store.readGithubAnchorProjection(anchor);
   } catch (error) {
-    if (isNotFound(error)) return { status: 'not-found' };
     console.error(
-      'agent-lcars: failed to load task detail (%s#%s):',
-      `${repo.owner}/${repo.name}`,
-      issueNumber,
+      'agent-lcars: failed to load stored task projection (%s#%s):',
+      anchor.repo,
+      anchor.issue,
       error,
     );
     return {
       status: 'error',
-      warning: 'Task detail unavailable (GitHub API request failed).',
+      warning: 'Task detail unavailable (stored projection read failed).',
     };
   }
-
-  const labels = issue.labels.map((label) =>
-    typeof label === 'string' ? label : (label.name ?? ''),
-  );
+  if (projection === undefined) return { status: 'not-found' };
 
   const key = repoItemKey(repo, issueNumber);
   const authoritative = await readAuthoritativeTaskStates([
     { repository: repo, issueNumber },
   ]);
-  const humanNeeded = labels.includes('status:needs-human');
-  // GitHub is the issue/PR presentation boundary. Lifecycle comes only from
-  // the task state read below; do not resurrect an Actions-attempt fallback.
+  const humanNeeded = projection.labels.includes('status:needs-human');
   const { work } = deriveLogicalWork({
     runs: [],
     unavailableTaskKeys: authoritative.unavailableTaskKeys,
@@ -209,8 +101,8 @@ export async function getTaskDetail(
         {
           repo,
           issueNumber,
-          title: issue.title,
-          url: issue.html_url,
+          title: projection.title,
+          url: projection.url,
           humanNeeded,
         },
       ],
@@ -229,15 +121,7 @@ export async function getTaskDetail(
     humanNeeded,
   );
 
-  // Reuse the board's one authoritative action classifier instead of
-  // recreating a detail-only partial `ActionItem`. This lets the canonical
-  // task page expose the same server-backed controls (unpark, retrigger,
-  // and pipeline handoff) as the queue without a second set of label rules.
-  const { item } = classifyIssue(
-    repo,
-    { ...issue, updated_at: issue.updated_at ?? sourceFetchedAt },
-    itemEnrichment,
-  );
+  const item = actionItemFromGithubAnchorProjection(projection, repo);
 
   const state = authoritative.states.get(key);
   return {
@@ -246,8 +130,8 @@ export async function getTaskDetail(
     runs: state?.runs ?? [],
     item,
     repo,
-    anchorState: issue.state === 'closed' ? 'closed' : 'open',
-    generatedAt: sourceFetchedAt,
+    anchorState: projection.state,
+    generatedAt: projection.observedAt,
     ...(state?.spec === undefined ? {} : { spec: state.spec }),
   };
 }

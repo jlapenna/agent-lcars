@@ -7,13 +7,14 @@ import { Octokit } from '@octokit/rest';
 
 import { createGithubClientAuthStrategy } from './github-app-tokens';
 import {
-  type AgentIntegration,
   type AgentPipeline,
   repoDisplayName,
   repoItemKey,
   repoKey,
   type WatchedRepo,
 } from './watched-repo';
+import { getWatchedRepos } from './watched-repos-config';
+export { getWatchedRepos } from './watched-repos-config';
 
 // Re-exported for existing importers - this file used to define these
 // itself, but they now live in watched-repo.ts (a client-bundle-safe file
@@ -229,134 +230,6 @@ export function getGithubClient(): Octokit {
     disableRetryForMutations(client);
   }
   return client;
-}
-
-/** The only repo this console has ever watched - kept as the fallback so an
- * unset `AGENT_LCARS_WATCHED_REPOS` reproduces today's single-repo behavior
- * exactly. */
-export const DEFAULT_WATCHED_REPOS: WatchedRepo[] = [
-  { owner: 'supersprinklesracing', name: 'sprinkles', alias: 'sprinkles' },
-];
-
-function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
-  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-    throw new Error(`AGENT_LCARS_WATCHED_REPOS[${index}] must be an object`);
-  }
-  const record = entry as Record<string, unknown>;
-
-  const owner = record['owner'];
-  if (typeof owner !== 'string' || owner.length === 0) {
-    throw new Error(
-      `AGENT_LCARS_WATCHED_REPOS[${index}].owner must be a non-empty string`,
-    );
-  }
-  const name = record['name'];
-  if (typeof name !== 'string' || name.length === 0) {
-    throw new Error(
-      `AGENT_LCARS_WATCHED_REPOS[${index}].name must be a non-empty string`,
-    );
-  }
-  const alias = record['alias'];
-  if (
-    alias !== undefined &&
-    (typeof alias !== 'string' || alias.length === 0)
-  ) {
-    throw new Error(
-      `AGENT_LCARS_WATCHED_REPOS[${index}].alias must be a non-empty string when present`,
-    );
-  }
-
-  const agents = record['agents'];
-  if (agents !== undefined) {
-    if (
-      typeof agents !== 'object' ||
-      agents === null ||
-      Array.isArray(agents)
-    ) {
-      throw new Error(
-        `AGENT_LCARS_WATCHED_REPOS[${index}].agents must be an object when present`,
-      );
-    }
-    const supportedPipelines: AgentPipeline[] = ['claude', 'codex', 'opencode'];
-    for (const [pipeline, value] of Object.entries(agents)) {
-      if (!supportedPipelines.includes(pipeline as AgentPipeline)) {
-        throw new Error(
-          `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline} is not a supported agent pipeline`,
-        );
-      }
-      if (value === null) continue;
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        throw new Error(
-          `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline} must be an object or null`,
-        );
-      }
-      for (const field of ['label', 'replyTrigger']) {
-        const fieldValue = (value as Record<string, unknown>)[field];
-        if (typeof fieldValue !== 'string' || fieldValue.length === 0) {
-          throw new Error(
-            `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline}.${field} must be a non-empty string`,
-          );
-        }
-      }
-      const aliases = (value as Record<string, unknown>)['replyTriggerAliases'];
-      if (
-        aliases !== undefined &&
-        (!Array.isArray(aliases) ||
-          aliases.some(
-            (alias) => typeof alias !== 'string' || alias.length === 0,
-          ))
-      ) {
-        throw new Error(
-          `AGENT_LCARS_WATCHED_REPOS[${index}].agents.${pipeline}.replyTriggerAliases must be an array of non-empty strings`,
-        );
-      }
-    }
-  }
-
-  return {
-    owner,
-    name,
-    ...(alias !== undefined && { alias: alias as string }),
-    ...(agents && {
-      agents: agents as Partial<Record<AgentPipeline, AgentIntegration | null>>,
-    }),
-  };
-}
-
-/**
- * Parses `AGENT_LCARS_WATCHED_REPOS`: a JSON array of
- * `{ "owner": string, "name": string, "alias"?: string, "agents"?: Partial<Record<AgentPipeline, AgentIntegration>> }`
- * objects, e.g.
- * `[{"owner":"supersprinklesracing","name":"sprinkles"},{"owner":"supersprinklesracing","name":"website","alias":"Website"}]`.
- * Throws with a specific reason on malformed input rather than falling back
- * silently, mirroring apps/telemetry-watcher/src/lib/config.ts's
- * parseWatchRootsJson - a broken config should fail loudly at startup, not
- * silently watch the wrong (or no) repos.
- */
-function parseWatchedReposJson(raw: string): WatchedRepo[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(
-      `AGENT_LCARS_WATCHED_REPOS is not valid JSON: ${(error as Error).message}`,
-      { cause: error },
-    );
-  }
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error(
-      'AGENT_LCARS_WATCHED_REPOS must be a non-empty JSON array of {owner, name, alias?, agents?} objects',
-    );
-  }
-  return parsed.map((entry, index) => validateWatchedRepo(entry, index));
-}
-
-/** The curated repo list this console watches, sourced from
- * `AGENT_LCARS_WATCHED_REPOS` (JSON array) when set, otherwise
- * {@link DEFAULT_WATCHED_REPOS}. */
-export function getWatchedRepos(): WatchedRepo[] {
-  const raw = optional('AGENT_LCARS_WATCHED_REPOS');
-  return raw ? parseWatchedReposJson(raw) : DEFAULT_WATCHED_REPOS;
 }
 
 /** The repository targeted by truly global ops actions that do not have a

@@ -565,7 +565,7 @@ describe('resolveRequestRepo', () => {
     );
   });
 
-  it('derives owner/name from GraphQL variables (item-enrichment.ts convention)', () => {
+  it('derives owner/name from structured GraphQL variables', () => {
     expect(
       resolveRequestRepo({
         variables: { owner: 'octo', name: 'example' },

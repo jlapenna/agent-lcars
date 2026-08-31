@@ -13,7 +13,7 @@ import { isE2eTesting } from '@agent-lcars/util-server';
 import { revalidateTag } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
-import { GITHUB_DATA_TAG } from '../../../../lib/cache-tags';
+import { AUTHORITATIVE_QUEUE_TAG } from '../../../../lib/cache-tags';
 import { E2E_FIXTURE_BRANCH } from '../../../../lib/e2e-fixtures';
 import {
   E2E_FIXTURE_REPO,
@@ -244,8 +244,8 @@ interface SeedRequest {
  * wouldn't reach the store the running app server reads).
  */
 /**
- * Seeding changes what the fixture GitHub API will answer, so it has to drop
- * the dashboard's cached read of it (lib/dashboard-data.ts) - otherwise a
+ * Seeding changes the durable queue projection, so it has to drop the
+ * dashboard's cached read of it (lib/dashboard-data.ts) - otherwise a
  * spec that loaded any page before seeding would keep rendering the pre-seed
  * response, and whether it passed would depend on how fast the spec ran.
  *
@@ -259,7 +259,7 @@ interface SeedRequest {
  * prevent. Zero expiry drops the entry outright.
  */
 function revalidateDashboardCache() {
-  revalidateTag(GITHUB_DATA_TAG, { expire: 0 });
+  revalidateTag(AUTHORITATIVE_QUEUE_TAG, { expire: 0 });
 }
 
 async function seedRunnerStatus() {

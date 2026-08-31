@@ -4,7 +4,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { controlPlaneRepository } from '../../../../../lib/deployment';
 import {
-  checkRuns,
   createQuickTaskClaimRef,
   createQuickTaskClaimTag,
   deleteQuickTaskClaimRef,
@@ -12,13 +11,11 @@ import {
   E2E_FIXTURE_REPOSITORY_ID,
   E2E_QUICK_TASK_DELAY_DESCRIPTION,
   E2E_QUICK_TASK_FORCE_4XX_DESCRIPTION,
-  enrichmentGraphql,
   getQuickTaskClaimRefSha,
   getQuickTaskClaimTag,
+  githubAnchorGraphqlDetail,
   issue,
   issueComments,
-  openIssues,
-  openPulls,
   pullRequest,
   quickTaskListingIssues,
   reassignFixtureIssuePipeline,
@@ -36,19 +33,14 @@ const QUICK_TASK_AGENT_LABELS = [
 ];
 
 /**
- * Stands in for the whole GitHub REST surface the dashboard reads when
+ * Stands in for the bounded GitHub REST surface console writes and exact
+ * detail reads when
  * `github-client.ts` is pointed at `AGENT_CONSOLE_GITHUB_API_BASE_URL` —
  * only ever set by the agent-lcars e2e suite, which has no real GitHub
  * token and would otherwise 401 against the real API.
  *
- * This started life as a single `search/issues` route serving only the
- * branch->PR join `getCliSessions()` needs - that route is gone now, the
- * console having stopped calling the search API at all (#13). #40 needed the dashboard
- * rendered against non-empty data — action-item cards, run rows, a runner
- * fleet — so it grew into the catch-all it is now. The fixture data itself
- * (and the populated-mode toggle that keeps it invisible to the older
- * specs) lives in `lib/e2e-github-fixtures.ts`; this file is only the
- * URL->fixture routing.
+ * Queue fixtures are written to the orchestrator emulator instead; this route
+ * must not emulate a list or GraphQL queue-discovery path.
  *
  * Anything not matched here 404s deliberately rather than falling through
  * to an empty 200: a silently-empty response for a call this fixture
@@ -118,26 +110,17 @@ export async function GET(
         : NextResponse.json({ message: 'Not Found' }, { status: 404 });
     }
 
-    // GET /repos/{o}/{r}/issues - the action-item board's item universe
-    // since #13. Page 2+ is empty so the app's pagination loop terminates.
-    //
-    // `state=all` is a distinct caller: `findExistingQuickTask` in
+    // `state=all` is a bounded Quick Task idempotency read:
+    // `findExistingQuickTask` in
     // backend-actions.ts asks for it specifically to scan for its
     // request-ID marker across every issue regardless of open/closed state
-    // - the `state=open` board listing (openIssues(), unchanged) never
-    // needs to see a Quick Task issue at all.
+    // - a queue view never consumes this endpoint.
     if (rest[0] === 'issues' && rest.length === 1) {
       const page = Number(query.get('page') ?? '1');
       if (page > 1) return NextResponse.json([]);
       return NextResponse.json(
-        query.get('state') === 'all' ? quickTaskListingIssues() : openIssues(),
+        query.get('state') === 'all' ? quickTaskListingIssues() : [],
       );
-    }
-
-    // GET /repos/{o}/{r}/pulls - supplies the review-requested predicate.
-    if (rest[0] === 'pulls' && rest.length === 1) {
-      const page = Number(query.get('page') ?? '1');
-      return NextResponse.json(page > 1 ? [] : openPulls());
     }
 
     // GET /repos/{o}/{r}/pulls/{number}
@@ -146,11 +129,6 @@ export async function GET(
       return pr
         ? NextResponse.json(pr)
         : NextResponse.json({ message: 'Not Found' }, { status: 404 });
-    }
-
-    // GET /repos/{o}/{r}/commits/{ref}/check-runs
-    if (rest[0] === 'commits' && rest[2] === 'check-runs') {
-      return NextResponse.json(checkRuns(rest[1]));
     }
 
     // GET /repos/{o}/{r}/actions/runners
@@ -163,12 +141,6 @@ export async function GET(
   return NextResponse.json({ message: 'Not Found' }, { status: 404 });
 }
 
-/**
- * `POST /graphql`. Octokit's `graphql()` posts to `{baseUrl}/graphql`, so
- * pointing the client at this fixture catches the enrichment query too -
- * without this the console would reach past the fixture to the real API
- * mid-suite (and 401, having no real token).
- */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
@@ -177,8 +149,49 @@ export async function POST(
     return NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
   const { path } = await params;
-  if (path[0] === 'graphql') {
-    return NextResponse.json({ data: enrichmentGraphql() });
+  // Exact control-plane refreshes use GitHub GraphQL for presentation fields
+  // that REST issue detail omits. This accepts only explicitly aliased anchor
+  // reads; it is not a queue/list discovery fixture.
+  if (path.length === 1 && path[0] === 'graphql') {
+    const body = (await req.json()) as {
+      query?: unknown;
+      variables?: { owner?: unknown; name?: unknown };
+      owner?: unknown;
+      name?: unknown;
+    };
+    const variables = body.variables ?? body;
+    if (
+      typeof body.query !== 'string' ||
+      variables.owner !== E2E_FIXTURE_REPO.owner ||
+      variables.name !== E2E_FIXTURE_REPO.name
+    ) {
+      return NextResponse.json(
+        { message: 'Invalid GraphQL anchor refresh fixture request' },
+        { status: 422 },
+      );
+    }
+    const aliases = Array.from(
+      body.query.matchAll(
+        /([A-Za-z_]\w*):\s*issueOrPullRequest\(number:\s*(\d+)\)/gu,
+      ),
+      ([, alias, number]) => ({ alias, number: Number(number) }),
+    );
+    if (aliases.length === 0) {
+      return NextResponse.json(
+        { message: 'Invalid GraphQL anchor refresh fixture request' },
+        { status: 422 },
+      );
+    }
+    return NextResponse.json({
+      data: {
+        repository: Object.fromEntries(
+          aliases.map(({ alias, number }) => [
+            alias,
+            githubAnchorGraphqlDetail(number) ?? null,
+          ]),
+        ),
+      },
+    });
   }
   // The broker's outbox drain uses raw fetch rather than Octokit. These two
   // handlers keep retrigger/reassignment coverage inside the same local

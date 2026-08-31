@@ -7,6 +7,7 @@
  * Octokit/Firestore transitive imports - in behind it just to name a tag.
  */
 
-/** Everything the dashboard reads out of the GitHub API - see
- * `lib/dashboard-data.ts`. */
-export const GITHUB_DATA_TAG = 'github-data';
+/** Durable Work/Task/Run and webhook-anchor projections rendered by Bridge,
+ * Inbox, and Agents. GitHub writes invalidate this view only after their
+ * corresponding webhook delivery updates the server-owned projection. */
+export const AUTHORITATIVE_QUEUE_TAG = 'authoritative-queue';

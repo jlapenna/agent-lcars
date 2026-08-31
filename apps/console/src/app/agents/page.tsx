@@ -10,8 +10,8 @@ import { readAuthoritativeTaskStates } from '../../lib/authoritative-task-state'
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
 import {
-  getCachedActionItems,
   getCachedAgentActivity,
+  getCachedQueueItems,
   oldestFetchedAt,
 } from '../../lib/dashboard-data';
 import {
@@ -58,14 +58,14 @@ async function AgentsPageBody({
 
   const [
     {
-      data: { items, warnings: itemWarnings },
+      data: { items },
       fetchedAt: itemsFetchedAt,
     },
     { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
   ] = await Promise.all([
-    getCachedActionItems(),
+    getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
@@ -75,7 +75,6 @@ async function AgentsPageBody({
   // unique problem only needs saying once.
   const baseWarnings = Array.from(
     new Set([
-      ...itemWarnings,
       ...activity.warnings,
       ...cliSessionWarnings,
       ...runnerSessionWarnings,

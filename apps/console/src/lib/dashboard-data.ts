@@ -1,12 +1,13 @@
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { cacheLife, cacheTag } from 'next/cache';
 
-import { type ActionItemsResult, getActionItems } from './action-items';
+import { type ActionItemsResult } from './action-items';
 import { type AgentActivity, getAgentActivity } from './agent-activity';
-import { GITHUB_DATA_TAG } from './cache-tags';
+import { getAuthoritativeQueueItems } from './authoritative-queue';
+import { AUTHORITATIVE_QUEUE_TAG } from './cache-tags';
 
 /**
- * A short server-side cache in front of the dashboard's GitHub reads.
+ * A short server-side cache in front of authoritative queue reads.
  *
  * Every navigation between Queue and Agents, and every Refresh click, used
  * to re-run the whole GitHub fetch. #147/#148 removed the search API's
@@ -40,8 +41,8 @@ import { GITHUB_DATA_TAG } from './cache-tags';
  * one serves the cached value AND kicks off a background refetch. For a
  * human clicking between Queue and Agents that is every single load, so the
  * cache removes the *blocking* but not the *requests* - which is most of
- * why it exists: it prevents repeated GitHub metadata and authoritative
- * broker-state reads during ordinary navigation.
+ * why it exists: it prevents repeated projection reads during ordinary
+ * navigation.
  *
  * `revalidate: 30` means loads inside a 30s window are genuinely free.
  * `expire: 60` bounds how stale a served value can get; `stale: 30` is the
@@ -62,14 +63,17 @@ export interface Fetched<T> {
 }
 
 async function fetchActionItems(): Promise<Fetched<ActionItemsResult>> {
-  return { data: await getActionItems(), fetchedAt: new Date().toISOString() };
+  return {
+    data: await getAuthoritativeQueueItems(),
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 async function getProductionCachedActionItems(): Promise<
   Fetched<ActionItemsResult>
 > {
   'use cache';
-  cacheTag(GITHUB_DATA_TAG);
+  cacheTag(AUTHORITATIVE_QUEUE_TAG);
   cacheLife(DASHBOARD_CACHE_LIFE);
   return fetchActionItems();
 }
@@ -85,7 +89,7 @@ async function getProductionCachedAgentActivity(): Promise<
   Fetched<AgentActivity>
 > {
   'use cache';
-  cacheTag(GITHUB_DATA_TAG);
+  cacheTag(AUTHORITATIVE_QUEUE_TAG);
   cacheLife(DASHBOARD_CACHE_LIFE);
   return fetchAgentActivity();
 }
@@ -98,7 +102,7 @@ async function getProductionCachedAgentActivity(): Promise<
  * Production keeps the same short cache; only the hermetic fixture runtime
  * pays for a fresh read on every render.
  */
-export function getCachedActionItems(): Promise<Fetched<ActionItemsResult>> {
+export function getCachedQueueItems(): Promise<Fetched<ActionItemsResult>> {
   return isE2eTesting() ? fetchActionItems() : getProductionCachedActionItems();
 }
 
