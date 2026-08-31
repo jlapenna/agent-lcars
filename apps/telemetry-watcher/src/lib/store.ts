@@ -1,16 +1,39 @@
 import { logger } from '@agent-lcars/logging';
-import { SessionWrite } from '@agent-lcars/telemetry';
+import { isSafeIdentifier, SessionWrite } from '@agent-lcars/telemetry';
 import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
 
 const AGENT_TELEMETRY_DATABASE_ID =
   process.env['AGENT_TELEMETRY_DATABASE_ID'] ?? '(default)';
 const SESSIONS_COLLECTION = 'sessions';
 
+function assertSafeSessionId(sessionId: string): void {
+  if (!isSafeIdentifier(sessionId)) {
+    throw new Error('Session schema migration requires a safe session ID');
+  }
+}
+
 export interface SessionStore {
   /** Takes a {@link SessionWrite}, never a bare doc plus extra arguments —
    * see that type's doc comment (`@agent-lcars/telemetry`'s `types.ts`) for
    * why a caller cannot describe a write this value doesn't already carry. */
   upsertSession(write: SessionWrite): Promise<void>;
+}
+
+/** Narrow operator-only boundary for the one-time current-session schema
+ * migration. It exposes no caller-selected collection, query, or document
+ * access: inventory is bounded and writes are fixed metadata patches on an
+ * explicitly named `sessions/{sessionId}` document. */
+export interface SessionSchemaMigrationStore {
+  inventory(limit: number): Promise<{ sessionId: string; data: unknown }[]>;
+  get(sessionId: string): Promise<unknown | undefined>;
+  patchSchema(
+    sessionId: string,
+    patch: {
+      agent: string;
+      repo: { owner: string; name: string };
+      renderable?: boolean;
+    },
+  ): Promise<void>;
 }
 
 export interface FirestoreStoreOptions {
@@ -69,6 +92,45 @@ export function createFirestoreStore(
           },
           { merge: true },
         );
+    },
+  };
+}
+
+export function createSessionSchemaMigrationStore(
+  options: FirestoreStoreOptions,
+): SessionSchemaMigrationStore {
+  const firestore = new Firestore({
+    projectId: options.projectId,
+    databaseId: AGENT_TELEMETRY_DATABASE_ID,
+    ...(options.credentials && { credentials: options.credentials }),
+    ...(options.emulatorHost && { host: options.emulatorHost, ssl: false }),
+  });
+  return {
+    async inventory(limit) {
+      const snapshots = await firestore
+        .collection(SESSIONS_COLLECTION)
+        .orderBy('lastActivityAt', 'desc')
+        .limit(limit)
+        .get();
+      return snapshots.docs.map((snapshot) => ({
+        sessionId: snapshot.id,
+        data: snapshot.data(),
+      }));
+    },
+    async get(sessionId) {
+      assertSafeSessionId(sessionId);
+      const snapshot = await firestore
+        .collection(SESSIONS_COLLECTION)
+        .doc(sessionId)
+        .get();
+      return snapshot.exists ? snapshot.data() : undefined;
+    },
+    async patchSchema(sessionId, patch) {
+      assertSafeSessionId(sessionId);
+      await firestore
+        .collection(SESSIONS_COLLECTION)
+        .doc(sessionId)
+        .set(patch, { merge: true });
     },
   };
 }
