@@ -109,17 +109,21 @@ case "$url" in
       echo "fake curl: simulated brief failure (expired/invalid run token)" >&2
       exit 22
     fi
+    brief_pipeline=",\"pipeline\":\"${FAKE_PIPELINE:-claude}\""
+    if [ "${FAKE_BRIEF_NO_PIPELINE:-}" = "1" ]; then
+      brief_pipeline=''
+    fi
     if [ "${FAKE_ANCHOR:-work}" = "github" ]; then
       cat <<JSON
-{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}},"pipeline":"${FAKE_PIPELINE:-claude}","mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
+{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
     else
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}},"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
 JSON
     fi
     ;;
@@ -440,7 +444,8 @@ run_scenario() {
   export SIDECAR_LIFECYCLE="$BAKED_SIDECAR_LIFECYCLE"
 
   set +e
-  /bin/bash "$here/direct-runner.sh"
+  scenario_log="$dir/direct-runner.log"
+  /bin/bash "$here/direct-runner.sh" >"$scenario_log" 2>&1
   rc=$?
   set -e
   workspace="$scenario_runner_temp/checkout"
@@ -861,6 +866,21 @@ unset FAKE_BRIEF_FAIL
 [ ! -f "$COMPLETE_LOG" ] || fail "brief-401: direct-runner.sh called POST .../complete after a failed brief fetch"
 
 echo "scenario brief-401: OK"
+
+# A current QueueExecutor brief always carries the selected Run pipeline.
+# A Work spec alone is not an execution fallback: accepting it would revive
+# the retired pre-cutover brief shape.
+export FAKE_BRIEF_NO_PIPELINE=1
+run_scenario missing-run-pipeline
+unset FAKE_BRIEF_NO_PIPELINE
+
+[ "$rc" -ne 0 ] || fail "missing-run-pipeline: expected a non-zero exit, got $rc"
+[ ! -f "$CLAUDE_ARGS_LOG" ] || fail "missing-run-pipeline: claude ran from Work.spec.pipeline fallback"
+[ -f "$COMPLETE_LOG" ] || fail "missing-run-pipeline: claimed run did not report its malformed brief"
+grep -q 'FATAL: direct runner does not support pipeline' "$scenario_log" ||
+  fail "missing-run-pipeline: did not fail explicitly ($(cat "$scenario_log"))"
+
+echo "scenario missing-run-pipeline: OK"
 
 # --- Scenario 4: missing claude token file -----------------------------------
 # A missing/unreadable CLAUDE_TOKEN_FILE must fail the run loudly rather

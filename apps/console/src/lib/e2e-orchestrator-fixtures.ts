@@ -59,6 +59,7 @@ function taskFor(input: {
       ? {}
       : { activeRunId: input.activeRunId }),
     runCount: input.runCount,
+    consecutiveLost: 0,
     work: {
       origin: { principal: 'github:e2e-fixture', channel: 'github' },
       spec: {
@@ -129,6 +130,7 @@ function runFor(input: {
     state: input.state,
     pipeline: input.pipeline,
     requestId: `e2e-fixture:${input.runId}`,
+    requestSource: 'caller',
     ...(input.queue === undefined
       ? {}
       : {

@@ -41,6 +41,18 @@ const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
 const DEFAULT_REPO_KEY = `${DEFAULT_REPO.owner}/${DEFAULT_REPO.name}`;
 
+function testWork(pipeline: 'claude' | 'codex' | 'opencode') {
+  return {
+    origin: { principal: 'github:test-fixture', channel: 'github' as const },
+    spec: {
+      title: 'Fixture issue',
+      description: 'Fixture issue body.',
+      pipeline,
+      target: { repo: DEFAULT_REPO_KEY },
+    },
+  };
+}
+
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
   return {
@@ -733,6 +745,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       taskId,
       requestId: 'seed',
       pipeline: 'opencode',
+      work: testWork('opencode'),
     });
     if ('refused' in seeded) throw new Error('seed request was refused');
     // Settle the seeded run so the task's lock is free for retriggerIssue's
@@ -753,6 +766,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
       requestId: 'already-live',
       pipeline: 'claude',
+      work: testWork('claude'),
     });
 
     await expect(
@@ -769,6 +783,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
       requestId: 'seed-note',
       pipeline: 'claude',
+      work: testWork('claude'),
     });
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
@@ -795,6 +810,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
       requestId: 'seed-mention',
       pipeline: 'claude',
+      work: testWork('claude'),
     });
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
@@ -981,6 +997,7 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
       taskId,
       requestId: 'live-codex',
       pipeline: 'codex',
+      work: testWork('codex'),
       params: { mode: 'review' },
     });
 

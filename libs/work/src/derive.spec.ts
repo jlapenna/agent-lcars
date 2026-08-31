@@ -5,7 +5,6 @@ import {
   deriveItemState,
   latestRun,
   toItemView,
-  toItemViewSafe,
   toWorkSummary,
 } from './derive';
 
@@ -28,6 +27,7 @@ function run(n: number, state: Run['state'], extra: Partial<Run> = {}): Run {
     state,
     pipeline: 'claude',
     requestId: `r${n}`,
+    requestSource: 'caller',
     leaseExpiresAt: T,
     events: [],
     createdAt: `2026-08-26T10:0${n}:00.000Z`,
@@ -39,6 +39,7 @@ function task(extra: Partial<Task> = {}): Task {
   return {
     task: { workId: WORK_ID },
     runCount: 1,
+    consecutiveLost: 0,
     updatedAt: T,
     work: payload,
     ...extra,
@@ -151,33 +152,11 @@ describe('toItemView', () => {
   });
 });
 
-describe('toItemViewSafe', () => {
-  it('returns a view for a valid work payload', () => {
-    const view = toItemViewSafe({
-      workId: WORK_ID,
-      task: task(),
-      runs: [run(1, 'finished', { result: { ok: true } })],
-    });
-    expect(view?.state).toBe('done');
-    expect(view?.spec.title).toBe('t');
-  });
-
-  it('returns undefined when the payload is missing spec', () => {
-    const view = toItemViewSafe({
-      workId: WORK_ID,
-      task: task({
-        work: { origin: { principal: 'user:x', channel: 'api' } },
-      }),
-      runs: [],
-    });
-    expect(view).toBeUndefined();
-  });
-});
-
 describe('toWorkSummary', () => {
   const githubTask: Task = {
     task: { repo: 'octo/example', issue: 7 },
     runCount: 1,
+    consecutiveLost: 0,
     updatedAt: T,
     work: payload,
   };

@@ -190,7 +190,7 @@ export class Orchestrator {
     // run.
     const settledRun = decidedRun(outcome);
 
-    if ((outcome.task.consecutiveLost ?? 0) > MAX_AUTO_RETRIES) {
+    if (outcome.task.consecutiveLost > MAX_AUTO_RETRIES) {
       return settledRun;
     }
     const retry = await this.request({

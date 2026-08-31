@@ -559,12 +559,10 @@ export async function retriggerIssue(
     }
   }
 
-  // A task that already carries `work` keeps it forever (decide.ts's
-  // "write once" rule) -- deriving one here would be discarded, so this
-  // reads the live issue only when there is something for the derivation
-  // to actually set.
+  // An existing strict Task already carries Work and keeps it forever
+  // (decide.ts's write-once rule). Only a new Task needs GitHub derivation.
   let work;
-  if (existingTask?.task.work === undefined) {
+  if (existingTask === undefined) {
     const octokit = getGithubClient();
     const { data: issue } = await octokit.rest.issues.get({
       owner: repo.owner,
@@ -684,12 +682,10 @@ export async function reassignPipeline(
     );
   }
 
-  // Reuses the issue already read above for the label swap -- no second
-  // GitHub call, unlike retriggerIssue, which has no other reason to read
-  // the issue. Same write-once reasoning as retriggerIssue's own `work`
-  // derivation (decide.ts's "write once" rule).
+  // Reuses the issue already read above for the label swap. An existing
+  // strict Task already carries Work, so only a new Task needs derivation.
   const work =
-    existingTask?.task.work === undefined
+    existingTask === undefined
       ? workPayloadFromGithub({
           title: issue.title,
           body: issue.body,

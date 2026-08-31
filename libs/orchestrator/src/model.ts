@@ -21,10 +21,8 @@ const isoUtc = z.iso.datetime({ offset: false });
  *   persisted document already carries, kept byte-for-byte;
  * - a native work item, `{ workId }`, a ULID minted by the caller.
  *
- * The variants are discriminated by which key is present, never by a new
- * required field: `FirestoreStore` zod-parses every persisted Task, Run,
- * and OutboxEntry on read, so a variant requiring a field legacy documents
- * lack would reject the whole existing dataset.
+ * The variants are discriminated by which key is present. Both are current
+ * Work anchors and share the same strict persisted Task/Run/Outbox contract.
  */
 /** GitHub limits an owner/name repository full name to 140 characters
  * (39-character owner, slash, 100-character repository). */
@@ -246,10 +244,8 @@ export type RunQueue = z.infer<typeof runQueueSchema>;
 export const runEventSchema = z.strictObject({
   at: isoUtc,
   to: runStateSchema,
-  /** Who caused it: `request`, `dispatch`, `report`, `operator`, `expiry`,
-   * or historical `infra`. New queue-native code does not produce `infra`,
-   * but persisted pre-cutover records must remain parseable. */
-  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry', 'infra']),
+  /** Who caused the transition. */
+  by: z.enum(['request', 'dispatch', 'report', 'operator', 'expiry']),
   note: z.string().max(1_024).optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;
@@ -263,9 +259,8 @@ export const runSchema = z.strictObject({
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
   requestId: z.string().min(1).max(RETRY_REQUEST_ID_MAX_LENGTH),
-  /** Namespace for requestId in the durable idempotency ledger. Old records
-   * predate source separation and are interpreted as caller requests. */
-  requestSource: requestSourceSchema.optional(),
+  /** Namespace for requestId in the durable idempotency ledger. */
+  requestSource: requestSourceSchema,
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here. */
   params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
@@ -283,17 +278,7 @@ export type Run = z.infer<typeof runSchema>;
 export function runRequestHistoryKey(
   run: Pick<Run, 'requestId' | 'requestSource'>,
 ): string {
-  return requestHistoryKey(run.requestSource ?? 'caller', run.requestId);
-}
-
-/** Reads persisted runs through a general projection that discards unknown
- * top-level fields. `runSchema` remains strict for every known field, so a
- * malformed known value still fails validation. This lets retired fields in
- * existing records age out without preserving a legacy runtime choice. */
-export const persistedRunSchema = runSchema.strip();
-
-export function parsePersistedRun(value: unknown): Run {
-  return persistedRunSchema.parse(value);
+  return requestHistoryKey(run.requestSource, run.requestId);
 }
 
 /**
@@ -323,18 +308,13 @@ export const taskSchema = z.strictObject({
   /** Monotonic count of runs ever started, for run-id minting. */
   runCount: z.number().int().nonnegative(),
   /** How many runs in a row have gone `lost`, since the last one that
-   *  `finished` or was `canceled`. Optional: absent means 0 (existing
-   *  Firestore task documents predate this field and are read that way by
-   *  `FirestoreStore`'s zod validation). Drives the bounded auto-retry
-   *  budget in `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
-  consecutiveLost: z.number().int().nonnegative().optional(),
+   *  `finished` or was `canceled`. Drives the bounded auto-retry budget in
+   *  `decide.ts`'s `expireLease`/`MAX_AUTO_RETRIES`. */
+  consecutiveLost: z.number().int().nonnegative(),
   /** The work item's payload, written once when the task is created by
    *  its first request and never modified by the orchestrator afterward.
-   *  A native anchor always carries one; a GitHub anchor carries one once
-   *  console-side derivation has populated it (sub-project 5's `work` for
-   *  every anchor). Older persisted GitHub Task records can still lack it
-   *  until the separately tracked historical-record migration completes. */
-  work: workPayloadSchema.optional(),
+   *  A native anchor and a GitHub anchor both carry one. */
+  work: workPayloadSchema,
   /** Native anchors only: set by `closeTask` when an operator closes an
    *  item that has no live run. A closed task refuses further requests. */
   closedAt: isoUtc.optional(),

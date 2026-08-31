@@ -195,6 +195,7 @@ describe('workPayloadFromGithub', () => {
     const task = taskSchema.parse({
       task: { repo: 'jlapenna/agent-lcars', issue: 7 },
       runCount: 0,
+      consecutiveLost: 0,
       updatedAt: '2026-08-15T12:00:00.000Z',
       work: payload,
     });

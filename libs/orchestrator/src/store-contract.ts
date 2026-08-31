@@ -23,6 +23,7 @@ import {
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const T0 = '2026-08-15T12:00:00.000Z';
+const TASK_WORK = { spec: { title: 'contract work' } };
 
 class TestClock implements Clock {
   constructor(private value: string) {}
@@ -43,6 +44,7 @@ async function started(orchestrator: Orchestrator, requestId = 'req-1') {
     taskId: TASK,
     requestId,
     pipeline: 'claude',
+    work: TASK_WORK,
   });
   if (isRefusal(outcome)) {
     throw new Error(`unexpected refusal: ${outcome.reason}`);
@@ -127,6 +129,7 @@ export function runOrchestratorStoreContract(
           taskId: TASK,
           requestId: 'same-request',
           pipeline: 'claude',
+          work: TASK_WORK,
         };
         const [left, right] = await Promise.all([
           orchestrator.request(input),
@@ -235,7 +238,7 @@ export function runOrchestratorStoreContract(
         await orchestrator.report(retriedRunId, { ok: true });
 
         const afterFinish = await store.readTask(TASK);
-        expect(afterFinish?.task.consecutiveLost).toBeUndefined();
+        expect(afterFinish?.task.consecutiveLost).toBe(0);
       });
     });
 
@@ -249,6 +252,7 @@ export function runOrchestratorStoreContract(
           activeRun: undefined,
           requestId: 'req-a',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         const loser = requestRun({
           now: T0,
@@ -257,6 +261,7 @@ export function runOrchestratorStoreContract(
           activeRun: undefined,
           requestId: 'req-b',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         if (isRefusal(winner) || isRefusal(loser)) {
           throw new Error('unexpected refusal');
@@ -316,7 +321,14 @@ export function runOrchestratorStoreContract(
       const now = '2026-08-15T12:00:00.000Z';
       await store.apply({
         decision: {
-          task: { task: id, runCount: 0, closedAt: now, updatedAt: now },
+          task: {
+            task: id,
+            runCount: 0,
+            consecutiveLost: 0,
+            work: {},
+            closedAt: now,
+            updatedAt: now,
+          },
           outbox: [],
         },
         expectedRevision: undefined,
@@ -340,6 +352,7 @@ export function runOrchestratorStoreContract(
         taskId: issue,
         requestId: 'i1',
         pipeline: 'claude',
+        work: TASK_WORK,
       });
       expect((await store.listRuns(work)).map((r) => r.runId)).toEqual([
         'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
@@ -357,6 +370,7 @@ export function runOrchestratorStoreContract(
         taskId: issue,
         requestId: 'issue-recent',
         pipeline: 'claude',
+        work: TASK_WORK,
       });
       clock.advanceMinutes(1);
       await orchestrator.request({
@@ -527,6 +541,7 @@ export function runOrchestratorStoreContract(
             taskId: { repo: 'octo/example', issue },
             requestId: `req-${issue}`,
             pipeline: 'claude',
+            work: TASK_WORK,
           });
           if (isRefusal(outcome)) throw new Error('unexpected refusal');
           const claim = onlyClaim(await claimOutbox(store, clock.now(), 1));
@@ -546,6 +561,7 @@ export function runOrchestratorStoreContract(
           taskId: { repo: 'octo/example', issue: 104 },
           requestId: 'req-104',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         if (isRefusal(freshOutcome)) throw new Error('unexpected refusal');
 
@@ -700,18 +716,21 @@ export function runOrchestratorStoreContract(
           taskId: githubOld,
           requestId: 'github-old',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         clock.advanceMinutes(1);
         await orchestrator.request({
           taskId: native,
           requestId: 'native',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         clock.advanceMinutes(1);
         await orchestrator.request({
           taskId: githubNew,
           requestId: 'github-new',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
 
         const firstPage = await store.listTasks(2);
@@ -737,11 +756,13 @@ export function runOrchestratorStoreContract(
           taskId: first,
           requestId: 'first',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         await orchestrator.request({
           taskId: second,
           requestId: 'second',
           pipeline: 'claude',
+          work: TASK_WORK,
         });
 
         const firstPage = await store.listTasks(1);
@@ -772,6 +793,7 @@ export function runOrchestratorStoreContract(
           taskId: { workId: queueWorkId(requestId) },
           requestId,
           pipeline: 'claude',
+          work: TASK_WORK,
         });
         if (isRefusal(outcome)) throw new Error('unexpected refusal');
         return decidedRun(outcome);

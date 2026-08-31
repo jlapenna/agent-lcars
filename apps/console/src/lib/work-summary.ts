@@ -7,7 +7,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import {
   type ItemState,
-  toWorkSummarySafe,
+  toWorkSummary,
   type WorkSummary,
 } from '@agent-lcars/work/derive';
 
@@ -29,10 +29,10 @@ function cursorFor(task: Parameters<typeof taskKey>[0], updatedAt: string) {
 }
 
 /**
- * Projects a bounded page of every anchor carrying a valid `Task.work`
- * payload. This is intentionally a server-side console adapter rather than
- * a new public Work API route: service principals that may create work for
- * one ingress must not gain a fleet-wide read of issue-projection data.
+ * Projects a bounded page of every persisted Task. This is intentionally a
+ * server-side console adapter rather than a new public Work API route:
+ * service principals that may create work for one ingress must not gain a
+ * fleet-wide read of issue-projection data.
  *
  * GitHub-anchored and native entries use identical derived lifecycle state;
  * GitHub is absent from this path. Callers that need PR/check/review details
@@ -44,23 +44,14 @@ export async function listWorkSummaries(
   input: ListWorkSummariesInput,
 ): Promise<WorkSummaryPage> {
   const tasks = await store.listTasks(input.limit, input.cursor);
-  const items = (
-    await Promise.all(
-      tasks.map(async ({ task }) => {
-        const summary = toWorkSummarySafe({
-          task,
-          runs: await store.listRuns(task.task),
-        });
-        if (summary === undefined) {
-          console.warn(
-            'agent-lcars: skipping task with an invalid work payload in work summary projection',
-            { task: taskKey(task.task) },
-          );
-        }
-        return summary;
+  const items = await Promise.all(
+    tasks.map(async ({ task }) =>
+      toWorkSummary({
+        task,
+        runs: await store.listRuns(task.task),
       }),
-    )
-  ).filter((summary): summary is WorkSummary => summary !== undefined);
+    ),
+  );
 
   const last = tasks[tasks.length - 1];
   return {

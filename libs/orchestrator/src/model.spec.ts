@@ -5,7 +5,6 @@ import {
   isGithubAnchor,
   isWorkAnchor,
   outboxEntrySchema,
-  parsePersistedRun,
   RUN_ID_MAX_LENGTH,
   runQueueSchema,
   runSchema,
@@ -80,38 +79,41 @@ describe('taskKey', () => {
   });
 });
 
-describe('persisted-shape fixtures', () => {
-  // Documents exactly as FirestoreStore wrote them before this change.
-  // Every one must still parse; this is the zero-migration guarantee.
+describe('strict persisted-shape fixtures', () => {
   const T = '2026-08-15T12:00:00.000Z';
 
-  it('parses a legacy task document', () => {
-    expect(() =>
-      taskSchema.parse({
+  it('rejects a Task document missing its Work payload', () => {
+    expect(
+      taskSchema.safeParse({
         task: { repo: 'octo/example', issue: 7 },
         activeRunId: 'octo/example#7/r1',
         runCount: 1,
         consecutiveLost: 0,
         updatedAt: T,
-      }),
-    ).not.toThrow();
+      }).success,
+    ).toBe(false);
   });
 
-  it('parses a legacy run document', () => {
-    expect(() =>
-      runSchema.parse({
-        runId: 'octo/example#7/r1',
-        task: { repo: 'octo/example', issue: 7 },
-        state: 'running',
-        pipeline: 'claude',
-        requestId: 'delivery-1',
-        params: { mode: 'implement' },
-        leaseExpiresAt: T,
-        events: [{ at: T, to: 'pending', by: 'request' }],
-        createdAt: T,
-        updatedAt: T,
-      }),
-    ).not.toThrow();
+  it('rejects a Run document missing requestSource or carrying infra history', () => {
+    const base = {
+      runId: 'octo/example#7/r1',
+      task: { repo: 'octo/example', issue: 7 },
+      state: 'running' as const,
+      pipeline: 'claude',
+      requestId: 'delivery-1',
+      leaseExpiresAt: T,
+      events: [{ at: T, to: 'pending' as const, by: 'request' as const }],
+      createdAt: T,
+      updatedAt: T,
+    };
+    expect(runSchema.safeParse(base).success).toBe(false);
+    expect(
+      runSchema.safeParse({
+        ...base,
+        requestSource: 'caller',
+        events: [{ at: T, to: 'pending', by: 'infra' }],
+      }).success,
+    ).toBe(false);
   });
 
   it('parses a legacy outbox document', () => {
@@ -147,6 +149,7 @@ describe('persisted-shape fixtures', () => {
         state: 'pending',
         pipeline: 'claude',
         requestId: `retry:${runId}`,
+        requestSource: 'auto-retry',
         leaseExpiresAt: T,
         events: [{ at: T, to: 'pending', by: 'request' }],
         createdAt: T,
@@ -158,6 +161,8 @@ describe('persisted-shape fixtures', () => {
         task,
         activeRunId: runId,
         runCount: Number.MAX_SAFE_INTEGER,
+        consecutiveLost: 0,
+        work: { spec: { title: 'maximal Work' } },
         updatedAt: T,
       }).success,
     ).toBe(true);
@@ -206,6 +211,7 @@ describe('persisted-shape fixtures', () => {
     const parsed = taskSchema.parse({
       task: { repo: 'octo/example', issue: 7 },
       runCount: 1,
+      consecutiveLost: 0,
       updatedAt: T,
       work,
     });
@@ -215,7 +221,12 @@ describe('persisted-shape fixtures', () => {
 
 describe('taskSchema work payload', () => {
   const T = '2026-08-15T12:00:00.000Z';
-  const base = { task: { workId: ULID }, runCount: 0, updatedAt: T };
+  const base = {
+    task: { workId: ULID },
+    runCount: 0,
+    consecutiveLost: 0,
+    updatedAt: T,
+  };
 
   it('stores an opaque bounded work payload and closedAt', () => {
     const parsed = taskSchema.parse({
@@ -270,19 +281,16 @@ describe('persisted Run projection / Run.queue', () => {
     state: 'pending' as const,
     pipeline: 'claude',
     requestId: 'req-1',
+    requestSource: 'caller' as const,
     leaseExpiresAt: '2026-08-27T00:00:00.000Z',
     events: [],
     createdAt: '2026-08-27T00:00:00.000Z',
     updatedAt: '2026-08-27T00:00:00.000Z',
   };
 
-  it('strips unknown persisted fields while strictly validating known fields', () => {
+  it('rejects unknown fields instead of projecting them away', () => {
     const persisted = { ...base, retiredField: 'old value' };
     expect(runSchema.safeParse(persisted).success).toBe(false);
-    expect(parsePersistedRun(persisted)).toEqual(base);
-    expect(() =>
-      parsePersistedRun({ ...persisted, state: 'not-a-run-state' }),
-    ).toThrow();
   });
 
   it('accepts a queued claim state', () => {
