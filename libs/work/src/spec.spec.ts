@@ -37,6 +37,15 @@ describe('workSpecSchema', () => {
     ).toThrow();
   });
 
+  it('keeps an issue anchor out of the repository-only target', () => {
+    expect(() =>
+      workSpecSchema.parse({
+        ...spec,
+        target: { repo: 'jlapenna/agent-lcars', issue: 1652 },
+      }),
+    ).toThrow();
+  });
+
   it('bounds the description', () => {
     expect(() =>
       workSpecSchema.parse({

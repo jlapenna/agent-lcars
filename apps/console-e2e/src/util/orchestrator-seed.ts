@@ -87,10 +87,9 @@ export async function seedOrchestratorTask(params: {
         title: `E2E fixture issue #${params.issue}`,
         description: 'Authoritative E2E fixture work.',
         pipeline: params.pipeline,
-        target: {
-          repo: params.repository ?? E2E_FIXTURE_REPOSITORY,
-          issue: params.issue,
-        },
+        // A Work target names the repository capability only. The issue
+        // anchor remains exclusively in the TaskId above.
+        target: { repo: params.repository ?? E2E_FIXTURE_REPOSITORY },
       },
     },
   });
