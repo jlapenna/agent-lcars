@@ -9,10 +9,40 @@ import {
 const repo = { owner: 'jlapenna', name: 'agent-lcars' };
 
 describe('session schema backfill', () => {
-  it('reports every required issue-agent metadata gap', () => {
+  it('does not require or patch renderability on a summary-only issue-agent document', () => {
     expect(
       sessionSchemaGaps({ sessionId: 's1', source: 'issue-agent' }),
-    ).toEqual(['agent', 'repo', 'renderable']);
+    ).toEqual(['agent', 'repo']);
+    expect(
+      sessionSchemaBackfillPatch(
+        { sessionId: 's1', source: 'issue-agent' },
+        { sessionId: 's1', agent: 'codex', repo, renderable: true },
+      ),
+    ).toEqual({ agent: 'codex', repo });
+  });
+
+  it('requires and patches renderability only when an issue-agent archive exists', () => {
+    const legacy = {
+      sessionId: 's1',
+      source: 'issue-agent',
+      transcriptGcsUri: 'gs://agent-lcars/session.jsonl',
+    };
+    expect(sessionSchemaGaps(legacy)).toEqual(['agent', 'repo', 'renderable']);
+    expect(() =>
+      sessionSchemaBackfillPatch(legacy, {
+        sessionId: 's1',
+        agent: 'codex',
+        repo,
+      }),
+    ).toThrow('requires explicit renderable');
+    expect(
+      sessionSchemaBackfillPatch(legacy, {
+        sessionId: 's1',
+        agent: 'codex',
+        repo,
+        renderable: true,
+      }),
+    ).toEqual({ agent: 'codex', repo, renderable: true });
   });
 
   it('reports invalid enum, source, and empty repository values as gaps', () => {
@@ -38,26 +68,34 @@ describe('session schema backfill', () => {
         sessionId: 's1',
         agent: 'codex',
         repo,
-        renderable: true,
       }),
-    ).toEqual({ agent: 'codex', repo, renderable: true });
+    ).toEqual({ agent: 'codex', repo });
     expect(
       backfillSessionSchema(legacy, {
         sessionId: 's1',
         agent: 'codex',
         repo,
-        renderable: true,
       }),
-    ).toMatchObject({ agent: 'codex', repo, renderable: true });
+    ).toMatchObject({ agent: 'codex', repo });
   });
 
-  it('rejects missing issue-agent renderability and conflicting stored values', () => {
+  it('rejects missing archived issue-agent renderability, whitespace repo values, and conflicting stored values', () => {
     expect(() =>
       backfillSessionSchema(
-        { sessionId: 's1', source: 'issue-agent' },
+        {
+          sessionId: 's1',
+          source: 'issue-agent',
+          transcriptGcsUri: 'gs://agent-lcars/session.jsonl',
+        },
         { sessionId: 's1', agent: 'claude-code', repo },
       ),
     ).toThrow('requires explicit renderable');
+    expect(() =>
+      backfillSessionSchema(
+        { sessionId: 's1', source: 'cli' },
+        { sessionId: 's1', agent: 'codex', repo: { owner: ' ', name: 'x' } },
+      ),
+    ).toThrow('requires a non-empty repo');
     expect(() =>
       backfillSessionSchema(
         { sessionId: 's1', source: 'cli', agent: 'codex' },

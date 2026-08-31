@@ -13,8 +13,9 @@ export interface SessionSchemaBackfill {
   sessionId: string;
   agent: SessionAgent;
   repo: SessionRepository;
-  /** Required for `source: 'issue-agent'`, where it is the capture-time
-   * statement about the archived transcript's timeline capability. */
+  /** Required only for an `issue-agent` document with an archived
+   * `transcriptGcsUri`, where it is the capture-time statement about that
+   * archive's timeline capability. */
   renderable?: boolean;
 }
 
@@ -32,6 +33,12 @@ function sameRepo(left: SessionRepository, right: SessionRepository): boolean {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasArchivedTranscript(document: {
+  readonly transcriptGcsUri?: unknown;
+}): boolean {
+  return isNonEmptyString(document['transcriptGcsUri']);
 }
 
 /** Lists the current-schema fields absent from an untyped stored document.
@@ -53,7 +60,11 @@ export function sessionSchemaGaps(document: unknown): SessionSchemaGap[] {
   ) {
     gaps.push('repo');
   }
-  if (source === 'issue-agent' && typeof document['renderable'] !== 'boolean') {
+  if (
+    source === 'issue-agent' &&
+    hasArchivedTranscript(document) &&
+    typeof document['renderable'] !== 'boolean'
+  ) {
     gaps.push('renderable');
   }
   return gaps;
@@ -83,6 +94,12 @@ export function backfillSessionSchema(
   if (document['agent'] !== undefined && document['agent'] !== backfill.agent) {
     throw new Error(`Session ${backfill.sessionId} has a conflicting agent`);
   }
+  if (
+    !isNonEmptyString(backfill.repo.owner) ||
+    !isNonEmptyString(backfill.repo.name)
+  ) {
+    throw new Error(`Session ${backfill.sessionId} requires a non-empty repo`);
+  }
   if (document['repo'] !== undefined) {
     const repo = document['repo'];
     if (
@@ -94,7 +111,7 @@ export function backfillSessionSchema(
       throw new Error(`Session ${backfill.sessionId} has a conflicting repo`);
     }
   }
-  if (source === 'issue-agent') {
+  if (source === 'issue-agent' && hasArchivedTranscript(document)) {
     if (backfill.renderable === undefined) {
       throw new Error(
         `Issue-agent session ${backfill.sessionId} requires explicit renderable`,
@@ -141,8 +158,9 @@ export function sessionSchemaBackfillPatch(
   return {
     agent: backfill.agent,
     repo: backfill.repo,
-    ...(migrated.source === 'issue-agent' && {
-      renderable: backfill.renderable,
-    }),
+    ...(migrated.source === 'issue-agent' &&
+      hasArchivedTranscript(migrated) && {
+        renderable: backfill.renderable,
+      }),
   };
 }
