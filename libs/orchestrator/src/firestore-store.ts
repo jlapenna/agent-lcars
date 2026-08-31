@@ -33,6 +33,7 @@ import {
   decodePersistedMigrationCursor,
   encodePersistedMigrationCursor,
   fingerprint,
+  hasPersistedMigrationCompatibilityFinding,
   inventoryPersistedRecord,
   isPersistedMigrationDeleteEntry,
   manifestId,
@@ -92,6 +93,7 @@ function normalizeFirestoreIntegerValues(value: unknown): unknown {
 
 interface PersistedMigrationDeleteReads {
   readonly parentTask: (task: TaskId) => Promise<unknown | undefined>;
+  readonly run: (runId: string) => Promise<unknown | undefined>;
   readonly hasChildRun: (task: TaskId) => Promise<boolean>;
   readonly outboxDependencies: (runId: string) => Promise<{
     readonly pending: boolean;
@@ -123,11 +125,43 @@ const migrationTaskSafetySchema = z
 const migrationOutboxSafetySchema = z
   .object({
     entryId: z.string().min(1),
+    kind: z.enum(['dispatch-run', 'report-outcome']),
     task: taskIdSchema,
     runId: migrationRunIdSchema,
     state: z.enum(['pending', 'leased', 'done', 'failed']),
+    firstFailedAt: z.string().optional(),
+    nextAttemptAt: z.string().optional(),
+    deliveryFailures: z.number().optional(),
+    claimId: z.unknown().optional(),
+    leaseExpiresAt: z.unknown().optional(),
   })
   .strip();
+
+const migrationTimestampSchema = z.iso.datetime({ offset: true });
+
+function hasUndeliverableOutcomeFailureProof(entry: {
+  firstFailedAt?: unknown;
+  nextAttemptAt?: unknown;
+  deliveryFailures?: unknown;
+}): boolean {
+  const firstFailedAt = migrationTimestampSchema.safeParse(entry.firstFailedAt);
+  const nextAttemptAt = migrationTimestampSchema.safeParse(entry.nextAttemptAt);
+  return (
+    firstFailedAt.success &&
+    nextAttemptAt.success &&
+    typeof entry.deliveryFailures === 'number' &&
+    Number.isInteger(entry.deliveryFailures) &&
+    entry.deliveryFailures >= 1 &&
+    Date.parse(nextAttemptAt.data) >= Date.parse(firstFailedAt.data)
+  );
+}
+
+function hasMigrationOutboxLease(entry: {
+  claimId?: unknown;
+  leaseExpiresAt?: unknown;
+}): boolean {
+  return entry.claimId !== undefined || entry.leaseExpiresAt !== undefined;
+}
 
 function selectorMatchesTask(
   selector: PersistedRecordSelector,
@@ -877,6 +911,11 @@ export class FirestoreStore implements OrchestratorStore {
         const snapshot = tx === undefined ? await ref.get() : await tx.get(ref);
         return snapshot.exists ? snapshot.data() : undefined;
       },
+      run: async (runId: string): Promise<unknown | undefined> => {
+        const ref = this.#migrationRuns.doc(encodeURIComponent(runId));
+        const snapshot = tx === undefined ? await ref.get() : await tx.get(ref);
+        return snapshot.exists ? snapshot.data() : undefined;
+      },
       hasChildRun: async (task: TaskId): Promise<boolean> => {
         const snapshot =
           tx === undefined
@@ -911,6 +950,7 @@ export class FirestoreStore implements OrchestratorStore {
     } else if (fingerprint(current) !== entry.expectedFingerprint) {
       reasons.push('target-changed');
     } else if (
+      entry.selector.kind !== 'outbox' &&
       !inventoryPersistedRecord(
         entry.selector.kind,
         normalizeFirestoreIntegerValues(current),
@@ -975,18 +1015,88 @@ export class FirestoreStore implements OrchestratorStore {
     }
 
     if (current !== undefined && entry.selector.kind === 'outbox') {
-      const parsed = migrationOutboxSafetySchema.safeParse(
-        normalizeFirestoreIntegerValues(current),
-      );
+      const normalized = normalizeFirestoreIntegerValues(current);
+      const parsed = migrationOutboxSafetySchema.safeParse(normalized);
       if (!parsed.success) {
         reasons.push('invalid-outbox');
       } else if (!selectorMatchesOutbox(entry.selector, parsed.data.entryId)) {
         reasons.push('invalid-outbox');
       } else if (
-        parsed.data.state !== 'done' &&
-        parsed.data.state !== 'failed'
+        hasPersistedMigrationCompatibilityFinding('outbox', normalized)
       ) {
-        reasons.push('outbox-not-terminal');
+        // Compatibility records retain the original rule: an Outbox document
+        // is deletable only after it has reached a terminal state.
+        if (parsed.data.state !== 'done' && parsed.data.state !== 'failed') {
+          reasons.push('outbox-not-terminal');
+        }
+      } else {
+        // The one temporary migration exception is a pending outcome report
+        // with proof that outcome delivery already failed. It is not part of
+        // normal 72-hour outbox retirement policy.
+        const outbox = parsed.data;
+        if (outbox.kind !== 'report-outcome') {
+          reasons.push('outbox-not-report-outcome');
+        } else if (outbox.state !== 'pending') {
+          reasons.push('no-compatibility-finding');
+        } else {
+          if (!hasUndeliverableOutcomeFailureProof(outbox)) {
+            reasons.push('outbox-no-failure-proof');
+          }
+          if (hasMigrationOutboxLease(outbox)) {
+            reasons.push('outbox-lease-present');
+          }
+
+          const rawRun = await reads.run(outbox.runId);
+          const run =
+            rawRun === undefined
+              ? undefined
+              : normalizeFirestoreIntegerValues(rawRun);
+          const runSafety =
+            run === undefined
+              ? undefined
+              : migrationRunSafetySchema.safeParse(run);
+          if (run === undefined) {
+            reasons.push('outbox-run-missing');
+          } else if (!runSafety?.success) {
+            reasons.push('outbox-run-invalid');
+          } else if (
+            runSafety.data.runId !== outbox.runId ||
+            !migrationParentTaskMatchesRun(runSafety.data.task, outbox.task)
+          ) {
+            reasons.push('outbox-run-mismatch');
+          } else {
+            if (isLive(runSafety.data.state)) {
+              reasons.push('outbox-run-not-terminal');
+            }
+            if (!hasPersistedMigrationCompatibilityFinding('run', run)) {
+              reasons.push('outbox-run-not-compatibility');
+            }
+            const parent = await reads.parentTask(runSafety.data.task);
+            const parentTask =
+              parent === undefined
+                ? undefined
+                : migrationTaskSafetySchema.safeParse(
+                    normalizeFirestoreIntegerValues(parent),
+                  );
+            if (parentTask !== undefined && !parentTask.success) {
+              reasons.push('outbox-parent-task-invalid');
+            } else if (
+              parentTask !== undefined &&
+              (!migrationParentTaskMatchesRun(
+                parentTask.data.task.task,
+                runSafety.data.task,
+              ) ||
+                !migrationParentTaskMatchesRun(
+                  parentTask.data.task.task,
+                  outbox.task,
+                ))
+            ) {
+              reasons.push('outbox-parent-task-invalid');
+            } else if (parentTask?.data.task.activeRunId !== undefined) {
+              reasons.push('outbox-parent-task-active');
+            }
+          }
+        }
       }
     }
 

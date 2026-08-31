@@ -26,6 +26,7 @@ import {
   decodePersistedMigrationCursor,
   encodePersistedMigrationCursor,
   fingerprint,
+  hasPersistedMigrationCompatibilityFinding,
   inventoryPersistedRecord,
   isPersistedMigrationDeleteEntry,
   manifestId,
@@ -72,11 +73,43 @@ const migrationTaskSafetySchema = z
 const migrationOutboxSafetySchema = z
   .object({
     entryId: z.string().min(1),
+    kind: z.enum(['dispatch-run', 'report-outcome']),
     task: taskIdSchema,
     runId: migrationRunIdSchema,
     state: z.enum(['pending', 'leased', 'done', 'failed']),
+    firstFailedAt: z.string().optional(),
+    nextAttemptAt: z.string().optional(),
+    deliveryFailures: z.number().optional(),
+    claimId: z.unknown().optional(),
+    leaseExpiresAt: z.unknown().optional(),
   })
   .strip();
+
+const migrationTimestampSchema = z.iso.datetime({ offset: true });
+
+function hasUndeliverableOutcomeFailureProof(entry: {
+  firstFailedAt?: unknown;
+  nextAttemptAt?: unknown;
+  deliveryFailures?: unknown;
+}): boolean {
+  const firstFailedAt = migrationTimestampSchema.safeParse(entry.firstFailedAt);
+  const nextAttemptAt = migrationTimestampSchema.safeParse(entry.nextAttemptAt);
+  return (
+    firstFailedAt.success &&
+    nextAttemptAt.success &&
+    typeof entry.deliveryFailures === 'number' &&
+    Number.isInteger(entry.deliveryFailures) &&
+    entry.deliveryFailures >= 1 &&
+    Date.parse(nextAttemptAt.data) >= Date.parse(firstFailedAt.data)
+  );
+}
+
+function hasMigrationOutboxLease(entry: {
+  claimId?: unknown;
+  leaseExpiresAt?: unknown;
+}): boolean {
+  return entry.claimId !== undefined || entry.leaseExpiresAt !== undefined;
+}
 
 function selectorMatchesTask(
   selector: PersistedRecordSelector,
@@ -625,6 +658,7 @@ export class MemoryStore implements OrchestratorStore {
     } else if (fingerprint(current) !== entry.expectedFingerprint) {
       reasons.push('target-changed');
     } else if (
+      entry.selector.kind !== 'outbox' &&
       !inventoryPersistedRecord(entry.selector.kind, current).findings.some(
         (finding) => finding.class === 'compatibility',
       )
@@ -698,11 +732,74 @@ export class MemoryStore implements OrchestratorStore {
         reasons.push('invalid-outbox');
       } else if (!selectorMatchesOutbox(entry.selector, parsed.data.entryId)) {
         reasons.push('invalid-outbox');
-      } else if (
-        parsed.data.state !== 'done' &&
-        parsed.data.state !== 'failed'
-      ) {
-        reasons.push('outbox-not-terminal');
+      } else if (hasPersistedMigrationCompatibilityFinding('outbox', current)) {
+        // Compatibility records retain the original rule: an Outbox document
+        // is deletable only after it has reached a terminal state.
+        if (parsed.data.state !== 'done' && parsed.data.state !== 'failed') {
+          reasons.push('outbox-not-terminal');
+        }
+      } else {
+        // This is intentionally not normal outbox retirement. It only clears
+        // the one bounded migration obstruction: a pending outcome report
+        // that has already made and recorded an actual failed delivery.
+        const outbox = parsed.data;
+        if (outbox.kind !== 'report-outcome') {
+          reasons.push('outbox-not-report-outcome');
+        } else if (outbox.state !== 'pending') {
+          reasons.push('no-compatibility-finding');
+        } else {
+          if (!hasUndeliverableOutcomeFailureProof(outbox)) {
+            reasons.push('outbox-no-failure-proof');
+          }
+          if (hasMigrationOutboxLease(outbox)) {
+            reasons.push('outbox-lease-present');
+          }
+
+          const run = this.#runs.get(outbox.runId);
+          const runSafety =
+            run === undefined
+              ? undefined
+              : migrationRunSafetySchema.safeParse(run);
+          if (run === undefined) {
+            reasons.push('outbox-run-missing');
+          } else if (!runSafety?.success) {
+            reasons.push('outbox-run-invalid');
+          } else if (
+            runSafety.data.runId !== outbox.runId ||
+            !migrationParentTaskMatchesRun(runSafety.data.task, outbox.task)
+          ) {
+            reasons.push('outbox-run-mismatch');
+          } else {
+            if (isLive(runSafety.data.state)) {
+              reasons.push('outbox-run-not-terminal');
+            }
+            if (!hasPersistedMigrationCompatibilityFinding('run', run)) {
+              reasons.push('outbox-run-not-compatibility');
+            }
+            const parent = this.#tasks.get(taskKey(runSafety.data.task));
+            const parentSafety =
+              parent === undefined
+                ? undefined
+                : migrationTaskSafetySchema.safeParse(parent);
+            if (parentSafety !== undefined && !parentSafety.success) {
+              reasons.push('outbox-parent-task-invalid');
+            } else if (
+              parentSafety !== undefined &&
+              (!migrationParentTaskMatchesRun(
+                parentSafety.data.task.task,
+                runSafety.data.task,
+              ) ||
+                !migrationParentTaskMatchesRun(
+                  parentSafety.data.task.task,
+                  outbox.task,
+                ))
+            ) {
+              reasons.push('outbox-parent-task-invalid');
+            } else if (parentSafety?.data.task.activeRunId !== undefined) {
+              reasons.push('outbox-parent-task-active');
+            }
+          }
+        }
       }
     }
 

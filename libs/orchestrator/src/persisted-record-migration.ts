@@ -192,6 +192,16 @@ export const persistedMigrationDeleteBlockReasonSchema = z.enum([
   'child-run-present',
   'invalid-outbox',
   'outbox-not-terminal',
+  'outbox-not-report-outcome',
+  'outbox-no-failure-proof',
+  'outbox-lease-present',
+  'outbox-run-missing',
+  'outbox-run-invalid',
+  'outbox-run-mismatch',
+  'outbox-run-not-terminal',
+  'outbox-run-not-compatibility',
+  'outbox-parent-task-invalid',
+  'outbox-parent-task-active',
 ]);
 export type PersistedMigrationDeleteBlockReason = z.infer<
   typeof persistedMigrationDeleteBlockReasonSchema
@@ -643,6 +653,18 @@ export function inventoryPersistedRecord(
     findingsTruncated: findings.length > PERSISTED_MIGRATION_FINDINGS_MAX,
     findings: findings.slice(0, PERSISTED_MIGRATION_FINDINGS_MAX),
   };
+}
+
+/** Keeps the temporary deletion policy tied to the same fixed inventory
+ * vocabulary shown to the operator. This never exposes the finding itself;
+ * it only answers whether the record may use a compatibility deletion path. */
+export function hasPersistedMigrationCompatibilityFinding(
+  kind: PersistedRecordKind,
+  value: unknown,
+): boolean {
+  return inventoryPersistedRecord(kind, value).findings.some(
+    (finding) => finding.class === 'compatibility',
+  );
 }
 
 /** Canonical, type-tagged Firestore values plus SHA-256 make a reviewed
