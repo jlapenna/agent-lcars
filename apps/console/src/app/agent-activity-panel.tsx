@@ -169,14 +169,10 @@ export function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
   );
 }
 
-// Labels/colors for the *coding agent* that produced a session (#3123 phase
-// 1 - the discriminator + watcher/adapter seam this badge is the only
-// visible surface of so far; no non-claude-code agent ships yet). Distinct
-// from PIPELINE_LABELS/PIPELINE_COLORS above, which tag an authoritative Run
-// by its selected provider - a
-// session's `agent` instead names which tool actually produced the
-// transcript, an orthogonal axis that matters once OpenCode (or a non-Claude
-// CLI) starts shipping its own session docs.
+// Labels/colors for the coding agent that produced a session. Distinct from
+// PIPELINE_LABELS/PIPELINE_COLORS above, which tag an authoritative Run by
+// its selected provider: a session's `agent` instead names the tool that
+// actually produced the transcript.
 const AGENT_LABELS: Record<SessionAgent, string> = {
   'claude-code': 'claude code',
   codex: 'codex',
@@ -195,13 +191,10 @@ const AGENT_COLORS: Record<SessionAgent, string> = {
 
 /**
  * Session-identity badge: which coding agent produced this session's
- * transcript. Renders nothing for `'claude-code'`, keeping the common case
- * visually quiet; every caller passes the persisted explicit identity.
+ * transcript. Every caller passes the persisted explicit identity, which is
+ * always rendered so the console does not imply Claude for another agent.
  */
 export function AgentBadge({ agent }: { agent: SessionAgent }) {
-  if (agent === 'claude-code') {
-    return null;
-  }
   return (
     <Badge
       variant="outline"
@@ -253,7 +246,7 @@ export function SourceBadge({
  * Which watched repo an item/run/session belongs to. Renders nothing when
  * only one repo is configured - the overwhelmingly common case today - so
  * every row stays exactly as quiet as it was before multi-repo support
- * existed, matching AgentBadge's "quiet unless it's informative" precedent.
+ * existed.
  */
 export function RepoBadge({ repo }: { repo: { owner: string; name: string } }) {
   const watchedRepos = getWatchedRepos();

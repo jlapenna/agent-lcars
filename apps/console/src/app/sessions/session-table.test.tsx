@@ -166,12 +166,12 @@ describe('SessionTable', () => {
     expect(screen.queryByText(/cw tok/)).toBeNull();
   });
 
-  it('renders no agent badge for a claude-code row (the overwhelming default)', () => {
+  it('renders the explicit claude-code identity in both row views', () => {
     renderTable([makeRow({ agent: 'claude-code' })]);
-    expect(screen.queryByText('claude code')).toBeNull();
+    expect(screen.getAllByText('claude code')).toHaveLength(2);
   });
 
-  it('renders an agent badge for a non-claude-code row in both views', () => {
+  it('renders the explicit codex identity in both row views', () => {
     renderTable([makeRow({ agent: 'codex' })]);
     expect(screen.getAllByText('codex')).toHaveLength(2);
   });
