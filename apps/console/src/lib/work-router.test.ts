@@ -1190,4 +1190,62 @@ describe('persisted orchestrator migration routes', () => {
     expect(applied.status).toBe(200);
     expect(await store.readTask(task.task)).toBeUndefined();
   });
+
+  it('previews a proved-undeliverable pending outcome without exposing delivery data', async () => {
+    const ctx = context({ principal: migrationOperator });
+    const store = ctx.runtime.store as MemoryStore;
+    const task = {
+      task: { repo: 'octo/example', issue: 10 },
+      runCount: 1,
+      updatedAt: '2026-08-26T10:00:00.000Z',
+    };
+    const run = {
+      runId: 'octo/example#10/r1',
+      task: task.task,
+      state: 'finished' as const,
+      pipeline: 'codex',
+      requestId: 'legacy-run',
+      leaseExpiresAt: '2026-08-26T10:00:00.000Z',
+      events: [],
+      createdAt: '2026-08-26T10:00:00.000Z',
+      updatedAt: '2026-08-26T10:00:00.000Z',
+    };
+    const entry = {
+      entryId: `report/${run.runId}`,
+      kind: 'report-outcome' as const,
+      task: task.task,
+      runId: run.runId,
+      state: 'pending' as const,
+      attempts: 1,
+      firstFailedAt: '2026-08-26T10:00:00.000Z',
+      nextAttemptAt: '2026-08-26T10:01:00.000Z',
+      deliveryFailures: 1,
+      createdAt: '2026-08-26T10:00:00.000Z',
+      updatedAt: '2026-08-26T10:00:00.000Z',
+    };
+    await store.apply({
+      decision: { task, run, outbox: [entry] },
+      expectedRevision: undefined,
+    });
+    const record = (
+      await store.inventoryPersistedRecords({ kind: 'outbox', limit: 1 })
+    ).records[0];
+    if (record?.selector === undefined) throw new Error('missing outbox');
+    const response = await call(ctx, 'POST', '/orchestrator-migration', {
+      entries: [
+        {
+          operation: 'delete',
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+        },
+      ],
+    });
+    expect(response.status).toBe(200);
+    expect(response.json).toMatchObject({
+      mode: 'dry-run',
+      deletions: [{ selector: record.selector, status: 'ready', reasons: [] }],
+    });
+    expect(JSON.stringify(response.json)).not.toContain('firstFailedAt');
+    expect(JSON.stringify(response.json)).not.toContain('deliveryFailures');
+  });
 });

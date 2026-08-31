@@ -517,4 +517,254 @@ describe('reviewed persisted-record manifest', () => {
       reasons: ['no-compatibility-finding'],
     });
   });
+
+  it('retires only a proved-undeliverable pending outcome before its legacy run and task', async () => {
+    const store = new MemoryStore();
+    const task = {
+      task: { repo: 'octo/example', issue: 81 },
+      runCount: 1,
+      updatedAt: T,
+    };
+    const run = {
+      runId: 'octo/example#81/r1',
+      task: task.task,
+      state: 'finished' as const,
+      pipeline: 'codex',
+      requestId: 'legacy-run',
+      leaseExpiresAt: T,
+      events: [],
+      createdAt: T,
+      updatedAt: T,
+    };
+    const outbox = {
+      entryId: `report/${run.runId}`,
+      kind: 'report-outcome' as const,
+      task: task.task,
+      runId: run.runId,
+      state: 'pending' as const,
+      attempts: 1,
+      firstFailedAt: T,
+      nextAttemptAt: '2026-08-15T12:01:00.000Z',
+      deliveryFailures: 1,
+      createdAt: T,
+      updatedAt: T,
+    };
+    await store.apply({
+      decision: { task, run, outbox: [outbox] },
+      expectedRevision: undefined,
+    });
+
+    const outboxRecord = (
+      await store.inventoryPersistedRecords({ kind: 'outbox', limit: 1 })
+    ).records[0];
+    if (outboxRecord?.selector === undefined) throw new Error('missing outbox');
+    const outboxDelete = {
+      operation: 'delete' as const,
+      selector: outboxRecord.selector,
+      expectedFingerprint: outboxRecord.fingerprint,
+    };
+    const outboxPreview = await store.previewPersistedMigration([outboxDelete]);
+    expect(outboxPreview.deletions).toEqual([
+      { selector: outboxRecord.selector, status: 'ready', reasons: [] },
+    ]);
+    await store.applyPersistedMigration({
+      entries: [outboxDelete],
+      reviewedManifestId: outboxPreview.manifestId,
+    });
+
+    const runRecord = (
+      await store.inventoryPersistedRecords({ kind: 'run', limit: 1 })
+    ).records[0];
+    if (runRecord?.selector === undefined) throw new Error('missing run');
+    const runDelete = {
+      operation: 'delete' as const,
+      selector: runRecord.selector,
+      expectedFingerprint: runRecord.fingerprint,
+    };
+    const runPreview = await store.previewPersistedMigration([runDelete]);
+    expect(runPreview.deletions).toEqual([
+      { selector: runRecord.selector, status: 'ready', reasons: [] },
+    ]);
+    await store.applyPersistedMigration({
+      entries: [runDelete],
+      reviewedManifestId: runPreview.manifestId,
+    });
+
+    const taskRecord = (
+      await store.inventoryPersistedRecords({ kind: 'task', limit: 1 })
+    ).records[0];
+    if (taskRecord?.selector === undefined) throw new Error('missing task');
+    const taskDelete = {
+      operation: 'delete' as const,
+      selector: taskRecord.selector,
+      expectedFingerprint: taskRecord.fingerprint,
+    };
+    const taskPreview = await store.previewPersistedMigration([taskDelete]);
+    expect(taskPreview.deletions).toEqual([
+      { selector: taskRecord.selector, status: 'ready', reasons: [] },
+    ]);
+  });
+
+  it('refuses pending outcomes without proof or a safe terminal identity chain', async () => {
+    const preview = async (input: {
+      readonly runState?: 'finished' | 'pending';
+      readonly activeRunId?: string;
+      readonly outboxTask?: { repo: string; issue: number };
+      readonly outboxKind?: 'dispatch-run' | 'report-outcome';
+      readonly failureProof?: false | 'malformed' | 'regressing' | 'offset';
+      readonly lease?: boolean;
+    }) => {
+      const store = new MemoryStore();
+      const task = {
+        task: { repo: 'octo/example', issue: 82 },
+        runCount: 1,
+        ...(input.activeRunId === undefined
+          ? {}
+          : { activeRunId: input.activeRunId }),
+        updatedAt: T,
+      };
+      const run = {
+        runId: 'octo/example#82/r1',
+        task: task.task,
+        state: input.runState ?? ('finished' as const),
+        pipeline: 'codex',
+        requestId: 'legacy-run',
+        leaseExpiresAt: T,
+        events: [],
+        createdAt: T,
+        updatedAt: T,
+      };
+      const outbox = {
+        entryId: `report/${run.runId}`,
+        kind: input.outboxKind ?? ('report-outcome' as const),
+        task: input.outboxTask ?? task.task,
+        runId: run.runId,
+        state: 'pending' as const,
+        attempts: 1,
+        ...(input.failureProof === false
+          ? {}
+          : input.failureProof === 'malformed'
+            ? {
+                firstFailedAt: 'not-a-timestamp',
+                nextAttemptAt: '2026-08-15T12:01:00.000Z',
+                deliveryFailures: 1,
+              }
+            : input.failureProof === 'regressing'
+              ? {
+                  firstFailedAt: '2026-08-15T12:01:00.000Z',
+                  nextAttemptAt: T,
+                  deliveryFailures: 1,
+                }
+              : input.failureProof === 'offset'
+                ? {
+                    firstFailedAt: '2026-08-15T12:00:00+00:00',
+                    nextAttemptAt: '2026-08-15T12:01:00+00:00',
+                    deliveryFailures: 1,
+                  }
+                : {
+                    firstFailedAt: T,
+                    nextAttemptAt: '2026-08-15T12:01:00.000Z',
+                    deliveryFailures: 1,
+                  }),
+        ...(input.lease
+          ? { claimId: 'migration-lease', leaseExpiresAt: T }
+          : {}),
+        createdAt: T,
+        updatedAt: T,
+      };
+      await store.apply({
+        decision: { task, run, outbox: [outbox] },
+        expectedRevision: undefined,
+      });
+      const record = (
+        await store.inventoryPersistedRecords({ kind: 'outbox', limit: 1 })
+      ).records[0];
+      if (record?.selector === undefined) throw new Error('missing outbox');
+      return store.previewPersistedMigration([
+        {
+          operation: 'delete',
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+        },
+      ]);
+    };
+
+    await expect(preview({ failureProof: false })).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-no-failure-proof']),
+        }),
+      ],
+    });
+    await expect(preview({ failureProof: 'malformed' })).resolves.toMatchObject(
+      {
+        deletions: [
+          expect.objectContaining({
+            status: 'blocked',
+            reasons: expect.arrayContaining(['outbox-no-failure-proof']),
+          }),
+        ],
+      },
+    );
+    await expect(
+      preview({ failureProof: 'regressing' }),
+    ).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-no-failure-proof']),
+        }),
+      ],
+    });
+    await expect(preview({ failureProof: 'offset' })).resolves.toMatchObject({
+      deletions: [expect.objectContaining({ status: 'ready', reasons: [] })],
+    });
+    await expect(preview({ lease: true })).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-lease-present']),
+        }),
+      ],
+    });
+    await expect(
+      preview({ outboxKind: 'dispatch-run' }),
+    ).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-not-report-outcome']),
+        }),
+      ],
+    });
+    await expect(preview({ runState: 'pending' })).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-run-not-terminal']),
+        }),
+      ],
+    });
+    await expect(
+      preview({ activeRunId: 'octo/example#82/r1' }),
+    ).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-parent-task-active']),
+        }),
+      ],
+    });
+    await expect(
+      preview({ outboxTask: { repo: 'octo/example', issue: 83 } }),
+    ).resolves.toMatchObject({
+      deletions: [
+        expect.objectContaining({
+          status: 'blocked',
+          reasons: expect.arrayContaining(['outbox-run-mismatch']),
+        }),
+      ],
+    });
+  });
 });

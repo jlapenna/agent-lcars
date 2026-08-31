@@ -758,6 +758,202 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       await firestore.terminate();
     });
 
+    it('applies the proved-undeliverable outcome rule through emulator transactions', async () => {
+      prefixCounter += 1;
+      const collectionPrefix = `orchestrator-migration-outcome-${Date.now()}-${prefixCounter}-`;
+      const store = new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+      const firestore = new Firestore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        host: emulatorHost ?? 'localhost:8080',
+        ssl: false,
+      });
+      const createCase = async (input: {
+        readonly issue: number;
+        readonly proof?: false | 'malformed' | 'regressing' | 'offset';
+        readonly runState?: 'finished' | 'pending';
+        readonly activeParent?: boolean;
+        readonly mismatchedOutboxTask?: boolean;
+        readonly lease?: boolean;
+        readonly parentAbsent?: boolean;
+      }) => {
+        const task = { repo: 'octo/example', issue: input.issue } as const;
+        const runId = `octo/example#${input.issue}/r1`;
+        const entryId = `report/${runId}`;
+        if (!input.parentAbsent) {
+          await firestore
+            .collection(`${collectionPrefix}tasks`)
+            .doc(encodeURIComponent(taskKey(task)))
+            .set({
+              task: {
+                task,
+                runCount: 1,
+                ...(input.activeParent ? { activeRunId: runId } : {}),
+                updatedAt: T,
+              },
+              revision: 1,
+            });
+        }
+        await firestore
+          .collection(`${collectionPrefix}runs`)
+          .doc(encodeURIComponent(runId))
+          .set({
+            runId,
+            task,
+            state: input.runState ?? 'finished',
+            pipeline: 'codex',
+            requestId: 'legacy',
+            leaseExpiresAt: T,
+            events: [],
+            createdAt: T,
+            updatedAt: T,
+          });
+        await firestore
+          .collection(`${collectionPrefix}outbox`)
+          .doc(encodeURIComponent(entryId))
+          .set({
+            entryId,
+            kind: 'report-outcome',
+            task: input.mismatchedOutboxTask
+              ? { repo: 'octo/example', issue: input.issue + 100 }
+              : task,
+            runId,
+            state: 'pending',
+            attempts: 1,
+            ...(input.proof === false
+              ? {}
+              : input.proof === 'malformed'
+                ? {
+                    firstFailedAt: 'not-a-timestamp',
+                    nextAttemptAt: '2026-08-15T12:01:00.000Z',
+                    deliveryFailures: 1,
+                  }
+                : input.proof === 'regressing'
+                  ? {
+                      firstFailedAt: '2026-08-15T12:01:00.000Z',
+                      nextAttemptAt: T,
+                      deliveryFailures: 1,
+                    }
+                  : input.proof === 'offset'
+                    ? {
+                        firstFailedAt: '2026-08-15T12:00:00+00:00',
+                        nextAttemptAt: '2026-08-15T12:01:00+00:00',
+                        deliveryFailures: 1,
+                      }
+                    : {
+                        firstFailedAt: T,
+                        nextAttemptAt: '2026-08-15T12:01:00.000Z',
+                        deliveryFailures: 1,
+                      }),
+            ...(input.lease
+              ? { claimId: 'migration-lease', leaseExpiresAt: T }
+              : {}),
+            createdAt: T,
+            updatedAt: T,
+          });
+        return { task, runId, entryId };
+      };
+      const ready = await createCase({ issue: 91 });
+      const noProof = await createCase({ issue: 92, proof: false });
+      const liveRun = await createCase({ issue: 93, runState: 'pending' });
+      const activeParent = await createCase({ issue: 94, activeParent: true });
+      const malformedIdentity = await createCase({
+        issue: 95,
+        mismatchedOutboxTask: true,
+      });
+      const malformedProof = await createCase({
+        issue: 96,
+        proof: 'malformed',
+      });
+      const regressingProof = await createCase({
+        issue: 97,
+        proof: 'regressing',
+      });
+      const offsetProof = await createCase({ issue: 98, proof: 'offset' });
+      const leased = await createCase({ issue: 99, lease: true });
+      const absentParent = await createCase({ issue: 100, parentAbsent: true });
+
+      const page = await store.inventoryPersistedRecords({
+        kind: 'outbox',
+        limit: 10,
+      });
+      const entryFor = (entryId: string) => {
+        const record = page.records.find(
+          (candidate) =>
+            candidate.selector?.kind === 'outbox' &&
+            'entryId' in candidate.selector &&
+            candidate.selector.entryId === entryId,
+        );
+        if (record?.selector === undefined) throw new Error('missing outbox');
+        return {
+          operation: 'delete' as const,
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+        };
+      };
+
+      const readyEntry = entryFor(ready.entryId);
+      await expect(
+        store.previewPersistedMigration([readyEntry]),
+      ).resolves.toMatchObject({
+        deletions: [
+          { selector: readyEntry.selector, status: 'ready', reasons: [] },
+        ],
+      });
+      await expect(
+        store.previewPersistedMigration([entryFor(absentParent.entryId)]),
+      ).resolves.toMatchObject({
+        deletions: [expect.objectContaining({ status: 'ready', reasons: [] })],
+      });
+      for (const [entry, reason] of [
+        [entryFor(noProof.entryId), 'outbox-no-failure-proof'],
+        [entryFor(liveRun.entryId), 'outbox-run-not-terminal'],
+        [entryFor(activeParent.entryId), 'outbox-parent-task-active'],
+        [entryFor(malformedIdentity.entryId), 'outbox-run-mismatch'],
+        [entryFor(malformedProof.entryId), 'outbox-no-failure-proof'],
+        [entryFor(regressingProof.entryId), 'outbox-no-failure-proof'],
+        [entryFor(leased.entryId), 'outbox-lease-present'],
+      ] as const) {
+        await expect(
+          store.previewPersistedMigration([entry]),
+        ).resolves.toMatchObject({
+          deletions: [
+            expect.objectContaining({
+              status: 'blocked',
+              reasons: expect.arrayContaining([reason]),
+            }),
+          ],
+        });
+      }
+
+      await expect(
+        store.previewPersistedMigration([entryFor(offsetProof.entryId)]),
+      ).resolves.toMatchObject({
+        deletions: [expect.objectContaining({ status: 'ready', reasons: [] })],
+      });
+
+      const preview = await store.previewPersistedMigration([readyEntry]);
+      await store.applyPersistedMigration({
+        entries: [readyEntry],
+        reviewedManifestId: preview.manifestId,
+      });
+      expect(
+        (
+          await firestore
+            .collection(`${collectionPrefix}outbox`)
+            .doc(encodeURIComponent(ready.entryId))
+            .get()
+        ).exists,
+      ).toBe(false);
+      expect(await store.readRun(ready.runId)).toBeDefined();
+      await firestore.terminate();
+    });
+
     it('keeps full-width Firestore int64 values distinct for stale manifests', async () => {
       prefixCounter += 1;
       const prefix = `orchestrator-migration-int64-${Date.now()}-${prefixCounter}-`;

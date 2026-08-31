@@ -37,14 +37,20 @@ missing `consecutiveLost`, historical `infra` events, and retired top-level
 fields) as well as meaningful optional field absences in Task, Run, and Outbox
 records. Optional findings are census evidence, not permission to invent
 values. An operator must review each full replacement outside the inventory
-response and submit the exact typed manifest. A deletion is permitted only for
-a record with a compatibility finding, never an optional-only finding. The
-application rechecks its safety predicates inside the apply transaction: a Run
-is terminal, has no active (or malformed) existing parent Task, and has no
-pending or leased Outbox dependency; a Task has no active run and no child Run;
-and an Outbox entry is terminal (`done` or `failed`). Run dependency reads stop
-at three and Task child-run reads at one; reaching either bound refuses the
-deletion rather than broadening the operation.
+response and submit the exact typed manifest. A deletion is normally permitted
+only for a record with a compatibility finding: a Run is terminal, has no active
+(or malformed) existing parent Task, and has no pending or leased Outbox
+dependency; a Task has no active run and no child Run; and an Outbox entry is
+terminal (`done` or `failed`). The sole temporary exception is an optional-only
+pending `report-outcome` Outbox entry that already has proof of an actual failed
+delivery (valid `firstFailedAt`, a positive `deliveryFailures`, and a coherent
+`nextAttemptAt`), has no lease, and points to a matching terminal compatibility
+Run with an absent or minimally valid inactive matching parent Task. That
+exception is migration cleanup only; it does not alter normal outbox retry or
+72-hour retirement behavior. All of those records are re-read inside the apply
+transaction before any delete. Run dependency reads stop at three and Task
+child-run reads at one; reaching either bound refuses the deletion rather than
+broadening the operation.
 
 Do not run an apply during phase 1. After deployment approval, perform two
 complete, back-to-back inventory passes during a quiescent maintenance window;
