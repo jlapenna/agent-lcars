@@ -3,6 +3,7 @@ import {
   PERSISTED_MIGRATION_FINDINGS_MAX,
   PERSISTED_MIGRATION_MANIFEST_MAX,
   PERSISTED_MIGRATION_PAGE_MAX,
+  persistedMigrationDeleteBlockReasonSchema,
   persistedMigrationEntrySchema,
   persistedRecordFindingCodeSchema,
   persistedRecordKindSchema,
@@ -28,6 +29,18 @@ const inventoryRecordSchema = z.strictObject({
   findingsTruncated: z.boolean(),
   findings: z.array(findingSchema).max(PERSISTED_MIGRATION_FINDINGS_MAX),
 });
+const deletionReadinessSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    selector: persistedRecordSelectorSchema,
+    status: z.literal('ready'),
+    reasons: z.array(persistedMigrationDeleteBlockReasonSchema).length(0),
+  }),
+  z.strictObject({
+    selector: persistedRecordSelectorSchema,
+    status: z.literal('blocked'),
+    reasons: z.array(persistedMigrationDeleteBlockReasonSchema).min(1).max(15),
+  }),
+]);
 const anchorProjectionComparisonSchema = z.strictObject({
   currentQueue: z.number().int().nonnegative(),
   projectedQueue: z.number().int().nonnegative(),
@@ -107,7 +120,9 @@ export const orchestratorMigrationContract = {
         description:
           'Dry-run is the default. Apply requires the digest returned by a ' +
           'previous preview and the exact confirmation string; records are ' +
-          're-read transactionally before the fixed replacements are written.',
+          're-read transactionally before fixed replacements are written or ' +
+          'a value-free delete is accepted. Delete readiness reports only ' +
+          'the supplied selector and closed safety reasons.',
       }),
     )
     .errors({
@@ -129,6 +144,9 @@ export const orchestratorMigrationContract = {
         mode: z.enum(['dry-run', 'apply']),
         manifestId: z.string().length(64),
         entries: z.number().int().positive(),
+        deletions: z
+          .array(deletionReadinessSchema)
+          .max(PERSISTED_MIGRATION_MANIFEST_MAX),
       }),
     ),
   projectionReconcile: base

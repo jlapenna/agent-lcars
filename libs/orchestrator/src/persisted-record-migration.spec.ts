@@ -272,6 +272,10 @@ describe('reviewed persisted-record manifest', () => {
     } as const;
     const preview = await store.previewPersistedMigration([entry]);
     expect(preview.manifestId).toBe(manifestId([entry]));
+    expect(preview.deletions).toEqual([]);
+    await expect(
+      store.previewPersistedMigration([{ ...entry, operation: 'replace' }]),
+    ).resolves.toMatchObject({ deletions: [] });
     await expect(
       store.applyPersistedMigration({
         entries: [entry],
@@ -285,6 +289,195 @@ describe('reviewed persisted-record manifest', () => {
     expect((await store.readTask(task.task))?.task).toMatchObject({
       consecutiveLost: 0,
       work: { migration: 'reviewed' },
+    });
+  });
+
+  it('deletes only reviewed terminal compatibility records with bounded dependencies', async () => {
+    const store = new MemoryStore();
+    const task = {
+      task: { repo: 'octo/example', issue: 71 },
+      runCount: 1,
+      updatedAt: T,
+    };
+    const run = {
+      runId: 'octo/example#71/r1',
+      task: task.task,
+      state: 'lost' as const,
+      pipeline: 'codex',
+      requestId: 'legacy-run',
+      leaseExpiresAt: T,
+      events: [],
+      createdAt: T,
+      updatedAt: T,
+    };
+    const pending = {
+      entryId: `dispatch/${run.runId}`,
+      kind: 'dispatch-run' as const,
+      task: task.task,
+      runId: run.runId,
+      state: 'pending' as const,
+      attempts: 0,
+      createdAt: T,
+      updatedAt: T,
+    };
+    await store.apply({
+      decision: { task, run, outbox: [pending] },
+      expectedRevision: undefined,
+    });
+    const record = (
+      await store.inventoryPersistedRecords({ kind: 'run', limit: 1 })
+    ).records[0];
+    if (record?.selector?.kind !== 'run' || !('runId' in record.selector)) {
+      throw new Error('missing run inventory selector');
+    }
+    const entry = {
+      operation: 'delete' as const,
+      selector: record.selector,
+      expectedFingerprint: record.fingerprint,
+    };
+    const blocked = await store.previewPersistedMigration([entry]);
+    expect(blocked.deletions).toEqual([
+      expect.objectContaining({
+        selector: record.selector,
+        status: 'blocked',
+        reasons: expect.arrayContaining(['pending-outbox']),
+      }),
+    ]);
+
+    const taskBeforeRunDelete = (
+      await store.inventoryPersistedRecords({ kind: 'task', limit: 1 })
+    ).records[0];
+    if (
+      taskBeforeRunDelete?.selector?.kind !== 'task' ||
+      !('task' in taskBeforeRunDelete.selector)
+    ) {
+      throw new Error('missing task inventory selector');
+    }
+    const childRunBlocked = await store.previewPersistedMigration([
+      {
+        operation: 'delete',
+        selector: taskBeforeRunDelete.selector,
+        expectedFingerprint: taskBeforeRunDelete.fingerprint,
+      },
+    ]);
+    expect(childRunBlocked.deletions[0]).toMatchObject({
+      status: 'blocked',
+      reasons: expect.arrayContaining(['child-run-present']),
+    });
+
+    const current = await store.readTask(task.task);
+    if (current === undefined) throw new Error('missing task');
+    await store.apply({
+      decision: { task: current.task, outbox: [{ ...pending, state: 'done' }] },
+      expectedRevision: current.revision,
+    });
+    const ready = await store.previewPersistedMigration([entry]);
+    expect(ready.deletions).toEqual([
+      { selector: record.selector, status: 'ready', reasons: [] },
+    ]);
+    await store.applyPersistedMigration({
+      entries: [entry],
+      reviewedManifestId: ready.manifestId,
+    });
+    expect(await store.readRun(run.runId)).toBeUndefined();
+
+    const taskRecord = (
+      await store.inventoryPersistedRecords({ kind: 'task', limit: 1 })
+    ).records[0];
+    if (
+      taskRecord?.selector?.kind !== 'task' ||
+      !('task' in taskRecord.selector)
+    ) {
+      throw new Error('missing task inventory selector');
+    }
+    const taskDelete = {
+      operation: 'delete' as const,
+      selector: taskRecord.selector,
+      expectedFingerprint: taskRecord.fingerprint,
+    };
+    const taskPreview = await store.previewPersistedMigration([taskDelete]);
+    expect(taskPreview.deletions).toEqual([
+      { selector: taskRecord.selector, status: 'ready', reasons: [] },
+    ]);
+    await store.applyPersistedMigration({
+      entries: [taskDelete],
+      reviewedManifestId: taskPreview.manifestId,
+    });
+    expect(await store.readTask(task.task)).toBeUndefined();
+  });
+
+  it('refuses optional-only outbox records and a saturated run dependency bound', async () => {
+    const store = new MemoryStore();
+    const task = {
+      task: { repo: 'octo/example', issue: 72 },
+      runCount: 1,
+      updatedAt: T,
+    };
+    const run = {
+      runId: 'octo/example#72/r1',
+      task: task.task,
+      state: 'finished' as const,
+      pipeline: 'codex',
+      requestId: 'legacy-run',
+      leaseExpiresAt: T,
+      events: [],
+      createdAt: T,
+      updatedAt: T,
+    };
+    const dependencies = [0, 1, 2].map((index) => ({
+      entryId: `report/${run.runId}/${index}`,
+      kind: 'report-outcome' as const,
+      task: task.task,
+      runId: run.runId,
+      state: 'done' as const,
+      attempts: 0,
+      createdAt: T,
+      updatedAt: T,
+    }));
+    await store.apply({
+      decision: { task, run, outbox: dependencies },
+      expectedRevision: undefined,
+    });
+    const runRecord = (
+      await store.inventoryPersistedRecords({ kind: 'run', limit: 1 })
+    ).records[0];
+    if (
+      runRecord?.selector?.kind !== 'run' ||
+      !('runId' in runRecord.selector)
+    ) {
+      throw new Error('missing run inventory selector');
+    }
+    const runPreview = await store.previewPersistedMigration([
+      {
+        operation: 'delete',
+        selector: runRecord.selector,
+        expectedFingerprint: runRecord.fingerprint,
+      },
+    ]);
+    expect(runPreview.deletions[0]).toMatchObject({
+      status: 'blocked',
+      reasons: expect.arrayContaining(['outbox-dependency-over-limit']),
+    });
+
+    const outboxRecord = (
+      await store.inventoryPersistedRecords({ kind: 'outbox', limit: 1 })
+    ).records[0];
+    if (
+      outboxRecord?.selector?.kind !== 'outbox' ||
+      !('entryId' in outboxRecord.selector)
+    ) {
+      throw new Error('missing outbox inventory selector');
+    }
+    const outboxPreview = await store.previewPersistedMigration([
+      {
+        operation: 'delete',
+        selector: outboxRecord.selector,
+        expectedFingerprint: outboxRecord.fingerprint,
+      },
+    ]);
+    expect(outboxPreview.deletions[0]).toMatchObject({
+      status: 'blocked',
+      reasons: ['no-compatibility-finding'],
     });
   });
 });

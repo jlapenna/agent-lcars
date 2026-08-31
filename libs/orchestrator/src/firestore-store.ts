@@ -4,6 +4,7 @@ import {
   FieldPath,
   FieldValue,
   Firestore,
+  type Transaction,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
@@ -20,9 +21,11 @@ import {
   parsePersistedRun,
   type RequestSource,
   type Run,
+  RUN_ID_MAX_LENGTH,
   runStateSchema,
   taskDocumentSchema,
   type TaskId,
+  taskIdSchema,
   taskKey,
 } from './model';
 import {
@@ -31,10 +34,14 @@ import {
   encodePersistedMigrationCursor,
   fingerprint,
   inventoryPersistedRecord,
+  isPersistedMigrationDeleteEntry,
   manifestId,
   PERSISTED_MIGRATION_PAGE_MAX,
   PersistedMigrationConflict,
   PersistedMigrationCursorError,
+  type PersistedMigrationDeleteBlockReason,
+  type PersistedMigrationDeleteEntry,
+  type PersistedMigrationDeleteReadiness,
   type PersistedMigrationEntry,
   type PersistedMigrationPreview,
   type PersistedRecordKind,
@@ -80,6 +87,84 @@ function normalizeFirestoreIntegerValues(value: unknown): unknown {
     );
   }
   return value;
+}
+
+interface PersistedMigrationDeleteReads {
+  readonly parentTask: (task: TaskId) => Promise<unknown | undefined>;
+  readonly hasChildRun: (task: TaskId) => Promise<boolean>;
+  readonly outboxDependencies: (runId: string) => Promise<{
+    readonly pending: boolean;
+    readonly leased: boolean;
+    /** The third match makes any additional outbox dependency unknowable
+     * without widening this one-shot bounded operation. */
+    readonly limitReached: boolean;
+  }>;
+}
+
+const migrationRunIdSchema = z.string().min(1).max(RUN_ID_MAX_LENGTH);
+const migrationRunSafetySchema = z
+  .object({
+    runId: migrationRunIdSchema,
+    task: taskIdSchema,
+    state: runStateSchema,
+  })
+  .strip();
+const migrationTaskSafetySchema = z
+  .object({
+    task: z
+      .object({
+        task: taskIdSchema,
+        activeRunId: migrationRunIdSchema.optional(),
+      })
+      .strip(),
+  })
+  .strip();
+const migrationOutboxSafetySchema = z
+  .object({
+    entryId: z.string().min(1),
+    task: taskIdSchema,
+    runId: migrationRunIdSchema,
+    state: z.enum(['pending', 'leased', 'done', 'failed']),
+  })
+  .strip();
+
+function selectorMatchesTask(
+  selector: PersistedRecordSelector,
+  task: TaskId,
+): boolean {
+  if ('address' in selector) {
+    return (
+      decodePersistedMigrationAddress(selector.address, 'task') ===
+      encodeURIComponent(taskKey(task))
+    );
+  }
+  return selector.kind === 'task' && taskKey(selector.task) === taskKey(task);
+}
+
+function selectorMatchesRun(
+  selector: PersistedRecordSelector,
+  runId: string,
+): boolean {
+  if ('address' in selector) {
+    return (
+      decodePersistedMigrationAddress(selector.address, 'run') ===
+      encodeURIComponent(runId)
+    );
+  }
+  return selector.kind === 'run' && selector.runId === runId;
+}
+
+function selectorMatchesOutbox(
+  selector: PersistedRecordSelector,
+  entryId: string,
+): boolean {
+  if ('address' in selector) {
+    return (
+      decodePersistedMigrationAddress(selector.address, 'outbox') ===
+      encodeURIComponent(entryId)
+    );
+  }
+  return selector.kind === 'outbox' && selector.entryId === entryId;
 }
 
 export interface FirestoreStoreOptions {
@@ -697,7 +782,21 @@ export class FirestoreStore implements OrchestratorStore {
     entries: readonly PersistedMigrationEntry[],
   ): Promise<PersistedMigrationPreview> {
     const validated = validateManifest(entries);
-    return { manifestId: manifestId(validated), entries: validated.length };
+    const deletions = await Promise.all(
+      validated.filter(isPersistedMigrationDeleteEntry).map(async (entry) => {
+        const snapshot = await this.#migrationRef(entry.selector).get();
+        return this.#deleteReadiness(
+          entry,
+          snapshot.exists ? snapshot.data() : undefined,
+          this.#migrationDeleteReads(),
+        );
+      }),
+    );
+    return {
+      manifestId: manifestId(validated),
+      entries: validated.length,
+      deletions,
+    };
   }
 
   async applyPersistedMigration(input: {
@@ -711,39 +810,197 @@ export class FirestoreStore implements OrchestratorStore {
         'reviewed manifest id does not match the submitted entries',
       );
     }
-    await this.#migrationFirestore.runTransaction(async (tx) => {
-      // Read every fixed manifest target first. Firestore retries the whole
-      // transaction on a concurrent write; each retry compares the current
-      // raw fingerprint before any write, so no reviewed replacement can
-      // overwrite a record changed after the inventory.
-      const snapshots = await Promise.all(
-        entries.map((entry) => tx.get(this.#migrationRef(entry.selector))),
+    const deletions = await this.#migrationFirestore.runTransaction(
+      async (tx) => {
+        // Read every fixed manifest target first. Firestore retries the whole
+        // transaction on a concurrent write; each retry compares the current
+        // raw fingerprint before any write, so no reviewed replacement can
+        // overwrite a record changed after the inventory.
+        const snapshots = await Promise.all(
+          entries.map((entry) => tx.get(this.#migrationRef(entry.selector))),
+        );
+        for (const [index, snapshot] of snapshots.entries()) {
+          const entry = entries[index];
+          if (entry === undefined) throw new Error('missing manifest entry');
+          if (!snapshot.exists) {
+            throw new PersistedMigrationConflict(
+              `persisted ${entry.selector.kind} record disappeared`,
+            );
+          }
+          if (fingerprint(snapshot.data()) !== entry.expectedFingerprint) {
+            throw new PersistedMigrationConflict(
+              `persisted ${entry.selector.kind} record changed after inventory`,
+            );
+          }
+        }
+        const deletions = await Promise.all(
+          entries.map(async (entry, index) => {
+            if (!isPersistedMigrationDeleteEntry(entry)) return undefined;
+            const snapshot = snapshots[index];
+            if (snapshot === undefined)
+              throw new Error('missing manifest entry');
+            return this.#deleteReadiness(
+              entry,
+              snapshot.data(),
+              this.#migrationDeleteReads(tx),
+            );
+          }),
+        );
+        for (const readiness of deletions) {
+          if (readiness?.status === 'blocked') {
+            throw new PersistedMigrationConflict(
+              `persisted ${readiness.selector.kind} deletion is blocked: ${readiness.reasons.join(',')}`,
+            );
+          }
+        }
+        for (const entry of entries) {
+          if (isPersistedMigrationDeleteEntry(entry)) {
+            tx.delete(this.#migrationRef(entry.selector));
+          } else {
+            tx.set(this.#migrationRef(entry.selector), entry.replacement);
+          }
+        }
+        return deletions.filter(
+          (readiness): readiness is PersistedMigrationDeleteReadiness =>
+            readiness !== undefined,
+        );
+      },
+    );
+    return { manifestId: id, entries: entries.length, deletions };
+  }
+
+  #migrationDeleteReads(tx?: Transaction): PersistedMigrationDeleteReads {
+    return {
+      parentTask: async (task: TaskId): Promise<unknown | undefined> => {
+        const ref = this.#migrationTasks.doc(encodeURIComponent(taskKey(task)));
+        const snapshot = tx === undefined ? await ref.get() : await tx.get(ref);
+        return snapshot.exists ? snapshot.data() : undefined;
+      },
+      hasChildRun: async (task: TaskId): Promise<boolean> => {
+        const snapshot =
+          tx === undefined
+            ? await this.#migrationRunsForTask(task).limit(1).get()
+            : await tx.get(this.#migrationRunsForTask(task).limit(1));
+        return !snapshot.empty;
+      },
+      outboxDependencies: async (runId: string) => {
+        const query = this.#migrationOutbox
+          .where('runId', '==', runId)
+          .limit(3);
+        const snapshot =
+          tx === undefined ? await query.get() : await tx.get(query);
+        const states = snapshot.docs.map((document) => document.get('state'));
+        return {
+          pending: states.includes('pending'),
+          leased: states.includes('leased'),
+          limitReached: snapshot.size === 3,
+        };
+      },
+    };
+  }
+
+  async #deleteReadiness(
+    entry: PersistedMigrationDeleteEntry,
+    current: unknown | undefined,
+    reads: PersistedMigrationDeleteReads,
+  ): Promise<PersistedMigrationDeleteReadiness> {
+    const reasons: PersistedMigrationDeleteBlockReason[] = [];
+    if (current === undefined) {
+      reasons.push('target-missing');
+    } else if (fingerprint(current) !== entry.expectedFingerprint) {
+      reasons.push('target-changed');
+    } else if (
+      !inventoryPersistedRecord(
+        entry.selector.kind,
+        normalizeFirestoreIntegerValues(current),
+      ).findings.some((finding) => finding.class === 'compatibility')
+    ) {
+      reasons.push('no-compatibility-finding');
+    }
+
+    if (current !== undefined && entry.selector.kind === 'run') {
+      const parsed = migrationRunSafetySchema.safeParse(
+        normalizeFirestoreIntegerValues(current),
       );
-      for (const [index, snapshot] of snapshots.entries()) {
-        const entry = entries[index];
-        if (entry === undefined) throw new Error('missing manifest entry');
-        if (!snapshot.exists) {
-          throw new PersistedMigrationConflict(
-            `persisted ${entry.selector.kind} record disappeared`,
-          );
+      if (!parsed.success) {
+        reasons.push('invalid-run');
+      } else if (!selectorMatchesRun(entry.selector, parsed.data.runId)) {
+        reasons.push('invalid-run');
+      } else {
+        const run = parsed.data;
+        if (isLive(run.state)) reasons.push('run-not-terminal');
+        const parent = await reads.parentTask(run.task);
+        const parentTask =
+          parent === undefined
+            ? undefined
+            : migrationTaskSafetySchema.safeParse(
+                normalizeFirestoreIntegerValues(parent),
+              );
+        if (parentTask !== undefined && !parentTask.success) {
+          reasons.push('invalid-parent-task');
+        } else if (parentTask?.data.task.activeRunId !== undefined) {
+          reasons.push('parent-task-active');
         }
-        if (fingerprint(snapshot.data()) !== entry.expectedFingerprint) {
-          throw new PersistedMigrationConflict(
-            `persisted ${entry.selector.kind} record changed after inventory`,
-          );
+        const outbox = await reads.outboxDependencies(run.runId);
+        if (outbox.pending) {
+          reasons.push('pending-outbox');
         }
+        if (outbox.leased) {
+          reasons.push('leased-outbox');
+        }
+        if (outbox.limitReached) reasons.push('outbox-dependency-over-limit');
       }
-      for (const entry of entries) {
-        tx.set(this.#migrationRef(entry.selector), entry.replacement);
+    }
+
+    if (current !== undefined && entry.selector.kind === 'task') {
+      const parsed = migrationTaskSafetySchema.safeParse(
+        normalizeFirestoreIntegerValues(current),
+      );
+      if (!parsed.success) {
+        reasons.push('invalid-task');
+      } else if (!selectorMatchesTask(entry.selector, parsed.data.task.task)) {
+        reasons.push('invalid-task');
+      } else {
+        const task = parsed.data.task;
+        if (task.activeRunId !== undefined) reasons.push('task-active');
+        if (await reads.hasChildRun(task.task))
+          reasons.push('child-run-present');
       }
-    });
-    return { manifestId: id, entries: entries.length };
+    }
+
+    if (current !== undefined && entry.selector.kind === 'outbox') {
+      const parsed = migrationOutboxSafetySchema.safeParse(
+        normalizeFirestoreIntegerValues(current),
+      );
+      if (!parsed.success) {
+        reasons.push('invalid-outbox');
+      } else if (!selectorMatchesOutbox(entry.selector, parsed.data.entryId)) {
+        reasons.push('invalid-outbox');
+      } else if (
+        parsed.data.state !== 'done' &&
+        parsed.data.state !== 'failed'
+      ) {
+        reasons.push('outbox-not-terminal');
+      }
+    }
+
+    return reasons.length === 0
+      ? { selector: entry.selector, status: 'ready', reasons: [] }
+      : { selector: entry.selector, status: 'blocked', reasons };
   }
 
   #migrationCollectionFor(kind: PersistedRecordKind): CollectionReference {
     if (kind === 'task') return this.#migrationTasks;
     if (kind === 'run') return this.#migrationRuns;
     return this.#migrationOutbox;
+  }
+
+  #migrationRunsForTask(id: TaskId) {
+    return isWorkAnchor(id)
+      ? this.#migrationRuns.where('task.workId', '==', id.workId)
+      : this.#migrationRuns
+          .where('task.repo', '==', id.repo)
+          .where('task.issue', '==', id.issue);
   }
 
   #migrationRef(selector: PersistedRecordSelector): DocumentReference {

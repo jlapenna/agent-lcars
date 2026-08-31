@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import { type Decision, isRefusal, type Refusal } from './decide';
 import type {
   GithubAnchorProjection,
@@ -14,6 +16,9 @@ import {
   isLive,
   isWorkAnchor,
   requestHistoryKey,
+  RUN_ID_MAX_LENGTH,
+  runStateSchema,
+  taskIdSchema,
   taskKey,
 } from './model';
 import {
@@ -22,10 +27,14 @@ import {
   encodePersistedMigrationCursor,
   fingerprint,
   inventoryPersistedRecord,
+  isPersistedMigrationDeleteEntry,
   manifestId,
   PERSISTED_MIGRATION_PAGE_MAX,
   PersistedMigrationConflict,
   PersistedMigrationCursorError,
+  type PersistedMigrationDeleteBlockReason,
+  type PersistedMigrationDeleteEntry,
+  type PersistedMigrationDeleteReadiness,
   type PersistedMigrationEntry,
   type PersistedMigrationPreview,
   type PersistedRecordKind,
@@ -40,6 +49,72 @@ import {
   type TaskListCursor,
   type VersionedTask,
 } from './store';
+
+const migrationRunIdSchema = z.string().min(1).max(RUN_ID_MAX_LENGTH);
+const migrationRunSafetySchema = z
+  .object({
+    runId: migrationRunIdSchema,
+    task: taskIdSchema,
+    state: runStateSchema,
+  })
+  .strip();
+const migrationTaskSafetySchema = z
+  .object({
+    task: z
+      .object({
+        task: taskIdSchema,
+        activeRunId: migrationRunIdSchema.optional(),
+      })
+      .strip(),
+  })
+  .strip();
+const migrationOutboxSafetySchema = z
+  .object({
+    entryId: z.string().min(1),
+    task: taskIdSchema,
+    runId: migrationRunIdSchema,
+    state: z.enum(['pending', 'leased', 'done', 'failed']),
+  })
+  .strip();
+
+function selectorMatchesTask(
+  selector: PersistedRecordSelector,
+  task: TaskId,
+): boolean {
+  if ('address' in selector) {
+    return (
+      decodePersistedMigrationAddress(selector.address, 'task') ===
+      encodeURIComponent(taskKey(task))
+    );
+  }
+  return selector.kind === 'task' && taskKey(selector.task) === taskKey(task);
+}
+
+function selectorMatchesRun(
+  selector: PersistedRecordSelector,
+  runId: string,
+): boolean {
+  if ('address' in selector) {
+    return (
+      decodePersistedMigrationAddress(selector.address, 'run') ===
+      encodeURIComponent(runId)
+    );
+  }
+  return selector.kind === 'run' && selector.runId === runId;
+}
+
+function selectorMatchesOutbox(
+  selector: PersistedRecordSelector,
+  entryId: string,
+): boolean {
+  if ('address' in selector) {
+    return (
+      decodePersistedMigrationAddress(selector.address, 'outbox') ===
+      encodeURIComponent(entryId)
+    );
+  }
+  return selector.kind === 'outbox' && selector.entryId === entryId;
+}
 
 /** Reference implementation; also the test double. */
 export class MemoryStore implements OrchestratorStore {
@@ -480,7 +555,15 @@ export class MemoryStore implements OrchestratorStore {
     entries: readonly PersistedMigrationEntry[],
   ): Promise<PersistedMigrationPreview> {
     const validated = validateManifest(entries);
-    return { manifestId: manifestId(validated), entries: validated.length };
+    return {
+      manifestId: manifestId(validated),
+      entries: validated.length,
+      deletions: validated
+        .filter(isPersistedMigrationDeleteEntry)
+        .map((entry) =>
+          this.#deleteReadiness(entry, this.#migrationValue(entry.selector)),
+        ),
+    };
   }
 
   async applyPersistedMigration(input: {
@@ -498,6 +581,7 @@ export class MemoryStore implements OrchestratorStore {
     // in-memory equivalent of FirestoreStore's all-reads-before-writes
     // transaction. This makes the reference store useful for dry-run and
     // conflict tests without widening its normal API.
+    const deletions: PersistedMigrationDeleteReadiness[] = [];
     for (const entry of entries) {
       const current = this.#migrationValue(entry.selector);
       if (current === undefined) {
@@ -510,9 +594,115 @@ export class MemoryStore implements OrchestratorStore {
           `persisted ${entry.selector.kind} record changed after inventory`,
         );
       }
+      if (isPersistedMigrationDeleteEntry(entry)) {
+        const readiness = this.#deleteReadiness(entry, current);
+        deletions.push(readiness);
+        if (readiness.status === 'blocked') {
+          throw new PersistedMigrationConflict(
+            `persisted ${entry.selector.kind} deletion is blocked: ${readiness.reasons.join(',')}`,
+          );
+        }
+      }
     }
-    for (const entry of entries) this.#setMigrationValue(entry);
-    return { manifestId: id, entries: entries.length };
+    for (const entry of entries) {
+      if (isPersistedMigrationDeleteEntry(entry)) {
+        this.#deleteMigrationValue(entry);
+      } else {
+        this.#setMigrationValue(entry);
+      }
+    }
+    return { manifestId: id, entries: entries.length, deletions };
+  }
+
+  #deleteReadiness(
+    entry: PersistedMigrationDeleteEntry,
+    current: TaskDocument | Run | OutboxEntry | undefined,
+  ): PersistedMigrationDeleteReadiness {
+    const reasons: PersistedMigrationDeleteBlockReason[] = [];
+    if (current === undefined) {
+      reasons.push('target-missing');
+    } else if (fingerprint(current) !== entry.expectedFingerprint) {
+      reasons.push('target-changed');
+    } else if (
+      !inventoryPersistedRecord(entry.selector.kind, current).findings.some(
+        (finding) => finding.class === 'compatibility',
+      )
+    ) {
+      reasons.push('no-compatibility-finding');
+    }
+
+    if (current !== undefined && entry.selector.kind === 'run') {
+      const parsed = migrationRunSafetySchema.safeParse(current);
+      if (!parsed.success) {
+        reasons.push('invalid-run');
+      } else if (!selectorMatchesRun(entry.selector, parsed.data.runId)) {
+        reasons.push('invalid-run');
+      } else {
+        const run = parsed.data;
+        if (isLive(run.state)) reasons.push('run-not-terminal');
+        const parent = this.#tasks.get(taskKey(run.task));
+        const parentSafety =
+          parent === undefined
+            ? undefined
+            : migrationTaskSafetySchema.safeParse(parent);
+        if (parentSafety !== undefined && !parentSafety.success) {
+          reasons.push('invalid-parent-task');
+        } else if (parentSafety?.data.task.activeRunId !== undefined) {
+          reasons.push('parent-task-active');
+        }
+        const dependencies: OutboxEntry[] = [];
+        for (const candidate of this.#outbox.values()) {
+          if (candidate.runId !== run.runId) continue;
+          dependencies.push(candidate);
+          if (dependencies.length === 3) break;
+        }
+        const outboxStates = new Set(
+          dependencies.map((candidate) => candidate.state),
+        );
+        if (outboxStates.has('pending')) reasons.push('pending-outbox');
+        if (outboxStates.has('leased')) reasons.push('leased-outbox');
+        if (dependencies.length === 3) {
+          reasons.push('outbox-dependency-over-limit');
+        }
+      }
+    }
+
+    if (current !== undefined && entry.selector.kind === 'task') {
+      const parsed = migrationTaskSafetySchema.safeParse(current);
+      if (!parsed.success) {
+        reasons.push('invalid-task');
+      } else if (!selectorMatchesTask(entry.selector, parsed.data.task.task)) {
+        reasons.push('invalid-task');
+      } else {
+        const task = parsed.data.task;
+        if (task.activeRunId !== undefined) reasons.push('task-active');
+        if (
+          [...this.#runs.values()].some(
+            (run) => taskKey(run.task) === taskKey(task.task),
+          )
+        ) {
+          reasons.push('child-run-present');
+        }
+      }
+    }
+
+    if (current !== undefined && entry.selector.kind === 'outbox') {
+      const parsed = migrationOutboxSafetySchema.safeParse(current);
+      if (!parsed.success) {
+        reasons.push('invalid-outbox');
+      } else if (!selectorMatchesOutbox(entry.selector, parsed.data.entryId)) {
+        reasons.push('invalid-outbox');
+      } else if (
+        parsed.data.state !== 'done' &&
+        parsed.data.state !== 'failed'
+      ) {
+        reasons.push('outbox-not-terminal');
+      }
+    }
+
+    return reasons.length === 0
+      ? { selector: entry.selector, status: 'ready', reasons: [] }
+      : { selector: entry.selector, status: 'blocked', reasons };
   }
 
   #migrationRecords(kind: PersistedRecordKind): {
@@ -562,6 +752,9 @@ export class MemoryStore implements OrchestratorStore {
   }
 
   #setMigrationValue(entry: PersistedMigrationEntry): void {
+    if (isPersistedMigrationDeleteEntry(entry)) {
+      throw new Error('delete entry cannot replace a persisted record');
+    }
     if ('address' in entry.selector) {
       const documentId = decodePersistedMigrationAddress(
         entry.selector.address,
@@ -608,6 +801,42 @@ export class MemoryStore implements OrchestratorStore {
         entry.selector.entryId,
         structuredClone(entry.replacement as OutboxEntry),
       );
+    }
+  }
+
+  #deleteMigrationValue(entry: PersistedMigrationDeleteEntry): void {
+    const { selector } = entry;
+    let storageKey: string;
+    if ('address' in selector) {
+      const record = this.#migrationRecords(selector.kind).find(
+        (candidate) =>
+          candidate.documentId ===
+          decodePersistedMigrationAddress(selector.address, selector.kind),
+      );
+      if (record === undefined) {
+        throw new PersistedMigrationConflict(
+          `persisted ${selector.kind} record disappeared`,
+        );
+      }
+      storageKey = record.storageKey;
+    } else if (selector.kind === 'task') {
+      storageKey = taskKey(selector.task);
+    } else if (selector.kind === 'run') {
+      storageKey = selector.runId;
+    } else {
+      storageKey = selector.entryId;
+    }
+    if (selector.kind === 'task') {
+      this.#tasks.delete(storageKey);
+      return;
+    }
+    if (selector.kind === 'outbox') {
+      this.#outbox.delete(storageKey);
+      return;
+    }
+    this.#runs.delete(storageKey);
+    for (const [key, runId] of this.#requestRuns.entries()) {
+      if (runId === storageKey) this.#requestRuns.delete(key);
     }
   }
 }

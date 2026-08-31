@@ -120,26 +120,93 @@ export type PersistedRecordSelector = z.infer<
   typeof persistedRecordSelectorSchema
 >;
 
-export const persistedMigrationEntrySchema = z.union([
+const persistedMigrationReplacementEntrySchema = z.union([
   z.strictObject({
+    /** Omitted for backwards-compatible reviewed replacement manifests. */
+    operation: z.literal('replace').optional(),
     selector: z.union([taskSelectorSchema, taskAddressSelectorSchema]),
     expectedFingerprint: fingerprintSchema,
     replacement: taskDocumentSchema,
   }),
   z.strictObject({
+    /** Omitted for backwards-compatible reviewed replacement manifests. */
+    operation: z.literal('replace').optional(),
     selector: z.union([runSelectorSchema, runAddressSelectorSchema]),
     expectedFingerprint: fingerprintSchema,
     replacement: runSchema,
   }),
   z.strictObject({
+    /** Omitted for backwards-compatible reviewed replacement manifests. */
+    operation: z.literal('replace').optional(),
     selector: z.union([outboxSelectorSchema, outboxAddressSelectorSchema]),
     expectedFingerprint: fingerprintSchema,
     replacement: outboxEntrySchema,
   }),
 ]);
+
+/** Deletion is deliberately value-free. The store, rather than the caller,
+ * determines whether the presently stored record is a compatibility record
+ * and whether its live dependencies make deletion safe. */
+export const persistedMigrationDeleteEntrySchema = z.strictObject({
+  operation: z.literal('delete'),
+  selector: persistedRecordSelectorSchema,
+  expectedFingerprint: fingerprintSchema,
+});
+
+export const persistedMigrationEntrySchema = z.union([
+  persistedMigrationReplacementEntrySchema,
+  persistedMigrationDeleteEntrySchema,
+]);
+export type PersistedMigrationReplacementEntry = z.infer<
+  typeof persistedMigrationReplacementEntrySchema
+>;
+export type PersistedMigrationDeleteEntry = z.infer<
+  typeof persistedMigrationDeleteEntrySchema
+>;
 export type PersistedMigrationEntry = z.infer<
   typeof persistedMigrationEntrySchema
 >;
+
+export function isPersistedMigrationDeleteEntry(
+  entry: PersistedMigrationEntry,
+): entry is PersistedMigrationDeleteEntry {
+  return entry.operation === 'delete';
+}
+
+/** Fixed, value-free deletion-readiness reasons. They are intentionally not
+ * derived from document field names or stored values. */
+export const persistedMigrationDeleteBlockReasonSchema = z.enum([
+  'target-missing',
+  'target-changed',
+  'no-compatibility-finding',
+  'invalid-run',
+  'run-not-terminal',
+  'invalid-parent-task',
+  'parent-task-active',
+  'pending-outbox',
+  'leased-outbox',
+  'outbox-dependency-over-limit',
+  'invalid-task',
+  'task-active',
+  'child-run-present',
+  'invalid-outbox',
+  'outbox-not-terminal',
+]);
+export type PersistedMigrationDeleteBlockReason = z.infer<
+  typeof persistedMigrationDeleteBlockReasonSchema
+>;
+
+export type PersistedMigrationDeleteReadiness =
+  | {
+      readonly selector: PersistedRecordSelector;
+      readonly status: 'ready';
+      readonly reasons: readonly [];
+    }
+  | {
+      readonly selector: PersistedRecordSelector;
+      readonly status: 'blocked';
+      readonly reasons: readonly PersistedMigrationDeleteBlockReason[];
+    };
 
 export interface PersistedRecordFinding {
   /** A short fixed code, never copied document values. */
@@ -323,6 +390,8 @@ export function decodePersistedMigrationAddress(
 export interface PersistedMigrationPreview {
   readonly manifestId: string;
   readonly entries: number;
+  /** Delete-only disposition. Replacements remain a pure manifest preview. */
+  readonly deletions: readonly PersistedMigrationDeleteReadiness[];
 }
 
 export class PersistedMigrationConflict extends Error {
@@ -651,7 +720,9 @@ function canonicalDocumentId(selector: PersistedRecordSelector): string {
   return encodeURIComponent(selector.entryId);
 }
 
-function replacementDocumentId(entry: PersistedMigrationEntry): string {
+function replacementDocumentId(
+  entry: PersistedMigrationReplacementEntry,
+): string {
   if (entry.selector.kind === 'task') {
     return encodeURIComponent(
       taskKey((entry.replacement as TaskDocument).task.task),
@@ -687,6 +758,7 @@ export function validateManifest(entries: unknown): PersistedMigrationEntry[] {
         `duplicate manifest selector ${key}`,
       );
     seen.add(key);
+    if (isPersistedMigrationDeleteEntry(entry)) continue;
     if ('address' in entry.selector) {
       if (
         addressedDocumentId(entry.selector) !== replacementDocumentId(entry)

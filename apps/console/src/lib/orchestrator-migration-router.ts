@@ -59,7 +59,14 @@ export const orchestratorMigrationRouter = os.router({
         if (input.mode === 'dry-run') {
           const preview =
             await context.runtime.store.previewPersistedMigration(entries);
-          return { mode: 'dry-run' as const, ...preview };
+          return {
+            mode: 'dry-run' as const,
+            ...preview,
+            deletions: preview.deletions.map((deletion) => ({
+              ...deletion,
+              reasons: [...deletion.reasons],
+            })),
+          };
         }
         if (
           input.reviewedManifestId === undefined ||
@@ -74,7 +81,14 @@ export const orchestratorMigrationRouter = os.router({
           entries,
           reviewedManifestId: input.reviewedManifestId,
         });
-        return { mode: 'apply' as const, ...applied };
+        return {
+          mode: 'apply' as const,
+          ...applied,
+          deletions: applied.deletions.map((deletion) => ({
+            ...deletion,
+            reasons: [...deletion.reasons],
+          })),
+        };
       } catch (error) {
         if (PersistedMigrationConflict.is(error)) {
           throw errors.CONFLICT({ message: error.message });
