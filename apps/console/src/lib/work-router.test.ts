@@ -9,7 +9,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
 import { createWorkHandler, type WorkContext } from './work-router';

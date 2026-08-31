@@ -268,6 +268,7 @@ async function loadCurrentGithubAnchorProjection(
       `GitHub returned an invalid anchor: ${anchor.repo}#${anchor.issue}`,
     );
   }
+  if (projection.kind === 'issue') return projection;
   const [enriched] = await enrichGithubAnchorProjections(
     anchor.repo,
     [projection],
