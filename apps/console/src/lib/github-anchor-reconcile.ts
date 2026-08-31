@@ -31,7 +31,7 @@ interface RawAnchorDetails {
     nodes?: ({
       body?: string;
       url?: string;
-      id?: string;
+      databaseId?: number | null;
       createdAt?: string;
       updatedAt?: string;
       author?: { login?: string } | null;
@@ -98,10 +98,10 @@ export async function enrichBackfillAnchors(
         (
           projection,
         ) => `${anchorAlias(projection.anchor.issue)}: issueOrPullRequest(number: ${projection.anchor.issue}) {
-          ... on Issue { body comments(last: 1) { nodes { id body url createdAt updatedAt author { login } } } }
+          ... on Issue { body comments(last: 1) { nodes { databaseId body url createdAt updatedAt author { login } } } }
           ... on PullRequest {
             body isDraft mergeStateStatus
-            comments(last: 1) { nodes { id body url createdAt updatedAt author { login } } }
+            comments(last: 1) { nodes { databaseId body url createdAt updatedAt author { login } } }
             reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
             reviewThreads(first: 100) { totalCount nodes { id isResolved } }
             commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { databaseId name status conclusion detailsUrl startedAt completedAt } } } } } } }
@@ -171,12 +171,13 @@ export async function enrichBackfillAnchors(
           : { body: detail.body }),
         ...(latestComment?.body === undefined ||
         latestComment.url === undefined ||
-        latestComment.id === undefined ||
+        latestComment.databaseId === undefined ||
+        latestComment.databaseId === null ||
         latestComment.createdAt === undefined
           ? {}
           : {
               lastComment: {
-                id: latestComment.id,
+                id: String(latestComment.databaseId),
                 body: latestComment.body,
                 url: latestComment.url,
                 createdAt: latestComment.createdAt,

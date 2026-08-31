@@ -54,10 +54,20 @@ describe('reconcileGithubAnchorProjections', () => {
     expect(enrich).toHaveBeenCalledWith(REPO, [expect.anything()]);
   });
 
-  it('stores a CheckRun REST databaseId, never its GraphQL node ID', async () => {
+  it('stores REST database IDs rather than GraphQL node IDs during backfill', async () => {
     const graphql = vi.fn().mockResolvedValue({
       repository: {
         i42: {
+          comments: {
+            nodes: [
+              {
+                databaseId: 5432,
+                body: 'Latest comment',
+                url: 'https://example.test/issues/42#issuecomment-5432',
+                createdAt: '2026-08-30T12:01:00.000Z',
+              },
+            ],
+          },
           commits: {
             nodes: [
               {
@@ -106,6 +116,9 @@ describe('reconcileGithubAnchorProjections', () => {
 
     expect(graphql.mock.calls[0][0]).toContain('CheckRun { databaseId');
     expect(graphql.mock.calls[0][0]).not.toContain('CheckRun { id');
+    expect(graphql.mock.calls[0][0]).toContain(
+      'comments(last: 1) { nodes { databaseId',
+    );
     expect(projection.checkRuns).toEqual([
       expect.objectContaining({
         id: '9876',
@@ -113,6 +126,10 @@ describe('reconcileGithubAnchorProjections', () => {
         updatedAt: '2026-08-30T12:02:00.000Z',
       }),
     ]);
+    expect(projection.lastComment).toMatchObject({
+      id: '5432',
+      body: 'Latest comment',
+    });
   });
 
   it('fails closed when a repository exceeds the explicit page bound', async () => {
