@@ -197,6 +197,7 @@ describe('GitHub App webhook configuration', () => {
           'check_run',
           'issues',
           'pull_request',
+          'pull_request_review',
           'pull_request_review_thread',
         ],
         hook_attributes: { active: true },
