@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { getGithubClient, getWatchedRepos } from './github-client';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
+const { readGithubAnchorProjection } = vi.hoisted(() => ({
+  readGithubAnchorProjection: vi.fn(),
+}));
 
 // `getCachedTaskSource` (task-detail.ts) is a real `"use cache"` function
 // exercised directly by these tests (unlike `getCachedAgentActivity`,
@@ -39,6 +42,11 @@ let authoritativeResult = {
 vi.mock('./authoritative-task-state', () => ({
   readAuthoritativeTaskStates: vi.fn(async () => authoritativeResult),
 }));
+vi.mock('./orchestrator-runtime', () => ({
+  createOrchestratorRuntime: () => ({
+    store: { readGithubAnchorProjection },
+  }),
+}));
 vi.mock('./dashboard-data', () => ({
   DASHBOARD_CACHE_LIFE: { stale: 30, revalidate: 30, expire: 60 },
   getCachedAgentActivity: vi.fn(async () => ({
@@ -74,6 +82,35 @@ function setupOctokit({
   (getGithubClient as Mock).mockReturnValue({
     rest: { issues: { get: issuesGet } },
     graphql: graphql ?? vi.fn().mockResolvedValue({ repository: {} }),
+  });
+  readGithubAnchorProjection.mockImplementation(async (anchor) => {
+    try {
+      const { data: issue } = await issuesGet({
+        owner: DEFAULT_REPO.owner,
+        repo: DEFAULT_REPO.name,
+        issue_number: anchor.issue,
+      });
+      return {
+        anchor,
+        kind: issue.pull_request === undefined ? 'issue' : 'pr',
+        state: issue.state === 'closed' ? 'closed' : 'open',
+        title: issue.title,
+        body: issue.body ?? '',
+        url: issue.html_url,
+        ...(issue.user?.login === undefined
+          ? {}
+          : { author: issue.user.login }),
+        labels: issue.labels ?? [],
+        assigneeLogins: (issue.assignees ?? []).flatMap((assignee) =>
+          assignee?.login === undefined ? [] : [assignee.login],
+        ),
+        sourceUpdatedAt: issue.updated_at ?? '2026-07-07T00:00:00.000Z',
+        observedAt: '2026-07-07T00:00:00.000Z',
+      };
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return undefined;
+      throw error;
+    }
   });
 }
 

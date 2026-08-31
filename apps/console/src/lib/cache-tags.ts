@@ -11,6 +11,3 @@
  * Inbox, and Agents. GitHub writes invalidate this view only after their
  * corresponding webhook delivery updates the server-owned projection. */
 export const AUTHORITATIVE_QUEUE_TAG = 'authoritative-queue';
-
-/** Exact GitHub detail reads are intentionally separate from queue state. */
-export const GITHUB_DETAIL_TAG = 'github-detail';

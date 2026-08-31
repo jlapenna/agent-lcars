@@ -54,9 +54,9 @@ export interface AuthoritativeTaskStateSet {
  * repository-id resolution needed (unlike the pre-#1183 Firestore read):
  * `@agent-lcars/orchestrator`'s `TaskId` is just `{repo, issue}` (see
  * `libs/orchestrator/src/model.ts`). A repository that never routes through
- * the orchestrator (anything other than `controlPlaneRepository()` - see
- * `deployment.ts`) simply has no task document here, and this returns
- * `undefined` rather than guessing.
+ * the orchestrator simply has no task document here, and this returns
+ * `undefined` rather than guessing. Every watched repository uses the same
+ * repository-qualified TaskId contract.
  */
 export async function readAuthoritativeTaskState({
   repository,

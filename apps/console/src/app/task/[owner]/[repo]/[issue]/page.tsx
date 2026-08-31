@@ -125,11 +125,9 @@ const TaskDetailView = withConsolePageShell(
 /**
  * The stable canonical task link (agent-lcars#306, and the same need
  * agent-lcars#264 describes): `/task/<owner>/<repo>/<issue>` resolves a
- * task directly from GitHub by its own identity, independent of whatever
- * the open-item board currently shows. A task that closes, merges, or
- * otherwise leaves the inbox keeps working here - see `task-detail.ts`'s
- * own doc comment for why this deliberately does not depend on
- * the authoritative queue's open-anchor listing.
+ * durable server-owned anchor by its own identity, independent of whether it
+ * remains selected for the open-item board. Closed anchors stay addressable;
+ * this page does not query GitHub while rendering.
  */
 async function TaskDetailPageContent({ params }: PageProps) {
   const session = await auth();
