@@ -24,8 +24,8 @@ not user-facing regressions. They fell into four distinct classes:
 3. **Harness failure:** checkout, Git LFS, cache lifetime, environment setup,
    emulator startup, or another prerequisite fails before the product is
    exercised.
-4. **Gate-policy failure:** the E2E workflow is red but is not a required check,
-   so the change can merge despite the apparent safety signal.
+4. **Gate-policy failure:** the E2E workflow is red but branch policy does not
+   require it, so the change can merge despite the apparent safety signal.
 
 Treating every class as "refresh the baselines" hid the cause and made the
 suite expensive to trust. A refresh can be correct only after a human has
@@ -56,7 +56,11 @@ not become the default assertion for an entire page.
 
 ## Harness rules
 
-- Use `./tools/nx run @agent-lcars/console-e2e:e2e-local` so the documented
+- CI has the required E2E check. It selects affected console and harness
+  changes and runs the hermetic suite. Any local E2E run is optional; do not
+  make it a delivery prerequisite.
+- When local reproduction is useful, use
+  `./tools/nx run @agent-lcars/console-e2e:e2e-local` so the documented
   credential-free environment is created consistently.
 - Give each host-direct run a run-scoped Nx L1 cache. Another worktree must not
   be able to delete build output while the suite is using it.
@@ -71,9 +75,9 @@ not become the default assertion for an entire page.
   branch policy. A post-merge run is a safety net, not a substitute for a PR
   gate.
 
-The last item is a governance decision: Agent LCARS currently requires
-`Verify`, while E2E is not a required check. Branch-policy changes are owned by
-the Homelab Terraform workflow and need their own reviewed plan and apply.
+Agent LCARS currently requires `E2E`, `Verify`, and `Runner image pnpm-store
+seed`. Branch-policy changes are owned by the Homelab Terraform workflow and
+need their own reviewed plan and apply.
 
 ## Triage a failure
 
@@ -83,8 +87,9 @@ the Homelab Terraform workflow and need their own reviewed plan and apply.
    artifacts.
 3. For a browser failure, inspect the Playwright report, trace, screenshot, and
    error context together.
-4. Reproduce the smallest stable test locally with `E2E_GREP`, then run the
-   complete local E2E target before delivery.
+4. When local reproduction will speed diagnosis, use `E2E_GREP` for the
+   smallest stable test. Push the fix once the proportional local checks pass;
+   CI owns the complete required E2E run.
 5. Fix the product contract or harness cause. Never regenerate a baseline only
    to turn the check green.
 

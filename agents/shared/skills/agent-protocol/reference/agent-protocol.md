@@ -291,6 +291,17 @@ or can exhaust its turn/time budget at any moment, and every unpushed byte
 is lost with it — this is not a hypothetical, it is the single most common
 way a headless run silently loses real, correct work.
 
+Verification is proportional. Fast local checks and focused unit, type, and
+lint tests are enough to push a coherent slice. Any local E2E suite is
+optional: use it to diagnose an end-to-end failure, not as a delivery
+prerequisite.
+
+That is safe only when the repository already requires its selected CI E2E
+result before merge or release. Every fleet repository that makes local E2E
+optional must enforce that CI contract. Repository-local instructions define
+the E2E command, selection rules, and any emergency opt-out; never hold a
+ready push or PR open only to run local E2E.
+
 For every ready, non-parked pull request you open, **do not request human
 review**. Fleet repositories require zero approving reviews for agent-authored
 PRs; a review request is friction, not a handoff. Immediately arm squash

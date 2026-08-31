@@ -55,11 +55,12 @@ These override any default behavior:
   front of a check that's going to happen anyway — push once the fast
   layer passes and let CI do the rest. See
   [references/verify.md](references/verify.md#ci-delegation) for the full
-  reasoning. Don't wait on the slow local E2E suite
-  (`tools/e2e-local.sh`'s hermetic build + Firebase emulator startup)
-  either — let it run concurrently with CI as an independent second
-  confirmation instead of serializing after it; report the pushed SHA
-  right away and the local suite's result in a follow-up.
+  reasoning. **Local E2E is optional, never a delivery prerequisite.** CI's
+  required E2E check selects affected console and harness changes. Run the
+  slow local suite
+  (`tools/e2e-local.sh`'s hermetic build + Firebase emulator startup) only
+  when it helps reproduce or debug a specific failure; it is supplemental
+  evidence, not a reason to delay a ready push.
 
 - **Never commit credentials.** Runtime secrets belong in GCP Secret
   Manager and the host writer credential belongs in the encrypted homelab
