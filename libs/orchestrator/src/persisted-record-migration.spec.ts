@@ -49,6 +49,7 @@ describe('persisted orchestrator record inventory', () => {
       state: 'lost',
       pipeline: 'codex',
       requestId: 'delivery-1',
+      requestSource: 'caller',
       leaseExpiresAt: T,
       events: [{ at: T, to: 'lost', by: 'infra' }],
       createdAt: T,
@@ -63,6 +64,23 @@ describe('persisted orchestrator record inventory', () => {
         { code: 'missing-params', class: 'optional' },
         { code: 'missing-queue', class: 'optional' },
         { code: 'missing-result', class: 'optional' },
+      ]),
+    );
+
+    const legacyRun = inventoryPersistedRecord('run', {
+      runId: 'octo/example#7/r0',
+      task: { repo: 'octo/example', issue: 7 },
+      state: 'lost',
+      pipeline: 'codex',
+      requestId: 'delivery-0',
+      leaseExpiresAt: T,
+      events: [],
+      createdAt: T,
+      updatedAt: T,
+    });
+    expect(legacyRun.findings).toEqual(
+      expect.arrayContaining([
+        { code: 'missing-requestSource', class: 'compatibility' },
       ]),
     );
 
