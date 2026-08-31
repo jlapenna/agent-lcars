@@ -52,6 +52,32 @@ const LIVE_STATES = runStateSchema.options.filter(isLive);
 
 const taskDocSchema = taskDocumentSchema;
 
+/** The migration client decodes every Firestore integer as bigint. Current
+ * schemas intentionally consume normal JavaScript numbers, so only values
+ * whose exact value survives the conversion are normalized for shape
+ * classification. Unsafe integers stay bigint and are reported as invalid;
+ * their raw BigInt representation remains the stale-write fingerprint. */
+function normalizeFirestoreIntegerValues(value: unknown): unknown {
+  if (typeof value === 'bigint') {
+    const asNumber = Number(value);
+    return Number.isSafeInteger(asNumber) ? asNumber : value;
+  }
+  if (Array.isArray(value)) return value.map(normalizeFirestoreIntegerValues);
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, child]) => [
+        key,
+        normalizeFirestoreIntegerValues(child),
+      ]),
+    );
+  }
+  return value;
+}
+
 export interface FirestoreStoreOptions {
   readonly projectId: string;
   readonly databaseId: string;
@@ -75,22 +101,41 @@ export interface FirestoreStoreOptions {
  */
 export class FirestoreStore implements OrchestratorStore {
   readonly #firestore: Firestore;
+  /** Migration reads must preserve every Firestore int64 exactly. This stays
+   * separate from the normal store client: ordinary Task/Run schemas use
+   * JavaScript numbers and must not start receiving bigint values. */
+  readonly #migrationFirestore: Firestore;
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
   readonly #outbox: CollectionReference;
+  readonly #migrationTasks: CollectionReference;
+  readonly #migrationRuns: CollectionReference;
+  readonly #migrationOutbox: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
     const prefix = options.collectionPrefix ?? 'orchestrator-';
-    this.#firestore = new Firestore({
+    const firestoreOptions = {
       projectId: options.projectId,
       databaseId: options.databaseId,
       ...(options.emulatorHost === undefined
         ? {}
         : { host: options.emulatorHost, ssl: false }),
+    };
+    this.#firestore = new Firestore(firestoreOptions);
+    this.#migrationFirestore = new Firestore({
+      ...firestoreOptions,
+      useBigInt: true,
     });
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
+    this.#migrationTasks = this.#migrationFirestore.collection(
+      `${prefix}tasks`,
+    );
+    this.#migrationRuns = this.#migrationFirestore.collection(`${prefix}runs`);
+    this.#migrationOutbox = this.#migrationFirestore.collection(
+      `${prefix}outbox`,
+    );
   }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -508,7 +553,7 @@ export class FirestoreStore implements OrchestratorStore {
         `Persisted orchestrator inventory page size must be 1-${PERSISTED_MIGRATION_PAGE_MAX}`,
       );
     }
-    const collection = this.#collectionFor(input.kind);
+    const collection = this.#migrationCollectionFor(input.kind);
     let query = collection.orderBy(FieldPath.documentId());
     if (input.cursor !== undefined) {
       const documentId = decodePersistedMigrationCursor(
@@ -534,8 +579,18 @@ export class FirestoreStore implements OrchestratorStore {
       kind: input.kind,
       consistency: 'page-only',
       records: documents.map((document) => {
-        const record = inventoryPersistedRecord(input.kind, document.data());
-        return record;
+        const raw = document.data();
+        // Normalization is only for the current schema census. Raw values
+        // remain BigInt-capable for the fingerprint used by the later
+        // transaction, so an unsafe Firestore int64 can never collapse into
+        // a rounded JavaScript number between inventory and apply.
+        return {
+          ...inventoryPersistedRecord(
+            input.kind,
+            normalizeFirestoreIntegerValues(raw),
+          ),
+          fingerprint: fingerprint(raw),
+        };
       }),
       hasMore,
       ...(hasMore && documents.length > 0
@@ -567,7 +622,7 @@ export class FirestoreStore implements OrchestratorStore {
         'reviewed manifest id does not match the submitted entries',
       );
     }
-    await this.#firestore.runTransaction(async (tx) => {
+    await this.#migrationFirestore.runTransaction(async (tx) => {
       // Read every fixed manifest target first. Firestore retries the whole
       // transaction on a concurrent write; each retry compares the current
       // raw fingerprint before any write, so no reviewed replacement can
@@ -596,16 +651,22 @@ export class FirestoreStore implements OrchestratorStore {
     return { manifestId: id, entries: entries.length };
   }
 
-  #collectionFor(kind: PersistedRecordKind): CollectionReference {
-    if (kind === 'task') return this.#tasks;
-    if (kind === 'run') return this.#runs;
-    return this.#outbox;
+  #migrationCollectionFor(kind: PersistedRecordKind): CollectionReference {
+    if (kind === 'task') return this.#migrationTasks;
+    if (kind === 'run') return this.#migrationRuns;
+    return this.#migrationOutbox;
   }
 
   #migrationRef(selector: PersistedRecordSelector): DocumentReference {
-    if (selector.kind === 'task') return this.#taskRef(selector.task);
-    if (selector.kind === 'run') return this.#runRef(selector.runId);
-    return this.#outboxRef(selector.entryId);
+    if (selector.kind === 'task') {
+      return this.#migrationTasks.doc(
+        encodeURIComponent(taskKey(selector.task)),
+      );
+    }
+    if (selector.kind === 'run') {
+      return this.#migrationRuns.doc(encodeURIComponent(selector.runId));
+    }
+    return this.#migrationOutbox.doc(encodeURIComponent(selector.entryId));
   }
 
   #taskRef(id: TaskId): DocumentReference {

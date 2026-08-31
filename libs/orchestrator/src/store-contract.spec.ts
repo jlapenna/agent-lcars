@@ -5,7 +5,7 @@ import { FirestoreScheduleStore } from './firestore-schedule-store';
 import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
-import { outboxEntrySchema, taskSchema } from './model';
+import { outboxEntrySchema, taskKey, taskSchema } from './model';
 import { Orchestrator } from './orchestrator';
 import {
   encodePersistedMigrationCursor,
@@ -322,6 +322,69 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
         consecutiveLost: 0,
         work: { reviewed: true },
       });
+    });
+
+    it('keeps full-width Firestore int64 values distinct for stale manifests', async () => {
+      prefixCounter += 1;
+      const prefix = `orchestrator-migration-int64-${Date.now()}-${prefixCounter}-`;
+      const store = new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix: prefix,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+      const taskId = { repo: 'octo/example', issue: 13 } as const;
+      const raw = new Firestore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        host: emulatorHost ?? 'localhost:8080',
+        ssl: false,
+      });
+      const ref = raw
+        .collection(`${prefix}tasks`)
+        .doc(encodeURIComponent(taskKey(taskId)));
+      const task = {
+        task: taskId,
+        runCount: 0,
+        updatedAt: '2026-08-15T12:00:00.000Z',
+      };
+      await ref.set({ task, revision: 9_007_199_254_740_992n });
+
+      const first = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      });
+      const record = first.records[0];
+      if (record?.selector?.kind !== 'task') throw new Error('missing task');
+      expect(record.selector.task).toEqual(taskId);
+
+      // These adjacent int64 values both round to the same JavaScript number
+      // with the default client. The migration client must fingerprint their
+      // exact BigInt representations, then reject this stale replacement.
+      await ref.update({ revision: 9_007_199_254_740_993n });
+      const second = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      });
+      expect(second.records[0]?.fingerprint).not.toBe(record.fingerprint);
+
+      const entries = [
+        {
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+          replacement: {
+            task: { ...task, consecutiveLost: 0, work: { reviewed: true } },
+            revision: 1,
+          },
+        },
+      ] as const;
+      const preview = await store.previewPersistedMigration(entries);
+      await expect(
+        store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        }),
+      ).rejects.toThrow('changed after inventory');
     });
   });
 });
