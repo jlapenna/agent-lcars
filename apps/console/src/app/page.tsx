@@ -24,6 +24,7 @@ import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
 import { indexSessionsByRunId } from '../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../lib/runner-sessions';
+import { filterSessionsForRepo } from '../lib/session-repo-filter';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import { AgentActivityPanel, type RunItemRef } from './agent-activity-panel';
 import { DataWarnings } from './console-header';
@@ -161,14 +162,7 @@ async function IndexBody({
         ),
       }
     : activity;
-  // A doc with no `repo` predates Phase 0's field - session-archive.ts and
-  // cli-sessions.ts both already treat that as belonging to the primary
-  // repo when building links, so the filter must agree: otherwise every
-  // A repo-less CLI session is host-scoped and does not match any GitHub
-  // repository filter.
-  const filteredCliSessions = repoFilter
-    ? cliSessions.filter((s) => s.repo && matchesFilter(s.repo))
-    : cliSessions;
+  const filteredCliSessions = filterSessionsForRepo(cliSessions, repoFilter);
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 

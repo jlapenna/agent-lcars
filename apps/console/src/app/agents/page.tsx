@@ -29,6 +29,7 @@ import {
 } from '../../lib/logical-work';
 import { indexSessionsByRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
+import { filterSessionsForRepo } from '../../lib/session-repo-filter';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
@@ -133,15 +134,11 @@ async function AgentsPageBody({
   // Applied last, after every cross-repo join above already ran against the
   // full, unfiltered data - see page.tsx's identical comment for why.
   const filteredItems = items.filter((item) => matchesFilter(item.repo));
-  // A doc with no `repo` predates Phase 0's field - session-archive.ts and
-  // Repo-less CLI sessions are host-scoped and do not belong to a
-  // GitHub-repository filter (matching page.tsx's identical rule).
-  const filteredActiveSessions = activeSessions.filter(
-    (s) => s.repo && matchesFilter(s.repo),
+  const filteredActiveSessions = filterSessionsForRepo(
+    activeSessions,
+    repoFilter,
   );
-  const filteredCliSessions = cliSessions.filter(
-    (s) => s.repo && matchesFilter(s.repo),
-  );
+  const filteredCliSessions = filterSessionsForRepo(cliSessions, repoFilter);
   const filteredActivity = repoFilter
     ? {
         ...activity,
