@@ -18,7 +18,7 @@ export function QueueConsoleUtilities({
     <ConsoleCommandUtilities
       watchedRepos={watchedRepos}
       initialRepoKey={repoFilter}
-      bustsGithubCache
+      refreshesAuthoritativeQueue
       includeNavigation={includeNavigation}
       navigationHrefs={repoScopedConsoleHrefs(repoFilter)}
     />

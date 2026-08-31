@@ -14,7 +14,7 @@ vi.mock('./refresh-action', () => ({
   refreshDashboard: () => refreshDashboard(),
 }));
 
-function renderButton(props: { bustsGithubCache?: boolean } = {}) {
+function renderButton(props: { refreshesAuthoritativeQueue?: boolean } = {}) {
   return render(
     <MantineProvider>
       <RefreshButton
@@ -27,25 +27,24 @@ function renderButton(props: { bustsGithubCache?: boolean } = {}) {
 }
 
 describe('RefreshButton', () => {
-  it('drops the cached GitHub read on the pages that render it', async () => {
+  it('refreshes the authoritative queue before rerendering pages that render it', async () => {
     refresh.mockClear();
     refreshDashboard.mockClear();
-    renderButton({ bustsGithubCache: true });
+    renderButton({ refreshesAuthoritativeQueue: true });
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
 
-    // Refresh has to mean "go ask GitHub again" - re-rendering off the cache
-    // would look like a dead button.
+    // Refresh has to invalidate the projection cache before rerendering, or
+    // the button would appear not to have done anything.
     await waitFor(() => expect(refreshDashboard).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
-  it('leaves the GitHub cache alone on pages that do not read it', async () => {
+  it('only rerenders pages that do not render the authoritative queue', async () => {
     refresh.mockClear();
     refreshDashboard.mockClear();
-    // The session pages read Firestore/GCS only. Busting the GitHub tag from
-    // there would force the next data-heavy visit to repeat ~30 requests for
-    // state that never changed.
+    // Detail pages do not render the queue. Invalidating it here would cause
+    // the next queue visit to repeat projection reads for unchanged state.
     renderButton();
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));

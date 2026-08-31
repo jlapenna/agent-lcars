@@ -67,7 +67,7 @@ const TaskDetailView = withConsolePageShell(
             <RefreshButton
               generatedAt={generatedAt}
               initialLabel={formatRelativeTime(generatedAt)}
-              bustsGithubCache
+              refreshesAuthoritativeQueue
             />
             {detail.status === 'ok' && detail.item.kind === 'issue' && (
               <ItemOverflowMenu item={detail.item} />
@@ -79,7 +79,7 @@ const TaskDetailView = withConsolePageShell(
             <RefreshButton
               generatedAt={generatedAt}
               initialLabel={formatRelativeTime(generatedAt)}
-              bustsGithubCache
+              refreshesAuthoritativeQueue
             />
             <QueueUtilityMenu
               repositoryUrl={consoleRepositoryUrl()}

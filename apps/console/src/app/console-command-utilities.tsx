@@ -14,20 +14,21 @@ import { SignOutButton } from './sign-out-button';
  *
  * It centralizes the utility hierarchy (create, refresh, then secondary
  * actions) while allowing each route to supply its precise repository scope,
- * cache policy, source evidence, and mobile navigation links.
+ * authoritative-queue refresh policy, source evidence, and mobile navigation
+ * links.
  */
 export function ConsoleCommandUtilities({
   watchedRepos,
   initialRepoKey,
   sourceIdentities,
-  bustsGithubCache = false,
+  refreshesAuthoritativeQueue = false,
   includeNavigation = false,
   navigationHrefs,
 }: {
   watchedRepos: WatchedRepo[];
   initialRepoKey?: string;
   sourceIdentities?: QuickTaskSourceIdentity[];
-  bustsGithubCache?: boolean;
+  refreshesAuthoritativeQueue?: boolean;
   includeNavigation?: boolean;
   navigationHrefs?: Partial<Record<NavKey, string>>;
 }) {
@@ -39,7 +40,10 @@ export function ConsoleCommandUtilities({
         sourceIdentities={sourceIdentities}
         size="compact-xs"
       />
-      <RefreshButton compact bustsGithubCache={bustsGithubCache} />
+      <RefreshButton
+        compact
+        refreshesAuthoritativeQueue={refreshesAuthoritativeQueue}
+      />
       <QueueUtilityMenu
         repositoryUrl={consoleRepositoryUrl()}
         includeNavigation={includeNavigation}

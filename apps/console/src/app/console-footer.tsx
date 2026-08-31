@@ -14,13 +14,13 @@ export function ConsoleFooter({
   generatedAt,
   refreshLabel,
   actions,
-  bustsGithubCache = false,
+  refreshesAuthoritativeQueue = false,
 }: {
   generatedAt?: string;
   refreshLabel?: string;
   actions?: ReactNode;
   /** Forwarded to RefreshButton - see its own doc. */
-  bustsGithubCache?: boolean;
+  refreshesAuthoritativeQueue?: boolean;
 }) {
   return (
     <Group justify="center" mt="xl" gap="md">
@@ -29,7 +29,7 @@ export function ConsoleFooter({
         <RefreshButton
           generatedAt={generatedAt}
           initialLabel={refreshLabel}
-          bustsGithubCache={bustsGithubCache}
+          refreshesAuthoritativeQueue={refreshesAuthoritativeQueue}
         />
       )}
       <ThemeToggle />

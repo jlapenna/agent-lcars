@@ -55,7 +55,7 @@ export function PageLoading({
  * inbox, agents, Shuttlebay, sessions, costs). Each of those pages' own shell only
  * waits on `auth()` + `searchParams` before it can render a real
  * `ConsoleHeader` (see console-header.tsx's doc comment) - neither depends
- * on the slow GitHub/Firestore reads - but `cacheComponents` still forces
+ * on the slow control-plane/Firestore reads - but `cacheComponents` still forces
  * even that fast a wait behind a Suspense boundary, and the generic
  * `PageLoading` header skeleton has a different shape/height than the real
  * `ConsoleHeader` (title + nav rail + signal bar). Swapping a skeleton bar

@@ -41,7 +41,7 @@ describe('DataWarnings', () => {
   it('uses the shared disclosure control for every route that renders it', () => {
     const { container } = render(
       <MantineProvider>
-        <DataWarnings warnings={['GitHub data is stale.']} />
+        <DataWarnings warnings={['Authoritative queue data is stale.']} />
       </MantineProvider>,
     );
 

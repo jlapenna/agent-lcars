@@ -6,11 +6,12 @@ import { useEffect, useState } from 'react';
 import { formatRelativeTime } from './format';
 
 /**
- * "Data as of Xm ago" for the pages that render cached GitHub reads (see
+ * "Data as of Xm ago" for the pages that render cached authoritative queue
+ * projections (see
  * dashboard-data.ts's DASHBOARD_CACHE_LIFE - up to a minute stale by
  * design). The server passes the initial label so hydration matches, then
  * the client re-derives it every 30s, the same pattern refresh-button.tsx
- * uses for its own "Updated ..." label. Uncached Firestore reads are always
+ * uses for its own "Updated ..." label. Uncached detail reads are always
  * current, so callers feed this the oldest cached `fetchedAt` only.
  */
 export function DataFreshness({
