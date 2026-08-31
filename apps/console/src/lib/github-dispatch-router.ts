@@ -4,7 +4,7 @@ import { decidedRun, isRefusal } from '@agent-lcars/orchestrator';
 import { dispatchesContract } from '@agent-lcars/work';
 import { implement, ORPCError } from '@orpc/server';
 
-import { truncatedDescription } from './work-from-github';
+import { normalizeGithubWorkPayload } from './work-from-github';
 import { forbiddenReason, type WorkContext } from './work-mint';
 
 const os = implement(dispatchesContract).$context<WorkContext>();
@@ -32,15 +32,18 @@ const operator = os.use(async ({ context, next }) => {
 export const githubDispatchRouter = os.router({
   github: operator.github.handler(async ({ input, context, errors }) => {
     const { principal } = context;
-    // GitHub permits a body larger than the durable Work spec. Normalize at
-    // this single GitHub-anchor boundary before authorization or storage, so
-    // every caller gets the same character/UTF-8-byte clamp and visible
-    // marker as webhook/console GitHub derivation. Under-bound bodies pass
-    // through byte-for-byte; valid empty bodies become the shared placeholder.
-    const spec = {
-      ...input.spec,
-      description: truncatedDescription(input.spec.description),
-    };
+    // GitHub permits a body larger than the durable Work spec. Build and
+    // normalize the complete payload before authorization or storage, so
+    // JSON escapes and multi-byte text count against the exact serialized
+    // byte cap just as they do for webhook/console GitHub derivation.
+    const work = normalizeGithubWorkPayload({
+      origin: {
+        principal: principal.principal,
+        channel: principal.via === 'session' ? 'console' : 'api',
+      },
+      spec: input.spec,
+    });
+    const { spec } = work;
     if (input.anchor.repo !== spec.target.repo) {
       throw errors.BAD_REQUEST();
     }
@@ -69,13 +72,7 @@ export const githubDispatchRouter = os.router({
       requestId: input.requestId,
       pipeline: spec.pipeline,
       params,
-      work: {
-        origin: {
-          principal: principal.principal,
-          channel: principal.via === 'session' ? 'console' : 'api',
-        },
-        spec,
-      },
+      work,
     });
 
     if (isRefusal(outcome)) {

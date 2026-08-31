@@ -2,6 +2,7 @@ import {
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
+  taskSchema,
   WORK_PAYLOAD_MAX_BYTES,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
@@ -743,6 +744,31 @@ describe('GitHub-anchor dispatch route', () => {
       stored?.task.work as { spec?: { description?: string } } | undefined
     )?.spec?.description;
     expect(storedDescription).toContain('12000 characters');
+    expect(
+      new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
+    ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
+  });
+
+  it('clamps JSON-escaped GitHub text before storage and reads the schema back', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    // `JSON.stringify` doubles each newline. The raw 16,384-byte body is
+    // valid GitHub input and character-bounded Work text, but the complete
+    // serialized payload is too large without route-side normalization.
+    const body = '\n'.repeat(WORK_DESCRIPTION_MAX);
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: body },
+      requestId: 'workflow-run:escaped:1633',
+    });
+
+    expect(r.status).toBe(200);
+    const stored = await ctx.runtime.store.readTask(anchor);
+    expect(stored).toBeDefined();
+    expect(taskSchema.parse(stored?.task)).toEqual(stored?.task);
+    const storedDescription = (
+      stored?.task.work as { spec?: { description?: string } } | undefined
+    )?.spec?.description;
+    expect(storedDescription).toContain('serialized work payload');
     expect(
       new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
     ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);

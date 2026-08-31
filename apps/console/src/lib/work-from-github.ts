@@ -6,6 +6,7 @@ import {
   WORK_TITLE_MAX,
   type WorkOrigin,
   type WorkPayload,
+  workPayloadSchema,
   type WorkSpec,
 } from '@agent-lcars/work';
 
@@ -32,9 +33,9 @@ const EMPTY_DESCRIPTION = '(no description)';
  * clears `workPayloadSchema` (`@agent-lcars/work`, character-bounded) but
  * misses `taskSchema`'s byte bound gets written unvalidated by
  * `FirestoreStore.apply` and then permanently refused by `readTask` --
- * the drain retries that task forever and the task page 500s. This clamp
- * must therefore always check the real serialized byte length, not just
- * character count.
+ * the drain retries that task forever and the task page 500s. This is the
+ * body-only first pass; `normalizeGithubWorkPayload` below must then check
+ * the actual serialized payload, including JSON escape expansion.
  *
  * `DESCRIPTION_BYTE_HEADROOM` reserves room in the byte budget for the
  * rest of the payload this description gets embedded in: `title` (up to
@@ -58,6 +59,10 @@ const textEncoder = new TextEncoder();
 
 function byteLength(text: string): number {
   return textEncoder.encode(text).length;
+}
+
+function serializedWorkPayloadBytes(payload: WorkPayload): number {
+  return byteLength(JSON.stringify(payload));
 }
 
 /** Binary-searches the largest character prefix of `text` whose UTF-8
@@ -115,6 +120,65 @@ export function truncatedDescription(body: string | null | undefined): string {
   return clampToByteBudget(charClamped, text.length);
 }
 
+/**
+ * Normalizes one complete GitHub-derived Work payload for durable storage.
+ * JSON escapes count here: a newline is one byte in GitHub's body but two
+ * bytes in its serialized Work description, and control characters can
+ * similarly expand to a six-byte `\\u00XX` escape. The only reliable budget
+ * is therefore the full `JSON.stringify(payload)` value the store persists,
+ * not the raw description's UTF-8 length.
+ */
+export function normalizeGithubWorkPayload(input: {
+  origin: WorkOrigin;
+  spec: Omit<WorkSpec, 'description'> & {
+    description: string | null | undefined;
+  };
+}): WorkPayload {
+  const original = input.spec.description;
+  const description = truncatedDescription(original);
+  const payload: WorkPayload = {
+    origin: input.origin,
+    spec: { ...input.spec, description },
+  };
+  if (serializedWorkPayloadBytes(payload) <= WORK_PAYLOAD_MAX_BYTES) {
+    return workPayloadSchema.parse(payload);
+  }
+
+  const originalChars = original?.length ?? 0;
+  const markerFor = (keptChars: number) =>
+    `\n\n[work: truncated to ${keptChars} of ${originalChars} characters ` +
+    `to fit the serialized work payload's ${WORK_PAYLOAD_MAX_BYTES}-byte ` +
+    `limit. Read the full body on the issue.]`;
+  let lo = 0;
+  let hi = description.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const candidate: WorkPayload = {
+      ...payload,
+      spec: {
+        ...payload.spec,
+        description: description.slice(0, mid) + markerFor(mid),
+      },
+    };
+    if (serializedWorkPayloadBytes(candidate) <= WORK_PAYLOAD_MAX_BYTES) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  const normalized: WorkPayload = {
+    ...payload,
+    spec: {
+      ...payload.spec,
+      description: description.slice(0, lo) + markerFor(lo),
+    },
+  };
+  if (serializedWorkPayloadBytes(normalized) > WORK_PAYLOAD_MAX_BYTES) {
+    throw new Error('GitHub Work payload metadata exceeds its storage budget');
+  }
+  return workPayloadSchema.parse(normalized);
+}
+
 /** GitHub's own issue/PR title limit (256 characters) already equals
  *  `WORK_TITLE_MAX`; this clamp is defensive, not expected to ever
  *  actually shorten a real title. */
@@ -159,13 +223,13 @@ export interface GithubWorkSource {
  * on every later request -- see the design spec's "write once" note).
  */
 export function workPayloadFromGithub(source: GithubWorkSource): WorkPayload {
-  return {
+  return normalizeGithubWorkPayload({
     origin: githubOrigin(source.actor, source.label),
     spec: {
       title: clampedTitle(source.title),
-      description: truncatedDescription(source.body),
+      description: source.body,
       pipeline: source.pipeline,
       target: { repo: source.repo },
     },
-  };
+  });
 }

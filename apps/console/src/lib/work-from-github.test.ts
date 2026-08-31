@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   githubOrigin,
+  normalizeGithubWorkPayload,
   truncatedDescription,
   workPayloadFromGithub,
 } from './work-from-github';
@@ -60,6 +61,29 @@ describe('truncatedDescription', () => {
   it('leaves a multi-byte body untouched when both bounds are satisfied', () => {
     const body = '漢'.repeat(1_000);
     expect(truncatedDescription(body)).toBe(body);
+  });
+
+  it('clamps JSON-escaped GitHub text against the complete serialized Work payload', () => {
+    // A newline is one byte in the anchor body but serializes as the two
+    // bytes `\\n`. This body clears the character and raw-UTF-8 checks yet
+    // overflows the durable payload once origin/spec JSON is included.
+    const body = '\n'.repeat(WORK_DESCRIPTION_MAX);
+    const payload = normalizeGithubWorkPayload({
+      origin: { principal: 'workflow:member-automation', channel: 'api' },
+      spec: {
+        title: 'Dispatch exact GitHub body',
+        description: body,
+        pipeline: 'codex',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    });
+
+    expect(payload.spec.description).not.toBe(body);
+    expect(payload.spec.description).toContain('serialized work payload');
+    expect(workPayloadSchema.parse(payload)).toEqual(payload);
+    expect(
+      new TextEncoder().encode(JSON.stringify(payload)).length,
+    ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
   });
 });
 
