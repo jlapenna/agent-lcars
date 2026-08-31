@@ -9,14 +9,14 @@ import {
 } from './work-from-github';
 
 describe('truncatedDescription', () => {
-  it('returns a short body verbatim, trimmed', () => {
-    expect(truncatedDescription('  hello  ')).toBe('hello');
+  it('returns every nonempty under-bound body byte-for-byte', () => {
+    expect(truncatedDescription('  hello  ')).toBe('  hello  ');
   });
 
   it('falls back to a placeholder for a null or empty body', () => {
     expect(truncatedDescription(null)).toBe('(no description)');
     expect(truncatedDescription(undefined)).toBe('(no description)');
-    expect(truncatedDescription('   ')).toBe('(no description)');
+    expect(truncatedDescription('')).toBe('(no description)');
   });
 
   it('leaves a body exactly at the bound untouched', () => {

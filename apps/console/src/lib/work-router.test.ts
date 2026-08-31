@@ -2,8 +2,10 @@ import {
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
+  WORK_PAYLOAD_MAX_BYTES,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
+import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { describe, expect, it } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
@@ -675,6 +677,75 @@ describe('GitHub-anchor dispatch route', () => {
       outcome: 'duplicate',
       runId: 'jlapenna/agent-lcars#1633/r1',
     });
+  });
+
+  it('preserves an under-bound GitHub body in the stored Work spec', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const description = '  Preserve this exact GitHub body.\n';
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description },
+      requestId: 'workflow-run:under-bound:1633',
+    });
+
+    expect(r.status).toBe(200);
+    expect((await ctx.runtime.store.readTask(anchor))?.task.work).toMatchObject(
+      {
+        spec: { description },
+      },
+    );
+  });
+
+  it('accepts an overlong GitHub body and stores the shared visible clamp', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const description = 'x'.repeat(WORK_DESCRIPTION_MAX + 3_616);
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description },
+      requestId: 'workflow-run:overlong:1633',
+    });
+
+    expect(r.status).toBe(200);
+    expect((await ctx.runtime.store.readTask(anchor))?.task.work).toMatchObject(
+      {
+        spec: {
+          description: expect.stringContaining(
+            `truncated to ${WORK_DESCRIPTION_MAX} of ${description.length} characters`,
+          ),
+        },
+      },
+    );
+  });
+
+  it('normalizes an empty body and keeps a multibyte body within the storage byte budget', async () => {
+    const emptyCtx = context({ principal: githubActionsOperator });
+    const empty = await call(emptyCtx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: '' },
+      requestId: 'workflow-run:empty:1633',
+    });
+    expect(empty.status).toBe(200);
+    expect(
+      (await emptyCtx.runtime.store.readTask(anchor))?.task.work,
+    ).toMatchObject({
+      spec: { description: '(no description)' },
+    });
+
+    const multibyteCtx = context({ principal: githubActionsOperator });
+    const multibyte = await call(multibyteCtx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: '漢'.repeat(12_000) },
+      requestId: 'workflow-run:multibyte:1633',
+    });
+    expect(multibyte.status).toBe(200);
+    const stored = await multibyteCtx.runtime.store.readTask(anchor);
+    const storedDescription = (
+      stored?.task.work as { spec?: { description?: string } } | undefined
+    )?.spec?.description;
+    expect(storedDescription).toContain('12000 characters');
+    expect(
+      new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
+    ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
   });
 
   it.each([true, false])(
