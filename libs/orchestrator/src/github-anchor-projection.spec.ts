@@ -43,4 +43,65 @@ describe('GitHub anchor projections', () => {
     });
     expect(await store.listOpenGithubAnchorProjections()).toEqual([]);
   });
+
+  it('clears absent anchor relationships while preserving independently delivered signals', async () => {
+    const store = new MemoryStore();
+    await store.upsertGithubAnchorProjection({
+      ...older,
+      parentNumber: 7,
+      linkedIssueNumbers: [8, 9],
+      checkRuns: [
+        {
+          name: 'Verify',
+          url: 'https://example.test/checks/1',
+          status: 'completed',
+          conclusion: 'failure',
+        },
+      ],
+      failingChecks: [{ name: 'Verify', url: 'https://example.test/checks/1' }],
+      ciRunning: false,
+    });
+    await store.upsertGithubAnchorProjection({
+      ...older,
+      title: 'Current snapshot without old links',
+      sourceUpdatedAt: '2026-08-30T11:00:00.000Z',
+    });
+
+    await expect(
+      store.readGithubAnchorProjection(older.anchor),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        title: 'Current snapshot without old links',
+        checkRuns: [expect.objectContaining({ name: 'Verify' })],
+      }),
+    );
+    const stored = await store.readGithubAnchorProjection(older.anchor);
+    expect(stored?.parentNumber).toBeUndefined();
+    expect(stored?.linkedIssueNumbers).toBeUndefined();
+  });
+
+  it('applies a signal updater to the latest stored projection', async () => {
+    const store = new MemoryStore();
+    await store.upsertGithubAnchorProjection(older);
+    await store.upsertGithubAnchorProjection({
+      ...older,
+      title: 'Latest title',
+      sourceUpdatedAt: '2026-08-30T11:00:00.000Z',
+    });
+    await store.updateGithubAnchorProjection(older.anchor, (current) =>
+      current === undefined
+        ? undefined
+        : {
+            ...current,
+            ciRunning: true,
+            observedAt: '2026-08-30T11:01:00.000Z',
+          },
+    );
+
+    await expect(
+      store.readGithubAnchorProjection(older.anchor),
+    ).resolves.toEqual(
+      expect.objectContaining({ title: 'Latest title', ciRunning: true }),
+    );
+  });
 });

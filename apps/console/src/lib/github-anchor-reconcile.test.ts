@@ -69,6 +69,44 @@ describe('reconcileGithubAnchorProjections', () => {
     expect(ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY).toBeGreaterThan(0);
   });
 
+  it('accepts exactly the bounded number of anchors after an empty sentinel page', async () => {
+    const listOpenIssues = vi.fn(async (_repository: string, page: number) =>
+      page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY
+        ? Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor)
+        : [],
+    );
+    await expect(
+      reconcileGithubAnchorProjections({
+        store: { upsertGithubAnchorProjection: vi.fn() },
+        repositories: [REPO],
+        listOpenIssues,
+        now: () => '2026-08-30T12:00:01.000Z',
+      }),
+    ).resolves.toMatchObject({
+      anchors:
+        ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY * ANCHOR_RECONCILE_PAGE_SIZE,
+    });
+    expect(listOpenIssues).toHaveBeenLastCalledWith(
+      REPO,
+      ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY + 1,
+    );
+  });
+
+  it('rejects a non-empty sentinel page instead of silently truncating', async () => {
+    await expect(
+      reconcileGithubAnchorProjections({
+        store: { upsertGithubAnchorProjection: vi.fn() },
+        repositories: [REPO],
+        listOpenIssues: vi.fn(async (_repository: string, page: number) =>
+          page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY
+            ? Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor)
+            : [anchor],
+        ),
+        now: () => '2026-08-30T12:00:01.000Z',
+      }),
+    ).rejects.toBeInstanceOf(AnchorProjectionBackfillLimitError);
+  });
+
   it('reports queue parity separately from the total open-anchor backfill', async () => {
     const result = await reconcileGithubAnchorProjections({
       store: { upsertGithubAnchorProjection: vi.fn() },
@@ -97,6 +135,50 @@ describe('reconcileGithubAnchorProjections', () => {
         matches: true,
       },
     });
+  });
+
+  it('uses repository-specific agent labels when comparing the projected queue', () => {
+    const result = compareSelectedGithubAnchorProjections({
+      currentQueue: [
+        {
+          key: `${REPO}#42`,
+          title: anchor.title,
+          url: anchor.html_url,
+          author: 'jlapenna',
+          assigneeLogins: [],
+        },
+      ],
+      projections: [
+        {
+          anchor: { repo: REPO, issue: 42 },
+          kind: 'issue',
+          state: 'open',
+          title: anchor.title,
+          body: '',
+          url: anchor.html_url,
+          author: 'jlapenna',
+          labels: ['queue:internal-agent'],
+          assigneeLogins: [],
+          sourceUpdatedAt: anchor.updated_at,
+          observedAt: '2026-08-30T12:00:01.000Z',
+        },
+      ],
+      repositoryForProjection: (repository) =>
+        repository === REPO
+          ? {
+              owner: 'jlapenna',
+              name: 'agent-lcars',
+              agents: {
+                codex: {
+                  label: 'queue:internal-agent',
+                  replyTrigger: '/codex',
+                },
+              },
+            }
+          : undefined,
+    });
+
+    expect(result).toMatchObject({ projectedQueue: 1, matches: true });
   });
 
   it('identifies selection, critical-field, and current-queue degradation mismatches', () => {

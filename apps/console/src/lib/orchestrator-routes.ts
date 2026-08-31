@@ -111,44 +111,46 @@ export async function handleWebhookDelivery(
       await deps.store.upsertGithubAnchorProjection(projection);
     }
     for (const signal of githubAnchorProjectionSignalFromDelivery(input)) {
-      const current = await deps.store.readGithubAnchorProjection(
+      await deps.store.updateGithubAnchorProjection(
         signal.anchor,
+        (current) => {
+          if (current?.kind !== 'pr') return undefined;
+          if (signal.reviewThread !== undefined) {
+            const unresolved = new Set(current.unresolvedReviewThreadIds ?? []);
+            if (signal.reviewThread.resolved) {
+              unresolved.delete(signal.reviewThread.id);
+            } else {
+              unresolved.add(signal.reviewThread.id);
+            }
+            return {
+              ...current,
+              unresolvedReviewThreadIds: [...unresolved],
+              unresolvedReviewThreadCount: unresolved.size,
+              observedAt: new Date().toISOString(),
+            };
+          }
+          if (signal.checkRun === undefined) return undefined;
+          const checkRuns = [
+            ...(current.checkRuns ?? []).filter(
+              (check) => check.name !== signal.checkRun?.name,
+            ),
+            signal.checkRun,
+          ].slice(-100);
+          return {
+            ...current,
+            checkRuns,
+            failingChecks: checkRuns
+              .filter(
+                (check) =>
+                  check.status === 'completed' &&
+                  check.conclusion === 'failure',
+              )
+              .map(({ name, url }) => ({ name, url })),
+            ciRunning: checkRuns.some((check) => check.status !== 'completed'),
+            observedAt: new Date().toISOString(),
+          };
+        },
       );
-      if (current?.kind !== 'pr') continue;
-      if (signal.reviewThread !== undefined) {
-        const unresolved = new Set(current.unresolvedReviewThreadIds ?? []);
-        if (signal.reviewThread.resolved) {
-          unresolved.delete(signal.reviewThread.id);
-        } else {
-          unresolved.add(signal.reviewThread.id);
-        }
-        await deps.store.upsertGithubAnchorProjection({
-          ...current,
-          unresolvedReviewThreadIds: [...unresolved],
-          unresolvedReviewThreadCount: unresolved.size,
-          observedAt: new Date().toISOString(),
-        });
-        continue;
-      }
-      if (signal.checkRun === undefined) continue;
-      const checkRuns = [
-        ...(current.checkRuns ?? []).filter(
-          (check) => check.name !== signal.checkRun?.name,
-        ),
-        signal.checkRun,
-      ].slice(-100);
-      await deps.store.upsertGithubAnchorProjection({
-        ...current,
-        checkRuns,
-        failingChecks: checkRuns
-          .filter(
-            (check) =>
-              check.status === 'completed' && check.conclusion === 'failure',
-          )
-          .map(({ name, url }) => ({ name, url })),
-        ciRunning: checkRuns.some((check) => check.status !== 'completed'),
-        observedAt: new Date().toISOString(),
-      });
     }
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {

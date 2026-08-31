@@ -19,9 +19,9 @@ open GitHub anchor through the supported, OIDC-protected control plane. This
 is a one-time cutover prerequisite, not a console runtime path and not a
 Firestore write.
 
-Before deploying, update the Agent LCARS GitHub App registration to grant
-`Checks: read` and subscribe it to `check_run` and
-`pull_request_review_thread` as well as its existing issue/PR events. Run
+Before deploying, verify the Agent LCARS GitHub App registration still has
+`Checks: read`, then add subscriptions for `check_run` and
+`pull_request_review_thread` alongside its existing issue/PR events. Run
 `configure-github-app-webhook` from protected `main` to verify the exact
 subscription before the backfill; it deliberately fails closed when an event
 is absent. This is an operator-owned GitHub App settings change, not a

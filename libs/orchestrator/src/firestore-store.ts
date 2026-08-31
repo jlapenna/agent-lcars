@@ -41,6 +41,7 @@ import {
   validateManifest,
 } from './persisted-record-migration';
 import {
+  mergeGithubAnchorSnapshot,
   type OrchestratorStore,
   type RequestTransactionState,
   StoreConflict,
@@ -266,12 +267,34 @@ export class FirestoreStore implements OrchestratorStore {
       ) {
         return;
       }
-      const next =
-        current === undefined ? projection : { ...current, ...projection };
+      const next = mergeGithubAnchorSnapshot(current, projection);
       // Preserve signals that arrive in their own webhook event (check runs,
       // comments and review threads) while replacing the complete anchor
       // fields. Closing an anchor still removes `openUpdatedAt`, so the queue
       // query cannot retain a stale open record after a close webhook.
+      tx.set(ref, {
+        projection: next,
+        ...(next.state === 'open'
+          ? { openUpdatedAt: next.sourceUpdatedAt }
+          : {}),
+      });
+    });
+  }
+
+  async updateGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+    update: (
+      current: GithubAnchorProjection | undefined,
+    ) => GithubAnchorProjection | undefined,
+  ): Promise<void> {
+    const ref = this.#githubAnchorRef(anchor);
+    await this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      const current = snapshot.exists
+        ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
+        : undefined;
+      const next = update(current);
+      if (next === undefined) return;
       tx.set(ref, {
         projection: next,
         ...(next.state === 'open'

@@ -9,7 +9,11 @@ import { getActionItems } from './action-items';
 import { controlPlaneRepositories } from './deployment';
 import { githubAnchorProjectionFromDelivery } from './github-anchor-projection';
 import { isSelectedGithubAnchorProjection } from './github-anchor-selector';
-import { getGithubClient } from './github-client';
+import {
+  getGithubClient,
+  getWatchedRepos,
+  type WatchedRepo,
+} from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 export const ANCHOR_RECONCILE_PAGE_SIZE = 100;
@@ -202,6 +206,7 @@ interface AnchorProjectionReconcileDeps {
     projections: GithubAnchorProjection[],
   ): Promise<GithubAnchorProjection[]>;
   currentQueue?(): Promise<{ items: CurrentQueueAnchor[]; warnings: string[] }>;
+  repositoryForProjection?(repository: string): WatchedRepo | undefined;
   now(): string;
 }
 
@@ -244,11 +249,17 @@ export function compareSelectedGithubAnchorProjections(input: {
   currentQueue: CurrentQueueAnchor[];
   projections: GithubAnchorProjection[];
   warnings?: string[];
+  repositoryForProjection?(repository: string): WatchedRepo | undefined;
 }): AnchorProjectionQueueComparison {
   const current = new Map(input.currentQueue.map((item) => [item.key, item]));
   const projected = new Map(
     input.projections
-      .filter(isSelectedGithubAnchorProjection)
+      .filter((projection) =>
+        isSelectedGithubAnchorProjection(
+          projection,
+          input.repositoryForProjection?.(projection.anchor.repo),
+        ),
+      )
       .map((projection) => [projectionKey(projection), projection]),
   );
   const missingProjectionKeys = [...current.keys()]
@@ -339,8 +350,19 @@ export async function reconcileGithubAnchorProjections(
       }
     }
     if (!complete) {
+      // A full final page is ambiguous: page ten may be exactly the bounded
+      // 1,000th anchor, or there may be more. Ask GitHub for one sentinel
+      // page without ingesting it so exact-bound repositories remain valid
+      // while >1,000 remains an explicit cutover stop.
+      const sentinel = await deps.listOpenIssues(
+        repository,
+        ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY + 1,
+      );
+      complete = sentinel.length === 0;
+    }
+    if (!complete) {
       throw new AnchorProjectionBackfillLimitError(
-        `GitHub anchor projection backfill reached ${ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY * ANCHOR_RECONCILE_PAGE_SIZE} open anchors for ${repository}; increase the bounded limit before cutover.`,
+        `GitHub anchor projection backfill found more than ${ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY * ANCHOR_RECONCILE_PAGE_SIZE} open anchors for ${repository}; increase the bounded limit before cutover.`,
       );
     }
   }
@@ -355,6 +377,7 @@ export async function reconcileGithubAnchorProjections(
             currentQueue: currentQueue.items,
             projections: allProjections,
             warnings: currentQueue.warnings,
+            repositoryForProjection: deps.repositoryForProjection,
           }),
         }),
   };
@@ -363,6 +386,12 @@ export async function reconcileGithubAnchorProjections(
 export function reconcileCurrentGithubAnchorProjections(): Promise<AnchorProjectionReconcileResult> {
   const { store } = createOrchestratorRuntime();
   const github = getGithubClient();
+  const watchedRepos = new Map(
+    getWatchedRepos().map((repository) => [
+      `${repository.owner}/${repository.name}`,
+      repository,
+    ]),
+  );
   return reconcileGithubAnchorProjections({
     store,
     repositories: controlPlaneRepositories(),
@@ -393,6 +422,7 @@ export function reconcileCurrentGithubAnchorProjections(): Promise<AnchorProject
         warnings: result.warnings,
       };
     },
+    repositoryForProjection: (repository) => watchedRepos.get(repository),
     now: () => new Date().toISOString(),
   });
 }

@@ -15,9 +15,18 @@ const BOARD_LABELS = ['status:needs-human', 'status:ready-for-agent'];
  */
 export function isSelectedGithubAnchorProjection(
   projection: GithubAnchorProjection,
+  repository?: WatchedRepo,
 ): boolean {
   const [owner, name] = projection.anchor.repo.split('/');
-  const repo: WatchedRepo = { owner: owner as string, name: name as string };
+  // A projection intentionally carries GitHub facts, not a copy of mutable
+  // console configuration. Use the configured repo when the caller has it so
+  // a repository-specific integration label remains equivalent to
+  // `isBoardItem`; the identity-only fallback keeps one-shot comparisons
+  // deterministic for callers that do not inject configuration.
+  const repo = repository ?? {
+    owner: owner as string,
+    name: name as string,
+  };
   if (
     projection.assigneeLogins.includes(agentFleetLogin()) ||
     projection.assigneeLogins.includes(maintainerLogin())

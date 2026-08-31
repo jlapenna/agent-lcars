@@ -42,4 +42,22 @@ describe('isSelectedGithubAnchorProjection', () => {
   it('does not select a merely open unowned anchor', () => {
     expect(isSelectedGithubAnchorProjection(projection())).toBe(false);
   });
+
+  it('uses a configured repository integration label', () => {
+    expect(
+      isSelectedGithubAnchorProjection(
+        projection({ labels: ['queue:internal-agent'] }),
+        {
+          owner: 'jlapenna',
+          name: 'agent-lcars',
+          agents: {
+            codex: {
+              label: 'queue:internal-agent',
+              replyTrigger: '/codex',
+            },
+          },
+        },
+      ),
+    ).toBe(true);
+  });
 });

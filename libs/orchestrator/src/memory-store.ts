@@ -32,6 +32,7 @@ import {
   validateManifest,
 } from './persisted-record-migration';
 import {
+  mergeGithubAnchorSnapshot,
   type OrchestratorStore,
   type RequestTransactionState,
   StoreConflict,
@@ -153,8 +154,21 @@ export class MemoryStore implements OrchestratorStore {
     }
     this.#githubAnchorProjections.set(
       key,
-      structuredClone({ ...current, ...projection }),
+      structuredClone(mergeGithubAnchorSnapshot(current, projection)),
     );
+  }
+
+  async updateGithubAnchorProjection(
+    anchor: GithubAnchorProjection['anchor'],
+    update: (
+      current: GithubAnchorProjection | undefined,
+    ) => GithubAnchorProjection | undefined,
+  ): Promise<void> {
+    const key = taskKey(anchor);
+    const next = update(this.#githubAnchorProjections.get(key));
+    if (next !== undefined) {
+      this.#githubAnchorProjections.set(key, structuredClone(next));
+    }
   }
 
   async readGithubAnchorProjection(
