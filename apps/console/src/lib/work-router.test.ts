@@ -11,6 +11,15 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { describe, expect, it, vi } from 'vitest';
 
+const { reconcileCurrentGithubAnchorProjections } = vi.hoisted(() => ({
+  reconcileCurrentGithubAnchorProjections: vi.fn(),
+}));
+
+vi.mock('@/lib/github-anchor-reconcile', () => ({
+  AnchorProjectionBackfillLimitError: class AnchorProjectionBackfillLimitError extends Error {},
+  reconcileCurrentGithubAnchorProjections,
+}));
+
 import { controlPlaneRepository } from './deployment';
 import { createWorkHandler, type WorkContext } from './work-router';
 
@@ -872,6 +881,76 @@ describe('GitHub-anchor dispatch route', () => {
 });
 
 describe('persisted orchestrator migration routes', () => {
+  it('reconciles the one-shot projection through the ordinary work.migrate boundary', async () => {
+    const result = {
+      repositories: 2,
+      anchors: 3,
+      comparison: {
+        currentQueue: 2,
+        projectedQueue: 2,
+        missingProjectionKeys: [],
+        unexpectedProjectionKeys: [],
+        criticalFieldMismatches: [],
+        warnings: [],
+        matches: true,
+      },
+    };
+    reconcileCurrentGithubAnchorProjections.mockResolvedValueOnce(result);
+
+    const denied = await call(
+      context({ principal: operator }),
+      'POST',
+      '/orchestrator-migration/projections/reconcile',
+      {},
+    );
+    expect(denied.status).toBe(401);
+    expect(reconcileCurrentGithubAnchorProjections).not.toHaveBeenCalled();
+
+    const accepted = await call(
+      context({ principal: migrationOperator }),
+      'POST',
+      '/orchestrator-migration/projections/reconcile',
+      {},
+    );
+    expect(accepted.status).toBe(200);
+    expect(accepted.json).toEqual(result);
+    expect(reconcileCurrentGithubAnchorProjections).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a comparison mismatch with its result as a non-2xx Work response', async () => {
+    reconcileCurrentGithubAnchorProjections.mockResolvedValueOnce({
+      repositories: 1,
+      anchors: 2,
+      comparison: {
+        currentQueue: 2,
+        projectedQueue: 1,
+        missingProjectionKeys: ['jlapenna/agent-lcars#1631'],
+        unexpectedProjectionKeys: [],
+        criticalFieldMismatches: [],
+        warnings: [],
+        matches: false,
+      },
+    });
+
+    const response = await call(
+      context({ principal: migrationOperator }),
+      'POST',
+      '/orchestrator-migration/projections/reconcile',
+      {},
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.json).toMatchObject({
+      message: 'Queue projection mismatch',
+      data: {
+        comparison: {
+          matches: false,
+          missingProjectionKeys: ['jlapenna/agent-lcars#1631'],
+        },
+      },
+    });
+  });
+
   it('requires a dedicated migration scope and defaults a reviewed manifest to dry-run', async () => {
     const ctx = context({ principal: migrationOperator });
     const store = ctx.runtime.store as MemoryStore;

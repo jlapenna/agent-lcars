@@ -28,13 +28,33 @@ const inventoryRecordSchema = z.strictObject({
   findingsTruncated: z.boolean(),
   findings: z.array(findingSchema).max(PERSISTED_MIGRATION_FINDINGS_MAX),
 });
+const anchorProjectionComparisonSchema = z.strictObject({
+  currentQueue: z.number().int().nonnegative(),
+  projectedQueue: z.number().int().nonnegative(),
+  missingProjectionKeys: z.array(z.string()),
+  unexpectedProjectionKeys: z.array(z.string()),
+  criticalFieldMismatches: z.array(
+    z.strictObject({
+      key: z.string(),
+      fields: z.array(z.enum(['title', 'url', 'author', 'assigneeLogins'])),
+    }),
+  ),
+  warnings: z.array(z.string()),
+  matches: z.boolean(),
+});
+const anchorProjectionReconcileResultSchema = z.strictObject({
+  repositories: z.number().int().nonnegative(),
+  anchors: z.number().int().nonnegative(),
+  comparison: anchorProjectionComparisonSchema.optional(),
+});
 
-/** Temporary, operator-only API contract. It has fixed orchestrator record
- * kinds and bounded payloads; it deliberately does not model a collection
- * name, a query expression, or arbitrary document access. A malformed
- * record may carry a bounded opaque address for its one inventoried document;
- * it cannot select a different collection or query. Delete this with the
- * phase-2 compatibility readers after a reviewed live conversion. */
+/** Temporary, operator-only API contract. It has fixed persisted-record kinds
+ * and one bounded projection reconciliation operation; it deliberately does
+ * not model a collection name, query expression, or arbitrary document
+ * access. A malformed record may carry a bounded opaque address for its one
+ * inventoried document; it cannot select a different collection or query.
+ * Delete this with the phase-2 compatibility readers after reviewed live
+ * conversion. */
 export const orchestratorMigrationContract = {
   inventory: base
     .meta(
@@ -111,4 +131,26 @@ export const orchestratorMigrationContract = {
         entries: z.number().int().positive(),
       }),
     ),
+  projectionReconcile: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/orchestrator-migration/projections/reconcile',
+        operationId: 'reconcileGithubAnchorProjections',
+        summary:
+          'Reconcile the one-shot GitHub anchor projection cutover through Work',
+        description:
+          'Temporary operator migration endpoint. It reads the bounded GitHub ' +
+          'anchor set, writes exact fenced projections, and returns a non-2xx ' +
+          'result when the selected stored queue does not match.',
+      }),
+    )
+    .errors({
+      CONFLICT: {
+        message: 'The projection backfill was incomplete or does not match',
+        data: anchorProjectionReconcileResultSchema.optional(),
+      },
+    })
+    .input(z.strictObject({}))
+    .output(anchorProjectionReconcileResultSchema),
 };

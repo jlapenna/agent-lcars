@@ -9,7 +9,8 @@ export type WorkScope =
   | 'work.executor'
   | 'work.cron'
   | 'work.reaper'
-  /** One-shot persisted-record migration only. Never implied by operator. */
+  /** Temporary, explicitly granted migration operations only. Never implied
+   * by operator. */
   | 'work.migrate';
 
 export interface WorkPrincipal {
