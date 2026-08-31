@@ -45,7 +45,7 @@ describe('session schema backfill', () => {
     ).toEqual({ agent: 'codex', repo, renderable: true });
   });
 
-  it('reports invalid enum, source, and noncanonical repository values as gaps', () => {
+  it('requires repository identity for issue-agent anchors but preserves repo-less CLI history', () => {
     expect(
       sessionSchemaGaps({
         sessionId: 's1',
@@ -68,6 +68,22 @@ describe('session schema backfill', () => {
         source: 'cli',
         agent: 'codex',
         repo: { owner: 'o'.repeat(40), name: 'n'.repeat(101) },
+      }),
+    ).toEqual(['repo']);
+    expect(
+      sessionSchemaGaps({
+        sessionId: 's4',
+        source: 'cli',
+        agent: 'claude-code',
+        host: 'pike',
+        lastActivityAt: '',
+      }),
+    ).toEqual([]);
+    expect(
+      sessionSchemaGaps({
+        sessionId: 's5',
+        source: 'issue-agent',
+        agent: 'codex',
       }),
     ).toEqual(['repo']);
   });
@@ -95,7 +111,36 @@ describe('session schema backfill', () => {
     ).toMatchObject({ agent: 'codex', repo });
   });
 
+  it('repairs a repo-less CLI agent without inventing a repository', () => {
+    const legacy = { sessionId: 's1', source: 'cli' };
+    expect(
+      sessionSchemaBackfillPatch(legacy, {
+        sessionId: 's1',
+        agent: 'claude-code',
+      }),
+    ).toEqual({ agent: 'claude-code' });
+    expect(
+      backfillSessionSchema(legacy, {
+        sessionId: 's1',
+        agent: 'claude-code',
+      }),
+    ).toMatchObject({ agent: 'claude-code' });
+    expect(
+      sessionSchemaGaps({
+        sessionId: 's1',
+        source: 'cli',
+        agent: 'claude-code',
+      }),
+    ).toEqual([]);
+  });
+
   it('rejects missing archived issue-agent renderability, noncanonical repo values, and conflicting stored values', () => {
+    expect(() =>
+      backfillSessionSchema(
+        { sessionId: 's1', source: 'issue-agent' },
+        { sessionId: 's1', agent: 'claude-code' },
+      ),
+    ).toThrow('requires a canonical GitHub repo');
     expect(() =>
       backfillSessionSchema(
         {

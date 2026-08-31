@@ -51,7 +51,10 @@ function validateManifestEntry(
       `Session ${(entry as SessionSchemaBackfill).sessionId} has an unsupported agent`,
     );
   }
-  if (!isCanonicalSessionRepository(candidate.repo)) {
+  if (
+    candidate.repo !== undefined &&
+    !isCanonicalSessionRepository(candidate.repo)
+  ) {
     throw new Error(
       `Session ${(entry as SessionSchemaBackfill).sessionId} requires a canonical GitHub repo owner and name`,
     );
