@@ -301,7 +301,10 @@ jobs:
   # events start `verify-full` and this gate then requires its real result.
   verify:
     name: Verify
-    needs: verify-full
+    # Verify is the required branch-protection check. It does not finish until
+    # both the standard gate and the selected E2E gate have finished, so a
+    # browser failure blocks merge and the production deployment it triggers.
+    needs: [verify-full, e2e, e2e-control-flag]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -319,6 +322,25 @@ jobs:
             echo "::error::Full verification concluded '$VERIFY_FULL_RESULT'."
             exit 1
           fi
+
+      - name: Require selected E2E verification
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        env:
+          E2E_RESULT: ${{ needs.e2e.result }}
+          E2E_CONTROL_FLAG_RESULT: ${{ needs.e2e-control-flag.result }}
+        run: |
+          if [ "$E2E_RESULT" = 'success' ]; then
+            exit 0
+          fi
+
+          if [ "$E2E_RESULT" = 'skipped' ] && \
+            [ "$E2E_CONTROL_FLAG_RESULT" = 'success' ]; then
+            echo 'E2E is explicitly disabled by the emergency control flag.'
+            exit 0
+          fi
+
+          echo "::error::E2E concluded '$E2E_RESULT' (control flag: '$E2E_CONTROL_FLAG_RESULT')."
+          exit 1
 
   runner-image-pnpm-store-seed:
     name: Runner image pnpm-store seed

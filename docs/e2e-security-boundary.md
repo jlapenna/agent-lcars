@@ -4,9 +4,10 @@ Console E2E does not need production credentials. Its GitHub API is a local
 fixture, Firebase uses the `demo-no-project` emulators, and every credential-like
 value in `tools/e2e/ci.env` is a documented dummy value.
 
-CI owns the required E2E gate. The local entrypoint below is an optional,
-credential-free diagnostic tool; it is not required before delivery. Both
-local diagnostics and CI use the same hermetic boundary:
+CI runs the required E2E gate and blocks `Verify` on a failure. The local
+entrypoint below is an optional, credential-free diagnostic tool; it is not
+required before delivery. Both local diagnostics and CI use the same hermetic
+boundary:
 
 ```sh
 ./tools/e2e-local.sh

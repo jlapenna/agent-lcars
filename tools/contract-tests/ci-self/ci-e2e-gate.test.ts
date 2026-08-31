@@ -9,6 +9,7 @@ interface Workflow {
     {
       if?: string;
       name?: string;
+      needs?: string[];
       steps?: Array<{ id?: string; if?: string; name?: string; run?: string }>;
     }
   >;
@@ -35,5 +36,23 @@ describe('CI E2E operational gate', () => {
         run: './tools/e2e-local.sh',
       }),
     );
+
+    expect(workflow.jobs?.verify?.needs).toEqual([
+      'verify-full',
+      'e2e',
+      'e2e-control-flag',
+    ]);
+    const e2eGate = workflow.jobs?.verify?.steps?.find(
+      (step) => step.name === 'Require selected E2E verification',
+    );
+    expect(e2eGate).toEqual(
+      expect.objectContaining({
+        if: "github.event_name != 'pull_request' || !github.event.pull_request.draft",
+      }),
+    );
+    expect(e2eGate?.run).toContain('E2E_RESULT');
+    expect(e2eGate?.run).toContain('[ "$E2E_RESULT" = \'success\' ]');
+    expect(e2eGate?.run).toContain('E2E_CONTROL_FLAG_RESULT');
+    expect(e2eGate?.run).toContain('exit 1');
   });
 });

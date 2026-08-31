@@ -55,9 +55,9 @@ These override any default behavior:
   front of a check that's going to happen anyway — push once the fast
   layer passes and let CI do the rest. See
   [references/verify.md](references/verify.md#ci-delegation) for the full
-  reasoning. **Local E2E is optional, never a delivery prerequisite.** CI's
-  E2E job owns the required browser gate and selects affected console/harness
-  changes on every push. Run the slow local suite
+  reasoning. **Local E2E is optional, never a delivery prerequisite.** The
+  required CI gate waits for selected browser E2E and blocks on a failure.
+  Run the slow local suite
   (`tools/e2e-local.sh`'s hermetic build + Firebase emulator startup) only
   when it helps reproduce or debug a specific failure; it is supplemental
   evidence, not a reason to delay a ready push.

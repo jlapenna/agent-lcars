@@ -35,12 +35,11 @@ the rest.
 
 ## Console e2e
 
-`pnpm verify` does **not** run the console e2e suite locally. **CI owns the
-required E2E gate:** its E2E job conservatively selects affected console and
-harness changes on every push and runs the hermetic suite. Local E2E is
-optional diagnostic evidence, useful for reproducing or iterating on a
-specific browser failure, but it is never required before pushing or part of
-deliverable proof.
+`pnpm verify` does **not** run the console E2E suite locally. CI runs the
+required browser gate: it selects affected console and harness changes, and
+the required `Verify` check fails if selected E2E fails. Local E2E is optional
+diagnostic evidence for reproducing or iterating on a browser failure; it is
+not required before pushing or part of deliverable proof.
 
 When a local reproduction is useful, use the same hermetic entrypoint as CI:
 
