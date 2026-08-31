@@ -8,8 +8,10 @@ import { MemoryStore } from './memory-store';
 import { outboxEntrySchema, taskKey, taskSchema } from './model';
 import { Orchestrator } from './orchestrator';
 import {
+  encodePersistedMigrationAddress,
   encodePersistedMigrationCursor,
   PersistedMigrationCursorError,
+  type PersistedMigrationEntry,
 } from './persisted-record-migration';
 import {
   runOrchestratorStoreContract,
@@ -21,6 +23,8 @@ runScheduleStoreContract(
   'MemoryScheduleStore',
   () => new MemoryScheduleStore(),
 );
+
+const T = '2026-08-15T12:00:00.000Z';
 
 describe('taskSchema', () => {
   it('reads a legacy task document that predates consecutiveLost fine', () => {
@@ -234,6 +238,168 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
     });
 
+    it('repairs malformed task, run, and outbox records through exact opaque addresses', async () => {
+      prefixCounter += 1;
+      const collectionPrefix = `orchestrator-migration-address-${Date.now()}-${prefixCounter}-`;
+      const store = new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+      const firestore = new Firestore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        host: emulatorHost ?? 'localhost:8080',
+        ssl: false,
+      });
+      const task = { repo: 'octo/example', issue: 14 } as const;
+      const runId = 'octo/example#14/r1';
+      const entryId = `dispatch/${runId}`;
+      const cases = [
+        {
+          kind: 'task' as const,
+          collection: 'tasks',
+          documentId: encodeURIComponent(taskKey(task)),
+          malformed: { task: { runCount: 0, updatedAt: T }, revision: 1 },
+          replacement: {
+            task: {
+              task,
+              runCount: 0,
+              consecutiveLost: 0,
+              work: { migrated: true },
+              updatedAt: T,
+            },
+            revision: 1,
+          },
+        },
+        {
+          kind: 'run' as const,
+          collection: 'runs',
+          documentId: encodeURIComponent(runId),
+          malformed: {
+            task,
+            state: 'lost',
+            pipeline: 'codex',
+            requestId: 'migration-run',
+            leaseExpiresAt: T,
+            events: [],
+            createdAt: T,
+            updatedAt: T,
+          },
+          replacement: {
+            runId,
+            task,
+            state: 'canceled' as const,
+            pipeline: 'codex',
+            requestId: 'migration-run',
+            requestSource: 'caller' as const,
+            leaseExpiresAt: T,
+            events: [],
+            createdAt: T,
+            updatedAt: T,
+          },
+        },
+        {
+          kind: 'outbox' as const,
+          collection: 'outbox',
+          documentId: encodeURIComponent(entryId),
+          malformed: { kind: 'dispatch-run', state: 'pending', attempts: 0 },
+          replacement: {
+            entryId,
+            kind: 'dispatch-run' as const,
+            task,
+            runId,
+            state: 'done' as const,
+            attempts: 0,
+            createdAt: T,
+            updatedAt: T,
+          },
+        },
+      ];
+
+      for (const candidate of cases) {
+        const ref = firestore
+          .collection(`${collectionPrefix}${candidate.collection}`)
+          .doc(candidate.documentId);
+        await ref.set(candidate.malformed);
+        const page = await store.inventoryPersistedRecords({
+          kind: candidate.kind,
+          limit: 1,
+        });
+        const record = page.records[0];
+        expect(record?.selector).toEqual({
+          kind: candidate.kind,
+          address: encodePersistedMigrationAddress(
+            candidate.kind,
+            candidate.documentId,
+          ),
+        });
+        if (record?.selector === undefined) throw new Error('missing address');
+        const entries = [
+          {
+            selector: record.selector,
+            expectedFingerprint: record.fingerprint,
+            replacement: candidate.replacement,
+          },
+        ] as unknown as PersistedMigrationEntry[];
+        const preview = await store.previewPersistedMigration(entries);
+        await store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        });
+        expect((await ref.get()).data()).toEqual(candidate.replacement);
+      }
+
+      const staleRunId = 'octo/example#14/r2';
+      const staleRef = firestore
+        .collection(`${collectionPrefix}runs`)
+        .doc(encodeURIComponent(staleRunId));
+      await staleRef.set({
+        task,
+        state: 'lost',
+        pipeline: 'codex',
+        requestId: 'migration-stale',
+        leaseExpiresAt: T,
+        events: [],
+        createdAt: T,
+        updatedAt: T,
+      });
+      const staleRecord = (
+        await store.inventoryPersistedRecords({ kind: 'run', limit: 10 })
+      ).records.find((record) => 'address' in (record.selector ?? {}));
+      if (staleRecord?.selector === undefined)
+        throw new Error('missing stale address');
+      const staleEntries = [
+        {
+          selector: staleRecord.selector,
+          expectedFingerprint: staleRecord.fingerprint,
+          replacement: {
+            runId: staleRunId,
+            task,
+            state: 'canceled' as const,
+            pipeline: 'codex',
+            requestId: 'migration-stale',
+            requestSource: 'caller' as const,
+            leaseExpiresAt: T,
+            events: [],
+            createdAt: T,
+            updatedAt: T,
+          },
+        },
+      ] as unknown as PersistedMigrationEntry[];
+      const stalePreview = await store.previewPersistedMigration(staleEntries);
+      await staleRef.update({ concurrentChange: true });
+      await expect(
+        store.applyPersistedMigration({
+          entries: staleEntries,
+          reviewedManifestId: stalePreview.manifestId,
+        }),
+      ).rejects.toThrow('changed after inventory');
+      expect((await staleRef.get()).data()).not.toHaveProperty('runId');
+      await firestore.terminate();
+    });
+
     it('does no partial write when a reviewed multi-record manifest is stale', async () => {
       const store = migrationStore();
       const firstTask = await seedTask(store, 10);
@@ -244,7 +410,12 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       });
       const entries = await Promise.all(
         inventory.records.map(async (record) => {
-          if (record.selector?.kind !== 'task') throw new Error('missing task');
+          if (
+            record.selector?.kind !== 'task' ||
+            !('task' in record.selector)
+          ) {
+            throw new Error('missing task');
+          }
           const current = await store.readTask(record.selector.task);
           if (current === undefined) throw new Error('missing stored task');
           return {
@@ -293,7 +464,9 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
         limit: 1,
       });
       const record = page.records[0];
-      if (record?.selector?.kind !== 'task') throw new Error('missing task');
+      if (record?.selector?.kind !== 'task' || !('task' in record.selector)) {
+        throw new Error('missing task');
+      }
       const current = await store.readTask(record.selector.task);
       if (current === undefined) throw new Error('missing stored task');
       const entries = [
@@ -355,7 +528,9 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
         limit: 1,
       });
       const record = first.records[0];
-      if (record?.selector?.kind !== 'task') throw new Error('missing task');
+      if (record?.selector?.kind !== 'task' || !('task' in record.selector)) {
+        throw new Error('missing task');
+      }
       expect(record.selector.task).toEqual(taskId);
 
       // These adjacent int64 values both round to the same JavaScript number

@@ -15,8 +15,8 @@ import {
   runSchema,
   type TaskDocument,
   taskDocumentSchema,
-  type TaskId,
   taskIdSchema,
+  taskKey,
 } from './model';
 
 /** This route is deliberately a one-shot operator surface.  Its small page
@@ -28,6 +28,8 @@ export const PERSISTED_MIGRATION_MANIFEST_MAX = 100;
  * base64url is at most 2,002 characters, including ids full of backslashes
  * or other JSON-escaped characters. */
 export const PERSISTED_MIGRATION_CURSOR_MAX_LENGTH = 2_002;
+/** One opaque-address tag byte, one kind byte, and a Firestore-sized id. */
+export const PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH = 2_003;
 export const PERSISTED_MIGRATION_FINDINGS_MAX = 16;
 
 export const persistedRecordKindSchema = z.enum(['task', 'run', 'outbox']);
@@ -71,10 +73,48 @@ const fingerprintSchema = z
   .length(64)
   .regex(/^[0-9a-f]{64}$/u);
 
-export const persistedRecordSelectorSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('task'), task: taskIdSchema }),
-  z.strictObject({ kind: z.literal('run'), runId: runIdSchema }),
-  z.strictObject({ kind: z.literal('outbox'), entryId: outboxEntryIdSchema }),
+const migrationAddressSchema = z
+  .string()
+  .min(1)
+  .max(PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH)
+  .regex(/^[A-Za-z0-9_-]+$/u);
+
+const taskSelectorSchema = z.strictObject({
+  kind: z.literal('task'),
+  task: taskIdSchema,
+});
+const runSelectorSchema = z.strictObject({
+  kind: z.literal('run'),
+  runId: runIdSchema,
+});
+const outboxSelectorSchema = z.strictObject({
+  kind: z.literal('outbox'),
+  entryId: outboxEntryIdSchema,
+});
+const taskAddressSelectorSchema = z.strictObject({
+  kind: z.literal('task'),
+  address: migrationAddressSchema,
+});
+const runAddressSelectorSchema = z.strictObject({
+  kind: z.literal('run'),
+  address: migrationAddressSchema,
+});
+const outboxAddressSelectorSchema = z.strictObject({
+  kind: z.literal('outbox'),
+  address: migrationAddressSchema,
+});
+
+/** A logical selector is preferable when the stored payload is coherent. An
+ * address selector is a bounded opaque reference to one already-inventoried
+ * document in one fixed collection, used only when that payload is malformed.
+ * It is deliberately not a collection name, query, or general document API. */
+export const persistedRecordSelectorSchema = z.union([
+  taskSelectorSchema,
+  runSelectorSchema,
+  outboxSelectorSchema,
+  taskAddressSelectorSchema,
+  runAddressSelectorSchema,
+  outboxAddressSelectorSchema,
 ]);
 export type PersistedRecordSelector = z.infer<
   typeof persistedRecordSelectorSchema
@@ -82,40 +122,24 @@ export type PersistedRecordSelector = z.infer<
 
 export const persistedMigrationEntrySchema = z.union([
   z.strictObject({
-    selector: z.strictObject({ kind: z.literal('task'), task: taskIdSchema }),
+    selector: z.union([taskSelectorSchema, taskAddressSelectorSchema]),
     expectedFingerprint: fingerprintSchema,
     replacement: taskDocumentSchema,
   }),
   z.strictObject({
-    selector: z.strictObject({ kind: z.literal('run'), runId: runIdSchema }),
+    selector: z.union([runSelectorSchema, runAddressSelectorSchema]),
     expectedFingerprint: fingerprintSchema,
     replacement: runSchema,
   }),
   z.strictObject({
-    selector: z.strictObject({
-      kind: z.literal('outbox'),
-      entryId: outboxEntryIdSchema,
-    }),
+    selector: z.union([outboxSelectorSchema, outboxAddressSelectorSchema]),
     expectedFingerprint: fingerprintSchema,
     replacement: outboxEntrySchema,
   }),
 ]);
-export type PersistedMigrationEntry =
-  | {
-      selector: { kind: 'task'; task: TaskId };
-      expectedFingerprint: string;
-      replacement: TaskDocument;
-    }
-  | {
-      selector: { kind: 'run'; runId: string };
-      expectedFingerprint: string;
-      replacement: Run;
-    }
-  | {
-      selector: { kind: 'outbox'; entryId: string };
-      expectedFingerprint: string;
-      replacement: OutboxEntry;
-    };
+export type PersistedMigrationEntry = z.infer<
+  typeof persistedMigrationEntrySchema
+>;
 
 export interface PersistedRecordFinding {
   /** A short fixed code, never copied document values. */
@@ -167,6 +191,7 @@ const cursorKindByte: Record<PersistedRecordKind, number> = {
   run: 0x72,
   outbox: 0x6f,
 };
+const migrationAddressTag = 0x6d;
 
 function invalidCursor(message: string): PersistedMigrationCursorError {
   return new PersistedMigrationCursorError(message);
@@ -236,6 +261,61 @@ export function decodePersistedMigrationCursor(
   // become a different anchor id.
   if (encodePersistedMigrationCursor(expectedKind, documentId) !== cursor) {
     throw invalidCursor('Invalid persisted orchestrator inventory cursor');
+  }
+  return documentId;
+}
+
+/** A separate opaque token for a reviewed migration target. Unlike a cursor,
+ * it cannot be used to continue an inventory walk. It still names only one
+ * direct document in one of the three fixed orchestrator collections. */
+export function encodePersistedMigrationAddress(
+  kind: PersistedRecordKind,
+  documentId: string,
+): string {
+  const documentIdBytes = Buffer.from(documentId, 'utf8');
+  if (
+    documentIdBytes.length === 0 ||
+    documentIdBytes.length > 1_500 ||
+    !isDirectFirestoreDocumentId(documentId)
+  ) {
+    throw invalidCursor('Invalid persisted orchestrator migration document id');
+  }
+  const address = Buffer.concat([
+    Buffer.from([migrationAddressTag, cursorKindByte[kind]]),
+    documentIdBytes,
+  ]).toString('base64url');
+  if (address.length > PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH) {
+    throw invalidCursor(
+      'Persisted orchestrator migration address is too large',
+    );
+  }
+  return address;
+}
+
+export function decodePersistedMigrationAddress(
+  address: string,
+  expectedKind: PersistedRecordKind,
+): string {
+  if (
+    !/^[A-Za-z0-9_-]+$/u.test(address) ||
+    address.length > PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH
+  ) {
+    throw invalidCursor('Invalid persisted orchestrator migration address');
+  }
+  const addressBytes = Buffer.from(address, 'base64url');
+  if (
+    addressBytes.length < 3 ||
+    addressBytes[0] !== migrationAddressTag ||
+    addressBytes[1] !== cursorKindByte[expectedKind]
+  ) {
+    throw invalidCursor('Invalid persisted orchestrator migration address');
+  }
+  const documentId = addressBytes.subarray(2).toString('utf8');
+  if (!isDirectFirestoreDocumentId(documentId)) {
+    throw invalidCursor('Invalid persisted orchestrator migration address');
+  }
+  if (encodePersistedMigrationAddress(expectedKind, documentId) !== address) {
+    throw invalidCursor('Invalid persisted orchestrator migration address');
   }
   return documentId;
 }
@@ -321,20 +401,45 @@ function retiredFields(
 function selectorFrom(
   kind: PersistedRecordKind,
   value: unknown,
+  documentId?: string,
 ): PersistedRecordSelector | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isRecord(value))
+    return documentId === undefined
+      ? undefined
+      : opaqueSelector(kind, documentId);
+  let selector: PersistedRecordSelector | undefined;
   if (kind === 'task') {
     const document = value['task'];
-    if (!isRecord(document)) return undefined;
-    const task = taskIdSchema.safeParse(document['task']);
-    return task.success ? { kind, task: task.data } : undefined;
-  }
-  if (kind === 'run') {
+    if (isRecord(document)) {
+      const task = taskIdSchema.safeParse(document['task']);
+      if (task.success) selector = { kind, task: task.data };
+    }
+  } else if (kind === 'run') {
     const runId = runIdSchema.safeParse(value['runId']);
-    return runId.success ? { kind, runId: runId.data } : undefined;
+    if (runId.success) selector = { kind, runId: runId.data };
+  } else {
+    const entryId = outboxEntryIdSchema.safeParse(value['entryId']);
+    if (entryId.success) selector = { kind, entryId: entryId.data };
   }
-  const entryId = outboxEntryIdSchema.safeParse(value['entryId']);
-  return entryId.success ? { kind, entryId: entryId.data } : undefined;
+  if (
+    selector !== undefined &&
+    (documentId === undefined || canonicalDocumentId(selector) === documentId)
+  ) {
+    return selector;
+  }
+  return documentId === undefined
+    ? undefined
+    : opaqueSelector(kind, documentId);
+}
+
+function opaqueSelector(
+  kind: PersistedRecordKind,
+  documentId: string,
+): PersistedRecordSelector {
+  const address = encodePersistedMigrationAddress(kind, documentId);
+  if (kind === 'task') return { kind, address };
+  if (kind === 'run') return { kind, address };
+  return { kind, address };
 }
 
 /** A compact, value-free classification of every currently tolerated
@@ -345,8 +450,9 @@ function selectorFrom(
 export function inventoryPersistedRecord(
   kind: PersistedRecordKind,
   value: unknown,
+  documentId?: string,
 ): PersistedRecordInventory {
-  const selector = selectorFrom(kind, value);
+  const selector = selectorFrom(kind, value, documentId);
   const findings: PersistedRecordFinding[] = [];
   if (!isRecord(value)) {
     return {
@@ -528,9 +634,44 @@ function stableNumber(value: number): string {
 }
 
 export function selectorKey(selector: PersistedRecordSelector): string {
+  if ('address' in selector)
+    return `address:${selector.kind}:${selector.address}`;
   if (selector.kind === 'task') return `task:${JSON.stringify(selector.task)}`;
   if (selector.kind === 'run') return `run:${selector.runId}`;
   return `outbox:${selector.entryId}`;
+}
+
+function canonicalDocumentId(selector: PersistedRecordSelector): string {
+  if ('address' in selector) {
+    return decodePersistedMigrationAddress(selector.address, selector.kind);
+  }
+  if (selector.kind === 'task')
+    return encodeURIComponent(taskKey(selector.task));
+  if (selector.kind === 'run') return encodeURIComponent(selector.runId);
+  return encodeURIComponent(selector.entryId);
+}
+
+function replacementDocumentId(entry: PersistedMigrationEntry): string {
+  if (entry.selector.kind === 'task') {
+    return encodeURIComponent(
+      taskKey((entry.replacement as TaskDocument).task.task),
+    );
+  }
+  if (entry.selector.kind === 'run') {
+    return encodeURIComponent((entry.replacement as Run).runId);
+  }
+  return encodeURIComponent((entry.replacement as OutboxEntry).entryId);
+}
+
+function addressedDocumentId(selector: PersistedRecordSelector): string {
+  try {
+    return canonicalDocumentId(selector);
+  } catch (error) {
+    if (PersistedMigrationCursorError.is(error)) {
+      throw new PersistedMigrationConflict('invalid opaque migration address');
+    }
+    throw error;
+  }
 }
 
 export function validateManifest(entries: unknown): PersistedMigrationEntry[] {
@@ -546,7 +687,15 @@ export function validateManifest(entries: unknown): PersistedMigrationEntry[] {
         `duplicate manifest selector ${key}`,
       );
     seen.add(key);
-    if (entry.selector.kind === 'task') {
+    if ('address' in entry.selector) {
+      if (
+        addressedDocumentId(entry.selector) !== replacementDocumentId(entry)
+      ) {
+        throw new PersistedMigrationConflict(
+          'opaque address does not match replacement document id',
+        );
+      }
+    } else if (entry.selector.kind === 'task') {
       const replacement = entry.replacement as TaskDocument;
       if (
         JSON.stringify(entry.selector.task) !==
