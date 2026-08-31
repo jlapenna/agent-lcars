@@ -4,6 +4,6 @@
   "packageManager": "pnpm@11.24.0",
   "dependencies": {
     "is-number": "7.0.0",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }
