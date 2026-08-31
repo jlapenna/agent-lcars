@@ -694,6 +694,67 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
         status: 'blocked',
         reasons: expect.arrayContaining(['invalid-parent-task']),
       });
+
+      const mismatchedParentTask = {
+        repo: 'octo/example',
+        issue: 75,
+      } as const;
+      const mismatchedEmbeddedTask = {
+        repo: 'octo/example',
+        issue: 76,
+      } as const;
+      const mismatchedParentRunId = 'octo/example#75/r1';
+      await firestore
+        .collection(`${collectionPrefix}tasks`)
+        .doc(encodeURIComponent(taskKey(mismatchedParentTask)))
+        .set({
+          // Keep the exact legacy task shape: no consecutiveLost or work.
+          // The collection path identifies #75 but its embedded safety anchor
+          // must independently agree before a terminal #75 run is deletable.
+          task: {
+            task: mismatchedEmbeddedTask,
+            runCount: 1,
+            updatedAt: T,
+          },
+          revision: 1,
+        });
+      await firestore
+        .collection(`${collectionPrefix}runs`)
+        .doc(encodeURIComponent(mismatchedParentRunId))
+        .set({
+          // This census-era run intentionally omits requestSource.
+          runId: mismatchedParentRunId,
+          task: mismatchedParentTask,
+          state: 'finished',
+          pipeline: 'codex',
+          requestId: 'legacy-mismatched-parent',
+          leaseExpiresAt: T,
+          events: [],
+          createdAt: T,
+          updatedAt: T,
+        });
+      const mismatchedParentRecord = (
+        await store.inventoryPersistedRecords({ kind: 'run', limit: 10 })
+      ).records.find(
+        (record) =>
+          record.selector?.kind === 'run' &&
+          'runId' in record.selector &&
+          record.selector.runId === mismatchedParentRunId,
+      );
+      if (mismatchedParentRecord?.selector === undefined) {
+        throw new Error('missing mismatched-parent run');
+      }
+      const mismatchedParentPreview = await store.previewPersistedMigration([
+        {
+          operation: 'delete',
+          selector: mismatchedParentRecord.selector,
+          expectedFingerprint: mismatchedParentRecord.fingerprint,
+        },
+      ]);
+      expect(mismatchedParentPreview.deletions[0]).toMatchObject({
+        status: 'blocked',
+        reasons: expect.arrayContaining(['invalid-parent-task']),
+      });
       await firestore.terminate();
     });
 

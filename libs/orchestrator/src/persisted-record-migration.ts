@@ -15,6 +15,7 @@ import {
   runSchema,
   type TaskDocument,
   taskDocumentSchema,
+  type TaskId,
   taskIdSchema,
   taskKey,
 } from './model';
@@ -745,6 +746,15 @@ function addressedDocumentId(selector: PersistedRecordSelector): string {
   }
 }
 
+/** Both stores must prove that a parent record fetched by a run's path is
+ * also anchored to that same task before trusting its inactive mutex. */
+export function migrationParentTaskMatchesRun(
+  parentTask: TaskId,
+  runTask: TaskId,
+): boolean {
+  return taskKey(parentTask) === taskKey(runTask);
+}
+
 export function validateManifest(entries: unknown): PersistedMigrationEntry[] {
   const parsed = z
     .array(persistedMigrationEntrySchema)
@@ -758,7 +768,14 @@ export function validateManifest(entries: unknown): PersistedMigrationEntry[] {
         `duplicate manifest selector ${key}`,
       );
     seen.add(key);
-    if (isPersistedMigrationDeleteEntry(entry)) continue;
+    // An opaque address is still an address of one of our fixed collections
+    // for a value-free delete. Decode it before branching so a malformed
+    // address remains an ordinary reviewed-manifest conflict (409), rather
+    // than reaching a store-specific lookup as an uncaught cursor error.
+    if (isPersistedMigrationDeleteEntry(entry)) {
+      if ('address' in entry.selector) addressedDocumentId(entry.selector);
+      continue;
+    }
     if ('address' in entry.selector) {
       if (
         addressedDocumentId(entry.selector) !== replacementDocumentId(entry)

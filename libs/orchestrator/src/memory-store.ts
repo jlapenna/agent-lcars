@@ -29,6 +29,7 @@ import {
   inventoryPersistedRecord,
   isPersistedMigrationDeleteEntry,
   manifestId,
+  migrationParentTaskMatchesRun,
   PERSISTED_MIGRATION_PAGE_MAX,
   PersistedMigrationConflict,
   PersistedMigrationCursorError,
@@ -646,6 +647,11 @@ export class MemoryStore implements OrchestratorStore {
             ? undefined
             : migrationTaskSafetySchema.safeParse(parent);
         if (parentSafety !== undefined && !parentSafety.success) {
+          reasons.push('invalid-parent-task');
+        } else if (
+          parentSafety !== undefined &&
+          !migrationParentTaskMatchesRun(parentSafety.data.task.task, run.task)
+        ) {
           reasons.push('invalid-parent-task');
         } else if (parentSafety?.data.task.activeRunId !== undefined) {
           reasons.push('parent-task-active');

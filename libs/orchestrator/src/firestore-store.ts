@@ -36,6 +36,7 @@ import {
   inventoryPersistedRecord,
   isPersistedMigrationDeleteEntry,
   manifestId,
+  migrationParentTaskMatchesRun,
   PERSISTED_MIGRATION_PAGE_MAX,
   PersistedMigrationConflict,
   PersistedMigrationCursorError,
@@ -937,6 +938,11 @@ export class FirestoreStore implements OrchestratorStore {
                 normalizeFirestoreIntegerValues(parent),
               );
         if (parentTask !== undefined && !parentTask.success) {
+          reasons.push('invalid-parent-task');
+        } else if (
+          parentTask !== undefined &&
+          !migrationParentTaskMatchesRun(parentTask.data.task.task, run.task)
+        ) {
           reasons.push('invalid-parent-task');
         } else if (parentTask?.data.task.activeRunId !== undefined) {
           reasons.push('parent-task-active');

@@ -10,10 +10,12 @@ import {
   fingerprint,
   inventoryPersistedRecord,
   manifestId,
+  migrationParentTaskMatchesRun,
   PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH,
   PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
   PersistedMigrationConflict,
   PersistedMigrationCursorError,
+  validateManifest,
 } from './persisted-record-migration';
 
 const T = '2026-08-15T12:00:00.000Z';
@@ -213,6 +215,41 @@ describe('persisted orchestrator record inventory', () => {
     expect(() => decodePersistedMigrationAddress(address, 'task')).toThrow(
       PersistedMigrationCursorError,
     );
+  });
+
+  it('rejects a malformed opaque delete address as a manifest conflict', () => {
+    expect(() =>
+      validateManifest([
+        {
+          operation: 'delete',
+          selector: {
+            kind: 'task',
+            // A pagination cursor has the right bounded transport shape but
+            // cannot address a persisted record for migration.
+            address: encodePersistedMigrationCursor(
+              'task',
+              encodeURIComponent('octo/example#31'),
+            ),
+          },
+          expectedFingerprint: 'a'.repeat(64),
+        },
+      ]),
+    ).toThrow(PersistedMigrationConflict);
+  });
+
+  it('shares the parent anchor guard used by Memory and Firestore deletion', () => {
+    expect(
+      migrationParentTaskMatchesRun(
+        { repo: 'octo/example', issue: 31 },
+        { repo: 'octo/example', issue: 31 },
+      ),
+    ).toBe(true);
+    expect(
+      migrationParentTaskMatchesRun(
+        { repo: 'octo/example', issue: 32 },
+        { repo: 'octo/example', issue: 31 },
+      ),
+    ).toBe(false);
   });
 
   it('fingerprints special numbers and Firestore value types distinctly', () => {

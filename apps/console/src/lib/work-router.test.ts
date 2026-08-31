@@ -1063,6 +1063,28 @@ describe('persisted orchestrator migration routes', () => {
     );
     expect(malformedAddress.status).toBe(409);
 
+    const malformedDeleteAddress = await call(
+      ctx,
+      'POST',
+      '/orchestrator-migration',
+      {
+        entries: [
+          {
+            operation: 'delete',
+            selector: {
+              kind: 'task',
+              address: encodePersistedMigrationCursor(
+                'task',
+                encodeURIComponent('octo/example#7'),
+              ),
+            },
+            expectedFingerprint: record.fingerprint,
+          },
+        ],
+      },
+    );
+    expect(malformedDeleteAddress.status).toBe(409);
+
     const refusedApply = await call(ctx, 'POST', '/orchestrator-migration', {
       mode: 'apply',
       entries: [entry],
