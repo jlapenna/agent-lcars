@@ -514,13 +514,6 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 
 USER runner
 
-# General repository-management guidance is a separate Codex plugin, not an
-# agent-tools dependency. Install the public @main marketplace into the runner
-# user's own Codex state so dispatched sessions load the one worktree-hygiene
-# skill instead of a repository-local copy.
-RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \
-    codex plugin add repo-tools@repo-tools
-
 # Corepack's downloaded package-manager cache is per-user. The root-side
 # `pnpm --version` smoke above proves installation but warms only /root;
 # jobs execute as `runner`, so without this build-time invocation their first

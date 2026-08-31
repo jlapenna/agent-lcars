@@ -63,21 +63,16 @@ fi
 runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
 codex_install_line="$(grep -n '^RUN npm install -g @openai/codex && codex --version$' "$dockerfile" | cut -d: -f1)"
 claude_install_line="$(grep -n '^RUN npm install -g @anthropic-ai/claude-code && claude --version$' "$dockerfile" | cut -d: -f1)"
-plugin_line="$(grep -n '^RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \\' "$dockerfile" | cut -d: -f1)"
-if [[ -z "$runner_user_line" || -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" ]]; then
-  echo "runner image must enable the public repo-tools plugin as runner" >&2
+if [[ -z "$runner_user_line" || -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" ]]; then
+  echo "runner image must install and smoke-check Codex before switching users" >&2
   exit 1
 fi
 if [[ -z "$claude_install_line" || "$claude_install_line" -ge "$runner_user_line" ]]; then
   echo "runner image must install and smoke-check Claude Code before switching users" >&2
   exit 1
 fi
-if [[ -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" ]]; then
-  echo "runner image must install and smoke-check Codex before switching users" >&2
-  exit 1
-fi
-if ! grep -Fqx '    codex plugin add repo-tools@repo-tools' "$dockerfile"; then
-  echo "runner image must enable the repo-tools plugin after adding its marketplace" >&2
+if grep -Eq 'codex plugin (marketplace|add|upgrade).*repo-tools|repo-tools.*codex plugin' "$dockerfile"; then
+  echo "runner image must not install repo-tools as a global Codex plugin" >&2
   exit 1
 fi
 
