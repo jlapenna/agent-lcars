@@ -194,9 +194,18 @@ node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-back
 ```
 
 Inventory is document-ID ordered, asks Firestore for at most `limit + 1`, and
-prints `hasMore` plus `nextCursor`. Repeat the bounded command with that cursor
-until `hasMore` is `false`; a first page alone is not clean-inventory proof.
-The manifest is an operator-reviewed record, not generated data: for example,
+prints at most 200 records plus `hasMore` and `nextCursor`. Repeat the bounded
+command with that cursor until `hasMore` is `false`; a first page alone is not
+clean-inventory proof. Each record retains its `gaps` and a migration-only
+`provenance` projection containing only already-stored review context: stored
+`source`, `agent`, `repo`, and `lastActivityAt`; `host`, `cwd`, and `worktree`
+for an explicitly stored `cli` source; or `runId`, `intentId`, and
+`issueNumber` for an explicitly stored `issue-agent` source. It reports
+`archivePresent` as a boolean, never an archive URI, and includes `renderable`
+only when that field is stored. Missing or malformed values remain missing or
+malformed in this operator output; it never supplies defaults or derives a
+value from another field. The manifest is an operator-reviewed record, not
+generated data: for example,
 `{"sessions":[{"sessionId":"...","agent":"codex","repo":{"owner":"jlapenna","name":"agent-lcars"}}]}`.
 This is a one-time #1632 migration boundary. Keep the CLI and its fixed store
 only until inventory, dry-run, apply, and a clean follow-up inventory are

@@ -10,6 +10,7 @@ import * as fs from 'fs';
 
 import { loadSharedConfig } from './lib/config';
 import { firestoreStoreOptions } from './lib/create-store';
+import { sessionSchemaInventoryProvenance } from './lib/session-schema-inventory-provenance';
 import {
   createSessionSchemaMigrationStore,
   MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE,
@@ -139,6 +140,7 @@ async function inventory(
   const records = page.records.map((snapshot) => ({
     sessionId: snapshot.sessionId,
     gaps: sessionSchemaGaps(snapshot.data),
+    provenance: sessionSchemaInventoryProvenance(snapshot.data),
   }));
   process.stdout.write(
     `${JSON.stringify(
