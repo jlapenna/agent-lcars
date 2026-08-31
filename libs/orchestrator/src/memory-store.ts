@@ -33,7 +33,6 @@ import {
   validateManifest,
 } from './persisted-record-migration';
 import {
-  mergeGithubAnchorSnapshot,
   type OrchestratorStore,
   type RequestTransactionState,
   StoreConflict,
