@@ -5,10 +5,7 @@ import type {
   SessionAgent,
   SessionLiveness,
 } from '@agent-lcars/telemetry';
-import {
-  displayLiveness,
-  totalTokens,
-} from '@agent-lcars/telemetry';
+import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,

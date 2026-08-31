@@ -11,7 +11,7 @@ import {
   githubAnchorProjectionAnchorsFromDelivery,
   githubAnchorProjectionDeletionFromDelivery,
 } from '@/lib/github-anchor-projection';
-import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-reconcile';
+import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 
