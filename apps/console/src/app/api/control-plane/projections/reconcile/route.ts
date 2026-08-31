@@ -44,6 +44,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const result = await reconcileCurrentGithubAnchorProjections();
     console.info('agent-lcars: anchor projection backfill completed', result);
+    if (result.comparison !== undefined && !result.comparison.matches) {
+      return NextResponse.json(
+        { error: 'Queue projection mismatch', result },
+        { status: 409, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
     return NextResponse.json(result, {
       status: 200,
       headers: { 'Cache-Control': 'no-store' },

@@ -75,4 +75,37 @@ describe('POST /api/control-plane/projections/reconcile', () => {
     expect(response.status).toBe(400);
     expect(mocks.reconcile).not.toHaveBeenCalled();
   });
+
+  it('fails closed when the selected projection does not match the current queue', async () => {
+    mocks.verify.mockResolvedValueOnce({ repository: 'jlapenna/agent-lcars' });
+    mocks.reconcile.mockResolvedValueOnce({
+      repositories: 1,
+      anchors: 42,
+      comparison: {
+        currentQueue: 3,
+        projectedQueue: 2,
+        missingProjectionKeys: ['jlapenna/agent-lcars#42'],
+        unexpectedProjectionKeys: [],
+        criticalFieldMismatches: [],
+        warnings: [],
+        matches: false,
+      },
+    });
+
+    const response = await POST(
+      new Request(
+        'https://console.test/api/control-plane/projections/reconcile',
+        {
+          method: 'POST',
+          headers: { authorization: 'Bearer token' },
+        },
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Queue projection mismatch',
+      result: { comparison: { matches: false } },
+    });
+  });
 });

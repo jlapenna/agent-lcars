@@ -4,6 +4,7 @@ import {
   ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY,
   ANCHOR_RECONCILE_PAGE_SIZE,
   AnchorProjectionBackfillLimitError,
+  compareSelectedGithubAnchorProjections,
   reconcileGithubAnchorProjections,
 } from './github-anchor-reconcile';
 
@@ -66,5 +67,76 @@ describe('reconcileGithubAnchorProjections', () => {
       }),
     ).rejects.toBeInstanceOf(AnchorProjectionBackfillLimitError);
     expect(ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY).toBeGreaterThan(0);
+  });
+
+  it('reports queue parity separately from the total open-anchor backfill', async () => {
+    const result = await reconcileGithubAnchorProjections({
+      store: { upsertGithubAnchorProjection: vi.fn() },
+      repositories: [REPO],
+      listOpenIssues: vi.fn().mockResolvedValue([anchor]),
+      currentQueue: async () => ({
+        items: [
+          {
+            key: `${REPO}#42`,
+            title: anchor.title,
+            url: anchor.html_url,
+            author: 'jlapenna',
+            assigneeLogins: [],
+          },
+        ],
+        warnings: [],
+      }),
+      now: () => '2026-08-30T12:00:01.000Z',
+    });
+
+    expect(result).toMatchObject({
+      anchors: 1,
+      comparison: {
+        currentQueue: 1,
+        projectedQueue: 1,
+        matches: true,
+      },
+    });
+  });
+
+  it('identifies selection, critical-field, and current-queue degradation mismatches', () => {
+    const result = compareSelectedGithubAnchorProjections({
+      currentQueue: [
+        {
+          key: `${REPO}#42`,
+          title: 'Stale title',
+          url: anchor.html_url,
+          author: 'jlapenna',
+          assigneeLogins: ['jlapenna'],
+        },
+      ],
+      projections: [
+        {
+          anchor: { repo: REPO, issue: 42 },
+          kind: 'issue',
+          state: 'open',
+          title: anchor.title,
+          body: '',
+          url: anchor.html_url,
+          author: 'jlapenna',
+          labels: ['status:needs-human'],
+          assigneeLogins: [],
+          sourceUpdatedAt: anchor.updated_at,
+          observedAt: '2026-08-30T12:00:01.000Z',
+        },
+      ],
+      warnings: ['Open items unavailable for another/repo.'],
+    });
+
+    expect(result).toMatchObject({
+      matches: false,
+      criticalFieldMismatches: [
+        {
+          key: `${REPO}#42`,
+          fields: ['title', 'assigneeLogins'],
+        },
+      ],
+      warnings: ['Open items unavailable for another/repo.'],
+    });
   });
 });

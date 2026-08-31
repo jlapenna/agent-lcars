@@ -37,11 +37,16 @@ render-time compatibility path.
    It returns HTTP 409 rather than claiming success if any repository exceeds
    that bounded limit. This read is available only through the explicit
    cutover endpoint; queue rendering never imports it.
-3. Compare the endpoint's `anchors` result with the authenticated console's
-   authoritative queue. If the endpoint returned 409, raise the reviewed
-   bound and repeat the controlled job; do not re-enable a GitHub-list
-   compatibility path. Then verify `/`, `/inbox`, and `/agents` show the
-   expected queue without an aggregate data-warning banner.
+3. The endpoint reports `anchors` for every open anchor it ingested, which is
+   intentionally larger than the actionable queue. Use its `comparison`
+   result instead: `matches` must be true after it compares the current
+   GitHub-derived queue keys and title/URL/author/assignee fields with the
+   selected stored projections. A comparison warning or mismatch returns 409;
+   fix the projection input and repeat the controlled job. If the endpoint
+   returned 409 for the page bound, raise the reviewed bound and repeat; do
+   not re-enable a GitHub-list compatibility path. Then verify `/`, `/inbox`,
+   and `/agents` show the expected queue without an aggregate data-warning
+   banner.
 4. Open the Phase 2 protected PR only after that production result is
    recorded. It switches Bridge, Inbox, and Agents to the stored projection,
    deletes GitHub queue aggregation, and deletes the one-shot workflow,

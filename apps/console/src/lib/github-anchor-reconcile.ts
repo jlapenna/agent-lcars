@@ -5,8 +5,10 @@ import type {
   OrchestratorStore,
 } from '@agent-lcars/orchestrator';
 
+import { getActionItems } from './action-items';
 import { controlPlaneRepositories } from './deployment';
 import { githubAnchorProjectionFromDelivery } from './github-anchor-projection';
+import { isSelectedGithubAnchorProjection } from './github-anchor-selector';
 import { getGithubClient } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
@@ -199,12 +201,93 @@ interface AnchorProjectionReconcileDeps {
     repository: string,
     projections: GithubAnchorProjection[],
   ): Promise<GithubAnchorProjection[]>;
+  currentQueue?(): Promise<{ items: CurrentQueueAnchor[]; warnings: string[] }>;
   now(): string;
 }
 
 export interface AnchorProjectionReconcileResult {
   repositories: number;
   anchors: number;
+  comparison?: AnchorProjectionQueueComparison;
+}
+
+export interface AnchorProjectionQueueComparison {
+  currentQueue: number;
+  projectedQueue: number;
+  missingProjectionKeys: string[];
+  unexpectedProjectionKeys: string[];
+  criticalFieldMismatches: {
+    key: string;
+    fields: ('title' | 'url' | 'author' | 'assigneeLogins')[];
+  }[];
+  warnings: string[];
+  matches: boolean;
+}
+
+interface CurrentQueueAnchor {
+  key: string;
+  title: string;
+  url: string;
+  author?: string;
+  assigneeLogins: string[];
+}
+
+function projectionKey(projection: GithubAnchorProjection): string {
+  return `${projection.anchor.repo}#${projection.anchor.issue}`;
+}
+
+function sorted(values: readonly string[]): string[] {
+  return [...values].sort();
+}
+
+export function compareSelectedGithubAnchorProjections(input: {
+  currentQueue: CurrentQueueAnchor[];
+  projections: GithubAnchorProjection[];
+  warnings?: string[];
+}): AnchorProjectionQueueComparison {
+  const current = new Map(input.currentQueue.map((item) => [item.key, item]));
+  const projected = new Map(
+    input.projections
+      .filter(isSelectedGithubAnchorProjection)
+      .map((projection) => [projectionKey(projection), projection]),
+  );
+  const missingProjectionKeys = [...current.keys()]
+    .filter((key) => !projected.has(key))
+    .sort();
+  const unexpectedProjectionKeys = [...projected.keys()]
+    .filter((key) => !current.has(key))
+    .sort();
+  const criticalFieldMismatches = [...current.entries()].flatMap(
+    ([key, item]) => {
+      const projection = projected.get(key);
+      if (projection === undefined) return [];
+      const fields: ('title' | 'url' | 'author' | 'assigneeLogins')[] = [];
+      if (item.title !== projection.title) fields.push('title');
+      if (item.url !== projection.url) fields.push('url');
+      if (item.author !== projection.author) fields.push('author');
+      if (
+        JSON.stringify(sorted(item.assigneeLogins)) !==
+        JSON.stringify(sorted(projection.assigneeLogins))
+      ) {
+        fields.push('assigneeLogins');
+      }
+      return fields.length === 0 ? [] : [{ key, fields }];
+    },
+  );
+  const warnings = input.warnings ?? [];
+  return {
+    currentQueue: current.size,
+    projectedQueue: projected.size,
+    missingProjectionKeys,
+    unexpectedProjectionKeys,
+    criticalFieldMismatches,
+    warnings,
+    matches:
+      missingProjectionKeys.length === 0 &&
+      unexpectedProjectionKeys.length === 0 &&
+      criticalFieldMismatches.length === 0 &&
+      warnings.length === 0,
+  };
 }
 
 /**
@@ -217,6 +300,7 @@ export async function reconcileGithubAnchorProjections(
   deps: AnchorProjectionReconcileDeps,
 ): Promise<AnchorProjectionReconcileResult> {
   let anchors = 0;
+  const allProjections: GithubAnchorProjection[] = [];
   for (const repository of deps.repositories) {
     const [owner, repo] = repository.split('/');
     if (!owner || !repo)
@@ -246,6 +330,7 @@ export async function reconcileGithubAnchorProjections(
         ? projections
         : await deps.enrich(repository, projections)) {
         await deps.store.upsertGithubAnchorProjection(projection);
+        allProjections.push(projection);
         anchors++;
       }
       if (issues.length < ANCHOR_RECONCILE_PAGE_SIZE) {
@@ -259,7 +344,20 @@ export async function reconcileGithubAnchorProjections(
       );
     }
   }
-  return { repositories: deps.repositories.length, anchors };
+  const currentQueue = await deps.currentQueue?.();
+  return {
+    repositories: deps.repositories.length,
+    anchors,
+    ...(currentQueue === undefined
+      ? {}
+      : {
+          comparison: compareSelectedGithubAnchorProjections({
+            currentQueue: currentQueue.items,
+            projections: allProjections,
+            warnings: currentQueue.warnings,
+          }),
+        }),
+  };
 }
 
 export function reconcileCurrentGithubAnchorProjections(): Promise<AnchorProjectionReconcileResult> {
@@ -282,6 +380,19 @@ export function reconcileCurrentGithubAnchorProjections(): Promise<AnchorProject
       return data;
     },
     enrich: enrichBackfillAnchors,
+    currentQueue: async () => {
+      const result = await getActionItems();
+      return {
+        items: result.items.map((item) => ({
+          key: `${item.repo.owner}/${item.repo.name}#${item.number}`,
+          title: item.title,
+          url: item.url,
+          ...(item.author === undefined ? {} : { author: item.author }),
+          assigneeLogins: item.assigneeLogins,
+        })),
+        warnings: result.warnings,
+      };
+    },
     now: () => new Date().toISOString(),
   });
 }
