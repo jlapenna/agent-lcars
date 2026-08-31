@@ -30,6 +30,7 @@ import {
   manifestId,
   PERSISTED_MIGRATION_PAGE_MAX,
   PersistedMigrationConflict,
+  PersistedMigrationCursorError,
   type PersistedMigrationEntry,
   type PersistedMigrationPreview,
   type PersistedRecordKind,
@@ -518,7 +519,9 @@ export class FirestoreStore implements OrchestratorStore {
       // silently become a new first page. Verify it belongs to this fixed
       // collection before using it as a query boundary.
       if (!(await collection.doc(documentId).get()).exists) {
-        throw new Error('Invalid persisted orchestrator inventory cursor');
+        throw new PersistedMigrationCursorError(
+          'Invalid persisted orchestrator inventory cursor',
+        );
       }
       query = query.startAfter(documentId);
     }

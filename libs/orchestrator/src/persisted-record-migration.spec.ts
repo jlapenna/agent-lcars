@@ -1,3 +1,4 @@
+import { Firestore, GeoPoint, Timestamp } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
 
 import { MemoryStore } from './memory-store';
@@ -7,6 +8,7 @@ import {
   fingerprint,
   inventoryPersistedRecord,
   manifestId,
+  PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
   PersistedMigrationConflict,
 } from './persisted-record-migration';
 
@@ -122,13 +124,34 @@ describe('persisted orchestrator record inventory', () => {
         { code: 'retired-task-fields', class: 'compatibility' },
       ]),
     );
-    const documentId = 'x'.repeat(1_500);
-    expect(
-      decodePersistedMigrationCursor(
-        encodePersistedMigrationCursor('task', documentId),
-        'task',
-      ),
-    ).toBe(documentId);
+    const documentId = '\\'.repeat(1_500);
+    const cursor = encodePersistedMigrationCursor('task', documentId);
+    expect(cursor.length).toBeLessThanOrEqual(
+      PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
+    );
+    expect(decodePersistedMigrationCursor(cursor, 'task')).toBe(documentId);
+  });
+
+  it('fingerprints special numbers and Firestore value types distinctly', () => {
+    const specialNumbers = [NaN, Infinity, -Infinity, -0, 0];
+    expect(new Set(specialNumbers.map(fingerprint))).toHaveLength(5);
+    expect(fingerprint(new Timestamp(7, 9))).not.toBe(
+      fingerprint({ seconds: 7, nanoseconds: 9 }),
+    );
+    expect(fingerprint(new GeoPoint(1, 2))).not.toBe(
+      fingerprint({ latitude: 1, longitude: 2 }),
+    );
+    expect(fingerprint(Buffer.from([1, 2]))).not.toBe(fingerprint('AQI'));
+    const firstReference = new Firestore({ projectId: 'fingerprint-a' }).doc(
+      'records/one',
+    );
+    const secondReference = new Firestore({ projectId: 'fingerprint-b' }).doc(
+      'records/one',
+    );
+    expect(fingerprint(firstReference)).not.toBe(fingerprint(secondReference));
+    expect(fingerprint(firstReference)).not.toBe(
+      fingerprint({ path: 'records/one' }),
+    );
   });
 });
 

@@ -22,6 +22,7 @@ import {
   manifestId,
   PERSISTED_MIGRATION_PAGE_MAX,
   PersistedMigrationConflict,
+  PersistedMigrationCursorError,
   type PersistedMigrationEntry,
   type PersistedMigrationPreview,
   type PersistedRecordKind,
@@ -374,7 +375,9 @@ export class MemoryStore implements OrchestratorStore {
         ? undefined
         : records.findIndex(({ documentId }) => documentId === cursor);
     if (cursorIndex === -1)
-      throw new Error('Invalid persisted orchestrator inventory cursor');
+      throw new PersistedMigrationCursorError(
+        'Invalid persisted orchestrator inventory cursor',
+      );
     const after = cursorIndex === undefined ? 0 : cursorIndex + 1;
     const page = records.slice(after, after + input.limit);
     const hasMore = records.length > after + page.length;

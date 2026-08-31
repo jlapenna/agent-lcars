@@ -6,9 +6,11 @@ import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
 import { outboxEntrySchema, taskSchema } from './model';
-<<<<<<< HEAD
 import { Orchestrator } from './orchestrator';
-import { encodePersistedMigrationCursor } from './persisted-record-migration';
+import {
+  encodePersistedMigrationCursor,
+  PersistedMigrationCursorError,
+} from './persisted-record-migration';
 import {
   runOrchestratorStoreContract,
   runScheduleStoreContract,
@@ -204,21 +206,21 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
           limit: 1,
           cursor: 'not-a-cursor',
         }),
-      ).rejects.toThrow('Invalid persisted orchestrator inventory cursor');
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
       await expect(
         store.inventoryPersistedRecords({
           kind: 'task',
           limit: 1,
           cursor: encodePersistedMigrationCursor('run', 'not-a-task'),
         }),
-      ).rejects.toThrow('Invalid persisted orchestrator inventory cursor');
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
       await expect(
         store.inventoryPersistedRecords({
           kind: 'task',
           limit: 1,
           cursor: encodePersistedMigrationCursor('task', 'not-a-task'),
         }),
-      ).rejects.toThrow('Invalid persisted orchestrator inventory cursor');
+      ).rejects.toBeInstanceOf(PersistedMigrationCursorError);
     });
 
     it('does no partial write when a reviewed multi-record manifest is stale', async () => {

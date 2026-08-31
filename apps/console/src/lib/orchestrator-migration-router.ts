@@ -2,6 +2,7 @@ import 'server-only';
 
 import {
   PersistedMigrationConflict,
+  PersistedMigrationCursorError,
   type PersistedMigrationEntry,
 } from '@agent-lcars/orchestrator';
 import { implement, ORPCError } from '@orpc/server';
@@ -27,16 +28,25 @@ const migrationOperator = os.use(async ({ context, next }) => {
 
 export const orchestratorMigrationRouter = os.router({
   inventory: migrationOperator.inventory.handler(async ({ input, context }) => {
-    const page = await context.runtime.store.inventoryPersistedRecords(input);
-    // The public contract owns mutable JSON arrays; store types deliberately
-    // expose readonly snapshots so callers cannot mutate an inventory page.
-    return {
-      ...page,
-      records: page.records.map((record) => ({
-        ...record,
-        findings: [...record.findings],
-      })),
-    };
+    try {
+      const page = await context.runtime.store.inventoryPersistedRecords(input);
+      // The public contract owns mutable JSON arrays; store types deliberately
+      // expose readonly snapshots so callers cannot mutate an inventory page.
+      return {
+        ...page,
+        records: page.records.map((record) => ({
+          ...record,
+          findings: [...record.findings],
+        })),
+      };
+    } catch (error) {
+      if (PersistedMigrationCursorError.is(error)) {
+        throw new ORPCError('BAD_REQUEST', {
+          message: 'The inventory cursor is malformed or stale',
+        });
+      }
+      throw error;
+    }
   }),
   migrate: migrationOperator.migrate.handler(
     async ({ input, context, errors }) => {

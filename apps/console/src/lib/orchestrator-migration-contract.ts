@@ -43,6 +43,9 @@ export const orchestratorMigrationContract = {
         summary: 'Inventory one bounded page of persisted orchestrator records',
       }),
     )
+    .errors({
+      BAD_REQUEST: { message: 'The inventory cursor is malformed or stale' },
+    })
     .input(
       z.strictObject({
         kind: persistedRecordKindSchema,
@@ -65,7 +68,10 @@ export const orchestratorMigrationContract = {
         consistency: z.literal('page-only'),
         records: z.array(inventoryRecordSchema),
         hasMore: z.boolean(),
-        nextCursor: z.string().optional(),
+        nextCursor: z
+          .string()
+          .max(PERSISTED_MIGRATION_CURSOR_MAX_LENGTH)
+          .optional(),
       }),
     ),
   migrate: base

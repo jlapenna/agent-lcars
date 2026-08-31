@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
 
+import {
+  DocumentReference,
+  GeoPoint,
+  Timestamp,
+  VectorValue,
+} from '@google-cloud/firestore';
 import { z } from 'zod';
 
 import {
@@ -18,10 +24,10 @@ import {
  * general datastore browser. */
 export const PERSISTED_MIGRATION_PAGE_MAX = 200;
 export const PERSISTED_MIGRATION_MANIFEST_MAX = 100;
-/** Firestore permits a 1,500-byte document id; base64url plus the cursor
- * envelope must carry even a malformed legacy id so a bounded census can
- * advance past it. */
-export const PERSISTED_MIGRATION_CURSOR_MAX_LENGTH = 2_048;
+/** Firestore permits a 1,500-byte document id. A one-byte kind prefix plus
+ * base64url is at most 2,002 characters, including ids full of backslashes
+ * or other JSON-escaped characters. */
+export const PERSISTED_MIGRATION_CURSOR_MAX_LENGTH = 2_002;
 export const PERSISTED_MIGRATION_FINDINGS_MAX = 16;
 
 export const persistedRecordKindSchema = z.enum(['task', 'run', 'outbox']);
@@ -139,24 +145,49 @@ export interface PersistedRecordPage {
   readonly nextCursor?: string;
 }
 
-/** Opaque, kind-bound cursor. The document id never becomes an apply
- * selector: callers can only use it to resume this one fixed census kind. */
+/** A caller-controlled cursor is an input error, not an unexpected store
+ * failure. The Work route maps this narrow error to its declared 400. */
+export class PersistedMigrationCursorError extends Error {
+  override readonly name = 'PersistedMigrationCursorError';
+
+  /** Bundled console code can load the shared store and router through
+   * different module instances. Keep this narrow guard so a cursor error is
+   * still classified as the declared client failure across that boundary. */
+  static is(error: unknown): error is PersistedMigrationCursorError {
+    return (
+      error instanceof PersistedMigrationCursorError ||
+      (error instanceof Error && error.name === 'PersistedMigrationCursorError')
+    );
+  }
+}
+
+const cursorKindByte: Record<PersistedRecordKind, number> = {
+  task: 0x74,
+  run: 0x72,
+  outbox: 0x6f,
+};
+
+function invalidCursor(message: string): PersistedMigrationCursorError {
+  return new PersistedMigrationCursorError(message);
+}
+
+/** Opaque, kind-bound cursor. Its binary one-byte kind prefix leaves the raw
+ * document-id bytes untouched before base64url encoding, so every valid
+ * Firestore-sized id can advance this bounded census. */
 export function encodePersistedMigrationCursor(
   kind: PersistedRecordKind,
   documentId: string,
 ): string {
-  if (
-    documentId.length === 0 ||
-    Buffer.byteLength(documentId, 'utf8') > 1_500
-  ) {
-    throw new Error('Invalid persisted orchestrator inventory document id');
+  const documentIdBytes = Buffer.from(documentId, 'utf8');
+  if (documentIdBytes.length === 0 || documentIdBytes.length > 1_500) {
+    throw invalidCursor('Invalid persisted orchestrator inventory document id');
   }
-  const cursor = Buffer.from(
-    JSON.stringify({ kind, documentId }),
-    'utf8',
-  ).toString('base64url');
+  const cursor = Buffer.concat([
+    Buffer.from([cursorKindByte[kind]]),
+    documentIdBytes,
+  ]).toString('base64url');
   if (cursor.length > PERSISTED_MIGRATION_CURSOR_MAX_LENGTH) {
-    throw new Error('Persisted orchestrator inventory cursor is too large');
+    throw invalidCursor('Persisted orchestrator inventory cursor is too large');
   }
   return cursor;
 }
@@ -169,24 +200,23 @@ export function decodePersistedMigrationCursor(
     !/^[A-Za-z0-9_-]+$/u.test(cursor) ||
     cursor.length > PERSISTED_MIGRATION_CURSOR_MAX_LENGTH
   ) {
-    throw new Error('Invalid persisted orchestrator inventory cursor');
+    throw invalidCursor('Invalid persisted orchestrator inventory cursor');
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-  } catch {
-    throw new Error('Invalid persisted orchestrator inventory cursor');
-  }
+  const cursorBytes = Buffer.from(cursor, 'base64url');
   if (
-    !isRecord(parsed) ||
-    parsed['kind'] !== expectedKind ||
-    typeof parsed['documentId'] !== 'string' ||
-    parsed['documentId'].length === 0 ||
-    Buffer.byteLength(parsed['documentId'], 'utf8') > 1_500
+    cursorBytes.length < 2 ||
+    cursorBytes[0] !== cursorKindByte[expectedKind]
   ) {
-    throw new Error('Invalid persisted orchestrator inventory cursor');
+    throw invalidCursor('Invalid persisted orchestrator inventory cursor');
   }
-  return parsed['documentId'];
+  const documentId = cursorBytes.subarray(1).toString('utf8');
+  // Require the exact canonical form emitted above: it rejects malformed UTF-8
+  // and non-canonical base64url rather than letting replacement characters
+  // become a different anchor id.
+  if (encodePersistedMigrationCursor(expectedKind, documentId) !== cursor) {
+    throw invalidCursor('Invalid persisted orchestrator inventory cursor');
+  }
+  return documentId;
 }
 
 export interface PersistedMigrationPreview {
@@ -405,9 +435,10 @@ export function inventoryPersistedRecord(
   };
 }
 
-/** Canonical JSON and SHA-256 make a reviewed manifest stable across key
- * insertion order. Neither inventory nor this digest includes secret data in
- * its response; the operator supplies a bounded reviewed replacement. */
+/** Canonical, type-tagged Firestore values plus SHA-256 make a reviewed
+ * manifest stable across key insertion order without collapsing special
+ * numbers or Firestore's Timestamp/GeoPoint/bytes/reference/vector types.
+ * Neither inventory nor this digest includes secret data in its response. */
 export function fingerprint(value: unknown): string {
   return createHash('sha256').update(stableJson(value)).digest('hex');
 }
@@ -419,14 +450,47 @@ export function manifestId(
 }
 
 function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return `string:${JSON.stringify(value)}`;
+  if (typeof value === 'boolean') return `boolean:${value}`;
+  if (typeof value === 'bigint') return `bigint:${value}`;
+  if (typeof value === 'number') return stableNumber(value);
+  if (Buffer.isBuffer(value)) return `bytes:${value.toString('base64url')}`;
+  if (value instanceof Uint8Array)
+    return `bytes:${Buffer.from(value).toString('base64url')}`;
+  if (value instanceof Timestamp)
+    return `timestamp:${value.seconds}:${value.nanoseconds}`;
+  if (value instanceof Date) return `date:${value.toISOString()}`;
+  if (value instanceof GeoPoint)
+    return `geopoint:${stableNumber(value.latitude)}:${stableNumber(value.longitude)}`;
+  if (value instanceof DocumentReference) {
+    // The Firestore type keeps these runtime identity fields private, but a
+    // reference can legally point outside the source document's database.
+    const database = value.firestore as unknown as {
+      projectId?: unknown;
+      databaseId?: unknown;
+    };
+    return `reference:${JSON.stringify(database.projectId)}:${JSON.stringify(database.databaseId)}:${JSON.stringify(value.path)}`;
+  }
+  if (value instanceof VectorValue)
+    return `vector:[${value.toArray().map(stableNumber).join(',')}]`;
+  if (Array.isArray(value)) return `array:[${value.map(stableJson).join(',')}]`;
   if (isRecord(value)) {
-    return `{${Object.keys(value)
+    return `object:{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .map((key) => `${JSON.stringify(key)}=${stableJson(value[key])}`)
       .join(',')}}`;
   }
-  return JSON.stringify(value) ?? 'undefined';
+  throw new Error(`Unsupported persisted value type: ${typeof value}`);
+}
+
+function stableNumber(value: number): string {
+  if (Number.isNaN(value)) return 'number:NaN';
+  if (value === Infinity) return 'number:Infinity';
+  if (value === -Infinity) return 'number:-Infinity';
+  if (Object.is(value, -0)) return 'number:-0';
+  return `number:${value}`;
 }
 
 export function selectorKey(selector: PersistedRecordSelector): string {
