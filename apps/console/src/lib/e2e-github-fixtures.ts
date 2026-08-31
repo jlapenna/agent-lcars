@@ -620,7 +620,12 @@ function quickTaskIssueComments(number: number) {
   }));
 }
 
-/** Exact issue-detail response shape, with a PR carrying `pull_request`. */
+/** Exact issue-detail response shape, with a PR carrying `pull_request`.
+ *
+ * Console mutations feed this shape through the same anchor-projection
+ * parser as webhook deliveries, so it must include the complete GitHub
+ * issue state rather than only the fields the former mutation preconditions
+ * happened to inspect. */
 function issueFor(item: FixtureItem) {
   const edited = issueContentEdits().get(item.number);
   return {
@@ -629,6 +634,7 @@ function issueFor(item: FixtureItem) {
     body: edited?.body ?? item.body,
     html_url: itemUrl(item.number, item.isPr ? 'pull' : 'issues'),
     user: { login: item.author },
+    state: 'open',
     updated_at: item.updatedAt,
     labels: item.labels.map((name) => ({ name })),
     assignees: item.assignees.map((login) => ({ login })),
