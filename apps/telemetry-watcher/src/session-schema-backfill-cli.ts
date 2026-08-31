@@ -1,4 +1,5 @@
 import {
+  isCanonicalSessionRepository,
   isSafeIdentifier,
   SESSION_AGENTS,
   SessionSchemaBackfill,
@@ -27,10 +28,6 @@ interface Flags {
   apply?: boolean;
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
 function validateManifestEntry(
   entry: unknown,
 ): asserts entry is SessionSchemaBackfill {
@@ -53,12 +50,9 @@ function validateManifestEntry(
       `Session ${(entry as SessionSchemaBackfill).sessionId} has an unsupported agent`,
     );
   }
-  if (
-    !isNonEmptyString(candidate.repo?.owner) ||
-    !isNonEmptyString(candidate.repo?.name)
-  ) {
+  if (!isCanonicalSessionRepository(candidate.repo)) {
     throw new Error(
-      `Session ${(entry as SessionSchemaBackfill).sessionId} requires a non-empty repo owner and name`,
+      `Session ${(entry as SessionSchemaBackfill).sessionId} requires a canonical GitHub repo owner and name`,
     );
   }
   if (

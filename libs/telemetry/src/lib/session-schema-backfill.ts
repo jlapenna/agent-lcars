@@ -5,6 +5,13 @@ export interface SessionRepository {
   name: string;
 }
 
+/** GitHub permits a 39-character owner and a 100-character repository name.
+ * Keep the same safe component alphabet as the fleet's GitHub task anchors:
+ * no slash or whitespace can become part of a persisted owner/name pair. */
+const GITHUB_OWNER_MAX_LENGTH = 39;
+const GITHUB_REPOSITORY_NAME_MAX_LENGTH = 100;
+const GITHUB_REPOSITORY_COMPONENT_RE = /^[\w.-]+$/u;
+
 /** The operator-supplied, evidence-backed values for one legacy document.
  * This deliberately has no defaults: a backfill is allowed to copy an
  * explicit value into a missing field, never to guess it from a provider,
@@ -35,6 +42,25 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/** True only for a canonical, GitHub-safe owner/name pair. This is shared by
+ * manifest validation, migration writes, and inventory so a malformed value
+ * can never be persisted and then falsely reported as clean. */
+export function isCanonicalSessionRepository(
+  value: unknown,
+): value is SessionRepository {
+  if (!isRecord(value)) return false;
+  const owner = value['owner'];
+  const name = value['name'];
+  return (
+    typeof owner === 'string' &&
+    owner.length <= GITHUB_OWNER_MAX_LENGTH &&
+    GITHUB_REPOSITORY_COMPONENT_RE.test(owner) &&
+    typeof name === 'string' &&
+    name.length <= GITHUB_REPOSITORY_NAME_MAX_LENGTH &&
+    GITHUB_REPOSITORY_COMPONENT_RE.test(name)
+  );
+}
+
 function hasArchivedTranscript(document: {
   readonly transcriptGcsUri?: unknown;
 }): boolean {
@@ -53,11 +79,7 @@ export function sessionSchemaGaps(document: unknown): SessionSchemaGap[] {
     gaps.push('agent');
   }
   const repo = document['repo'];
-  if (
-    !isRecord(repo) ||
-    !isNonEmptyString(repo['owner']) ||
-    !isNonEmptyString(repo['name'])
-  ) {
+  if (!isCanonicalSessionRepository(repo)) {
     gaps.push('repo');
   }
   if (
@@ -94,11 +116,10 @@ export function backfillSessionSchema(
   if (document['agent'] !== undefined && document['agent'] !== backfill.agent) {
     throw new Error(`Session ${backfill.sessionId} has a conflicting agent`);
   }
-  if (
-    !isNonEmptyString(backfill.repo.owner) ||
-    !isNonEmptyString(backfill.repo.name)
-  ) {
-    throw new Error(`Session ${backfill.sessionId} requires a non-empty repo`);
+  if (!isCanonicalSessionRepository(backfill.repo)) {
+    throw new Error(
+      `Session ${backfill.sessionId} requires a canonical GitHub repo`,
+    );
   }
   if (document['repo'] !== undefined) {
     const repo = document['repo'];

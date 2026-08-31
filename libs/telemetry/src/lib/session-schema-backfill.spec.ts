@@ -45,7 +45,7 @@ describe('session schema backfill', () => {
     ).toEqual({ agent: 'codex', repo, renderable: true });
   });
 
-  it('reports invalid enum, source, and empty repository values as gaps', () => {
+  it('reports invalid enum, source, and noncanonical repository values as gaps', () => {
     expect(
       sessionSchemaGaps({
         sessionId: 's1',
@@ -54,6 +54,22 @@ describe('session schema backfill', () => {
         repo: { owner: ' ', name: '' },
       }),
     ).toEqual(['source', 'agent', 'repo']);
+    expect(
+      sessionSchemaGaps({
+        sessionId: 's2',
+        source: 'cli',
+        agent: 'codex',
+        repo: { owner: ' jlapenna', name: 'agent-lcars ' },
+      }),
+    ).toEqual(['repo']);
+    expect(
+      sessionSchemaGaps({
+        sessionId: 's3',
+        source: 'cli',
+        agent: 'codex',
+        repo: { owner: 'o'.repeat(40), name: 'n'.repeat(101) },
+      }),
+    ).toEqual(['repo']);
   });
 
   it('backfills only explicit values without provider or repository inference', () => {
@@ -79,7 +95,7 @@ describe('session schema backfill', () => {
     ).toMatchObject({ agent: 'codex', repo });
   });
 
-  it('rejects missing archived issue-agent renderability, whitespace repo values, and conflicting stored values', () => {
+  it('rejects missing archived issue-agent renderability, noncanonical repo values, and conflicting stored values', () => {
     expect(() =>
       backfillSessionSchema(
         {
@@ -95,7 +111,17 @@ describe('session schema backfill', () => {
         { sessionId: 's1', source: 'cli' },
         { sessionId: 's1', agent: 'codex', repo: { owner: ' ', name: 'x' } },
       ),
-    ).toThrow('requires a non-empty repo');
+    ).toThrow('requires a canonical GitHub repo');
+    expect(() =>
+      backfillSessionSchema(
+        { sessionId: 's1', source: 'cli' },
+        {
+          sessionId: 's1',
+          agent: 'codex',
+          repo: { owner: 'jlapenna', name: 'agent-lcars ' },
+        },
+      ),
+    ).toThrow('requires a canonical GitHub repo');
     expect(() =>
       backfillSessionSchema(
         { sessionId: 's1', source: 'cli', agent: 'codex' },
