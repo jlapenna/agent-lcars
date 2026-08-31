@@ -121,6 +121,55 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('atomically maps overlapping same-id requests to the sole run', async () => {
+        const { store, orchestrator } = await fixture();
+        const input = {
+          taskId: TASK,
+          requestId: 'same-request',
+          pipeline: 'claude',
+        };
+        const [left, right] = await Promise.all([
+          orchestrator.request(input),
+          orchestrator.request(input),
+        ]);
+        const outcomes = [left, right];
+        const accepted = outcomes.find((outcome) => !isRefusal(outcome));
+        const duplicate = outcomes.find(
+          (outcome) =>
+            isRefusal(outcome) && outcome.reason === 'duplicate-request',
+        );
+        if (accepted === undefined || isRefusal(accepted)) {
+          throw new Error('expected one accepted request');
+        }
+        expect(duplicate).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({
+            runId: decidedRun(accepted).runId,
+          }),
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+      });
+
+      it('returns the terminal request-id match before a newer live run', async () => {
+        const { store, orchestrator } = await fixture();
+        const first = await started(orchestrator, 'terminal-retry');
+        await orchestrator.report(first.run.runId, { ok: true });
+        await started(orchestrator, 'newer-request');
+
+        const replay = await orchestrator.request({
+          taskId: TASK,
+          requestId: 'terminal-retry',
+          pipeline: 'claude',
+        });
+        expect(replay).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: first.run.runId }),
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+      });
+
       it('frees the task after each terminal state so it can be worked again', async () => {
         const { clock, orchestrator } = await fixture();
         // finished -> free
@@ -145,6 +194,31 @@ export function runOrchestratorStoreContract(
     });
 
     describe('the auto-retry budget (consecutiveLost)', () => {
+      it('keeps auto-retry history separate from arbitrary caller request IDs', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const { run } = await started(orchestrator, 'retry:octo/example#7/r1');
+        clock.advanceMinutes(121);
+
+        const swept = await orchestrator.sweepExpired();
+        expect(swept.retried).toHaveLength(1);
+        const retry = await store.readRun(swept.retried[0]?.newRunId as string);
+        expect(retry).toMatchObject({
+          requestId: `retry:${run.runId}`,
+          requestSource: 'auto-retry',
+        });
+
+        const replay = await orchestrator.request({
+          taskId: TASK,
+          requestId: `retry:${run.runId}`,
+          pipeline: run.pipeline,
+        });
+        expect(replay).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: run.runId }),
+        });
+      });
+
       it('increments consecutiveLost on loss and resets it on a later finish', async () => {
         const { clock, store, orchestrator } = await fixture();
         await started(orchestrator, 'req-1');

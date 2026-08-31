@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CodexAuthStoreError } from './codex-auth-store';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
+import { truncatedDescription } from './work-from-github';
 
 /**
  * `requireRunToken` (`runs-router.ts`) now reads its "is this lease still
@@ -595,6 +596,61 @@ describe('brief', () => {
         spec: {
           title: 'GitHub brief',
           pipeline: 'opencode',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+  });
+
+  it('serves the normalized stored Work spec for a GitHub anchor', async () => {
+    const { store, orchestrator, now } = fixture();
+    const rawBody = '漢'.repeat(12_000);
+    const description = truncatedDescription(rawBody);
+    const outcome = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue: 43 },
+      requestId: 'github-brief-normalized-spec',
+      pipeline: 'claude',
+      work: {
+        origin: {
+          principal: 'github-actions:octo/example:workflow:dispatch.yml',
+          channel: 'github-dispatch',
+        },
+        spec: {
+          title: 'A real GitHub title',
+          description,
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if ('refused' in outcome || outcome.run === undefined) {
+      throw new Error('expected a queued GitHub run');
+    }
+    const runId = outcome.run.runId;
+    await store.enqueueRun({ runId, now: NOW });
+    await orchestrator.confirmDispatch(runId);
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({
+      anchor: { type: 'github', repo: 'octo/example', issue: 43 },
+      work: {
+        spec: {
+          title: 'A real GitHub title',
+          description,
+          pipeline: 'claude',
           target: { repo: 'octo/example' },
         },
       },

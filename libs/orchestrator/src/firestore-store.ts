@@ -6,7 +6,7 @@ import {
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
-import type { Decision } from './decide';
+import { type Decision, isRefusal, type Refusal } from './decide';
 import {
   byOutboxClaimFairness,
   isLive,
@@ -16,6 +16,7 @@ import {
   outboxEntrySchema,
   parsePersistedRun,
   type Run,
+  runRequestHistoryKey,
   runStateSchema,
   type TaskId,
   taskKey,
@@ -23,6 +24,7 @@ import {
 } from './model';
 import {
   type OrchestratorStore,
+  type RequestTransactionState,
   StoreConflict,
   type TaskListCursor,
   type VersionedTask,
@@ -95,15 +97,54 @@ export class FirestoreStore implements OrchestratorStore {
   }
 
   async listRuns(id: TaskId): Promise<Run[]> {
-    // Equality-only filters on single fields: served from Firestore's
-    // automatic indexes without a composite index, for either anchor.
-    const query = isWorkAnchor(id)
-      ? this.#runs.where('task.workId', '==', id.workId)
-      : this.#runs
-          .where('task.repo', '==', id.repo)
-          .where('task.issue', '==', id.issue);
-    const snapshot = await query.get();
+    const snapshot = await this.#runsForTask(id).get();
     return snapshot.docs.map((doc) => parsePersistedRun(doc.data()));
+  }
+
+  async transactRequest(input: {
+    taskId: TaskId;
+    requestHistoryKey: string;
+    decide(state: RequestTransactionState): Decision | Refusal;
+  }): Promise<Decision | Refusal> {
+    const taskRef = this.#taskRef(input.taskId);
+    return this.#firestore.runTransaction(async (tx) => {
+      // The history query and the task/run reads share this transaction with
+      // the accepted write. Firestore reruns the callback if any concurrent
+      // request or settlement changes one of those reads, closing the
+      // terminal-settlement replay window as well as the live-run race.
+      const taskSnapshot = await tx.get(taskRef);
+      const task = taskSnapshot.exists
+        ? taskDocSchema.parse(taskSnapshot.data())
+        : undefined;
+      const [activeRunSnapshot, runsSnapshot] = await Promise.all([
+        task?.task.activeRunId === undefined
+          ? Promise.resolve(undefined)
+          : tx.get(this.#runRef(task.task.activeRunId)),
+        tx.get(this.#runsForTask(input.taskId)),
+      ]);
+      const activeRun =
+        activeRunSnapshot === undefined || !activeRunSnapshot.exists
+          ? undefined
+          : parsePersistedRun(activeRunSnapshot.data());
+      const previousRun = runsSnapshot.docs
+        .map((doc) => parsePersistedRun(doc.data()))
+        .find((run) => runRequestHistoryKey(run) === input.requestHistoryKey);
+      const outcome = input.decide({ task, activeRun, previousRun });
+      if (isRefusal(outcome)) return outcome;
+
+      const nextTaskDoc: z.infer<typeof taskDocSchema> = {
+        task: outcome.task,
+        revision: (task?.revision ?? 0) + 1,
+      };
+      tx.set(taskRef, nextTaskDoc);
+      if (outcome.run !== undefined) {
+        tx.set(this.#runRef(outcome.run.runId), outcome.run);
+      }
+      for (const entry of outcome.outbox) {
+        tx.set(this.#outboxRef(entry.entryId), entry);
+      }
+      return outcome;
+    });
   }
 
   async apply(input: {
@@ -434,6 +475,16 @@ export class FirestoreStore implements OrchestratorStore {
 
   #taskRef(id: TaskId): DocumentReference {
     return this.#tasks.doc(encodeURIComponent(taskKey(id)));
+  }
+
+  /** Equality-only query shape, shared by the public history read and the
+   * request transaction so durable idempotency never needs a new index. */
+  #runsForTask(id: TaskId) {
+    return isWorkAnchor(id)
+      ? this.#runs.where('task.workId', '==', id.workId)
+      : this.#runs
+          .where('task.repo', '==', id.repo)
+          .where('task.issue', '==', id.issue);
   }
 
   #runRef(runId: string): DocumentReference {

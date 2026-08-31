@@ -2,7 +2,10 @@ import {
   isLive,
   isWorkAnchor,
   type OutboxEntry,
+  requestHistoryKey,
+  type RequestSource,
   type Run,
+  runRequestHistoryKey,
   type RunResult,
   type Task,
   type TaskId,
@@ -79,6 +82,7 @@ export interface RequestRunInput {
   taskId: TaskId;
   activeRun: Run | undefined;
   requestId: string;
+  requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
@@ -88,13 +92,16 @@ export interface RequestRunInput {
  * A request to work a task.
  *
  * - No live run → start one, take the lock, enqueue its dispatch.
- * - Same requestId as the task's live run → that run, idempotently.
+ * - Same request source/id as the task's live run → that run, idempotently.
  * - Any other live run → refused: the lock is held.
  */
 export function requestRun(input: RequestRunInput): Decision | Refusal {
   const { now, taskId, activeRun, requestId } = input;
   if (activeRun !== undefined && isLive(activeRun.state)) {
-    if (activeRun.requestId === requestId) {
+    if (
+      runRequestHistoryKey(activeRun) ===
+      requestHistoryKey(input.requestSource ?? 'caller', requestId)
+    ) {
       return refused('duplicate-request', activeRun);
     }
     return refused('task-busy', activeRun);
@@ -125,6 +132,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     taskId,
     task: baseTask,
     requestId,
+    requestSource: input.requestSource,
     pipeline: input.pipeline,
     params: input.params,
   });
@@ -136,10 +144,12 @@ function mintRun(input: {
   taskId: TaskId;
   task: Task;
   requestId: string;
+  requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
 }): Decision {
-  const { now, taskId, task, requestId, pipeline, params } = input;
+  const { now, taskId, task, requestId, requestSource, pipeline, params } =
+    input;
   const runCount = task.runCount + 1;
   const runId = `${taskKey(taskId)}/r${runCount}`;
   const run: Run = {
@@ -148,6 +158,7 @@ function mintRun(input: {
     state: 'pending',
     pipeline,
     requestId,
+    ...(requestSource === undefined ? {} : { requestSource }),
     ...(params === undefined ? {} : { params }),
     leaseExpiresAt: lease(now),
     events: [{ at: now, to: 'pending', by: 'request' }],

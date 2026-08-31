@@ -3,7 +3,13 @@ import { openapi } from '@orpc/openapi';
 import { z } from 'zod';
 
 import { parseCron } from './cron';
-import { workOriginSchema, workSpecSchema } from './spec';
+import {
+  PIPELINES,
+  WORK_TITLE_MAX,
+  workOriginSchema,
+  workSpecSchema,
+  workTargetSchema,
+} from './spec';
 
 /**
  * Crockford base32, 26 characters: a ULID. Excludes I, L, O, U.
@@ -220,6 +226,95 @@ export const itemsContract = {
     .output(itemViewSchema),
 };
 export type ItemsContract = typeof itemsContract;
+
+/** A GitHub issue or pull request is one durable orchestrator task anchor.
+ * Pull requests use GitHub's issue number, so no separate `type` selector is
+ * needed at the Work API boundary. */
+export const githubDispatchAnchorSchema = z.strictObject({
+  repo: z
+    .string()
+    .max(140)
+    .regex(/^[\w.-]+\/[\w.-]+$/u),
+  issue: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+
+const githubDispatchModeSchema = z.enum(['implement', 'review']);
+
+/** GitHub permits issue and pull-request bodies up to 65,536 characters.
+ * GitHub-anchor dispatch accepts that complete caller shape, then the server
+ * normalizes it into the smaller stored `workSpecSchema` budget. Native Work
+ * item creation deliberately keeps its own stricter description bound. */
+export const GITHUB_DISPATCH_DESCRIPTION_MAX = 65_536;
+
+/** The ingress-only spec for a GitHub anchor. Title, pipeline, and target use
+ * the ordinary Work constraints; description is intentionally wider and may
+ * be empty because an empty GitHub body is valid. The route turns it into a
+ * stored `WorkSpec` before grant checks or orchestrator storage. */
+export const githubDispatchSpecSchema = z.strictObject({
+  title: z.string().min(1).max(WORK_TITLE_MAX),
+  description: z.string().max(GITHUB_DISPATCH_DESCRIPTION_MAX),
+  pipeline: z.enum(PIPELINES),
+  target: workTargetSchema,
+});
+
+/** One explicit response shape for the GitHub-anchor admission path. A
+ * duplicate or busy result is a successful, actionable idempotency/mutex
+ * answer rather than an HTTP failure: both name the existing durable run. */
+const githubDispatchResultSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('accepted'),
+    runId: z.string(),
+    dispatched: z.boolean(),
+  }),
+  z.strictObject({ outcome: z.literal('duplicate'), runId: z.string() }),
+  z.strictObject({ outcome: z.literal('busy'), runId: z.string() }),
+]);
+
+const dispatchBase = oc.meta(
+  openapi({ tags: ['dispatches'], spec: withBearer }),
+);
+
+/**
+ * Contract-first GitHub-anchor admission. The explicit Work spec means this
+ * has the same stored Work payload and QueueExecutor brief as every other
+ * Work API admission; it is not a compatibility alias for the retired
+ * control-plane request body.
+ */
+export const dispatchesContract = {
+  github: dispatchBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/dispatches/github',
+        operationId: 'dispatchGithubAnchor',
+        summary: 'Request a run for a GitHub issue or pull-request anchor',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message:
+          'Principal may not request this pipeline, repository, or anchor',
+      },
+      BAD_REQUEST: {
+        message: 'Anchor repository must equal the Work target repository',
+      },
+    })
+    .input(
+      z.strictObject({
+        anchor: githubDispatchAnchorSchema,
+        spec: githubDispatchSpecSchema,
+        mode: githubDispatchModeSchema,
+        reply: z.string().max(8_192).optional(),
+        runbook: z.string().min(1).max(128).optional(),
+        context: z.string().max(4_096).optional(),
+        /** Caller-controlled idempotency key. A retry with this same value
+         * receives the existing durable run instead of minting another. */
+        requestId: z.string().min(1).max(128),
+      }),
+    )
+    .output(githubDispatchResultSchema),
+};
+export type DispatchesContract = typeof dispatchesContract;
 
 /** A `cron` field is only accepted once it parses: `parseCron` throws on
  *  anything malformed, so a bad expression is refused at the API's input

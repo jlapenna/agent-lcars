@@ -30,6 +30,12 @@ const REQUEST_EVENT_NAMES: ReadonlySet<string> = new Set([
   'push',
 ]);
 
+/** GitHub Actions callers of the public Work API use its normal audience,
+ * then become a normal `github-actions:<repository>` Work grant subject.
+ * This is deliberately separate from #1215's legacy request-route audience:
+ * phase one is additive so existing callers can migrate without an alias. */
+const WORK_API_OIDC_AUDIENCE = 'agent-lcars-work';
+
 const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com';
 const githubActionsJwks = createRemoteJWKSet(
   new URL(`${GITHUB_ACTIONS_ISSUER}/.well-known/jwks`),
@@ -45,6 +51,20 @@ export interface RequestOidcIdentity {
   repository: string;
   repositoryId: number;
   runId: number;
+}
+
+export interface WorkApiOidcIdentity {
+  repository: string;
+  repositoryId: number;
+  runId: number;
+}
+
+/** Canonical grant subject for a GitHub Actions caller. The repository is
+ * still checked from the signed claims before this value is ever resolved
+ * against `AGENT_LCARS_WORK_GRANTS`; there is no provider-specific identity
+ * or special-case member repository in the Work API. */
+export function githubActionsWorkSubject(repository: string): string {
+  return `github-actions:${repository}`;
 }
 
 function positiveIntegerClaim(value: unknown, name: string): number {
@@ -253,4 +273,56 @@ export async function verifyRequestOidcToken(
     );
   }
   return assertRequestOidcClaims(payload, claimedRepository);
+}
+
+/** Work API equivalent of the legacy request-route claim policy: any
+ * protected-main workflow belonging to an allow-listed repository may ask to
+ * dispatch its own GitHub anchor. Authorization after this cryptographic
+ * verification is the ordinary Work principal/grant lookup. */
+export function assertWorkApiOidcClaims(
+  claims: JWTPayload,
+  repository: string,
+): WorkApiOidcIdentity {
+  if (claims['repository'] !== repository) {
+    throw new Error('OIDC repository claim does not match the Work API caller');
+  }
+  if (claims['ref'] !== 'refs/heads/main') {
+    throw new Error('OIDC ref claim is not main');
+  }
+  if (!REQUEST_EVENT_NAMES.has(String(claims['event_name']))) {
+    throw new Error('OIDC event_name claim is not an allowed Work API event');
+  }
+  if (!isOwnWorkflowRefOnMain(claims['workflow_ref'], repository)) {
+    throw new Error(
+      'OIDC workflow_ref claim is not a workflow of this repository on main',
+    );
+  }
+  return {
+    repository,
+    repositoryId: positiveIntegerClaim(
+      claims['repository_id'],
+      'repository_id',
+    ),
+    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
+  };
+}
+
+export async function verifyWorkApiOidcToken(
+  token: string,
+  allowedRepositories: string[],
+): Promise<WorkApiOidcIdentity> {
+  const { payload } = await jwtVerify(token, githubActionsJwks, {
+    issuer: GITHUB_ACTIONS_ISSUER,
+    audience: WORK_API_OIDC_AUDIENCE,
+  });
+  const claimedRepository = payload['repository'];
+  if (
+    typeof claimedRepository !== 'string' ||
+    !allowedRepositories.includes(claimedRepository)
+  ) {
+    throw new Error(
+      'OIDC repository claim is not an allow-listed control-plane repository',
+    );
+  }
+  return assertWorkApiOidcClaims(payload, claimedRepository);
 }

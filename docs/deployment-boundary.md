@@ -69,24 +69,26 @@ evaluating this host-only privacy scope.
 
 ### 3. `apps/console/src/lib/work-grants.ts`
 
-Who may operate the native work items API, and how many runs it will let be
-live at once. `authenticateWorkRequest` (`work-auth.ts`) maps a verified
-Google service-account ID token or an Auth.js session to a principal by
-looking it up here — an unlisted subject gets no access at all, regardless
-of how it authenticated.
+Who may operate the Work API, and how many runs it will let be live at once.
+`authenticateWorkRequest` (`work-auth.ts`) maps a verified Google
+service-account ID token, GitHub Actions OIDC identity, or Auth.js session to
+a principal by looking it up here — an unlisted subject gets no access at all,
+regardless of how it authenticated. A GitHub Actions caller's signed
+repository maps generically to `github-actions:<owner/repo>`; it is neither a
+Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                          | This deployment                                                                                |
-| ------------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`        | current operators and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
-| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                            |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                             |
+| Value                    | Env var                          | This deployment                                                                                                                           |
+| ------------------------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`        | operators, allowed `github-actions:<owner/repo>` automation, and `svc:telemetry-writer` executor/scheduler: `claude`, `codex`, `opencode` |
+| max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                                                                       |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                                                                        |
 
 Unlike `deployment.ts`, these have no fallback identity baked into source —
 an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
 operate the API), not a default principal. Every admitted run uses
 QueueExecutor, regardless of its provider or whether it came from GitHub, the
-console, an internal request, native Work, a schedule tick, or redispatch.
-Callers and work specifications never choose a route.
+console, a Work API GitHub-anchor dispatch, native Work, a schedule tick, or
+redispatch. Callers and work specifications never choose a route.
 
 The autoscaler's own identity needs its own grant row in
 `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's. It receives

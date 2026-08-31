@@ -128,6 +128,55 @@ describe('the per-task mutex', () => {
     });
   });
 
+  it('atomically maps overlapping same-id requests to one run', async () => {
+    const { store, orchestrator } = fixture();
+    const input = {
+      taskId: TASK,
+      requestId: 'same-request',
+      pipeline: 'claude',
+    };
+    const [left, right] = await Promise.all([
+      orchestrator.request(input),
+      orchestrator.request(input),
+    ]);
+
+    const outcomes = [left, right];
+    const accepted = outcomes.find((outcome) => !isRefusal(outcome));
+    const duplicate = outcomes.find(
+      (outcome) => isRefusal(outcome) && outcome.reason === 'duplicate-request',
+    );
+    if (accepted === undefined || isRefusal(accepted)) {
+      throw new Error('expected one accepted request');
+    }
+    expect(duplicate).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({
+        runId: decidedRun(accepted).runId,
+      }),
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+  });
+
+  it('returns a terminal request-id match even when a newer run holds the lock', async () => {
+    const { store, orchestrator } = fixture();
+    const first = await started(orchestrator, 'retry-after-settlement');
+    await orchestrator.report(first.run.runId, { ok: true });
+    await started(orchestrator, 'newer-request');
+
+    const replay = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'retry-after-settlement',
+      pipeline: 'claude',
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: first.run.runId }),
+    });
+    expect(await store.listRuns(TASK)).toHaveLength(2);
+  });
+
   it('allows the same task to be worked again after each terminal state', async () => {
     const { clock, orchestrator } = fixture();
     // finished → free
@@ -339,6 +388,7 @@ describe('auto-retry on loss', () => {
     const again = await orchestrator.request({
       taskId: TASK,
       requestId: `retry:${run.runId}`,
+      requestSource: 'auto-retry',
       pipeline: run.pipeline,
       ...(run.params === undefined ? {} : { params: run.params }),
     });
@@ -353,6 +403,77 @@ describe('auto-retry on loss', () => {
     const secondSweep = await orchestrator.sweepExpired();
     expect(secondSweep.lost).toEqual([]);
     expect(secondSweep.retried).toEqual([]);
+  });
+
+  it('keeps automatic retry history separate from a caller key that looks internal', async () => {
+    const { clock, store, orchestrator } = fixture();
+    // Caller input is intentionally arbitrary. This is exactly the key the
+    // first run's lease-expiry retry will later use, but in the caller
+    // namespace rather than the orchestrator's internal retry namespace.
+    const { run } = await started(orchestrator, 'retry:octo/example#7/r1');
+    clock.advanceMinutes(121);
+
+    const swept = await orchestrator.sweepExpired();
+    expect(swept.retried).toHaveLength(1);
+    const retry = await store.readRun(swept.retried[0]?.newRunId as string);
+    expect(retry).toMatchObject({
+      requestId: `retry:${run.runId}`,
+      requestSource: 'auto-retry',
+    });
+
+    // Replaying the caller's original key remains idempotent against its
+    // original run; it cannot be confused with the automatic retry.
+    const replay = await orchestrator.request({
+      taskId: TASK,
+      requestId: `retry:${run.runId}`,
+      pipeline: run.pipeline,
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: run.runId }),
+    });
+  });
+
+  it('does not classify a first caller request as a live automatic retry duplicate', async () => {
+    const { clock, store, orchestrator } = fixture();
+    const original = await started(orchestrator, 'ordinary-request');
+    clock.advanceMinutes(121);
+    const swept = await orchestrator.sweepExpired();
+    const automaticRunId = swept.retried[0]?.newRunId as string;
+    const callerKey = `retry:${original.run.runId}`;
+
+    const whileAutomaticIsLive = await orchestrator.request({
+      taskId: TASK,
+      requestId: callerKey,
+      pipeline: original.run.pipeline,
+    });
+    expect(whileAutomaticIsLive).toMatchObject({
+      refused: true,
+      reason: 'task-busy',
+      existingRun: expect.objectContaining({ runId: automaticRunId }),
+    });
+
+    await orchestrator.report(automaticRunId, { ok: true });
+    const callerRun = await orchestrator.request({
+      taskId: TASK,
+      requestId: callerKey,
+      pipeline: original.run.pipeline,
+    });
+    if (isRefusal(callerRun)) throw new Error('caller request was refused');
+    const callerRunId = decidedRun(callerRun).runId;
+    expect((await store.readRun(callerRunId))?.requestSource).toBe('caller');
+
+    const replay = await orchestrator.request({
+      taskId: TASK,
+      requestId: callerKey,
+      pipeline: original.run.pipeline,
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: callerRunId }),
+    });
   });
 
   it('stops retrying once a task has lost 3 runs in a row (budget exhausted)', async () => {

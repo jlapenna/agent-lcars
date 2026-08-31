@@ -1,6 +1,7 @@
 import {
   MemoryStore,
   Orchestrator,
+  type RequestInput,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
@@ -52,10 +53,33 @@ function fakeFetch(): { fetchImpl: typeof fetch; calls: FetchCall[] } {
   return { fetchImpl, calls };
 }
 
-function fixture() {
+class CallerWinsRetryRaceOrchestrator extends Orchestrator {
+  #armed = true;
+
+  override async request(input: RequestInput) {
+    if (this.#armed && input.requestSource === 'auto-retry') {
+      this.#armed = false;
+      await super.request({
+        taskId: input.taskId,
+        requestId: input.requestId,
+        pipeline: input.pipeline,
+        ...(input.params === undefined ? {} : { params: input.params }),
+        ...(input.work === undefined ? {} : { work: input.work }),
+      });
+    }
+    return super.request(input);
+  }
+}
+
+function fixture(
+  makeOrchestrator: (store: MemoryStore, clock: Clock) => Orchestrator = (
+    store,
+    clock,
+  ) => new Orchestrator(store, clock),
+) {
   const clock = new Clock(T0);
   const store = new MemoryStore();
-  const orchestrator = new Orchestrator(store, clock);
+  const orchestrator = makeOrchestrator(store, clock);
   const { fetchImpl, calls } = fakeFetch();
   const deps: OrchestratorRouteDeps = {
     store,
@@ -484,6 +508,34 @@ describe('handleReconcile', () => {
     };
     expect(commentBody.body).toContain(newRunId);
     expect(commentBody.body).toContain('attempt 2 of 3');
+  });
+
+  it('reports a caller-owned matching replacement as already in progress', async () => {
+    const { deps, clock, calls, store } = fixture(
+      (currentStore, currentClock) =>
+        new CallerWinsRetryRaceOrchestrator(currentStore, currentClock),
+    );
+    const runId = await dispatchedRun(deps);
+    calls.length = 0;
+    clock.advanceMinutes(121);
+
+    const result = await handleReconcile(deps);
+
+    expect(result.body['lost']).toEqual([runId]);
+    expect(result.body['retried']).toEqual([]);
+    const activeRun = await store.readActiveRun(ISSUE);
+    expect(activeRun).toMatchObject({
+      requestId: `retry:${runId}`,
+      requestSource: 'caller',
+    });
+    const commentCall = calls.find((call) => call.url.includes('/comments'));
+    const commentBody = JSON.parse(String(commentCall?.init.body)) as {
+      body: string;
+    };
+    expect(commentBody.body).toContain(
+      `Run ${activeRun?.runId} is already in progress.`,
+    );
+    expect(commentBody.body).not.toContain('Retrying automatically');
   });
 
   it('preserves a pre-cutover executor cause when draining its pending outcome', async () => {

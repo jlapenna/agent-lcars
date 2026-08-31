@@ -2,8 +2,11 @@ import {
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
+  taskSchema,
+  WORK_PAYLOAD_MAX_BYTES,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
+import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { describe, expect, it } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
@@ -43,6 +46,14 @@ const reaperOnly = {
   subject: 'pin:tick',
   scopes: new Set(['work.reaper'] as const),
   pipelines: [],
+  via: 'oidc' as const,
+};
+const githubActionsOperator = {
+  principal: 'workflow:member-automation',
+  subject: 'github-actions:jlapenna/agent-lcars',
+  sourceRepository: 'jlapenna/agent-lcars',
+  scopes: new Set(['work.operator'] as const),
+  pipelines: ['claude', 'codex', 'opencode'],
   via: 'oidc' as const,
 };
 
@@ -605,4 +616,251 @@ describe('items routes', () => {
     // The store is exhausted: no more native tasks behind OLDEST.
     expect(secondPage.json.nextCursor).toBeUndefined();
   });
+});
+
+describe('GitHub-anchor dispatch route', () => {
+  const anchor = { repo: 'jlapenna/agent-lcars', issue: 1633 };
+  const input = {
+    anchor,
+    spec: {
+      title: 'Migrate automation dispatch',
+      description: 'Use the Work API route.',
+      pipeline: 'codex',
+      target: { repo: anchor.repo },
+    },
+    mode: 'implement' as const,
+    reply: 'Please handle this.',
+    runbook: 'automation-dispatch',
+    context: 'phase-1',
+    requestId: 'workflow-run:123:dispatch:1633',
+  };
+
+  it('requires work.operator before it parses or admits an anchor', async () => {
+    const r = await call(
+      context({ principal: undefined }),
+      'POST',
+      '/dispatches/github',
+      input,
+    );
+    expect(r.status).toBe(401);
+  });
+
+  it('stores the explicit Work payload, parameters, and idempotency key through the normal orchestrator path', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const first = await call(ctx, 'POST', '/dispatches/github', input);
+    expect(first.status).toBe(200);
+    expect(first.json).toEqual({
+      outcome: 'accepted',
+      runId: 'jlapenna/agent-lcars#1633/r1',
+      dispatched: false,
+    });
+
+    const task = await ctx.runtime.store.readTask(anchor);
+    expect(task?.task.work).toEqual({
+      origin: { principal: 'workflow:member-automation', channel: 'api' },
+      spec: input.spec,
+    });
+    const run = await ctx.runtime.store.readRun('jlapenna/agent-lcars#1633/r1');
+    expect(run).toMatchObject({
+      requestId: input.requestId,
+      pipeline: 'codex',
+      params: {
+        mode: 'implement',
+        reply: 'Please handle this.',
+        runbook: 'automation-dispatch',
+        context: 'phase-1',
+      },
+    });
+
+    const retry = await call(ctx, 'POST', '/dispatches/github', input);
+    expect(retry.status).toBe(200);
+    expect(retry.json).toEqual({
+      outcome: 'duplicate',
+      runId: 'jlapenna/agent-lcars#1633/r1',
+    });
+  });
+
+  it('preserves an under-bound GitHub body in the stored Work spec', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const description = '  Preserve this exact GitHub body.\n';
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description },
+      requestId: 'workflow-run:under-bound:1633',
+    });
+
+    expect(r.status).toBe(200);
+    expect((await ctx.runtime.store.readTask(anchor))?.task.work).toMatchObject(
+      {
+        spec: { description },
+      },
+    );
+  });
+
+  it('accepts an overlong GitHub body and stores the shared visible clamp', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const description = 'x'.repeat(WORK_DESCRIPTION_MAX + 3_616);
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description },
+      requestId: 'workflow-run:overlong:1633',
+    });
+
+    expect(r.status).toBe(200);
+    expect((await ctx.runtime.store.readTask(anchor))?.task.work).toMatchObject(
+      {
+        spec: {
+          description: expect.stringContaining(
+            `truncated to ${WORK_DESCRIPTION_MAX} of ${description.length} characters`,
+          ),
+        },
+      },
+    );
+  });
+
+  it('normalizes an empty body and keeps a multibyte body within the storage byte budget', async () => {
+    const emptyCtx = context({ principal: githubActionsOperator });
+    const empty = await call(emptyCtx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: '' },
+      requestId: 'workflow-run:empty:1633',
+    });
+    expect(empty.status).toBe(200);
+    expect(
+      (await emptyCtx.runtime.store.readTask(anchor))?.task.work,
+    ).toMatchObject({
+      spec: { description: '(no description)' },
+    });
+
+    const multibyteCtx = context({ principal: githubActionsOperator });
+    const multibyte = await call(multibyteCtx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: '漢'.repeat(12_000) },
+      requestId: 'workflow-run:multibyte:1633',
+    });
+    expect(multibyte.status).toBe(200);
+    const stored = await multibyteCtx.runtime.store.readTask(anchor);
+    const storedDescription = (
+      stored?.task.work as { spec?: { description?: string } } | undefined
+    )?.spec?.description;
+    expect(storedDescription).toContain('12000 characters');
+    expect(
+      new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
+    ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
+  });
+
+  it('clamps JSON-escaped GitHub text before storage and reads the schema back', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    // `JSON.stringify` doubles each newline. The raw 16,384-byte body is
+    // valid GitHub input and character-bounded Work text, but the complete
+    // serialized payload is too large without route-side normalization.
+    const body = '\n'.repeat(WORK_DESCRIPTION_MAX);
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: body },
+      requestId: 'workflow-run:escaped:1633',
+    });
+
+    expect(r.status).toBe(200);
+    const stored = await ctx.runtime.store.readTask(anchor);
+    expect(stored).toBeDefined();
+    expect(taskSchema.parse(stored?.task)).toEqual(stored?.task);
+    const storedDescription = (
+      stored?.task.work as { spec?: { description?: string } } | undefined
+    )?.spec?.description;
+    expect(storedDescription).toContain('serialized work payload');
+    expect(
+      new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
+    ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
+  });
+
+  it.each([true, false])(
+    'returns the original run when a request is replayed after it settles (%s)',
+    async (ok) => {
+      const ctx = context({ principal: githubActionsOperator });
+      const first = await call(ctx, 'POST', '/dispatches/github', input);
+      expect(first.json).toMatchObject({ outcome: 'accepted' });
+
+      await ctx.runtime.orchestrator.report('jlapenna/agent-lcars#1633/r1', {
+        ok,
+      });
+
+      const replay = await call(ctx, 'POST', '/dispatches/github', input);
+      expect(replay.status).toBe(200);
+      expect(replay.json).toEqual({
+        outcome: 'duplicate',
+        runId: 'jlapenna/agent-lcars#1633/r1',
+      });
+      expect(await ctx.runtime.store.listRuns(anchor)).toHaveLength(1);
+    },
+  );
+
+  it('allows a different request ID after a prior request settles', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    await call(ctx, 'POST', '/dispatches/github', input);
+    await ctx.runtime.orchestrator.report('jlapenna/agent-lcars#1633/r1', {
+      ok: true,
+    });
+
+    const next = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      requestId: 'workflow-run:124:dispatch:1633',
+    });
+    expect(next.status).toBe(200);
+    expect(next.json).toMatchObject({
+      outcome: 'accepted',
+      runId: 'jlapenna/agent-lcars#1633/r2',
+    });
+  });
+
+  it('preserves the signed caller-repository boundary and requires the Work target to equal the anchor', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const foreign = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      anchor: { repo: 'other-org/other-repo', issue: 1 },
+      spec: { ...input.spec, target: { repo: 'other-org/other-repo' } },
+    });
+    expect(foreign.status).toBe(403);
+
+    const mismatched = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, target: { repo: 'other-org/other-repo' } },
+    });
+    expect(mismatched.status).toBe(400);
+  });
+
+  it('uses the same pipeline grant check as other Work API admissions', async () => {
+    const r = await call(
+      context({
+        principal: { ...githubActionsOperator, pipelines: ['claude'] },
+      }),
+      'POST',
+      '/dispatches/github',
+      input,
+    );
+    expect(r.status).toBe(403);
+  });
+
+  it.each(['claude', 'codex', 'opencode'] as const)(
+    'admits %s through the same Work API and QueueExecutor request path',
+    async (pipeline) => {
+      const ctx = context({ principal: githubActionsOperator });
+      const r = await call(ctx, 'POST', '/dispatches/github', {
+        ...input,
+        spec: { ...input.spec, pipeline },
+        requestId: `workflow-run:123:${pipeline}:1633`,
+      });
+      expect(r.status).toBe(200);
+      expect(r.json).toMatchObject({
+        outcome: 'accepted',
+        runId: 'jlapenna/agent-lcars#1633/r1',
+      });
+      expect(
+        await ctx.runtime.store.readRun('jlapenna/agent-lcars#1633/r1'),
+      ).toMatchObject({
+        pipeline,
+        task: anchor,
+      });
+    },
+  );
 });

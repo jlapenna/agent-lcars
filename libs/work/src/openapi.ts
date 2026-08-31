@@ -1,7 +1,12 @@
 import { OpenAPIGenerator } from '@orpc/openapi';
 import { ZodToJsonSchemaConverter } from '@orpc/zod';
 
-import { itemsContract, runsContract, schedulesContract } from './contract';
+import {
+  dispatchesContract,
+  itemsContract,
+  runsContract,
+  schedulesContract,
+} from './contract';
 
 /** The document `docs/api/work-v1.openapi.json` is generated from. */
 export async function generateWorkOpenApi(): Promise<object> {
@@ -9,7 +14,12 @@ export async function generateWorkOpenApi(): Promise<object> {
     converters: [new ZodToJsonSchemaConverter()],
   });
   return generator.generate(
-    { items: itemsContract, schedules: schedulesContract, runs: runsContract },
+    {
+      items: itemsContract,
+      schedules: schedulesContract,
+      dispatches: dispatchesContract,
+      runs: runsContract,
+    },
     {
       base: {
         info: { title: 'Agent LCARS work items', version: '1' },

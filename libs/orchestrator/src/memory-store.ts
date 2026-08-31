@@ -1,8 +1,15 @@
-import type { Decision } from './decide';
+import { type Decision, isRefusal, type Refusal } from './decide';
 import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
-import { byOutboxClaimFairness, isLive, isWorkAnchor, taskKey } from './model';
+import {
+  byOutboxClaimFairness,
+  isLive,
+  isWorkAnchor,
+  runRequestHistoryKey,
+  taskKey,
+} from './model';
 import {
   type OrchestratorStore,
+  type RequestTransactionState,
   StoreConflict,
   type TaskListCursor,
   type VersionedTask,
@@ -36,10 +43,46 @@ export class MemoryStore implements OrchestratorStore {
     );
   }
 
+  async transactRequest(input: {
+    taskId: TaskId;
+    requestHistoryKey: string;
+    decide(state: RequestTransactionState): Decision | Refusal;
+  }): Promise<Decision | Refusal> {
+    // Do not await while this snapshot and its accepted write are in flight:
+    // the in-memory implementation is our reference transaction, so two
+    // overlapping callers cannot both observe an absent request id and mint
+    // separate runs.
+    const key = taskKey(input.taskId);
+    const task = structuredClone(this.#tasks.get(key));
+    const activeRunId = task?.task.activeRunId;
+    const activeRun =
+      activeRunId === undefined
+        ? undefined
+        : structuredClone(this.#runs.get(activeRunId));
+    const previousRun = structuredClone(
+      [...this.#runs.values()].find(
+        (run) =>
+          taskKey(run.task) === key &&
+          runRequestHistoryKey(run) === input.requestHistoryKey,
+      ),
+    );
+    const outcome = input.decide({ task, activeRun, previousRun });
+    if (isRefusal(outcome)) return outcome;
+    this.#apply({ decision: outcome, expectedRevision: task?.revision });
+    return outcome;
+  }
+
   async apply(input: {
     decision: Decision;
     expectedRevision: number | undefined;
   }): Promise<void> {
+    this.#apply(input);
+  }
+
+  #apply(input: {
+    decision: Decision;
+    expectedRevision: number | undefined;
+  }): void {
     const { decision, expectedRevision } = input;
     const key = taskKey(decision.task.task);
     const current = this.#tasks.get(key);
