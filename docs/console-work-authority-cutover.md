@@ -28,10 +28,12 @@ subscription before the backfill; it deliberately fails closed when an event
 is absent. This is an operator-owned GitHub App settings change, not a
 render-time compatibility path.
 
-1. After the Phase 1 control-plane revision is deployed, manually dispatch
-   `Console Anchor Projection Backfill` from the protected default branch.
-   Its OIDC identity is pinned to that exact workflow and it calls
-   `/api/control-plane/projections/reconcile`.
+1. After the Phase 1 control-plane revision is deployed, invoke the temporary
+   `POST /api/work/v1/orchestrator-migration/projections/reconcile` endpoint
+   as an authenticated Work principal with the explicit `work.migrate` grant.
+   It has no GitHub Actions-specific identity, workflow, or route; the saved
+   production verifier session is a normal configured Work subject for this
+   one cutover operation.
 2. The endpoint uses the GitHub App to read up to 1,000 open anchors per
    configured control-plane repository, validates each current GitHub shape,
    and writes it through a generation-fenced exact refresh: it first claims
@@ -47,15 +49,14 @@ render-time compatibility path.
    result instead: `matches` must be true after it compares the current
    GitHub-derived queue keys and title/URL/author/assignee fields with the
    selected stored projections. A comparison warning or mismatch returns 409;
-   fix the projection input and repeat the controlled job. If the endpoint
+   fix the projection input and repeat the controlled Work operation. If the endpoint
    returned 409 for the page bound, raise the reviewed bound and repeat; do
    not re-enable a GitHub-list compatibility path. Then verify `/`, `/inbox`,
    and `/agents` show the expected queue without an aggregate data-warning
    banner.
 4. Open the Phase 2 protected PR only after that production result is
    recorded. It switches Bridge, Inbox, and Agents to the stored projection,
-   deletes GitHub queue aggregation, and deletes the one-shot workflow,
-   endpoint, and their temporary proxy allowlist. Normal webhook deliveries
+   deletes GitHub queue aggregation. Normal webhook deliveries
    continue maintaining the projection.
 
 Each invalidation increments a per-anchor refresh generation before its exact

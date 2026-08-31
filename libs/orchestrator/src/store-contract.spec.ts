@@ -150,6 +150,80 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
     });
   });
 
+  it('removes the open-anchor index field through a real transactional Firestore update', async () => {
+    prefixCounter += 1;
+    const collectionPrefix = `orchestrator-anchor-projection-${Date.now()}-${prefixCounter}-`;
+    const store = new FirestoreStore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+    });
+    const firestore = new Firestore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      host: emulatorHost ?? 'localhost:8080',
+      ssl: false,
+    });
+    const anchor = { repo: 'octo/example', issue: 902 } as const;
+    const openProjection = {
+      anchor,
+      kind: 'issue' as const,
+      state: 'open' as const,
+      title: 'Open anchor',
+      body: '',
+      url: 'https://github.com/octo/example/issues/902',
+      labels: [],
+      assigneeLogins: [],
+      sourceUpdatedAt: '2026-08-31T12:00:00.000Z',
+      observedAt: '2026-08-31T12:00:01.000Z',
+    };
+
+    const openGeneration =
+      await store.beginGithubAnchorProjectionRefresh(anchor);
+    await expect(
+      store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation: openGeneration,
+        projection: openProjection,
+      }),
+    ).resolves.toBe(true);
+    await expect(store.listOpenGithubAnchorProjections()).resolves.toEqual([
+      openProjection,
+    ]);
+
+    const closedGeneration =
+      await store.beginGithubAnchorProjectionRefresh(anchor);
+    const closedProjection = {
+      ...openProjection,
+      state: 'closed' as const,
+      sourceUpdatedAt: '2026-08-31T12:01:00.000Z',
+      observedAt: '2026-08-31T12:01:01.000Z',
+    };
+    await expect(
+      store.applyGithubAnchorProjectionRefresh({
+        anchor,
+        generation: closedGeneration,
+        projection: closedProjection,
+      }),
+    ).resolves.toBe(true);
+
+    // This is deliberately an emulator assertion, not a fake-store sentinel
+    // comparison: Firestore itself rejects delete sentinels in a transaction
+    // `set` without merge, which was the production backfill failure.
+    const snapshot = await firestore
+      .collection(`${collectionPrefix}github-anchors`)
+      .doc(encodeURIComponent(taskKey(anchor)))
+      .get();
+    expect(snapshot.data()).toMatchObject({
+      projection: closedProjection,
+      refreshGeneration: closedGeneration,
+    });
+    expect(snapshot.data()).not.toHaveProperty('openUpdatedAt');
+    await expect(store.listOpenGithubAnchorProjections()).resolves.toEqual([]);
+    await firestore.terminate();
+  });
+
   describe('persisted-record migration boundary', () => {
     function migrationStore() {
       prefixCounter += 1;

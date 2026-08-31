@@ -289,7 +289,12 @@ export class FirestoreStore implements OrchestratorStore {
           'GitHub anchor refresh projection does not match its fence',
         );
       }
-      tx.set(ref, {
+      // The refresh fence was created above, so this is always an update of
+      // an existing document. `update` both replaces the projection map
+      // exactly (rather than retaining removed optional fields) and is the
+      // Firestore write form that permits the top-level delete sentinel used
+      // to remove this anchor from the open-order index.
+      tx.update(ref, {
         projection: next,
         refreshGeneration: input.generation,
         ...(next.state === 'open'

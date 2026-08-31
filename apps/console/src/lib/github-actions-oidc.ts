@@ -11,12 +11,6 @@ import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
 const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
 const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
 
-/** One-shot, manually dispatched backfill of GitHub anchor projections. */
-const ANCHOR_PROJECTION_BACKFILL_OIDC_AUDIENCE =
-  'agent-lcars-anchor-projection-backfill';
-const ANCHOR_PROJECTION_BACKFILL_WORKFLOW_PATH =
-  '.github/workflows/console-anchor-projection-backfill.yml';
-
 /** GitHub Actions Work-dispatch event shapes. Not `pull_request`/
  *  `issue_comment`/etc -- those already have a trusted path via the webhook
  *  route; this is for repository automation with no human-authored event to
@@ -108,44 +102,6 @@ export async function verifyReconcileOidcToken(
     audience: RECONCILE_OIDC_AUDIENCE,
   });
   return assertReconcileOidcClaims(payload, repository);
-}
-
-export function assertAnchorProjectionBackfillOidcClaims(
-  claims: JWTPayload,
-  repository: string,
-): ReconcileOidcIdentity {
-  const expectedWorkflowRef = `${repository}/${ANCHOR_PROJECTION_BACKFILL_WORKFLOW_PATH}@refs/heads/main`;
-  if (claims['repository'] !== repository) {
-    throw new Error('OIDC repository claim does not match the control plane');
-  }
-  if (claims['workflow_ref'] !== expectedWorkflowRef) {
-    throw new Error('OIDC workflow_ref is not the anchor backfill on main');
-  }
-  if (claims['ref'] !== 'refs/heads/main') {
-    throw new Error('OIDC ref claim is not main');
-  }
-  if (claims['event_name'] !== 'workflow_dispatch') {
-    throw new Error('OIDC event_name is not a manual anchor backfill');
-  }
-  return {
-    repository,
-    repositoryId: positiveIntegerClaim(
-      claims['repository_id'],
-      'repository_id',
-    ),
-    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
-  };
-}
-
-export async function verifyAnchorProjectionBackfillOidcToken(
-  token: string,
-  repository: string,
-): Promise<ReconcileOidcIdentity> {
-  const { payload } = await jwtVerify(token, githubActionsJwks, {
-    issuer: GITHUB_ACTIONS_ISSUER,
-    audience: ANCHOR_PROJECTION_BACKFILL_OIDC_AUDIENCE,
-  });
-  return assertAnchorProjectionBackfillOidcClaims(payload, repository);
 }
 
 // Sub-project 6 (2026-08-27-native-work-items-8-sessions, Task 8): the

@@ -7,15 +7,19 @@ import {
 } from '@agent-lcars/orchestrator';
 import { implement, ORPCError } from '@orpc/server';
 
+import {
+  AnchorProjectionBackfillLimitError,
+  reconcileCurrentGithubAnchorProjections,
+} from './github-anchor-reconcile';
 import { orchestratorMigrationContract } from './orchestrator-migration-contract';
 import type { WorkContext } from './work-mint';
 
 const os = implement(orchestratorMigrationContract).$context<WorkContext>();
 
 /** Dedicated, never-default migration capability. Member automation may hold
- * `work.operator` for normal Work dispatch, but cannot read or replace
- * fleet-wide persisted records unless a maintainer explicitly grants this
- * short-lived scope to its human/operator identity. */
+ * `work.operator` for normal Work dispatch, but cannot inventory or replace
+ * fleet-wide persisted records, or invoke the one-shot projection cutover,
+ * unless a maintainer explicitly grants this short-lived scope. */
 const migrationOperator = os.use(async ({ context, next }) => {
   const { principal } = context;
   if (principal === undefined || !principal.scopes.has('work.migrate')) {
@@ -73,6 +77,25 @@ export const orchestratorMigrationRouter = os.router({
         return { mode: 'apply' as const, ...applied };
       } catch (error) {
         if (PersistedMigrationConflict.is(error)) {
+          throw errors.CONFLICT({ message: error.message });
+        }
+        throw error;
+      }
+    },
+  ),
+  projectionReconcile: migrationOperator.projectionReconcile.handler(
+    async ({ errors }) => {
+      try {
+        const result = await reconcileCurrentGithubAnchorProjections();
+        if (result.comparison !== undefined && !result.comparison.matches) {
+          throw errors.CONFLICT({
+            message: 'Queue projection mismatch',
+            data: result,
+          });
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof AnchorProjectionBackfillLimitError) {
           throw errors.CONFLICT({ message: error.message });
         }
         throw error;

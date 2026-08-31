@@ -17,7 +17,6 @@ vi.mock('jose', async (importOriginal) => {
 });
 
 import {
-  assertAnchorProjectionBackfillOidcClaims,
   assertReconcileOidcClaims,
   assertSessionPinTickOidcClaims,
   assertWorkApiOidcClaims,
@@ -30,10 +29,6 @@ import {
 // @agent-lcars/dispatch-reconcile, deleted in #1015 Wave 4).
 const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
 const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
-const ANCHOR_BACKFILL_OIDC_AUDIENCE = 'agent-lcars-anchor-projection-backfill';
-const ANCHOR_BACKFILL_WORKFLOW_PATH =
-  '.github/workflows/console-anchor-projection-backfill.yml';
-
 const WORK_API_OIDC_AUDIENCE = 'agent-lcars-work';
 
 const repository = 'jlapenna/agent-lcars';
@@ -129,33 +124,6 @@ describe('verifyReconcileOidcToken', () => {
     await expect(verifyReconcileOidcToken('token', repository)).rejects.toThrow(
       'exp',
     );
-  });
-});
-
-describe('GitHub anchor projection backfill OIDC claims', () => {
-  it('accepts only the manual, main-branch one-shot workflow', () => {
-    expect(
-      assertAnchorProjectionBackfillOidcClaims(
-        {
-          ...validClaims,
-          aud: ANCHOR_BACKFILL_OIDC_AUDIENCE,
-          workflow_ref: `${repository}/${ANCHOR_BACKFILL_WORKFLOW_PATH}@refs/heads/main`,
-          event_name: 'workflow_dispatch',
-        },
-        repository,
-      ),
-    ).toMatchObject({ repository });
-    expect(() =>
-      assertAnchorProjectionBackfillOidcClaims(
-        {
-          ...validClaims,
-          aud: ANCHOR_BACKFILL_OIDC_AUDIENCE,
-          workflow_ref: `${repository}/${ANCHOR_BACKFILL_WORKFLOW_PATH}@refs/heads/main`,
-          event_name: 'schedule',
-        },
-        repository,
-      ),
-    ).toThrow('event_name');
   });
 });
 

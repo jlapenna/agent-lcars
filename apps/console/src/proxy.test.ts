@@ -17,7 +17,6 @@ const EXPECTED_PUBLIC_ROUTES = [
   '/login',
   '/api/logs/error',
   '/api/control-plane/reconcile',
-  '/api/control-plane/projections/reconcile',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
 ];
