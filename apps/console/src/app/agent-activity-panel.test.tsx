@@ -1,5 +1,6 @@
 import type {
   IssueAgentSessionDoc,
+  SessionAgent,
   SessionSource,
 } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
@@ -10,6 +11,7 @@ import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import type { CliSession } from '../lib/cli-sessions';
 import {
   AgentActivityPanel,
+  AgentBadge,
   CliSessionRow,
   FinishedRunRow,
   LiveRunRow,
@@ -296,12 +298,30 @@ describe('AgentActivityPanel CLI sessions', () => {
     expect(badge.style.flexShrink).toBe('0');
   });
 
-  it('renders no agent badge for a claude-code session (the overwhelming default)', () => {
+  it.each([
+    ['claude-code', 'claude code'],
+    ['codex', 'codex'],
+    ['gemini', 'gemini'],
+    ['antigravity', 'antigravity'],
+    ['opencode', 'opencode'],
+  ] as const satisfies readonly [SessionAgent, string][])(
+    'renders the persisted %s agent identity',
+    (agent, label) => {
+      render(
+        <MantineProvider>
+          <AgentBadge agent={agent} />
+        </MantineProvider>,
+      );
+      expect(screen.getByText(label)).toBeTruthy();
+    },
+  );
+
+  it('renders the explicit claude-code identity for a CLI session', () => {
     renderPanel([makeCliSession({ agent: 'claude-code' })]);
-    expect(screen.queryByText('claude code')).toBeNull();
+    expect(screen.getByText('claude code')).toBeTruthy();
   });
 
-  it('renders an agent badge for a non-claude-code session', () => {
+  it('renders the explicit opencode identity for a CLI session', () => {
     renderPanel([makeCliSession({ agent: 'opencode' })]);
     expect(screen.getByText('opencode')).toBeTruthy();
   });
