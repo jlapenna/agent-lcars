@@ -111,7 +111,7 @@ case "$url" in
     fi
     if [ "${FAKE_ANCHOR:-work}" = "github" ]; then
       cat <<JSON
-{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"pipeline":"${FAKE_PIPELINE:-claude}","mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
+{"anchor":{"type":"github","repo":"octo/example","issue":42,"html_url":"https://github.test/octo/example/issues/42"},"work":{"spec":{"title":"GitHub work","description":"Work-projected body","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}},"pipeline":"${FAKE_PIPELINE:-claude}","mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","runbook":"${FAKE_RUNBOOK:-}","context":"${FAKE_CONTEXT:-}","attemptId":"g1:octo/example#42/r1","generation":1,"intentId":"octo/example#42/r1"}
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON

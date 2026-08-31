@@ -60,11 +60,11 @@ case "$ANCHOR_TYPE" in
     ISSUE=''
     ;;
   github)
-    # A GitHub anchor may carry the server-derived Work spec, but the
-    # dispatch still remains valid without one: prepare.sh then fetches the
-    # anchor in the normal legacy path. The queue never makes this a routing
-    # distinction; it is only the brief's task-text representation.
-    WORK="$(jq -c '.work // empty' <<<"$brief")"
+    WORK="$(jq -c '.work' <<<"$brief")"
+    if [ "$WORK" = "null" ]; then
+      echo "FATAL: GitHub-anchored direct runner brief has no Work spec" >&2
+      exit 1
+    fi
     TARGET_REPO="$(jq -r '.anchor.repo' <<<"$brief")"
     ISSUE="$(jq -r '.anchor.issue' <<<"$brief")"
     ;;

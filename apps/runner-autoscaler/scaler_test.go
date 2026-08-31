@@ -53,10 +53,10 @@ func newStubScalesetClient(t *testing.T) *scaleset.Client {
 // arbitrary label-safe string elsewhere.
 func TestDockerSafeNamePart(t *testing.T) {
 	cases := map[string]string{
-		"homelab-autoscale-claude-agent-lcars": "homelab-autoscale-claude-agent-lcars",
-		"already.safe_name-123":                "already.safe_name-123",
-		"has spaces":                           "has-spaces",
-		"slash/and:colon":                      "slash-and-colon",
+		"homelab-autoscale-agent-runner": "homelab-autoscale-agent-runner",
+		"already.safe_name-123":          "already.safe_name-123",
+		"has spaces":                     "has-spaces",
+		"slash/and:colon":                "slash-and-colon",
 	}
 	for in, want := range cases {
 		if got := dockerSafeNamePart(in); got != want {
@@ -578,15 +578,10 @@ func TestPickHostHonorsConfiguredMemorySafetyMargin(t *testing.T) {
 	}
 }
 
-func TestDeclaredRunnerMemoryInspectsPreLabelContainer(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	fake.setInspectMemory("legacy", 6*gibibyte)
-	memory, err := declaredRunnerMemory(context.Background(), fake.client(t), container.Summary{ID: "legacy"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if memory != 6*gibibyte {
-		t.Fatalf("declaredRunnerMemory() = %d, want %d", memory, 6*gibibyte)
+func TestDeclaredRunnerMemoryRequiresReservationLabel(t *testing.T) {
+	_, err := declaredRunnerMemory(container.Summary{ID: "missing-label"})
+	if err == nil || !strings.Contains(err.Error(), runnerMemoryLabelKey) {
+		t.Fatalf("declaredRunnerMemory() error = %v, want missing reservation label", err)
 	}
 }
 

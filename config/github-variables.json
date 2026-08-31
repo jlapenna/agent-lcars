@@ -5,8 +5,7 @@
       "repositories": ["jlapenna/agent-lcars"],
       "variables": {
         "E2E_ENABLED": { "class": "lane", "default": "true" },
-        "AGENT_FLEET_LOGIN": { "class": "shared-input", "required": true },
-        "AGENT_RUNNER_LABEL": { "class": "shared-input" }
+        "AGENT_FLEET_LOGIN": { "class": "shared-input", "required": true }
       }
     },
     "sprinkles": {
@@ -20,8 +19,7 @@
           "class": "armed",
           "default": "false"
         },
-        "AGENT_FLEET_LOGIN": { "class": "shared-input", "required": true },
-        "AGENT_RUNNER_LABEL": { "class": "shared-input" }
+        "AGENT_FLEET_LOGIN": { "class": "shared-input", "required": true }
       }
     }
   }

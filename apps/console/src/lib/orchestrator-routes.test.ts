@@ -83,7 +83,7 @@ function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'labeled',
     repository: { full_name: REPO },
-    issue: { number: ISSUE.issue },
+    issue: { number: ISSUE.issue, title: 'Issue title', body: 'Issue body' },
     label: { name: 'agent:claude' },
     ...overrides,
   };
@@ -257,7 +257,11 @@ describe('handleWebhookDelivery', () => {
       payload: {
         action: 'created',
         repository: { full_name: REPO },
-        issue: { number: ISSUE.issue },
+        issue: {
+          number: ISSUE.issue,
+          title: 'Issue title',
+          body: 'Issue body',
+        },
         comment: {
           body: '@claude continue with the new detail',
           author_association: 'OWNER',
@@ -280,7 +284,11 @@ describe('handleWebhookDelivery', () => {
     const reviewPayload = {
       action: 'labeled',
       repository: { full_name: REPO },
-      pull_request: { number: ISSUE.issue },
+      pull_request: {
+        number: ISSUE.issue,
+        title: 'Pull request title',
+        body: 'Pull request body',
+      },
       label: { name: 'review:codex' },
     };
     const first = await handleWebhookDelivery(deps, {
@@ -375,14 +383,22 @@ describe('handleDispatchRequest', () => {
     const first = await handleDispatchRequest(deps, {
       repository: REPO,
       callerRunId: 555,
-      body: { issue: ISSUE.issue, pipeline: 'claude', runbook: 'pr-heal' },
+      body: {
+        issue: ISSUE.issue,
+        pipeline: 'claude',
+        runbook: 'pr-heal',
+      },
     });
     calls.length = 0;
 
     const second = await handleDispatchRequest(deps, {
       repository: REPO,
       callerRunId: 556, // a new workflow run -> a new default requestId
-      body: { issue: ISSUE.issue, pipeline: 'claude', runbook: 'pr-heal' },
+      body: {
+        issue: ISSUE.issue,
+        pipeline: 'claude',
+        runbook: 'pr-heal',
+      },
     });
 
     expect(second).toEqual({

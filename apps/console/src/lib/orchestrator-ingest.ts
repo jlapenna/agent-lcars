@@ -27,12 +27,9 @@ export interface IngestDecision {
   pipeline: Pipeline;
   /** Always includes `mode`; includes `reply` when `mode` is `'reply'`. */
   params: Record<string, string>;
-  /** Present when the anchor (issue or PR) carried a title -- absent for a
-   *  payload shape this parser could not read one from, which dispatches
-   *  exactly as it did before sub-project 5 (no `work` on the task, or the
-   *  task's already-set `work` carried forward -- see `decide.ts`'s
-   *  `baseTask`). */
-  work?: WorkPayload;
+  /** Every admitted GitHub anchor supplies the Work specification its
+   * direct runner will execute. */
+  work: WorkPayload;
 }
 
 export interface IngestIgnore {
@@ -54,14 +51,11 @@ const labelSchema = z.object({ name: z.string().min(1) });
  *  comment). Optional here only so a malformed/legacy-shaped test fixture
  *  degrades to the label fallback instead of failing to parse. */
 const senderSchema = z.object({ login: z.string().min(1) }).optional();
-/** GitHub always sends `title`; `body` may be `null`. Both optional here
- *  so a payload shape this parser has not seen before still admits the
- *  dispatch -- it just derives no `work` for it (see the `issue.title`
- *  guard in each `interpret*Event` below), matching how a legacy task
- *  (pre-sub-project-5) already dispatches with no `work` payload. */
+/** GitHub always sends `title`; `body` may be `null`. A title is required
+ * because the Work specification is required at admission. */
 const issueBodySchema = z.object({
   number: z.number().int().positive(),
-  title: z.string().min(1).optional(),
+  title: z.string().min(1),
   body: z.string().nullable().optional(),
 });
 
@@ -126,7 +120,7 @@ function buildRequestDecision(
   requestId: string,
   pipeline: Pipeline,
   params: Record<string, string>,
-  work?: WorkPayload,
+  work: WorkPayload,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
@@ -136,7 +130,7 @@ function buildRequestDecision(
     requestId,
     pipeline,
     params,
-    ...(work === undefined ? {} : { work }),
+    work,
   };
 }
 
@@ -155,16 +149,14 @@ function interpretIssuesEvent(
   const pipeline = label && IMPLEMENT_LABELS[label.name];
   if (!pipeline) return ignore('no-trigger-label');
 
-  const work = issue.title
-    ? workPayloadFromGithub({
-        title: issue.title,
-        body: issue.body,
-        pipeline,
-        repo: repository.full_name,
-        actor: sender?.login,
-        label: label?.name,
-      })
-    : undefined;
+  const work = workPayloadFromGithub({
+    title: issue.title,
+    body: issue.body,
+    pipeline,
+    repo: repository.full_name,
+    actor: sender?.login,
+    label: label?.name,
+  });
 
   return buildRequestDecision(
     repository.full_name,
@@ -199,16 +191,14 @@ function interpretPullRequestEvent(
   const labelName = label?.name;
   const implementPipeline = labelName && IMPLEMENT_LABELS[labelName];
   if (implementPipeline) {
-    const work = pullRequest.title
-      ? workPayloadFromGithub({
-          title: pullRequest.title,
-          body: pullRequest.body,
-          pipeline: implementPipeline,
-          repo: repository.full_name,
-          actor: sender?.login,
-          label: labelName,
-        })
-      : undefined;
+    const work = workPayloadFromGithub({
+      title: pullRequest.title,
+      body: pullRequest.body,
+      pipeline: implementPipeline,
+      repo: repository.full_name,
+      actor: sender?.login,
+      label: labelName,
+    });
     return buildRequestDecision(
       repository.full_name,
       pullRequest.number,
@@ -221,16 +211,14 @@ function interpretPullRequestEvent(
 
   const reviewPipeline = labelName && REVIEW_LABELS[labelName];
   if (reviewPipeline) {
-    const work = pullRequest.title
-      ? workPayloadFromGithub({
-          title: pullRequest.title,
-          body: pullRequest.body,
-          pipeline: reviewPipeline,
-          repo: repository.full_name,
-          actor: sender?.login,
-          label: labelName,
-        })
-      : undefined;
+    const work = workPayloadFromGithub({
+      title: pullRequest.title,
+      body: pullRequest.body,
+      pipeline: reviewPipeline,
+      repo: repository.full_name,
+      actor: sender?.login,
+      label: labelName,
+    });
     return buildRequestDecision(
       repository.full_name,
       pullRequest.number,
@@ -271,15 +259,13 @@ function interpretIssueCommentEvent(
   // comment text is already `params.reply`, a separate field the brief
   // reads independently (see the design spec's "brief is built from
   // work" note).
-  const work = issue.title
-    ? workPayloadFromGithub({
-        title: issue.title,
-        body: issue.body,
-        pipeline,
-        repo: repository.full_name,
-        actor: sender?.login,
-      })
-    : undefined;
+  const work = workPayloadFromGithub({
+    title: issue.title,
+    body: issue.body,
+    pipeline,
+    repo: repository.full_name,
+    actor: sender?.login,
+  });
 
   return buildRequestDecision(
     repository.full_name,

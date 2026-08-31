@@ -59,16 +59,16 @@ LOG_FILE=/tmp/runner-telemetry/sidecar.log
 # needs to happen afterward, and folding the two together would remove
 # the very ordering guarantee this comment describes.
 if [ "$MODE" = finalize ]; then
-  if [ -x "$JOB_DAEMON_BIN" ]; then
-    "$JOB_DAEMON_BIN" stop "$DAEMON_NAME"
-  else
-    echo "job-daemon.sh not found at $JOB_DAEMON_BIN (runner image predates this bake-in); skipping sidecar stop-wait." >&2
+  if [ ! -x "$JOB_DAEMON_BIN" ]; then
+    echo "Telemetry lifecycle contract violation: missing baked job-daemon at $JOB_DAEMON_BIN" >&2
+    exit 1
   fi
+  "$JOB_DAEMON_BIN" stop "$DAEMON_NAME"
 fi
 
 if [ ! -s "$SIDECAR_BIN" ]; then
-  echo "Sidecar tool not found at $SIDECAR_BIN (runner image predates this bake-in); skipping telemetry $MODE."
-  exit 0
+  echo "Telemetry lifecycle contract violation: missing baked sidecar at $SIDECAR_BIN" >&2
+  exit 1
 fi
 if [ -z "${WRITER_CREDENTIALS_FILE:-}" ]; then
   # The one path that actually reproduces agent-lcars#352's motivating
@@ -97,14 +97,14 @@ if [ -n "${INTENT_ID:-}" ]; then
 fi
 
 if [ "$MODE" = start ]; then
-  if [ -x "$JOB_DAEMON_BIN" ]; then
-    GOOGLE_APPLICATION_CREDENTIALS="$WRITER_CREDENTIALS_FILE" \
-      AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
-      "$JOB_DAEMON_BIN" start "$DAEMON_NAME" --log "$LOG_FILE" -- \
-      node "$SIDECAR_BIN" "${ARGS[@]}"
-  else
-    echo "job-daemon.sh not found at $JOB_DAEMON_BIN (runner image predates this bake-in); skipping telemetry sidecar start."
+  if [ ! -x "$JOB_DAEMON_BIN" ]; then
+    echo "Telemetry lifecycle contract violation: missing baked job-daemon at $JOB_DAEMON_BIN" >&2
+    exit 1
   fi
+  GOOGLE_APPLICATION_CREDENTIALS="$WRITER_CREDENTIALS_FILE" \
+    AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+    "$JOB_DAEMON_BIN" start "$DAEMON_NAME" --log "$LOG_FILE" -- \
+    node "$SIDECAR_BIN" "${ARGS[@]}"
 else
   GOOGLE_APPLICATION_CREDENTIALS="$WRITER_CREDENTIALS_FILE" \
     AGENT_TELEMETRY_PROJECT_ID=agent-lcars \

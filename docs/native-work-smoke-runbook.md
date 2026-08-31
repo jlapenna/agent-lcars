@@ -1,12 +1,10 @@
 # Native work item production smoke runbook
 
-The first real native work item was run end to end against production on
-2026-08-27. The historical evidence below predates the direct-run migration.
-For the current path, create an item through the work API with no GitHub issue
-behind it; the authoritative Task and Run records drive dispatch, execution,
-session history, and settlement. This is the sub-project 1 proof from the
-[native work items design](superpowers/specs/2026-08-23-native-work-items-design.md)
-(#1502), Plan 3 Task 6.
+The current production route is Work API → orchestrator → QueueExecutor →
+direct container. Every GitHub-anchored admission derives a Work specification
+before it enters that route; no hosted provider workflow or raw-GitHub runner
+fallback is supported. The dated sections below are historical evidence only,
+not operational instructions.
 
 ## Safety rules
 
@@ -73,6 +71,8 @@ The run's step summary shows `state`, and each run's `runId`, `state`, and
 gh pr close <pr-number> --comment "Native work smoke — evidence only, not merged."
 gh workflow run work-create.yml -f action=cancel -f id=<id>   # step log: -> 409
 ```
+
+## Historical evidence (pre-cutover; non-executable)
 
 ## Source evidence
 
@@ -214,12 +214,10 @@ because GitHub had not started the scheduled run. Current cron health is the
 autoscaler's `github_runner_autoscaler_schedule_ticks_total{outcome}` metric;
 the server's deterministic item IDs make a restarted ticker safe to retry.
 
-## Sub-project 4: QueueExecutor — acceptance still incomplete (2026-08-28)
+## QueueExecutor canary evidence (2026-08-28; historical)
 
-This is an evidence/status record, **not** a completion claim. The direct
-queue path has reached a real autoscaler-launched container three times, but
-no canary has yet produced the required successful deliverable and `done`
-item state.
+This dated record predates the completed QueueExecutor cutover and is retained
+only as evidence for the fixes it names.
 
 | Attempt         | Evidence and outcome                                                                                                                                                                                                                                                                                                                                        |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -227,12 +225,6 @@ item state.
 | Second canary   | The repaired bootstrap reached `direct-runner.sh`, then failed with `claude: command not found`. [PR #1577](https://github.com/jlapenna/agent-lcars/pull/1577) installs Claude Code in the runner image and smoke-checks `claude --version` during its build.                                                                                               |
 | Published image | The repaired image was published from Agent LCARS revision `4d30d30b230aac09c12c6f1bdf6a79a0abe90867` as `sha256:ad7b6e022ed0bdcca366dca1b2520001c6178ee413cdbc5224a8d88fe8e95b96`.                                                                                                                                                                         |
 | Third canary    | Item [`01M138S62PHGVQ5AQNBP1NRW66`](https://lcars.jlapenna.net/work/01M138S62PHGVQ5AQNBP1NRW66) minted a `queue` run, was claimed by a direct container, and did **not** trigger `claude.yml`. Claude itself then exited because its weekly quota resets at **2026-08-30 00:00 UTC**; the item was canceled and the temporary queue flags were rolled back. |
-
-**Next action:** after that quota reset, run exactly one more canary and
-require the direct container to finish with a real deliverable and the item
-to reach `done`; only then may sub-project 4 be marked complete. Until then,
-production remains on the rolled-back flags (console rollback:
-[PR #1579](https://github.com/jlapenna/agent-lcars/pull/1579)).
 
 ## Sub-project 5: ingress unification — issue-side claim/park projections (2026-08-27)
 

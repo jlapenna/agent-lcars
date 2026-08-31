@@ -7,7 +7,6 @@ import {
 } from './control-plane-request';
 
 const REPO = 'jlapenna/agent-lcars';
-
 describe('parseHostedDispatchRequestBody (#1215)', () => {
   it('accepts a minimal body: just issue and pipeline', () => {
     expect(

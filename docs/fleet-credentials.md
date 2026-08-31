@@ -265,8 +265,7 @@ provisioning walkthrough and installation IDs.
 
 Every fleet repo also carries non-secret vars the lanes read:
 `AGENT_LCARS_CLIENT_ID` (fleet App client id), `AGENT_FLEET_LOGIN`
-(`agent-lcars-bot`), `AGENT_BOT_LOGINS`, `MAINTAINER_LOGIN`, and
-`AGENT_RUNNER_LABEL` (`<repo>-default` per the homelab scale-set naming).
+(`agent-lcars-bot`), `AGENT_BOT_LOGINS`, and `MAINTAINER_LOGIN`.
 These are plain `gh variable set` calls and safe to provision from any
 session — the 2026-08 onboarding left all four new repos at 5/5 vars and
 2/2 automatable secrets, with only the maintainer-mintable tokens above

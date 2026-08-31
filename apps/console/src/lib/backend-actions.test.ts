@@ -705,13 +705,13 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     return { removeLabel, createComment, get };
   }
 
-  it('falls back to claude and dispatches it when the task has no prior orchestrator run', async () => {
+  it('requires an authoritative pipeline when the task has no prior run', async () => {
     const { calls } = fixtureOrchestratorRuntime();
     mockOctokit();
 
-    const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
-
-    expect(result).toEqual({ pipelineFallback: true });
+    await expect(
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
+    ).rejects.toThrow('No authoritative pipeline is recorded for this task');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -731,9 +731,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     // own request below - only the pipeline history should matter here.
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    const result = await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
-
-    expect(result).toEqual({ pipelineFallback: false });
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -757,10 +755,17 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   });
 
   it('posts the steering note and still dispatches when the note carries no mention', async () => {
-    const { calls } = fixtureOrchestratorRuntime();
+    const { calls, orchestrator } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
+    const seeded = await orchestrator.request({
+      taskId: { repo: CONTROL_PLANE_REPO, issue: 2709 },
+      requestId: 'seed-note',
+      pipeline: 'claude',
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
 
-    const result = await retriggerIssue(
+    await retriggerIssue(
       DEFAULT_REPO,
       2709,
       DISPATCH_ID,
@@ -770,17 +775,22 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'try a different approach' }),
     );
-    expect(result.pipelineFallback).toBe(true);
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
   });
 
   it('skips the orchestrator request when a later line carries a reply-trigger alias (would double-dispatch)', async () => {
-    const { calls } = fixtureOrchestratorRuntime();
+    const { calls, orchestrator } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
+    const seeded = await orchestrator.request({
+      taskId: { repo: CONTROL_PLANE_REPO, issue: 2709 },
+      requestId: 'seed-mention',
+      pipeline: 'claude',
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
 
-    // No prior run falls back to Claude; @agent is its shared alias.
     const result = await retriggerIssue(
       DEFAULT_REPO,
       2709,
@@ -791,7 +801,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'This is working now.\n\n@agent' }),
     );
-    expect(result).toEqual({ pipelineFallback: true });
+    expect(result).toBeUndefined();
     // The webhook-driven mention path is the sole trigger here - a direct
     // request() alongside it would double-dispatch (see this function's own
     // doc comment).
@@ -808,44 +818,6 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       retriggerIssue(DEFAULT_REPO, 2709, 'not-a-uuid'),
     ).rejects.toThrow('A valid dispatch caller ID is required');
     expect(requestSpy).not.toHaveBeenCalled();
-  });
-
-  it('derives and forwards work from the live issue when the task has none yet', async () => {
-    const { orchestrator } = fixtureOrchestratorRuntime();
-    const { get } = mockOctokit();
-    get.mockResolvedValue({
-      data: { title: 'Live title', body: 'Live body' },
-    });
-    const requestSpy = vi.spyOn(orchestrator, 'request');
-
-    await retriggerIssue(
-      DEFAULT_REPO,
-      2709,
-      DISPATCH_ID,
-      undefined,
-      'jlapenna',
-    );
-
-    expect(get).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner: DEFAULT_REPO.owner,
-        repo: DEFAULT_REPO.name,
-        issue_number: 2709,
-      }),
-    );
-    expect(requestSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        work: {
-          origin: { principal: 'github:jlapenna', channel: 'github' },
-          spec: {
-            title: 'Live title',
-            description: 'Live body',
-            pipeline: 'claude',
-            target: { repo: 'supersprinklesracing/sprinkles' },
-          },
-        },
-      }),
-    );
   });
 
   it('does not re-read the issue or forward work when the task already carries one', async () => {

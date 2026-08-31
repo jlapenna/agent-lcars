@@ -47,10 +47,7 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 	if err != nil {
 		return resolvedOrchestratorConfig{}, err
 	}
-	images, err := directRunnerPreflightImages(resolved)
-	if err != nil {
-		return resolvedOrchestratorConfig{}, err
-	}
+	images := directRunnerPreflightImages()
 	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
 	if err != nil {
 		return resolvedOrchestratorConfig{}, err
@@ -72,32 +69,11 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 	return queueResolved, nil
 }
 
-// directRunnerPreflightImages returns every image directRunnerImageFor can
-// select for a supported direct adapter. The direct executor is
-// provider-neutral, but a deployment may use a distinct runner image for
-// each pipeline. Probing only the first image could mark a host eligible and
-// then claim a run whose selected image cannot actually start with its
-// permanent mounts. The adapter registry is also the launch contract, so an
-// unrelated scale-set image cannot make a direct-queue host ineligible.
-func directRunnerPreflightImages(resolved resolvedOrchestratorConfig) ([]string, error) {
-	images := make([]string, 0, len(directRunnerAdapters))
-	seen := make(map[string]bool, len(directRunnerAdapters))
-	for _, adapter := range directRunnerAdapters {
-		config, err := directRunnerConfigFor(resolved, adapter.pipeline)
-		if err != nil {
-			return nil, fmt.Errorf("%s adapter: %w", adapter.pipeline, err)
-		}
-		key := config.RunnerImage
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		images = append(images, config.RunnerImage)
-	}
-	if len(images) == 0 {
-		return nil, fmt.Errorf("no configured scale set to source a direct-runner preflight image")
-	}
-	return images, nil
+// directRunnerPreflightImages returns the one direct-runner image that every
+// provider uses after claim. GitHub scale-set configuration is unrelated to
+// QueueExecutor placement.
+func directRunnerPreflightImages() []string {
+	return []string{directRunnerImage()}
 }
 
 func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []string, mounts []directRunnerCredentialMount, logger *slog.Logger) error {

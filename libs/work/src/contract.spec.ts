@@ -86,7 +86,7 @@ describe('runsContract', () => {
     );
   });
 
-  it('accepts legacy pipeline input without making it part of claim capability', () => {
+  it('accepts only the executor identity for claim capability', () => {
     const [rawShape] = runsContract.claim['~orpc'].inputSchemas ?? [];
     const shape = rawShape as z.ZodTypeAny | undefined;
 
@@ -94,11 +94,9 @@ describe('runsContract', () => {
       runner: 'autoscaler-1',
     });
     expect(
-      shape?.parse({
-        runner: 'autoscaler-1',
-        pipelines: ['claude'],
-      }),
-    ).toEqual({ runner: 'autoscaler-1', pipelines: ['claude'] });
+      shape?.safeParse({ runner: 'autoscaler-1', pipelines: ['claude'] })
+        .success,
+    ).toBe(false);
     expect(
       shape?.safeParse({ runner: 'autoscaler-1', unknown: true }).success,
     ).toBe(false);
@@ -184,6 +182,14 @@ describe('runsContract.brief resume field', () => {
         repo: 'octo/example',
         issue: 42,
         html_url: 'https://github.com/octo/example/issues/42',
+      },
+      work: {
+        spec: {
+          title: 'GitHub work',
+          description: 'Dispatch via Work API.',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
       },
       pipeline: 'opencode',
       mode: 'review',

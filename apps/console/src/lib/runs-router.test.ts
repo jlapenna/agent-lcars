@@ -343,7 +343,7 @@ describe('claim', () => {
     expect((await store.readRun(claudeRunId))?.queue?.state).toBe('queued');
   });
 
-  it('ignores a legacy pipeline selection and claims only the grant-allowed pipeline', async () => {
+  it('rejects a caller-selected pipeline list', async () => {
     const { store, orchestrator, now } = fixture();
     const codexRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-codex-older'),
@@ -367,12 +367,10 @@ describe('claim', () => {
       '/runs/claim',
       { runner: 'runner-1', pipelines: ['codex', 'opencode'] },
     );
-    expect(r.status).toBe(200);
-    const claimed = r.json as { runId: string; pipeline: string };
-    expect(claimed.runId).toBe(claudeRunId);
-    expect(claimed.pipeline).toBe('claude');
-    // The codex run was never even a candidate -- still untouched.
+    expect(r.status).toBe(400);
+    // Neither run can be claimed when the request violates the contract.
     expect((await store.readRun(codexRunId))?.queue?.state).toBe('queued');
+    expect((await store.readRun(claudeRunId))?.queue?.state).toBe('queued');
   });
 
   it('skips a non-live queued run and returns the next live one', async () => {
@@ -541,6 +539,15 @@ describe('brief', () => {
       taskId: { repo: 'octo/example', issue: 42 },
       requestId: 'github-brief',
       pipeline: 'opencode',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'GitHub brief',
+          description: 'Direct runner metadata.',
+          pipeline: 'opencode',
+          target: { repo: 'octo/example' },
+        },
+      },
       params: {
         mode: 'review',
         reply: '/opencode review this',
@@ -583,7 +590,15 @@ describe('brief', () => {
       context: 'nightly sweep',
       intentId: runId,
     });
-    expect((r.json as { work?: unknown }).work).toBeUndefined();
+    expect(r.json).toMatchObject({
+      work: {
+        spec: {
+          title: 'GitHub brief',
+          pipeline: 'opencode',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
   });
 
   it('500s on a stored spec that no longer parses as workSpecSchema, without leaking it', async () => {

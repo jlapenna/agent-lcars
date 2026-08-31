@@ -13,7 +13,7 @@ function issuesLabeledPayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'labeled',
     repository: { full_name: REPO },
-    issue: { number: 42 },
+    issue: { number: 42, title: 'Issue title', body: 'Issue body' },
     label: { name: 'agent:claude' },
     ...overrides,
   };
@@ -23,7 +23,11 @@ function pullRequestLabeledPayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'labeled',
     repository: { full_name: REPO },
-    pull_request: { number: 7 },
+    pull_request: {
+      number: 7,
+      title: 'Pull request title',
+      body: 'Pull request body',
+    },
     label: { name: 'agent:codex' },
     ...overrides,
   };
@@ -33,7 +37,7 @@ function issueCommentPayload(overrides: Record<string, unknown> = {}) {
   return {
     action: 'created',
     repository: { full_name: REPO },
-    issue: { number: 9 },
+    issue: { number: 9, title: 'Issue title', body: 'Issue body' },
     comment: {
       body: '@claude please take a look',
       author_association: 'OWNER',
@@ -626,7 +630,14 @@ describe('interpretDelivery', () => {
       deliveryId: DELIVERY_ID,
       payload,
     });
-    expect(result).toEqual(expected);
+    expect(result).toMatchObject(expected);
+    if (expected.kind !== 'request') return;
+    expect(result.kind).toBe('request');
+    if (result.kind !== 'request') throw new Error('expected admission');
+    expect(result.work.spec).toMatchObject({
+      pipeline: result.pipeline,
+      target: { repo: result.taskId.repo },
+    });
   });
 
   it('tolerates unrecognized extra fields on an otherwise valid payload', () => {
@@ -638,7 +649,7 @@ describe('interpretDelivery', () => {
         installation: { id: 123 },
       }),
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       kind: 'request',
       taskId: { repo: REPO, issue: 42 },
       requestId: DELIVERY_ID,
@@ -679,7 +690,7 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
       }),
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       kind: 'request',
       taskId: { repo: SECOND_REPO, issue: 42 },
       requestId: DELIVERY_ID,

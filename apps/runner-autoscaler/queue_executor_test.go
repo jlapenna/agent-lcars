@@ -483,50 +483,10 @@ func TestPollOnceClaimResponseTooLargeIsError(t *testing.T) {
 	}
 }
 
-func TestDirectRunnerImageFor(t *testing.T) {
-	resolved := resolvedOrchestratorConfig{
-		ScaleSets: []Config{
-			{ScaleSetName: "claude-actions", Labels: []string{"claude"}, RunnerImage: "registry/claude-image:latest"},
-			{ScaleSetName: "codex-actions", Labels: []string{"codex"}, RunnerImage: "registry/codex-image:latest"},
-		},
+func TestDirectRunnerImageUsesTheSingleQueueExecutorContract(t *testing.T) {
+	if got := directRunnerImage(); got != directRunnerImageRef {
+		t.Fatalf("directRunnerImage() = %q, want %q", got, directRunnerImageRef)
 	}
-
-	t.Run("matches a scale set labelled for the pipeline", func(t *testing.T) {
-		image, err := directRunnerImageFor(resolved, "claude")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if image != "registry/claude-image:latest" {
-			t.Errorf("expected the claude-labelled scale set's image, got %q", image)
-		}
-	})
-
-	t.Run("matches case-insensitively", func(t *testing.T) {
-		image, err := directRunnerImageFor(resolved, "CODEX")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if image != "registry/codex-image:latest" {
-			t.Errorf("expected the codex-labelled scale set's image, got %q", image)
-		}
-	})
-
-	t.Run("falls back to the first scale set when no label matches", func(t *testing.T) {
-		image, err := directRunnerImageFor(resolved, "opencode")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if image != "registry/claude-image:latest" {
-			t.Errorf("expected the fallback (first) scale set's image, got %q", image)
-		}
-	})
-
-	t.Run("errors when no scale set is configured at all", func(t *testing.T) {
-		_, err := directRunnerImageFor(resolvedOrchestratorConfig{}, "claude")
-		if err == nil {
-			t.Fatalf("expected an error with no configured scale sets")
-		}
-	})
 }
 
 func TestDirectRunnerMaxConcurrent(t *testing.T) {

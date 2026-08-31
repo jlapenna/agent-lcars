@@ -7,7 +7,6 @@ import {
   toItemView,
   toItemViewSafe,
   toWorkSummary,
-  toWorkSummarySafe,
 } from './derive';
 
 const T = '2026-08-26T10:00:00.000Z';
@@ -196,14 +195,5 @@ describe('toWorkSummary', () => {
       state: 'parked',
       spec: payload.spec,
     });
-  });
-
-  it('returns undefined for a legacy GitHub task with no work payload', () => {
-    expect(
-      toWorkSummarySafe({
-        task: { ...githubTask, work: undefined },
-        runs: [githubRun],
-      }),
-    ).toBeUndefined();
   });
 });

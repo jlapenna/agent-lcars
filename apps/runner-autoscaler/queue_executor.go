@@ -439,10 +439,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	if len(order) == 0 {
 		return fmt.Errorf("no docker hosts configured to launch a direct-mode runner")
 	}
-	runnerConfig, err := directRunnerConfigFor(resolved, l.pipeline)
-	if err != nil {
-		return err
-	}
+	runnerImage := directRunnerImage()
 	writerKeyHostPath, err := directRunnerTelemetryWriterHostPath()
 	if err != nil {
 		return err
@@ -457,7 +454,7 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	var lastErr error
 	for i := range order {
 		host := order[(start+uint64(i))%uint64(len(order))]
-		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerConfig.RunnerImage, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
+		if err := launchDirectRunnerOnHost(ctx, newClient, host, targets[host], runnerImage, writerKeyHostPath, providerCredentialBinds, maxConcurrent, l, logger); err != nil {
 			lastErr = err
 			continue
 		}
@@ -469,34 +466,13 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	return fmt.Errorf("launching direct-mode runner for run %q: %w", l.runID, lastErr)
 }
 
-// directRunnerImageFor picks the runner image to launch: the runner-image
-// Dockerfile bakes RUNNER_MODE=direct support into the SAME image every
-// GitHub scale set already runs (entrypoint.sh branches on RUNNER_MODE
-// before any GitHub-registration preflight), so any configured scale set's
-// image is usable. Prefer a scale set whose labels name this pipeline (the
-// same convention GitHub-mode dispatch already uses to route a job to a
-// scale set); fall back to the first configured scale set otherwise.
-func directRunnerImageFor(resolved resolvedOrchestratorConfig, pipeline string) (string, error) {
-	config, err := directRunnerConfigFor(resolved, pipeline)
-	if err != nil {
-		return "", err
-	}
-	return config.RunnerImage, nil
-}
+// directRunnerImage is the one image contract for QueueExecutor containers.
+// GitHub scale-set labels are not a QueueExecutor routing input: Claude,
+// Codex, and OpenCode all execute through this same direct-container image.
+const directRunnerImageRef = "docker-registry.lan.jlapenna.net/homelab-runner:jit-node24"
 
-func directRunnerConfigFor(resolved resolvedOrchestratorConfig, pipeline string) (Config, error) {
-	pipeline = strings.ToLower(strings.TrimSpace(pipeline))
-	for _, c := range resolved.ScaleSets {
-		for _, label := range c.Labels {
-			if strings.ToLower(label) == pipeline {
-				return c, nil
-			}
-		}
-	}
-	if len(resolved.ScaleSets) > 0 {
-		return resolved.ScaleSets[0], nil
-	}
-	return Config{}, fmt.Errorf("no configured scale set to source a direct-runner image for pipeline %q", pipeline)
+func directRunnerImage() string {
+	return directRunnerImageRef
 }
 
 // directRunnerMaxConcurrent bounds how many direct-mode containers

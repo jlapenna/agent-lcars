@@ -118,7 +118,7 @@ export async function handleWebhookDelivery(
       requestId: interpreted.requestId,
       pipeline: interpreted.pipeline,
       params,
-      ...(interpreted.work === undefined ? {} : { work: interpreted.work }),
+      work: interpreted.work,
     });
 
     if (isRefusal(outcome)) {
@@ -215,6 +215,8 @@ export async function handleDispatchRequest(
       requestId,
       pipeline: body.pipeline,
       params: dispatchRequestParams(body),
+      // #1633 owns migration of this residual workflow endpoint to the
+      // contract-first Work API after its external consumers move.
     });
 
     if (isRefusal(outcome)) {
