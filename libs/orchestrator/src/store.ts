@@ -1,5 +1,11 @@
 import type { Decision, Refusal } from './decide';
-import type { LeasedOutboxEntry, Run, Task, TaskId } from './model';
+import type {
+  LeasedOutboxEntry,
+  RequestSource,
+  Run,
+  Task,
+  TaskId,
+} from './model';
 import { taskKey } from './model';
 
 /** GitHub delivery normally takes seconds; five minutes tolerates a slow call
@@ -28,9 +34,9 @@ export interface OrchestratorStore {
   listRuns(id: TaskId): Promise<Run[]>;
 
   /**
-   * Atomically reads a task's current lock and durable request-id ledger,
-   * decides a new request, and (when accepted) commits it. `requestId` is
-   * checked against every historical run before the live mutex so a retried
+   * Atomically reads a task's current lock and the one matching durable
+   * request identity, decides a new request, and (when accepted) commits it.
+   * The historical match is checked before the live mutex so a retried
    * request maps to its original terminal run even if another request has
    * since taken the lock.
    *
@@ -41,8 +47,8 @@ export interface OrchestratorStore {
    */
   transactRequest(input: {
     taskId: TaskId;
-    /** Source-namespaced durable idempotency identity. */
-    requestHistoryKey: string;
+    requestId: string;
+    requestSource: RequestSource;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {

@@ -14,7 +14,6 @@ import {
   requestRun,
 } from './decide';
 import {
-  requestHistoryKey,
   type RequestSource,
   type Run,
   type RunResult,
@@ -73,7 +72,8 @@ export class Orchestrator {
     const requestSource = input.requestSource ?? 'caller';
     return this.store.transactRequest({
       taskId: input.taskId,
-      requestHistoryKey: requestHistoryKey(requestSource, input.requestId),
+      requestId: input.requestId,
+      requestSource,
       decide: ({ task, activeRun, previousRun }) => {
         // The historical check precedes the live mutex. A retry remains a
         // duplicate even after its original run settled and a newer request
