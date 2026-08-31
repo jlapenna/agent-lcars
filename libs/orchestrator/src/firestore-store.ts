@@ -2,6 +2,7 @@ import {
   type CollectionReference,
   type DocumentReference,
   FieldPath,
+  FieldValue,
   Firestore,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
@@ -293,7 +294,7 @@ export class FirestoreStore implements OrchestratorStore {
         refreshGeneration: input.generation,
         ...(next.state === 'open'
           ? { openUpdatedAt: next.sourceUpdatedAt }
-          : {}),
+          : { openUpdatedAt: FieldValue.delete() }),
       });
       return true;
     });
@@ -319,9 +320,14 @@ export class FirestoreStore implements OrchestratorStore {
       .orderBy('openUpdatedAt', 'desc')
       .limit(limit)
       .get();
-    return snapshot.docs.map((doc) =>
-      githubAnchorProjectionSchema.parse(doc.data()['projection']),
-    );
+    return snapshot.docs.flatMap((doc) => {
+      const projection = githubAnchorProjectionSchema.parse(
+        doc.data()['projection'],
+      );
+      // A pre-fence document may retain its old index field. Never present a
+      // closed snapshot as an open queue item while the backfill refreshes it.
+      return projection.state === 'open' ? [projection] : [];
+    });
   }
 
   async claimPendingOutbox(input: {

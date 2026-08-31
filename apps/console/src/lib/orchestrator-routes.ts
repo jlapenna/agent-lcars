@@ -24,9 +24,11 @@ import { interpretDelivery } from '@/lib/orchestrator-ingest';
  * `app/api/**` so they can be driven directly in tests without Next.js's
  * Request/Response plumbing. Each route file is a thin shell: verify auth,
  * parse the body, call the matching handler here, forward its
- * `{status, body}` verbatim. No handler here ever throws -- an unexpected
- * failure is caught and turned into a 500 with an opaque body so nothing
- * from `error` (which may carry request internals) reaches the caller.
+ * `{status, body}` verbatim. Unexpected failures are caught and turned into
+ * a 500 with an opaque body so nothing from `error` (which may carry request
+ * internals) reaches the caller. A projection-only refresh failure is the
+ * narrow exception: it deliberately reaches the Cloud Tasks shell so that
+ * the durable delivery remains retryable.
  */
 
 export interface OrchestratorRouteDeps {
@@ -46,6 +48,13 @@ export type HostedDispatchRequestBody = ReturnType<
 >;
 
 type RouteResult = { status: number; body: Record<string, unknown> };
+
+/** A projection-only failure must outlive the generic poison-delivery cap:
+ * no work admission was attempted, and a deleted anchor may never emit a
+ * later event or appear in the open-anchor backfill. */
+export class ProjectionRefreshError extends Error {
+  override readonly name = 'ProjectionRefreshError';
+}
 
 /**
  * A label re-request has no reply text of its own.  Put this opaque marker
@@ -146,7 +155,14 @@ export async function handleWebhookDelivery(
   try {
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
-      await refreshGithubAnchorProjection(deps, input);
+      try {
+        await refreshGithubAnchorProjection(deps, input);
+      } catch (error) {
+        throw new ProjectionRefreshError(
+          `Projection refresh failed for ${input.event}/${input.deliveryId}`,
+          { cause: error },
+        );
+      }
       return { status: 200, body: { ignored: interpreted.reason } };
     }
 
@@ -202,6 +218,7 @@ export async function handleWebhookDelivery(
       },
     };
   } catch (error) {
+    if (error instanceof ProjectionRefreshError) throw error;
     return internalError('webhook delivery', error);
   }
 }

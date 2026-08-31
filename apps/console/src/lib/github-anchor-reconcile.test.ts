@@ -241,6 +241,39 @@ describe('reconcileGithubAnchorProjections', () => {
     expect(load).toHaveBeenCalledWith({ repo: REPO, issue: 42 });
   });
 
+  it('tombstones every persisted open anchor absent from the complete listing', async () => {
+    const store = new MemoryStore();
+    const staleAnchor = { repo: 'retired-org/retired-repo', issue: 99 };
+    const staleGeneration =
+      await store.beginGithubAnchorProjectionRefresh(staleAnchor);
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor: staleAnchor,
+      generation: staleGeneration,
+      projection: {
+        ...projection('Stale anchor'),
+        anchor: staleAnchor,
+        url: 'https://github.com/retired-org/retired-repo/issues/99',
+      },
+    });
+
+    await expect(
+      reconcileGithubAnchorProjections({
+        store,
+        repositories: [REPO],
+        listOpenIssues: vi.fn().mockResolvedValue([anchor]),
+        load: async (current) => ({ ...projection(), anchor: current }),
+        now: () => '2026-08-30T12:00:01.000Z',
+      }),
+    ).resolves.toEqual({ repositories: 1, anchors: 1 });
+
+    await expect(store.readGithubAnchorProjection(staleAnchor)).resolves.toBe(
+      undefined,
+    );
+    await expect(store.listOpenGithubAnchorProjections(1001)).resolves.toEqual([
+      expect.objectContaining({ anchor: projection().anchor }),
+    ]);
+  });
+
   it('refreshes exactly 1,000 anchors with bounded exact-read concurrency', async () => {
     const listOpenIssues = vi.fn(async (_repository: string, page: number) =>
       page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY

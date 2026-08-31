@@ -2,7 +2,10 @@ import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
-import { handleWebhookDelivery } from '@/lib/orchestrator-routes';
+import {
+  handleWebhookDelivery,
+  ProjectionRefreshError,
+} from '@/lib/orchestrator-routes';
 import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
 
 /**
@@ -110,6 +113,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { outcome: 'dropped_permanent', deliveryId, eventName, attempt },
         { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+    if (error instanceof ProjectionRefreshError) {
+      // Unlike an admission failure, this delivery has not created work and
+      // may be the only durable signal for a close/delete. Keep the queued
+      // task retryable past the generic poison-delivery acknowledgement cap.
+      console.error(
+        `agent-lcars: retaining projection-only webhook repair after ${attempt} attempts`,
+        error,
+      );
+      return NextResponse.json(
+        { error: 'Projection refresh pending repair', attempt },
+        { status: 500 },
       );
     }
     if (attempt >= MAX_PROCESS_ATTEMPTS) {

@@ -19,6 +19,8 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 export const ANCHOR_RECONCILE_PAGE_SIZE = 100;
 export const ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY = 10;
 export const ANCHOR_RECONCILE_REFRESH_CONCURRENCY = 16;
+const ANCHOR_RECONCILE_MAX_ANCHORS_PER_REPOSITORY =
+  ANCHOR_RECONCILE_PAGE_SIZE * ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY;
 
 export class AnchorProjectionBackfillLimitError extends Error {
   override readonly name = 'AnchorProjectionBackfillLimitError';
@@ -279,7 +281,9 @@ export async function refreshGithubAnchorProjection(
 interface AnchorProjectionReconcileDeps {
   readonly store: Pick<
     OrchestratorStore,
-    'beginGithubAnchorProjectionRefresh' | 'applyGithubAnchorProjectionRefresh'
+    | 'beginGithubAnchorProjectionRefresh'
+    | 'applyGithubAnchorProjectionRefresh'
+    | 'listOpenGithubAnchorProjections'
   >;
   readonly repositories: readonly string[];
   listOpenIssues(repository: string, page: number): Promise<unknown[]>;
@@ -454,6 +458,49 @@ export async function reconcileGithubAnchorProjections(
         `GitHub anchor projection backfill found more than ${ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY * ANCHOR_RECONCILE_PAGE_SIZE} open anchors for ${repository}; increase the bounded limit before cutover.`,
       );
     }
+  }
+  // The GitHub listing is authoritative for the configured repositories.
+  // Tombstone anything still open in the stored set but absent from it: a
+  // missed close/delete delivery or removed repository must not survive into
+  // Phase 2 merely because neither side of the selected-queue comparison
+  // happened to include it.
+  const authoritativeKeys = new Set(allProjections.map(projectionKey));
+  // The console feed is intentionally capped at 200, but a cutover check
+  // must inspect every stored open projection. The GitHub listing above is
+  // already bounded to 1,000 anchors per configured repository; one extra
+  // row turns an unexpectedly larger persisted set into an explicit stop
+  // instead of silently leaving old anchors outside this validation.
+  const maxPersistedOpen =
+    deps.repositories.length * ANCHOR_RECONCILE_MAX_ANCHORS_PER_REPOSITORY;
+  const persistedOpen = await deps.store.listOpenGithubAnchorProjections(
+    maxPersistedOpen + 1,
+  );
+  if (persistedOpen.length > maxPersistedOpen) {
+    throw new Error(
+      `GitHub anchor projection reconciliation found more than ${maxPersistedOpen} stored open anchors; clear the stale set before cutover.`,
+    );
+  }
+  await mapWithBoundedConcurrency({
+    values: persistedOpen.filter(
+      (projection) => !authoritativeKeys.has(projectionKey(projection)),
+    ),
+    concurrency: ANCHOR_RECONCILE_REFRESH_CONCURRENCY,
+    map: async (projection) => {
+      await refreshGithubAnchorProjection(deps, projection.anchor, {
+        deleted: true,
+      });
+    },
+  });
+  const remainingOpen = await deps.store.listOpenGithubAnchorProjections(
+    maxPersistedOpen + 1,
+  );
+  const staleKeys = remainingOpen
+    .map(projectionKey)
+    .filter((key) => !authoritativeKeys.has(key));
+  if (staleKeys.length > 0) {
+    throw new Error(
+      `GitHub anchor projection reconciliation left stale open anchors: ${staleKeys.join(', ')}`,
+    );
   }
   const currentQueue = await deps.currentQueue?.();
   return {
