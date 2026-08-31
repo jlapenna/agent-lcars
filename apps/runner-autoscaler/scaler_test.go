@@ -53,10 +53,10 @@ func newStubScalesetClient(t *testing.T) *scaleset.Client {
 // arbitrary label-safe string elsewhere.
 func TestDockerSafeNamePart(t *testing.T) {
 	cases := map[string]string{
-		"homelab-autoscale-claude-agent-lcars": "homelab-autoscale-claude-agent-lcars",
-		"already.safe_name-123":                "already.safe_name-123",
-		"has spaces":                           "has-spaces",
-		"slash/and:colon":                      "slash-and-colon",
+		"homelab-autoscale-agent-runner": "homelab-autoscale-agent-runner",
+		"already.safe_name-123":          "already.safe_name-123",
+		"has spaces":                     "has-spaces",
+		"slash/and:colon":                "slash-and-colon",
 	}
 	for in, want := range cases {
 		if got := dockerSafeNamePart(in); got != want {

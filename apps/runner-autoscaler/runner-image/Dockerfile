@@ -223,11 +223,10 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 # now runs on a runner image that IS the sandbox, so it never needs to
 # create a container), which leaves the client with nothing to talk to.
 #
-# Removing it is the point rather than tidiness: this image backs the
-# claude-agent pool, so shipping a Docker client here puts one in front of
-# arbitrary agent-authored code. A tool that cannot reach a daemon today is
-# still a tool that starts working the moment someone re-adds a socket
-# somewhere.
+# Removing it is the point rather than tidiness: this shared runner image
+# executes arbitrary QueueExecutor work. A tool that cannot reach a daemon
+# today is still a tool that starts working the moment someone re-adds a
+# socket somewhere.
 FROM ${RUNNER_BASE}
 
 ARG GO_VERSION

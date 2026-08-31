@@ -47,9 +47,8 @@ done
 ```
 
 **Match the container to your run by creation time**, not by name — the name's
-suffix is random. A container created within ~30s of your dispatch is yours.
-Agent lanes use the `claude-agent-lcars` scale set; `lcars-ci` and `control`
-are different work.
+suffix is random. A QueueExecutor container created within ~30s of your
+dispatch is yours. `lcars-ci` and `control` are different work.
 
 > **Nested-quoting trap.** `ssh → ssh → docker exec` mangles quotes three
 > times over and you will lose several minutes to it. Base64 the inner script

@@ -197,12 +197,12 @@ source too (see `dockerSocketPaths` in `orchestrator_config.go`), so there
 is no way around this via config.
 
 It existed once, gated per scale set, with `homelab-autoscale-e2e-docker`
-(docker-enabled) kept strictly separate from agent-dispatch pools like
-`homelab-autoscale-claude-agent` — never let arbitrary agent-authored code
-anywhere near the socket, since it is root-equivalent on the placement
-host. It was removed once every scale set that used to need it (the E2E
-pools) was rebuilt so the runner itself is the pinned sandbox image, with
-no inner container to create and therefore no reason to hold the socket.
+(docker-enabled) kept strictly separate from the former agent-dispatch pools
+— never let arbitrary agent-authored code anywhere near the socket, since it
+is root-equivalent on the placement host. It was removed once every scale set
+that used to need it (the E2E pools) was rebuilt so the runner itself is the
+pinned sandbox image, with no inner container to create and therefore no
+reason to hold the socket.
 
 If a genuine future need for `docker run` semantics on a runner shows up,
 that is a design decision requiring its own scale-set-level trust

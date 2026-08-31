@@ -22,8 +22,7 @@
 # was bumped and not the other. Deriving from it means there is nothing to
 # keep in sync.
 #
-# Multi-arch: the fleet's other pools (homelab-autoscale-lcars-ci,
-# homelab-autoscale-claude-agent-lcars, ...) span spark (arm64) alongside the
+# Multi-arch: CI and QueueExecutor workloads span spark (arm64) alongside the
 # amd64 hosts, and lcars-e2e is sized/placed the same way (see the homelab
 # orchestrator.yml comment on that scale set) -- so both this and the sandbox
 # base publish linux/amd64 and linux/arm64.
