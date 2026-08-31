@@ -46,10 +46,9 @@ const EMPTY_DESCRIPTION = '(no description)';
  * unbounded in the schema itself. This accounting assumes a real GitHub
  * `owner/name` full name, which GitHub itself caps around ~140
  * characters (39-char max login + `/` + 100-char max repo name); this
- * module's only caller of `truncatedDescription` (`workPayloadFromGithub`)
- * always sources `repo` from a real webhook delivery's
- * `repository.full_name`, never free text, so that assumption holds here
- * in practice even though nothing in the type system enforces it.
+ * callers either source `repo` from a real webhook delivery's
+ * `repository.full_name` or from `githubDispatchAnchorSchema`, which caps it
+ * at 140 characters. That keeps the byte accounting valid in practice.
  */
 const DESCRIPTION_BYTE_HEADROOM = 2_048;
 const DESCRIPTION_MAX_BYTES =
@@ -94,8 +93,15 @@ function clampToByteBudget(text: string, originalChars: number): string {
  *  above), since a multi-byte body can miss that bound even while staying
  *  under the character-count bound below. */
 export function truncatedDescription(body: string | null | undefined): string {
-  const text = body?.trim();
-  if (!text) return EMPTY_DESCRIPTION;
+  // Preserve nonempty GitHub text exactly until a documented clamp is needed:
+  // automation dispatch supplies the fetched anchor body directly, and a
+  // whitespace change is still a change to the anchor. Only null/empty
+  // GitHub bodies need normalization because Work descriptions require one
+  // character.
+  if (body === null || body === undefined || body.length === 0) {
+    return EMPTY_DESCRIPTION;
+  }
+  const text = body;
   let charClamped = text;
   if (text.length > WORK_DESCRIPTION_MAX) {
     const marker =

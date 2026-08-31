@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import {
   dispatchesContract,
+  GITHUB_DISPATCH_DESCRIPTION_MAX,
   itemsContract,
   runBriefSchema,
   runsContract,
@@ -36,7 +37,7 @@ describe('itemsContract', () => {
 });
 
 describe('dispatchesContract.github', () => {
-  it('requires an explicit GitHub anchor, Work spec, mode, and request id', () => {
+  it('requires an explicit GitHub anchor, spec, mode, and request id while accepting every valid GitHub body', () => {
     expect(Object.keys(dispatchesContract)).toEqual(['github']);
     const [rawShape] = dispatchesContract.github['~orpc'].inputSchemas ?? [];
     const shape = rawShape as z.ZodTypeAny | undefined;
@@ -57,6 +58,29 @@ describe('dispatchesContract.github', () => {
       shape?.parse(withoutIdempotency);
     }).toThrow();
     expect(() => shape?.parse({ ...input, mode: 'reply' })).toThrow();
+    expect(
+      shape?.parse({
+        ...input,
+        spec: {
+          ...input.spec,
+          description: 'x'.repeat(GITHUB_DISPATCH_DESCRIPTION_MAX),
+        },
+      }),
+    ).toMatchObject({
+      spec: { description: 'x'.repeat(GITHUB_DISPATCH_DESCRIPTION_MAX) },
+    });
+    expect(
+      shape?.parse({ ...input, spec: { ...input.spec, description: '' } }),
+    ).toMatchObject({ spec: { description: '' } });
+    expect(() =>
+      shape?.parse({
+        ...input,
+        spec: {
+          ...input.spec,
+          description: 'x'.repeat(GITHUB_DISPATCH_DESCRIPTION_MAX + 1),
+        },
+      }),
+    ).toThrow();
   });
 });
 

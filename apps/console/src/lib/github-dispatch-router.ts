@@ -4,6 +4,7 @@ import { decidedRun, isRefusal } from '@agent-lcars/orchestrator';
 import { dispatchesContract } from '@agent-lcars/work';
 import { implement, ORPCError } from '@orpc/server';
 
+import { truncatedDescription } from './work-from-github';
 import { forbiddenReason, type WorkContext } from './work-mint';
 
 const os = implement(dispatchesContract).$context<WorkContext>();
@@ -31,7 +32,16 @@ const operator = os.use(async ({ context, next }) => {
 export const githubDispatchRouter = os.router({
   github: operator.github.handler(async ({ input, context, errors }) => {
     const { principal } = context;
-    if (input.anchor.repo !== input.spec.target.repo) {
+    // GitHub permits a body larger than the durable Work spec. Normalize at
+    // this single GitHub-anchor boundary before authorization or storage, so
+    // every caller gets the same character/UTF-8-byte clamp and visible
+    // marker as webhook/console GitHub derivation. Under-bound bodies pass
+    // through byte-for-byte; valid empty bodies become the shared placeholder.
+    const spec = {
+      ...input.spec,
+      description: truncatedDescription(input.spec.description),
+    };
+    if (input.anchor.repo !== spec.target.repo) {
       throw errors.BAD_REQUEST();
     }
     if (
@@ -44,7 +54,7 @@ export const githubDispatchRouter = os.router({
       });
     }
 
-    const forbidden = forbiddenReason(principal, input.spec);
+    const forbidden = forbiddenReason(principal, spec);
     if (forbidden !== undefined) {
       throw errors.FORBIDDEN({ message: forbidden });
     }
@@ -68,14 +78,14 @@ export const githubDispatchRouter = os.router({
     const outcome = await context.runtime.orchestrator.request({
       taskId: input.anchor,
       requestId: input.requestId,
-      pipeline: input.spec.pipeline,
+      pipeline: spec.pipeline,
       params,
       work: {
         origin: {
           principal: principal.principal,
           channel: principal.via === 'session' ? 'console' : 'api',
         },
-        spec: input.spec,
+        spec,
       },
     });
 

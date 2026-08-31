@@ -107,7 +107,11 @@ assign endpoint-specific meaning to either response shape. During #1633's
 additive migration, member automation uses that generic transport with the
 Work API's `/dispatches/github` endpoint and `agent-lcars-work` audience; the
 generated Work OpenAPI contract, not this transport action, defines the
-dispatch payload and response.
+dispatch payload and response. A GitHub dispatch may send GitHub's complete
+valid anchor body (including an empty body). The service preserves non-empty
+bodies that already fit the Work description limit exactly, and normalizes
+empty or oversized bodies with the shared Work byte-budget/truncation rule
+before authorization or storage; callers must not pre-truncate it.
 
 ## Contract verification
 

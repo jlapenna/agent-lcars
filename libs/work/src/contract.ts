@@ -3,7 +3,13 @@ import { openapi } from '@orpc/openapi';
 import { z } from 'zod';
 
 import { parseCron } from './cron';
-import { workOriginSchema, workSpecSchema } from './spec';
+import {
+  PIPELINES,
+  WORK_TITLE_MAX,
+  workOriginSchema,
+  workSpecSchema,
+  workTargetSchema,
+} from './spec';
 
 /**
  * Crockford base32, 26 characters: a ULID. Excludes I, L, O, U.
@@ -234,6 +240,23 @@ export const githubDispatchAnchorSchema = z.strictObject({
 
 const githubDispatchModeSchema = z.enum(['implement', 'review']);
 
+/** GitHub permits issue and pull-request bodies up to 65,536 characters.
+ * GitHub-anchor dispatch accepts that complete caller shape, then the server
+ * normalizes it into the smaller stored `workSpecSchema` budget. Native Work
+ * item creation deliberately keeps its own stricter description bound. */
+export const GITHUB_DISPATCH_DESCRIPTION_MAX = 65_536;
+
+/** The ingress-only spec for a GitHub anchor. Title, pipeline, and target use
+ * the ordinary Work constraints; description is intentionally wider and may
+ * be empty because an empty GitHub body is valid. The route turns it into a
+ * stored `WorkSpec` before grant checks or orchestrator storage. */
+export const githubDispatchSpecSchema = z.strictObject({
+  title: z.string().min(1).max(WORK_TITLE_MAX),
+  description: z.string().max(GITHUB_DISPATCH_DESCRIPTION_MAX),
+  pipeline: z.enum(PIPELINES),
+  target: workTargetSchema,
+});
+
 /** One explicit response shape for the GitHub-anchor admission path. A
  * duplicate or busy result is a successful, actionable idempotency/mutex
  * answer rather than an HTTP failure: both name the existing durable run. */
@@ -279,7 +302,7 @@ export const dispatchesContract = {
     .input(
       z.strictObject({
         anchor: githubDispatchAnchorSchema,
-        spec: workSpecSchema,
+        spec: githubDispatchSpecSchema,
         mode: githubDispatchModeSchema,
         reply: z.string().max(8_192).optional(),
         runbook: z.string().min(1).max(128).optional(),
