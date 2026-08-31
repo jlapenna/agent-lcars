@@ -617,7 +617,7 @@ async function describeLostOutcome(
   run: Run,
   task: Task | undefined,
 ): Promise<{ body: string; needsHumanLabel: boolean }> {
-  const lostPrefix = `⚠️ Run ${run.runId} ${lostCause(run)}. `;
+  const lostPrefix = `⚠️ Run ${run.runId} was lost (no report before its lease expired). `;
   const activeRunId = task?.activeRunId;
   const activeRun =
     activeRunId === undefined ? undefined : await store.readRun(activeRunId);
@@ -648,21 +648,6 @@ async function describeLostOutcome(
       `agent label) when ready.`,
     needsHumanLabel: true,
   };
-}
-
-/**
- * Why a `lost` run was lost, in the reader's terms. Queue-native runs reach
- * `lost` only after their lease expires without a completion report. A
- * persisted pre-cutover `infra` event instead records the executor's actual
- * terminal cause; retain that read path while its pending outcome entries
- * drain. New queue-native code does not write `infra` events.
- */
-function lostCause(run: Run): string {
-  const last = run.events.at(-1);
-  if (last?.by === 'infra') {
-    return `was lost (${last.note ?? 'its executor failed'}, no completion report)`;
-  }
-  return 'was lost (no report before its lease expired)';
 }
 
 /** Flags the issue for human attention: once the auto-retry budget is

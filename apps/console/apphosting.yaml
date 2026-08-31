@@ -89,11 +89,9 @@ env:
   # grant subject (work-auth verifies that value); the service-prefixed
   # principal is the stable audit identity. It replaces the restricted
   # `/lcars` Slack command's direct GitHub issue filing with a native item.
-  # Its current grant lists every supported pipeline. The saved production
-  # verifier session is an ordinary second subject on the temporary explicit
-  # work.migrate operator grant; remove it together with that migration route.
+  # Its current grant lists every supported pipeline.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna","github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator","work.migrate"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
     availability:
       - RUNTIME
 
@@ -109,8 +107,9 @@ env:
     availability:
       - RUNTIME
 
-  # Explicit deployment identity. Repository configuration has no source
-  # fallback, so these values remain visible and mutually validated here.
+  # The rest of this deployment's identity, mirroring lib/deployment.ts's
+  # fallbacks explicitly rather than relying on them - so what this instance
+  # is configured with is visible here, not only in app source.
   - variable: AGENT_LCARS_FLEET_GITHUB_LOGIN
     value: 'agent-lcars-bot'
     availability:
@@ -152,8 +151,10 @@ env:
     availability:
       - RUNTIME
 
-  # The curated repo list this console watches. It must exactly match
-  # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES; either mismatch fails closed.
+  # The curated repo list this console watches - see getWatchedRepos() in
+  # apps/console/src/lib/github-client.ts. Not sensitive, just config; the
+  # console falls back to supersprinklesracing/sprinkles alone when unset, so
+  # this is the only place that needs editing to add/remove a watched repo.
   # Agent capabilities are explicit. Omitting `agents` opts a repository into
   # the standard Claude, Codex, and OpenCode integrations.
   - variable: AGENT_LCARS_WATCHED_REPOS

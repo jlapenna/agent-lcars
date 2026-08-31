@@ -13,7 +13,6 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { githubDispatchRouter } from './github-dispatch-router';
-import { orchestratorMigrationRouter } from './orchestrator-migration-router';
 import { scheduleRouter } from './schedule-router';
 import {
   forbiddenReason,
@@ -129,11 +128,9 @@ export const workRouter = os.router({
     // database, so it runs only over the items that survive the filters
     // and the limit rather than over every native task ever created.
     //
-    // `toItemViewSafe` rather than `toItemView`: `Task.work` is stored as
-    // an optional loose record, so one native task with an absent or
-    // partial payload is a legal persisted state, not a bug. A strict
-    // parse there would 500 the whole listing over a single bad item;
-    // skipping it (and logging once) degrades the page instead.
+    // `toItemViewSafe` rather than `toItemView`: every strict Task carries a
+    // Work record, but a partially corrupted Work payload must not 500 the
+    // whole listing. Skip it and log once instead.
     const unjoined = (
       await Promise.all(
         native.map(async ({ workId, task }) => {
@@ -287,9 +284,9 @@ export const workRouter = os.router({
 });
 
 /**
- * The OpenAPI (RESTful) adapter serving items, schedules, GitHub-anchor
- * dispatches, and the temporary operator-only migration route under one
- * handler. Their contracts already carry the full path, so nesting them
+ * The OpenAPI (RESTful) adapter serving items, schedules, and GitHub-anchor
+ * dispatches under one handler. Their contracts already carry the full path,
+ * so nesting them
  * under organizational keys here is not a URL prefix. Error codes map to
  * HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP` (`UNAUTHORIZED`
  * 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
@@ -302,7 +299,6 @@ export function createWorkHandler(): OpenAPIHandler<WorkContext> {
       items: workRouter,
       schedules: scheduleRouter,
       dispatches: githubDispatchRouter,
-      orchestratorMigration: orchestratorMigrationRouter,
     },
     {
       routingInterceptors: [

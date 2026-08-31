@@ -13,6 +13,5 @@ export {
   type RequestInput,
   type SweepResult,
 } from './orchestrator';
-export * from './persisted-record-migration';
 export * from './schedule-store';
 export * from './store';

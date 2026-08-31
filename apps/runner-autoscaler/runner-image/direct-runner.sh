@@ -52,7 +52,9 @@ $CURL_TIMEOUT_CONFIG
 CURLCFG
 )"
 ANCHOR_TYPE="$(jq -r '.anchor.type' <<<"$brief")"
-PIPELINE="$(jq -r '.pipeline // .spec.pipeline // empty' <<<"$brief")"
+# The QueueExecutor brief's run pipeline is authoritative. Do not infer it
+# from Work.spec: that would keep pre-cutover brief shapes executable.
+PIPELINE="$(jq -r '.pipeline // empty' <<<"$brief")"
 case "$ANCHOR_TYPE" in
   work)
     WORK="$(jq -c '{id, spec}' <<<"$brief")"

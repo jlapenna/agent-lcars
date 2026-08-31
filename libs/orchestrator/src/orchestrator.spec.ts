@@ -9,6 +9,7 @@ import { OUTBOX_LEASE_MS } from './store';
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const WORK: TaskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
 const T0 = '2026-08-15T12:00:00.000Z';
+const TASK_WORK = { spec: { title: 'orchestrator test work' } };
 
 class Clock {
   constructor(private value: string) {}
@@ -81,6 +82,7 @@ async function started(
     taskId: TASK,
     requestId,
     pipeline: 'claude',
+    work: TASK_WORK,
     ...(params === undefined ? {} : { params }),
   });
   if (isRefusal(outcome))
@@ -134,6 +136,7 @@ describe('the per-task mutex', () => {
       taskId: TASK,
       requestId: 'same-request',
       pipeline: 'claude',
+      work: TASK_WORK,
     };
     const [left, right] = await Promise.all([
       orchestrator.request(input),
@@ -557,6 +560,7 @@ describe('auto-retry on loss', () => {
       taskId: WORK,
       requestId: 'req-1',
       pipeline: 'claude',
+      work: TASK_WORK,
     });
     if (isRefusal(requested)) throw new Error('unexpected refusal');
     const runId = decidedRun(requested).runId;
@@ -747,11 +751,13 @@ describe('concurrency', () => {
         taskId: TASK,
         requestId: 'req-a',
         pipeline: 'claude',
+        work: TASK_WORK,
       }),
       orchestrator.request({
         taskId: TASK,
         requestId: 'req-b',
         pipeline: 'claude',
+        work: TASK_WORK,
       }),
     ]);
     const refusals = [a, b].filter(isRefusal);

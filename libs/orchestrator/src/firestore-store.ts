@@ -4,7 +4,6 @@ import {
   FieldPath,
   FieldValue,
   Firestore,
-  type Transaction,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
 
@@ -18,42 +17,15 @@ import {
   type LeasedOutboxEntry,
   type OutboxEntry,
   outboxEntrySchema,
-  parsePersistedRun,
   type RequestSource,
   type Run,
-  RUN_ID_MAX_LENGTH,
+  runSchema,
   runStateSchema,
   taskDocumentSchema,
   type TaskId,
-  taskIdSchema,
   taskKey,
 } from './model';
 import {
-  decodePersistedMigrationAddress,
-  decodePersistedMigrationCursor,
-  encodePersistedMigrationCursor,
-  fingerprint,
-  hasPersistedMigrationCompatibilityFinding,
-  inventoryPersistedRecord,
-  isPersistedMigrationDeleteEntry,
-  manifestId,
-  migrationParentTaskMatchesRun,
-  PERSISTED_MIGRATION_PAGE_MAX,
-  PersistedMigrationConflict,
-  PersistedMigrationCursorError,
-  type PersistedMigrationDeleteBlockReason,
-  type PersistedMigrationDeleteEntry,
-  type PersistedMigrationDeleteReadiness,
-  type PersistedMigrationEntry,
-  type PersistedMigrationPreview,
-  type PersistedRecordKind,
-  type PersistedRecordPage,
-  type PersistedRecordSelector,
-  validateManifest,
-} from './persisted-record-migration';
-import {
-  type OpenGithubAnchorProjectionCursor,
-  type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
   type RequestTransactionState,
   StoreConflict,
@@ -66,143 +38,6 @@ import {
 const LIVE_STATES = runStateSchema.options.filter(isLive);
 
 const taskDocSchema = taskDocumentSchema;
-
-/** The migration client decodes every Firestore integer as bigint. Current
- * schemas intentionally consume normal JavaScript numbers, so only values
- * whose exact value survives the conversion are normalized for shape
- * classification. Unsafe integers stay bigint and are reported as invalid;
- * their raw BigInt representation remains the stale-write fingerprint. */
-function normalizeFirestoreIntegerValues(value: unknown): unknown {
-  if (typeof value === 'bigint') {
-    const asNumber = Number(value);
-    return Number.isSafeInteger(asNumber) ? asNumber : value;
-  }
-  if (Array.isArray(value)) return value.map(normalizeFirestoreIntegerValues);
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    Object.getPrototypeOf(value) === Object.prototype
-  ) {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, child]) => [
-        key,
-        normalizeFirestoreIntegerValues(child),
-      ]),
-    );
-  }
-  return value;
-}
-
-interface PersistedMigrationDeleteReads {
-  readonly parentTask: (task: TaskId) => Promise<unknown | undefined>;
-  readonly run: (runId: string) => Promise<unknown | undefined>;
-  readonly hasChildRun: (task: TaskId) => Promise<boolean>;
-  readonly outboxDependencies: (runId: string) => Promise<{
-    readonly pending: boolean;
-    readonly leased: boolean;
-    /** The third match makes any additional outbox dependency unknowable
-     * without widening this one-shot bounded operation. */
-    readonly limitReached: boolean;
-  }>;
-}
-
-const migrationRunIdSchema = z.string().min(1).max(RUN_ID_MAX_LENGTH);
-const migrationRunSafetySchema = z
-  .object({
-    runId: migrationRunIdSchema,
-    task: taskIdSchema,
-    state: runStateSchema,
-  })
-  .strip();
-const migrationTaskSafetySchema = z
-  .object({
-    task: z
-      .object({
-        task: taskIdSchema,
-        activeRunId: migrationRunIdSchema.optional(),
-      })
-      .strip(),
-  })
-  .strip();
-const migrationOutboxSafetySchema = z
-  .object({
-    entryId: z.string().min(1),
-    kind: z.enum(['dispatch-run', 'report-outcome']),
-    task: taskIdSchema,
-    runId: migrationRunIdSchema,
-    state: z.enum(['pending', 'leased', 'done', 'failed']),
-    firstFailedAt: z.string().optional(),
-    nextAttemptAt: z.string().optional(),
-    deliveryFailures: z.number().optional(),
-    claimId: z.unknown().optional(),
-    leaseExpiresAt: z.unknown().optional(),
-  })
-  .strip();
-
-const migrationTimestampSchema = z.iso.datetime({ offset: true });
-
-function hasUndeliverableOutcomeFailureProof(entry: {
-  firstFailedAt?: unknown;
-  nextAttemptAt?: unknown;
-  deliveryFailures?: unknown;
-}): boolean {
-  const firstFailedAt = migrationTimestampSchema.safeParse(entry.firstFailedAt);
-  const nextAttemptAt = migrationTimestampSchema.safeParse(entry.nextAttemptAt);
-  return (
-    firstFailedAt.success &&
-    nextAttemptAt.success &&
-    typeof entry.deliveryFailures === 'number' &&
-    Number.isInteger(entry.deliveryFailures) &&
-    entry.deliveryFailures >= 1 &&
-    Date.parse(nextAttemptAt.data) >= Date.parse(firstFailedAt.data)
-  );
-}
-
-function hasMigrationOutboxLease(entry: {
-  claimId?: unknown;
-  leaseExpiresAt?: unknown;
-}): boolean {
-  return entry.claimId !== undefined || entry.leaseExpiresAt !== undefined;
-}
-
-function selectorMatchesTask(
-  selector: PersistedRecordSelector,
-  task: TaskId,
-): boolean {
-  if ('address' in selector) {
-    return (
-      decodePersistedMigrationAddress(selector.address, 'task') ===
-      encodeURIComponent(taskKey(task))
-    );
-  }
-  return selector.kind === 'task' && taskKey(selector.task) === taskKey(task);
-}
-
-function selectorMatchesRun(
-  selector: PersistedRecordSelector,
-  runId: string,
-): boolean {
-  if ('address' in selector) {
-    return (
-      decodePersistedMigrationAddress(selector.address, 'run') ===
-      encodeURIComponent(runId)
-    );
-  }
-  return selector.kind === 'run' && selector.runId === runId;
-}
-
-function selectorMatchesOutbox(
-  selector: PersistedRecordSelector,
-  entryId: string,
-): boolean {
-  if ('address' in selector) {
-    return (
-      decodePersistedMigrationAddress(selector.address, 'outbox') ===
-      encodeURIComponent(entryId)
-    );
-  }
-  return selector.kind === 'outbox' && selector.entryId === entryId;
-}
 
 export interface FirestoreStoreOptions {
   readonly projectId: string;
@@ -227,16 +62,9 @@ export interface FirestoreStoreOptions {
  */
 export class FirestoreStore implements OrchestratorStore {
   readonly #firestore: Firestore;
-  /** Migration reads must preserve every Firestore int64 exactly. This stays
-   * separate from the normal store client: ordinary Task/Run schemas use
-   * JavaScript numbers and must not start receiving bigint values. */
-  readonly #migrationFirestore: Firestore;
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
   readonly #outbox: CollectionReference;
-  readonly #migrationTasks: CollectionReference;
-  readonly #migrationRuns: CollectionReference;
-  readonly #migrationOutbox: CollectionReference;
   readonly #githubAnchors: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
@@ -249,20 +77,9 @@ export class FirestoreStore implements OrchestratorStore {
         : { host: options.emulatorHost, ssl: false }),
     };
     this.#firestore = new Firestore(firestoreOptions);
-    this.#migrationFirestore = new Firestore({
-      ...firestoreOptions,
-      useBigInt: true,
-    });
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
-    this.#migrationTasks = this.#migrationFirestore.collection(
-      `${prefix}tasks`,
-    );
-    this.#migrationRuns = this.#migrationFirestore.collection(`${prefix}runs`);
-    this.#migrationOutbox = this.#migrationFirestore.collection(
-      `${prefix}outbox`,
-    );
     this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
   }
 
@@ -273,7 +90,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async readRun(runId: string): Promise<Run | undefined> {
     const snapshot = await this.#runRef(runId).get();
-    return snapshot.exists ? parsePersistedRun(snapshot.data()) : undefined;
+    return snapshot.exists ? runSchema.parse(snapshot.data()) : undefined;
   }
 
   async readActiveRun(id: TaskId): Promise<Run | undefined> {
@@ -284,7 +101,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async listRuns(id: TaskId): Promise<Run[]> {
     const snapshot = await this.#runsForTask(id).get();
-    return snapshot.docs.map((doc) => parsePersistedRun(doc.data()));
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
   }
 
   async transactRequest(input: {
@@ -319,10 +136,10 @@ export class FirestoreStore implements OrchestratorStore {
       const activeRun =
         activeRunSnapshot === undefined || !activeRunSnapshot.exists
           ? undefined
-          : parsePersistedRun(activeRunSnapshot.data());
+          : runSchema.parse(activeRunSnapshot.data());
       const previousRun = runsSnapshot.docs
-        .map((doc) => parsePersistedRun(doc.data()))
-        .find((run) => (run.requestSource ?? 'caller') === input.requestSource);
+        .map((doc) => runSchema.parse(doc.data()))
+        .find((run) => run.requestSource === input.requestSource);
       const outcome = input.decide({ task, activeRun, previousRun });
       if (isRefusal(outcome)) return outcome;
 
@@ -411,12 +228,7 @@ export class FirestoreStore implements OrchestratorStore {
           'GitHub anchor refresh projection does not match its fence',
         );
       }
-      // The refresh fence was created above, so this is always an update of
-      // an existing document. `update` both replaces the projection map
-      // exactly (rather than retaining removed optional fields) and is the
-      // Firestore write form that permits the top-level delete sentinel used
-      // to remove this anchor from the open-order index.
-      tx.update(ref, {
+      tx.set(ref, {
         projection: next,
         refreshGeneration: input.generation,
         ...(next.state === 'open'
@@ -440,48 +252,21 @@ export class FirestoreStore implements OrchestratorStore {
   async listOpenGithubAnchorProjections(
     limit = 200,
   ): Promise<GithubAnchorProjection[]> {
-    return (await this.listOpenGithubAnchorProjectionPage({ limit }))
-      .projections;
-  }
-
-  async listOpenGithubAnchorProjectionPage(input: {
-    limit: number;
-    cursor?: OpenGithubAnchorProjectionCursor;
-  }): Promise<OpenGithubAnchorProjectionPage> {
     // `openUpdatedAt` is present only on open anchors. Ordering this single
-    // field plus document id gives this cursor a stable total order without
-    // an application-maintained composite index. Each datastore read remains
-    // bounded; callers follow nextCursor until selection is complete.
-    let query = this.#githubAnchors
+    // field is served by Firestore's automatic index and bounds the read at
+    // the datastore without a state+order composite index.
+    const snapshot = await this.#githubAnchors
       .orderBy('openUpdatedAt', 'desc')
-      .orderBy(FieldPath.documentId(), 'desc')
-      .limit(input.limit);
-    if (input.cursor !== undefined) {
-      query = query.startAfter(
-        input.cursor.sourceUpdatedAt,
-        encodeURIComponent(taskKey(input.cursor.anchor)),
+      .limit(limit)
+      .get();
+    return snapshot.docs.flatMap((doc) => {
+      const projection = githubAnchorProjectionSchema.parse(
+        doc.data()['projection'],
       );
-    }
-    const snapshot = await query.get();
-    const entries = snapshot.docs.map((doc) => ({
-      projection: githubAnchorProjectionSchema.parse(doc.data()['projection']),
-    }));
-    const last = entries.at(-1)?.projection;
-    return {
-      projections: entries.flatMap(({ projection }) => {
-        // A pre-fence document may retain its old index field. Never present a
-        // closed snapshot as an open queue item while the backfill refreshes it.
-        return projection.state === 'open' ? [projection] : [];
-      }),
-      ...(last !== undefined && snapshot.size === input.limit
-        ? {
-            nextCursor: {
-              sourceUpdatedAt: last.sourceUpdatedAt,
-              anchor: last.anchor,
-            },
-          }
-        : {}),
-    };
+      // A pre-fence document may retain its old index field. Never present a
+      // closed snapshot as an open queue item while the backfill refreshes it.
+      return projection.state === 'open' ? [projection] : [];
+    });
   }
 
   async claimPendingOutbox(input: {
@@ -683,7 +468,7 @@ export class FirestoreStore implements OrchestratorStore {
       LIVE_STATES.map((state) => this.#runs.where('state', '==', state).get()),
     );
     return perState.flatMap((snapshot) =>
-      snapshot.docs.map((doc) => parsePersistedRun(doc.data())),
+      snapshot.docs.map((doc) => runSchema.parse(doc.data())),
     );
   }
 
@@ -696,7 +481,7 @@ export class FirestoreStore implements OrchestratorStore {
       .orderBy('updatedAt', 'desc')
       .limit(limit)
       .get();
-    return snapshot.docs.map((doc) => parsePersistedRun(doc.data()));
+    return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
   }
 
   async enqueueRun(input: { runId: string; now: string }): Promise<void> {
@@ -704,7 +489,7 @@ export class FirestoreStore implements OrchestratorStore {
     await this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       if (!snapshot.exists) return;
-      const run = parsePersistedRun(snapshot.data());
+      const run = runSchema.parse(snapshot.data());
       if (run.queue !== undefined) return;
       tx.set(ref, {
         ...run,
@@ -738,7 +523,7 @@ export class FirestoreStore implements OrchestratorStore {
       );
       const candidates = snapshots
         .flatMap((snapshot) => snapshot.docs)
-        .map((doc) => ({ doc, run: parsePersistedRun(doc.data()) }))
+        .map((doc) => ({ doc, run: runSchema.parse(doc.data()) }))
         .sort((a, b) => a.run.createdAt.localeCompare(b.run.createdAt));
       const first = candidates[0];
       if (first === undefined) return undefined;
@@ -771,398 +556,9 @@ export class FirestoreStore implements OrchestratorStore {
       .where('queue.state', '==', 'queued')
       .get();
     return snapshot.docs
-      .map((doc) => parsePersistedRun(doc.data()))
+      .map((doc) => runSchema.parse(doc.data()))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, limit ?? 200);
-  }
-
-  async inventoryPersistedRecords(input: {
-    kind: PersistedRecordKind;
-    limit: number;
-    cursor?: string;
-  }): Promise<PersistedRecordPage> {
-    if (
-      !Number.isInteger(input.limit) ||
-      input.limit < 1 ||
-      input.limit > PERSISTED_MIGRATION_PAGE_MAX
-    ) {
-      throw new Error(
-        `Persisted orchestrator inventory page size must be 1-${PERSISTED_MIGRATION_PAGE_MAX}`,
-      );
-    }
-    const collection = this.#migrationCollectionFor(input.kind);
-    let query = collection.orderBy(FieldPath.documentId());
-    if (input.cursor !== undefined) {
-      const documentId = decodePersistedMigrationCursor(
-        input.cursor,
-        input.kind,
-      );
-      // A well-formed cursor for another or nonexistent record must not
-      // silently become a new first page. Verify it belongs to this fixed
-      // collection before using it as a query boundary.
-      if (!(await collection.doc(documentId).get()).exists) {
-        throw new PersistedMigrationCursorError(
-          'Invalid persisted orchestrator inventory cursor',
-        );
-      }
-      query = query.startAfter(documentId);
-    }
-    // The extra document makes `hasMore` truthful at the exact page boundary
-    // without scanning an unbounded collection.
-    const snapshot = await query.limit(input.limit + 1).get();
-    const documents = snapshot.docs.slice(0, input.limit);
-    const hasMore = snapshot.docs.length > documents.length;
-    return {
-      kind: input.kind,
-      consistency: 'page-only',
-      records: documents.map((document) => {
-        const raw = document.data();
-        // Normalization is only for the current schema census. Raw values
-        // remain BigInt-capable for the fingerprint used by the later
-        // transaction, so an unsafe Firestore int64 can never collapse into
-        // a rounded JavaScript number between inventory and apply.
-        return {
-          ...inventoryPersistedRecord(
-            input.kind,
-            normalizeFirestoreIntegerValues(raw),
-            document.id,
-          ),
-          fingerprint: fingerprint(raw),
-        };
-      }),
-      hasMore,
-      ...(hasMore && documents.length > 0
-        ? {
-            nextCursor: encodePersistedMigrationCursor(
-              input.kind,
-              documents.at(-1)?.id ?? '',
-            ),
-          }
-        : {}),
-    };
-  }
-
-  async previewPersistedMigration(
-    entries: readonly PersistedMigrationEntry[],
-  ): Promise<PersistedMigrationPreview> {
-    const validated = validateManifest(entries);
-    const deletions = await Promise.all(
-      validated.filter(isPersistedMigrationDeleteEntry).map(async (entry) => {
-        const snapshot = await this.#migrationRef(entry.selector).get();
-        return this.#deleteReadiness(
-          entry,
-          snapshot.exists ? snapshot.data() : undefined,
-          this.#migrationDeleteReads(),
-        );
-      }),
-    );
-    return {
-      manifestId: manifestId(validated),
-      entries: validated.length,
-      deletions,
-    };
-  }
-
-  async applyPersistedMigration(input: {
-    entries: readonly PersistedMigrationEntry[];
-    reviewedManifestId: string;
-  }): Promise<PersistedMigrationPreview> {
-    const entries = validateManifest(input.entries);
-    const id = manifestId(entries);
-    if (id !== input.reviewedManifestId) {
-      throw new PersistedMigrationConflict(
-        'reviewed manifest id does not match the submitted entries',
-      );
-    }
-    const deletions = await this.#migrationFirestore.runTransaction(
-      async (tx) => {
-        // Read every fixed manifest target first. Firestore retries the whole
-        // transaction on a concurrent write; each retry compares the current
-        // raw fingerprint before any write, so no reviewed replacement can
-        // overwrite a record changed after the inventory.
-        const snapshots = await Promise.all(
-          entries.map((entry) => tx.get(this.#migrationRef(entry.selector))),
-        );
-        for (const [index, snapshot] of snapshots.entries()) {
-          const entry = entries[index];
-          if (entry === undefined) throw new Error('missing manifest entry');
-          if (!snapshot.exists) {
-            throw new PersistedMigrationConflict(
-              `persisted ${entry.selector.kind} record disappeared`,
-            );
-          }
-          if (fingerprint(snapshot.data()) !== entry.expectedFingerprint) {
-            throw new PersistedMigrationConflict(
-              `persisted ${entry.selector.kind} record changed after inventory`,
-            );
-          }
-        }
-        const deletions = await Promise.all(
-          entries.map(async (entry, index) => {
-            if (!isPersistedMigrationDeleteEntry(entry)) return undefined;
-            const snapshot = snapshots[index];
-            if (snapshot === undefined)
-              throw new Error('missing manifest entry');
-            return this.#deleteReadiness(
-              entry,
-              snapshot.data(),
-              this.#migrationDeleteReads(tx),
-            );
-          }),
-        );
-        for (const readiness of deletions) {
-          if (readiness?.status === 'blocked') {
-            throw new PersistedMigrationConflict(
-              `persisted ${readiness.selector.kind} deletion is blocked: ${readiness.reasons.join(',')}`,
-            );
-          }
-        }
-        for (const entry of entries) {
-          if (isPersistedMigrationDeleteEntry(entry)) {
-            tx.delete(this.#migrationRef(entry.selector));
-          } else {
-            tx.set(this.#migrationRef(entry.selector), entry.replacement);
-          }
-        }
-        return deletions.filter(
-          (readiness): readiness is PersistedMigrationDeleteReadiness =>
-            readiness !== undefined,
-        );
-      },
-    );
-    return { manifestId: id, entries: entries.length, deletions };
-  }
-
-  #migrationDeleteReads(tx?: Transaction): PersistedMigrationDeleteReads {
-    return {
-      parentTask: async (task: TaskId): Promise<unknown | undefined> => {
-        const ref = this.#migrationTasks.doc(encodeURIComponent(taskKey(task)));
-        const snapshot = tx === undefined ? await ref.get() : await tx.get(ref);
-        return snapshot.exists ? snapshot.data() : undefined;
-      },
-      run: async (runId: string): Promise<unknown | undefined> => {
-        const ref = this.#migrationRuns.doc(encodeURIComponent(runId));
-        const snapshot = tx === undefined ? await ref.get() : await tx.get(ref);
-        return snapshot.exists ? snapshot.data() : undefined;
-      },
-      hasChildRun: async (task: TaskId): Promise<boolean> => {
-        const snapshot =
-          tx === undefined
-            ? await this.#migrationRunsForTask(task).limit(1).get()
-            : await tx.get(this.#migrationRunsForTask(task).limit(1));
-        return !snapshot.empty;
-      },
-      outboxDependencies: async (runId: string) => {
-        const query = this.#migrationOutbox
-          .where('runId', '==', runId)
-          .limit(3);
-        const snapshot =
-          tx === undefined ? await query.get() : await tx.get(query);
-        const states = snapshot.docs.map((document) => document.get('state'));
-        return {
-          pending: states.includes('pending'),
-          leased: states.includes('leased'),
-          limitReached: snapshot.size === 3,
-        };
-      },
-    };
-  }
-
-  async #deleteReadiness(
-    entry: PersistedMigrationDeleteEntry,
-    current: unknown | undefined,
-    reads: PersistedMigrationDeleteReads,
-  ): Promise<PersistedMigrationDeleteReadiness> {
-    const reasons: PersistedMigrationDeleteBlockReason[] = [];
-    if (current === undefined) {
-      reasons.push('target-missing');
-    } else if (fingerprint(current) !== entry.expectedFingerprint) {
-      reasons.push('target-changed');
-    } else if (
-      entry.selector.kind !== 'outbox' &&
-      !inventoryPersistedRecord(
-        entry.selector.kind,
-        normalizeFirestoreIntegerValues(current),
-      ).findings.some((finding) => finding.class === 'compatibility')
-    ) {
-      reasons.push('no-compatibility-finding');
-    }
-
-    if (current !== undefined && entry.selector.kind === 'run') {
-      const parsed = migrationRunSafetySchema.safeParse(
-        normalizeFirestoreIntegerValues(current),
-      );
-      if (!parsed.success) {
-        reasons.push('invalid-run');
-      } else if (!selectorMatchesRun(entry.selector, parsed.data.runId)) {
-        reasons.push('invalid-run');
-      } else {
-        const run = parsed.data;
-        if (isLive(run.state)) reasons.push('run-not-terminal');
-        const parent = await reads.parentTask(run.task);
-        const parentTask =
-          parent === undefined
-            ? undefined
-            : migrationTaskSafetySchema.safeParse(
-                normalizeFirestoreIntegerValues(parent),
-              );
-        if (parentTask !== undefined && !parentTask.success) {
-          reasons.push('invalid-parent-task');
-        } else if (
-          parentTask !== undefined &&
-          !migrationParentTaskMatchesRun(parentTask.data.task.task, run.task)
-        ) {
-          reasons.push('invalid-parent-task');
-        } else if (parentTask?.data.task.activeRunId !== undefined) {
-          reasons.push('parent-task-active');
-        }
-        const outbox = await reads.outboxDependencies(run.runId);
-        if (outbox.pending) {
-          reasons.push('pending-outbox');
-        }
-        if (outbox.leased) {
-          reasons.push('leased-outbox');
-        }
-        if (outbox.limitReached) reasons.push('outbox-dependency-over-limit');
-      }
-    }
-
-    if (current !== undefined && entry.selector.kind === 'task') {
-      const parsed = migrationTaskSafetySchema.safeParse(
-        normalizeFirestoreIntegerValues(current),
-      );
-      if (!parsed.success) {
-        reasons.push('invalid-task');
-      } else if (!selectorMatchesTask(entry.selector, parsed.data.task.task)) {
-        reasons.push('invalid-task');
-      } else {
-        const task = parsed.data.task;
-        if (task.activeRunId !== undefined) reasons.push('task-active');
-        if (await reads.hasChildRun(task.task))
-          reasons.push('child-run-present');
-      }
-    }
-
-    if (current !== undefined && entry.selector.kind === 'outbox') {
-      const normalized = normalizeFirestoreIntegerValues(current);
-      const parsed = migrationOutboxSafetySchema.safeParse(normalized);
-      if (!parsed.success) {
-        reasons.push('invalid-outbox');
-      } else if (!selectorMatchesOutbox(entry.selector, parsed.data.entryId)) {
-        reasons.push('invalid-outbox');
-      } else if (
-        hasPersistedMigrationCompatibilityFinding('outbox', normalized)
-      ) {
-        // Compatibility records retain the original rule: an Outbox document
-        // is deletable only after it has reached a terminal state.
-        if (parsed.data.state !== 'done' && parsed.data.state !== 'failed') {
-          reasons.push('outbox-not-terminal');
-        }
-      } else {
-        // The one temporary migration exception is a pending outcome report
-        // with proof that outcome delivery already failed. It is not part of
-        // normal 72-hour outbox retirement policy.
-        const outbox = parsed.data;
-        if (outbox.kind !== 'report-outcome') {
-          reasons.push('outbox-not-report-outcome');
-        } else if (outbox.state !== 'pending') {
-          reasons.push('no-compatibility-finding');
-        } else {
-          if (!hasUndeliverableOutcomeFailureProof(outbox)) {
-            reasons.push('outbox-no-failure-proof');
-          }
-          if (hasMigrationOutboxLease(outbox)) {
-            reasons.push('outbox-lease-present');
-          }
-
-          const rawRun = await reads.run(outbox.runId);
-          const run =
-            rawRun === undefined
-              ? undefined
-              : normalizeFirestoreIntegerValues(rawRun);
-          const runSafety =
-            run === undefined
-              ? undefined
-              : migrationRunSafetySchema.safeParse(run);
-          if (run === undefined) {
-            reasons.push('outbox-run-missing');
-          } else if (!runSafety?.success) {
-            reasons.push('outbox-run-invalid');
-          } else if (
-            runSafety.data.runId !== outbox.runId ||
-            !migrationParentTaskMatchesRun(runSafety.data.task, outbox.task)
-          ) {
-            reasons.push('outbox-run-mismatch');
-          } else {
-            if (isLive(runSafety.data.state)) {
-              reasons.push('outbox-run-not-terminal');
-            }
-            if (!hasPersistedMigrationCompatibilityFinding('run', run)) {
-              reasons.push('outbox-run-not-compatibility');
-            }
-            const parent = await reads.parentTask(runSafety.data.task);
-            const parentTask =
-              parent === undefined
-                ? undefined
-                : migrationTaskSafetySchema.safeParse(
-                    normalizeFirestoreIntegerValues(parent),
-                  );
-            if (parentTask !== undefined && !parentTask.success) {
-              reasons.push('outbox-parent-task-invalid');
-            } else if (
-              parentTask !== undefined &&
-              (!migrationParentTaskMatchesRun(
-                parentTask.data.task.task,
-                runSafety.data.task,
-              ) ||
-                !migrationParentTaskMatchesRun(
-                  parentTask.data.task.task,
-                  outbox.task,
-                ))
-            ) {
-              reasons.push('outbox-parent-task-invalid');
-            } else if (parentTask?.data.task.activeRunId !== undefined) {
-              reasons.push('outbox-parent-task-active');
-            }
-          }
-        }
-      }
-    }
-
-    return reasons.length === 0
-      ? { selector: entry.selector, status: 'ready', reasons: [] }
-      : { selector: entry.selector, status: 'blocked', reasons };
-  }
-
-  #migrationCollectionFor(kind: PersistedRecordKind): CollectionReference {
-    if (kind === 'task') return this.#migrationTasks;
-    if (kind === 'run') return this.#migrationRuns;
-    return this.#migrationOutbox;
-  }
-
-  #migrationRunsForTask(id: TaskId) {
-    return isWorkAnchor(id)
-      ? this.#migrationRuns.where('task.workId', '==', id.workId)
-      : this.#migrationRuns
-          .where('task.repo', '==', id.repo)
-          .where('task.issue', '==', id.issue);
-  }
-
-  #migrationRef(selector: PersistedRecordSelector): DocumentReference {
-    if ('address' in selector) {
-      return this.#migrationCollectionFor(selector.kind).doc(
-        decodePersistedMigrationAddress(selector.address, selector.kind),
-      );
-    }
-    if (selector.kind === 'task') {
-      return this.#migrationTasks.doc(
-        encodeURIComponent(taskKey(selector.task)),
-      );
-    }
-    if (selector.kind === 'run') {
-      return this.#migrationRuns.doc(encodeURIComponent(selector.runId));
-    }
-    return this.#migrationOutbox.doc(encodeURIComponent(selector.entryId));
   }
 
   #taskRef(id: TaskId): DocumentReference {
@@ -1179,17 +575,15 @@ export class FirestoreStore implements OrchestratorStore {
           .where('task.issue', '==', id.issue);
   }
 
-  /** A constant-size idempotency lookup. Automatic retries have an explicit
-   * source field, so their query is exact. Caller history also includes
-   * legacy runs without requestSource; at most one automatic-retry record can
-   * share the raw ID, so two candidates are sufficient to find either caller
-   * representation without an unbounded history scan. Equality-only filters
-   * keep this on Firestore's automatic index merging path. */
+  /** A constant-size exact idempotency lookup. Every current Run persists its
+   * request source, so caller and automatic-retry histories remain separate
+   * without a legacy broad query. Equality-only filters keep this on
+   * Firestore's automatic index merging path. */
   #runsForRequest(id: TaskId, requestId: string, source: RequestSource) {
-    const query = this.#runsForTask(id).where('requestId', '==', requestId);
-    return source === 'auto-retry'
-      ? query.where('requestSource', '==', source).limit(1)
-      : query.limit(2);
+    return this.#runsForTask(id)
+      .where('requestId', '==', requestId)
+      .where('requestSource', '==', source)
+      .limit(1);
   }
 
   #runRef(runId: string): DocumentReference {

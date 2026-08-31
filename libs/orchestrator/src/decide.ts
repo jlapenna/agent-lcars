@@ -39,6 +39,7 @@ export interface Refusal {
     | 'run-not-live' // report/cancel/renew against a settled run
     | 'stale-lease' // renew/report from a run that already lost the lock
     | 'task-closed' // closeTask set closedAt; no further runs
+    | 'missing-work' // strict Task documents always carry the Work payload
     | 'unknown-task' // close on a task that was never created
     | 'not-native'; // closeTask on a GitHub anchor: closedAt is native-only
   /** For `duplicate-request`, the run the request already maps to. */
@@ -109,6 +110,8 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
   if (input.task?.closedAt !== undefined) {
     return refused('task-closed');
   }
+  const work = input.task?.work ?? input.work;
+  if (work === undefined) return refused('missing-work');
   const baseTask: Task = {
     task: taskId,
     runCount: input.task?.runCount ?? 0,
@@ -116,15 +119,9 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     // the auto-retry streak (see `resetConsecutiveLost`). A request -- manual
     // or the auto-retry itself -- must not accidentally clear the budget
     // `expireLease` just spent computing.
-    ...(input.task?.consecutiveLost === undefined
-      ? {}
-      : { consecutiveLost: input.task.consecutiveLost }),
+    consecutiveLost: input.task?.consecutiveLost ?? 0,
     // Written once: only the request that creates the task may set `work`.
-    ...(input.task?.work !== undefined
-      ? { work: input.task.work }
-      : input.work !== undefined
-        ? { work: input.work }
-        : {}),
+    work,
     updatedAt: now,
   };
   return mintRun({
@@ -158,7 +155,7 @@ function mintRun(input: {
     state: 'pending',
     pipeline,
     requestId,
-    ...(requestSource === undefined ? {} : { requestSource }),
+    requestSource: requestSource ?? 'caller',
     ...(params === undefined ? {} : { params }),
     leaseExpiresAt: lease(now),
     events: [{ at: now, to: 'pending', by: 'request' }],
@@ -311,7 +308,7 @@ export function expireLease(input: {
   return settle(
     {
       ...releaseLock(task, run.runId, now),
-      consecutiveLost: (task.consecutiveLost ?? 0) + 1,
+      consecutiveLost: task.consecutiveLost + 1,
     },
     settled,
     now,
@@ -355,12 +352,10 @@ function releaseLock(task: Task, runId: string, now: string): Task {
     : { ...task, updatedAt: now };
 }
 
-/** Drops `consecutiveLost` (equivalent to resetting the auto-retry budget
- *  to 0) after a run settles into a state where retrying makes no sense:
- *  `finished` or `canceled`. */
+/** Resets the auto-retry budget after a run settles into a state where
+ * retrying makes no sense: `finished` or `canceled`. */
 function resetConsecutiveLost(task: Task): Task {
-  const { consecutiveLost, ...rest } = task;
-  return rest;
+  return { ...task, consecutiveLost: 0 };
 }
 
 function outcomeEntry(run: Run, now: string): OutboxEntry {

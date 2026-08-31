@@ -1,6 +1,4 @@
 import {
-  encodePersistedMigrationAddress,
-  encodePersistedMigrationCursor,
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
@@ -9,7 +7,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { controlPlaneRepository } from './deployment';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -28,10 +26,6 @@ const operator = {
   scopes: new Set(['work.operator'] as const),
   pipelines: ['claude'],
   via: 'session' as const,
-};
-const migrationOperator = {
-  ...operator,
-  scopes: new Set(['work.operator', 'work.migrate'] as const),
 };
 const cronTick = {
   principal: 'svc:telemetry-writer',
@@ -276,10 +270,6 @@ describe('items routes', () => {
     const otherRepo = 'other-org/other-repo';
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${controlPlaneRepository()},${otherRepo}`;
-    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
-      { owner: 'jlapenna', name: 'agent-lcars' },
-      { owner: 'other-org', name: 'other-repo' },
-    ]);
     try {
       const ctx = context();
       const r = await call(ctx, 'PUT', `/items/${ID}`, {
@@ -289,7 +279,6 @@ describe('items routes', () => {
       expect(r.json).toMatchObject({ state: 'running' });
     } finally {
       delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'];
-      delete process.env['AGENT_LCARS_WATCHED_REPOS'];
     }
   });
 
@@ -548,10 +537,9 @@ describe('items routes', () => {
   it('degrades a native task with an invalid work payload instead of 500ing the whole list', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });
-    // A legal persisted state per `Task.work`'s optional-loose-record type:
-    // a native task whose stored `work` has no `spec`. `toItemView`'s
-    // strict parse would throw on this and 500 the whole listing; the list
-    // handler must skip just this item instead.
+    // A corrupted Work record lacks its spec. `toItemView`'s strict parse
+    // would throw and 500 the whole listing; the list handler must skip just
+    // this item instead.
     await ctx.runtime.orchestrator.request({
       taskId: { workId: OTHER_ID },
       requestId: OTHER_ID,
@@ -874,304 +862,4 @@ describe('GitHub-anchor dispatch route', () => {
       });
     },
   );
-});
-
-describe('persisted orchestrator migration routes', () => {
-  it('requires a dedicated migration scope and defaults a reviewed manifest to dry-run', async () => {
-    const ctx = context({ principal: migrationOperator });
-    const store = ctx.runtime.store as MemoryStore;
-    const task = {
-      task: { repo: 'octo/example', issue: 7 },
-      runCount: 0,
-      updatedAt: '2026-08-26T10:00:00.000Z',
-    };
-    await store.apply({
-      decision: { task, outbox: [] },
-      expectedRevision: undefined,
-    });
-
-    const denied = await call(
-      context({ principal: { ...operator, scopes: new Set<never>() } }),
-      'GET',
-      '/orchestrator-migration/task',
-    );
-    expect(denied.status).toBe(401);
-
-    const ordinaryOperator = await call(
-      context(),
-      'GET',
-      '/orchestrator-migration/task',
-    );
-    expect(ordinaryOperator.status).toBe(401);
-
-    for (const cursor of [
-      'not-a-cursor',
-      encodePersistedMigrationCursor('run', 'not-a-task'),
-      encodePersistedMigrationCursor('task', 'not-a-task'),
-      Buffer.concat([Buffer.from([0x74]), Buffer.from('a/b', 'utf8')]).toString(
-        'base64url',
-      ),
-    ]) {
-      const rejected = await call(
-        ctx,
-        'GET',
-        `/orchestrator-migration/task?limit=1&cursor=${cursor}`,
-      );
-      expect(rejected.status).toBe(400);
-    }
-    const inventory = await call(
-      ctx,
-      'GET',
-      '/orchestrator-migration/task?limit=1',
-    );
-    expect(inventory.status).toBe(200);
-    const record = inventory.json.records[0] as {
-      selector: { kind: 'task'; task: typeof task.task };
-      fingerprint: string;
-    };
-    const entry = {
-      selector: record.selector,
-      expectedFingerprint: record.fingerprint,
-      replacement: {
-        task: { ...task, consecutiveLost: 0, work: { reviewed: true } },
-        revision: 1,
-      },
-    };
-    const dryRun = await call(ctx, 'POST', '/orchestrator-migration', {
-      entries: [entry],
-    });
-    expect(dryRun.status).toBe(200);
-    expect(dryRun.json).toMatchObject({ mode: 'dry-run', entries: 1 });
-    expect((await store.readTask(task.task))?.task.work).toBeUndefined();
-
-    // The route schema accepts only the bounded opaque address emitted for a
-    // fixed collection document; it remains a reviewed manifest entry, never
-    // a generic document read or write input.
-    const addressDryRun = await call(ctx, 'POST', '/orchestrator-migration', {
-      entries: [
-        {
-          selector: {
-            kind: 'task',
-            address: encodePersistedMigrationAddress(
-              'task',
-              encodeURIComponent('octo/example#7'),
-            ),
-          },
-          expectedFingerprint: record.fingerprint,
-          replacement: entry.replacement,
-        },
-      ],
-    });
-    expect(addressDryRun.status).toBe(200);
-    expect(addressDryRun.json).toMatchObject({ mode: 'dry-run', entries: 1 });
-
-    const malformedAddress = await call(
-      ctx,
-      'POST',
-      '/orchestrator-migration',
-      {
-        entries: [
-          {
-            selector: {
-              kind: 'task',
-              // An inventory cursor is not a migration address, even though
-              // both are opaque base64url strings for fixed collections.
-              address: encodePersistedMigrationCursor(
-                'task',
-                encodeURIComponent('octo/example#7'),
-              ),
-            },
-            expectedFingerprint: record.fingerprint,
-            replacement: entry.replacement,
-          },
-        ],
-      },
-    );
-    expect(malformedAddress.status).toBe(409);
-
-    const malformedDeleteAddress = await call(
-      ctx,
-      'POST',
-      '/orchestrator-migration',
-      {
-        entries: [
-          {
-            operation: 'delete',
-            selector: {
-              kind: 'task',
-              address: encodePersistedMigrationCursor(
-                'task',
-                encodeURIComponent('octo/example#7'),
-              ),
-            },
-            expectedFingerprint: record.fingerprint,
-          },
-        ],
-      },
-    );
-    expect(malformedDeleteAddress.status).toBe(409);
-
-    const refusedApply = await call(ctx, 'POST', '/orchestrator-migration', {
-      mode: 'apply',
-      entries: [entry],
-    });
-    expect(refusedApply.status).toBe(409);
-
-    const apply = await call(ctx, 'POST', '/orchestrator-migration', {
-      mode: 'apply',
-      entries: [entry],
-      reviewedManifestId: dryRun.json.manifestId,
-      confirmation: 'apply-reviewed-manifest',
-    });
-    expect(apply.status).toBe(200);
-    expect((await store.readTask(task.task))?.task.work).toEqual({
-      reviewed: true,
-    });
-  });
-
-  it('maps a conflict from a separately bundled store module to 409', async () => {
-    const ctx = context({ principal: migrationOperator });
-    const store = ctx.runtime.store as MemoryStore;
-    const task = {
-      task: { repo: 'octo/example', issue: 8 },
-      runCount: 0,
-      updatedAt: '2026-08-26T10:00:00.000Z',
-    };
-    await store.apply({
-      decision: { task, outbox: [] },
-      expectedRevision: undefined,
-    });
-    const record = (
-      await store.inventoryPersistedRecords({
-        kind: 'task',
-        limit: 1,
-      })
-    ).records[0];
-    if (record?.selector?.kind !== 'task' || !('task' in record.selector)) {
-      throw new Error('missing task');
-    }
-    const entries = [
-      {
-        selector: record.selector,
-        expectedFingerprint: record.fingerprint,
-        replacement: {
-          task: { ...task, consecutiveLost: 0, work: { reviewed: true } },
-          revision: 1,
-        },
-      },
-    ];
-    vi.spyOn(store, 'applyPersistedMigration').mockRejectedValueOnce(
-      Object.assign(new Error('stale manifest'), {
-        name: 'PersistedMigrationConflict',
-      }),
-    );
-    const response = await call(ctx, 'POST', '/orchestrator-migration', {
-      mode: 'apply',
-      entries,
-      reviewedManifestId: 'a'.repeat(64),
-      confirmation: 'apply-reviewed-manifest',
-    });
-    expect(response.status).toBe(409);
-    expect(response.json.message).toContain('stale manifest');
-  });
-
-  it('previews and applies a value-free compatibility deletion through Work', async () => {
-    const ctx = context({ principal: migrationOperator });
-    const store = ctx.runtime.store as MemoryStore;
-    const task = {
-      task: { repo: 'octo/example', issue: 9 },
-      runCount: 0,
-      updatedAt: '2026-08-26T10:00:00.000Z',
-    };
-    await store.apply({
-      decision: { task, outbox: [] },
-      expectedRevision: undefined,
-    });
-    const record = (
-      await store.inventoryPersistedRecords({ kind: 'task', limit: 1 })
-    ).records[0];
-    if (record?.selector === undefined) throw new Error('missing task');
-    const entries = [
-      {
-        operation: 'delete',
-        selector: record.selector,
-        expectedFingerprint: record.fingerprint,
-      },
-    ];
-    const preview = await call(ctx, 'POST', '/orchestrator-migration', {
-      entries,
-    });
-    expect(preview.status).toBe(200);
-    expect(preview.json).toMatchObject({
-      mode: 'dry-run',
-      deletions: [{ selector: record.selector, status: 'ready', reasons: [] }],
-    });
-    expect(JSON.stringify(preview.json)).not.toContain('updatedAt');
-    const applied = await call(ctx, 'POST', '/orchestrator-migration', {
-      mode: 'apply',
-      entries,
-      reviewedManifestId: preview.json.manifestId,
-      confirmation: 'apply-reviewed-manifest',
-    });
-    expect(applied.status).toBe(200);
-    expect(await store.readTask(task.task)).toBeUndefined();
-  });
-
-  it('previews a proved-undeliverable pending outcome without exposing delivery data', async () => {
-    const ctx = context({ principal: migrationOperator });
-    const store = ctx.runtime.store as MemoryStore;
-    const task = {
-      task: { repo: 'octo/example', issue: 10 },
-      runCount: 1,
-      updatedAt: '2026-08-26T10:00:00.000Z',
-    };
-    const run = {
-      runId: 'octo/example#10/r1',
-      task: task.task,
-      state: 'finished' as const,
-      pipeline: 'codex',
-      requestId: 'legacy-run',
-      leaseExpiresAt: '2026-08-26T10:00:00.000Z',
-      events: [],
-      createdAt: '2026-08-26T10:00:00.000Z',
-      updatedAt: '2026-08-26T10:00:00.000Z',
-    };
-    const entry = {
-      entryId: `report/${run.runId}`,
-      kind: 'report-outcome' as const,
-      task: task.task,
-      runId: run.runId,
-      state: 'pending' as const,
-      attempts: 1,
-      firstFailedAt: '2026-08-26T10:00:00.000Z',
-      nextAttemptAt: '2026-08-26T10:01:00.000Z',
-      deliveryFailures: 1,
-      createdAt: '2026-08-26T10:00:00.000Z',
-      updatedAt: '2026-08-26T10:00:00.000Z',
-    };
-    await store.apply({
-      decision: { task, run, outbox: [entry] },
-      expectedRevision: undefined,
-    });
-    const record = (
-      await store.inventoryPersistedRecords({ kind: 'outbox', limit: 1 })
-    ).records[0];
-    if (record?.selector === undefined) throw new Error('missing outbox');
-    const response = await call(ctx, 'POST', '/orchestrator-migration', {
-      entries: [
-        {
-          operation: 'delete',
-          selector: record.selector,
-          expectedFingerprint: record.fingerprint,
-        },
-      ],
-    });
-    expect(response.status).toBe(200);
-    expect(response.json).toMatchObject({
-      mode: 'dry-run',
-      deletions: [{ selector: record.selector, status: 'ready', reasons: [] }],
-    });
-    expect(JSON.stringify(response.json)).not.toContain('firstFailedAt');
-    expect(JSON.stringify(response.json)).not.toContain('deliveryFailures');
-  });
 });

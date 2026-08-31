@@ -8,12 +8,6 @@ import type {
   TaskId,
 } from './model';
 import { taskKey } from './model';
-import type {
-  PersistedMigrationEntry,
-  PersistedMigrationPreview,
-  PersistedRecordKind,
-  PersistedRecordPage,
-} from './persisted-record-migration';
 
 /** GitHub delivery normally takes seconds; five minutes tolerates a slow call
  *  while still making a crashed drain retryable promptly. */
@@ -249,27 +243,6 @@ export interface OrchestratorStore {
   /** Every `queue.state === 'queued'` run, oldest first, bounded by
    *  `limit` (default 200). */
   listQueuedRuns(limit?: number): Promise<Run[]>;
-
-  /**
-   * One-shot, app-owned migration boundary for records written before the
-   * strict Work cutover. It is deliberately limited to the three fixed
-   * orchestrator collections, bounded pages, and reviewed full-record
-   * manifests; it is not a generic Firestore client. Normal readers retain
-   * their compatibility behavior until a separately verified phase removes
-   * this surface and the readers together.
-   */
-  inventoryPersistedRecords(input: {
-    kind: PersistedRecordKind;
-    limit: number;
-    cursor?: string;
-  }): Promise<PersistedRecordPage>;
-  previewPersistedMigration(
-    entries: readonly PersistedMigrationEntry[],
-  ): Promise<PersistedMigrationPreview>;
-  applyPersistedMigration(input: {
-    entries: readonly PersistedMigrationEntry[];
-    reviewedManifestId: string;
-  }): Promise<PersistedMigrationPreview>;
 }
 
 /** Opaque-at-the-API-boundary cursor for the all-anchor task feed. */
