@@ -70,8 +70,8 @@ run() {
         FAKE_OIDC_TOKEN='fake-oidc-jwt' \
         ACTIONS_ID_TOKEN_REQUEST_URL='https://oidc.example/token?api-version=2' \
         ACTIONS_ID_TOKEN_REQUEST_TOKEN='runner-bearer' \
-        ENDPOINT='https://lcars.example/api/control-plane/request' \
-        AUDIENCE='agent-lcars-dispatch-request' \
+        ENDPOINT='https://lcars.example/api/work/v1/dispatches/github' \
+        AUDIENCE='agent-lcars-work' \
         TIMEOUT_SECONDS='60' \
         "$@" bash "$script" 2>&1
   )"
@@ -94,7 +94,7 @@ fail() {
 #    the bearer, the JSON content type, and the exact body.
 run $'0 {"ok":true}' PAYLOAD='{"issue": 7}'
 test "$status" = 0 || fail "single payload must succeed"
-grep -q 'audience=agent-lcars-dispatch-request' <<<"$curl_log" ||
+grep -q 'audience=agent-lcars-work' <<<"$curl_log" ||
   fail "token mint must request the audience"
 grep -q 'Authorization: bearer runner-bearer' <<<"$curl_log" ||
   fail "token mint must use the runner's request bearer"

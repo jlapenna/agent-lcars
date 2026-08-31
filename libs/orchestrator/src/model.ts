@@ -215,9 +215,8 @@ export const taskSchema = z.strictObject({
    *  its first request and never modified by the orchestrator afterward.
    *  A native anchor always carries one; a GitHub anchor carries one once
    *  console-side derivation has populated it (sub-project 5's `work` for
-   *  every anchor) and is absent otherwise -- a legacy task, or one
-   *  requested through a path that does not derive it
-   *  (`handleDispatchRequest`; see the design spec). */
+   *  every anchor). Older persisted GitHub Task records can still lack it
+   *  until the separately tracked historical-record migration completes. */
   work: workPayloadSchema.optional(),
   /** Native anchors only: set by `closeTask` when an operator closes an
    *  item that has no live run. A closed task refuses further requests. */

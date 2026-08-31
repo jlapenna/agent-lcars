@@ -88,7 +88,7 @@ const PUBLISHED = {
     },
     outputs: ['status-code', 'result'],
   },
-  // The fleet's one OIDC-mint-then-POST dispatch snippet (#1340 A-R3/D7):
+  // The fleet's one OIDC-mint-then-POST transport (#1340 A-R3/D7):
   // consumers are sprinkles' pr-heal/playbook-unstick-prs/visual-refresh/
   // post-deploy-verify and this repo's own dispatch-reconcile. Exactly one
   // of payload/payloads may be set; `payloads` (newline-delimited compact

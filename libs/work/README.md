@@ -59,8 +59,8 @@ anchor to that signed repository. The admitted request stores the same Work
 payload and reaches the same orchestrator → QueueExecutor route as every
 other Work API admission.
 
-During #1633's additive migration, member workflows may use the published
-`request-control-plane` composite's generic OIDC POST transport with
+GitHub-anchor workflows use the published `request-control-plane` composite's
+generic OIDC POST transport with
 `endpoint=https://lcars.jlapenna.net/api/work/v1/dispatches/github` and
 `audience=agent-lcars-work`. The composite does not interpret this API's
 payload or response; the generated OpenAPI contract is authoritative.

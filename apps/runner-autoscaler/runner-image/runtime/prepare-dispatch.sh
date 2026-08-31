@@ -132,9 +132,9 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
     '$i + { title: $w.spec.title, body: $w.spec.description }')"
 else
-  # Legacy: no work payload yet on this task (pre-sub-project-5, or a task
-  # created through the internal-request path -- see the design spec's
-  # "handleDispatchRequest is not a derivation site" note). Unchanged.
+  # A historical persisted task can predate its derived Work payload. Its
+  # anchor remains the authoritative source until the record migration reads
+  # and updates that historical state.
   anchor_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE")"
   comments_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
 fi

@@ -2,8 +2,8 @@ name: Request control plane
 description: >-
   Mint a GitHub Actions OIDC token for the given audience and POST a
   caller-assembled JSON payload (or a bodyless request) to an Agent LCARS
-  control-plane endpoint with that token as the bearer. The single
-  implementation of the fleet's OIDC-mint-then-POST dispatch snippet
+  endpoint with that token as the bearer. The single implementation of the
+  fleet's OIDC-mint-then-POST transport
   (jlapenna/agent-lcars#1340 A-R3/D7); the calling job must grant
   `id-token: write`. Fails loud on any non-2xx response, with the response
   body in the log.

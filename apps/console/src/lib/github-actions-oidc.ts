@@ -11,19 +11,11 @@ import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
 const RECONCILE_OIDC_AUDIENCE = 'agent-lcars-dispatch-reconcile';
 const RECONCILE_WORKFLOW_PATH = '.github/workflows/dispatch-reconcile.yml';
 
-// #1215: the internal-workflow request path (any onboarded repo's own
-// main-branch automation asking the control plane to work a task, carrying
-// `runbook`/`context` dispatch parameters the label-admission webhook has no
-// way to express). Audience/claims verified the same way as the reconciler
-// route -- see `verifyRequestOidcToken` below.
-const REQUEST_OIDC_AUDIENCE = 'agent-lcars-dispatch-request';
-/** Internal-caller trigger shapes covered today: sprinkles's four surviving
- *  `agent-router.yml` callers (pr-heal, playbook-unstick-prs, visual-refresh,
- *  post-deploy-verify) run as a mix of these. Not `pull_request`/
+/** GitHub Actions Work-dispatch event shapes. Not `pull_request`/
  *  `issue_comment`/etc -- those already have a trusted path via the webhook
- *  route; this one is for internal automation with no human-authored event
- *  to admit against. */
-const REQUEST_EVENT_NAMES: ReadonlySet<string> = new Set([
+ *  route; this is for repository automation with no human-authored event to
+ *  admit against. */
+const WORK_API_EVENT_NAMES: ReadonlySet<string> = new Set([
   'schedule',
   'workflow_dispatch',
   'workflow_run',
@@ -31,9 +23,7 @@ const REQUEST_EVENT_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /** GitHub Actions callers of the public Work API use its normal audience,
- * then become a normal `github-actions:<repository>` Work grant subject.
- * This is deliberately separate from #1215's legacy request-route audience:
- * phase one is additive so existing callers can migrate without an alias. */
+ * then become a normal `github-actions:<repository>` Work grant subject. */
 const WORK_API_OIDC_AUDIENCE = 'agent-lcars-work';
 
 const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com';
@@ -42,12 +32,6 @@ const githubActionsJwks = createRemoteJWKSet(
 );
 
 export interface ReconcileOidcIdentity {
-  repository: string;
-  repositoryId: number;
-  runId: number;
-}
-
-export interface RequestOidcIdentity {
   repository: string;
   repositoryId: number;
   runId: number;
@@ -183,11 +167,8 @@ export async function verifySessionPinTickOidcToken(
 /**
  * `workflow_ref` names ANY workflow file in this repository's own
  * `.github/workflows/` on `main` -- not one pinned path, unlike the
- * reconciler's canonical scheduler. #1215's request endpoint
- * exists precisely because the callers are NOT one shared workflow: they are
- * an open-ended set of a repo's own internal automation (sprinkles's
- * pr-heal, playbook-unstick-prs, visual-refresh, post-deploy-verify today;
- * more later without a change here).
+ * reconciler's canonical scheduler. GitHub-anchor Work dispatch supports an
+ * open-ended set of a repository's own maintained automation.
  *
  * This is safe to leave open because `main` is protected by this
  * deployment's own branch-protection ruleset (required review, required
@@ -200,7 +181,7 @@ export async function verifySessionPinTickOidcToken(
  * makes this guarantee hold: a workflow file on an unprotected branch or in
  * a fork PR never reaches this claim shape.
  */
-function isOwnWorkflowRefOnMain(
+function isWorkApiWorkflowRefOnMain(
   workflowRef: unknown,
   repository: string,
 ): boolean {
@@ -221,62 +202,7 @@ function isOwnWorkflowRefOnMain(
   return file.length > 0 && !file.includes('/') && /\.ya?ml$/u.test(file);
 }
 
-export function assertRequestOidcClaims(
-  claims: JWTPayload,
-  repository: string,
-): RequestOidcIdentity {
-  if (claims['repository'] !== repository) {
-    throw new Error('OIDC repository claim does not match the control plane');
-  }
-  if (claims['ref'] !== 'refs/heads/main') {
-    throw new Error('OIDC ref claim is not main');
-  }
-  if (!REQUEST_EVENT_NAMES.has(String(claims['event_name']))) {
-    throw new Error('OIDC event_name claim is not an allowed request event');
-  }
-  if (!isOwnWorkflowRefOnMain(claims['workflow_ref'], repository)) {
-    throw new Error(
-      'OIDC workflow_ref claim is not a workflow of this repository on main',
-    );
-  }
-  return {
-    repository,
-    repositoryId: positiveIntegerClaim(
-      claims['repository_id'],
-      'repository_id',
-    ),
-    runId: positiveIntegerClaim(claims['run_id'], 'run_id'),
-  };
-}
-
-/**
- * Verifies signature/issuer/audience, then checks the *claimed* repository
- * against the allow-list before running the per-repo claim assertions.
- * Every allow-listed repository is trusted to request work through its own workflows on
- * `main`; see {@link isOwnWorkflowRefOnMain} for why that's safe.
- */
-export async function verifyRequestOidcToken(
-  token: string,
-  allowedRepositories: string[],
-): Promise<RequestOidcIdentity> {
-  const { payload } = await jwtVerify(token, githubActionsJwks, {
-    issuer: GITHUB_ACTIONS_ISSUER,
-    audience: REQUEST_OIDC_AUDIENCE,
-  });
-  const claimedRepository = payload['repository'];
-  if (
-    typeof claimedRepository !== 'string' ||
-    !allowedRepositories.includes(claimedRepository)
-  ) {
-    throw new Error(
-      'OIDC repository claim is not an allow-listed control-plane repository',
-    );
-  }
-  return assertRequestOidcClaims(payload, claimedRepository);
-}
-
-/** Work API equivalent of the legacy request-route claim policy: any
- * protected-main workflow belonging to an allow-listed repository may ask to
+/** Any protected-main workflow belonging to an allow-listed repository may
  * dispatch its own GitHub anchor. Authorization after this cryptographic
  * verification is the ordinary Work principal/grant lookup. */
 export function assertWorkApiOidcClaims(
@@ -289,10 +215,10 @@ export function assertWorkApiOidcClaims(
   if (claims['ref'] !== 'refs/heads/main') {
     throw new Error('OIDC ref claim is not main');
   }
-  if (!REQUEST_EVENT_NAMES.has(String(claims['event_name']))) {
+  if (!WORK_API_EVENT_NAMES.has(String(claims['event_name']))) {
     throw new Error('OIDC event_name claim is not an allowed Work API event');
   }
-  if (!isOwnWorkflowRefOnMain(claims['workflow_ref'], repository)) {
+  if (!isWorkApiWorkflowRefOnMain(claims['workflow_ref'], repository)) {
     throw new Error(
       'OIDC workflow_ref claim is not a workflow of this repository on main',
     );
@@ -321,7 +247,7 @@ export async function verifyWorkApiOidcToken(
     !allowedRepositories.includes(claimedRepository)
   ) {
     throw new Error(
-      'OIDC repository claim is not an allow-listed control-plane repository',
+      'OIDC repository claim is not an allow-listed Work API repository',
     );
   }
   return assertWorkApiOidcClaims(payload, claimedRepository);
