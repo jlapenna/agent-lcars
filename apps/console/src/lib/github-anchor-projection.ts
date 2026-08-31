@@ -210,6 +210,11 @@ const reviewThreadPayloadSchema = z.object({
     is_resolved: z.boolean(),
   }),
 });
+const pullRequestReviewPayloadSchema = z.object({
+  repository: z.object({ full_name: z.string().min(1).max(140) }),
+  pull_request: z.object({ number: z.number().int().positive() }),
+  review: z.object({ id: z.number().int().positive() }),
+});
 
 /**
  * Returns the bounded anchor invalidations carried by a configured webhook.
@@ -257,9 +262,14 @@ export function githubAnchorProjectionAnchorsFromDelivery(input: {
         }) satisfies GithubAnchorProjection['anchor'],
     );
   }
-  if (input.event !== 'pull_request_review_thread') return [];
-  const parsed = reviewThreadPayloadSchema.safeParse(input.payload);
+  const parsed =
+    input.event === 'pull_request_review_thread'
+      ? reviewThreadPayloadSchema.safeParse(input.payload)
+      : input.event === 'pull_request_review'
+        ? pullRequestReviewPayloadSchema.safeParse(input.payload)
+        : undefined;
   if (
+    parsed === undefined ||
     !parsed.success ||
     !isControlPlaneRepository(parsed.data.repository.full_name)
   ) {

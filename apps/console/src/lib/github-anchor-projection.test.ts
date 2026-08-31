@@ -62,6 +62,14 @@ describe('githubAnchorProjectionFromDelivery', () => {
           thread: { id: 'PRRT_1', is_resolved: true },
         },
       },
+      {
+        event: 'pull_request_review',
+        payload: {
+          repository: { full_name: REPO },
+          pull_request: { number: 42 },
+          review: { id: 1234 },
+        },
+      },
     ];
     for (const input of cases) {
       expect(githubAnchorProjectionAnchorsFromDelivery(input)).toEqual([

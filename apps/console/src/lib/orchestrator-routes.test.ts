@@ -165,6 +165,29 @@ describe('handleWebhookDelivery', () => {
     expect(refresh).toHaveBeenCalledWith(ISSUE);
   });
 
+  it('refreshes the affected PR after a submitted or dismissed review', async () => {
+    const { deps } = fixture();
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    deps.refreshGithubAnchorProjection = refresh;
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'pull_request_review',
+      deliveryId: 'review-state-delivery',
+      payload: {
+        action: 'dismissed',
+        repository: { full_name: REPO },
+        pull_request: { number: ISSUE.issue },
+        review: { id: 1234 },
+      },
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'unhandled-event' },
+    });
+    expect(refresh).toHaveBeenCalledWith(ISSUE);
+  });
+
   it('ignores a delivery with no trigger label', async () => {
     const { deps } = fixture();
     const result = await handleWebhookDelivery(deps, {

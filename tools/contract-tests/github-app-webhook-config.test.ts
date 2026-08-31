@@ -64,6 +64,7 @@ describe('GitHub App webhook configuration', () => {
               'issue_comment',
               'issues',
               'pull_request',
+              'pull_request_review',
               'pull_request_review_thread',
             ],
             hook_attributes: { active: true, url: webhookUrl },
@@ -89,6 +90,7 @@ describe('GitHub App webhook configuration', () => {
         'issue_comment',
         'issues',
         'pull_request',
+        'pull_request_review',
         'pull_request_review_thread',
       ],
     });
@@ -164,6 +166,7 @@ describe('GitHub App webhook configuration', () => {
                 'issue_comment',
                 'issues',
                 'pull_request',
+                'pull_request_review',
                 'pull_request_review_thread',
               ],
               ...(hookAttributes ? { hook_attributes: hookAttributes } : {}),

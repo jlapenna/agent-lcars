@@ -9,6 +9,7 @@ const ADMITTED_EVENTS = new Set([
   'issues',
   'issue_comment',
   'pull_request',
+  'pull_request_review',
   'check_run',
   'pull_request_review_thread',
 ]);

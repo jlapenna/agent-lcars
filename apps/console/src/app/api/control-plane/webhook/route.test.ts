@@ -63,7 +63,7 @@ describe('POST /api/control-plane/webhook repository admission', () => {
     expect(enqueueGitHubWebhook).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['check_run', 'pull_request_review_thread'])(
+  it.each(['check_run', 'pull_request_review', 'pull_request_review_thread'])(
     'admits the %s projection signal event for a configured repository',
     async (event) => {
       const response = await POST(
