@@ -17,7 +17,6 @@ import {
 import {
   getWatchedRepos,
   parseRepoFilterParam,
-  primaryWatchedRepo,
   repoDisplayName,
   repoItemKey,
   repoKey,
@@ -30,6 +29,7 @@ import {
 } from '../../lib/logical-work';
 import { indexSessionsByRunId } from '../../lib/run-classification';
 import { getRunnerSessionsByRunId } from '../../lib/runner-sessions';
+import { filterSessionsForRepo } from '../../lib/session-repo-filter';
 import type { RunItemRef } from '../agent-activity-panel';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
 import { DataWarnings } from '../console-header';
@@ -134,16 +134,11 @@ async function AgentsPageBody({
   // Applied last, after every cross-repo join above already ran against the
   // full, unfiltered data - see page.tsx's identical comment for why.
   const filteredItems = items.filter((item) => matchesFilter(item.repo));
-  // A doc with no `repo` predates Phase 0's field - session-archive.ts and
-  // cli-sessions.ts both already treat that as belonging to the primary
-  // repo when building links, so the filter must agree (see page.tsx's
-  // identical comment).
-  const filteredActiveSessions = activeSessions.filter((s) =>
-    matchesFilter(s.repo ?? primaryWatchedRepo()),
+  const filteredActiveSessions = filterSessionsForRepo(
+    activeSessions,
+    repoFilter,
   );
-  const filteredCliSessions = cliSessions.filter((s) =>
-    matchesFilter(s.repo ?? primaryWatchedRepo()),
-  );
+  const filteredCliSessions = filterSessionsForRepo(cliSessions, repoFilter);
   const filteredActivity = repoFilter
     ? {
         ...activity,

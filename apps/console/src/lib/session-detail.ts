@@ -1,7 +1,6 @@
 import 'server-only';
 
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import { isSessionRenderable, sessionAgent } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   getSessionDoc,
@@ -29,8 +28,8 @@ export type SessionDetailResult =
  * `getSessionTranscript` already absorbs it into its own `warning` field, so
  * the header still renders even when the transcript can't be shown.
  *
- * Only fetched when `isSessionRenderable(doc)` is true (#3123 phase 2,
- * updated to read the `renderable` field in #645): `getSessionTranscript`
+ * Only fetched when the persisted `renderable` field is true:
+ * `getSessionTranscript`
  * parses `transcriptGcsUri` as a single `.jsonl` object via the agent-specific
  * branch in `parseTranscriptTimeline` (see `RENDERABLE_TRANSCRIPT_AGENTS` in
  * `transcript-timeline.ts`). Unsupported agents may archive-first rather
@@ -41,10 +40,8 @@ export type SessionDetailResult =
  * would fail-soft into a scary warning on every one of their session pages
  * for no benefit, since there's nothing renderable yet. The page instead
  * shows a short note that the archive exists without attempting to
- * fetch/parse it. This gate is deliberately read from `doc.renderable`
- * (Worker runtime's own claim, set once at capture time) rather than
- * re-derived here from `sessionAgent(doc)` - see `isSessionRenderable`'s own
- * doc comment for why re-deriving it was Bug 3.
+ * fetch/parse it. This gate is deliberately read from `doc.renderable`, the
+ * Worker runtime's capture-time claim, rather than re-derived from `agent`.
  */
 export async function getSessionDetail(
   sessionId: string,
@@ -66,10 +63,8 @@ export async function getSessionDetail(
   }
 
   const transcript =
-    doc.source === 'issue-agent' &&
-    doc.transcriptGcsUri &&
-    isSessionRenderable(doc)
-      ? await getSessionTranscript(doc.transcriptGcsUri, sessionAgent(doc))
+    doc.source === 'issue-agent' && doc.transcriptGcsUri && doc.renderable
+      ? await getSessionTranscript(doc.transcriptGcsUri, doc.agent)
       : undefined;
 
   return { status: 'ok', doc, ...(transcript && { transcript }) };

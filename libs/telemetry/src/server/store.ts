@@ -12,6 +12,7 @@ import {
   Timestamp as AdminTimestamp,
 } from 'firebase-admin/firestore';
 
+import { parseSessionDoc } from '../lib/session-doc';
 import { SessionDoc, SessionSource, SessionWrite } from '../lib/types';
 import { AGENT_TELEMETRY_DATABASE_ID } from './firestore-client';
 
@@ -211,12 +212,12 @@ export async function listSessionDocs(
   const docs = snapshot.docs.map((doc) => {
     const data = doc.data();
     const expireAt = data['expireAt'];
-    return {
+    return parseSessionDoc({
       ...data,
       ...(expireAt instanceof Timestamp && {
         expireAt: expireAt.toDate().toISOString(),
       }),
-    } as SessionDoc;
+    });
   });
   const sorted = docs.sort((a, b) =>
     b.lastActivityAt.localeCompare(a.lastActivityAt),
@@ -249,12 +250,12 @@ export async function getSessionDoc(
     return undefined;
   }
   const expireAt = data['expireAt'];
-  return {
+  return parseSessionDoc({
     ...data,
     ...(expireAt instanceof Timestamp && {
       expireAt: expireAt.toDate().toISOString(),
     }),
-  } as SessionDoc;
+  });
 }
 
 /** @internal Reset cached clients for testing only. */

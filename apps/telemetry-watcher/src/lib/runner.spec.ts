@@ -132,6 +132,7 @@ const NO_OVERLAY_STATE_DIR = '/nonexistent/agent-lcars-session-state-fixture';
 
 function baseConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   return {
+    repo: { owner: 'jlapenna', name: 'agent-lcars' },
     claudeProjectsDir: '/home/runner/.claude/projects',
     codexSessionsDir: '/home/runner/.codex/sessions',
     opencodeExportsDir: '/tmp/agent-lcars-opencode-exports',

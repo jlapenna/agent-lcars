@@ -687,6 +687,7 @@ describe('WatcherDaemon', () => {
       resolveGitBranch: async () => undefined,
       resolveGitRepo: async () => undefined,
       forceSource: 'issue-agent',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
       intentId: 'octo/example#7/r1',
     });
 
@@ -1684,6 +1685,7 @@ describe('WatcherDaemon', () => {
         // caller is, an omitted sessionStateDir must skip the overlay
         // entirely rather than reading from `undefined`.
         forceSource: 'issue-agent',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
         host: 'test-host',
         store,
         heartbeatIntervalMs: HEARTBEAT_MS,
@@ -2002,6 +2004,7 @@ describe('WatcherDaemon', () => {
           { path: '/root', adapter: 'claude-code', projectDirAllowlist: ['*'] },
         ],
         forceSource: 'issue-agent',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
         host: 'test-host',
         store,
         heartbeatIntervalMs: HEARTBEAT_MS,

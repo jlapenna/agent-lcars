@@ -9,6 +9,7 @@ import { getSessionDoc, listSessionDocs, SESSIONS_COLLECTION } from './store';
 const cliSession: CliSessionDoc = {
   sessionId: 'cli-session-1',
   source: 'cli',
+  agent: 'codex',
   liveness: 'live',
   startedAt: '2026-07-12T00:00:00.000Z',
   lastActivityAt: '2026-07-12T00:05:00.000Z',
@@ -29,6 +30,8 @@ const cliSession: CliSessionDoc = {
 const issueAgentSession: IssueAgentSessionDoc = {
   sessionId: 'runner-session-1',
   source: 'issue-agent',
+  agent: 'claude-code',
+  repo: { owner: 'jlapenna', name: 'agent-lcars' },
   liveness: 'ended',
   startedAt: '2026-07-11T00:00:00.000Z',
   lastActivityAt: '2026-07-11T00:30:00.000Z',
@@ -126,6 +129,15 @@ describe('listSessionDocs', () => {
     const [doc] = await listSessionDocs(firestore);
 
     expect(doc.expireAt).toBeUndefined();
+  });
+
+  it('rejects retired persisted compatibility shapes at the Firestore reader boundary', async () => {
+    const { agent: _agent, ...missingAgent } = cliSession;
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [{ id: missingAgent.sessionId, ...missingAgent }],
+    }) as unknown as Firestore;
+
+    await expect(listSessionDocs(firestore)).rejects.toThrow('explicit agent');
   });
 
   it('applies source as an equality filter', async () => {
@@ -236,5 +248,16 @@ describe('getSessionDoc', () => {
     const doc = await getSessionDoc(firestore, cliSession.sessionId);
 
     expect(doc?.expireAt).toBe('2026-08-11T00:05:00.000Z');
+  });
+
+  it('rejects an issue-agent doc without its required repository', async () => {
+    const { repo: _repo, ...missingRepo } = issueAgentSession;
+    const firestore = new FakeFirestore({
+      [SESSIONS_COLLECTION]: [{ id: missingRepo.sessionId, ...missingRepo }],
+    }) as unknown as Firestore;
+
+    await expect(
+      getSessionDoc(firestore, missingRepo.sessionId),
+    ).rejects.toThrow('canonical GitHub repo');
   });
 });

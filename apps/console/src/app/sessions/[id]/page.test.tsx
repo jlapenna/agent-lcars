@@ -12,6 +12,8 @@ function agentDoc(
   return {
     sessionId: 'agent-1',
     source: 'issue-agent',
+    agent: 'claude-code',
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     liveness: 'ended',
     startedAt: '2026-07-19T10:00:00.000Z',
     lastActivityAt: '2026-07-19T10:05:00.000Z',
@@ -45,6 +47,7 @@ describe('ArchivedSessionTranscript', () => {
         doc={agentDoc({
           agent: 'claude-code',
           transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl',
+          renderable: true,
         })}
       />,
     );
@@ -58,6 +61,7 @@ describe('ArchivedSessionTranscript', () => {
         doc={agentDoc({
           agent: 'claude-code',
           transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl',
+          renderable: true,
         })}
         transcript={{ events: [] }}
       />,
@@ -68,17 +72,6 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.queryByTestId('session-archive-note')).toBeNull();
   });
 
-  it('renders the transcript timeline for a legacy doc with no agent field (defaults to claude-code)', () => {
-    renderWithProvider(
-      <ArchivedSessionTranscript
-        doc={agentDoc({ transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl' })}
-        transcript={{ events: [] }}
-      />,
-    );
-
-    expect(screen.getByTestId('transcript-timeline')).toBeInTheDocument();
-  });
-
   it('renders a muted archive note for an unsupported agent', () => {
     renderWithProvider(
       <ArchivedSessionTranscript
@@ -86,6 +79,7 @@ describe('ArchivedSessionTranscript', () => {
           agent: 'opencode',
           transcriptGcsUri:
             'gs://supersprinklesracing-agent-session-transcripts/runs/999/opencode/',
+          renderable: false,
         })}
       />,
     );
@@ -134,14 +128,13 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.queryByTestId('transcript-timeline')).toBeNull();
   });
 
-  it('keeps a legacy Codex doc without a renderability claim archive-only', () => {
-    // Docs captured before Codex timeline support deliberately retain their
-    // original archive-only contract even if a caller passes transcript data.
+  it('keeps an explicitly archive-only Codex doc archive-only', () => {
     renderWithProvider(
       <ArchivedSessionTranscript
         doc={agentDoc({
           agent: 'codex',
           transcriptGcsUri: 'gs://bucket/runs/1/codex/',
+          renderable: false,
         })}
         transcript={{ events: [] }}
       />,

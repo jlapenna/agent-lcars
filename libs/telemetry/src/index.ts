@@ -1,4 +1,3 @@
-export * from './lib/agent';
 export * from './lib/codex-transcript-adapter';
 export * from './lib/liveness';
 export * from './lib/opencode-transcript-adapter';
@@ -6,7 +5,6 @@ export * from './lib/reducer';
 export * from './lib/run-status-classifier';
 export * from './lib/runner-capture';
 export * from './lib/session-doc';
-export * from './lib/session-schema-backfill';
 export * from './lib/session-status-annotation';
 export * from './lib/session-title-annotation';
 export * from './lib/session-title-selection';

@@ -18,15 +18,14 @@ import { repoKey } from './watched-repo';
  * numbers (and the PR numbers joined onto a session) only disambiguate
  * within one repo, so without this check two watched repos each holding a
  * `#42` would false-match every CLI session working either one to *both*
- * items. A session with no `repo` (legacy telemetry doc predating Phase 0)
- * still matches on number alone, same fail-open behavior as every other
- * repo-less-doc fallback in this app.
+ * items. A repo-less CLI session is host-scoped, so it cannot claim a
+ * GitHub item by number alone.
  */
 export function sessionReferencesItemNumber(
   session: Pick<CliSession, 'pr' | 'branch' | 'repo'>,
   item: Pick<ActionItem, 'number' | 'repo'>,
 ): boolean {
-  if (session.repo && repoKey(session.repo) !== repoKey(item.repo)) {
+  if (!session.repo || repoKey(session.repo) !== repoKey(item.repo)) {
     return false;
   }
   if (session.pr?.number === item.number) return true;

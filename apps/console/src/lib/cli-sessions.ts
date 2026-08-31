@@ -5,22 +5,13 @@ import type {
   SessionAgent,
   SessionLiveness,
 } from '@agent-lcars/telemetry';
-import {
-  displayLiveness,
-  sessionAgent,
-  totalTokens,
-} from '@agent-lcars/telemetry';
+import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import {
-  getGithubClient,
-  getWatchedRepos,
-  repoKey,
-  type WatchedRepo,
-} from './github-client';
+import { getGithubClient, repoKey, type WatchedRepo } from './github-client';
 
 /** Sessions with no activity in this window don't render at all - the
  * telemetry collection keeps one doc per session forever, and the dashboard
@@ -41,10 +32,7 @@ export interface JoinedPr {
 export interface CliSession {
   sessionId: string;
   liveness: SessionLiveness;
-  /** Resolved via `sessionAgent()` at fetch time (never the doc's raw
-   * optional `agent` field), so it's always a concrete value here -
-   * defaults to `'claude-code'` for the overwhelming majority of sessions
-   * that predate #3123 or simply never carried a different agent. */
+  /** Explicit adapter identity from the persisted session contract. */
   agent: SessionAgent;
   host?: string;
   branch?: string;
@@ -85,7 +73,7 @@ function toCliSession(doc: CliSessionDoc, now: string): CliSession {
       now,
       doc.observedAt,
     ),
-    agent: sessionAgent(doc),
+    agent: doc.agent,
     host: doc.host,
     branch: doc.branch,
     worktree: doc.worktree,
@@ -229,13 +217,11 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   // now the unit of work. Two watched repos could legitimately share a
   // branch-naming convention, so the join itself stays repo-scoped.
   const prsByRepo = new Map<string, Promise<Map<string, JoinedPr>>>();
-  const failedPrRepos = new Set<string>();
   const openPrsFor = (repo: WatchedRepo): Promise<Map<string, JoinedPr>> => {
     const key = repoKey(repo);
     let pending = prsByRepo.get(key);
     if (!pending) {
       pending = listOpenPrsByBranch(repo).catch((error) => {
-        failedPrRepos.add(key);
         console.error(
           'agent-lcars: failed to list open PRs for branch joins (%s):',
           key,
@@ -253,29 +239,10 @@ export async function getCliSessions(): Promise<CliSessionsResult> {
   const sessions = await Promise.all(
     capped.map(async ([doc, session]) => {
       session.pr = prFromDeliverables(doc);
-      if (!session.pr && doc.branch && isActive(session.liveness)) {
+      if (!session.pr && doc.repo && doc.branch && isActive(session.liveness)) {
         const branch = doc.branch;
-        const repos = doc.repo ? [doc.repo] : getWatchedRepos();
-        const openPrsByRepo = await Promise.all(
-          repos.map((repo) => openPrsFor(repo)),
-        );
-        // A failed lookup leaves a legacy repo-less session indeterminate:
-        // the unavailable repo could contain the same branch and be the
-        // session's actual repository. Never resolve from partial evidence.
-        if (
-          !doc.repo &&
-          repos.some((repo) => failedPrRepos.has(repoKey(repo)))
-        ) {
-          return session;
-        }
-        const matches = openPrsByRepo.flatMap((openPrs) => {
-          const match = openPrs.get(branch);
-          return match ? [match] : [];
-        });
-        // A branch name can exist in more than one watched repo. Preserve a
-        // legacy session's unknown repository instead of attaching a
-        // plausible-looking but potentially wrong link.
-        session.pr = matches.length === 1 ? matches[0] : undefined;
+        const openPrs = await openPrsFor(doc.repo);
+        session.pr = openPrs.get(branch);
       }
       return session;
     }),

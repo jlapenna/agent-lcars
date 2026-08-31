@@ -195,13 +195,8 @@ const AGENT_COLORS: Record<SessionAgent, string> = {
 
 /**
  * Session-identity badge: which coding agent produced this session's
- * transcript. Renders nothing for `'claude-code'` - both `sessionAgent()`'s
- * default for any doc predating #3123 and, today, every single session that
- * exists - so the overwhelmingly common case stays visually quiet and only
- * a genuinely different agent earns a badge. Callers resolve the value via
- * `sessionAgent(doc)` (or a view-model field already resolved that way, see
- * `CliSession.agent`/`SessionRow.agent`) rather than passing the raw
- * optional field through.
+ * transcript. Renders nothing for `'claude-code'`, keeping the common case
+ * visually quiet; every caller passes the persisted explicit identity.
  */
 export function AgentBadge({ agent }: { agent: SessionAgent }) {
   if (agent === 'claude-code') {

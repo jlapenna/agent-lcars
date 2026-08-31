@@ -5,13 +5,15 @@ import {
   buildSessionWrite,
   CLI_SESSION_RETENTION_DAYS,
   ISSUE_AGENT_SESSION_RETENTION_DAYS,
+  parseSessionDoc,
 } from './session-doc';
 import { SessionSummary } from './types';
 
 function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
-  return {
+  const summary: SessionSummary = {
     sessionId: 'session-1',
     source: 'cli',
+    agent: 'claude-code',
     startedAt: '2026-07-10T10:00:00.000Z',
     lastActivityAt: '2026-07-10T10:05:00.000Z',
     turns: 2,
@@ -25,6 +27,9 @@ function baseSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     deliverables: { prNumbers: [], commitShas: [] },
     ...overrides,
   };
+  return summary.source === 'issue-agent' && summary.repo === undefined
+    ? { ...summary, repo: { owner: 'jlapenna', name: 'agent-lcars' } }
+    : summary;
 }
 
 describe('buildSessionDoc', () => {
@@ -42,6 +47,7 @@ describe('buildSessionDoc', () => {
     expect(doc).toEqual({
       sessionId: 'session-1',
       source: 'cli',
+      agent: 'claude-code',
       liveness: 'live',
       startedAt: '2026-07-10T10:00:00.000Z',
       lastActivityAt: '2026-07-10T10:05:00.000Z',
@@ -72,7 +78,11 @@ describe('buildSessionDoc', () => {
         cwd: '/home/runner/work/members/members',
       }),
       'ended',
-      { runId: 'run-123', issueNumber: 2539 },
+      {
+        runId: 'run-123',
+        issueNumber: 2539,
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      },
     );
 
     const expectedExpireAt = new Date('2026-07-10T10:05:00.000Z');
@@ -83,6 +93,8 @@ describe('buildSessionDoc', () => {
     expect(doc).toEqual({
       sessionId: 'session-1',
       source: 'issue-agent',
+      agent: 'claude-code',
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
       liveness: 'ended',
       startedAt: '2026-07-10T10:00:00.000Z',
       lastActivityAt: '2026-07-10T10:05:00.000Z',
@@ -312,9 +324,10 @@ describe('buildSessionDoc', () => {
     expect(doc).toMatchObject({ agent: 'opencode' });
   });
 
-  it('omits agent entirely when absent from the summary (legacy reducer output)', () => {
-    const doc = buildSessionDoc(baseSummary(), 'idle');
-    expect(doc).not.toHaveProperty('agent');
+  it('rejects a summary that lacks an explicit agent', () => {
+    const summary = baseSummary();
+    delete (summary as Partial<SessionSummary>).agent;
+    expect(() => buildSessionDoc(summary, 'idle')).toThrow('explicit agent');
   });
 
   it('threads agent through on an issue-agent doc too', () => {
@@ -362,13 +375,12 @@ describe('buildSessionDoc', () => {
     });
   });
 
-  it('omits repo entirely when absent from options (issue-agent)', () => {
-    const doc = buildSessionDoc(
-      baseSummary({ source: 'issue-agent' }),
-      'ended',
-      { runId: 'run-123' },
-    );
-    expect(doc).not.toHaveProperty('repo');
+  it('rejects an issue-agent summary with no repository', () => {
+    const summary = baseSummary({ source: 'issue-agent' });
+    delete (summary as Partial<SessionSummary>).repo;
+    expect(() =>
+      buildSessionDoc(summary, 'ended', { runId: 'run-123' }),
+    ).toThrow('canonical GitHub repo');
   });
 
   it('sets renderable: true on an issue-agent doc archiving a claude-code transcript', () => {
@@ -401,7 +413,7 @@ describe('buildSessionDoc', () => {
     expect(doc).toMatchObject({ renderable: true });
   });
 
-  it('defaults renderable to the claude-code assumption when the summary has no agent field (legacy reducer output)', () => {
+  it('writes renderable from the explicit agent on an archived issue session', () => {
     const doc = buildSessionDoc(
       baseSummary({ source: 'issue-agent' }),
       'ended',
@@ -459,6 +471,43 @@ describe('buildSessionDoc', () => {
 
     expect(doc).not.toHaveProperty('status');
     expect(doc).not.toHaveProperty('statusUpdatedAt');
+  });
+});
+
+describe('parseSessionDoc', () => {
+  it('accepts a repo-less CLI session and rejects every retired persisted compatibility shape', () => {
+    expect(parseSessionDoc({ source: 'cli', agent: 'codex' })).toMatchObject({
+      source: 'cli',
+      agent: 'codex',
+    });
+
+    expect(() => parseSessionDoc({ source: 'cli' })).toThrow('explicit agent');
+    expect(() =>
+      parseSessionDoc({
+        source: 'cli',
+        agent: 'codex',
+        repo: { owner: 'bad owner', name: 'repo' },
+      }),
+    ).toThrow('malformed GitHub repo');
+    expect(() =>
+      parseSessionDoc({ source: 'issue-agent', agent: 'claude-code' }),
+    ).toThrow('canonical GitHub repo');
+    expect(() =>
+      parseSessionDoc({
+        source: 'issue-agent',
+        agent: 'claude-code',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+        transcriptGcsUri: 'gs://bucket/session.jsonl',
+      }),
+    ).toThrow('explicit renderable');
+    expect(() =>
+      parseSessionDoc({
+        source: 'issue-agent',
+        agent: 'claude-code',
+        repo: { owner: 'jlapenna', name: 'agent-lcars' },
+        renderable: true,
+      }),
+    ).toThrow('cannot declare renderable');
   });
 });
 

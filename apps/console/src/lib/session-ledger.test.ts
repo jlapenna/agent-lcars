@@ -10,6 +10,7 @@ function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {
     sessionId: 'cli-1',
     source: 'cli',
+    agent: 'claude-code',
     liveness: 'ended',
     startedAt: '2026-01-05T10:00:00.000Z', // Monday of 2026-W02
     lastActivityAt: '2026-01-05T10:05:00.000Z',
@@ -32,6 +33,8 @@ function agentDoc(
   return {
     sessionId: 'agent-1',
     source: 'issue-agent',
+    agent: 'claude-code',
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     liveness: 'ended',
     startedAt: '2026-01-05T10:00:00.000Z',
     lastActivityAt: '2026-01-05T10:05:00.000Z',

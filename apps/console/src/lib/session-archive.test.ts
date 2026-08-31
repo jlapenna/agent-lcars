@@ -22,6 +22,7 @@ function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {
     sessionId: 'cli-1',
     source: 'cli',
+    agent: 'claude-code',
     liveness: 'ended',
     startedAt: '2026-07-10T10:00:00.000Z',
     lastActivityAt: '2026-07-10T10:05:00.000Z',
@@ -34,6 +35,7 @@ function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
       cacheReadTokens: 0,
     },
     deliverables: { prNumbers: [], commitShas: [] },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     host: 'joes-workstation',
     ...overrides,
   };
@@ -45,6 +47,8 @@ function agentDoc(
   return {
     sessionId: 'agent-1',
     source: 'issue-agent',
+    agent: 'claude-code',
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     liveness: 'ended',
     startedAt: '2026-07-10T10:00:00.000Z',
     lastActivityAt: '2026-07-10T10:05:00.000Z',
@@ -148,7 +152,7 @@ describe('toSessionRow', () => {
     expect(row.runId).toBeUndefined();
   });
 
-  it('resolves agent via sessionAgent(), defaulting to claude-code when the doc has none', () => {
+  it('uses the persisted explicit agent', () => {
     expect(toSessionRow(cliDoc(), now).agent).toBe('claude-code');
     expect(toSessionRow(cliDoc({ agent: 'opencode' }), now).agent).toBe(
       'opencode',
@@ -325,9 +329,9 @@ describe('getSessionArchive', () => {
     );
   });
 
-  it('treats a repo-less doc as belonging to the primary watched repo when filtering', async () => {
+  it('does not include a repo-less CLI doc in a GitHub-repository filter', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
-      cliDoc({ sessionId: 'legacy' }),
+      cliDoc({ sessionId: 'legacy', repo: undefined }),
       agentDoc({
         sessionId: 'other-repo',
         repo: { owner: 'org-b', name: 'repo-b' },
@@ -339,7 +343,7 @@ describe('getSessionArchive', () => {
       repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     });
 
-    expect(result.rows.map((r) => r.sessionId)).toEqual(['legacy']);
+    expect(result.rows).toEqual([]);
   });
 
   it('degrades to an empty result with a warning when the store throws', async () => {

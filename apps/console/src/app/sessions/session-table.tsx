@@ -56,7 +56,7 @@ function SessionCard({ row }: { row: SessionRow }) {
           <Group gap={6} wrap="wrap">
             <SourceBadge source={row.source} size="xs" />
             <AgentBadge agent={row.agent} />
-            <RepoBadge repo={row.repo} />
+            {row.repo && <RepoBadge repo={row.repo} />}
           </Group>
           <Badge
             variant="light"
@@ -206,7 +206,7 @@ export function SessionTable({ rows }: { rows: SessionRow[] }) {
                         {row.title}
                       </Anchor>
                       <AgentBadge agent={row.agent} />
-                      <RepoBadge repo={row.repo} />
+                      {row.repo && <RepoBadge repo={row.repo} />}
                     </Group>
                     <SessionStatusLine
                       status={row.status}

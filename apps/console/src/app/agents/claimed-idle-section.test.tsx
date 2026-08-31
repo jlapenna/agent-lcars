@@ -27,6 +27,7 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
     sessionId: 'session-1',
     liveness: 'ended',
     agent: 'claude-code',
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     turns: 1,
     totalTokens: 100,
     startedAt: '2026-07-18T00:00:00Z',
