@@ -70,12 +70,13 @@ env:
     availability:
       - RUNTIME
 
-  # Not sensitive - grants for the native work items API (see
+  # Not sensitive - grants for the Work API (see
   # apps/console/src/lib/work-grants.ts). Maps a Google service-account
-  # email or a `github:<login>` session subject to a principal and the
-  # pipelines it may operate. The current operator grants each list every
-  # supported pipeline. That admission grant does not select an executor;
-  # the one global cutover below does. svc:telemetry-writer
+  # email, `github:<login>` session subject, or signed
+  # `github-actions:<owner/repo>` subject to a principal and the pipelines it
+  # may operate. The current operator grants each list every supported
+  # pipeline. That admission grant does not select an executor; the one
+  # global cutover below does. svc:telemetry-writer
   # is the runner-autoscaler's queue executor claim identity
   # (native-work-items sub-project 4,
   # #1502): scoped to work.executor and work.cron, never work.operator --
@@ -90,7 +91,7 @@ env:
   # `/lcars` Slack command's direct GitHub issue filing with a native item.
   # Its current grant lists every supported pipeline.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
     availability:
       - RUNTIME
 

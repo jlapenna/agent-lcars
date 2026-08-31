@@ -221,6 +221,78 @@ export const itemsContract = {
 };
 export type ItemsContract = typeof itemsContract;
 
+/** A GitHub issue or pull request is one durable orchestrator task anchor.
+ * Pull requests use GitHub's issue number, so no separate `type` selector is
+ * needed at the Work API boundary. */
+export const githubDispatchAnchorSchema = z.strictObject({
+  repo: z
+    .string()
+    .max(140)
+    .regex(/^[\w.-]+\/[\w.-]+$/u),
+  issue: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+
+const githubDispatchModeSchema = z.enum(['implement', 'review']);
+
+/** One explicit response shape for the GitHub-anchor admission path. A
+ * duplicate or busy result is a successful, actionable idempotency/mutex
+ * answer rather than an HTTP failure: both name the existing durable run. */
+const githubDispatchResultSchema = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('accepted'),
+    runId: z.string(),
+    dispatched: z.boolean(),
+  }),
+  z.strictObject({ outcome: z.literal('duplicate'), runId: z.string() }),
+  z.strictObject({ outcome: z.literal('busy'), runId: z.string() }),
+]);
+
+const dispatchBase = oc.meta(
+  openapi({ tags: ['dispatches'], spec: withBearer }),
+);
+
+/**
+ * Contract-first GitHub-anchor admission. The explicit Work spec means this
+ * has the same stored Work payload and QueueExecutor brief as every other
+ * Work API admission; it is not a compatibility alias for the retired
+ * control-plane request body.
+ */
+export const dispatchesContract = {
+  github: dispatchBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/dispatches/github',
+        operationId: 'dispatchGithubAnchor',
+        summary: 'Request a run for a GitHub issue or pull-request anchor',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message:
+          'Principal may not request this pipeline, repository, or anchor',
+      },
+      BAD_REQUEST: {
+        message: 'Anchor repository must equal the Work target repository',
+      },
+    })
+    .input(
+      z.strictObject({
+        anchor: githubDispatchAnchorSchema,
+        spec: workSpecSchema,
+        mode: githubDispatchModeSchema,
+        reply: z.string().max(8_192).optional(),
+        runbook: z.string().min(1).max(128).optional(),
+        context: z.string().max(4_096).optional(),
+        /** Caller-controlled idempotency key. A retry with this same value
+         * receives the existing durable run instead of minting another. */
+        requestId: z.string().min(1).max(128),
+      }),
+    )
+    .output(githubDispatchResultSchema),
+};
+export type DispatchesContract = typeof dispatchesContract;
+
 /** A `cron` field is only accepted once it parses: `parseCron` throws on
  *  anything malformed, so a bad expression is refused at the API's input
  *  validation boundary (400) rather than reaching the store. */

@@ -13,6 +13,9 @@ export interface WorkPrincipal {
   scopes: ReadonlySet<WorkScope>;
   pipelines: readonly string[];
   via: 'google' | 'session' | 'oidc';
+  /** Present only for a GitHub Actions OIDC identity. GitHub-anchor
+   * dispatch keeps the anchor bound to this signed source repository. */
+  sourceRepository?: string;
 }
 
 export interface WorkAuthDeps {
@@ -22,6 +25,12 @@ export interface WorkAuthDeps {
   /** GitHub Actions OIDC verifier for the session-pin-tick trigger
    *  (`work-session-pin-tick.yml`, sub-project 6). */
   verifySessionPinTickOidcToken: (token: string) => Promise<unknown>;
+  /** Generic GitHub Actions Work API identity. Its verifier establishes the
+   * signed repository and canonical Work-grant subject; this module only
+   * resolves that subject through the ordinary grant model. */
+  verifyGithubActionsWorkOidcToken: (
+    token: string,
+  ) => Promise<{ repository: string; subject: string }>;
   session: () => Promise<{ user?: { login?: string } } | null>;
   grants: () => WorkGrant[];
 }
@@ -83,10 +92,9 @@ export function rawBearerToken(request: Request): string | undefined {
 }
 
 /**
- * Bearer token first, tried against Google, then on failure against the
- * session-pin-tick OIDC verifier; an Auth.js session only when no bearer
- * header is present.
- * A bearer that fails all three never falls back to the session -- a
+ * Bearer token first, tried against Google and the two GitHub Actions OIDC
+ * identities; an Auth.js session only when no bearer header is present.
+ * A bearer that fails every verifier never falls back to the session -- a
  * caller that presented a credential is judged on it.
  */
 export async function authenticateWorkRequest(
@@ -121,6 +129,17 @@ export async function authenticateWorkRequest(
         pipelines: [],
         via: 'oidc',
       };
+    } catch {
+      // Not the dedicated read-only reaper identity either. A normal
+      // GitHub Actions caller may still resolve through a configured Work
+      // grant below.
+    }
+    try {
+      const identity = await deps.verifyGithubActionsWorkOidcToken(token);
+      const principal = principalFor(identity.subject, 'oidc', deps.grants());
+      return principal === undefined
+        ? undefined
+        : { ...principal, sourceRepository: identity.repository };
     } catch {
       return undefined;
     }

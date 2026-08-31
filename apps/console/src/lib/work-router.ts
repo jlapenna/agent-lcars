@@ -13,6 +13,7 @@ import { deriveItemState, toItemViewSafe } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
+import { githubDispatchRouter } from './github-dispatch-router';
 import { scheduleRouter } from './schedule-router';
 import {
   forbiddenReason,
@@ -286,19 +287,21 @@ export const workRouter = os.router({
 });
 
 /**
- * The OpenAPI (RESTful) adapter serving both {@link workRouter} (`/items`)
- * and {@link scheduleRouter} (`/schedules`) under one handler -- their
- * contracts already carry the full path (`itemsContract`/
- * `schedulesContract`), so nesting them under `items`/`schedules` keys here
- * is purely organizational, not a URL prefix. Error codes map to HTTP
- * status through oRPC's own `COMMON_ERROR_STATUS_MAP` (`UNAUTHORIZED` 401,
- * `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409, `TOO_MANY_REQUESTS`
- * 429), which is exactly what this API wants -- so no `errorStatusMap`
- * override.
+ * The OpenAPI (RESTful) adapter serving items, schedules, and GitHub-anchor
+ * dispatches under one handler. Their contracts already carry the full path,
+ * so nesting them under organizational keys here is not a URL prefix. Error
+ * codes map to HTTP status through oRPC's own `COMMON_ERROR_STATUS_MAP`
+ * (`UNAUTHORIZED` 401, `FORBIDDEN` 403, `NOT_FOUND` 404, `CONFLICT` 409,
+ * `TOO_MANY_REQUESTS` 429), which is exactly what this API wants -- so no
+ * `errorStatusMap` override.
  */
 export function createWorkHandler(): OpenAPIHandler<WorkContext> {
   return new OpenAPIHandler(
-    { items: workRouter, schedules: scheduleRouter },
+    {
+      items: workRouter,
+      schedules: scheduleRouter,
+      dispatches: githubDispatchRouter,
+    },
     {
       routingInterceptors: [
         // `Retry-After` is the standard way to say what the 429 body's
