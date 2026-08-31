@@ -462,12 +462,13 @@ COPY --from=telemetry-watcher-build /repo/packages/fleet-tools /opt/agent-tools
 # that combined transaction can race the pnpm-linked tree while npm packs it.
 # Keep the two independent tool systems independently installed as well.
 RUN npm install -g /opt/agent-tools
-# repo-tools is a Git-hosted first-party artifact. pnpm is its supported
-# consumer path: npm 11's global Git installer cannot materialize its
-# pnpm-linked Nx dependency tree in this image. Install it in a private
-# prefix, then expose only its public commands on PATH.
-RUN mkdir -p /opt/repo-tools && \
-    pnpm --dir /opt/repo-tools add --ignore-scripts github:jlapenna/repo-tools#main && \
+# repo-tools has three consumers in this image: its public CLI commands plus
+# the Codex and Claude plugin managers. Keep one shallow checkout as their
+# shared source of truth. The plugin managers retain their required,
+# provider-specific installed snapshots, but neither performs another Git
+# fetch; the CLI is installed from this same checkout in its private prefix.
+RUN git clone --depth 1 --branch main https://github.com/jlapenna/repo-tools.git /opt/repo-tools && \
+    pnpm --dir /opt/repo-tools install --prod --frozen-lockfile --ignore-scripts && \
     ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/
 # The launcher itself lives on PATH at /usr/local/bin (standard on this
 # Debian-derived base for every user, root or `runner` -- no ENV PATH
@@ -514,12 +515,13 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 
 USER runner
 
-# General repository-management guidance is a separate Codex plugin, not an
-# agent-tools dependency. Install the public @main marketplace into the runner
-# user's own Codex state so dispatched sessions load the one worktree-hygiene
-# skill instead of a repository-local copy.
-RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \
+# Register the shared source checkout in each provider's own runner-user
+# plugin state. Both providers require their own installed plugin snapshot;
+# using the local marketplace avoids fetching repo-tools again.
+RUN codex plugin marketplace add /opt/repo-tools && \
     codex plugin add repo-tools@repo-tools
+RUN claude plugin marketplace add /opt/repo-tools && \
+    claude plugin install repo-tools@repo-tools
 
 # Corepack's downloaded package-manager cache is per-user. The root-side
 # `pnpm --version` smoke above proves installation but warms only /root;

@@ -48,9 +48,10 @@ if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entr
   exit 1
 fi
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
-  ! grep -Fqx '    pnpm --dir /opt/repo-tools add --ignore-scripts github:jlapenna/repo-tools#main && \' "$dockerfile" ||
+  ! grep -Fqx 'RUN git clone --depth 1 --branch main https://github.com/jlapenna/repo-tools.git /opt/repo-tools && \' "$dockerfile" ||
+  ! grep -Fqx '    pnpm --dir /opt/repo-tools install --prod --frozen-lockfile --ignore-scripts && \' "$dockerfile" ||
   ! grep -Fqx '    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/' "$dockerfile"; then
-  echo "runner image must install agent-tools and public repo-tools separately" >&2
+  echo "runner image must install agent-tools and repo-tools from one source checkout" >&2
   exit 1
 fi
 
@@ -63,9 +64,10 @@ fi
 runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
 codex_install_line="$(grep -n '^RUN npm install -g @openai/codex && codex --version$' "$dockerfile" | cut -d: -f1)"
 claude_install_line="$(grep -n '^RUN npm install -g @anthropic-ai/claude-code && claude --version$' "$dockerfile" | cut -d: -f1)"
-plugin_line="$(grep -n '^RUN codex plugin marketplace add jlapenna/repo-tools --ref main && \\' "$dockerfile" | cut -d: -f1)"
-if [[ -z "$runner_user_line" || -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" ]]; then
-  echo "runner image must enable the public repo-tools plugin as runner" >&2
+plugin_line="$(grep -n '^RUN codex plugin marketplace add /opt/repo-tools && \\' "$dockerfile" | cut -d: -f1)"
+claude_plugin_line="$(grep -n '^RUN claude plugin marketplace add /opt/repo-tools && \\' "$dockerfile" | cut -d: -f1)"
+if [[ -z "$runner_user_line" || -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" || -z "$claude_plugin_line" || "$claude_plugin_line" -le "$runner_user_line" ]]; then
+  echo "runner image must enable the public repo-tools plugins as runner" >&2
   exit 1
 fi
 if [[ -z "$claude_install_line" || "$claude_install_line" -ge "$runner_user_line" ]]; then
@@ -78,6 +80,10 @@ if [[ -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" 
 fi
 if ! grep -Fqx '    codex plugin add repo-tools@repo-tools' "$dockerfile"; then
   echo "runner image must enable the repo-tools plugin after adding its marketplace" >&2
+  exit 1
+fi
+if ! grep -Fqx '    claude plugin install repo-tools@repo-tools' "$dockerfile"; then
+  echo "runner image must install the repo-tools plugin for Claude Code" >&2
   exit 1
 fi
 
