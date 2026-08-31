@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   githubAnchorProjectionAnchorsFromDelivery,
+  githubAnchorProjectionDeletionFromDelivery,
   githubAnchorProjectionFromDelivery,
 } from './github-anchor-projection';
 
@@ -86,5 +87,18 @@ describe('githubAnchorProjectionFromDelivery', () => {
         observedAt: T0,
       }),
     ).toBeUndefined();
+  });
+
+  it('recognizes a configured deleted issue as a tombstone rather than a fetch', () => {
+    expect(
+      githubAnchorProjectionDeletionFromDelivery({
+        event: 'issues',
+        payload: {
+          action: 'deleted',
+          repository: { full_name: REPO },
+          issue: { number: 42 },
+        },
+      }),
+    ).toEqual({ repo: REPO, issue: 42 });
   });
 });

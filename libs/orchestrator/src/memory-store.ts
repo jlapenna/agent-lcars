@@ -161,12 +161,24 @@ export class MemoryStore implements OrchestratorStore {
   }
 
   async applyGithubAnchorProjectionRefresh(input: {
+    anchor: GithubAnchorProjection['anchor'];
     generation: number;
-    projection: GithubAnchorProjection;
+    projection?: GithubAnchorProjection;
   }): Promise<boolean> {
-    const key = taskKey(input.projection.anchor);
+    const key = taskKey(input.anchor);
     const current = this.#githubAnchorProjections.get(key);
     if (current?.refreshGeneration !== input.generation) return false;
+    if (input.projection === undefined) {
+      this.#githubAnchorProjections.set(key, {
+        refreshGeneration: input.generation,
+      });
+      return true;
+    }
+    if (taskKey(input.projection.anchor) !== key) {
+      throw new Error(
+        'GitHub anchor refresh projection does not match its fence',
+      );
+    }
     this.#githubAnchorProjections.set(key, {
       projection: structuredClone(
         githubAnchorProjectionSchema.parse(input.projection),

@@ -53,6 +53,11 @@ const issueCommentPayloadSchema = z.object({
     number: z.number().int().positive(),
   }),
 });
+const deletedIssuePayloadSchema = z.object({
+  action: z.literal('deleted'),
+  repository: z.object({ full_name: z.string().min(1).max(140) }),
+  issue: z.object({ number: z.number().int().positive() }),
+});
 const pullRequestPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
   pull_request: anchorSchema,
@@ -266,4 +271,25 @@ export function githubAnchorProjectionAnchorsFromDelivery(input: {
       issue: parsed.data.pull_request.number,
     },
   ];
+}
+
+/** GitHub does not guarantee a deleted anchor remains readable. Deletion is
+ * therefore a guarded tombstone, not an exact fetch that would leave an old
+ * open projection behind on 404. */
+export function githubAnchorProjectionDeletionFromDelivery(input: {
+  event: string;
+  payload: unknown;
+}): GithubAnchorProjection['anchor'] | undefined {
+  if (input.event !== 'issues') return undefined;
+  const parsed = deletedIssuePayloadSchema.safeParse(input.payload);
+  if (
+    !parsed.success ||
+    !isControlPlaneRepository(parsed.data.repository.full_name)
+  ) {
+    return undefined;
+  }
+  return {
+    repo: parsed.data.repository.full_name,
+    issue: parsed.data.issue.number,
+  };
 }

@@ -203,7 +203,8 @@ export async function enrichBackfillAnchors(
               ),
               unresolvedReviewThreadCount,
               unresolvedReviewThreadIds,
-              checksTruncated: (contexts?.totalCount ?? 0) > checkRuns.length,
+              checksTruncated:
+                (contexts?.totalCount ?? 0) > (contexts?.nodes?.length ?? 0),
               reviewThreadsTruncated:
                 (detail.reviewThreads?.totalCount ?? 0) > threadNodes.length,
             }
@@ -228,20 +229,29 @@ export interface GithubAnchorProjectionRefreshDeps {
   ): Promise<GithubAnchorProjection>;
 }
 
+const MAX_REFRESH_GENERATION_RETRIES = 3;
+
 /** One fence-protected exact refresh path for webhook invalidations and
  * backfill candidates. No webhook payload is merged into persisted state. */
 export async function refreshGithubAnchorProjection(
   deps: GithubAnchorProjectionRefreshDeps,
   anchor: GithubAnchorProjection['anchor'],
-): Promise<{ applied: boolean; projection: GithubAnchorProjection }> {
-  const generation =
-    await deps.store.beginGithubAnchorProjectionRefresh(anchor);
-  const projection = await deps.load(anchor);
-  const applied = await deps.store.applyGithubAnchorProjectionRefresh({
-    generation,
-    projection,
-  });
-  return { applied, projection };
+  input: { deleted?: boolean } = {},
+): Promise<GithubAnchorProjection | undefined> {
+  for (let attempt = 0; attempt < MAX_REFRESH_GENERATION_RETRIES; attempt++) {
+    const generation =
+      await deps.store.beginGithubAnchorProjectionRefresh(anchor);
+    const projection = input.deleted ? undefined : await deps.load(anchor);
+    const applied = await deps.store.applyGithubAnchorProjectionRefresh({
+      anchor,
+      generation,
+      ...(projection === undefined ? {} : { projection }),
+    });
+    if (applied) return projection;
+  }
+  throw new Error(
+    `GitHub anchor refresh could not apply after ${MAX_REFRESH_GENERATION_RETRIES} fenced attempts: ${anchor.repo}#${anchor.issue}`,
+  );
 }
 
 interface AnchorProjectionReconcileDeps {
@@ -388,7 +398,12 @@ export async function reconcileGithubAnchorProjections(
       }
       for (const anchor of anchorsForPage) {
         const refreshed = await refreshGithubAnchorProjection(deps, anchor);
-        allProjections.push(refreshed.projection);
+        if (refreshed === undefined) {
+          throw new Error(
+            `GitHub anchor backfill unexpectedly removed ${anchor.repo}#${anchor.issue}`,
+          );
+        }
+        allProjections.push(refreshed);
         anchors++;
       }
       if (issues.length < ANCHOR_RECONCILE_PAGE_SIZE) {
@@ -505,6 +520,7 @@ async function loadCurrentGithubAnchorProjection(
 /** Server-side webhook ingestion only. Queue rendering never invokes this. */
 export async function refreshCurrentGithubAnchorProjection(
   anchor: GithubAnchorProjection['anchor'],
+  input: { deleted?: boolean } = {},
 ): Promise<void> {
   const { store } = createOrchestratorRuntime();
   const github = getGithubClient();
@@ -514,5 +530,6 @@ export async function refreshCurrentGithubAnchorProjection(
       load: (current) => loadCurrentGithubAnchorProjection(github, current),
     },
     anchor,
+    input,
   );
 }

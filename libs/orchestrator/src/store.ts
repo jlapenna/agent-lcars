@@ -76,8 +76,10 @@ export interface OrchestratorStore {
 
   /** Replaces the projection only if this refresh generation is still live. */
   applyGithubAnchorProjectionRefresh(input: {
+    anchor: GithubAnchorProjection['anchor'];
     generation: number;
-    projection: GithubAnchorProjection;
+    /** Omitted only for an explicit GitHub deletion tombstone. */
+    projection?: GithubAnchorProjection;
   }): Promise<boolean>;
 
   /** Reads one stored GitHub-anchor projection for webhook signal updates.

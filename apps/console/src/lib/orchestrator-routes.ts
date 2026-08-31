@@ -11,7 +11,10 @@ import {
   defaultDispatchRequestId,
   type parseHostedDispatchRequestBody,
 } from '@/lib/control-plane-request';
-import { githubAnchorProjectionAnchorsFromDelivery } from '@/lib/github-anchor-projection';
+import {
+  githubAnchorProjectionAnchorsFromDelivery,
+  githubAnchorProjectionDeletionFromDelivery,
+} from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-reconcile';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
@@ -32,7 +35,10 @@ export interface OrchestratorRouteDeps {
   drain: () => Promise<DrainOutboxResult>;
   /** Test seam for the exact server-side refresh; production uses the shared
    * reconciler rather than interpreting partial webhook payloads. */
-  refreshGithubAnchorProjection?: (anchor: TaskId) => Promise<void>;
+  refreshGithubAnchorProjection?: (
+    anchor: TaskId,
+    input?: { deleted?: boolean },
+  ) => Promise<void>;
 }
 
 export type HostedDispatchRequestBody = ReturnType<
@@ -103,11 +109,19 @@ export async function handleWebhookDelivery(
   input: { event: string; deliveryId: string; payload: unknown },
 ): Promise<RouteResult> {
   try {
-    for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
+    const deletedAnchor = githubAnchorProjectionDeletionFromDelivery(input);
+    if (deletedAnchor !== undefined) {
       await (
         deps.refreshGithubAnchorProjection ??
         refreshCurrentGithubAnchorProjection
-      )(anchor);
+      )(deletedAnchor, { deleted: true });
+    } else {
+      for (const anchor of githubAnchorProjectionAnchorsFromDelivery(input)) {
+        await (
+          deps.refreshGithubAnchorProjection ??
+          refreshCurrentGithubAnchorProjection
+        )(anchor);
+      }
     }
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {

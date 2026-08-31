@@ -268,16 +268,26 @@ export class FirestoreStore implements OrchestratorStore {
   }
 
   async applyGithubAnchorProjectionRefresh(input: {
+    anchor: GithubAnchorProjection['anchor'];
     generation: number;
-    projection: GithubAnchorProjection;
+    projection?: GithubAnchorProjection;
   }): Promise<boolean> {
-    const ref = this.#githubAnchorRef(input.projection.anchor);
+    const ref = this.#githubAnchorRef(input.anchor);
     return this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       if (snapshot.data()?.['refreshGeneration'] !== input.generation) {
         return false;
       }
+      if (input.projection === undefined) {
+        tx.set(ref, { refreshGeneration: input.generation });
+        return true;
+      }
       const next = githubAnchorProjectionSchema.parse(input.projection);
+      if (taskKey(next.anchor) !== taskKey(input.anchor)) {
+        throw new Error(
+          'GitHub anchor refresh projection does not match its fence',
+        );
+      }
       tx.set(ref, {
         projection: next,
         refreshGeneration: input.generation,

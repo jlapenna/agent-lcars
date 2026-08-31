@@ -9,6 +9,7 @@ import {
   ANCHOR_RECONCILE_PAGE_SIZE,
   AnchorProjectionBackfillLimitError,
   compareSelectedGithubAnchorProjections,
+  enrichBackfillAnchors,
   reconcileGithubAnchorProjections,
   refreshGithubAnchorProjection,
 } from './github-anchor-reconcile';
@@ -47,12 +48,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function staleThenCurrent(
+  stale: ReturnType<typeof deferred<GithubAnchorProjection>>,
+  current: GithubAnchorProjection,
+) {
+  let calls = 0;
+  return () => (++calls === 1 ? stale.promise : Promise.resolve(current));
+}
+
 describe('refreshGithubAnchorProjection', () => {
   it('keeps a newer webhook refresh over an older in-flight backfill fetch', async () => {
     const store = new MemoryStore();
     const older = deferred<GithubAnchorProjection>();
     const first = refreshGithubAnchorProjection(
-      { store, load: () => older.promise },
+      { store, load: staleThenCurrent(older, projection('webhook current')) },
       projection().anchor,
     );
     await Promise.resolve();
@@ -61,8 +70,8 @@ describe('refreshGithubAnchorProjection', () => {
       projection().anchor,
     );
     older.resolve(projection('stale backfill'));
-    await expect(first).resolves.toMatchObject({ applied: false });
-    expect(newer).toMatchObject({ applied: true });
+    await expect(first).resolves.toMatchObject({ title: 'webhook current' });
+    expect(newer).toMatchObject({ title: 'webhook current' });
     await expect(
       store.readGithubAnchorProjection(projection().anchor),
     ).resolves.toMatchObject({ title: 'webhook current' });
@@ -71,19 +80,20 @@ describe('refreshGithubAnchorProjection', () => {
   it('keeps the exact-current review-thread state when resolve and unresolve deliveries race', async () => {
     const store = new MemoryStore();
     const older = deferred<GithubAnchorProjection>();
+    const current = {
+      ...projection(),
+      unresolvedReviewThreadCount: 1,
+      unresolvedReviewThreadIds: ['PRRT_live'],
+    };
     const first = refreshGithubAnchorProjection(
-      { store, load: () => older.promise },
+      { store, load: staleThenCurrent(older, current) },
       projection().anchor,
     );
     await Promise.resolve();
     await refreshGithubAnchorProjection(
       {
         store,
-        load: async () => ({
-          ...projection(),
-          unresolvedReviewThreadCount: 1,
-          unresolvedReviewThreadIds: ['PRRT_live'],
-        }),
+        load: async () => current,
       },
       projection().anchor,
     );
@@ -92,7 +102,9 @@ describe('refreshGithubAnchorProjection', () => {
       unresolvedReviewThreadCount: 0,
       unresolvedReviewThreadIds: [],
     });
-    await expect(first).resolves.toMatchObject({ applied: false });
+    await expect(first).resolves.toMatchObject({
+      unresolvedReviewThreadIds: ['PRRT_live'],
+    });
     await expect(
       store.readGithubAnchorProjection(projection().anchor),
     ).resolves.toMatchObject({ unresolvedReviewThreadIds: ['PRRT_live'] });
@@ -101,29 +113,28 @@ describe('refreshGithubAnchorProjection', () => {
   it('keeps a terminal check result when equal-timestamp lifecycle deliveries race', async () => {
     const store = new MemoryStore();
     const older = deferred<GithubAnchorProjection>();
+    const current = {
+      ...projection(),
+      checkRuns: [
+        {
+          name: 'Verify',
+          url: 'https://example.test/check',
+          status: 'completed',
+          conclusion: 'failure' as const,
+        },
+      ],
+      failingChecks: [{ name: 'Verify', url: 'https://example.test/check' }],
+      ciRunning: false,
+    };
     const first = refreshGithubAnchorProjection(
-      { store, load: () => older.promise },
+      { store, load: staleThenCurrent(older, current) },
       projection().anchor,
     );
     await Promise.resolve();
     await refreshGithubAnchorProjection(
       {
         store,
-        load: async () => ({
-          ...projection(),
-          checkRuns: [
-            {
-              name: 'Verify',
-              url: 'https://example.test/check',
-              status: 'completed',
-              conclusion: 'failure',
-            },
-          ],
-          failingChecks: [
-            { name: 'Verify', url: 'https://example.test/check' },
-          ],
-          ciRunning: false,
-        }),
+        load: async () => current,
       },
       projection().anchor,
     );
@@ -139,7 +150,7 @@ describe('refreshGithubAnchorProjection', () => {
       ],
       ciRunning: true,
     });
-    await expect(first).resolves.toMatchObject({ applied: false });
+    await expect(first).resolves.toMatchObject({ ciRunning: false });
     await expect(
       store.readGithubAnchorProjection(projection().anchor),
     ).resolves.toMatchObject({
@@ -151,20 +162,27 @@ describe('refreshGithubAnchorProjection', () => {
   it('keeps a newer complete anchor snapshot even with an equal source timestamp', async () => {
     const store = new MemoryStore();
     const older = deferred<GithubAnchorProjection>();
+    const current = {
+      ...projection('current title'),
+      state: 'closed' as const,
+    };
     const first = refreshGithubAnchorProjection(
-      { store, load: () => older.promise },
+      { store, load: staleThenCurrent(older, current) },
       projection().anchor,
     );
     await Promise.resolve();
     await refreshGithubAnchorProjection(
       {
         store,
-        load: async () => ({ ...projection('current title'), state: 'closed' }),
+        load: async () => current,
       },
       projection().anchor,
     );
     older.resolve(projection('stale title'));
-    await expect(first).resolves.toMatchObject({ applied: false });
+    await expect(first).resolves.toMatchObject({
+      title: 'current title',
+      state: 'closed',
+    });
     await expect(
       store.readGithubAnchorProjection(projection().anchor),
     ).resolves.toMatchObject({ title: 'current title', state: 'closed' });
@@ -172,6 +190,41 @@ describe('refreshGithubAnchorProjection', () => {
 });
 
 describe('reconcileGithubAnchorProjections', () => {
+  it('does not mark checks truncated when all returned context nodes fit', async () => {
+    const graphql = vi.fn().mockResolvedValue({
+      repository: {
+        i42: {
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      totalCount: 2,
+                      nodes: [
+                        {
+                          name: 'Verify',
+                          status: 'COMPLETED',
+                          conclusion: 'SUCCESS',
+                          detailsUrl: 'https://example.test/verify',
+                        },
+                        {},
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const [enriched] = await enrichBackfillAnchors(REPO, [projection()], {
+      graphql,
+    } as never);
+    expect(enriched?.checksTruncated).toBe(false);
+  });
+
   it('uses the bounded listing only to discover anchors, then refreshes each exactly', async () => {
     const store = new MemoryStore();
     const load = vi.fn(async () => projection());

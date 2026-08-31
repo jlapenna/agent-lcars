@@ -24,12 +24,14 @@ describe('GitHub anchor projection refresh generations', () => {
     const second = await store.beginGithubAnchorProjectionRefresh(anchor);
     await expect(
       store.applyGithubAnchorProjectionRefresh({
+        anchor,
         generation: first,
         projection: { ...base, title: 'stale' },
       }),
     ).resolves.toBe(false);
     await expect(
       store.applyGithubAnchorProjectionRefresh({
+        anchor,
         generation: second,
         projection: { ...base, title: 'current' },
       }),
@@ -43,16 +45,36 @@ describe('GitHub anchor projection refresh generations', () => {
     const store = new MemoryStore();
     const first = await store.beginGithubAnchorProjectionRefresh(anchor);
     await store.applyGithubAnchorProjectionRefresh({
+      anchor,
       generation: first,
       projection: { ...base, parentNumber: 7, linkedIssueNumbers: [8] },
     });
     const second = await store.beginGithubAnchorProjectionRefresh(anchor);
     await store.applyGithubAnchorProjectionRefresh({
+      anchor,
       generation: second,
       projection: base,
     });
     await expect(store.readGithubAnchorProjection(anchor)).resolves.toEqual(
       base,
     );
+  });
+
+  it('removes a deleted anchor behind the refresh generation fence', async () => {
+    const store = new MemoryStore();
+    const first = await store.beginGithubAnchorProjectionRefresh(anchor);
+    await store.applyGithubAnchorProjectionRefresh({
+      anchor,
+      generation: first,
+      projection: base,
+    });
+    const deleted = await store.beginGithubAnchorProjectionRefresh(anchor);
+    await expect(
+      store.applyGithubAnchorProjectionRefresh({ anchor, generation: deleted }),
+    ).resolves.toBe(true);
+    await expect(
+      store.readGithubAnchorProjection(anchor),
+    ).resolves.toBeUndefined();
+    await expect(store.listOpenGithubAnchorProjections()).resolves.toEqual([]);
   });
 });
