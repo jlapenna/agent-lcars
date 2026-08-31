@@ -11,17 +11,16 @@ import { refreshDashboard } from './refresh-action';
 export function RefreshButton({
   generatedAt,
   initialLabel,
-  bustsGithubCache = false,
+  refreshesAuthoritativeQueue = false,
   compact = false,
 }: {
   generatedAt?: string;
   initialLabel?: string;
-  /** Whether this page renders cached GitHub data (see
-   * lib/dashboard-data.ts). Only Deck, Inbox, and Agents do; the session
-   * pages read Firestore/GCS, and busting the GitHub tag from there would
-   * force the next data-heavy visit to repeat ~30 requests for state that never
-   * changed. */
-  bustsGithubCache?: boolean;
+  /** Whether this route renders the cached authoritative queue (see
+   * lib/dashboard-data.ts). Invalidating its tag before an unrelated detail
+   * refresh would force the next queue visit to repeat projection reads for
+   * state that did not change. */
+  refreshesAuthoritativeQueue?: boolean;
   /** Icon-only command-rail treatment. Mobile CSS still gives it a 44px
    * target even though the visual icon remains compact. */
   compact?: boolean;
@@ -59,9 +58,8 @@ export function RefreshButton({
           aria-label="Refresh"
           onClick={() =>
             startTransition(async () => {
-              // Drop the cached GitHub read first, then re-render against
-              // the fresh one - see refreshDashboard's own comment.
-              if (bustsGithubCache) await refreshDashboard();
+              // Invalidate the authoritative queue before re-rendering it.
+              if (refreshesAuthoritativeQueue) await refreshDashboard();
               router.refresh();
             })
           }

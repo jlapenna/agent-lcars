@@ -128,7 +128,8 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
 }
 
 /** A tiny, isolated polling island: status refreshes every 10 seconds without
- * re-running the dashboard's GitHub reads or invalidating its cache. */
+ * re-running the dashboard's authoritative queue projections or invalidating
+ * their cache. */
 export function RunnerAutoscalerStatus({
   initial,
 }: {

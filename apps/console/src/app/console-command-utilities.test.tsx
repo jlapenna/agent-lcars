@@ -11,8 +11,14 @@ vi.mock('./quick-task-button', () => ({
   ),
 }));
 vi.mock('./refresh-button', () => ({
-  RefreshButton: ({ bustsGithubCache }: { bustsGithubCache?: boolean }) => (
-    <button>Refresh: {bustsGithubCache ? 'fresh' : 'cached'}</button>
+  RefreshButton: ({
+    refreshesAuthoritativeQueue,
+  }: {
+    refreshesAuthoritativeQueue?: boolean;
+  }) => (
+    <button>
+      Refresh: {refreshesAuthoritativeQueue ? 'authoritative queue' : 'route'}
+    </button>
   ),
 }));
 vi.mock('./sign-out-button', () => ({
@@ -44,7 +50,7 @@ describe('ConsoleCommandUtilities', () => {
         <ConsoleCommandUtilities
           watchedRepos={watchedRepos}
           initialRepoKey="example/console"
-          bustsGithubCache
+          refreshesAuthoritativeQueue
           includeNavigation
           navigationHrefs={{ sessions: '/sessions?days=90' }}
         />
@@ -52,7 +58,7 @@ describe('ConsoleCommandUtilities', () => {
     );
 
     expect(screen.getByText('Quick task: example/console')).toBeTruthy();
-    expect(screen.getByText('Refresh: fresh')).toBeTruthy();
+    expect(screen.getByText('Refresh: authoritative queue')).toBeTruthy();
     expect(screen.getByText('Navigate: /sessions?days=90')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
   });

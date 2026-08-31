@@ -306,14 +306,14 @@ const AgentsView = withConsolePageShell(
             <ConsoleCommandUtilities
               watchedRepos={watchedRepos}
               initialRepoKey={repoFilterKey}
-              bustsGithubCache
+              refreshesAuthoritativeQueue
             />
           </div>
           <div className="agents-utilities agents-utilities--mobile">
             <ConsoleCommandUtilities
               watchedRepos={watchedRepos}
               initialRepoKey={repoFilterKey}
-              bustsGithubCache
+              refreshesAuthoritativeQueue
               includeNavigation
               navigationHrefs={repoScopedConsoleHrefs(repoFilterKey)}
             />
