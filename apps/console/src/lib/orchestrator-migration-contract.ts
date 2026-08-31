@@ -1,7 +1,10 @@
 import {
+  PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
+  PERSISTED_MIGRATION_FINDINGS_MAX,
   PERSISTED_MIGRATION_MANIFEST_MAX,
   PERSISTED_MIGRATION_PAGE_MAX,
   persistedMigrationEntrySchema,
+  persistedRecordFindingCodeSchema,
   persistedRecordKindSchema,
   persistedRecordSelectorSchema,
 } from '@agent-lcars/orchestrator';
@@ -15,14 +18,15 @@ const base = oc.meta(
 );
 
 const findingSchema = z.strictObject({
-  code: z.string(),
+  code: persistedRecordFindingCodeSchema,
   class: z.enum(['compatibility', 'optional', 'invalid']),
 });
 const inventoryRecordSchema = z.strictObject({
   selector: persistedRecordSelectorSchema.optional(),
-  opaqueDocumentId: z.string().optional(),
   fingerprint: z.string().length(64),
-  findings: z.array(findingSchema),
+  findingCount: z.number().int().nonnegative(),
+  findingsTruncated: z.boolean(),
+  findings: z.array(findingSchema).max(PERSISTED_MIGRATION_FINDINGS_MAX),
 });
 
 /** Temporary, operator-only API contract. It has fixed orchestrator record
@@ -50,13 +54,15 @@ export const orchestratorMigrationContract = {
           .default(PERSISTED_MIGRATION_PAGE_MAX),
         cursor: z
           .string()
-          .regex(/^[A-Za-z0-9_-]{1,512}$/u)
+          .regex(/^[A-Za-z0-9_-]+$/u)
+          .max(PERSISTED_MIGRATION_CURSOR_MAX_LENGTH)
           .optional(),
       }),
     )
     .output(
       z.strictObject({
         kind: persistedRecordKindSchema,
+        consistency: z.literal('page-only'),
         records: z.array(inventoryRecordSchema),
         hasMore: z.boolean(),
         nextCursor: z.string().optional(),

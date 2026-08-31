@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { MemoryStore } from './memory-store';
 import {
+  decodePersistedMigrationCursor,
+  encodePersistedMigrationCursor,
   fingerprint,
   inventoryPersistedRecord,
   manifestId,
@@ -29,10 +31,10 @@ describe('persisted orchestrator record inventory', () => {
     expect(task.findings).toEqual(
       expect.arrayContaining([
         {
-          code: 'retired-top-level-retiredDocumentField',
+          code: 'retired-task-document-fields',
           class: 'compatibility',
         },
-        { code: 'retired-top-level-retiredTaskField', class: 'compatibility' },
+        { code: 'retired-task-fields', class: 'compatibility' },
         { code: 'missing-consecutiveLost', class: 'compatibility' },
         { code: 'missing-work', class: 'compatibility' },
       ]),
@@ -53,8 +55,8 @@ describe('persisted orchestrator record inventory', () => {
     expect(run.selector).toEqual({ kind: 'run', runId: 'octo/example#7/r1' });
     expect(run.findings).toEqual(
       expect.arrayContaining([
-        { code: 'infra-event-0', class: 'compatibility' },
-        { code: 'retired-top-level-retiredRunField', class: 'compatibility' },
+        { code: 'infra-run-events', class: 'compatibility' },
+        { code: 'retired-run-fields', class: 'compatibility' },
         { code: 'missing-params', class: 'optional' },
         { code: 'missing-queue', class: 'optional' },
         { code: 'missing-result', class: 'optional' },
@@ -79,7 +81,7 @@ describe('persisted orchestrator record inventory', () => {
     expect(outbox.findings).toEqual(
       expect.arrayContaining([
         {
-          code: 'retired-top-level-retiredOutboxField',
+          code: 'retired-outbox-fields',
           class: 'compatibility',
         },
         { code: 'missing-firstFailedAt', class: 'optional' },
@@ -89,11 +91,44 @@ describe('persisted orchestrator record inventory', () => {
     );
     // A census record has only selector/fingerprint/finding labels, never a
     // copied persisted payload.
-    expect(Object.keys(outbox)).toEqual([
-      'selector',
-      'fingerprint',
-      'findings',
-    ]);
+    expect(outbox).toMatchObject({
+      findingCount: outbox.findings.length,
+      findingsTruncated: false,
+    });
+  });
+
+  it('uses only its closed finding-code vocabulary and a bounded cursor', () => {
+    const inventory = inventoryPersistedRecord('task', {
+      task: {
+        task: { repo: 'octo/example', issue: 7 },
+        runCount: 0,
+        updatedAt: T,
+        ...Object.fromEntries(
+          Array.from({ length: 500 }, (_, index) => [`retired${index}`, true]),
+        ),
+      },
+      revision: 1,
+      ...Object.fromEntries(
+        Array.from({ length: 500 }, (_, index) => [`retired${index}`, true]),
+      ),
+    });
+    expect(inventory).toMatchObject({
+      findingCount: 7,
+      findingsTruncated: false,
+    });
+    expect(inventory.findings).toEqual(
+      expect.arrayContaining([
+        { code: 'retired-task-document-fields', class: 'compatibility' },
+        { code: 'retired-task-fields', class: 'compatibility' },
+      ]),
+    );
+    const documentId = 'x'.repeat(1_500);
+    expect(
+      decodePersistedMigrationCursor(
+        encodePersistedMigrationCursor('task', documentId),
+        'task',
+      ),
+    ).toBe(documentId);
   });
 });
 
@@ -116,6 +151,7 @@ describe('reviewed persisted-record manifest', () => {
       limit: 1,
     });
     expect(inventory.hasMore).toBe(false);
+    expect(inventory.consistency).toBe('page-only');
     const record = inventory.records[0];
     if (record?.selector?.kind !== 'task') throw new Error('missing task');
     const entry = {

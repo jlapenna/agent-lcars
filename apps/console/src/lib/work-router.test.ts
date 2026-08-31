@@ -913,7 +913,6 @@ describe('persisted orchestrator migration routes', () => {
       );
       expect(rejected.status).toBe(400);
     }
-
     const inventory = await call(
       ctx,
       'GET',

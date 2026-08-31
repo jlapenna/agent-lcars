@@ -2,7 +2,8 @@
 
 This is the application-owned, one-shot preparation for removing persisted
 orchestrator compatibility readers. It is served only by the deployed console
-Work API and requires an authenticated principal with `work.operator`; it is
+Work API and requires an authenticated principal with the dedicated
+`work.migrate` scope; it is
 not a Firestore CLI, does not accept a project/database/collection name, and
 must not be run from a developer shell with production credentials.
 
@@ -10,9 +11,10 @@ The temporary routes are:
 
 - `GET /api/work/v1/orchestrator-migration/{task|run|outbox}` inventories one
   page (1--200) ordered by the fixed collection document ID. The response has
-  only a safe record selector, SHA-256 fingerprint, and fixed finding codes;
-  it never copies payloads. Follow `nextCursor` until `hasMore` is false to
-  obtain exact per-kind counts.
+  only a safe record selector, SHA-256 fingerprint, at most 16 fixed finding
+  codes, plus explicit `findingCount`/`findingsTruncated`; it never copies
+  payloads or arbitrary field names. `consistency: "page-only"` explicitly
+  says this is not a cross-page snapshot.
 - `POST /api/work/v1/orchestrator-migration` previews an explicit manifest by
   default (`mode` omitted or `dry-run`). It returns a stable `manifestId`.
 - The same `POST` applies at most 100 fixed task/run/outbox replacements only
@@ -28,8 +30,12 @@ records. Optional findings are census evidence, not permission to invent
 values. An operator must review each full replacement outside the inventory
 response and submit the exact typed manifest.
 
-Do not run an apply during phase 1. After deployment approval, a complete
-inventory, reviewed dry run, bounded apply, and clean post-apply census are
-recorded on the issue. Only then may a later PR remove both this temporary
-route/store surface and the persisted compatibility readers. This document and
-the route are intentionally deletable with that phase-2 PR.
+Do not run an apply during phase 1. After deployment approval, perform two
+complete, back-to-back inventory passes during a quiescent maintenance window;
+only identical safe-selector/fingerprint sets may be recorded as a stable
+census. A single paged pass must never be called exact, because ordinary
+orchestrator writes may occur between pages. Then record the reviewed dry run,
+bounded apply, and a second stable post-apply census on the issue. Only then
+may a later PR remove both this temporary route/store surface and the persisted
+compatibility readers. This document and the route are intentionally deletable
+with that phase-2 PR.

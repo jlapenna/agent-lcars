@@ -1,5 +1,4 @@
 import { type Decision, isRefusal, type Refusal } from './decide';
-<<<<<<< HEAD
 import type {
   LeasedOutboxEntry,
   OutboxEntry,
@@ -16,6 +15,8 @@ import {
   taskKey,
 } from './model';
 import {
+  decodePersistedMigrationCursor,
+  encodePersistedMigrationCursor,
   fingerprint,
   inventoryPersistedRecord,
   manifestId,
@@ -365,23 +366,32 @@ export class MemoryStore implements OrchestratorStore {
     }
     const records = this.#migrationRecords(input.kind);
     const cursor =
-      input.cursor === undefined ? undefined : decodeCursor(input.cursor);
-    const after =
+      input.cursor === undefined
+        ? undefined
+        : decodePersistedMigrationCursor(input.cursor, input.kind);
+    const cursorIndex =
       cursor === undefined
-        ? 0
-        : records.findIndex(({ documentId }) => documentId === cursor) + 1;
-    if (after < 0)
+        ? undefined
+        : records.findIndex(({ documentId }) => documentId === cursor);
+    if (cursorIndex === -1)
       throw new Error('Invalid persisted orchestrator inventory cursor');
+    const after = cursorIndex === undefined ? 0 : cursorIndex + 1;
     const page = records.slice(after, after + input.limit);
     const hasMore = records.length > after + page.length;
     return {
       kind: input.kind,
+      consistency: 'page-only',
       records: page.map(({ value }) =>
         inventoryPersistedRecord(input.kind, value),
       ),
       hasMore,
       ...(hasMore && page.length > 0
-        ? { nextCursor: encodeCursor(page.at(-1)?.documentId ?? '') }
+        ? {
+            nextCursor: encodePersistedMigrationCursor(
+              input.kind,
+              page.at(-1)?.documentId ?? '',
+            ),
+          }
         : {}),
     };
   }
@@ -476,15 +486,4 @@ export class MemoryStore implements OrchestratorStore {
       );
     }
   }
-}
-
-function encodeCursor(documentId: string): string {
-  return Buffer.from(documentId, 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string): string {
-  if (!/^[A-Za-z0-9_-]{1,512}$/u.test(cursor)) {
-    throw new Error('Invalid persisted orchestrator inventory cursor');
-  }
-  return Buffer.from(cursor, 'base64url').toString('utf8');
 }

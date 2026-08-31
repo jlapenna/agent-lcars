@@ -6,7 +6,9 @@ import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
 import { outboxEntrySchema, taskSchema } from './model';
+<<<<<<< HEAD
 import { Orchestrator } from './orchestrator';
+import { encodePersistedMigrationCursor } from './persisted-record-migration';
 import {
   runOrchestratorStoreContract,
   runScheduleStoreContract,
@@ -139,6 +141,174 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       databaseId: '(default)',
       collectionPrefix: `orchestrator-test-${Date.now()}-${prefixCounter}-`,
       emulatorHost: emulatorHost ?? 'localhost:8080',
+    });
+  });
+
+  describe('persisted-record migration boundary', () => {
+    function migrationStore() {
+      prefixCounter += 1;
+      return new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix: `orchestrator-migration-test-${Date.now()}-${prefixCounter}-`,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+    }
+
+    async function seedTask(store: FirestoreStore, issue: number) {
+      const task = {
+        task: { repo: 'octo/example', issue },
+        runCount: 0,
+        updatedAt: '2026-08-15T12:00:00.000Z',
+      };
+      await store.apply({
+        decision: { task, outbox: [] },
+        expectedRevision: undefined,
+      });
+      return task;
+    }
+
+    it('pages a real Firestore collection and rejects invalid, cross-kind, or foreign cursors', async () => {
+      const store = migrationStore();
+      await Promise.all([
+        seedTask(store, 1),
+        seedTask(store, 2),
+        seedTask(store, 3),
+      ]);
+
+      const first = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 2,
+      });
+      expect(first.records).toHaveLength(2);
+      expect(first.hasMore).toBe(true);
+      expect(first.nextCursor).toBeDefined();
+      const second = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      expect(second.records).toHaveLength(1);
+      expect(second.hasMore).toBe(false);
+      expect(
+        new Set(
+          [...first.records, ...second.records].map((record) =>
+            JSON.stringify(record.selector),
+          ),
+        ),
+      ).toHaveLength(3);
+
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: 'not-a-cursor',
+        }),
+      ).rejects.toThrow('Invalid persisted orchestrator inventory cursor');
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: encodePersistedMigrationCursor('run', 'not-a-task'),
+        }),
+      ).rejects.toThrow('Invalid persisted orchestrator inventory cursor');
+      await expect(
+        store.inventoryPersistedRecords({
+          kind: 'task',
+          limit: 1,
+          cursor: encodePersistedMigrationCursor('task', 'not-a-task'),
+        }),
+      ).rejects.toThrow('Invalid persisted orchestrator inventory cursor');
+    });
+
+    it('does no partial write when a reviewed multi-record manifest is stale', async () => {
+      const store = migrationStore();
+      const firstTask = await seedTask(store, 10);
+      const secondTask = await seedTask(store, 11);
+      const inventory = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 10,
+      });
+      const entries = await Promise.all(
+        inventory.records.map(async (record) => {
+          if (record.selector?.kind !== 'task') throw new Error('missing task');
+          const current = await store.readTask(record.selector.task);
+          if (current === undefined) throw new Error('missing stored task');
+          return {
+            selector: record.selector,
+            expectedFingerprint: record.fingerprint,
+            replacement: {
+              task: {
+                ...current.task,
+                consecutiveLost: 0,
+                work: { reviewed: true },
+              },
+              revision: current.revision,
+            },
+          } as const;
+        }),
+      );
+      const preview = await store.previewPersistedMigration(entries);
+
+      const changed = await store.readTask(secondTask.task);
+      if (changed === undefined) throw new Error('missing second task');
+      await store.apply({
+        decision: {
+          task: { ...changed.task, updatedAt: '2026-08-16T12:00:00.000Z' },
+          outbox: [],
+        },
+        expectedRevision: changed.revision,
+      });
+
+      await expect(
+        store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        }),
+      ).rejects.toThrow('changed after inventory');
+      // The first document was valid, but FirestoreStore validates every
+      // target before issuing any write, so the stale second entry leaves it
+      // untouched too.
+      expect((await store.readTask(firstTask.task))?.task.work).toBeUndefined();
+    });
+
+    it('applies a reviewed Firestore manifest through the transaction boundary', async () => {
+      const store = migrationStore();
+      const task = await seedTask(store, 12);
+      const page = await store.inventoryPersistedRecords({
+        kind: 'task',
+        limit: 1,
+      });
+      const record = page.records[0];
+      if (record?.selector?.kind !== 'task') throw new Error('missing task');
+      const current = await store.readTask(record.selector.task);
+      if (current === undefined) throw new Error('missing stored task');
+      const entries = [
+        {
+          selector: record.selector,
+          expectedFingerprint: record.fingerprint,
+          replacement: {
+            task: {
+              ...current.task,
+              consecutiveLost: 0,
+              work: { reviewed: true },
+            },
+            revision: current.revision,
+          },
+        },
+      ] as const;
+      const preview = await store.previewPersistedMigration(entries);
+
+      await expect(
+        store.applyPersistedMigration({
+          entries,
+          reviewedManifestId: preview.manifestId,
+        }),
+      ).resolves.toMatchObject({ entries: 1 });
+      expect((await store.readTask(task.task))?.task).toMatchObject({
+        consecutiveLost: 0,
+        work: { reviewed: true },
+      });
     });
   });
 });

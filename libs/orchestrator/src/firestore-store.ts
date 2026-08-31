@@ -23,6 +23,8 @@ import {
   taskKey,
 } from './model';
 import {
+  decodePersistedMigrationCursor,
+  encodePersistedMigrationCursor,
   fingerprint,
   inventoryPersistedRecord,
   manifestId,
@@ -508,7 +510,17 @@ export class FirestoreStore implements OrchestratorStore {
     const collection = this.#collectionFor(input.kind);
     let query = collection.orderBy(FieldPath.documentId());
     if (input.cursor !== undefined) {
-      query = query.startAfter(decodeCursor(input.cursor));
+      const documentId = decodePersistedMigrationCursor(
+        input.cursor,
+        input.kind,
+      );
+      // A well-formed cursor for another or nonexistent record must not
+      // silently become a new first page. Verify it belongs to this fixed
+      // collection before using it as a query boundary.
+      if (!(await collection.doc(documentId).get()).exists) {
+        throw new Error('Invalid persisted orchestrator inventory cursor');
+      }
+      query = query.startAfter(documentId);
     }
     // The extra document makes `hasMore` truthful at the exact page boundary
     // without scanning an unbounded collection.
@@ -517,15 +529,19 @@ export class FirestoreStore implements OrchestratorStore {
     const hasMore = snapshot.docs.length > documents.length;
     return {
       kind: input.kind,
+      consistency: 'page-only',
       records: documents.map((document) => {
         const record = inventoryPersistedRecord(input.kind, document.data());
-        return record.selector === undefined
-          ? { ...record, opaqueDocumentId: document.id }
-          : record;
+        return record;
       }),
       hasMore,
       ...(hasMore && documents.length > 0
-        ? { nextCursor: encodeCursor(documents.at(-1)?.id ?? '') }
+        ? {
+            nextCursor: encodePersistedMigrationCursor(
+              input.kind,
+              documents.at(-1)?.id ?? '',
+            ),
+          }
         : {}),
     };
   }
@@ -623,15 +639,4 @@ export class FirestoreStore implements OrchestratorStore {
   #outboxRef(entryId: string): DocumentReference {
     return this.#outbox.doc(encodeURIComponent(entryId));
   }
-}
-
-function encodeCursor(documentId: string): string {
-  return Buffer.from(documentId, 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string): string {
-  if (!/^[A-Za-z0-9_-]{1,512}$/u.test(cursor)) {
-    throw new Error('Invalid persisted orchestrator inventory cursor');
-  }
-  return Buffer.from(cursor, 'base64url').toString('utf8');
 }

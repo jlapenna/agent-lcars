@@ -18,9 +18,44 @@ import {
  * general datastore browser. */
 export const PERSISTED_MIGRATION_PAGE_MAX = 200;
 export const PERSISTED_MIGRATION_MANIFEST_MAX = 100;
+/** Firestore permits a 1,500-byte document id; base64url plus the cursor
+ * envelope must carry even a malformed legacy id so a bounded census can
+ * advance past it. */
+export const PERSISTED_MIGRATION_CURSOR_MAX_LENGTH = 2_048;
+export const PERSISTED_MIGRATION_FINDINGS_MAX = 16;
 
 export const persistedRecordKindSchema = z.enum(['task', 'run', 'outbox']);
 export type PersistedRecordKind = z.infer<typeof persistedRecordKindSchema>;
+
+/** The inventory protocol intentionally exposes a closed vocabulary. Never
+ * derive a finding code from a stored field name or record value. */
+export const persistedRecordFindingCodeSchema = z.enum([
+  'not-object',
+  'retired-task-document-fields',
+  'missing-task',
+  'missing-revision',
+  'invalid-task',
+  'retired-task-fields',
+  'missing-consecutiveLost',
+  'missing-work',
+  'missing-activeRunId',
+  'missing-closedAt',
+  'invalid-task-document',
+  'retired-run-fields',
+  'missing-params',
+  'missing-queue',
+  'missing-result',
+  'infra-run-events',
+  'invalid-run-document',
+  'retired-outbox-fields',
+  'missing-firstFailedAt',
+  'missing-nextAttemptAt',
+  'missing-deliveryFailures',
+  'invalid-outbox-document',
+]);
+export type PersistedRecordFindingCode = z.infer<
+  typeof persistedRecordFindingCodeSchema
+>;
 
 const runIdSchema = z.string().min(1).max(175);
 const outboxEntryIdSchema = z.string().min(1).max(184);
@@ -77,7 +112,7 @@ export type PersistedMigrationEntry =
 
 export interface PersistedRecordFinding {
   /** A short fixed code, never copied document values. */
-  readonly code: string;
+  readonly code: PersistedRecordFindingCode;
   /** `compatibility` needs a future migration decision; `optional` records a
    * deliberate current absence without pretending it is malformed. */
   readonly class: 'compatibility' | 'optional' | 'invalid';
@@ -85,19 +120,73 @@ export interface PersistedRecordFinding {
 
 export interface PersistedRecordInventory {
   readonly selector?: PersistedRecordSelector;
-  /** Encoded datastore id is shown only for an invalid legacy document that
-   * has no safe domain selector. It is never accepted by apply. */
-  readonly opaqueDocumentId?: string;
   readonly fingerprint: string;
+  /** Total findings before the fixed response cap. */
+  readonly findingCount: number;
+  /** True when `findings` is a prefix of the complete value-free census. */
+  readonly findingsTruncated: boolean;
   readonly findings: readonly PersistedRecordFinding[];
 }
 
 export interface PersistedRecordPage {
   readonly kind: PersistedRecordKind;
+  /** Each request reads one current Firestore page; it is not a cross-page
+   * snapshot. A phase-2 proof must compare two full quiescent passes. */
+  readonly consistency: 'page-only';
   readonly records: readonly PersistedRecordInventory[];
   readonly hasMore: boolean;
   /** Opaque, scoped to `kind`, and usable only as the next inventory cursor. */
   readonly nextCursor?: string;
+}
+
+/** Opaque, kind-bound cursor. The document id never becomes an apply
+ * selector: callers can only use it to resume this one fixed census kind. */
+export function encodePersistedMigrationCursor(
+  kind: PersistedRecordKind,
+  documentId: string,
+): string {
+  if (
+    documentId.length === 0 ||
+    Buffer.byteLength(documentId, 'utf8') > 1_500
+  ) {
+    throw new Error('Invalid persisted orchestrator inventory document id');
+  }
+  const cursor = Buffer.from(
+    JSON.stringify({ kind, documentId }),
+    'utf8',
+  ).toString('base64url');
+  if (cursor.length > PERSISTED_MIGRATION_CURSOR_MAX_LENGTH) {
+    throw new Error('Persisted orchestrator inventory cursor is too large');
+  }
+  return cursor;
+}
+
+export function decodePersistedMigrationCursor(
+  cursor: string,
+  expectedKind: PersistedRecordKind,
+): string {
+  if (
+    !/^[A-Za-z0-9_-]+$/u.test(cursor) ||
+    cursor.length > PERSISTED_MIGRATION_CURSOR_MAX_LENGTH
+  ) {
+    throw new Error('Invalid persisted orchestrator inventory cursor');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('Invalid persisted orchestrator inventory cursor');
+  }
+  if (
+    !isRecord(parsed) ||
+    parsed['kind'] !== expectedKind ||
+    typeof parsed['documentId'] !== 'string' ||
+    parsed['documentId'].length === 0 ||
+    Buffer.byteLength(parsed['documentId'], 'utf8') > 1_500
+  ) {
+    throw new Error('Invalid persisted orchestrator inventory cursor');
+  }
+  return parsed['documentId'];
 }
 
 export interface PersistedMigrationPreview {
@@ -116,36 +205,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const missingFindingCodes = {
+  task: 'missing-task',
+  revision: 'missing-revision',
+  consecutiveLost: 'missing-consecutiveLost',
+  work: 'missing-work',
+  activeRunId: 'missing-activeRunId',
+  closedAt: 'missing-closedAt',
+  params: 'missing-params',
+  queue: 'missing-queue',
+  result: 'missing-result',
+  firstFailedAt: 'missing-firstFailedAt',
+  nextAttemptAt: 'missing-nextAttemptAt',
+  deliveryFailures: 'missing-deliveryFailures',
+} as const;
+
 function missing(
   value: Record<string, unknown>,
-  key: string,
+  key: keyof typeof missingFindingCodes,
   class_: PersistedRecordFinding['class'],
 ): PersistedRecordFinding | undefined {
   return Object.hasOwn(value, key)
     ? undefined
-    : { code: `missing-${key}`, class: class_ };
+    : { code: missingFindingCodes[key], class: class_ };
 }
 
 function absent(
   value: Record<string, unknown>,
-  key: string,
+  key: keyof typeof missingFindingCodes,
   class_: PersistedRecordFinding['class'],
 ): PersistedRecordFinding[] {
   const finding = missing(value, key, class_);
   return finding === undefined ? [] : [finding];
 }
 
-function unknownKeys(
+function unknownKeyCount(
   value: Record<string, unknown>,
   allowed: readonly string[],
+): number {
+  return Object.keys(value).filter((key) => !allowed.includes(key)).length;
+}
+
+function retiredFields(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  code: PersistedRecordFindingCode,
 ): PersistedRecordFinding[] {
-  return Object.keys(value)
-    .filter((key) => !allowed.includes(key))
-    .sort()
-    .map((key) => ({
-      code: `retired-top-level-${key}`,
-      class: 'compatibility',
-    }));
+  return unknownKeyCount(value, allowed) === 0
+    ? []
+    : [{ code, class: 'compatibility' }];
 }
 
 function selectorFrom(
@@ -181,13 +289,19 @@ export function inventoryPersistedRecord(
   if (!isRecord(value)) {
     return {
       fingerprint: fingerprint(value),
+      findingCount: 1,
+      findingsTruncated: false,
       findings: [{ code: 'not-object', class: 'invalid' }],
     };
   }
 
   if (kind === 'task') {
     findings.push(
-      ...unknownKeys(value, ['task', 'revision']),
+      ...retiredFields(
+        value,
+        ['task', 'revision'],
+        'retired-task-document-fields',
+      ),
       ...absent(value, 'task', 'invalid'),
       ...absent(value, 'revision', 'invalid'),
     );
@@ -196,15 +310,19 @@ export function inventoryPersistedRecord(
       findings.push({ code: 'invalid-task', class: 'invalid' });
     } else {
       findings.push(
-        ...unknownKeys(task, [
-          'task',
-          'activeRunId',
-          'runCount',
-          'consecutiveLost',
-          'work',
-          'closedAt',
-          'updatedAt',
-        ]),
+        ...retiredFields(
+          task,
+          [
+            'task',
+            'activeRunId',
+            'runCount',
+            'consecutiveLost',
+            'work',
+            'closedAt',
+            'updatedAt',
+          ],
+          'retired-task-fields',
+        ),
         ...absent(task, 'consecutiveLost', 'compatibility'),
         ...absent(task, 'work', 'compatibility'),
         ...absent(task, 'activeRunId', 'optional'),
@@ -216,55 +334,59 @@ export function inventoryPersistedRecord(
     }
   } else if (kind === 'run') {
     findings.push(
-      ...unknownKeys(value, [
-        'runId',
-        'task',
-        'state',
-        'pipeline',
-        'requestId',
-        'params',
-        'queue',
-        'leaseExpiresAt',
-        'result',
-        'events',
-        'createdAt',
-        'updatedAt',
-      ]),
+      ...retiredFields(
+        value,
+        [
+          'runId',
+          'task',
+          'state',
+          'pipeline',
+          'requestId',
+          'params',
+          'queue',
+          'leaseExpiresAt',
+          'result',
+          'events',
+          'createdAt',
+          'updatedAt',
+        ],
+        'retired-run-fields',
+      ),
       ...absent(value, 'params', 'optional'),
       ...absent(value, 'queue', 'optional'),
       ...absent(value, 'result', 'optional'),
     );
     const events = value['events'];
-    if (Array.isArray(events)) {
-      events.forEach((event, index) => {
-        if (isRecord(event) && event['by'] === 'infra') {
-          findings.push({
-            code: `infra-event-${index}`,
-            class: 'compatibility',
-          });
-        }
-      });
+    if (
+      Array.isArray(events) &&
+      events.some((event) => isRecord(event) && event['by'] === 'infra')
+    ) {
+      findings.push({ code: 'infra-run-events', class: 'compatibility' });
     }
     if (!runSchema.strip().safeParse(value).success) {
       findings.push({ code: 'invalid-run-document', class: 'invalid' });
     }
   } else {
     findings.push(
-      ...unknownKeys(value, [
-        'entryId',
-        'kind',
-        'task',
-        'runId',
-        'state',
-        'attempts',
-        'firstFailedAt',
-        'nextAttemptAt',
-        'deliveryFailures',
-        'createdAt',
-        'updatedAt',
-        'claimId',
-        'leaseExpiresAt',
-      ]),
+      ...retiredFields(
+        value,
+        [
+          'entryId',
+          'kind',
+          'task',
+          'runId',
+          'state',
+          'attempts',
+          'firstFailedAt',
+          'nextAttemptAt',
+          'deliveryFailures',
+          'createdAt',
+          'updatedAt',
+          'claimId',
+          'leaseExpiresAt',
+        ],
+        'retired-outbox-fields',
+      ),
       ...absent(value, 'firstFailedAt', 'optional'),
       ...absent(value, 'nextAttemptAt', 'optional'),
       ...absent(value, 'deliveryFailures', 'optional'),
@@ -277,7 +399,9 @@ export function inventoryPersistedRecord(
   return {
     ...(selector === undefined ? {} : { selector }),
     fingerprint: fingerprint(value),
-    findings,
+    findingCount: findings.length,
+    findingsTruncated: findings.length > PERSISTED_MIGRATION_FINDINGS_MAX,
+    findings: findings.slice(0, PERSISTED_MIGRATION_FINDINGS_MAX),
   };
 }
 

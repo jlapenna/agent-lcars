@@ -3,7 +3,14 @@ import 'server-only';
 import { PIPELINES } from '@agent-lcars/work';
 import { z } from 'zod';
 
-const workScopeSchema = z.enum(['work.operator', 'work.executor', 'work.cron']);
+const workScopeSchema = z.enum([
+  'work.operator',
+  'work.executor',
+  'work.cron',
+  // Deliberately explicit: missing scopes preserve the normal operator
+  // default but must never unlock the one-shot migration surface.
+  'work.migrate',
+]);
 
 /** A pipeline name checked against the same closed set `workSpecSchema`
  *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
