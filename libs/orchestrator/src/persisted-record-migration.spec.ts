@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 
 import { MemoryStore } from './memory-store';
 import {
+  decodePersistedMigrationAddress,
   decodePersistedMigrationCursor,
+  encodePersistedMigrationAddress,
   encodePersistedMigrationCursor,
   fingerprint,
   inventoryPersistedRecord,
   manifestId,
+  PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH,
   PERSISTED_MIGRATION_CURSOR_MAX_LENGTH,
   PersistedMigrationConflict,
   PersistedMigrationCursorError,
@@ -165,6 +168,53 @@ describe('persisted orchestrator record inventory', () => {
     );
   });
 
+  it('uses a bounded opaque address for malformed fixed-collection records', () => {
+    const taskDocumentId = encodeURIComponent('octo/example#31');
+    const runDocumentId = encodeURIComponent('octo/example#31/r1');
+    const outboxDocumentId = encodeURIComponent('dispatch/octo/example#31/r1');
+    const records = [
+      [
+        'task',
+        taskDocumentId,
+        { task: { runCount: 0, updatedAt: T }, revision: 1 },
+      ],
+      [
+        'run',
+        runDocumentId,
+        {
+          task: { repo: 'octo/example', issue: 31 },
+          state: 'lost',
+          pipeline: 'codex',
+        },
+      ],
+      [
+        'outbox',
+        outboxDocumentId,
+        { kind: 'dispatch-run', state: 'pending', attempts: 0 },
+      ],
+    ] as const;
+
+    for (const [kind, documentId, value] of records) {
+      const inventory = inventoryPersistedRecord(kind, value, documentId);
+      expect(inventory.selector).toEqual({
+        kind,
+        address: encodePersistedMigrationAddress(kind, documentId),
+      });
+      expect(JSON.stringify(inventory)).not.toContain(documentId);
+    }
+
+    const address = encodePersistedMigrationAddress('run', '\\'.repeat(1_500));
+    expect(address.length).toBeLessThanOrEqual(
+      PERSISTED_MIGRATION_ADDRESS_MAX_LENGTH,
+    );
+    expect(decodePersistedMigrationAddress(address, 'run')).toBe(
+      '\\'.repeat(1_500),
+    );
+    expect(() => decodePersistedMigrationAddress(address, 'task')).toThrow(
+      PersistedMigrationCursorError,
+    );
+  });
+
   it('fingerprints special numbers and Firestore value types distinctly', () => {
     const specialNumbers = [NaN, Infinity, -Infinity, -0, 0];
     expect(new Set(specialNumbers.map(fingerprint))).toHaveLength(5);
@@ -209,7 +259,9 @@ describe('reviewed persisted-record manifest', () => {
     expect(inventory.hasMore).toBe(false);
     expect(inventory.consistency).toBe('page-only');
     const record = inventory.records[0];
-    if (record?.selector?.kind !== 'task') throw new Error('missing task');
+    if (record?.selector?.kind !== 'task' || !('task' in record.selector)) {
+      throw new Error('missing task');
+    }
     const entry = {
       selector: record.selector,
       expectedFingerprint: record.fingerprint,

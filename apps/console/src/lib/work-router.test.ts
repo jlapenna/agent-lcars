@@ -1,4 +1,5 @@
 import {
+  encodePersistedMigrationAddress,
   encodePersistedMigrationCursor,
   MemoryScheduleStore,
   MemoryStore,
@@ -938,6 +939,51 @@ describe('persisted orchestrator migration routes', () => {
     expect(dryRun.json).toMatchObject({ mode: 'dry-run', entries: 1 });
     expect((await store.readTask(task.task))?.task.work).toBeUndefined();
 
+    // The route schema accepts only the bounded opaque address emitted for a
+    // fixed collection document; it remains a reviewed manifest entry, never
+    // a generic document read or write input.
+    const addressDryRun = await call(ctx, 'POST', '/orchestrator-migration', {
+      entries: [
+        {
+          selector: {
+            kind: 'task',
+            address: encodePersistedMigrationAddress(
+              'task',
+              encodeURIComponent('octo/example#7'),
+            ),
+          },
+          expectedFingerprint: record.fingerprint,
+          replacement: entry.replacement,
+        },
+      ],
+    });
+    expect(addressDryRun.status).toBe(200);
+    expect(addressDryRun.json).toMatchObject({ mode: 'dry-run', entries: 1 });
+
+    const malformedAddress = await call(
+      ctx,
+      'POST',
+      '/orchestrator-migration',
+      {
+        entries: [
+          {
+            selector: {
+              kind: 'task',
+              // An inventory cursor is not a migration address, even though
+              // both are opaque base64url strings for fixed collections.
+              address: encodePersistedMigrationCursor(
+                'task',
+                encodeURIComponent('octo/example#7'),
+              ),
+            },
+            expectedFingerprint: record.fingerprint,
+            replacement: entry.replacement,
+          },
+        ],
+      },
+    );
+    expect(malformedAddress.status).toBe(409);
+
     const refusedApply = await call(ctx, 'POST', '/orchestrator-migration', {
       mode: 'apply',
       entries: [entry],
@@ -974,7 +1020,9 @@ describe('persisted orchestrator migration routes', () => {
         limit: 1,
       })
     ).records[0];
-    if (record?.selector?.kind !== 'task') throw new Error('missing task');
+    if (record?.selector?.kind !== 'task' || !('task' in record.selector)) {
+      throw new Error('missing task');
+    }
     const entries = [
       {
         selector: record.selector,

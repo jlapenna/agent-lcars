@@ -31,8 +31,10 @@ const inventoryRecordSchema = z.strictObject({
 
 /** Temporary, operator-only API contract. It has fixed orchestrator record
  * kinds and bounded payloads; it deliberately does not model a collection
- * name, a query expression, or arbitrary document access. Delete this with
- * the phase-2 compatibility readers after a reviewed live conversion. */
+ * name, a query expression, or arbitrary document access. A malformed
+ * record may carry a bounded opaque address for its one inventoried document;
+ * it cannot select a different collection or query. Delete this with the
+ * phase-2 compatibility readers after a reviewed live conversion. */
 export const orchestratorMigrationContract = {
   inventory: base
     .meta(

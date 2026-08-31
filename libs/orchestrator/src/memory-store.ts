@@ -17,6 +17,7 @@ import {
   taskKey,
 } from './model';
 import {
+  decodePersistedMigrationAddress,
   decodePersistedMigrationCursor,
   encodePersistedMigrationCursor,
   fingerprint,
@@ -460,8 +461,8 @@ export class MemoryStore implements OrchestratorStore {
     return {
       kind: input.kind,
       consistency: 'page-only',
-      records: page.map(({ value }) =>
-        inventoryPersistedRecord(input.kind, value),
+      records: page.map(({ documentId, value }) =>
+        inventoryPersistedRecord(input.kind, value, documentId),
       ),
       hasMore,
       ...(hasMore && page.length > 0
@@ -516,21 +517,25 @@ export class MemoryStore implements OrchestratorStore {
 
   #migrationRecords(kind: PersistedRecordKind): {
     documentId: string;
+    storageKey: string;
     value: TaskDocument | Run | OutboxEntry;
   }[] {
     const values =
       kind === 'task'
         ? [...this.#tasks.entries()].map(([key, value]) => ({
             documentId: encodeURIComponent(key),
+            storageKey: key,
             value,
           }))
         : kind === 'run'
           ? [...this.#runs.entries()].map(([key, value]) => ({
               documentId: encodeURIComponent(key),
+              storageKey: key,
               value,
             }))
           : [...this.#outbox.entries()].map(([key, value]) => ({
               documentId: encodeURIComponent(key),
+              storageKey: key,
               value,
             }));
     return values.sort((left, right) =>
@@ -541,6 +546,15 @@ export class MemoryStore implements OrchestratorStore {
   #migrationValue(
     selector: PersistedRecordSelector,
   ): TaskDocument | Run | OutboxEntry | undefined {
+    if ('address' in selector) {
+      const documentId = decodePersistedMigrationAddress(
+        selector.address,
+        selector.kind,
+      );
+      return this.#migrationRecords(selector.kind).find(
+        (record) => record.documentId === documentId,
+      )?.value;
+    }
     if (selector.kind === 'task')
       return this.#tasks.get(taskKey(selector.task));
     if (selector.kind === 'run') return this.#runs.get(selector.runId);
@@ -548,6 +562,37 @@ export class MemoryStore implements OrchestratorStore {
   }
 
   #setMigrationValue(entry: PersistedMigrationEntry): void {
+    if ('address' in entry.selector) {
+      const documentId = decodePersistedMigrationAddress(
+        entry.selector.address,
+        entry.selector.kind,
+      );
+      const record = this.#migrationRecords(entry.selector.kind).find(
+        (candidate) => candidate.documentId === documentId,
+      );
+      if (record === undefined) {
+        throw new PersistedMigrationConflict(
+          `persisted ${entry.selector.kind} record disappeared`,
+        );
+      }
+      if (entry.selector.kind === 'task') {
+        this.#tasks.set(
+          record.storageKey,
+          structuredClone(entry.replacement as TaskDocument),
+        );
+      } else if (entry.selector.kind === 'run') {
+        this.#runs.set(
+          record.storageKey,
+          structuredClone(entry.replacement as Run),
+        );
+      } else {
+        this.#outbox.set(
+          record.storageKey,
+          structuredClone(entry.replacement as OutboxEntry),
+        );
+      }
+      return;
+    }
     if (entry.selector.kind === 'task') {
       this.#tasks.set(
         taskKey(entry.selector.task),

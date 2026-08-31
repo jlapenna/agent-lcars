@@ -26,6 +26,7 @@ import {
   taskKey,
 } from './model';
 import {
+  decodePersistedMigrationAddress,
   decodePersistedMigrationCursor,
   encodePersistedMigrationCursor,
   fingerprint,
@@ -670,6 +671,7 @@ export class FirestoreStore implements OrchestratorStore {
           ...inventoryPersistedRecord(
             input.kind,
             normalizeFirestoreIntegerValues(raw),
+            document.id,
           ),
           fingerprint: fingerprint(raw),
         };
@@ -740,6 +742,11 @@ export class FirestoreStore implements OrchestratorStore {
   }
 
   #migrationRef(selector: PersistedRecordSelector): DocumentReference {
+    if ('address' in selector) {
+      return this.#migrationCollectionFor(selector.kind).doc(
+        decodePersistedMigrationAddress(selector.address, selector.kind),
+      );
+    }
     if (selector.kind === 'task') {
       return this.#migrationTasks.doc(
         encodeURIComponent(taskKey(selector.task)),

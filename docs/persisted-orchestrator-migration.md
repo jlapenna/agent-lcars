@@ -13,8 +13,12 @@ The temporary routes are:
   page (1--200) ordered by the fixed collection document ID. The response has
   only a safe record selector, SHA-256 fingerprint, at most 16 fixed finding
   codes, plus explicit `findingCount`/`findingsTruncated`; it never copies
-  payloads or arbitrary field names. `consistency: "page-only"` explicitly
-  says this is not a cross-page snapshot.
+  payloads or arbitrary field names. When a malformed payload cannot supply a
+  coherent logical selector, it instead carries one bounded opaque address for
+  the exact already-inventoried document in that same fixed collection. The
+  address is not a collection, query, or general Firestore read surface and
+  must match the replacement's canonical document ID. The response's
+  `consistency: "page-only"` explicitly says this is not a cross-page snapshot.
 - `POST /api/work/v1/orchestrator-migration` previews an explicit manifest by
   default (`mode` omitted or `dry-run`). It returns a stable `manifestId`.
 - The same `POST` applies at most 100 fixed task/run/outbox replacements only
