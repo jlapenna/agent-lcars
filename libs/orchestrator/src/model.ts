@@ -109,10 +109,16 @@ export const githubAnchorProjectionSchema = z.strictObject({
   checkRuns: z
     .array(
       z.object({
+        /** REST `check_run.id` / GraphQL `databaseId`, never the node ID. */
+        id: z.string().min(1).max(256),
         name: z.string().min(1).max(256),
         url: z.string().min(1).max(2_048),
         status: z.string().min(1).max(64),
         conclusion: z.string().max(64).nullable(),
+        /** GitHub's check-run update timestamp rejects out-of-order signals. */
+        updatedAt: isoUtc,
+        startedAt: isoUtc.optional(),
+        completedAt: isoUtc.optional(),
       }),
     )
     .max(100)
@@ -125,6 +131,11 @@ export const githubAnchorProjectionSchema = z.strictObject({
     .array(z.string().min(1).max(256))
     .max(100)
     .optional(),
+  /** Exact unresolved threads beyond the bounded retained identity window.
+   * Unknown resolutions never decrement this count: without the omitted
+   * identity that would make a duplicate or reordered delivery hide a real
+   * merge blocker. A complete snapshot resets it authoritatively. */
+  unresolvedReviewThreadOmittedCount: z.number().int().nonnegative().optional(),
   checksTruncated: z.boolean().optional(),
   reviewThreadsTruncated: z.boolean().optional(),
   /** GitHub's own updated_at, used to reject an out-of-order webhook. */

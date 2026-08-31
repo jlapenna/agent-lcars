@@ -115,10 +115,14 @@ describe('githubAnchorProjectionFromDelivery', () => {
         payload: {
           repository: { full_name: REPO },
           check_run: {
+            id: 123,
             name: 'Verify',
             html_url: `https://github.com/${REPO}/runs/1`,
             status: 'completed',
             conclusion: 'failure',
+            started_at: '2026-08-30T11:59:00.000Z',
+            completed_at: '2026-08-30T12:00:00.000Z',
+            updated_at: '2026-08-30T12:00:00.000Z',
             pull_requests: [{ number: 42 }],
           },
         },
@@ -127,10 +131,14 @@ describe('githubAnchorProjectionFromDelivery', () => {
       {
         anchor: { repo: REPO, issue: 42 },
         checkRun: {
+          id: '123',
           name: 'Verify',
           url: `https://github.com/${REPO}/runs/1`,
           status: 'completed',
           conclusion: 'failure',
+          startedAt: '2026-08-30T11:59:00.000Z',
+          completedAt: '2026-08-30T12:00:00.000Z',
+          updatedAt: '2026-08-30T12:00:00.000Z',
         },
       },
     ]);

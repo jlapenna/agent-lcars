@@ -216,10 +216,12 @@ describe('handleWebhookDelivery', () => {
       payload: {
         repository: { full_name: REPO },
         check_run: {
+          id: 1001,
           name: 'Verify',
           html_url: `https://github.com/${REPO}/runs/1`,
           status: 'completed',
           conclusion: 'failure',
+          updated_at: '2026-08-15T12:01:00.000Z',
           pull_requests: [{ number: ISSUE.issue }],
         },
       },
@@ -235,6 +237,69 @@ describe('handleWebhookDelivery', () => {
       kind: 'pr',
       failingChecks: [{ name: 'Verify' }],
       ciRunning: false,
+    });
+  });
+
+  it('rejects an out-of-order lifecycle update for the same check-run identity', async () => {
+    const { deps, store } = fixture();
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'pr-anchor-delivery',
+      payload: {
+        repository: { full_name: REPO },
+        pull_request: {
+          ...completeIssuePayload().issue,
+          draft: false,
+          requested_reviewers: [],
+          mergeable_state: 'clean',
+        },
+      },
+    });
+    const deliverCheck = (
+      deliveryId: string,
+      input: { status: string; conclusion: string | null; updatedAt: string },
+    ) =>
+      handleWebhookDelivery(deps, {
+        event: 'check_run',
+        deliveryId,
+        payload: {
+          repository: { full_name: REPO },
+          check_run: {
+            id: 1004,
+            name: 'Verify',
+            html_url: `https://github.com/${REPO}/runs/1004`,
+            status: input.status,
+            conclusion: input.conclusion,
+            updated_at: input.updatedAt,
+            pull_requests: [{ number: ISSUE.issue }],
+          },
+        },
+      });
+
+    await deliverCheck('completed-first', {
+      status: 'completed',
+      conclusion: 'failure',
+      updatedAt: '2026-08-15T12:02:00.000Z',
+    });
+    await deliverCheck('stale-in-progress', {
+      status: 'in_progress',
+      conclusion: null,
+      updatedAt: '2026-08-15T12:01:00.000Z',
+    });
+
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
+      ciRunning: false,
+      failingChecks: [{ name: 'Verify' }],
+      checkRuns: [
+        {
+          id: '1004',
+          status: 'completed',
+          conclusion: 'failure',
+          updatedAt: '2026-08-15T12:02:00.000Z',
+        },
+      ],
     });
   });
 
@@ -299,6 +364,7 @@ describe('handleWebhookDelivery', () => {
         (_value, index) => `PRRT_${index}`,
       ),
       unresolvedReviewThreadCount: 100,
+      unresolvedReviewThreadOmittedCount: 0,
       reviewThreadsTruncated: true,
     }));
     const threadPayload = (resolved: boolean) => ({
@@ -332,7 +398,23 @@ describe('handleWebhookDelivery', () => {
     await expect(
       store.readGithubAnchorProjection(ISSUE),
     ).resolves.toMatchObject({
+      unresolvedReviewThreadCount: 101,
+      unresolvedReviewThreadOmittedCount: 1,
+      reviewThreadsTruncated: true,
+    });
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request_review_thread',
+      deliveryId: 'thread-known-resolved',
+      payload: {
+        ...threadPayload(true),
+        thread: { id: 'PRRT_0', is_resolved: true },
+      },
+    });
+    await expect(
+      store.readGithubAnchorProjection(ISSUE),
+    ).resolves.toMatchObject({
       unresolvedReviewThreadCount: 100,
+      unresolvedReviewThreadOmittedCount: 1,
       reviewThreadsTruncated: true,
     });
   });
@@ -403,10 +485,12 @@ describe('handleWebhookDelivery', () => {
           payload: {
             repository: { full_name: REPO },
             check_run: {
+              id: name === 'Verify' ? 1002 : 1003,
               name,
               html_url: `https://github.com/${REPO}/runs/${name}`,
               status: 'completed',
               conclusion: 'failure',
+              updated_at: '2026-08-15T12:01:00.000Z',
               pull_requests: [{ number: ISSUE.issue }],
             },
           },

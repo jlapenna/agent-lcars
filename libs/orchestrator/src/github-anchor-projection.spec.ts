@@ -52,10 +52,12 @@ describe('GitHub anchor projections', () => {
       linkedIssueNumbers: [8, 9],
       checkRuns: [
         {
+          id: '1000',
           name: 'Verify',
           url: 'https://example.test/checks/1',
           status: 'completed',
           conclusion: 'failure',
+          updatedAt: '2026-08-30T10:00:00.000Z',
         },
       ],
       failingChecks: [{ name: 'Verify', url: 'https://example.test/checks/1' }],

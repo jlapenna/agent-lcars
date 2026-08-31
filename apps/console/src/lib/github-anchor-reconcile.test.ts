@@ -5,6 +5,7 @@ import {
   ANCHOR_RECONCILE_PAGE_SIZE,
   AnchorProjectionBackfillLimitError,
   compareSelectedGithubAnchorProjections,
+  enrichBackfillAnchors,
   reconcileGithubAnchorProjections,
 } from './github-anchor-reconcile';
 
@@ -51,6 +52,67 @@ describe('reconcileGithubAnchorProjections', () => {
       }),
     );
     expect(enrich).toHaveBeenCalledWith(REPO, [expect.anything()]);
+  });
+
+  it('stores a CheckRun REST databaseId, never its GraphQL node ID', async () => {
+    const graphql = vi.fn().mockResolvedValue({
+      repository: {
+        i42: {
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      totalCount: 1,
+                      nodes: [
+                        {
+                          databaseId: 9876,
+                          name: 'Verify',
+                          status: 'COMPLETED',
+                          conclusion: 'FAILURE',
+                          detailsUrl: 'https://example.test/checks/9876',
+                          startedAt: '2026-08-30T12:01:00.000Z',
+                          completedAt: '2026-08-30T12:02:00.000Z',
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const [projection] = await enrichBackfillAnchors(
+      REPO,
+      [
+        {
+          anchor: { repo: REPO, issue: 42 },
+          kind: 'pr',
+          state: 'open',
+          title: anchor.title,
+          body: anchor.body,
+          url: anchor.html_url,
+          labels: ['status:needs-human'],
+          assigneeLogins: [],
+          sourceUpdatedAt: anchor.updated_at,
+          observedAt: '2026-08-30T12:00:01.000Z',
+        },
+      ],
+      { graphql } as never,
+    );
+
+    expect(graphql.mock.calls[0][0]).toContain('CheckRun { databaseId');
+    expect(graphql.mock.calls[0][0]).not.toContain('CheckRun { id');
+    expect(projection.checkRuns).toEqual([
+      expect.objectContaining({
+        id: '9876',
+        name: 'Verify',
+        updatedAt: '2026-08-30T12:02:00.000Z',
+      }),
+    ]);
   });
 
   it('fails closed when a repository exceeds the explicit page bound', async () => {

@@ -50,6 +50,13 @@ export function mergeGithubAnchorSnapshot(
     current.unresolvedReviewThreadIds !== undefined
       ? { unresolvedReviewThreadIds: current.unresolvedReviewThreadIds }
       : {}),
+    ...(snapshot.unresolvedReviewThreadOmittedCount === undefined &&
+    current.unresolvedReviewThreadOmittedCount !== undefined
+      ? {
+          unresolvedReviewThreadOmittedCount:
+            current.unresolvedReviewThreadOmittedCount,
+        }
+      : {}),
     ...(snapshot.checksTruncated === undefined &&
     current.checksTruncated !== undefined
       ? { checksTruncated: current.checksTruncated }

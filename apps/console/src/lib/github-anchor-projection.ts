@@ -204,10 +204,14 @@ export function githubAnchorProjectionFromDelivery(input: {
 const checkRunPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
   check_run: z.object({
+    id: z.number().int().positive(),
     name: z.string().min(1).max(256),
     html_url: z.string().min(1).max(2_048),
     status: z.string().min(1).max(64),
     conclusion: z.string().max(64).nullable(),
+    started_at: z.iso.datetime({ offset: false }).nullable().optional(),
+    completed_at: z.iso.datetime({ offset: false }).nullable().optional(),
+    updated_at: z.iso.datetime({ offset: false }),
     pull_requests: z
       .array(z.object({ number: z.number().int().positive() }))
       .max(8),
@@ -293,10 +297,20 @@ export function githubAnchorProjectionSignalFromDelivery(input: {
         issue: pullRequest.number,
       },
       checkRun: {
+        id: String(parsed.data.check_run.id),
         name: parsed.data.check_run.name,
         url: parsed.data.check_run.html_url,
         status: parsed.data.check_run.status.toLowerCase(),
         conclusion: parsed.data.check_run.conclusion?.toLowerCase() ?? null,
+        updatedAt: parsed.data.check_run.updated_at,
+        ...(parsed.data.check_run.started_at === null ||
+        parsed.data.check_run.started_at === undefined
+          ? {}
+          : { startedAt: parsed.data.check_run.started_at }),
+        ...(parsed.data.check_run.completed_at === null ||
+        parsed.data.check_run.completed_at === undefined
+          ? {}
+          : { completedAt: parsed.data.check_run.completed_at }),
       },
     }));
   }

@@ -53,10 +53,13 @@ interface RawAnchorDetails {
           contexts?: {
             totalCount?: number;
             nodes?: ({
+              databaseId?: number | null;
               name?: string;
               status?: string;
               conclusion?: string | null;
               detailsUrl?: string | null;
+              startedAt?: string | null;
+              completedAt?: string | null;
             } | null)[];
           } | null;
         } | null;
@@ -74,12 +77,15 @@ function anchorAlias(number: number): string {
  * is deliberately never imported by a console route: after the cutover every
  * queue signal is read from the stored projection it fills.
  */
-async function enrichBackfillAnchors(
+export async function enrichBackfillAnchors(
   repository: string,
   projections: GithubAnchorProjection[],
+  github: Pick<
+    ReturnType<typeof getGithubClient>,
+    'graphql'
+  > = getGithubClient(),
 ): Promise<GithubAnchorProjection[]> {
   const [owner, name] = repository.split('/');
-  const github = getGithubClient();
   const enriched = new Map<string, GithubAnchorProjection>();
   for (
     let offset = 0;
@@ -98,7 +104,7 @@ async function enrichBackfillAnchors(
             comments(last: 1) { nodes { id body url createdAt updatedAt author { login } } }
             reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
             reviewThreads(first: 100) { totalCount nodes { id isResolved } }
-            commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { name status conclusion detailsUrl } } } } } } }
+            commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { databaseId name status conclusion detailsUrl startedAt completedAt } } } } } } }
           }
         }`,
       )
@@ -116,13 +122,27 @@ async function enrichBackfillAnchors(
       const contexts =
         detail.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
       const checkRuns = (contexts?.nodes ?? []).flatMap((check) =>
-        check?.name
+        check?.name &&
+        check.databaseId !== undefined &&
+        check.databaseId !== null
           ? [
               {
+                id: String(check.databaseId),
                 name: check.name,
                 url: check.detailsUrl ?? projection.url,
                 status: check.status?.toLowerCase() ?? 'completed',
                 conclusion: check.conclusion?.toLowerCase() ?? null,
+                updatedAt:
+                  check.completedAt ??
+                  check.startedAt ??
+                  projection.sourceUpdatedAt,
+                ...(check.startedAt === undefined || check.startedAt === null
+                  ? {}
+                  : { startedAt: check.startedAt }),
+                ...(check.completedAt === undefined ||
+                check.completedAt === null
+                  ? {}
+                  : { completedAt: check.completedAt }),
               },
             ]
           : [],
@@ -130,6 +150,20 @@ async function enrichBackfillAnchors(
       const latestComment = detail.comments?.nodes?.at(-1);
       const mergeableState = detail.mergeStateStatus?.toLowerCase();
       const threadNodes = detail.reviewThreads?.nodes ?? [];
+      const unresolvedReviewThreadIds = threadNodes.flatMap((thread) =>
+        thread?.isResolved === false && thread.id !== undefined
+          ? [thread.id]
+          : [],
+      );
+      // GitHub's connection only returns the first 100 identities. We cannot
+      // know how many remaining threads are unresolved, so count every
+      // omitted record conservatively until a complete later snapshot says
+      // otherwise; an underestimate would hide a merge blocker.
+      const unresolvedReviewThreadOmittedCount = Math.max(
+        0,
+        (detail.reviewThreads?.totalCount ?? threadNodes.length) -
+          threadNodes.length,
+      );
       enriched.set(`${projection.anchor.repo}#${projection.anchor.issue}`, {
         ...projection,
         ...(detail.body === undefined || detail.body === null
@@ -185,14 +219,11 @@ async function enrichBackfillAnchors(
               ciRunning: checkRuns.some(
                 (check) => check.status !== 'completed',
               ),
-              unresolvedReviewThreadCount: threadNodes.filter(
-                (thread) => thread?.isResolved === false,
-              ).length,
-              unresolvedReviewThreadIds: threadNodes.flatMap((thread) =>
-                thread?.isResolved === false && thread.id !== undefined
-                  ? [thread.id]
-                  : [],
-              ),
+              unresolvedReviewThreadCount:
+                unresolvedReviewThreadIds.length +
+                unresolvedReviewThreadOmittedCount,
+              unresolvedReviewThreadIds,
+              unresolvedReviewThreadOmittedCount,
               checksTruncated: (contexts?.totalCount ?? 0) > checkRuns.length,
               reviewThreadsTruncated:
                 (detail.reviewThreads?.totalCount ?? 0) > threadNodes.length,

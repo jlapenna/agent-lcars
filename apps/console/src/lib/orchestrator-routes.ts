@@ -183,17 +183,26 @@ export async function handleWebhookDelivery(
           if (current.kind !== 'pr') return undefined;
           if (signal.reviewThread !== undefined) {
             const unresolved = new Set(current.unresolvedReviewThreadIds ?? []);
-            const currentCount =
-              current.unresolvedReviewThreadCount ?? unresolved.size;
+            const omittedCount =
+              current.unresolvedReviewThreadOmittedCount ??
+              Math.max(
+                0,
+                (current.unresolvedReviewThreadCount ?? unresolved.size) -
+                  unresolved.size,
+              );
+            const currentCount = unresolved.size + omittedCount;
             if (signal.reviewThread.resolved) {
               const known = unresolved.delete(signal.reviewThread.id);
-              const canBeOmitted = current.reviewThreadsTruncated === true;
-              if (!known && !canBeOmitted) return undefined;
+              // An omitted identity cannot be matched safely. In particular,
+              // a duplicate/out-of-order resolve for an already-resolved
+              // omitted thread must not decrement a different live blocker.
+              if (!known) return undefined;
               return {
                 ...current,
                 unresolvedReviewThreadIds: [...unresolved],
-                unresolvedReviewThreadCount: Math.max(0, currentCount - 1),
-                ...(canBeOmitted ? { reviewThreadsTruncated: true } : {}),
+                unresolvedReviewThreadOmittedCount: omittedCount,
+                unresolvedReviewThreadCount: currentCount - 1,
+                ...(omittedCount > 0 ? { reviewThreadsTruncated: true } : {}),
                 observedAt: new Date().toISOString(),
               };
             }
@@ -205,6 +214,7 @@ export async function handleWebhookDelivery(
               return {
                 ...current,
                 unresolvedReviewThreadIds: retained,
+                unresolvedReviewThreadOmittedCount: omittedCount + 1,
                 unresolvedReviewThreadCount: currentCount + 1,
                 reviewThreadsTruncated: true,
                 observedAt: new Date().toISOString(),
@@ -213,17 +223,31 @@ export async function handleWebhookDelivery(
             return {
               ...current,
               unresolvedReviewThreadIds: retained,
+              unresolvedReviewThreadOmittedCount: omittedCount,
               unresolvedReviewThreadCount: currentCount + 1,
               observedAt: new Date().toISOString(),
             };
           }
           if (signal.checkRun === undefined) return undefined;
+          const existing = (current.checkRuns ?? []).find(
+            (check) => check.id === signal.checkRun?.id,
+          );
+          if (
+            existing !== undefined &&
+            existing.updatedAt >= signal.checkRun.updatedAt
+          ) {
+            return undefined;
+          }
           const checkRuns = [
             ...(current.checkRuns ?? []).filter(
-              (check) => check.name !== signal.checkRun?.name,
+              (check) => check.id !== signal.checkRun?.id,
             ),
             signal.checkRun,
-          ].slice(-100);
+          ]
+            .sort((left, right) =>
+              left.updatedAt.localeCompare(right.updatedAt),
+            )
+            .slice(-100);
           return {
             ...current,
             checkRuns,
