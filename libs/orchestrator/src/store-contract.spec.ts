@@ -571,6 +571,193 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       });
     });
 
+    it('deletes only terminal compatibility records through bounded emulator transactions', async () => {
+      prefixCounter += 1;
+      const collectionPrefix = `orchestrator-migration-delete-${Date.now()}-${prefixCounter}-`;
+      const store = new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      });
+      const firestore = new Firestore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        host: emulatorHost ?? 'localhost:8080',
+        ssl: false,
+      });
+      const task = { repo: 'octo/example', issue: 73 } as const;
+      const runId = 'octo/example#73/r1';
+      const taskRef = firestore
+        .collection(`${collectionPrefix}tasks`)
+        .doc(encodeURIComponent(taskKey(task)));
+      const runRef = firestore
+        .collection(`${collectionPrefix}runs`)
+        .doc(encodeURIComponent(runId));
+      // These are the census-era shapes: their strict compatibility fields
+      // are absent, while the minimum safety facts are coherent.
+      await taskRef.set({
+        task: { task, runCount: 1, updatedAt: T },
+        revision: 1,
+      });
+      await runRef.set({
+        runId,
+        task,
+        state: 'lost',
+        pipeline: 'codex',
+        requestId: 'legacy',
+        leaseExpiresAt: T,
+        events: [],
+        createdAt: T,
+        updatedAt: T,
+      });
+      const runRecord = (
+        await store.inventoryPersistedRecords({ kind: 'run', limit: 1 })
+      ).records[0];
+      if (runRecord?.selector === undefined) throw new Error('missing run');
+      const runEntry = {
+        operation: 'delete' as const,
+        selector: runRecord.selector,
+        expectedFingerprint: runRecord.fingerprint,
+      };
+      const runPreview = await store.previewPersistedMigration([runEntry]);
+      expect(runPreview.deletions).toEqual([
+        { selector: runRecord.selector, status: 'ready', reasons: [] },
+      ]);
+      await store.applyPersistedMigration({
+        entries: [runEntry],
+        reviewedManifestId: runPreview.manifestId,
+      });
+      expect((await runRef.get()).exists).toBe(false);
+
+      const taskRecord = (
+        await store.inventoryPersistedRecords({ kind: 'task', limit: 1 })
+      ).records[0];
+      if (taskRecord?.selector === undefined) throw new Error('missing task');
+      const taskEntry = {
+        operation: 'delete' as const,
+        selector: taskRecord.selector,
+        expectedFingerprint: taskRecord.fingerprint,
+      };
+      const taskPreview = await store.previewPersistedMigration([taskEntry]);
+      expect(taskPreview.deletions).toEqual([
+        { selector: taskRecord.selector, status: 'ready', reasons: [] },
+      ]);
+      await store.applyPersistedMigration({
+        entries: [taskEntry],
+        reviewedManifestId: taskPreview.manifestId,
+      });
+      expect((await taskRef.get()).exists).toBe(false);
+
+      const invalidParentTask = { repo: 'octo/example', issue: 74 } as const;
+      const invalidParentRunId = 'octo/example#74/r1';
+      await firestore
+        .collection(`${collectionPrefix}tasks`)
+        .doc(encodeURIComponent(taskKey(invalidParentTask)))
+        .set({
+          task: {
+            task: invalidParentTask,
+            activeRunId: null,
+            runCount: 1,
+            updatedAt: T,
+          },
+          revision: 1,
+        });
+      await firestore
+        .collection(`${collectionPrefix}runs`)
+        .doc(encodeURIComponent(invalidParentRunId))
+        .set({
+          runId: invalidParentRunId,
+          task: invalidParentTask,
+          state: 'finished',
+          pipeline: 'codex',
+          requestId: 'legacy-invalid-parent',
+          leaseExpiresAt: T,
+          events: [],
+          createdAt: T,
+          updatedAt: T,
+        });
+      const invalidParentRecord = (
+        await store.inventoryPersistedRecords({ kind: 'run', limit: 10 })
+      ).records.find((record) => record.selector?.kind === 'run');
+      if (invalidParentRecord?.selector === undefined) {
+        throw new Error('missing invalid-parent run');
+      }
+      const invalidParentPreview = await store.previewPersistedMigration([
+        {
+          operation: 'delete',
+          selector: invalidParentRecord.selector,
+          expectedFingerprint: invalidParentRecord.fingerprint,
+        },
+      ]);
+      expect(invalidParentPreview.deletions[0]).toMatchObject({
+        status: 'blocked',
+        reasons: expect.arrayContaining(['invalid-parent-task']),
+      });
+
+      const mismatchedParentTask = {
+        repo: 'octo/example',
+        issue: 75,
+      } as const;
+      const mismatchedEmbeddedTask = {
+        repo: 'octo/example',
+        issue: 76,
+      } as const;
+      const mismatchedParentRunId = 'octo/example#75/r1';
+      await firestore
+        .collection(`${collectionPrefix}tasks`)
+        .doc(encodeURIComponent(taskKey(mismatchedParentTask)))
+        .set({
+          // Keep the exact legacy task shape: no consecutiveLost or work.
+          // The collection path identifies #75 but its embedded safety anchor
+          // must independently agree before a terminal #75 run is deletable.
+          task: {
+            task: mismatchedEmbeddedTask,
+            runCount: 1,
+            updatedAt: T,
+          },
+          revision: 1,
+        });
+      await firestore
+        .collection(`${collectionPrefix}runs`)
+        .doc(encodeURIComponent(mismatchedParentRunId))
+        .set({
+          // This census-era run intentionally omits requestSource.
+          runId: mismatchedParentRunId,
+          task: mismatchedParentTask,
+          state: 'finished',
+          pipeline: 'codex',
+          requestId: 'legacy-mismatched-parent',
+          leaseExpiresAt: T,
+          events: [],
+          createdAt: T,
+          updatedAt: T,
+        });
+      const mismatchedParentRecord = (
+        await store.inventoryPersistedRecords({ kind: 'run', limit: 10 })
+      ).records.find(
+        (record) =>
+          record.selector?.kind === 'run' &&
+          'runId' in record.selector &&
+          record.selector.runId === mismatchedParentRunId,
+      );
+      if (mismatchedParentRecord?.selector === undefined) {
+        throw new Error('missing mismatched-parent run');
+      }
+      const mismatchedParentPreview = await store.previewPersistedMigration([
+        {
+          operation: 'delete',
+          selector: mismatchedParentRecord.selector,
+          expectedFingerprint: mismatchedParentRecord.fingerprint,
+        },
+      ]);
+      expect(mismatchedParentPreview.deletions[0]).toMatchObject({
+        status: 'blocked',
+        reasons: expect.arrayContaining(['invalid-parent-task']),
+      });
+      await firestore.terminate();
+    });
+
     it('keeps full-width Firestore int64 values distinct for stale manifests', async () => {
       prefixCounter += 1;
       const prefix = `orchestrator-migration-int64-${Date.now()}-${prefixCounter}-`;

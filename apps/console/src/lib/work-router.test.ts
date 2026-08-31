@@ -1063,6 +1063,28 @@ describe('persisted orchestrator migration routes', () => {
     );
     expect(malformedAddress.status).toBe(409);
 
+    const malformedDeleteAddress = await call(
+      ctx,
+      'POST',
+      '/orchestrator-migration',
+      {
+        entries: [
+          {
+            operation: 'delete',
+            selector: {
+              kind: 'task',
+              address: encodePersistedMigrationCursor(
+                'task',
+                encodeURIComponent('octo/example#7'),
+              ),
+            },
+            expectedFingerprint: record.fingerprint,
+          },
+        ],
+      },
+    );
+    expect(malformedDeleteAddress.status).toBe(409);
+
     const refusedApply = await call(ctx, 'POST', '/orchestrator-migration', {
       mode: 'apply',
       entries: [entry],
@@ -1125,5 +1147,47 @@ describe('persisted orchestrator migration routes', () => {
     });
     expect(response.status).toBe(409);
     expect(response.json.message).toContain('stale manifest');
+  });
+
+  it('previews and applies a value-free compatibility deletion through Work', async () => {
+    const ctx = context({ principal: migrationOperator });
+    const store = ctx.runtime.store as MemoryStore;
+    const task = {
+      task: { repo: 'octo/example', issue: 9 },
+      runCount: 0,
+      updatedAt: '2026-08-26T10:00:00.000Z',
+    };
+    await store.apply({
+      decision: { task, outbox: [] },
+      expectedRevision: undefined,
+    });
+    const record = (
+      await store.inventoryPersistedRecords({ kind: 'task', limit: 1 })
+    ).records[0];
+    if (record?.selector === undefined) throw new Error('missing task');
+    const entries = [
+      {
+        operation: 'delete',
+        selector: record.selector,
+        expectedFingerprint: record.fingerprint,
+      },
+    ];
+    const preview = await call(ctx, 'POST', '/orchestrator-migration', {
+      entries,
+    });
+    expect(preview.status).toBe(200);
+    expect(preview.json).toMatchObject({
+      mode: 'dry-run',
+      deletions: [{ selector: record.selector, status: 'ready', reasons: [] }],
+    });
+    expect(JSON.stringify(preview.json)).not.toContain('updatedAt');
+    const applied = await call(ctx, 'POST', '/orchestrator-migration', {
+      mode: 'apply',
+      entries,
+      reviewedManifestId: preview.json.manifestId,
+      confirmation: 'apply-reviewed-manifest',
+    });
+    expect(applied.status).toBe(200);
+    expect(await store.readTask(task.task)).toBeUndefined();
   });
 });

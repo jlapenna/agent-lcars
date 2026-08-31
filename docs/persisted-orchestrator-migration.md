@@ -21,18 +21,30 @@ The temporary routes are:
   `consistency: "page-only"` explicitly says this is not a cross-page snapshot.
 - `POST /api/work/v1/orchestrator-migration` previews an explicit manifest by
   default (`mode` omitted or `dry-run`). It returns a stable `manifestId`.
-- The same `POST` applies at most 100 fixed task/run/outbox replacements only
-  when `mode: "apply"`, the caller echoes that exact `reviewedManifestId`, and
-  sends `confirmation: "apply-reviewed-manifest"`. The store transaction
-  re-reads every record and compares its fingerprint before writing, so a
-  concurrent change aborts the whole bounded manifest.
+  Existing typed replacement entries remain supported. A temporary deletion
+  entry is value-free: `{ "operation": "delete", "selector": ..., "expectedFingerprint": ... }`;
+  it cannot carry a replacement, query, or payload. Its dry-run result includes only the supplied selector and a closed
+  `ready`/`blocked` safety disposition with fixed reasons.
+- The same `POST` applies at most 100 fixed task/run/outbox replacements or
+  deletions only when `mode: "apply"`, the caller echoes that exact
+  `reviewedManifestId`, and sends `confirmation: "apply-reviewed-manifest"`.
+  The store transaction re-reads every record and compares its fingerprint
+  before writing or deleting, so a concurrent change aborts the whole bounded
+  manifest.
 
 Inventory reports compatibility candidates (missing Work task payload,
 missing `consecutiveLost`, historical `infra` events, and retired top-level
 fields) as well as meaningful optional field absences in Task, Run, and Outbox
 records. Optional findings are census evidence, not permission to invent
 values. An operator must review each full replacement outside the inventory
-response and submit the exact typed manifest.
+response and submit the exact typed manifest. A deletion is permitted only for
+a record with a compatibility finding, never an optional-only finding. The
+application rechecks its safety predicates inside the apply transaction: a Run
+is terminal, has no active (or malformed) existing parent Task, and has no
+pending or leased Outbox dependency; a Task has no active run and no child Run;
+and an Outbox entry is terminal (`done` or `failed`). Run dependency reads stop
+at three and Task child-run reads at one; reaching either bound refuses the
+deletion rather than broadening the operation.
 
 Do not run an apply during phase 1. After deployment approval, perform two
 complete, back-to-back inventory passes during a quiescent maintenance window;
