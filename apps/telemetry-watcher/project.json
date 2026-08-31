@@ -107,25 +107,6 @@
         }
       }
     },
-    "session-schema-backfill-cli": {
-      "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "platform": "node",
-        "outputPath": "dist/apps/telemetry-watcher-session-schema-backfill-cli",
-        "outputFileName": "session-schema-backfill.cjs",
-        "format": ["cjs"],
-        "bundle": true,
-        "thirdParty": true,
-        "target": "node24",
-        "main": "apps/telemetry-watcher/src/session-schema-backfill-cli.ts",
-        "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
-        "skipTypeCheck": true,
-        "esbuildOptions": {
-          "sourcemap": false
-        }
-      }
-    },
     "docker-build": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],

@@ -21,6 +21,41 @@ export const SESSION_AGENTS: readonly SessionAgent[] = [
   'opencode',
 ];
 
+export function isSessionAgent(value: unknown): value is SessionAgent {
+  return SESSION_AGENTS.includes(value as SessionAgent);
+}
+
+export interface SessionRepository {
+  owner: string;
+  name: string;
+}
+
+/** GitHub permits a 39-character owner and a 100-character repository name.
+ * Keep this validation next to the persisted document contract so writers and
+ * readers cannot disagree about what a repository identity means. */
+const GITHUB_OWNER_MAX_LENGTH = 39;
+const GITHUB_REPOSITORY_NAME_MAX_LENGTH = 100;
+const GITHUB_REPOSITORY_COMPONENT_RE = /^[\w.-]+$/u;
+
+export function isCanonicalSessionRepository(
+  value: unknown,
+): value is SessionRepository {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const { owner, name } = value as Record<string, unknown>;
+  return (
+    typeof owner === 'string' &&
+    owner.length > 0 &&
+    owner.length <= GITHUB_OWNER_MAX_LENGTH &&
+    GITHUB_REPOSITORY_COMPONENT_RE.test(owner) &&
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= GITHUB_REPOSITORY_NAME_MAX_LENGTH &&
+    GITHUB_REPOSITORY_COMPONENT_RE.test(name)
+  );
+}
+
 export interface TokenUsage {
   /** Non-cached input only. Providers whose input total includes cache reads
    * must subtract `cacheReadTokens` when adapting their native usage. */
@@ -80,11 +115,8 @@ export type SessionTitleSource = 'declared' | 'generated' | 'inferred';
 export interface SessionSummary {
   sessionId: string;
   source: SessionSource;
-  /** Which coding agent produced this transcript. Omitted (rather than
-   * defaulted here) for any summary a pre-#3123 reducer produced or a
-   * hand-built test fixture that predates this field — use the
-   * {@link sessionAgent} helper to resolve the effective value (defaults to
-   * `'claude-code'` when absent) instead of reading this field directly. */
+  /** Which coding agent produced this transcript. Current adapters stamp
+   * this before a summary reaches the persisted-session writer. */
   agent?: SessionAgent;
   host?: string;
   cwd?: string;
@@ -158,16 +190,8 @@ interface BaseSessionDoc {
   /** Most recent time a host watcher directly observed this CLI session.
    * Quantized by the watcher to avoid a Firestore write every tick. */
   observedAt?: string;
-  /** See {@link SessionSummary.agent} — threaded through unchanged by
-   * `buildSessionDoc`. Use the {@link sessionAgent} helper to resolve the
-   * effective value rather than reading this field directly. */
-  agent?: SessionAgent;
-  /** Which GitHub repo this session belongs to. Lives on the shared base
-   * (not `CliSessionDoc`/`IssueAgentSessionDoc` individually) because both
-   * sources populate it, just via different routes — see
-   * {@link SessionSummary.repo} (`cli`) and
-   * {@link BuildSessionDocOptions.repo} (`issue-agent`). */
-  repo?: { owner: string; name: string };
+  /** The adapter identity written by the current watcher/reducer. */
+  agent: SessionAgent;
   startedAt: string;
   lastActivityAt: string;
   turns: number;
@@ -205,6 +229,9 @@ interface BaseSessionDoc {
 
 export interface CliSessionDoc extends BaseSessionDoc {
   source: 'cli';
+  /** A host-scoped CLI session is valid without a GitHub repository. When a
+   * repository is present it must be canonical; readers never guess one. */
+  repo?: SessionRepository;
   host?: string;
   cwd?: string;
   worktree?: string;
@@ -214,8 +241,11 @@ export interface CliSessionDoc extends BaseSessionDoc {
   artifacts?: string[];
 }
 
-export interface IssueAgentSessionDoc extends BaseSessionDoc {
+interface IssueAgentSessionDocBase extends BaseSessionDoc {
   source: 'issue-agent';
+  /** A QueueExecutor session is a GitHub-work anchor, so its repository is
+   * never optional. */
+  repo: SessionRepository;
   runId?: string;
   /** The QueueExecutor attempt ID — the join key from a work item to its
    * sessions. `runId` identifies the claimed execution. */
@@ -235,24 +265,23 @@ export interface IssueAgentSessionDoc extends BaseSessionDoc {
    * object is console-renderable without checking
    * {@link IssueAgentSessionDoc.renderable} first — OpenCode archives are
    * durable but intentionally remain summary-only in the console. */
-  transcriptGcsUri?: string;
-  /**
-   * Whether `transcriptGcsUri` (when set) points at a raw transcript
-   * `parseTranscriptTimeline` (`transcript-timeline.ts`) can actually parse
-   * into a rendered timeline — set once by `buildSessionDoc` from the
-   * capturing adapter's identity (see `isRenderableTranscriptAgent`),
-   * mirroring this issue's `TelemetrySessionRef` contract (agent-lcars#645):
-   * captured once by Worker runtime, read — never re-derived — by the
-   * console. Before this field existed, `apps/console/src/lib/
-   * session-detail.ts` re-derived the same fact itself by comparing
-   * `sessionAgent(doc) === 'claude-code'` directly, coincidentally matching
-   * `RENDERABLE_TRANSCRIPT_AGENTS`'s current (but unrelated) contents rather
-   * than reading it. Absent on docs shipped before this field existed —
-   * `isSessionRenderable` (`agent.ts`) is the one place that should read
-   * this with the pre-#645 fallback, never a fresh `=== 'claude-code'`
-   * check re-introduced elsewhere. */
-  renderable?: boolean;
 }
+
+/** An archived issue-agent transcript carries the capture-time renderability
+ * decision. It is never inferred from the provider at read time. */
+export interface ArchivedIssueAgentSessionDoc extends IssueAgentSessionDocBase {
+  transcriptGcsUri: string;
+  renderable: boolean;
+}
+
+/** Summary-only issue-agent records have no transcript capability to state. */
+export interface SummaryIssueAgentSessionDoc extends IssueAgentSessionDocBase {
+  transcriptGcsUri?: undefined;
+  renderable?: undefined;
+}
+
+export type IssueAgentSessionDoc =
+  ArchivedIssueAgentSessionDoc | SummaryIssueAgentSessionDoc;
 
 /** Source-discriminated document shape stored at `sessions/{sessionId}`. */
 export type SessionDoc = CliSessionDoc | IssueAgentSessionDoc;

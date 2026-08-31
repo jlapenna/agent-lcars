@@ -174,49 +174,6 @@ short-lived credentials file) instead of a key JSON blob — see
 ./tools/nx run @agent-lcars/telemetry-watcher:serve
 ```
 
-## Session schema backfill
-
-`session-schema-backfill-cli` is the only supported repair path for telemetry
-documents written before explicit provider, issue-agent repository, and archive
-renderability metadata became mandatory. First inventory at most 200 current
-documents with the telemetry writer identity, then prepare a reviewed JSON
-manifest with an explicit `sessionId`, `agent`, and (for issue-agent sessions)
-`repo` and `renderable` values for each record that has evidence-backed metadata
-to enrich. CLI sessions are legitimately host-scoped and may have no repository
-identity; do not invent one. The command is dry-run by default; `--apply` is
-the separately approved write step.
-
-```bash
-./tools/nx run @agent-lcars/telemetry-watcher:session-schema-backfill-cli
-node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --inventory --limit 200
-node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --inventory --limit 200 --cursor '<nextCursor from the prior page>'
-node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --manifest reviewed-sessions.json
-node dist/apps/telemetry-watcher-session-schema-backfill-cli/session-schema-backfill.cjs --manifest reviewed-sessions.json --apply
-```
-
-Inventory is document-ID ordered, asks Firestore for at most `limit + 1`, and
-prints at most 200 records plus `hasMore` and `nextCursor`. Repeat the bounded
-command with that cursor until `hasMore` is `false`; a first page alone is not
-clean-inventory proof. Each record retains its `gaps` and a migration-only
-`provenance` projection containing only already-stored review context: stored
-`source`, `agent`, `repo`, and `lastActivityAt`; `host`, `cwd`, and `worktree`
-for an explicitly stored `cli` source; or `runId`, `intentId`, and
-`issueNumber` for an explicitly stored `issue-agent` source. It reports
-`archivePresent` as a boolean, never an archive URI, and includes `renderable`
-only when that field is stored. Missing or malformed values remain missing or
-malformed in this operator output; it never supplies defaults or derives a
-value from another field. The manifest is an operator-reviewed record, not
-generated data: for example,
-`{"sessions":[{"sessionId":"...","agent":"codex","repo":{"owner":"jlapenna","name":"agent-lcars"}}]}`.
-This is a one-time #1632 migration boundary. Keep the CLI and its fixed store
-only until inventory, dry-run, apply, and a clean follow-up inventory are
-recorded; phase 2 removes the retired readers and this target while retaining
-the supported host-scoped CLI record model. On
-`--apply`, each record is re-read and validated inside one Firestore
-transaction before its fixed metadata patch is written, so a concurrent
-watcher update conflicts rather than being overwritten. It is not a general
-Firestore administration surface.
-
 ## Bundle (runner sidecar)
 
 The `bundle` Nx target produces the single self-contained file the

@@ -70,6 +70,7 @@ function fixtureSessions(): CliSessionDoc[] {
     {
       sessionId: E2E_CLI_SESSION_IDS.live,
       source: 'cli',
+      agent: 'claude-code',
       liveness: 'live',
       startedAt: minutesAgo(15),
       lastActivityAt: liveLastActivityAt,
@@ -93,6 +94,7 @@ function fixtureSessions(): CliSessionDoc[] {
     {
       sessionId: E2E_CLI_SESSION_IDS.idle,
       source: 'cli',
+      agent: 'claude-code',
       liveness: 'idle',
       startedAt: minutesAgo(120),
       lastActivityAt: idleLastActivityAt,
@@ -114,6 +116,7 @@ function fixtureSessions(): CliSessionDoc[] {
     {
       sessionId: E2E_CLI_SESSION_IDS.ended,
       source: 'cli',
+      agent: 'claude-code',
       liveness: 'ended',
       startedAt: minutesAgo(240),
       lastActivityAt: endedLastActivityAt,
@@ -133,6 +136,7 @@ function fixtureSessions(): CliSessionDoc[] {
     {
       sessionId: E2E_CLI_SESSION_IDS.stale,
       source: 'cli',
+      agent: 'claude-code',
       liveness: 'stale',
       startedAt: minutesAgo(360),
       lastActivityAt: staleLastActivityAt,
@@ -164,6 +168,7 @@ function fixtureIssueAgentSession(): IssueAgentSessionDoc {
   return {
     sessionId: E2E_ISSUE_AGENT_SESSION_ID,
     source: 'issue-agent',
+    agent: 'claude-code',
     liveness: 'ended',
     repo: { owner: E2E_FIXTURE_REPO.owner, name: E2E_FIXTURE_REPO.name },
     runId: E2E_ORCHESTRATOR_RUN_IDS.silentError,
@@ -200,6 +205,7 @@ function fixtureArchiveIssueSessions(): IssueAgentSessionDoc[] {
     return {
       sessionId: `e2e-archive-issue-session-${issueNumber}`,
       source: 'issue-agent',
+      agent: 'claude-code',
       liveness: 'ended',
       repo: { owner: E2E_FIXTURE_REPO.owner, name: E2E_FIXTURE_REPO.name },
       issueNumber,

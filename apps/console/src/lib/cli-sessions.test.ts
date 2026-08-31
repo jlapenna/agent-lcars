@@ -1,17 +1,9 @@
 import type { CliSessionDoc } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  type Mock,
-  vi,
-} from 'vitest';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getCliSessions } from './cli-sessions';
-import { getGithubClient, getWatchedRepos } from './github-client';
+import { getGithubClient } from './github-client';
 
 vi.mock('@agent-lcars/telemetry/server', () => ({
   getAgentTelemetryReaderFirestore: vi.fn(),
@@ -23,7 +15,6 @@ vi.mock('./github-client', async (importOriginal) => {
   return {
     ...actual,
     getGithubClient: vi.fn(),
-    getWatchedRepos: vi.fn(),
   };
 });
 
@@ -34,6 +25,7 @@ function makeCliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {
     sessionId: 'session-1',
     source: 'cli',
+    agent: 'claude-code',
     liveness: 'live',
     startedAt: minutesAgo(10),
     lastActivityAt: minutesAgo(1),
@@ -77,12 +69,6 @@ function mockPullsGet(merged: boolean | Error) {
 }
 
 describe('getCliSessions', () => {
-  beforeEach(() => {
-    (getWatchedRepos as Mock).mockReturnValue([
-      { owner: 'supersprinklesracing', name: 'sprinkles' },
-    ]);
-  });
-
   afterEach(() => vi.resetAllMocks());
 
   it('passes a lastActivityAt cutoff to the store instead of listing everything', async () => {
@@ -133,16 +119,16 @@ describe('getCliSessions', () => {
     );
   });
 
-  it('resolves agent via sessionAgent(), defaulting to claude-code when the doc has none', async () => {
+  it('uses the persisted explicit agent', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ sessionId: 'legacy' }),
+      makeCliDoc({ sessionId: 'claude-session', agent: 'claude-code' }),
       makeCliDoc({ sessionId: 'opencode-session', agent: 'opencode' }),
     ]);
     mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
-    expect(sessions.find((s) => s.sessionId === 'legacy')?.agent).toBe(
+    expect(sessions.find((s) => s.sessionId === 'claude-session')?.agent).toBe(
       'claude-code',
     );
     expect(
@@ -165,7 +151,7 @@ describe('getCliSessions', () => {
     expect(listMock).not.toHaveBeenCalled();
   });
 
-  it('does not fabricate a deliverable PR link for a legacy repo-less session', async () => {
+  it('keeps a repo-less CLI session host-scoped without GitHub PR links', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({
         repo: undefined,
@@ -181,104 +167,16 @@ describe('getCliSessions', () => {
     expect(listMock).not.toHaveBeenCalled();
   });
 
-  it('resolves a repo-less active session only when its branch matches one watched repo', async () => {
-    (getWatchedRepos as Mock).mockReturnValue([
-      { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b' },
-    ]);
+  it('does not query GitHub for a repo-less CLI branch', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ repo: undefined, branch: 'fix/right-repo' }),
+      makeCliDoc({ repo: undefined, branch: 'fix/no-repo' }),
     ]);
-    const listMock = vi
-      .fn()
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            number: 272,
-            html_url: 'https://github.com/org-b/repo-b/pull/272',
-            head: { ref: 'fix/right-repo' },
-          },
-        ],
-      });
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { list: listMock } },
-    });
-
-    const { sessions } = await getCliSessions();
-
-    expect(sessions[0].pr).toEqual({
-      number: 272,
-      url: 'https://github.com/org-b/repo-b/pull/272',
-    });
-    expect(listMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not guess when a repo-less branch exists in multiple watched repos', async () => {
-    (getWatchedRepos as Mock).mockReturnValue([
-      { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b' },
-    ]);
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ repo: undefined, branch: 'fix/shared-name' }),
-    ]);
-    const listMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: [
-          {
-            number: 11,
-            html_url: 'https://github.com/org-a/repo-a/pull/11',
-            head: { ref: 'fix/shared-name' },
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            number: 22,
-            html_url: 'https://github.com/org-b/repo-b/pull/22',
-            head: { ref: 'fix/shared-name' },
-          },
-        ],
-      });
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { list: listMock } },
-    });
+    const listMock = mockOpenPulls();
 
     const { sessions } = await getCliSessions();
 
     expect(sessions[0].pr).toBeUndefined();
-  });
-
-  it('does not resolve a repo-less branch from partial lookup results', async () => {
-    (getWatchedRepos as Mock).mockReturnValue([
-      { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b' },
-    ]);
-    (listSessionDocs as Mock).mockResolvedValue([
-      makeCliDoc({ repo: undefined, branch: 'fix/possibly-shared' }),
-    ]);
-    const listMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        data: [
-          {
-            number: 11,
-            html_url: 'https://github.com/org-a/repo-a/pull/11',
-            head: { ref: 'fix/possibly-shared' },
-          },
-        ],
-      })
-      .mockRejectedValueOnce(new Error('502'));
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { pulls: { list: listMock } },
-    });
-
-    const { sessions, warnings } = await getCliSessions();
-
-    expect(sessions[0].pr).toBeUndefined();
-    expect(warnings).toEqual(['PR lookup failed for org-b/repo-b.']);
+    expect(listMock).not.toHaveBeenCalled();
   });
 
   it('keeps an idle running session visible when a recorded PR has merged', async () => {

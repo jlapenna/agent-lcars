@@ -61,7 +61,14 @@ describe('LedgerTables', () => {
   it('links a real issue number and labels the no-issue bucket in plain text, in both the full and compact tables', () => {
     renderLedger({
       byIssue: [
-        { issueNumber: 42, sessions: 2, turns: 10, tokens: 3000, costUsd: 1.5 },
+        {
+          issueNumber: 42,
+          repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
+          sessions: 2,
+          turns: 10,
+          tokens: 3000,
+          costUsd: 1.5,
+        },
         { issueNumber: 'no-issue', sessions: 1, turns: 3, tokens: 500 },
       ],
       byWeek: [],

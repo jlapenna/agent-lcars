@@ -1,9 +1,5 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import {
-  displayLiveness,
-  sessionAgent,
-  totalTokens,
-} from '@agent-lcars/telemetry';
+import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
 import { Anchor, Badge, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 
@@ -11,7 +7,6 @@ import {
   agentSessionResumeScript,
   shareArtifactUrl,
 } from '../../../lib/deployment';
-import { primaryWatchedRepo } from '../../../lib/github-client';
 import { sessionDurationSeconds } from '../../../lib/session-archive';
 import {
   AgentBadge,
@@ -75,9 +70,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
   );
   const cliHost = doc.source === 'cli' ? doc.host : undefined;
   const cliArtifacts = doc.source === 'cli' ? (doc.artifacts ?? []) : [];
-  // Falls back to the primary watched repo for docs written before Phase
-  // 0's `repo` field existed.
-  const repo = doc.repo ?? primaryWatchedRepo();
+  const repo = doc.repo;
   const hasDeliverables =
     doc.deliverables.prNumbers.length > 0 ||
     doc.deliverables.commitShas.length > 0 ||
@@ -94,7 +87,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         >
           {LIVENESS_LABELS[liveness]}
         </Badge>
-        <AgentBadge agent={sessionAgent(doc)} />
+        <AgentBadge agent={doc.agent} />
       </Group>
 
       <SessionStatusLine
@@ -138,7 +131,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           <Field label="Run">
             {/^[1-9][0-9]*$/u.test(doc.runId) ? (
               <Anchor
-                href={`https://github.com/${repo.owner}/${repo.name}/actions/runs/${doc.runId}`}
+                href={`https://github.com/${doc.repo.owner}/${doc.repo.name}/actions/runs/${doc.runId}`}
                 target="_blank"
                 rel="noreferrer"
                 size="sm"
@@ -153,7 +146,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         {doc.source === 'issue-agent' && doc.issueNumber !== undefined && (
           <Field label="Issue">
             <Anchor
-              href={`https://github.com/${repo.owner}/${repo.name}/issues/${doc.issueNumber}`}
+              href={`https://github.com/${doc.repo.owner}/${doc.repo.name}/issues/${doc.issueNumber}`}
               target="_blank"
               rel="noreferrer"
               size="sm"
@@ -171,17 +164,18 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
             {doc.deliverables.branch && (
               <Text size="sm">branch: {doc.deliverables.branch}</Text>
             )}
-            {doc.deliverables.prNumbers.map((number) => (
-              <Anchor
-                key={number}
-                href={`https://github.com/${repo.owner}/${repo.name}/pull/${number}`}
-                target="_blank"
-                rel="noreferrer"
-                size="sm"
-              >
-                PR #{number} ↗
-              </Anchor>
-            ))}
+            {repo &&
+              doc.deliverables.prNumbers.map((number) => (
+                <Anchor
+                  key={number}
+                  href={`https://github.com/${repo.owner}/${repo.name}/pull/${number}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="sm"
+                >
+                  PR #{number} ↗
+                </Anchor>
+              ))}
             {doc.deliverables.commitShas.length > 0 && (
               <Text size="sm" c="dimmed">
                 commits: {doc.deliverables.commitShas.join(', ')}
@@ -218,7 +212,7 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           shown. */}
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
-        sessionAgent(doc) === 'claude-code' && (
+        doc.agent === 'claude-code' && (
           <Stack gap={4}>
             <Eyebrow>Resume from archive</Eyebrow>
             <Text size="xs" c="dimmed">
@@ -233,12 +227,12 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
-        sessionAgent(doc) !== 'claude-code' && (
+        doc.agent !== 'claude-code' && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
               Archived at <code>{doc.transcriptGcsUri}</code>. No resume command
-              yet for {sessionAgent(doc)} sessions — the existing one is
+              yet for {doc.agent} sessions — the existing one is
               Claude-specific.
             </Text>
           </Stack>

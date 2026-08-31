@@ -1,5 +1,4 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
-import { isSessionRenderable, sessionAgent } from '@agent-lcars/telemetry';
 import { Code, Stack, Text, Title } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
@@ -29,7 +28,7 @@ interface PageProps {
 
 /**
  * The bottom half of an issue-agent session's detail view: either the real
- * turn-by-turn transcript timeline (`isSessionRenderable(doc)`, see
+ * turn-by-turn transcript timeline (the persisted `renderable` flag, see
  * `transcript-timeline.ts`'s `RENDERABLE_TRANSCRIPT_AGENTS`), or - for every
  * unsupported agent - a short note that the archive exists without attempting to
  * render it as a transcript. Rendering the latter as a transcript would
@@ -38,8 +37,7 @@ interface PageProps {
  * (see `types.ts`'s
  * `transcriptGcsUri` doc comment). This reads the same `renderable` field
  * `session-detail.ts`'s fetch gate does rather than re-deriving its own
- * opinion from `sessionAgent(doc)` - agent-lcars#645's Bug 3 was exactly two
- * call sites disagreeing about how to answer this question. Exported (not
+ * opinion from the provider. Exported (not
  * inlined into the page below) so both branches are independently
  * unit-testable without rendering the whole async server page.
  */
@@ -54,9 +52,9 @@ export function ArchivedSessionTranscript({
     return null;
   }
 
-  const agent = sessionAgent(doc);
+  const agent = doc.agent;
 
-  if (!isSessionRenderable(doc)) {
+  if (!doc.renderable) {
     return (
       <Stack gap={4} data-testid="session-archive-note">
         <Text size="sm" c="dimmed">

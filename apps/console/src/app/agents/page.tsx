@@ -17,7 +17,6 @@ import {
 import {
   getWatchedRepos,
   parseRepoFilterParam,
-  primaryWatchedRepo,
   repoDisplayName,
   repoItemKey,
   repoKey,
@@ -135,14 +134,13 @@ async function AgentsPageBody({
   // full, unfiltered data - see page.tsx's identical comment for why.
   const filteredItems = items.filter((item) => matchesFilter(item.repo));
   // A doc with no `repo` predates Phase 0's field - session-archive.ts and
-  // cli-sessions.ts both already treat that as belonging to the primary
-  // repo when building links, so the filter must agree (see page.tsx's
-  // identical comment).
-  const filteredActiveSessions = activeSessions.filter((s) =>
-    matchesFilter(s.repo ?? primaryWatchedRepo()),
+  // Repo-less CLI sessions are host-scoped and do not belong to a
+  // GitHub-repository filter (matching page.tsx's identical rule).
+  const filteredActiveSessions = activeSessions.filter(
+    (s) => s.repo && matchesFilter(s.repo),
   );
-  const filteredCliSessions = cliSessions.filter((s) =>
-    matchesFilter(s.repo ?? primaryWatchedRepo()),
+  const filteredCliSessions = cliSessions.filter(
+    (s) => s.repo && matchesFilter(s.repo),
   );
   const filteredActivity = repoFilter
     ? {

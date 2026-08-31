@@ -1,11 +1,7 @@
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { estimateCostUsd, totalTokens } from '@agent-lcars/telemetry';
 
-import {
-  primaryWatchedRepo,
-  repoItemKey,
-  type WatchedRepo,
-} from './github-client';
+import { repoItemKey, type WatchedRepo } from './github-client';
 
 export interface LedgerTotals {
   sessions: number;
@@ -44,9 +40,7 @@ export interface IssueLedgerRow extends LedgerTotals {
    * bucket, which stays a single cross-repo catch-all rather than being
    * split per repo (unlike a real issue number, "no issue" never claims to
    * identify one specific GitHub entity, so mixing repos into it doesn't
-   * misattribute anyone's cost - see aggregateSessionLedger). Falls back to
-   * primaryWatchedRepo() for docs written before Phase 0's `repo` field
-   * existed, same as every other repo-less-doc fallback in this app.
+   * misattribute anyone's cost - see aggregateSessionLedger).
    */
   repo?: WatchedRepo;
 }
@@ -220,7 +214,7 @@ export function aggregateSessionLedger(docs: SessionDoc[]): SessionLedger {
     const tokens = totalTokens(doc.tokens);
     const cost = docCost(doc);
     if (doc.source === 'issue-agent' && doc.issueNumber !== undefined) {
-      const repo = doc.repo ?? primaryWatchedRepo();
+      const repo = doc.repo;
       const key = repoItemKey(repo, doc.issueNumber);
       const existing = byIssueMap.get(key);
       byIssueMap.set(key, {

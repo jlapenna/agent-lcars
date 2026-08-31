@@ -29,6 +29,7 @@ function makeSession(overrides: Partial<CliSession> = {}): CliSession {
     sessionId: 'session-1',
     liveness: 'live',
     agent: 'claude-code',
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     turns: 1,
     totalTokens: 100,
     startedAt: '2026-07-18T00:00:00Z',
@@ -100,14 +101,17 @@ describe('sessionReferencesItemNumber', () => {
     ).toBe(true);
   });
 
-  it('matches on number alone when the session predates Phase 0 (no repo)', () => {
-    const session = makeSession({ pr: { number: 42, url: 'u' } });
+  it('does not match a repo-less CLI session to a GitHub item', () => {
+    const session = makeSession({
+      repo: undefined,
+      pr: { number: 42, url: 'u' },
+    });
     expect(
       sessionReferencesItemNumber(
         session,
         makeItem({ number: 42, repo: { owner: 'org-a', name: 'repo-a' } }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

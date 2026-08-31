@@ -23,6 +23,7 @@ function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
   return {
     sessionId: 'cli-1',
     source: 'cli',
+    agent: 'claude-code',
     liveness: 'ended',
     startedAt: '2026-07-10T10:00:00.000Z',
     lastActivityAt: '2026-07-10T10:05:00.000Z',
@@ -35,6 +36,7 @@ function cliDoc(overrides: Partial<CliSessionDoc> = {}): CliSessionDoc {
       cacheReadTokens: 10,
     },
     deliverables: { prNumbers: [], commitShas: [] },
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     ...overrides,
   };
 }
@@ -45,6 +47,8 @@ function agentDoc(
   return {
     sessionId: 'agent-1',
     source: 'issue-agent',
+    agent: 'claude-code',
+    repo: { owner: 'supersprinklesracing', name: 'sprinkles' },
     liveness: 'ended',
     startedAt: '2026-07-10T10:00:00.000Z',
     lastActivityAt: '2026-07-10T10:05:00.000Z',
@@ -225,6 +229,7 @@ describe('SessionHeader', () => {
       agentDoc({
         transcriptGcsUri:
           'gs://supersprinklesracing-agent-session-transcripts/runs/999/agent-1.jsonl',
+        renderable: true,
       }),
     );
 
@@ -244,6 +249,7 @@ describe('SessionHeader', () => {
         agent: 'codex',
         transcriptGcsUri:
           'gs://agent-lcars-agent-session-transcripts/runs/5150/codex.jsonl',
+        renderable: false,
       }),
     );
 
@@ -266,11 +272,6 @@ describe('SessionHeader', () => {
   it('omits the resume-archive command for a cli session even if transcriptGcsUri were somehow present', () => {
     renderHeader(cliDoc());
     expect(screen.queryByText(/resume-archive/)).toBeNull();
-  });
-
-  it('renders no agent badge when the doc has no agent field (defaults to claude-code)', () => {
-    renderHeader(cliDoc());
-    expect(screen.queryByText('claude code')).toBeNull();
   });
 
   it('renders no agent badge for an explicit claude-code doc', () => {

@@ -4,7 +4,7 @@ import { repoItemKey, type WatchedRepo } from './watched-repo';
 export interface IssueSessionGroup {
   /** Mirrors IssueLedgerRow.issueNumber (session-ledger.ts): the issue-agent
    * session's `issueNumber`, or the 'no-issue' catch-all for every CLI
-   * session and any issue-agent session missing one (legacy docs). */
+   * session and any issue-agent session missing one. */
   issueNumber: number | 'no-issue';
   /** Undefined only for the 'no-issue' bucket - see IssueLedgerRow.repo's
    * doc comment for why that one stays a single cross-repo catch-all. */
@@ -22,7 +22,7 @@ export interface IssueSessionGroup {
 }
 
 function groupKey(row: SessionRow): string {
-  return row.issueNumber !== undefined
+  return row.issueNumber !== undefined && row.repo !== undefined
     ? repoItemKey(row.repo, row.issueNumber)
     : 'no-issue';
 }

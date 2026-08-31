@@ -6,11 +6,7 @@ import type {
   SessionLiveness,
   SessionSource,
 } from '@agent-lcars/telemetry';
-import {
-  displayLiveness,
-  sessionAgent,
-  totalTokens,
-} from '@agent-lcars/telemetry';
+import { displayLiveness, totalTokens } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
   listSessionDocs,
@@ -19,7 +15,6 @@ import {
 import { DEFAULT_ARCHIVE_DAYS } from './archive-window';
 import {
   parseRepoFilterParam,
-  primaryWatchedRepo,
   repoKey,
   type WatchedRepo,
 } from './github-client';
@@ -112,11 +107,9 @@ export function sessionDurationSeconds(
 export interface SessionRow {
   sessionId: string;
   source: SessionSource;
-  /** Falls back to the primary watched repo for docs written before Phase
-   * 0's `repo` field existed - see `toSessionRow`. */
-  repo: WatchedRepo;
-  /** Resolved via `sessionAgent()` at fetch time - see `CliSession.agent`'s
-   * doc comment in cli-sessions.ts for why this is always concrete here. */
+  /** Omitted only for a valid host-scoped CLI session. */
+  repo?: WatchedRepo;
+  /** Explicit adapter identity from the persisted session contract. */
   agent: SessionAgent;
   title: string;
   /** Agent-declared "what it's doing right now" (#1257) - unlike `title`,
@@ -179,15 +172,13 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
         ? (doc.branch ??
           (doc.host ? `Session on ${doc.host}` : 'Untitled CLI session'))
         : 'Untitled session');
-  // Falls back to the primary watched repo for docs written before Phase
-  // 0's `repo` field existed.
-  const repo = doc.repo ?? primaryWatchedRepo();
+  const repo = doc.repo;
 
   return {
     sessionId: doc.sessionId,
     source: doc.source,
-    repo,
-    agent: sessionAgent(doc),
+    ...(repo && { repo }),
+    agent: doc.agent,
     title,
     ...(doc.status !== undefined && { status: doc.status }),
     ...(doc.statusUpdatedAt !== undefined && {
@@ -196,17 +187,19 @@ export function toSessionRow(doc: SessionDoc, now: string): SessionRow {
     ...(doc.source === 'issue-agent' &&
       doc.issueNumber !== undefined && {
         issueNumber: doc.issueNumber,
-        issueUrl: issueUrl(repo, doc.issueNumber),
+        issueUrl: issueUrl(doc.repo, doc.issueNumber),
       }),
-    prUrls: doc.deliverables.prNumbers.map((number) => ({
-      number,
-      url: prUrl(repo, number),
-    })),
+    prUrls: repo
+      ? doc.deliverables.prNumbers.map((number) => ({
+          number,
+          url: prUrl(repo, number),
+        }))
+      : [],
     ...(doc.source === 'cli' && doc.host && { host: doc.host }),
     ...(doc.source === 'issue-agent' &&
       doc.runId && {
         runId: doc.runId,
-        runUrl: historicalWorkflowRunUrl(repo, doc.runId),
+        runUrl: historicalWorkflowRunUrl(doc.repo, doc.runId),
       }),
     ...(doc.model && { model: doc.model }),
     turns: doc.turns,
@@ -268,14 +261,13 @@ export async function getSessionArchive(
   // No repo field on `listSessionDocs` to filter server-side by, unlike
   // source/issueNumber (which are indexed Firestore query params) - applied
   // here instead, after the fetch, the same way the dashboard/`/agents`
-  // pages narrow their own already-fetched data (see page.tsx). A doc with
-  // no `repo` predates Phase 0's field and is treated as belonging to the
-  // primary watched repo, matching toSessionRow's own fallback just below.
+  // pages narrow their own already-fetched data (see page.tsx). Repo-less
+  // CLI sessions are host-scoped and therefore do not match a repo filter.
   if (query.repo) {
     const repoFilter = query.repo;
     docs = docs.filter(
       (doc) =>
-        repoKey(doc.repo ?? primaryWatchedRepo()) === repoKey(repoFilter),
+        doc.repo !== undefined && repoKey(doc.repo) === repoKey(repoFilter),
     );
   }
 

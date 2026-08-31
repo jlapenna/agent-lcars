@@ -1,6 +1,6 @@
 import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
 
-import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
+import { repoItemKey } from '../../lib/github-client';
 import type { IssueSessionGroup } from '../../lib/session-issue-groups';
 import { RepoBadge } from '../agent-activity-panel';
 import { MobileHistoryDisclosure } from '../mobile-history-disclosure';
@@ -12,9 +12,9 @@ const MOBILE_INITIAL_ISSUE_GROUP_COUNT = 5;
 /** Mirrors ledger-tables.tsx's issueRowKey - the bare issue number collides
  * once two watched repos can each have their own #42. */
 function groupKey(group: IssueSessionGroup): string | number {
-  return group.issueNumber === 'no-issue'
+  return group.issueNumber === 'no-issue' || !group.repo
     ? group.issueNumber
-    : repoItemKey(group.repo ?? primaryWatchedRepo(), group.issueNumber);
+    : repoItemKey(group.repo, group.issueNumber);
 }
 
 function SessionCountLabel({ group }: { group: IssueSessionGroup }) {

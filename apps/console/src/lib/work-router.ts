@@ -6,7 +6,6 @@ import {
   isRefusal,
   isWorkAnchor,
 } from '@agent-lcars/orchestrator';
-import { sessionAgent } from '@agent-lcars/telemetry';
 import { itemsContract, workPayloadSchema } from '@agent-lcars/work';
 import type { ItemView } from '@agent-lcars/work/derive';
 import { deriveItemState, toItemViewSafe } from '@agent-lcars/work/derive';
@@ -246,7 +245,7 @@ export const workRouter = os.router({
           session.source !== 'issue-agent' ||
           session.intentId === undefined ||
           !runIds.has(session.intentId) ||
-          sessionAgent(session) !== 'claude-code'
+          session.agent !== 'claude-code'
         ) {
           throw errors.BAD_REQUEST({
             message:

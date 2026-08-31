@@ -12,7 +12,7 @@ import {
   Text,
 } from '@mantine/core';
 
-import { primaryWatchedRepo, repoItemKey } from '../../lib/github-client';
+import { repoItemKey } from '../../lib/github-client';
 import type {
   IssueLedgerRow,
   LedgerTotals,
@@ -73,9 +73,9 @@ function TruncationNote({ shown, total }: { shown: number; total: number }) {
  * caught in the board's row keys, #18); 'no-issue' is already a unique
  * literal on its own, so it's returned as-is. */
 function issueRowKey(row: IssueLedgerRow): string | number {
-  return row.issueNumber === 'no-issue'
+  return row.issueNumber === 'no-issue' || !row.repo
     ? row.issueNumber
-    : repoItemKey(row.repo ?? primaryWatchedRepo(), row.issueNumber);
+    : repoItemKey(row.repo, row.issueNumber);
 }
 
 function IssueCell({ row }: { row: IssueLedgerRow }) {
@@ -86,11 +86,10 @@ function IssueCell({ row }: { row: IssueLedgerRow }) {
       </Text>
     );
   }
-  // row.repo is only absent for the 'no-issue' catch-all (handled above) -
-  // every real issueNumber row carries one, already resolved against
-  // primaryWatchedRepo() by aggregateSessionLedger for docs predating
-  // Phase 0's `repo` field. Kept here too as a type-safe fallback.
-  const repo = row.repo ?? primaryWatchedRepo();
+  if (!row.repo) {
+    return <Text size="sm">#{row.issueNumber}</Text>;
+  }
+  const repo = row.repo;
   return (
     <Group
       gap={6}

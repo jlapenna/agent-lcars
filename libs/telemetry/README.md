@@ -26,13 +26,11 @@ const summaries = reduceTranscripts([part1Content, part2Content]);
 
 ## Agent identity & the transcript-adapter seam
 
-Every `SessionSummary`/`SessionDoc` carries an optional `agent` field
-(`SessionAgent`: `'claude-code' | 'codex' | 'gemini' | 'antigravity' |
-'opencode'`) naming which coding agent produced it. It's optional because
-every session shipped before this field existed has no such key — resolve
-the effective value with `sessionAgent(docOrSummary)` rather than reading
-`.agent` directly; it defaults to `'claude-code'` when absent, since that
-reducer was the only one that ever existed.
+Every `SessionDoc` carries an explicit `agent` field (`SessionAgent`:
+`'claude-code' | 'codex' | 'gemini' | 'antigravity' | 'opencode'`) naming
+which coding agent produced it. A `SessionSummary` can be incomplete while an
+adapter is producing it, but the persisted writer rejects a missing value;
+readers never infer one from a stored document.
 
 `reduceTranscript`/`reduceTranscripts` remain Claude-Code-only and always
 stamp `agent: 'claude-code'`. `TranscriptAdapter` (`transcript-adapter.ts`)
@@ -51,8 +49,7 @@ console's session detail page — `parseTranscriptTimeline`
 other agents may still have a summary adapter without a timeline parser.
 Whether a given session's archived transcript can be rendered is captured once by
 `buildSessionDoc` as `SessionDoc.renderable` (see `isRenderableTranscriptAgent`)
-and read — never re-derived — by the console via `isSessionRenderable`
-(`agent.ts`).
+and read directly — never re-derived — by the console.
 
 OpenCode's native store is one SQLite database, so the watcher first uses the
 supported `opencode session list`/sanitized `opencode export` CLI surface to

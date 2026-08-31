@@ -15,7 +15,6 @@ import {
 import {
   getWatchedRepos,
   parseRepoFilterParam,
-  primaryWatchedRepo,
   repoDisplayName,
   repoItemKey,
   repoKey,
@@ -165,10 +164,10 @@ async function IndexBody({
   // A doc with no `repo` predates Phase 0's field - session-archive.ts and
   // cli-sessions.ts both already treat that as belonging to the primary
   // repo when building links, so the filter must agree: otherwise every
-  // legacy session stays visible under every repo filter instead of just
-  // the primary one.
+  // A repo-less CLI session is host-scoped and does not match any GitHub
+  // repository filter.
   const filteredCliSessions = repoFilter
-    ? cliSessions.filter((s) => matchesFilter(s.repo ?? primaryWatchedRepo()))
+    ? cliSessions.filter((s) => s.repo && matchesFilter(s.repo))
     : cliSessions;
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
