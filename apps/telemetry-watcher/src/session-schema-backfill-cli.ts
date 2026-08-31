@@ -8,6 +8,7 @@ import {
 import * as fs from 'fs';
 
 import { loadSharedConfig } from './lib/config';
+import { firestoreStoreOptions } from './lib/create-store';
 import {
   createSessionSchemaMigrationStore,
   MAX_SESSION_SCHEMA_MIGRATION_PAGE_SIZE,
@@ -89,22 +90,13 @@ function parseFlags(argv: string[]): Flags {
 
 function migrationStore(): SessionSchemaMigrationStore {
   const config = loadSharedConfig();
-  const projectId = config.firestoreProjectId;
-  if (!projectId) {
-    throw new Error('AGENT_TELEMETRY_PROJECT_ID is required');
+  const options = firestoreStoreOptions(config);
+  if (options === undefined) {
+    throw new Error(
+      'AGENT_TELEMETRY_PROJECT_ID is required unless FIRESTORE_EMULATOR_HOST is configured',
+    );
   }
-  return createSessionSchemaMigrationStore({
-    projectId,
-    ...(config.firestoreWriterKeyJson && {
-      credentials: JSON.parse(config.firestoreWriterKeyJson) as {
-        client_email: string;
-        private_key: string;
-      },
-    }),
-    ...(config.firestoreEmulatorHost && {
-      emulatorHost: config.firestoreEmulatorHost,
-    }),
-  });
+  return createSessionSchemaMigrationStore(options);
 }
 
 function readManifest(path: string): Manifest {
