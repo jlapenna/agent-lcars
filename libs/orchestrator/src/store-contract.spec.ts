@@ -1,3 +1,4 @@
+import { Firestore } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
 
 import { FirestoreScheduleStore } from './firestore-schedule-store';
@@ -5,6 +6,7 @@ import { FirestoreStore } from './firestore-store';
 import { MemoryScheduleStore } from './memory-schedule-store';
 import { MemoryStore } from './memory-store';
 import { outboxEntrySchema, taskSchema } from './model';
+import { Orchestrator } from './orchestrator';
 import {
   runOrchestratorStoreContract,
   runScheduleStoreContract,
@@ -75,6 +77,47 @@ if (
 // suite still passes hermetically (e.g. in CI without an emulator wired up).
 describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
   let prefixCounter = 0;
+
+  it('reads only candidates for the requested idempotency key', async () => {
+    prefixCounter += 1;
+    const collectionPrefix = `orchestrator-test-${Date.now()}-${prefixCounter}-`;
+    const firestore = new Firestore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      host: emulatorHost ?? 'localhost:8080',
+      ssl: false,
+    });
+    const taskId = { repo: 'octo/example', issue: 901 } as const;
+
+    // This malformed document deliberately shares the task anchor. An
+    // unbounded task-history scan attempts to parse it and rejects the new
+    // request; the exact requestId query must never read it.
+    await firestore.collection(`${collectionPrefix}runs`).doc('unrelated').set({
+      task: taskId,
+      requestId: 'some-other-request',
+    });
+
+    const orchestrator = new Orchestrator(
+      new FirestoreStore({
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix,
+        emulatorHost: emulatorHost ?? 'localhost:8080',
+      }),
+      { now: () => '2026-08-31T12:00:00.000Z' },
+    );
+    await expect(
+      orchestrator.request({
+        taskId,
+        requestId: 'requested-key',
+        pipeline: 'codex',
+      }),
+    ).resolves.toMatchObject({
+      run: { requestId: 'requested-key', requestSource: 'caller' },
+    });
+
+    await firestore.terminate();
+  });
 
   runOrchestratorStoreContract('FirestoreStore', () => {
     prefixCounter += 1;

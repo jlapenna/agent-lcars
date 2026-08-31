@@ -1,10 +1,16 @@
 import { type Decision, isRefusal, type Refusal } from './decide';
-import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
+import type {
+  LeasedOutboxEntry,
+  OutboxEntry,
+  RequestSource,
+  Run,
+  TaskId,
+} from './model';
 import {
   byOutboxClaimFairness,
   isLive,
   isWorkAnchor,
-  runRequestHistoryKey,
+  requestHistoryKey,
   taskKey,
 } from './model';
 import {
@@ -19,6 +25,7 @@ import {
 export class MemoryStore implements OrchestratorStore {
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #runs = new Map<string, Run>();
+  readonly #requestRuns = new Map<string, string>();
   readonly #outbox = new Map<string, OutboxEntry>();
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
@@ -45,7 +52,8 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRequest(input: {
     taskId: TaskId;
-    requestHistoryKey: string;
+    requestId: string;
+    requestSource: RequestSource;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Do not await while this snapshot and its accepted write are in flight:
@@ -59,13 +67,13 @@ export class MemoryStore implements OrchestratorStore {
       activeRunId === undefined
         ? undefined
         : structuredClone(this.#runs.get(activeRunId));
-    const previousRun = structuredClone(
-      [...this.#runs.values()].find(
-        (run) =>
-          taskKey(run.task) === key &&
-          runRequestHistoryKey(run) === input.requestHistoryKey,
-      ),
+    const previousRunId = this.#requestRuns.get(
+      this.#requestKey(input.taskId, input.requestSource, input.requestId),
     );
+    const previousRun =
+      previousRunId === undefined
+        ? undefined
+        : structuredClone(this.#runs.get(previousRunId));
     const outcome = input.decide({ task, activeRun, previousRun });
     if (isRefusal(outcome)) return outcome;
     this.#apply({ decision: outcome, expectedRevision: task?.revision });
@@ -95,10 +103,22 @@ export class MemoryStore implements OrchestratorStore {
     });
     if (decision.run !== undefined) {
       this.#runs.set(decision.run.runId, structuredClone(decision.run));
+      this.#requestRuns.set(
+        this.#requestKey(
+          decision.run.task,
+          decision.run.requestSource ?? 'caller',
+          decision.run.requestId,
+        ),
+        decision.run.runId,
+      );
     }
     for (const entry of decision.outbox) {
       this.#outbox.set(entry.entryId, structuredClone(entry));
     }
+  }
+
+  #requestKey(id: TaskId, source: RequestSource, requestId: string): string {
+    return JSON.stringify([taskKey(id), requestHistoryKey(source, requestId)]);
   }
 
   async claimPendingOutbox(input: {

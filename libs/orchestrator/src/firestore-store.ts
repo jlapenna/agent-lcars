@@ -15,8 +15,8 @@ import {
   type OutboxEntry,
   outboxEntrySchema,
   parsePersistedRun,
+  type RequestSource,
   type Run,
-  runRequestHistoryKey,
   runStateSchema,
   type TaskId,
   taskKey,
@@ -103,15 +103,17 @@ export class FirestoreStore implements OrchestratorStore {
 
   async transactRequest(input: {
     taskId: TaskId;
-    requestHistoryKey: string;
+    requestId: string;
+    requestSource: RequestSource;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const taskRef = this.#taskRef(input.taskId);
     return this.#firestore.runTransaction(async (tx) => {
-      // The history query and the task/run reads share this transaction with
-      // the accepted write. Firestore reruns the callback if any concurrent
-      // request or settlement changes one of those reads, closing the
-      // terminal-settlement replay window as well as the live-run race.
+      // The exact-key history query and the task/run reads share this
+      // transaction with the accepted write. Firestore reruns the callback
+      // if any concurrent request or settlement changes one of those reads,
+      // closing the terminal-settlement replay window as well as the live-run
+      // race without scanning the task's unbounded run history.
       const taskSnapshot = await tx.get(taskRef);
       const task = taskSnapshot.exists
         ? taskDocSchema.parse(taskSnapshot.data())
@@ -120,7 +122,13 @@ export class FirestoreStore implements OrchestratorStore {
         task?.task.activeRunId === undefined
           ? Promise.resolve(undefined)
           : tx.get(this.#runRef(task.task.activeRunId)),
-        tx.get(this.#runsForTask(input.taskId)),
+        tx.get(
+          this.#runsForRequest(
+            input.taskId,
+            input.requestId,
+            input.requestSource,
+          ),
+        ),
       ]);
       const activeRun =
         activeRunSnapshot === undefined || !activeRunSnapshot.exists
@@ -128,7 +136,7 @@ export class FirestoreStore implements OrchestratorStore {
           : parsePersistedRun(activeRunSnapshot.data());
       const previousRun = runsSnapshot.docs
         .map((doc) => parsePersistedRun(doc.data()))
-        .find((run) => runRequestHistoryKey(run) === input.requestHistoryKey);
+        .find((run) => (run.requestSource ?? 'caller') === input.requestSource);
       const outcome = input.decide({ task, activeRun, previousRun });
       if (isRefusal(outcome)) return outcome;
 
@@ -485,6 +493,19 @@ export class FirestoreStore implements OrchestratorStore {
       : this.#runs
           .where('task.repo', '==', id.repo)
           .where('task.issue', '==', id.issue);
+  }
+
+  /** A constant-size idempotency lookup. Automatic retries have an explicit
+   * source field, so their query is exact. Caller history also includes
+   * legacy runs without requestSource; at most one automatic-retry record can
+   * share the raw ID, so two candidates are sufficient to find either caller
+   * representation without an unbounded history scan. Equality-only filters
+   * keep this on Firestore's automatic index merging path. */
+  #runsForRequest(id: TaskId, requestId: string, source: RequestSource) {
+    const query = this.#runsForTask(id).where('requestId', '==', requestId);
+    return source === 'auto-retry'
+      ? query.where('requestSource', '==', source).limit(1)
+      : query.limit(2);
   }
 
   #runRef(runId: string): DocumentReference {
