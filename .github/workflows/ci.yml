@@ -130,8 +130,11 @@ jobs:
       - name: Test the agent-tools package install
         run: bash packages/fleet-tools/tests/package-install.test.sh
 
-      - name: Test the control-plane request action (#1340)
+      - name: Test generic OIDC POST transport (#1340)
         run: bash .github/actions/request-control-plane/request.test.sh
+
+      - name: Reject retired control-plane dispatch admission
+        run: bash tools/no-legacy-control-plane-request.test.sh
 
       # The check itself, against this checkout - the #1255 incident's
       # self-referential skill symlink passed CI here and broke every

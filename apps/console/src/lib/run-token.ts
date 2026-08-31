@@ -3,10 +3,8 @@ import 'server-only';
 import crypto from 'node:crypto';
 
 /** 256-bit random, base64url -- returned exactly once, from `claim`.
- *  Mirrors `control-plane-request.ts`'s existing dispatch-token pattern
- *  (`crypto.randomBytes(24).toString('base64url')`), sized up to 32 bytes
- *  since this token is the sole credential for four routes, not one
- *  echoed-back replay guard. */
+ * Sized to 32 bytes because this token is the sole credential for the
+ * executor's run routes, rather than an echoed-back replay guard. */
 export function mintRunToken(): string {
   return crypto.randomBytes(32).toString('base64url');
 }

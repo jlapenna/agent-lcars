@@ -45,7 +45,7 @@ The run's step summary links the item's console page and names its first run.
 
 ## Dispatching a GitHub anchor from Actions
 
-`POST /api/work/v1/dispatches/github` is the additive, contract-first route
+`POST /api/work/v1/dispatches/github` is the contract-first route
 for an Actions workflow to request a run for its own issue or pull request.
 It requires an explicit anchor, Work spec, `mode`, and caller-controlled
 `requestId`; `reply`, `runbook`, and `context` are optional dispatch
@@ -59,8 +59,8 @@ anchor to that signed repository. The admitted request stores the same Work
 payload and reaches the same orchestrator → QueueExecutor route as every
 other Work API admission.
 
-During #1633's additive migration, member workflows may use the published
-`request-control-plane` composite's generic OIDC POST transport with
+GitHub-anchor workflows use the published `request-control-plane` composite's
+generic OIDC POST transport with
 `endpoint=https://lcars.jlapenna.net/api/work/v1/dispatches/github` and
 `audience=agent-lcars-work`. The composite does not interpret this API's
 payload or response; the generated OpenAPI contract is authoritative.
