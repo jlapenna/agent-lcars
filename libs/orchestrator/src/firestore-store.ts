@@ -225,7 +225,7 @@ export class FirestoreStore implements OrchestratorStore {
     const { decision, expectedRevision } = input;
     const taskRef = this.#taskRef(decision.task.task);
 
-    await this.#firestore.runTransaction(async (tx) => {
+    return this.#firestore.runTransaction(async (tx) => {
       // All reads before all writes, per Firestore transaction rules. Run/
       // outbox refs are computed below, after the read -- ref construction
       // isn't itself a read, so this still respects that ordering.
@@ -252,61 +252,40 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
-  async upsertGithubAnchorProjection(
-    projection: GithubAnchorProjection,
-  ): Promise<void> {
-    const ref = this.#githubAnchorRef(projection.anchor);
-    await this.#firestore.runTransaction(async (tx) => {
+  async beginGithubAnchorProjectionRefresh(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<number> {
+    const ref = this.#githubAnchorRef(anchor);
+    return this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
-      const current = snapshot.exists
-        ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
-        : undefined;
-      if (
-        current !== undefined &&
-        current.sourceUpdatedAt > projection.sourceUpdatedAt
-      ) {
-        return;
-      }
-      const next = githubAnchorProjectionSchema.parse(
-        mergeGithubAnchorSnapshot(current, projection),
-      );
-      // Preserve signals that arrive in their own webhook event (check runs,
-      // comments and review threads) while replacing the complete anchor
-      // fields. Closing an anchor still removes `openUpdatedAt`, so the queue
-      // query cannot retain a stale open record after a close webhook.
-      tx.set(ref, {
-        projection: next,
-        ...(next.state === 'open'
-          ? { openUpdatedAt: next.sourceUpdatedAt }
-          : {}),
-      });
+      const generation =
+        typeof snapshot.data()?.['refreshGeneration'] === 'number'
+          ? snapshot.data()?.['refreshGeneration'] + 1
+          : 1;
+      tx.set(ref, { refreshGeneration: generation }, { merge: true });
+      return generation;
     });
   }
 
-  async updateGithubAnchorProjection(
-    anchor: GithubAnchorProjection['anchor'],
-    update: (
-      current: GithubAnchorProjection | undefined,
-    ) => GithubAnchorProjection | undefined,
-  ): Promise<void> {
-    const ref = this.#githubAnchorRef(anchor);
-    await this.#firestore.runTransaction(async (tx) => {
+  async applyGithubAnchorProjectionRefresh(input: {
+    generation: number;
+    projection: GithubAnchorProjection;
+  }): Promise<boolean> {
+    const ref = this.#githubAnchorRef(input.projection.anchor);
+    return this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
-      const current = snapshot.exists
-        ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
-        : undefined;
-      const updated = update(current);
-      const next =
-        updated === undefined
-          ? undefined
-          : githubAnchorProjectionSchema.parse(updated);
-      if (next === undefined) return;
+      if (snapshot.data()?.['refreshGeneration'] !== input.generation) {
+        return false;
+      }
+      const next = githubAnchorProjectionSchema.parse(input.projection);
       tx.set(ref, {
         projection: next,
+        refreshGeneration: input.generation,
         ...(next.state === 'open'
           ? { openUpdatedAt: next.sourceUpdatedAt }
           : {}),
       });
+      return true;
     });
   }
 
@@ -314,9 +293,10 @@ export class FirestoreStore implements OrchestratorStore {
     anchor: GithubAnchorProjection['anchor'],
   ): Promise<GithubAnchorProjection | undefined> {
     const snapshot = await this.#githubAnchorRef(anchor).get();
-    return snapshot.exists
-      ? githubAnchorProjectionSchema.parse(snapshot.data()?.['projection'])
-      : undefined;
+    const projection = snapshot.data()?.['projection'];
+    return projection === undefined
+      ? undefined
+      : githubAnchorProjectionSchema.parse(projection);
   }
 
   async listOpenGithubAnchorProjections(

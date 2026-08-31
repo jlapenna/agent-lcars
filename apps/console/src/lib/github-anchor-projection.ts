@@ -4,22 +4,12 @@ import { z } from 'zod';
 import { isControlPlaneRepository } from './deployment';
 
 /**
- * Converts a complete GitHub webhook anchor into the bounded server-side
- * projection the console reads. It intentionally has no GitHub client: a
- * delivery is the only queue-ingress source, so render-time code cannot turn
- * a cache miss into repository enumeration.
+ * Converts a complete GitHub anchor response into the bounded server-side
+ * projection the console reads. It intentionally has no GitHub client:
+ * webhook and explicit backfill ingestion share this parser, while rendering
+ * cannot turn a cache miss into repository enumeration.
  */
 const userSchema = z.object({ login: z.string().min(1).max(256) });
-const commentSchema = z.object({
-  body: z.string().max(65_536),
-  html_url: z.string().min(1).max(2_048),
-  user: userSchema.optional().nullable(),
-});
-const issueCommentSchema = commentSchema.extend({
-  id: z.union([z.string().min(1).max(256), z.number().int().positive()]),
-  created_at: z.iso.datetime({ offset: false }),
-  updated_at: z.iso.datetime({ offset: false }).optional(),
-});
 const labelSchema = z.union([
   z.string().min(1).max(256),
   z.object({ name: z.string().min(1).max(256) }),
@@ -55,7 +45,6 @@ const anchorSchema = z.object({
 const issuesPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
   issue: anchorSchema,
-  comment: commentSchema.optional(),
 });
 const issueCommentPayloadSchema = z.object({
   action: z.string().min(1).max(64),
@@ -63,12 +52,10 @@ const issueCommentPayloadSchema = z.object({
   issue: z.object({
     number: z.number().int().positive(),
   }),
-  comment: issueCommentSchema,
 });
 const pullRequestPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
   pull_request: anchorSchema,
-  comment: commentSchema.optional(),
 });
 
 const CLOSING_KEYWORD_RE =
@@ -204,34 +191,11 @@ export function githubAnchorProjectionFromDelivery(input: {
 const checkRunPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
   check_run: z.object({
-    id: z.number().int().positive(),
-    name: z.string().min(1).max(256),
-    html_url: z.string().min(1).max(2_048),
-    status: z.string().min(1).max(64),
-    conclusion: z.string().max(64).nullable(),
-    started_at: z.iso.datetime({ offset: false }).nullable().optional(),
-    completed_at: z.iso.datetime({ offset: false }).nullable().optional(),
-    updated_at: z.iso.datetime({ offset: false }),
     pull_requests: z
       .array(z.object({ number: z.number().int().positive() }))
       .max(8),
   }),
 });
-
-export interface GithubAnchorProjectionSignal {
-  anchor: GithubAnchorProjection['anchor'];
-  checkRun?: NonNullable<GithubAnchorProjection['checkRuns']>[number];
-  reviewThread?: { id: string; resolved: boolean };
-  comment?: {
-    action: 'created' | 'edited' | 'deleted';
-    id: string;
-    body: string;
-    url: string;
-    author?: string;
-    createdAt: string;
-    updatedAt?: string;
-  };
-}
 
 const reviewThreadPayloadSchema = z.object({
   repository: z.object({ full_name: z.string().min(1).max(140) }),
@@ -243,14 +207,19 @@ const reviewThreadPayloadSchema = z.object({
 });
 
 /**
- * Check-run deliveries update an existing server-owned PR projection. They
- * have no complete issue payload, so they can never create an anchor or
- * trigger a GitHub read from rendering.
+ * Returns the bounded anchor invalidations carried by a configured webhook.
+ * Payloads are never merged into a projection: every accepted invalidation
+ * goes through the same exact GitHub refresh as the one-shot backfill.
  */
-export function githubAnchorProjectionSignalFromDelivery(input: {
+export function githubAnchorProjectionAnchorsFromDelivery(input: {
   event: string;
   payload: unknown;
-}): GithubAnchorProjectionSignal[] {
+}): GithubAnchorProjection['anchor'][] {
+  const complete = githubAnchorProjectionFromDelivery({
+    ...input,
+    observedAt: new Date(0).toISOString(),
+  });
+  if (complete !== undefined) return [complete.anchor];
   if (input.event === 'issue_comment') {
     const parsed = issueCommentPayloadSchema.safeParse(input.payload);
     if (
@@ -260,26 +229,10 @@ export function githubAnchorProjectionSignalFromDelivery(input: {
     ) {
       return [];
     }
-    const { comment } = parsed.data;
     return [
       {
-        anchor: {
-          repo: parsed.data.repository.full_name,
-          issue: parsed.data.issue.number,
-        },
-        comment: {
-          action: parsed.data.action as 'created' | 'edited' | 'deleted',
-          id: String(comment.id),
-          body: comment.body,
-          url: comment.html_url,
-          ...(comment.user?.login === undefined
-            ? {}
-            : { author: comment.user.login }),
-          createdAt: comment.created_at,
-          ...(comment.updated_at === undefined
-            ? {}
-            : { updatedAt: comment.updated_at }),
-        },
+        repo: parsed.data.repository.full_name,
+        issue: parsed.data.issue.number,
       },
     ];
   }
@@ -291,28 +244,13 @@ export function githubAnchorProjectionSignalFromDelivery(input: {
     ) {
       return [];
     }
-    return parsed.data.check_run.pull_requests.map((pullRequest) => ({
-      anchor: {
-        repo: parsed.data.repository.full_name,
-        issue: pullRequest.number,
-      },
-      checkRun: {
-        id: String(parsed.data.check_run.id),
-        name: parsed.data.check_run.name,
-        url: parsed.data.check_run.html_url,
-        status: parsed.data.check_run.status.toLowerCase(),
-        conclusion: parsed.data.check_run.conclusion?.toLowerCase() ?? null,
-        updatedAt: parsed.data.check_run.updated_at,
-        ...(parsed.data.check_run.started_at === null ||
-        parsed.data.check_run.started_at === undefined
-          ? {}
-          : { startedAt: parsed.data.check_run.started_at }),
-        ...(parsed.data.check_run.completed_at === null ||
-        parsed.data.check_run.completed_at === undefined
-          ? {}
-          : { completedAt: parsed.data.check_run.completed_at }),
-      },
-    }));
+    return parsed.data.check_run.pull_requests.map(
+      (pullRequest) =>
+        ({
+          repo: parsed.data.repository.full_name,
+          issue: pullRequest.number,
+        }) satisfies GithubAnchorProjection['anchor'],
+    );
   }
   if (input.event !== 'pull_request_review_thread') return [];
   const parsed = reviewThreadPayloadSchema.safeParse(input.payload);
@@ -324,14 +262,8 @@ export function githubAnchorProjectionSignalFromDelivery(input: {
   }
   return [
     {
-      anchor: {
-        repo: parsed.data.repository.full_name,
-        issue: parsed.data.pull_request.number,
-      },
-      reviewThread: {
-        id: parsed.data.thread.id,
-        resolved: parsed.data.thread.is_resolved,
-      },
+      repo: parsed.data.repository.full_name,
+      issue: parsed.data.pull_request.number,
     },
   ];
 }

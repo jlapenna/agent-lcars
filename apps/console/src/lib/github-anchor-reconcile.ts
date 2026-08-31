@@ -31,7 +31,6 @@ interface RawAnchorDetails {
     nodes?: ({
       body?: string;
       url?: string;
-      databaseId?: number | null;
       createdAt?: string;
       updatedAt?: string;
       author?: { login?: string } | null;
@@ -53,13 +52,10 @@ interface RawAnchorDetails {
           contexts?: {
             totalCount?: number;
             nodes?: ({
-              databaseId?: number | null;
               name?: string;
               status?: string;
               conclusion?: string | null;
               detailsUrl?: string | null;
-              startedAt?: string | null;
-              completedAt?: string | null;
             } | null)[];
           } | null;
         } | null;
@@ -98,13 +94,13 @@ export async function enrichBackfillAnchors(
         (
           projection,
         ) => `${anchorAlias(projection.anchor.issue)}: issueOrPullRequest(number: ${projection.anchor.issue}) {
-          ... on Issue { body comments(last: 1) { nodes { databaseId body url createdAt updatedAt author { login } } } }
+          ... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { login } } } }
           ... on PullRequest {
             body isDraft mergeStateStatus
-            comments(last: 1) { nodes { databaseId body url createdAt updatedAt author { login } } }
+            comments(last: 1) { nodes { body url createdAt updatedAt author { login } } }
             reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
             reviewThreads(first: 100) { totalCount nodes { id isResolved } }
-            commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { databaseId name status conclusion detailsUrl startedAt completedAt } } } } } } }
+            commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { ... on CheckRun { name status conclusion detailsUrl } } } } } } }
           }
         }`,
       )
@@ -122,27 +118,13 @@ export async function enrichBackfillAnchors(
       const contexts =
         detail.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
       const checkRuns = (contexts?.nodes ?? []).flatMap((check) =>
-        check?.name &&
-        check.databaseId !== undefined &&
-        check.databaseId !== null
+        check?.name
           ? [
               {
-                id: String(check.databaseId),
                 name: check.name,
                 url: check.detailsUrl ?? projection.url,
                 status: check.status?.toLowerCase() ?? 'completed',
                 conclusion: check.conclusion?.toLowerCase() ?? null,
-                updatedAt:
-                  check.completedAt ??
-                  check.startedAt ??
-                  projection.sourceUpdatedAt,
-                ...(check.startedAt === undefined || check.startedAt === null
-                  ? {}
-                  : { startedAt: check.startedAt }),
-                ...(check.completedAt === undefined ||
-                check.completedAt === null
-                  ? {}
-                  : { completedAt: check.completedAt }),
               },
             ]
           : [],
@@ -159,11 +141,13 @@ export async function enrichBackfillAnchors(
       // know how many remaining threads are unresolved, so count every
       // omitted record conservatively until a complete later snapshot says
       // otherwise; an underestimate would hide a merge blocker.
-      const unresolvedReviewThreadOmittedCount = Math.max(
-        0,
-        (detail.reviewThreads?.totalCount ?? threadNodes.length) -
-          threadNodes.length,
-      );
+      const unresolvedReviewThreadCount =
+        unresolvedReviewThreadIds.length +
+        Math.max(
+          0,
+          (detail.reviewThreads?.totalCount ?? threadNodes.length) -
+            threadNodes.length,
+        );
       enriched.set(`${projection.anchor.repo}#${projection.anchor.issue}`, {
         ...projection,
         ...(detail.body === undefined || detail.body === null
@@ -171,13 +155,10 @@ export async function enrichBackfillAnchors(
           : { body: detail.body }),
         ...(latestComment?.body === undefined ||
         latestComment.url === undefined ||
-        latestComment.databaseId === undefined ||
-        latestComment.databaseId === null ||
         latestComment.createdAt === undefined
           ? {}
           : {
               lastComment: {
-                id: String(latestComment.databaseId),
                 body: latestComment.body,
                 url: latestComment.url,
                 createdAt: latestComment.createdAt,
@@ -220,11 +201,8 @@ export async function enrichBackfillAnchors(
               ciRunning: checkRuns.some(
                 (check) => check.status !== 'completed',
               ),
-              unresolvedReviewThreadCount:
-                unresolvedReviewThreadIds.length +
-                unresolvedReviewThreadOmittedCount,
+              unresolvedReviewThreadCount,
               unresolvedReviewThreadIds,
-              unresolvedReviewThreadOmittedCount,
               checksTruncated: (contexts?.totalCount ?? 0) > checkRuns.length,
               reviewThreadsTruncated:
                 (detail.reviewThreads?.totalCount ?? 0) > threadNodes.length,
@@ -240,14 +218,42 @@ export async function enrichBackfillAnchors(
   );
 }
 
+export interface GithubAnchorProjectionRefreshDeps {
+  readonly store: Pick<
+    OrchestratorStore,
+    'beginGithubAnchorProjectionRefresh' | 'applyGithubAnchorProjectionRefresh'
+  >;
+  load(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection>;
+}
+
+/** One fence-protected exact refresh path for webhook invalidations and
+ * backfill candidates. No webhook payload is merged into persisted state. */
+export async function refreshGithubAnchorProjection(
+  deps: GithubAnchorProjectionRefreshDeps,
+  anchor: GithubAnchorProjection['anchor'],
+): Promise<{ applied: boolean; projection: GithubAnchorProjection }> {
+  const generation =
+    await deps.store.beginGithubAnchorProjectionRefresh(anchor);
+  const projection = await deps.load(anchor);
+  const applied = await deps.store.applyGithubAnchorProjectionRefresh({
+    generation,
+    projection,
+  });
+  return { applied, projection };
+}
+
 interface AnchorProjectionReconcileDeps {
-  readonly store: Pick<OrchestratorStore, 'upsertGithubAnchorProjection'>;
+  readonly store: Pick<
+    OrchestratorStore,
+    'beginGithubAnchorProjectionRefresh' | 'applyGithubAnchorProjectionRefresh'
+  >;
   readonly repositories: readonly string[];
   listOpenIssues(repository: string, page: number): Promise<unknown[]>;
-  enrich?(
-    repository: string,
-    projections: GithubAnchorProjection[],
-  ): Promise<GithubAnchorProjection[]>;
+  load(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<GithubAnchorProjection>;
   currentQueue?(): Promise<{ items: CurrentQueueAnchor[]; warnings: string[] }>;
   repositoryForProjection?(repository: string): WatchedRepo | undefined;
   now(): string;
@@ -366,7 +372,7 @@ export async function reconcileGithubAnchorProjections(
       page++
     ) {
       const issues = await deps.listOpenIssues(repository, page);
-      const projections: GithubAnchorProjection[] = [];
+      const anchorsForPage: GithubAnchorProjection['anchor'][] = [];
       for (const issue of issues) {
         const projection = githubAnchorProjectionFromDelivery({
           event: 'issues',
@@ -378,13 +384,11 @@ export async function reconcileGithubAnchorProjections(
             `GitHub returned an invalid anchor during projection backfill: ${repository}`,
           );
         }
-        projections.push(projection);
+        anchorsForPage.push(projection.anchor);
       }
-      for (const projection of deps.enrich === undefined
-        ? projections
-        : await deps.enrich(repository, projections)) {
-        await deps.store.upsertGithubAnchorProjection(projection);
-        allProjections.push(projection);
+      for (const anchor of anchorsForPage) {
+        const refreshed = await refreshGithubAnchorProjection(deps, anchor);
+        allProjections.push(refreshed.projection);
         anchors++;
       }
       if (issues.length < ANCHOR_RECONCILE_PAGE_SIZE) {
@@ -451,7 +455,7 @@ export function reconcileCurrentGithubAnchorProjections(): Promise<AnchorProject
       });
       return data;
     },
-    enrich: enrichBackfillAnchors,
+    load: (anchor) => loadCurrentGithubAnchorProjection(github, anchor),
     currentQueue: async () => {
       const result = await getActionItems();
       return {
@@ -468,4 +472,47 @@ export function reconcileCurrentGithubAnchorProjections(): Promise<AnchorProject
     repositoryForProjection: (repository) => watchedRepos.get(repository),
     now: () => new Date().toISOString(),
   });
+}
+
+async function loadCurrentGithubAnchorProjection(
+  github: ReturnType<typeof getGithubClient>,
+  anchor: GithubAnchorProjection['anchor'],
+): Promise<GithubAnchorProjection> {
+  const [owner, repo] = anchor.repo.split('/');
+  const { data } = await github.rest.issues.get({
+    owner: owner as string,
+    repo: repo as string,
+    issue_number: anchor.issue,
+  });
+  const projection = githubAnchorProjectionFromDelivery({
+    event: 'issues',
+    payload: { repository: { full_name: anchor.repo }, issue: data },
+    observedAt: new Date().toISOString(),
+  });
+  if (projection === undefined) {
+    throw new Error(
+      `GitHub returned an invalid anchor: ${anchor.repo}#${anchor.issue}`,
+    );
+  }
+  const [enriched] = await enrichBackfillAnchors(
+    anchor.repo,
+    [projection],
+    github,
+  );
+  return enriched ?? projection;
+}
+
+/** Server-side webhook ingestion only. Queue rendering never invokes this. */
+export async function refreshCurrentGithubAnchorProjection(
+  anchor: GithubAnchorProjection['anchor'],
+): Promise<void> {
+  const { store } = createOrchestratorRuntime();
+  const github = getGithubClient();
+  await refreshGithubAnchorProjection(
+    {
+      store,
+      load: (current) => loadCurrentGithubAnchorProjection(github, current),
+    },
+    anchor,
+  );
 }

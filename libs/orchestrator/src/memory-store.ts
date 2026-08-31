@@ -47,7 +47,10 @@ export class MemoryStore implements OrchestratorStore {
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
   readonly #outbox = new Map<string, OutboxEntry>();
-  readonly #githubAnchorProjections = new Map<string, GithubAnchorProjection>();
+  readonly #githubAnchorProjections = new Map<
+    string,
+    { projection?: GithubAnchorProjection; refreshGeneration: number }
+  >();
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
@@ -142,47 +145,43 @@ export class MemoryStore implements OrchestratorStore {
     return JSON.stringify([taskKey(id), requestHistoryKey(source, requestId)]);
   }
 
-  async upsertGithubAnchorProjection(
-    projection: GithubAnchorProjection,
-  ): Promise<void> {
-    const key = taskKey(projection.anchor);
+  async beginGithubAnchorProjectionRefresh(
+    anchor: GithubAnchorProjection['anchor'],
+  ): Promise<number> {
+    const key = taskKey(anchor);
     const current = this.#githubAnchorProjections.get(key);
-    if (
-      current !== undefined &&
-      current.sourceUpdatedAt > projection.sourceUpdatedAt
-    ) {
-      return;
-    }
-    this.#githubAnchorProjections.set(
-      key,
-      structuredClone(
-        githubAnchorProjectionSchema.parse(
-          mergeGithubAnchorSnapshot(current, projection),
-        ),
-      ),
-    );
+    const refreshGeneration = (current?.refreshGeneration ?? 0) + 1;
+    this.#githubAnchorProjections.set(key, {
+      ...(current?.projection === undefined
+        ? {}
+        : { projection: structuredClone(current.projection) }),
+      refreshGeneration,
+    });
+    return refreshGeneration;
   }
 
-  async updateGithubAnchorProjection(
-    anchor: GithubAnchorProjection['anchor'],
-    update: (
-      current: GithubAnchorProjection | undefined,
-    ) => GithubAnchorProjection | undefined,
-  ): Promise<void> {
-    const key = taskKey(anchor);
-    const next = update(this.#githubAnchorProjections.get(key));
-    if (next !== undefined) {
-      this.#githubAnchorProjections.set(
-        key,
-        structuredClone(githubAnchorProjectionSchema.parse(next)),
-      );
-    }
+  async applyGithubAnchorProjectionRefresh(input: {
+    generation: number;
+    projection: GithubAnchorProjection;
+  }): Promise<boolean> {
+    const key = taskKey(input.projection.anchor);
+    const current = this.#githubAnchorProjections.get(key);
+    if (current?.refreshGeneration !== input.generation) return false;
+    this.#githubAnchorProjections.set(key, {
+      projection: structuredClone(
+        githubAnchorProjectionSchema.parse(input.projection),
+      ),
+      refreshGeneration: input.generation,
+    });
+    return true;
   }
 
   async readGithubAnchorProjection(
     anchor: GithubAnchorProjection['anchor'],
   ): Promise<GithubAnchorProjection | undefined> {
-    const projection = this.#githubAnchorProjections.get(taskKey(anchor));
+    const projection = this.#githubAnchorProjections.get(
+      taskKey(anchor),
+    )?.projection;
     return projection === undefined ? undefined : structuredClone(projection);
   }
 
@@ -191,6 +190,9 @@ export class MemoryStore implements OrchestratorStore {
   ): Promise<GithubAnchorProjection[]> {
     return structuredClone(
       [...this.#githubAnchorProjections.values()]
+        .flatMap((entry) =>
+          entry.projection === undefined ? [] : [entry.projection],
+        )
         .filter((projection) => projection.state === 'open')
         .sort(
           (left, right) =>

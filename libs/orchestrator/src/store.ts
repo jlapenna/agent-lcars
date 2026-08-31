@@ -19,55 +19,6 @@ import type {
  *  while still making a crashed drain retryable promptly. */
 export const OUTBOX_LEASE_MS = 5 * 60_000;
 
-/** Complete anchor deliveries replace their GitHub snapshot, including
- * optional facts which disappeared. Independently delivered signals remain
- * until their own webhook refreshes them. */
-export function mergeGithubAnchorSnapshot(
-  current: GithubAnchorProjection | undefined,
-  snapshot: GithubAnchorProjection,
-): GithubAnchorProjection {
-  if (current === undefined) return snapshot;
-  return {
-    ...snapshot,
-    ...(snapshot.lastComment === undefined && current.lastComment !== undefined
-      ? { lastComment: current.lastComment }
-      : {}),
-    ...(snapshot.checkRuns === undefined && current.checkRuns !== undefined
-      ? { checkRuns: current.checkRuns }
-      : {}),
-    ...(snapshot.failingChecks === undefined &&
-    current.failingChecks !== undefined
-      ? { failingChecks: current.failingChecks }
-      : {}),
-    ...(snapshot.ciRunning === undefined && current.ciRunning !== undefined
-      ? { ciRunning: current.ciRunning }
-      : {}),
-    ...(snapshot.unresolvedReviewThreadCount === undefined &&
-    current.unresolvedReviewThreadCount !== undefined
-      ? { unresolvedReviewThreadCount: current.unresolvedReviewThreadCount }
-      : {}),
-    ...(snapshot.unresolvedReviewThreadIds === undefined &&
-    current.unresolvedReviewThreadIds !== undefined
-      ? { unresolvedReviewThreadIds: current.unresolvedReviewThreadIds }
-      : {}),
-    ...(snapshot.unresolvedReviewThreadOmittedCount === undefined &&
-    current.unresolvedReviewThreadOmittedCount !== undefined
-      ? {
-          unresolvedReviewThreadOmittedCount:
-            current.unresolvedReviewThreadOmittedCount,
-        }
-      : {}),
-    ...(snapshot.checksTruncated === undefined &&
-    current.checksTruncated !== undefined
-      ? { checksTruncated: current.checksTruncated }
-      : {}),
-    ...(snapshot.reviewThreadsTruncated === undefined &&
-    current.reviewThreadsTruncated !== undefined
-      ? { reviewThreadsTruncated: current.reviewThreadsTruncated }
-      : {}),
-  };
-}
-
 /**
  * Durability boundary. One method per question the decision layer asks, one
  * method to apply a decision atomically. Implementations must guarantee:
@@ -114,23 +65,20 @@ export interface OrchestratorStore {
   }): Promise<void>;
 
   /**
-   * Writes the webhook-backed presentation projection for an issue or PR.
-   * This is deliberately independent from Task creation: an actionable
-   * anchor can be waiting for a human before it has ever been dispatched.
-   * Implementations must not let an older GitHub `updated_at` overwrite a
-   * newer stored projection.
+   * Starts one bounded exact-GitHub refresh for an anchor. The returned
+   * generation is a fence: only its matching apply may replace the stored
+   * snapshot. A later webhook/backfill refresh therefore makes any older
+   * in-flight GitHub read harmless without interpreting partial deliveries.
    */
-  upsertGithubAnchorProjection(
-    projection: GithubAnchorProjection,
-  ): Promise<void>;
-
-  /** Atomically mutates one latest projection for a signal-only webhook. */
-  updateGithubAnchorProjection(
+  beginGithubAnchorProjectionRefresh(
     anchor: GithubAnchorProjection['anchor'],
-    update: (
-      current: GithubAnchorProjection | undefined,
-    ) => GithubAnchorProjection | undefined,
-  ): Promise<void>;
+  ): Promise<number>;
+
+  /** Replaces the projection only if this refresh generation is still live. */
+  applyGithubAnchorProjectionRefresh(input: {
+    generation: number;
+    projection: GithubAnchorProjection;
+  }): Promise<boolean>;
 
   /** Reads one stored GitHub-anchor projection for webhook signal updates.
    * This is a point lookup, never a queue-discovery primitive. */

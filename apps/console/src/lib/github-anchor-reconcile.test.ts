@@ -1,3 +1,7 @@
+import {
+  type GithubAnchorProjection,
+  MemoryStore,
+} from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -5,8 +9,8 @@ import {
   ANCHOR_RECONCILE_PAGE_SIZE,
   AnchorProjectionBackfillLimitError,
   compareSelectedGithubAnchorProjections,
-  enrichBackfillAnchors,
   reconcileGithubAnchorProjections,
+  refreshGithubAnchorProjection,
 } from './github-anchor-reconcile';
 
 const REPO = 'jlapenna/agent-lcars';
@@ -18,137 +22,172 @@ const anchor = {
   state: 'open',
   updated_at: '2026-08-30T12:00:00.000Z',
   user: { login: 'jlapenna' },
-  labels: [{ name: 'status:needs-human' }],
+  labels: [],
   assignees: [],
 };
+const projection = (title = anchor.title): GithubAnchorProjection => ({
+  anchor: { repo: REPO, issue: 42 },
+  kind: 'pr',
+  state: 'open',
+  title,
+  body: anchor.body,
+  url: anchor.html_url,
+  author: 'jlapenna',
+  labels: [],
+  assigneeLogins: [],
+  sourceUpdatedAt: anchor.updated_at,
+  observedAt: '2026-08-30T12:00:01.000Z',
+});
 
-describe('reconcileGithubAnchorProjections', () => {
-  it('ingests a bounded GitHub listing into durable anchor projections', async () => {
-    const upsertGithubAnchorProjection = vi.fn();
-    const enrich = vi.fn(async (_repository: string, projections: unknown[]) =>
-      projections.map((projection) => ({
-        ...(projection as object),
-        requestedReviewerLogins: ['jlapenna'],
-        failingChecks: [{ name: 'Verify', url: 'https://example.test/check' }],
-        ciRunning: false,
-        unresolvedReviewThreadCount: 2,
-      })),
-    );
-    const result = await reconcileGithubAnchorProjections({
-      store: { upsertGithubAnchorProjection },
-      repositories: [REPO],
-      listOpenIssues: vi.fn().mockResolvedValue([anchor]),
-      enrich,
-      now: () => '2026-08-30T12:00:01.000Z',
-    });
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
-    expect(result).toEqual({ repositories: 1, anchors: 1 });
-    expect(upsertGithubAnchorProjection).toHaveBeenCalledWith(
-      expect.objectContaining({
-        anchor: { repo: REPO, issue: 42 },
-        requestedReviewerLogins: ['jlapenna'],
-        failingChecks: [{ name: 'Verify', url: 'https://example.test/check' }],
-        unresolvedReviewThreadCount: 2,
-      }),
+describe('refreshGithubAnchorProjection', () => {
+  it('keeps a newer webhook refresh over an older in-flight backfill fetch', async () => {
+    const store = new MemoryStore();
+    const older = deferred<GithubAnchorProjection>();
+    const first = refreshGithubAnchorProjection(
+      { store, load: () => older.promise },
+      projection().anchor,
     );
-    expect(enrich).toHaveBeenCalledWith(REPO, [expect.anything()]);
+    await Promise.resolve();
+    const newer = await refreshGithubAnchorProjection(
+      { store, load: async () => projection('webhook current') },
+      projection().anchor,
+    );
+    older.resolve(projection('stale backfill'));
+    await expect(first).resolves.toMatchObject({ applied: false });
+    expect(newer).toMatchObject({ applied: true });
+    await expect(
+      store.readGithubAnchorProjection(projection().anchor),
+    ).resolves.toMatchObject({ title: 'webhook current' });
   });
 
-  it('stores REST database IDs rather than GraphQL node IDs during backfill', async () => {
-    const graphql = vi.fn().mockResolvedValue({
-      repository: {
-        i42: {
-          comments: {
-            nodes: [
-              {
-                databaseId: 5432,
-                body: 'Latest comment',
-                url: 'https://example.test/issues/42#issuecomment-5432',
-                createdAt: '2026-08-30T12:01:00.000Z',
-              },
-            ],
-          },
-          commits: {
-            nodes: [
-              {
-                commit: {
-                  statusCheckRollup: {
-                    contexts: {
-                      totalCount: 1,
-                      nodes: [
-                        {
-                          databaseId: 9876,
-                          name: 'Verify',
-                          status: 'COMPLETED',
-                          conclusion: 'FAILURE',
-                          detailsUrl: 'https://example.test/checks/9876',
-                          startedAt: '2026-08-30T12:01:00.000Z',
-                          completedAt: '2026-08-30T12:02:00.000Z',
-                        },
-                      ],
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        },
+  it('keeps the exact-current review-thread state when resolve and unresolve deliveries race', async () => {
+    const store = new MemoryStore();
+    const older = deferred<GithubAnchorProjection>();
+    const first = refreshGithubAnchorProjection(
+      { store, load: () => older.promise },
+      projection().anchor,
+    );
+    await Promise.resolve();
+    await refreshGithubAnchorProjection(
+      {
+        store,
+        load: async () => ({
+          ...projection(),
+          unresolvedReviewThreadCount: 1,
+          unresolvedReviewThreadIds: ['PRRT_live'],
+        }),
       },
+      projection().anchor,
+    );
+    older.resolve({
+      ...projection(),
+      unresolvedReviewThreadCount: 0,
+      unresolvedReviewThreadIds: [],
     });
-    const [projection] = await enrichBackfillAnchors(
-      REPO,
-      [
+    await expect(first).resolves.toMatchObject({ applied: false });
+    await expect(
+      store.readGithubAnchorProjection(projection().anchor),
+    ).resolves.toMatchObject({ unresolvedReviewThreadIds: ['PRRT_live'] });
+  });
+
+  it('keeps a terminal check result when equal-timestamp lifecycle deliveries race', async () => {
+    const store = new MemoryStore();
+    const older = deferred<GithubAnchorProjection>();
+    const first = refreshGithubAnchorProjection(
+      { store, load: () => older.promise },
+      projection().anchor,
+    );
+    await Promise.resolve();
+    await refreshGithubAnchorProjection(
+      {
+        store,
+        load: async () => ({
+          ...projection(),
+          checkRuns: [
+            {
+              name: 'Verify',
+              url: 'https://example.test/check',
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          ],
+          failingChecks: [
+            { name: 'Verify', url: 'https://example.test/check' },
+          ],
+          ciRunning: false,
+        }),
+      },
+      projection().anchor,
+    );
+    older.resolve({
+      ...projection(),
+      checkRuns: [
         {
-          anchor: { repo: REPO, issue: 42 },
-          kind: 'pr',
-          state: 'open',
-          title: anchor.title,
-          body: anchor.body,
-          url: anchor.html_url,
-          labels: ['status:needs-human'],
-          assigneeLogins: [],
-          sourceUpdatedAt: anchor.updated_at,
-          observedAt: '2026-08-30T12:00:01.000Z',
+          name: 'Verify',
+          url: 'https://example.test/check',
+          status: 'in_progress',
+          conclusion: null,
         },
       ],
-      { graphql } as never,
-    );
-
-    expect(graphql.mock.calls[0][0]).toContain('CheckRun { databaseId');
-    expect(graphql.mock.calls[0][0]).not.toContain('CheckRun { id');
-    expect(graphql.mock.calls[0][0]).toContain(
-      'comments(last: 1) { nodes { databaseId',
-    );
-    expect(projection.checkRuns).toEqual([
-      expect.objectContaining({
-        id: '9876',
-        name: 'Verify',
-        updatedAt: '2026-08-30T12:02:00.000Z',
-      }),
-    ]);
-    expect(projection.lastComment).toMatchObject({
-      id: '5432',
-      body: 'Latest comment',
+      ciRunning: true,
+    });
+    await expect(first).resolves.toMatchObject({ applied: false });
+    await expect(
+      store.readGithubAnchorProjection(projection().anchor),
+    ).resolves.toMatchObject({
+      ciRunning: false,
+      failingChecks: [{ name: 'Verify' }],
     });
   });
 
-  it('fails closed when a repository exceeds the explicit page bound', async () => {
+  it('keeps a newer complete anchor snapshot even with an equal source timestamp', async () => {
+    const store = new MemoryStore();
+    const older = deferred<GithubAnchorProjection>();
+    const first = refreshGithubAnchorProjection(
+      { store, load: () => older.promise },
+      projection().anchor,
+    );
+    await Promise.resolve();
+    await refreshGithubAnchorProjection(
+      {
+        store,
+        load: async () => ({ ...projection('current title'), state: 'closed' }),
+      },
+      projection().anchor,
+    );
+    older.resolve(projection('stale title'));
+    await expect(first).resolves.toMatchObject({ applied: false });
+    await expect(
+      store.readGithubAnchorProjection(projection().anchor),
+    ).resolves.toMatchObject({ title: 'current title', state: 'closed' });
+  });
+});
+
+describe('reconcileGithubAnchorProjections', () => {
+  it('uses the bounded listing only to discover anchors, then refreshes each exactly', async () => {
+    const store = new MemoryStore();
+    const load = vi.fn(async () => projection());
     await expect(
       reconcileGithubAnchorProjections({
-        store: { upsertGithubAnchorProjection: vi.fn() },
+        store,
         repositories: [REPO],
-        listOpenIssues: vi
-          .fn()
-          .mockResolvedValue(
-            Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor),
-          ),
+        listOpenIssues: vi.fn().mockResolvedValue([anchor]),
+        load,
         now: () => '2026-08-30T12:00:01.000Z',
       }),
-    ).rejects.toBeInstanceOf(AnchorProjectionBackfillLimitError);
-    expect(ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY).toBeGreaterThan(0);
+    ).resolves.toEqual({ repositories: 1, anchors: 1 });
+    expect(load).toHaveBeenCalledWith({ repo: REPO, issue: 42 });
   });
 
-  it('accepts exactly the bounded number of anchors after an empty sentinel page', async () => {
+  it('accepts exactly 1,000 anchors only after an empty sentinel page', async () => {
     const listOpenIssues = vi.fn(async (_repository: string, page: number) =>
       page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY
         ? Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor)
@@ -156,43 +195,39 @@ describe('reconcileGithubAnchorProjections', () => {
     );
     await expect(
       reconcileGithubAnchorProjections({
-        store: { upsertGithubAnchorProjection: vi.fn() },
+        store: new MemoryStore(),
         repositories: [REPO],
         listOpenIssues,
+        load: async () => projection(),
         now: () => '2026-08-30T12:00:01.000Z',
       }),
-    ).resolves.toMatchObject({
-      anchors:
-        ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY * ANCHOR_RECONCILE_PAGE_SIZE,
-    });
+    ).resolves.toMatchObject({ anchors: 1000 });
     expect(listOpenIssues).toHaveBeenLastCalledWith(
       REPO,
       ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY + 1,
     );
   });
 
-  it('rejects a non-empty sentinel page instead of silently truncating', async () => {
+  it('rejects a non-empty sentinel instead of silently truncating', async () => {
     await expect(
       reconcileGithubAnchorProjections({
-        store: { upsertGithubAnchorProjection: vi.fn() },
+        store: new MemoryStore(),
         repositories: [REPO],
         listOpenIssues: vi.fn(async (_repository: string, page: number) =>
           page <= ANCHOR_RECONCILE_MAX_PAGES_PER_REPOSITORY
             ? Array.from({ length: ANCHOR_RECONCILE_PAGE_SIZE }, () => anchor)
             : [anchor],
         ),
+        load: async () => projection(),
         now: () => '2026-08-30T12:00:01.000Z',
       }),
     ).rejects.toBeInstanceOf(AnchorProjectionBackfillLimitError);
   });
 
-  it('reports queue parity separately from the total open-anchor backfill', async () => {
-    const result = await reconcileGithubAnchorProjections({
-      store: { upsertGithubAnchorProjection: vi.fn() },
-      repositories: [REPO],
-      listOpenIssues: vi.fn().mockResolvedValue([anchor]),
-      currentQueue: async () => ({
-        items: [
+  it('compares selected queue records separately from all open anchor totals', () => {
+    expect(
+      compareSelectedGithubAnchorProjections({
+        currentQueue: [
           {
             key: `${REPO}#42`,
             title: anchor.title,
@@ -201,103 +236,8 @@ describe('reconcileGithubAnchorProjections', () => {
             assigneeLogins: [],
           },
         ],
-        warnings: [],
+        projections: [{ ...projection(), labels: ['agent:claude'] }],
       }),
-      now: () => '2026-08-30T12:00:01.000Z',
-    });
-
-    expect(result).toMatchObject({
-      anchors: 1,
-      comparison: {
-        currentQueue: 1,
-        projectedQueue: 1,
-        matches: true,
-      },
-    });
-  });
-
-  it('uses repository-specific agent labels when comparing the projected queue', () => {
-    const result = compareSelectedGithubAnchorProjections({
-      currentQueue: [
-        {
-          key: `${REPO}#42`,
-          title: anchor.title,
-          url: anchor.html_url,
-          author: 'jlapenna',
-          assigneeLogins: [],
-        },
-      ],
-      projections: [
-        {
-          anchor: { repo: REPO, issue: 42 },
-          kind: 'issue',
-          state: 'open',
-          title: anchor.title,
-          body: '',
-          url: anchor.html_url,
-          author: 'jlapenna',
-          labels: ['queue:internal-agent'],
-          assigneeLogins: [],
-          sourceUpdatedAt: anchor.updated_at,
-          observedAt: '2026-08-30T12:00:01.000Z',
-        },
-      ],
-      repositoryForProjection: (repository) =>
-        repository === REPO
-          ? {
-              owner: 'jlapenna',
-              name: 'agent-lcars',
-              agents: {
-                codex: {
-                  label: 'queue:internal-agent',
-                  replyTrigger: '/codex',
-                },
-              },
-            }
-          : undefined,
-    });
-
-    expect(result).toMatchObject({ projectedQueue: 1, matches: true });
-  });
-
-  it('identifies selection, critical-field, and current-queue degradation mismatches', () => {
-    const result = compareSelectedGithubAnchorProjections({
-      currentQueue: [
-        {
-          key: `${REPO}#42`,
-          title: 'Stale title',
-          url: anchor.html_url,
-          author: 'jlapenna',
-          assigneeLogins: ['jlapenna'],
-        },
-      ],
-      projections: [
-        {
-          anchor: { repo: REPO, issue: 42 },
-          kind: 'issue',
-          state: 'open',
-          title: anchor.title,
-          body: '',
-          url: anchor.html_url,
-          author: 'jlapenna',
-          labels: ['status:needs-human'],
-          assigneeLogins: [],
-          sourceUpdatedAt: anchor.updated_at,
-          observedAt: '2026-08-30T12:00:01.000Z',
-        },
-      ],
-      warnings: ['Open items unavailable for another/repo.'],
-    });
-
-    expect(result).toMatchObject({
-      matches: false,
-      criticalFieldMismatches: [
-        {
-          key: `${REPO}#42`,
-          fields: ['title', 'assigneeLogins'],
-        },
-      ],
-      warnings: ['Open items unavailable for another/repo.'],
-    });
+    ).toMatchObject({ currentQueue: 1, projectedQueue: 1, matches: true });
   });
 });
