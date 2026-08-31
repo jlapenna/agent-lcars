@@ -17,7 +17,6 @@ const EXPECTED_PUBLIC_ROUTES = [
   '/login',
   '/api/logs/error',
   '/api/control-plane/reconcile',
-  '/api/control-plane/request',
   '/api/control-plane/projections/reconcile',
   '/api/control-plane/webhook',
   '/api/control-plane/webhook/process',
@@ -35,10 +34,8 @@ const EXPECTED_PUBLIC_PREFIXES = [
 // Every control-plane route authenticates itself (OIDC claims or raw-body
 // HMAC) and is called by machines that never carry a session cookie, so
 // each one MUST be reachable through publicRoutes/publicPrefixes. Deriving
-// the set from the route files on disk is what neither hand-maintained
-// list could do: #1232's request route shipped absent from both lists and
-// 401ed every caller (exactly as recovery-observation did before #885),
-// while webhook/probe outlived its deleted route in both lists.
+// the set from the route files on disk avoids stale exceptions when a route
+// is deleted or a new machine endpoint is added.
 function controlPlaneRoutesOnDisk(): string[] {
   const base = join(__dirname, 'app', 'api', 'control-plane');
   return readdirSync(base, { recursive: true, withFileTypes: true })

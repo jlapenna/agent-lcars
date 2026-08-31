@@ -277,8 +277,7 @@ const dispatchBase = oc.meta(
 /**
  * Contract-first GitHub-anchor admission. The explicit Work spec means this
  * has the same stored Work payload and QueueExecutor brief as every other
- * Work API admission; it is not a compatibility alias for the retired
- * control-plane request body.
+ * Work API admission.
  */
 export const dispatchesContract = {
   github: dispatchBase

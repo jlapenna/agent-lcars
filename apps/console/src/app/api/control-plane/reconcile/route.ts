@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 
 import {
-  parseHostedBearerToken,
-  parseHostedReconcileRequestBody,
-} from '@/lib/control-plane-request';
+  assertEmptyReconcileBody,
+  parseReconcileBearerToken,
+} from '@/lib/control-plane-reconcile-request';
 import { controlPlaneRepository } from '@/lib/deployment';
 import { verifyReconcileOidcToken } from '@/lib/github-actions-oidc';
 import { handleReconcile } from '@/lib/orchestrator-routes';
@@ -19,7 +19,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const repository = controlPlaneRepository();
   try {
     await verifyReconcileOidcToken(
-      parseHostedBearerToken(request.headers.get('authorization')),
+      parseReconcileBearerToken(request.headers.get('authorization')),
       repository,
     );
   } catch (error) {
@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    parseHostedReconcileRequestBody(await request.text());
+    assertEmptyReconcileBody(await request.text());
   } catch {
     return NextResponse.json(
       { error: 'Invalid reconcile request' },
