@@ -9,7 +9,6 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { isRefusal } from '@agent-lcars/orchestrator';
 
-import { controlPlaneRepository } from './deployment';
 import { REPO_HEADER } from './github-app-tokens';
 import {
   getGithubClient,
@@ -485,11 +484,11 @@ function latestOrchestratorPipeline(
 /**
  * Re-requests work on a task through the orchestrator (#1183): unlike the
  * legacy broker's label-driven admission, the orchestrator's `request()` is
- * the one dispatch entry point, keyed by the task's own `TaskId` (issue
- * number in the control-plane repository - orchestrator tracks no other
- * repository, see `deployment.ts`'s `controlPlaneRepository`). A Retry click
- * always mints a fresh idempotency key: unlike a webhook replay, there is no
- * meaningful "same request" to converge on.
+ * the one dispatch entry point, keyed by the clicked item's own `TaskId`.
+ * The repository is part of task identity, so a Retry click must preserve the
+ * watched repository rather than collapsing every item onto the controller's
+ * home repository. A Retry click always mints a fresh idempotency key: unlike
+ * a webhook replay, there is no meaningful "same request" to converge on.
  */
 export async function retriggerIssue(
   repo: WatchedRepo,
@@ -504,7 +503,7 @@ export async function retriggerIssue(
 
   const runtime = createOrchestratorRuntime();
   const { store, orchestrator, drain } = runtime;
-  const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
+  const taskId = { repo: repoKey(repo), issue: issueNumber };
   const [runs, existingTask] = await Promise.all([
     store.listRuns(taskId),
     store.readTask(taskId),
@@ -648,7 +647,7 @@ export async function reassignPipeline(
 
   const runtime = createOrchestratorRuntime();
   const { store, orchestrator, drain } = runtime;
-  const taskId = { repo: controlPlaneRepository(), issue: issueNumber };
+  const taskId = { repo: repoKey(repo), issue: issueNumber };
   const [activeRun, existingTask] = await Promise.all([
     store.readActiveRun(taskId),
     store.readTask(taskId),

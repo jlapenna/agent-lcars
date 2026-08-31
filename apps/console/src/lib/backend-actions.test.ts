@@ -31,11 +31,7 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 const DEFAULT_REPO = { owner: 'supersprinklesracing', name: 'sprinkles' };
 const DISPATCH_ID = '11111111-1111-4111-8111-111111111111';
-// `controlPlaneRepository()`'s own fallback (see deployment.ts) - no env
-// var overrides it in this test environment (see orchestrator-routes.test.ts's
-// identical comment), so this is the repo retriggerIssue/reassignPipeline
-// build their orchestrator `TaskId` from regardless of `DEFAULT_REPO` above.
-const CONTROL_PLANE_REPO = 'jlapenna/agent-lcars';
+const DEFAULT_REPO_KEY = `${DEFAULT_REPO.owner}/${DEFAULT_REPO.name}`;
 
 vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
@@ -685,11 +681,9 @@ describe('dispatchUnstickPrs', () => {
 describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   // retriggerIssue no longer checks GitHub labels at all - the orchestrator
   // is the one dispatch entry point, and its `request()` is keyed by the
-  // task's own TaskId (issue number in `controlPlaneRepository()`, not the
-  // `repo` argument - see backend-actions.ts's own doc comment on this
-  // function). `getGithubClient()` is still needed for
-  // clearNeedsHumanLabel's label removal and an optional steering-note
-  // comment.
+  // clicked item's own cross-repository TaskId. `getGithubClient()` is still
+  // needed for clearNeedsHumanLabel's label removal and an optional
+  // steering-note comment.
   function mockOctokit() {
     const removeLabel = vi.fn().mockResolvedValue({});
     const createComment = vi.fn().mockResolvedValue({});
@@ -720,7 +714,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   it("reads the task's latest orchestrator run for the dispatch pipeline instead of defaulting", async () => {
     const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
     mockOctokit();
-    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
     const seeded = await orchestrator.request({
       taskId,
       requestId: 'seed',
@@ -742,7 +736,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const { orchestrator } = fixtureOrchestratorRuntime();
     mockOctokit();
     await orchestrator.request({
-      taskId: { repo: CONTROL_PLANE_REPO, issue: 2709 },
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
       requestId: 'already-live',
       pipeline: 'claude',
     });
@@ -758,7 +752,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const { calls, orchestrator } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
     const seeded = await orchestrator.request({
-      taskId: { repo: CONTROL_PLANE_REPO, issue: 2709 },
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
       requestId: 'seed-note',
       pipeline: 'claude',
     });
@@ -784,7 +778,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const { calls, orchestrator } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
     const seeded = await orchestrator.request({
-      taskId: { repo: CONTROL_PLANE_REPO, issue: 2709 },
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
       requestId: 'seed-mention',
       pipeline: 'claude',
     });
@@ -823,7 +817,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
   it('does not re-read the issue or forward work when the task already carries one', async () => {
     const { orchestrator } = fixtureOrchestratorRuntime();
     mockOctokit();
-    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
     const seeded = await orchestrator.request({
       taskId,
       requestId: 'seed',
@@ -893,7 +887,7 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
       false,
     );
     const runs = await store.listRuns({
-      repo: CONTROL_PLANE_REPO,
+      repo: DEFAULT_REPO_KEY,
       issue: 2709,
     });
     expect(runs).toHaveLength(1);
@@ -907,7 +901,7 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
     await reassignPipeline(DEFAULT_REPO, 2709, 'claude', DISPATCH_ID);
 
     expect(
-      await store.listRuns({ repo: CONTROL_PLANE_REPO, issue: 2709 }),
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
     ).toHaveLength(1);
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
@@ -947,19 +941,28 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
       },
     };
     const { setLabels } = mockOctokit(['bot:codex']);
-    fixtureOrchestratorRuntime();
+    const { store } = fixtureOrchestratorRuntime();
 
     await reassignPipeline(customRepo, 2709, 'claude', DISPATCH_ID);
 
     expect(setLabels).toHaveBeenCalledWith(
       expect.objectContaining({ labels: ['bot:claude'] }),
     );
+    // The selected watched repository is part of the TaskId. Keeping this
+    // separate from the controller home repo ensures an operator can reassign
+    // an item from any configured repository without creating an orphan run.
+    expect(
+      await store.listRuns({
+        repo: `${customRepo.owner}/${customRepo.name}`,
+        issue: 2709,
+      }),
+    ).toHaveLength(1);
   });
 
   it('cancels the live run before requesting the new pipeline, carrying its mode forward', async () => {
     mockOctokit(['agent:codex']);
     const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
-    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
     await orchestrator.request({
       taskId,
       requestId: 'live-codex',
@@ -1044,7 +1047,7 @@ describe('reassignPipeline (orchestrator dispatch, #1183)', () => {
   it('does not forward work when the task already carries one', async () => {
     mockOctokit(['agent:codex']);
     const { orchestrator } = fixtureOrchestratorRuntime();
-    const taskId = { repo: CONTROL_PLANE_REPO, issue: 2709 };
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
     const seeded = await orchestrator.request({
       taskId,
       requestId: 'seed',
