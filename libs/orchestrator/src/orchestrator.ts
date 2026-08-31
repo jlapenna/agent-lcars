@@ -13,7 +13,14 @@ import {
   reportResult,
   requestRun,
 } from './decide';
-import type { Run, RunResult, TaskId, WorkPayload } from './model';
+import {
+  requestHistoryKey,
+  type RequestSource,
+  type Run,
+  type RunResult,
+  type TaskId,
+  type WorkPayload,
+} from './model';
 import {
   type OrchestratorStore,
   StoreConflict,
@@ -46,6 +53,8 @@ export interface SweepResult {
 export interface RequestInput {
   taskId: TaskId;
   requestId: string;
+  /** Omitted for arbitrary caller-controlled request IDs. */
+  requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
@@ -61,9 +70,10 @@ export class Orchestrator {
     // Firestore may replay a transaction callback after a concurrent commit;
     // capture time once so every replay evaluates the same pure request.
     const now = this.clock.now();
+    const requestSource = input.requestSource ?? 'caller';
     return this.store.transactRequest({
       taskId: input.taskId,
-      requestId: input.requestId,
+      requestHistoryKey: requestHistoryKey(requestSource, input.requestId),
       decide: ({ task, activeRun, previousRun }) => {
         // The historical check precedes the live mutex. A retry remains a
         // duplicate even after its original run settled and a newer request
@@ -78,6 +88,7 @@ export class Orchestrator {
           taskId: input.taskId,
           activeRun,
           requestId: input.requestId,
+          requestSource,
           pipeline: input.pipeline,
           ...(input.params === undefined ? {} : { params: input.params }),
           ...(input.work === undefined ? {} : { work: input.work }),
@@ -129,7 +140,8 @@ export class Orchestrator {
    * times in a row exhausts its budget and is left parked rather than
    * retried forever.
    *
-   * The retry request uses a deterministic requestId (`retry:<lostRunId>`),
+   * The retry request uses a deterministic requestId (`retry:<lostRunId>`) in
+   * its own internal history namespace,
    * so re-issuing it -- a re-sweep landing on the same run, or a caller
    * retrying after a crash -- maps to the run already created instead of
    * starting a second one; this is the same duplicate-request idempotency
@@ -184,6 +196,7 @@ export class Orchestrator {
     const retry = await this.request({
       taskId: settledRun.task,
       requestId: `retry:${settledRun.runId}`,
+      requestSource: 'auto-retry',
       pipeline: settledRun.pipeline,
       ...(settledRun.params === undefined ? {} : { params: settledRun.params }),
     });

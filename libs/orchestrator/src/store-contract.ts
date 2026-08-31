@@ -194,6 +194,31 @@ export function runOrchestratorStoreContract(
     });
 
     describe('the auto-retry budget (consecutiveLost)', () => {
+      it('keeps auto-retry history separate from arbitrary caller request IDs', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const { run } = await started(orchestrator, 'retry:octo/example#7/r1');
+        clock.advanceMinutes(121);
+
+        const swept = await orchestrator.sweepExpired();
+        expect(swept.retried).toHaveLength(1);
+        const retry = await store.readRun(swept.retried[0]?.newRunId as string);
+        expect(retry).toMatchObject({
+          requestId: `retry:${run.runId}`,
+          requestSource: 'auto-retry',
+        });
+
+        const replay = await orchestrator.request({
+          taskId: TASK,
+          requestId: `retry:${run.runId}`,
+          pipeline: run.pipeline,
+        });
+        expect(replay).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: run.runId }),
+        });
+      });
+
       it('increments consecutiveLost on loss and resets it on a later finish', async () => {
         const { clock, store, orchestrator } = await fixture();
         await started(orchestrator, 'req-1');

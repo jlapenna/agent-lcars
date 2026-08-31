@@ -41,7 +41,8 @@ export interface OrchestratorStore {
    */
   transactRequest(input: {
     taskId: TaskId;
-    requestId: string;
+    /** Source-namespaced durable idempotency identity. */
+    requestHistoryKey: string;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {

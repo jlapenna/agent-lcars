@@ -100,6 +100,22 @@ export const runStateSchema = z.enum([
 ]);
 export type RunState = z.infer<typeof runStateSchema>;
 
+/** Distinguishes arbitrary caller idempotency keys from orchestrator-owned
+ * automatic retry keys. The raw requestId remains caller-visible; this source
+ * exists only for the durable request-history namespace. */
+export const requestSourceSchema = z.enum(['caller', 'auto-retry']);
+export type RequestSource = z.infer<typeof requestSourceSchema>;
+
+/** A collision-proof durable idempotency identity. Caller input is arbitrary,
+ * so a raw value such as `retry:<runId>` must not suppress the orchestrator's
+ * own lease-expiry retry for that run. */
+export function requestHistoryKey(
+  source: RequestSource,
+  requestId: string,
+): string {
+  return `${source}:${requestId}`;
+}
+
 const LIVE_STATES: readonly RunState[] = ['pending', 'running'];
 
 export function isLive(state: RunState): boolean {
@@ -155,6 +171,9 @@ export const runSchema = z.strictObject({
   /** Idempotency: the request that created this run. A retry of the same
    *  request maps to this run instead of creating a second one. */
   requestId: z.string().min(1).max(RETRY_REQUEST_ID_MAX_LENGTH),
+  /** Namespace for requestId in the durable idempotency ledger. Old records
+   * predate source separation and are interpreted as caller requests. */
+  requestSource: requestSourceSchema.optional(),
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here. */
   params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
@@ -168,6 +187,12 @@ export const runSchema = z.strictObject({
   updatedAt: isoUtc,
 });
 export type Run = z.infer<typeof runSchema>;
+
+export function runRequestHistoryKey(
+  run: Pick<Run, 'requestId' | 'requestSource'>,
+): string {
+  return requestHistoryKey(run.requestSource ?? 'caller', run.requestId);
+}
 
 /** Reads persisted runs through a general projection that discards unknown
  * top-level fields. `runSchema` remains strict for every known field, so a

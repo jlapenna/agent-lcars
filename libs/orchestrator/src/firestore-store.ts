@@ -16,6 +16,7 @@ import {
   outboxEntrySchema,
   parsePersistedRun,
   type Run,
+  runRequestHistoryKey,
   runStateSchema,
   type TaskId,
   taskKey,
@@ -102,7 +103,7 @@ export class FirestoreStore implements OrchestratorStore {
 
   async transactRequest(input: {
     taskId: TaskId;
-    requestId: string;
+    requestHistoryKey: string;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const taskRef = this.#taskRef(input.taskId);
@@ -127,7 +128,7 @@ export class FirestoreStore implements OrchestratorStore {
           : parsePersistedRun(activeRunSnapshot.data());
       const previousRun = runsSnapshot.docs
         .map((doc) => parsePersistedRun(doc.data()))
-        .find((run) => run.requestId === input.requestId);
+        .find((run) => runRequestHistoryKey(run) === input.requestHistoryKey);
       const outcome = input.decide({ task, activeRun, previousRun });
       if (isRefusal(outcome)) return outcome;
 

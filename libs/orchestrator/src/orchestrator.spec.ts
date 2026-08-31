@@ -388,6 +388,7 @@ describe('auto-retry on loss', () => {
     const again = await orchestrator.request({
       taskId: TASK,
       requestId: `retry:${run.runId}`,
+      requestSource: 'auto-retry',
       pipeline: run.pipeline,
       ...(run.params === undefined ? {} : { params: run.params }),
     });
@@ -402,6 +403,36 @@ describe('auto-retry on loss', () => {
     const secondSweep = await orchestrator.sweepExpired();
     expect(secondSweep.lost).toEqual([]);
     expect(secondSweep.retried).toEqual([]);
+  });
+
+  it('keeps automatic retry history separate from a caller key that looks internal', async () => {
+    const { clock, store, orchestrator } = fixture();
+    // Caller input is intentionally arbitrary. This is exactly the key the
+    // first run's lease-expiry retry will later use, but in the caller
+    // namespace rather than the orchestrator's internal retry namespace.
+    const { run } = await started(orchestrator, 'retry:octo/example#7/r1');
+    clock.advanceMinutes(121);
+
+    const swept = await orchestrator.sweepExpired();
+    expect(swept.retried).toHaveLength(1);
+    const retry = await store.readRun(swept.retried[0]?.newRunId as string);
+    expect(retry).toMatchObject({
+      requestId: `retry:${run.runId}`,
+      requestSource: 'auto-retry',
+    });
+
+    // Replaying the caller's original key remains idempotent against its
+    // original run; it cannot be confused with the automatic retry.
+    const replay = await orchestrator.request({
+      taskId: TASK,
+      requestId: `retry:${run.runId}`,
+      pipeline: run.pipeline,
+    });
+    expect(replay).toMatchObject({
+      refused: true,
+      reason: 'duplicate-request',
+      existingRun: expect.objectContaining({ runId: run.runId }),
+    });
   });
 
   it('stops retrying once a task has lost 3 runs in a row (budget exhausted)', async () => {

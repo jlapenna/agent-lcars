@@ -2,6 +2,7 @@ import {
   isLive,
   isWorkAnchor,
   type OutboxEntry,
+  type RequestSource,
   type Run,
   type RunResult,
   type Task,
@@ -79,6 +80,7 @@ export interface RequestRunInput {
   taskId: TaskId;
   activeRun: Run | undefined;
   requestId: string;
+  requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
@@ -125,6 +127,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     taskId,
     task: baseTask,
     requestId,
+    requestSource: input.requestSource,
     pipeline: input.pipeline,
     params: input.params,
   });
@@ -136,10 +139,12 @@ function mintRun(input: {
   taskId: TaskId;
   task: Task;
   requestId: string;
+  requestSource?: RequestSource;
   pipeline: string;
   params?: Record<string, string>;
 }): Decision {
-  const { now, taskId, task, requestId, pipeline, params } = input;
+  const { now, taskId, task, requestId, requestSource, pipeline, params } =
+    input;
   const runCount = task.runCount + 1;
   const runId = `${taskKey(taskId)}/r${runCount}`;
   const run: Run = {
@@ -148,6 +153,7 @@ function mintRun(input: {
     state: 'pending',
     pipeline,
     requestId,
+    ...(requestSource === undefined ? {} : { requestSource }),
     ...(params === undefined ? {} : { params }),
     leaseExpiresAt: lease(now),
     events: [{ at: now, to: 'pending', by: 'request' }],

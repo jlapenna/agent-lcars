@@ -1,6 +1,12 @@
 import { type Decision, isRefusal, type Refusal } from './decide';
 import type { LeasedOutboxEntry, OutboxEntry, Run, TaskId } from './model';
-import { byOutboxClaimFairness, isLive, isWorkAnchor, taskKey } from './model';
+import {
+  byOutboxClaimFairness,
+  isLive,
+  isWorkAnchor,
+  runRequestHistoryKey,
+  taskKey,
+} from './model';
 import {
   type OrchestratorStore,
   type RequestTransactionState,
@@ -39,7 +45,7 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRequest(input: {
     taskId: TaskId;
-    requestId: string;
+    requestHistoryKey: string;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Do not await while this snapshot and its accepted write are in flight:
@@ -55,7 +61,9 @@ export class MemoryStore implements OrchestratorStore {
         : structuredClone(this.#runs.get(activeRunId));
     const previousRun = structuredClone(
       [...this.#runs.values()].find(
-        (run) => taskKey(run.task) === key && run.requestId === input.requestId,
+        (run) =>
+          taskKey(run.task) === key &&
+          runRequestHistoryKey(run) === input.requestHistoryKey,
       ),
     );
     const outcome = input.decide({ task, activeRun, previousRun });
