@@ -468,7 +468,23 @@ RUN npm install -g /opt/agent-tools
 # shared source of truth. The plugin managers retain their required,
 # provider-specific installed snapshots, but neither performs another Git
 # fetch; the CLI is installed from this same checkout in its private prefix.
-RUN git clone --depth 1 --branch main https://github.com/jlapenna/repo-tools.git /opt/repo-tools && \
+# REPO_TOOLS_REF (build-arg, set to repo-tools' current main SHA by the
+# publishing script) forces this RUN's cache key to change whenever
+# repo-tools/main advances -- the same registry cache-from/to: type=registry
+# (mode=max) hazard the telemetry-watcher-build stage's AGENT_LCARS_REF /
+# CACHE_BUST pair guards against above, applied to this independent clone.
+# Without it, a rebuild of an *unchanged* agent-lcars commit could restore a
+# cached layer for this instruction from a PRIOR build even though repo-tools
+# has since released new content, silently pinning /opt/repo-tools to a stale
+# checkout. A publish always sets a real, unique REPO_TOOLS_REF; a bare local
+# `docker build` with no --build-arg risks a stale cache hit here too,
+# matching the accepted risk on that manual path already.
+ARG REPO_TOOLS_REF=main
+RUN echo "repo-tools ref: ${REPO_TOOLS_REF}" && \
+    git init /opt/repo-tools && \
+    git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \
+    git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \
+    git -C /opt/repo-tools checkout --detach FETCH_HEAD && \
     pnpm --dir /opt/repo-tools install --prod --frozen-lockfile --ignore-scripts && \
     ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/
 # The launcher itself lives on PATH at /usr/local/bin (standard on this

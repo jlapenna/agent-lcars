@@ -31,8 +31,11 @@ registry-side promotion contract.
 | `e2e-runner`              | repo root                                    | `tools/e2e-runner/Dockerfile`                           | `latest`               |
 
 The JIT runner receives the selected source SHA as both `CACHE_BUST` and
-`AGENT_LCARS_REF`, plus its required C toolchain packages. The E2E runner
-receives the matching E2E sandbox reference as `SANDBOX_IMAGE`.
+`AGENT_LCARS_REF`, plus its required C toolchain packages. It also receives
+repo-tools' current `main` SHA as `REPO_TOOLS_REF`, so that clone's build
+cache invalidates independently whenever repo-tools/main advances, even
+across rebuilds of an unchanged agent-lcars commit. The E2E runner receives
+the matching E2E sandbox reference as `SANDBOX_IMAGE`.
 
 ## Select only artifacts whose inputs changed
 
