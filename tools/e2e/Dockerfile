@@ -11,9 +11,12 @@
 FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
-# require a JRE, which the base Playwright image does not include.
+# require a JRE, which the base Playwright image does not include. jq is part
+# of the fleet-wide runner contract, including lightweight report parsing in
+# E2E workflows.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends default-jre-headless \
+  && apt-get install -y --no-install-recommends default-jre-headless jq \
+  && jq --version \
   && rm -rf /var/lib/apt/lists/*
 
 # This image has no repo checkout at build time (tools/e2e-docker.sh bind-

@@ -1,7 +1,7 @@
 # Small, socketless image for the fleet control plane.
 #
 # Control-plane jobs only need the Actions runner, git/checkout, Node for the
-# local JavaScript broker action, and gh for the few shell-based routers. They
+# local JavaScript broker action, and gh/jq for the few shell-based routers. They
 # do not need Docker, Buildx, Python, pnpm, the telemetry sidecar, or the
 # developer toolchain baked into homelab-runner:jit-node24.
 ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
@@ -38,9 +38,10 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends nodejs gh; \
+    apt-get install -y --no-install-recommends nodejs gh jq; \
     node --version; \
     gh --version; \
+    jq --version; \
     # The runner base carries three npm copies. Replace their vulnerable
     # node-tar implementations while retaining npm for control-plane agent
     # jobs, which install their CLI into an unprivileged user prefix.
