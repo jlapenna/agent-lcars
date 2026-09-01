@@ -48,10 +48,15 @@ if ! grep -Fqx 'if ! trusted_opencode_runs /usr/local/bin/opencode; then' "$entr
   exit 1
 fi
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
-  ! grep -Fqx 'RUN git clone --depth 1 --branch main https://github.com/jlapenna/repo-tools.git /opt/repo-tools && \' "$dockerfile" ||
+  ! grep -Fqx 'ARG REPO_TOOLS_REF=main' "$dockerfile" ||
+  ! grep -Fqx 'RUN echo "repo-tools ref: ${REPO_TOOLS_REF}" && \' "$dockerfile" ||
+  ! grep -Fqx '    git init /opt/repo-tools && \' "$dockerfile" ||
+  ! grep -Fqx '    git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \' "$dockerfile" ||
+  ! grep -Fqx '    git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \' "$dockerfile" ||
+  ! grep -Fqx '    git -C /opt/repo-tools checkout --detach FETCH_HEAD && \' "$dockerfile" ||
   ! grep -Fqx '    pnpm --dir /opt/repo-tools install --prod --frozen-lockfile --ignore-scripts && \' "$dockerfile" ||
   ! grep -Fqx '    ln -s /opt/repo-tools/node_modules/.bin/repo-* /usr/local/bin/' "$dockerfile"; then
-  echo "runner image must install agent-tools and repo-tools from one source checkout" >&2
+  echo "runner image must install agent-tools and repo-tools from one source checkout, with a cache-bust guard against a stale registry-cached layer" >&2
   exit 1
 fi
 
