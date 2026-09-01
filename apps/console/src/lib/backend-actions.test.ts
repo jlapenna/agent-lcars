@@ -382,7 +382,10 @@ describe('clearNeedsHumanLabel', () => {
 });
 
 describe('postComment (direct Work admission)', () => {
-  function mockOctokit(currentLabels = ['agent:codex']) {
+  function mockOctokit(
+    currentLabels = ['agent:codex'],
+    kind: 'issue' | 'pr' = 'issue',
+  ) {
     // clearNeedsHumanLabel's own sweep-the-orchestrator follow-up (#1183)
     // fires on every successful removeLabel below - give it somewhere real
     // to land instead of a bare unmocked createOrchestratorRuntime().
@@ -392,7 +395,12 @@ describe('postComment (direct Work admission)', () => {
     });
     const removeLabel = vi.fn().mockResolvedValue({});
     const get = vi.fn().mockResolvedValue({
-      data: { labels: currentLabels },
+      data: {
+        labels: currentLabels,
+        ...(kind === 'pr'
+          ? { pull_request: { url: 'https://github.test/pr' } }
+          : {}),
+      },
     });
     (getGithubClient as Mock).mockReturnValue({
       rest: { issues: { createComment, get, removeLabel } },
@@ -443,6 +451,37 @@ describe('postComment (direct Work admission)', () => {
       mode: 'reply',
       reply: 'Use option 2',
     });
+  });
+
+  it('admits a reply when the current assignment is a canonical review label', async () => {
+    const { removeLabel } = mockOctokit(['review:codex'], 'pr');
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review-reply',
+      pipeline: 'codex',
+      params: { mode: 'review' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Please address this',
+      'jlapenna',
+      'codex',
+    );
+
+    expect((await store.listRuns(taskId)).at(-1)?.params).toEqual({
+      mode: 'reply',
+      reply: 'Please address this',
+    });
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'status:needs-human' }),
+    );
   });
 
   it('leaves needs-human on a plain comment with no assignment', async () => {

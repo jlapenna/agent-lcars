@@ -23,6 +23,8 @@ export type AgentPipeline = SharedAgentPipeline;
 export interface AgentIntegration {
   /** Durable GitHub control label that selects this executor. */
   label: string;
+  /** Durable pull-request review label that selects this executor. */
+  reviewLabel: string;
   /** Command that hands a parked thread back to this executor. */
   replyTrigger: string;
   /** Additional commands recognized as equivalent replies. */
@@ -38,6 +40,7 @@ function integrationFromContract(pipeline: AgentPipeline): AgentIntegration {
   const contract = pipelineContract(pipeline);
   return {
     label: contract.label,
+    reviewLabel: contract.reviewLabel,
     replyTrigger: contract.replyTrigger,
     ...(contract.replyTriggerAliases.length > 0
       ? { replyTriggerAliases: [...contract.replyTriggerAliases] }
@@ -116,6 +119,38 @@ export function matchingAgentPipelines(
     const integration = agentIntegration(repo, pipeline);
     return integration ? labels.includes(integration.label) : false;
   });
+}
+
+/** Every supported pipeline selected by a current canonical reply label. An
+ * `agent:*` label selects both issue and PR work; `review:*` selects only a
+ * PR. A pipeline matched by both label families still appears once: it has
+ * one executor target, even when GitHub carries both mode labels. */
+export function matchingReplyPipelines(
+  repo: WatchedRepo,
+  labels: string[],
+  kind: 'issue' | 'pr',
+): AgentPipeline[] {
+  return supportedAgentPipelines(repo).filter((pipeline) => {
+    const integration = agentIntegration(repo, pipeline);
+    return (
+      integration !== undefined &&
+      (labels.includes(integration.label) ||
+        (kind === 'pr' && labels.includes(integration.reviewLabel)))
+    );
+  });
+}
+
+/** Resolves exactly one current canonical executor target for a reply. Unlike
+ * first-assignment checks, this includes PR review labels so a parked review
+ * task can be handed back through the same direct Work API. Multiple
+ * pipelines have no implicit precedence. */
+export function selectedReplyPipeline(
+  repo: WatchedRepo,
+  labels: string[],
+  kind: 'issue' | 'pr',
+): AgentPipeline | undefined {
+  const matches = matchingReplyPipelines(repo, labels, kind);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function selectedAgentPipeline(

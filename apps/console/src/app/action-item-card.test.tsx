@@ -1,10 +1,11 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
+import { replyToItem } from './actions';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
 // out of scope here, matching the pattern in action-items-board.test.tsx.
@@ -371,6 +372,29 @@ describe('ActionItemCard', () => {
       );
 
       expect(screen.getByPlaceholderText('Reply with /oc…')).toBeTruthy();
+    });
+
+    it('uses a review label as the explicit direct-reply assignment', async () => {
+      vi.mocked(replyToItem).mockResolvedValue({ ok: true });
+      const item = makeItem({
+        kind: 'pr',
+        labels: ['review:codex'],
+      });
+      renderCard(item, { kind: 'reply' });
+
+      fireEvent.change(screen.getByPlaceholderText('Reply with /codex…'), {
+        target: { value: 'Please address this' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+
+      await waitFor(() => {
+        expect(replyToItem).toHaveBeenCalledWith(
+          item.repo,
+          item.number,
+          'Please address this',
+          'codex',
+        );
+      });
     });
 
     it('shows a plain reply placeholder when no agent is selected', () => {
