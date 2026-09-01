@@ -357,6 +357,36 @@ class GitHubActionsExporterTests(unittest.TestCase):
             'github_actions_workflow_consecutive_failures{repository="jlapenna/homelab",workflow="deploy"} 0.0',
             metrics,
         )
+        # Both streaks are bounded by a stored success, so they are exact.
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures_complete{repository="jlapenna/homelab",workflow="validate"} 1.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures_complete{repository="jlapenna/homelab",workflow="deploy"} 1.0',
+            metrics,
+        )
+
+    def test_consecutive_failures_without_a_stored_success_are_marked_incomplete(self):
+        # A freshly backfilled database may hold only the tail of a longer
+        # streak. The count is still reported (two observed failures are two
+        # failures) but flagged as a lower bound.
+        repository = "jlapenna/homelab"
+        for run in (
+            workflow_run(id=1, conclusion="failure", created_at="2026-08-05T01:00:00Z"),
+            workflow_run(id=2, conclusion="failure", created_at="2026-08-05T02:00:00Z"),
+        ):
+            self.database.upsert_run(repository, run)
+
+        metrics = self.metrics()
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures{repository="jlapenna/homelab",workflow="validate"} 2.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures_complete{repository="jlapenna/homelab",workflow="validate"} 0.0',
+            metrics,
+        )
 
     def test_rerun_attempt_preserves_the_previous_workflow_outcome(self):
         failed = workflow_run(conclusion="failure", run_attempt=1)

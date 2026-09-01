@@ -1089,7 +1089,18 @@ class DatabaseMetrics:
         # runs neither extend nor break the streak (homelab#1077).
         consecutive_failures = GaugeMetricFamily(
             "github_actions_workflow_consecutive_failures",
-            "Consecutive most-recent completed non-pull_request runs of a workflow that did not succeed; 0 once the latest decisive run succeeded.",
+            "Consecutive most-recent completed non-pull_request runs of a workflow that did not succeed; 0 once the latest decisive run succeeded. A lower bound until the stored history reaches a success (see _complete).",
+            labels=("repository", "workflow"),
+        )
+        # The stored history starts at BACKFILL_HOURS on a freshly created
+        # database, so a streak that reaches the oldest stored run without
+        # meeting a success may be longer than reported. The database lives on
+        # a persistent volume, so this only applies to a brand-new deployment;
+        # the alert still fires at two observed failures rather than waiting,
+        # and this gauge lets a dashboard say when the count is exact.
+        consecutive_failures_complete = GaugeMetricFamily(
+            "github_actions_workflow_consecutive_failures_complete",
+            "1 when the consecutive-failure count is bounded by a stored success (or is 0); 0 when it is a lower bound because stored history ends before the last success.",
             labels=("repository", "workflow"),
         )
         for row in self.database.rows(
@@ -1115,7 +1126,8 @@ class DatabaseMetrics:
             SELECT o.repository, o.workflow,
                    SUM(CASE WHEN o.conclusion != 'success'
                                  AND (s.rn IS NULL OR o.rn < s.rn)
-                            THEN 1 ELSE 0 END) AS streak
+                            THEN 1 ELSE 0 END) AS streak,
+                   MAX(CASE WHEN s.rn IS NULL THEN 0 ELSE 1 END) AS bounded
             FROM ordered o
             LEFT JOIN first_success s
                    ON s.repository = o.repository AND s.workflow = o.workflow
@@ -1125,7 +1137,12 @@ class DatabaseMetrics:
             consecutive_failures.add_metric(
                 [row["repository"], row["workflow"]], float(row["streak"])
             )
+            consecutive_failures_complete.add_metric(
+                [row["repository"], row["workflow"]],
+                1.0 if row["bounded"] or row["streak"] == 0 else 0.0,
+            )
         yield consecutive_failures
+        yield consecutive_failures_complete
 
         jobs = CounterMetricFamily(
             "github_actions_jobs",
