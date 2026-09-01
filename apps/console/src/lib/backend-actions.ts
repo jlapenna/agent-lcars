@@ -605,8 +605,22 @@ export async function assignPipeline(
   issueNumber: number,
   targetPipeline: Pipeline,
 ): Promise<void> {
-  const octokit = getGithubClient();
   const targetIntegration = requireAgentIntegration(repo, targetPipeline);
+  const taskId = { repo: repoKey(repo), issue: issueNumber };
+  const existingTask = await createOrchestratorRuntime().store.readTask(taskId);
+  if (existingTask !== undefined) {
+    // Work is written exactly once for every GitHub anchor. GitHub labels are
+    // only a request signal, so a manually removed agent label must not make
+    // the console recreate Reassign by relabeling an already-admitted task.
+    // Validate the durable payload before relying on its immutable contract.
+    workPayloadSchema.parse(existingTask.task.work);
+    throw new ActionError(
+      'Issue already has immutable Work; retry its admitted pipeline instead',
+      409,
+    );
+  }
+
+  const octokit = getGithubClient();
   const { data: issue } = await octokit.rest.issues.get({
     owner: repo.owner,
     repo: repo.name,

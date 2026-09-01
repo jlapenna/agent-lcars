@@ -898,6 +898,7 @@ describe('assignPipeline', () => {
     labels: string[],
     overrides: Record<string, unknown> = {},
   ) {
+    const runtime = fixtureOrchestratorRuntime();
     const get = vi.fn().mockResolvedValue({
       data: { state: 'open', pull_request: undefined, labels, ...overrides },
     });
@@ -905,8 +906,27 @@ describe('assignPipeline', () => {
     (getGithubClient as Mock).mockReturnValue({
       rest: { issues: { get, setLabels } },
     });
-    return { get, setLabels };
+    return { get, setLabels, ...runtime };
   }
+
+  it('409s before reading or relabeling GitHub when immutable Work already exists', async () => {
+    const { get, orchestrator, setLabels } = mockOctokit(['type:bug']);
+    await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'already-admitted',
+      pipeline: 'claude',
+      work: testWork('claude'),
+    });
+
+    await expect(assignPipeline(DEFAULT_REPO, 2709, 'codex')).rejects.toThrow(
+      new ActionError(
+        'Issue already has immutable Work; retry its admitted pipeline instead',
+        409,
+      ),
+    );
+    expect(get).not.toHaveBeenCalled();
+    expect(setLabels).not.toHaveBeenCalled();
+  });
 
   it('adds the target pipeline label to an unclaimed issue', async () => {
     const { setLabels } = mockOctokit(['type:bug']);

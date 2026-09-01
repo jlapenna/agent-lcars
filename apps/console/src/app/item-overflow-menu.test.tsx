@@ -429,6 +429,31 @@ describe('ItemOverflowMenu', () => {
     );
   });
 
+  it('shows an error instead of a success toast when immutable Work rejects assignment', async () => {
+    (assignPipeline as Mock).mockResolvedValue({
+      ok: false,
+      message:
+        'Issue already has immutable Work; retry its admitted pipeline instead',
+    });
+    renderMenu(makeItem());
+    await openMenu();
+
+    fireEvent.click(screen.getByText('Assign to codex'));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            'Issue already has immutable Work; retry its admitted pipeline instead',
+          color: 'red',
+        }),
+      ),
+    );
+    expect(notifications.show).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: '#42 assigned to codex' }),
+    );
+  });
+
   it('offers no assignment for an issue with two agent labels', async () => {
     renderMenu(makeItem({ labels: ['agent:claude', 'agent:opencode'] }));
     await openMenu();
