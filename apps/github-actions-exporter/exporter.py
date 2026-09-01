@@ -1079,6 +1079,71 @@ class DatabaseMetrics:
             )
         yield workflow_runs
 
+        # The most recent decisive (success/failure-class, non-pull_request)
+        # runs of each workflow that did not succeed, counted back from the
+        # latest until the first success. Counters alone cannot express run
+        # order: a success followed by two failures inside a rate window looks
+        # identical to two failures followed by a success, and a low-volume
+        # main-line workflow (deploy, post-merge reconcile) can fail on every
+        # run for a day without tripping a rate rule. Cancelled and skipped
+        # runs neither extend nor break the streak (homelab#1077).
+        consecutive_failures = GaugeMetricFamily(
+            "github_actions_workflow_consecutive_failures",
+            "Consecutive most-recent completed non-pull_request runs of a workflow that did not succeed; 0 once the latest decisive run succeeded. A lower bound until the stored history reaches a success (see _complete).",
+            labels=("repository", "workflow"),
+        )
+        # The stored history starts at BACKFILL_HOURS on a freshly created
+        # database, so a streak that reaches the oldest stored run without
+        # meeting a success may be longer than reported. The database lives on
+        # a persistent volume, so this only applies to a brand-new deployment;
+        # the alert still fires at two observed failures rather than waiting,
+        # and this gauge lets a dashboard say when the count is exact.
+        consecutive_failures_complete = GaugeMetricFamily(
+            "github_actions_workflow_consecutive_failures_complete",
+            "1 when the consecutive-failure count is bounded by a stored success (or is 0); 0 when it is a lower bound because stored history ends before the last success.",
+            labels=("repository", "workflow"),
+        )
+        for row in self.database.rows(
+            """
+            WITH ordered AS (
+                SELECT repository, workflow, conclusion,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY repository, workflow
+                           ORDER BY COALESCE(created_at, 0) DESC, id DESC, run_attempt DESC
+                       ) AS rn
+                FROM workflow_runs
+                WHERE status = 'completed'
+                  AND event != 'pull_request'
+                  AND conclusion IN ('success', 'failure', 'timed_out',
+                                     'action_required', 'startup_failure')
+            ),
+            first_success AS (
+                SELECT repository, workflow, MIN(rn) AS rn
+                FROM ordered
+                WHERE conclusion = 'success'
+                GROUP BY repository, workflow
+            )
+            SELECT o.repository, o.workflow,
+                   SUM(CASE WHEN o.conclusion != 'success'
+                                 AND (s.rn IS NULL OR o.rn < s.rn)
+                            THEN 1 ELSE 0 END) AS streak,
+                   MAX(CASE WHEN s.rn IS NULL THEN 0 ELSE 1 END) AS bounded
+            FROM ordered o
+            LEFT JOIN first_success s
+                   ON s.repository = o.repository AND s.workflow = o.workflow
+            GROUP BY o.repository, o.workflow
+            """
+        ):
+            consecutive_failures.add_metric(
+                [row["repository"], row["workflow"]], float(row["streak"])
+            )
+            consecutive_failures_complete.add_metric(
+                [row["repository"], row["workflow"]],
+                1.0 if row["bounded"] or row["streak"] == 0 else 0.0,
+            )
+        yield consecutive_failures
+        yield consecutive_failures_complete
+
         jobs = CounterMetricFamily(
             "github_actions_jobs",
             "Completed GitHub Actions jobs.",
