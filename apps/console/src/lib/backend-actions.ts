@@ -25,6 +25,7 @@ import type {
 import {
   agentIntegration,
   repoKey,
+  selectedAgentPipeline,
   supportedAgentPipelines,
   taskRefUrl,
 } from './watched-repo';
@@ -151,6 +152,23 @@ export async function postComment(
   // caller has made that explicit choice.
   let handedBackToAgent = false;
   if (assignedPipeline !== undefined) {
+    // A card's labels are only a render-time projection. Re-read the current
+    // GitHub labels at the dispatch boundary so a removed, changed, or
+    // contradictory assignment cannot be revived by a stale/crafted Server
+    // Action argument. `selectedAgentPipeline` accepts exactly one canonical
+    // label and has no repo/provider-specific precedence.
+    const { data: issue } = await octokit.rest.issues.get({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+    });
+    const currentLabels = issue.labels.map((label) =>
+      typeof label === 'string' ? label : (label.name ?? ''),
+    );
+    const currentAssignment = selectedAgentPipeline(repo, currentLabels);
+    if (currentAssignment !== assignedPipeline) {
+      return { url: data.html_url };
+    }
     const runtime = createOrchestratorRuntime();
     const taskId = { repo: repoKey(repo), issue: issueNumber };
     const existingTask = await runtime.store.readTask(taskId);
