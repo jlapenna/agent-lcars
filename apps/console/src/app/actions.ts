@@ -34,7 +34,8 @@ import type {
 import { repoKey } from '../lib/watched-repo';
 
 // LAN preview goes through the shared test-session adapter inside auth()
-// (IMPERSONATE_AUTOMATIC_LOGIN), so no bypass is needed here.
+// (E2E_TESTING + the x-e2e-auth-user request header), so no bypass is
+// needed here.
 const requireAdmin = createAdminAction(auth);
 
 // Duck-typed check for Octokit's RequestError (thrown for any non-2xx

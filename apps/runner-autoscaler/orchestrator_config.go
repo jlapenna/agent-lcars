@@ -183,11 +183,6 @@ type ScaleSetConfigFile struct {
 	FileMounts []string `yaml:"file_mounts,omitempty"`
 }
 
-// dockerSocketPath is the canonical socket location, also used to build the
-// docker-socket bind itself. See dockerSocketPaths for why one literal is
-// not enough when validating untrusted config.
-const dockerSocketPath = "/var/run/docker.sock"
-
 // dockerSocketPaths are every spelling of the Docker socket that config
 // validation must refuse to expose. Two are needed because /var/run is a
 // symlink to /run on systemd hosts, so the same socket has two absolute

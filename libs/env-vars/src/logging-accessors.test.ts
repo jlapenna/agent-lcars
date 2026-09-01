@@ -14,7 +14,6 @@ describe('logging-accessors', () => {
     delete process.env.K_SERVICE;
     delete process.env.K_REVISION;
     delete process.env.CLOUD_RUN_JOB;
-    delete process.env.FUNCTIONS_EMULATOR;
   });
 
   afterAll(() => {
@@ -27,13 +26,17 @@ describe('logging-accessors', () => {
       expect(isOnGoogleCloud()).toBe(true);
     });
 
-    it('is false with no marker vars set (local dev)', () => {
-      expect(isOnGoogleCloud()).toBe(false);
+    it('is true when a Cloud Run revision marker var is present', () => {
+      process.env.K_REVISION = 'members-backend-00001-abc';
+      expect(isOnGoogleCloud()).toBe(true);
     });
 
-    it('is false inside the Firebase Functions emulator even if a marker is set', () => {
-      process.env.K_SERVICE = 'members-backend';
-      process.env.FUNCTIONS_EMULATOR = 'true';
+    it('is true when a Cloud Run job marker var is present', () => {
+      process.env.CLOUD_RUN_JOB = 'members-backend-job';
+      expect(isOnGoogleCloud()).toBe(true);
+    });
+
+    it('is false with no marker vars set (local dev)', () => {
       expect(isOnGoogleCloud()).toBe(false);
     });
   });

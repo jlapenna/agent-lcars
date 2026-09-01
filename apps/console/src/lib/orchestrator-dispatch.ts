@@ -13,10 +13,6 @@ import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
 
-// Re-exported so callers share the same repository-token seam rather than
-// reaching past this module into `github-app-tokens.ts` directly.
-export type { DispatchTokenProvider };
-
 /**
  * The outbox drain: turns `@agent-lcars/orchestrator` decisions into real
  * GitHub effects. The orchestrator itself never does I/O beyond its own

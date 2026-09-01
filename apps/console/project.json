@@ -16,11 +16,7 @@
       "executor": "@nx/next:build",
       "outputs": ["{options.outputPath}/*"],
       "defaultConfiguration": "production",
-      "inputs": [
-        "production",
-        "^production",
-        { "env": "NEXT_PUBLIC_PROJECT_ID" }
-      ],
+      "inputs": ["production", "^production"],
       "options": {
         "outputPath": "dist/apps/console",
         "tsConfig": "apps/console/tsconfig.json",

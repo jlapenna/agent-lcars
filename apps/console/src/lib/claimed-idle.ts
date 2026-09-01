@@ -36,21 +36,9 @@ export function sessionReferencesItemNumber(
 }
 
 /**
- * The open item a CLI session is working, if any - the reverse join used to
- * surface an item's takeover command next to the session actually working
- * it (see `active-agents-section.tsx`).
- */
-export function findItemForSession(
-  session: CliSession,
-  items: ActionItem[],
-): ActionItem | undefined {
-  return items.find((item) => sessionReferencesItemNumber(session, item));
-}
-
-/**
  * The most recent CLI session that referenced this item, if any - unlike
- * `findItemForSession`/`deriveClaimedIdle`, this deliberately does not care
- * whether the session is still live/idle. It backs the Claimed but Idle
+ * `deriveClaimedIdle`, this deliberately does not care whether the session
+ * is still live/idle. It backs the Claimed but Idle
  * section's "session" link (#182): those items are *defined* by having no
  * active session behind them, but the fleet may well have worked one to
  * completion (or left it stale) before the claim went idle, and that
