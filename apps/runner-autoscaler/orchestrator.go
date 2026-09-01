@@ -585,6 +585,20 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 			return nil, err
 		}
 	}
+	reservation := memory
+	if c.RunnerMemoryReservation != "" {
+		reservation, err = units.RAMInBytes(c.RunnerMemoryReservation)
+		if err != nil {
+			return nil, err
+		}
+		if memory <= 0 || reservation <= 0 || reservation > memory {
+			return nil, fmt.Errorf("scale set %q runner_memory_reservation %q must be positive and at most runner_memory %q", c.ScaleSetName, c.RunnerMemoryReservation, c.RunnerMemory)
+		}
+	}
+	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(reservation))
+	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memory))
+	owner, repository := registrationTarget(c.RegistrationURL)
+	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, owner, repository).Set(1)
 	shmSize := int64(0)
 	if c.RunnerShmSize != "" {
 		shmSize, err = units.RAMInBytes(c.RunnerShmSize)
@@ -596,7 +610,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		scaleSetName: c.ScaleSetName, registrationName: c.RegistrationName, registrationURL: c.RegistrationURL, logger: logger.With("component", "scaler"),
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage:  c.RunnerImage,
-		runnerMemory: memory, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
+		runnerMemory: memory, runnerMemoryReservation: reservation, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,

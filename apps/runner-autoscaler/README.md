@@ -382,8 +382,9 @@ than reporting those hosts as unreachable.
 
 ## Aggregate reserved-memory admission
 
-`runner_memory` is both the Docker cgroup limit for one runner and its
-scheduler reservation. Before placing a memory-bounded runner, the scheduler
+`runner_memory` is the Docker cgroup limit for one runner and, unless
+`runner_memory_reservation` is declared, also its scheduler reservation.
+Before placing a memory-bounded runner, the scheduler
 sums the declared reservations of every running autoscaled runner on that host
 plus starts currently in flight, then checks the candidate against the host's
 physical memory as reported by Docker. A configurable safety-margin fraction
@@ -397,7 +398,23 @@ fleet:
 scale_sets:
   - name: e2e
     runner_memory: 12g
+  - name: default
+    runner_memory: 14g # cgroup ceiling: protects co-tenants
+    runner_memory_reservation: 8g # what placement charges against the host
 ```
+
+`runner_memory_reservation` (agent-lcars#1683) separates the two concerns the
+way Kubernetes separates requests from limits. The ceiling bounds the rare
+pathological job; the reservation is the measured footprint used for
+bin-packing, so a fleet does not shrink to a fraction of its RAM the moment a
+host drops out. It requires `runner_memory`, must not exceed it, and defaults
+to it when omitted. The per-lane values are exported as
+`github_runner_autoscaler_scale_set_memory_reservation_bytes` and
+`github_runner_autoscaler_scale_set_memory_limit_bytes`, and
+`github_runner_autoscaler_scale_set_info{scale_set,registration,owner,repository}`
+maps each lane to the GitHub repository it serves (repository is empty for an
+organization-scoped registration, which serves many) so queue-depth metrics
+can be joined to the lane that should drain them.
 
 The margin must be greater than zero and less than one. Admission is
 candidate-sized rather than a global runner-count reduction: if a 12 GiB E2E
@@ -406,8 +423,8 @@ the remaining capacity. For example, one 12 GiB reservation on a 16 GiB host
 allows a 2 GiB candidate with the default margin but rejects a second 12 GiB
 candidate.
 
-New runner containers record their exact reservation in the
-`autoscaler.runner-memory-bytes` Docker label. That makes accounting stable
+New runner containers record their exact reservation (not the ceiling) in
+the `autoscaler.runner-memory-bytes` Docker label. That makes accounting stable
 across live config reloads; a missing label is a current-image contract error.
 In-flight reservations are held under the same fleet coordinator lock as host
 selection, closing the count/admit race across scale sets and registrations.

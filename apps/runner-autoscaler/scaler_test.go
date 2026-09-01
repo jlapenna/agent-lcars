@@ -1825,3 +1825,69 @@ func TestMetricLabelValue(t *testing.T) {
 		})
 	}
 }
+
+// agent-lcars#1683: the scheduler charges runner_memory_reservation, not the
+// runner_memory ceiling, against a host's aggregate budget. A 14 GiB-capped
+// candidate reserving 4 GiB fits beside an 8 GiB runner on a 16 GiB host
+// (8 + 4 = 12 GiB under the 14.4 GiB budget) where the ceiling would not.
+func TestPickHostChargesReservationNotCeiling(t *testing.T) {
+	scaler := memoryBoundScaler(t, "default", 16*gibibyte, 14*gibibyte, []container.Summary{reservedRunner("first", 8*gibibyte)})
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() with reservation == ceiling = (%q, %v), want capacity failure", host, err)
+	}
+	scaler.runnerMemoryReservation = 4 * gibibyte
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() with 4 GiB reservation error = %v", err)
+	}
+	if host != "janeway" {
+		t.Fatalf("pickHost() = %q, want janeway", host)
+	}
+}
+
+func TestMemoryReservationDefaultsToCeiling(t *testing.T) {
+	scaler := &Scaler{runnerMemory: 14 * gibibyte}
+	if got := scaler.memoryReservation(); got != 14*gibibyte {
+		t.Fatalf("memoryReservation() = %d, want the 14 GiB ceiling when no reservation is declared", got)
+	}
+	scaler.runnerMemoryReservation = 8 * gibibyte
+	if got := scaler.memoryReservation(); got != 8*gibibyte {
+		t.Fatalf("memoryReservation() = %d, want the declared 8 GiB reservation", got)
+	}
+	if labels := runnerLabels("default", "primary", scaler.memoryReservation()); labels[runnerMemoryLabelKey] != "8589934592" {
+		t.Fatalf("container label = %q, want the reservation the scheduler will recount, not the ceiling", labels[runnerMemoryLabelKey])
+	}
+}
+
+func TestFleetReservationChargesDeclaredReservation(t *testing.T) {
+	scaler := memoryBoundScaler(t, "default", 32*gibibyte, 14*gibibyte, nil)
+	scaler.runnerMemoryReservation = 8 * gibibyte
+	fleet := scaler.coordinator()
+	reservation, err := fleet.reserve(context.Background(), scaler)
+	if err != nil {
+		t.Fatalf("reserve() error = %v", err)
+	}
+	if got := fleet.reservedMemory["janeway"]; got != 8*gibibyte {
+		t.Fatalf("in-flight reservedMemory = %d, want 8 GiB (the reservation), not the 14 GiB ceiling", got)
+	}
+	reservation.release("default")
+	if got := fleet.reservedMemory["janeway"]; got != 0 {
+		t.Fatalf("reservedMemory after release = %d, want 0", got)
+	}
+}
+
+func TestRegistrationTarget(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"https://github.com/supersprinklesracing/sprinkles": {"supersprinklesracing", "supersprinklesracing/sprinkles"},
+		"https://github.com/jlapenna/agent-lcars/":          {"jlapenna", "jlapenna/agent-lcars"},
+		"https://github.com/jlapenna/nx-cache-server.git":   {"jlapenna", "jlapenna/nx-cache-server"},
+		"https://github.com/acme":                           {"acme", ""},
+		"https://github.com/":                               {"", ""},
+		"":                                                  {"", ""},
+	} {
+		owner, repository := registrationTarget(in)
+		if owner != want[0] || repository != want[1] {
+			t.Errorf("registrationTarget(%q) = (%q, %q), want (%q, %q)", in, owner, repository, want[0], want[1])
+		}
+	}
+}

@@ -59,6 +59,12 @@ type Config struct {
 	// RunnerMemory is a homelab addition: optional memory limit for spawned
 	// runner containers (e.g. 16g, 4g, 512m). Empty means no limit.
 	RunnerMemory string
+	// RunnerMemoryReservation is a homelab addition (agent-lcars#1683): the
+	// scheduler's per-runner reservation charged against a host's aggregate
+	// memory budget, distinct from the RunnerMemory cgroup ceiling. Empty
+	// means "reserve the full ceiling" (the pre-#1683 behavior). Requires
+	// RunnerMemory and must not exceed it.
+	RunnerMemoryReservation string
 	// RunnerPidsLimit is a homelab addition: optional PID-count ceiling for
 	// spawned runner containers (orchestrator.yml's `pids_limit`). Zero means
 	// no limit -- the same "unset means unlimited" convention as

@@ -166,6 +166,10 @@ type ScaleSetConfigFile struct {
 	Labels       []string `yaml:"labels"`
 	RunnerImage  string   `yaml:"runner_image"`
 	RunnerMemory string   `yaml:"runner_memory,omitempty"`
+	// RunnerMemoryReservation is the scheduler's per-runner reservation for
+	// aggregate host-memory admission, distinct from the RunnerMemory cgroup
+	// ceiling (agent-lcars#1683). Omitted means "reserve the full ceiling".
+	RunnerMemoryReservation string `yaml:"runner_memory_reservation,omitempty"`
 	// PidsLimit and ShmSize are homelab additions restoring what e2e.yml's
 	// dropped job-level `container:` block carried (homelab#148); see
 	// Config.RunnerPidsLimit / Config.RunnerShmSize.
@@ -618,6 +622,18 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 				return nil, 0, fmt.Errorf("scale set %q has invalid runner_memory %q", s.Name, s.RunnerMemory)
 			}
 		}
+		if s.RunnerMemoryReservation != "" {
+			if s.RunnerMemory == "" {
+				return nil, 0, fmt.Errorf("scale set %q sets runner_memory_reservation %q without runner_memory", s.Name, s.RunnerMemoryReservation)
+			}
+			reservation, err := units.RAMInBytes(s.RunnerMemoryReservation)
+			if err != nil || reservation <= 0 {
+				return nil, 0, fmt.Errorf("scale set %q has invalid runner_memory_reservation %q", s.Name, s.RunnerMemoryReservation)
+			}
+			if limit, _ := units.RAMInBytes(s.RunnerMemory); reservation > limit {
+				return nil, 0, fmt.Errorf("scale set %q runner_memory_reservation %q exceeds runner_memory %q", s.Name, s.RunnerMemoryReservation, s.RunnerMemory)
+			}
+		}
 		if s.PidsLimit < 0 {
 			return nil, 0, fmt.Errorf("scale set %q has invalid pids_limit %d", s.Name, s.PidsLimit)
 		}
@@ -636,7 +652,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		out = append(out, Config{
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
-			RunnerMemory: s.RunnerMemory, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
+			RunnerMemory: s.RunnerMemory, RunnerMemoryReservation: s.RunnerMemoryReservation, RunnerPidsLimit: s.PidsLimit, RunnerShmSize: s.ShmSize,
 			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
 			FileMounts: fileMounts,
 			LogLevel:   r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,

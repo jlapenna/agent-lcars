@@ -186,13 +186,13 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 		return nil, err
 	}
 	f.reservations[host]++
-	f.reservedMemory[host] += scaler.runnerMemory
+	f.reservedMemory[host] += scaler.memoryReservation()
 	f.startInFlight[host] = true
 	demand := f.scaleSetDemand[scaleSet]
 	demand.reservations++
 	f.scaleSetDemand[scaleSet] = demand
 	reservationGauge.WithLabelValues(scaleSet, host).Inc()
-	return &hostReservation{fleet: f, host: host, memory: scaler.runnerMemory}, nil
+	return &hostReservation{fleet: f, host: host, memory: scaler.memoryReservation()}, nil
 }
 
 func (r *hostReservation) release(scaleSet string) {
