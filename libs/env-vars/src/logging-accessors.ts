@@ -13,10 +13,9 @@ import {
 export function isOnGoogleCloud(): boolean {
   // https://cloud.google.com/run/docs/container-contract#env-vars
   return (
-    (optional('K_SERVICE') !== undefined ||
-      optional('K_REVISION') !== undefined ||
-      optional('CLOUD_RUN_JOB') !== undefined) &&
-    !isTrue('FUNCTIONS_EMULATOR')
+    optional('K_SERVICE') !== undefined ||
+    optional('K_REVISION') !== undefined ||
+    optional('CLOUD_RUN_JOB') !== undefined
   );
 }
 

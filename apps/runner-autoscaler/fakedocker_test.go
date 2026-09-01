@@ -43,14 +43,13 @@ type fakeDockerServer struct {
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
-	listDelay              time.Duration
-	inspectDelay           time.Duration
-	imagePresent           bool
-	imagePulls             int
-	pullStreamError        bool
-	pullStreamErrorMessage string
-	containerCreates       int
-	createFailures         []int
+	listDelay        time.Duration
+	inspectDelay     time.Duration
+	imagePresent     bool
+	imagePulls       int
+	pullStreamError  bool
+	containerCreates int
+	createFailures   []int
 	// lastCreate captures the most recent /containers/create request body so
 	// a test can assert exactly what a caller (e.g. launchDirectRunner) sent
 	// -- image, env, labels, bind mounts -- without a real docker daemon.
@@ -88,9 +87,8 @@ type createdContainerRequest struct {
 // (404 for not-found, anything else e.g. 500 for a generic/transport-ish
 // failure) with no state.
 type inspectStub struct {
-	status     int
-	state      *container.State
-	hostConfig *container.HostConfig
+	status int
+	state  *container.State
 }
 
 // newFakeDockerServer starts the fake server and registers its teardown with
@@ -131,15 +129,6 @@ func (f *fakeDockerServer) setInspect(containerID string, status int, state *con
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.inspect[containerID] = inspectStub{status: status, state: state}
-}
-
-func (f *fakeDockerServer) setInspectMemory(containerID string, memory int64) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	stub := f.inspect[containerID]
-	stub.status = http.StatusOK
-	stub.hostConfig = &container.HostConfig{Resources: container.Resources{Memory: memory}}
-	f.inspect[containerID] = stub
 }
 
 func (f *fakeDockerServer) inspectCallCount(containerID string) int {
@@ -263,7 +252,7 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(container.InspectResponse{
-			ContainerJSONBase: &container.ContainerJSONBase{ID: id, State: stub.state, HostConfig: stub.hostConfig},
+			ContainerJSONBase: &container.ContainerJSONBase{ID: id, State: stub.state},
 		})
 
 	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/containers/"):
@@ -290,7 +279,6 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.imagePulls++
 		failStream := f.pullStreamError
-		failMessage := f.pullStreamErrorMessage
 		if !failStream {
 			f.imagePresent = true
 		}
@@ -300,12 +288,9 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 			// A real daemon reports registry/auth/manifest failures INSIDE the
 			// progress stream with HTTP 200, not as a transport error.
 			_, _ = w.Write([]byte("{\"status\":\"Pulling from library/x\"}\n"))
-			if failMessage == "" {
-				failMessage = "manifest unknown"
-			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"errorDetail": map[string]string{"message": failMessage},
-				"error":       failMessage,
+				"errorDetail": map[string]string{"message": "manifest unknown"},
+				"error":       "manifest unknown",
 			})
 			return
 		}
@@ -383,13 +368,6 @@ func (f *fakeDockerServer) pullCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.imagePulls
-}
-
-func (f *fakeDockerServer) setPullStreamError(message string) {
-	f.mu.Lock()
-	f.pullStreamError = message != ""
-	f.pullStreamErrorMessage = message
-	f.mu.Unlock()
 }
 
 func (f *fakeDockerServer) setCreateFailures(statuses ...int) {

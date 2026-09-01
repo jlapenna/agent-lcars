@@ -7,7 +7,6 @@
   "types": "./src/index.d.ts",
   "dependencies": {
     "@agent-lcars/util": "workspace:*",
-    "@agent-lcars/logging": "workspace:*",
     "@agent-lcars/env": "workspace:*"
   }
 }

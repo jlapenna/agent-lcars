@@ -717,7 +717,7 @@ func TestParseFileMounts(t *testing.T) {
 		{name: "prefix is not a path boundary", raw: []string{"/etc/buildkit-evil/x.pem:/secrets/x.pem"}, allow: allow,
 			wantErr: "not under any fleet.file_mount_allowlist prefix"},
 		// Without this, file_mounts would be a way to smuggle in the Docker
-		// socket -- see dockerSocketPath.
+		// socket -- see dockerSocketPaths.
 		{name: "docker socket rejected", raw: []string{"/var/run/docker.sock:/var/run/docker.sock"},
 			allow: []string{"/var/run"}, wantErr: "is or contains the Docker socket"},
 		{name: "traversal in source", raw: []string{"/etc/buildkit/../../root/.ssh/id_rsa:/secrets/k"}, allow: allow,

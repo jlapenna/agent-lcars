@@ -1,8 +1,4 @@
-import {
-  type Clock,
-  FirestoreStore,
-  Orchestrator,
-} from '@agent-lcars/orchestrator';
+import { FirestoreStore } from '@agent-lcars/orchestrator';
 
 /**
  * Seeds `@agent-lcars/orchestrator` task/run documents directly against the
@@ -47,61 +43,6 @@ function firestoreStore(): FirestoreStore {
     projectId: process.env['PROJECT_ID'] ?? 'demo-no-project',
     databaseId: process.env['DISPATCH_FIRESTORE_DATABASE_ID'] ?? '(default)',
   });
-}
-
-/**
- * Requests one orchestrator run for a fixture task, giving
- * `readAuthoritativeTaskState` real state to project instead of the "no
- * authoritative lifecycle state" fallback. Defaults to `pending`; a test
- * that pairs the seed with an already-running GitHub fixture can request
- * `running` so both authoritative and external lifecycle facts agree.
- *
- * Idempotent by design: `requestId` is fixed per call site, and
- * `Orchestrator.request`'s own duplicate-request contract maps a repeat
- * call with the same id back to the same run rather than starting a second
- * one - so a retried test (Nx retries a failed e2e test twice in CI) or a
- * suite that seeds more than once never races itself for the task's lock,
- * and the task's storage revision this fixture asserts on stays stable.
- */
-export async function seedOrchestratorTask(params: {
-  issue: number;
-  pipeline: string;
-  requestId: string;
-  repository?: string;
-  state?: 'pending' | 'running';
-}): Promise<void> {
-  const now = new Date().toISOString();
-  const clock: Clock = { now: () => now };
-  const orchestrator = new Orchestrator(firestoreStore(), clock);
-  const outcome = await orchestrator.request({
-    taskId: {
-      repo: params.repository ?? E2E_FIXTURE_REPOSITORY,
-      issue: params.issue,
-    },
-    requestId: params.requestId,
-    pipeline: params.pipeline,
-    params: { mode: 'implement' },
-    work: {
-      origin: { principal: 'e2e:orchestrator-seed', channel: 'github' },
-      spec: {
-        title: `E2E fixture issue #${params.issue}`,
-        description: 'Authoritative E2E fixture work.',
-        pipeline: params.pipeline,
-        // A Work target names the repository capability only. The issue
-        // anchor remains exclusively in the TaskId above.
-        target: { repo: params.repository ?? E2E_FIXTURE_REPOSITORY },
-      },
-    },
-  });
-  if ('refused' in outcome && outcome.reason !== 'duplicate-request') {
-    throw new Error(
-      `seedOrchestratorTask: request for ${params.repository ?? E2E_FIXTURE_REPOSITORY}#${params.issue} was refused (${outcome.reason}) - a real run already holds this task's lock`,
-    );
-  }
-  const run = 'refused' in outcome ? outcome.existingRun : outcome.run;
-  if (params.state === 'running' && run?.state === 'pending') {
-    await orchestrator.confirmDispatch(run.runId);
-  }
 }
 
 /** Reads the broker's authoritative active run from the shared emulator.

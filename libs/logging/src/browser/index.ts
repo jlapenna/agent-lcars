@@ -1,17 +1,5 @@
 /// <reference lib="dom" />
 
-export type {
-  LogEnricher,
-  LogEnrichment,
-  LogFormatter,
-} from '@jlapenna/fleet-runtime/logging';
-export {
-  Logger,
-  setLogDefaults,
-  setLogEnricher,
-  setLogFormatter,
-} from '@jlapenna/fleet-runtime/logging';
-
 // Simple circular-safe serializer
 function safeStringify(obj: unknown): string {
   const cache = new Set();

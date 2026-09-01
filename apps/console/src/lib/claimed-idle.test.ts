@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { ActionItem } from './action-items';
 import {
   deriveClaimedIdle,
-  findItemForSession,
   mostRecentSessionForItem,
   sessionReferencesItemNumber,
 } from './claimed-idle';
@@ -115,22 +114,8 @@ describe('sessionReferencesItemNumber', () => {
   });
 });
 
-describe('findItemForSession', () => {
-  it('returns the item whose number the session references', () => {
-    const items = [makeItem({ number: 10 }), makeItem({ number: 20 })];
-    const session = makeSession({ pr: { number: 20, url: 'u' } });
-    expect(findItemForSession(session, items)?.number).toBe(20);
-  });
-
-  it('returns undefined when no item matches', () => {
-    const items = [makeItem({ number: 10 })];
-    const session = makeSession({ branch: 'unrelated-branch' });
-    expect(findItemForSession(session, items)).toBeUndefined();
-  });
-});
-
 describe('mostRecentSessionForItem', () => {
-  it('finds an ended/stale session, unlike findItemForSession/deriveClaimedIdle', () => {
+  it('finds an ended/stale session, unlike deriveClaimedIdle', () => {
     const item = makeItem({ number: 1 });
     const session = makeSession({
       liveness: 'ended',

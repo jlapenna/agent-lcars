@@ -32,10 +32,7 @@ const CLIENT_PREFIX_BY_SOURCE: Record<string, string> = {
 // so this stays free of the node-only util-server accessor, which
 // would be both a circular dep and edge-unsafe).
 const getProjectId = (): string | undefined =>
-  process.env.NEXT_PUBLIC_PROJECT_ID ||
-  process.env.PROJECT_ID ||
-  process.env.GCLOUD_PROJECT ||
-  process.env.FIREBASE_PROJECT_ID;
+  process.env.PROJECT_ID || process.env.GCLOUD_PROJECT;
 
 const tracePath = (traceId: string | undefined): string | undefined => {
   const projectId = getProjectId();

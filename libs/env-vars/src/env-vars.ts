@@ -1,8 +1,6 @@
 export interface EnvVars {
   PROJECT_ID: string;
-  NEXT_PUBLIC_PROJECT_ID: string;
   GCLOUD_PROJECT?: string;
-  FIREBASE_PROJECT_ID?: string;
 
   // Cloud Run
   K_SERVICE?: string;
@@ -64,15 +62,7 @@ export interface EnvVars {
   /** Local Development only. */
 
   /** Dev only */
-  FUNCTIONS_EMULATOR?: string;
-  /** Dev only */
-  FIREBASE_AUTH_EMULATOR_HOST?: string;
-  /** Dev only */
   FIRESTORE_EMULATOR_HOST?: string;
-  /** Dev only */
-  AUTH_EMULATOR_HOST?: string;
-  /** Dev only */
-  IMPERSONATE_AUTOMATIC_LOGIN?: string;
 
   // Agent telemetry host watcher (issue #2540). See
   // infra/terraform/main.tf for the dedicated Firestore database + writer
