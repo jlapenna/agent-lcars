@@ -1481,6 +1481,67 @@ describe('createQuickTask', () => {
     ).toHaveLength(1);
   });
 
+  it('retains claim and evidence after a post-create webhook Work conflict', async () => {
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      const webhook = await quickTaskRuntime.orchestrator.request({
+        taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+        requestId: 'webhook-post-create-conflict',
+        pipeline: 'codex',
+        params: { mode: 'implement' },
+        work: workPayloadFromGithub({
+          title: input.title,
+          body: input.body,
+          pipeline: 'codex',
+          repo: DEFAULT_REPO_KEY,
+          actor: 'github-webhook-user',
+        }),
+      });
+      if ('refused' in webhook) throw new Error('webhook request was refused');
+      return { data: { number: 99 } };
+    });
+    const { deleteRef } = mockOctokit({
+      createIssue,
+      // Simulate GitHub list/search propagation lag after the durable create.
+      listForRepo: vi.fn().mockResolvedValue({ data: [] }),
+    });
+    const { lifecycle, rollback } = evidenceLifecycle();
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task immutable Work does not match its marker request',
+    );
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task creation is already claimed but no issue is visible yet',
+    );
+
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(deleteRef).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it('retains claim and evidence after a post-create projection 4xx', async () => {
+    const createIssue = vi.fn().mockResolvedValue({ data: { number: 99 } });
+    const { deleteRef } = mockOctokit({
+      createIssue,
+      // Simulate GitHub list/search propagation lag after the durable create.
+      listForRepo: vi.fn().mockResolvedValue({ data: [] }),
+    });
+    const { lifecycle, rollback } = evidenceLifecycle();
+    refreshCurrentGithubAnchorProjection.mockRejectedValue(
+      Object.assign(new Error('projection rejected'), { status: 422 }),
+    );
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'projection rejected',
+    );
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task creation is already claimed but no issue is visible yet',
+    );
+
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(deleteRef).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
   it('uses the signed-in user creator for the issue while the App client owns the claim ledger', async () => {
     const { createIssue: appCreateIssue, createTag, createRef } = mockOctokit();
     const userCreateIssue = vi.fn().mockResolvedValue({
@@ -1874,7 +1935,7 @@ describe('createQuickTask', () => {
           {
             number: 101,
             title: deriveQuickTaskTitle(request.description),
-            body: `Winner\n\n<!-- agent-lcars:quick-task-request:v1 id=${request.requestId} digest=${digest} -->`,
+            body: `${request.description.trim()}\n\n<!-- agent-lcars:quick-task-request:v1 id=${request.requestId} digest=${digest} -->`,
           },
         ],
       }));
@@ -2005,6 +2066,41 @@ describe('createQuickTask', () => {
     );
     expect(createIssue).toHaveBeenCalledTimes(1);
     expect(listForRepo).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when a recovered marker issue was edited before first Work admission', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      throw new Error('socket timed out');
+    });
+    const editedIssue = () => ({
+      number: 99,
+      title: 'Edited before first admission',
+      body:
+        'Edited before first admission\n\n' +
+        persistedBody.slice(persistedBody.indexOf('<!--')),
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({ data: [editedIssue()] }));
+    mockOctokit({ createIssue, listForRepo });
+
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Recovered Quick Task content does not match its marker request; manual reconciliation is required',
+    );
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Recovered Quick Task content does not match its marker request; manual reconciliation is required',
+    );
+
+    expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(
+      await quickTaskRuntime.store.listRuns({
+        repo: DEFAULT_REPO_KEY,
+        issue: 99,
+      }),
+    ).toHaveLength(0);
   });
 
   it('reconciles an HTTP 408 instead of releasing the uniqueness claim', async () => {

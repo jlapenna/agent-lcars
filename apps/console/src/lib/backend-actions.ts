@@ -934,9 +934,22 @@ async function admitQuickTask(
     // after it settles: this marker request has reached its canonical result.
     return;
   }
+  const canonicalBody = quickTaskBody(request, digest);
+  // Before a Task exists, the marker binds the only immutable Work source.
+  // A transport-recovered issue may have been edited after GitHub accepted
+  // creation but before a webhook/retry admits it; never let that mutable
+  // projection become the first Work specification. Once Work exists, the
+  // branch above intentionally permits ordinary issue edits while validating
+  // the stored immutable spec instead.
+  if (issue.title !== request.title || issue.body !== canonicalBody) {
+    throw new ActionError(
+      'Recovered Quick Task content does not match its marker request; manual reconciliation is required',
+      409,
+    );
+  }
   const work = workPayloadFromGithub({
-    title: issue.title,
-    body: issue.body,
+    title: request.title,
+    body: canonicalBody,
     pipeline: request.pipeline,
     repo: repoKey(request.repository),
     actor: request.actorLogin,
@@ -1339,9 +1352,10 @@ async function createQuickTaskOnce(
     }
   }
 
+  const body = quickTaskBody(request, digest);
+  let issue: { number: number };
   try {
-    const body = quickTaskBody(request, digest);
-    const { data: issue } = await (
+    ({ data: issue } = await (
       issueCreator ?? ((parameters) => octokit.rest.issues.create(parameters))
     )({
       owner: request.repository.owner,
@@ -1349,19 +1363,12 @@ async function createQuickTaskOnce(
       title: request.title,
       body,
       labels: [QUICK_TASK_LABEL, integration.label],
-    });
-    // Admit before refreshing the read projection. The issue write above is
-    // the durable source of truth, so this exact title/body is also what a
-    // label webhook sees. Either ordering therefore records the same
-    // immutable Work specification.
-    await admitQuickTask(request, digest, {
-      number: issue.number,
-      title: request.title,
-      body,
-    });
-    await refreshGithubMutation(request.repository, issue.number);
-    return receiptFor(request, issue.number);
+    }));
   } catch (error) {
+    // This handler is intentionally limited to the create request itself.
+    // Once GitHub has returned an issue, admission and projection failures
+    // must retain the claim (and evidence) so marker reconciliation remains
+    // the only recovery path instead of reopening duplicate creation.
     if (isDefinitiveCreateFailure(error)) {
       if (preparedEvidence && evidenceLifecycle) {
         await evidenceLifecycle.hook.rollbackDefinitiveCreateFailure(
@@ -1374,9 +1381,8 @@ async function createQuickTaskOnce(
         await releaseQuickTaskClaim(request, digest, claim.claimantId);
         throw error;
       }
-      // A 4xx proves GitHub did not create the issue, so releasing the claim
-      // is safe and lets the same browser intent retry after the validation,
-      // permission, or label problem is corrected.
+      // A 4xx from issues.create proves no issue was created, so releasing
+      // the claim lets the same browser intent retry after correction.
       await releaseQuickTaskClaim(request, digest, claim.claimantId);
       throw error;
     }
@@ -1396,6 +1402,21 @@ async function createQuickTaskOnce(
     // the marker, while a truly stranded claim is reconciled manually.
     throw error;
   }
+
+  // GitHub has now durably acknowledged creation. Every following failure
+  // retains the durable claim and any prepared evidence; a retry must find
+  // this marker-backed issue rather than recreate it.
+  // Admit before refreshing the read projection. The issue write above is
+  // the durable source of truth, so this exact title/body is also what a
+  // label webhook sees. Either ordering therefore records the same
+  // immutable Work specification.
+  await admitQuickTask(request, digest, {
+    number: issue.number,
+    title: request.title,
+    body,
+  });
+  await refreshGithubMutation(request.repository, issue.number);
+  return receiptFor(request, issue.number);
 }
 
 const inFlightQuickTasks = new Map<
