@@ -88,23 +88,9 @@ describe('truncatedDescription', () => {
 });
 
 describe('githubOrigin', () => {
-  it('prefers the actor login', () => {
-    expect(githubOrigin('jlapenna', 'agent:claude')).toEqual({
+  it('uses the required actor login', () => {
+    expect(githubOrigin('jlapenna')).toEqual({
       principal: 'github:jlapenna',
-      channel: 'github',
-    });
-  });
-
-  it('falls back to the label when no actor is known', () => {
-    expect(githubOrigin(undefined, 'agent:claude')).toEqual({
-      principal: 'github:label:agent:claude',
-      channel: 'github',
-    });
-  });
-
-  it('falls back to unknown when neither actor nor label is known', () => {
-    expect(githubOrigin(undefined, undefined)).toEqual({
-      principal: 'github:unknown',
       channel: 'github',
     });
   });

@@ -43,21 +43,16 @@ describe('isSelectedGithubAnchorProjection', () => {
     expect(isSelectedGithubAnchorProjection(projection())).toBe(false);
   });
 
-  it('uses a configured repository integration label', () => {
+  it('does not select agent labels for an explicit no-agents repository', () => {
     expect(
       isSelectedGithubAnchorProjection(
-        projection({ labels: ['queue:internal-agent'] }),
+        projection({ labels: ['agent:codex'] }),
         {
           owner: 'jlapenna',
           name: 'agent-lcars',
-          agents: {
-            codex: {
-              label: 'queue:internal-agent',
-              replyTrigger: '/codex',
-            },
-          },
+          agents: false,
         },
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

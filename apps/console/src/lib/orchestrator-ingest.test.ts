@@ -15,6 +15,7 @@ function issuesLabeledPayload(overrides: Record<string, unknown> = {}) {
     repository: { full_name: REPO },
     issue: { number: 42, title: 'Issue title', body: 'Issue body' },
     label: { name: 'agent:claude' },
+    sender: { login: 'jlapenna' },
     ...overrides,
   };
 }
@@ -29,6 +30,7 @@ function pullRequestLabeledPayload(overrides: Record<string, unknown> = {}) {
       body: 'Pull request body',
     },
     label: { name: 'agent:codex' },
+    sender: { login: 'jlapenna' },
     ...overrides,
   };
 }
@@ -42,6 +44,7 @@ function issueCommentPayload(overrides: Record<string, unknown> = {}) {
       body: '@claude please take a look',
       author_association: 'OWNER',
     },
+    sender: { login: 'jlapenna' },
     ...overrides,
   };
 }
@@ -127,27 +130,13 @@ describe('interpretDelivery', () => {
       },
     },
     {
-      name: 'issues labeled with a title but no sender falls back to the label',
+      name: 'issues labeled without a sender are malformed',
       event: 'issues',
       payload: issuesLabeledPayload({
         issue: { number: 42, title: 'Fix the thing', body: null },
+        sender: undefined,
       }),
-      expected: {
-        kind: 'request',
-        taskId: { repo: REPO, issue: 42 },
-        requestId: DELIVERY_ID,
-        pipeline: 'claude',
-        params: { mode: 'implement' },
-        work: {
-          origin: { principal: 'github:label:agent:claude', channel: 'github' },
-          spec: {
-            title: 'Fix the thing',
-            description: '(no description)',
-            pipeline: 'claude',
-            target: { repo: REPO },
-          },
-        },
-      },
+      expected: { kind: 'ignore', reason: 'malformed-payload' },
     },
     {
       name: 'issues labeled with an overlong body truncates the work description',

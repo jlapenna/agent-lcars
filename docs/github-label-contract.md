@@ -2,9 +2,9 @@
 
 Agent LCARS owns the canonical label manifest for Agent LCARS, Sprinkles, and
 Homelab in [`config/github-labels.json`](../config/github-labels.json). Labels
-are a small public API: workflows may consume durable control labels, while
-runtime facts stay in GitHub Actions, comments, assignees, and GitHub's native
-pull-request state.
+are GitHub-facing intent and classification metadata. Agent LCARS Work
+Tasks/Runs own execution state; GitHub comments, assignees, and pull-request
+state remain their respective artifact facts.
 
 ## Shared vocabulary
 
@@ -12,17 +12,11 @@ pull-request state.
 - `status:*` records durable workflow state. `status:needs-human` means a
   maintainer must take the next action; `status:blocked` means an external
   dependency or prerequisite is preventing progress. They are not aliases.
-- `agent:*` selects an executor and means "take this over" -- on an issue,
-  implement it and open a PR; on a pull request (Agent LCARS only today,
-  #567), take the PR over and keep pushing commits to its branch. The
-  serialized dispatch broker enforces that exactly one of `agent:claude`,
-  `agent:codex`, or `agent:opencode` is present and dispatches that agent.
-  Contradictory `agent:*` labels fail loudly instead of being tolerated or
-  resolved by precedence, with one narrow self-heal exception: a manual
-  GitHub UI relabel can momentarily leave two agent labels on an issue (the
-  new one added before the old one is removed), and the broker resolves
-  that transient window itself by honoring the newest label and removing
-  the other before dispatching, rather than failing the run.
+- `agent:*` requests the canonical executor to take the anchor over -- on an
+  issue, implement it and open a PR; on a pull request, take the PR over and
+  keep pushing commits to its branch. Apply one of `agent:claude`,
+  `agent:codex`, or `agent:opencode`; conflicting requests are refused by
+  immutable Work admission and never self-healed by label rewriting.
 - `review:*` (pull requests only; declared fleet-wide since #1312 -- #567
   introduced it on Agent LCARS alone, while the native verifier's
   `MODE=review` support was already fleet-wide) asks an agent to leave a
@@ -53,19 +47,19 @@ pull-request state.
 | Planning          | `planning`                               | `planning`                                        | `planning`                               |
 
 Repository profiles deliberately share names without requiring every
-repository to install every label. Agent LCARS reads each watched repository's
-declared agent integrations; Homelab now declares the standard Claude, Codex,
-and OpenCode workflows and therefore exposes initial assignment and dispatch
-actions. An agent choice is immutable once the Work record is admitted; the
-console does not offer a parallel reassignment path.
+repository to install every label. Every watched repository uses the same
+canonical Claude, Codex, and OpenCode integrations unless it explicitly opts
+out with `agents: false`. An agent choice is immutable once the Work record is
+admitted; the console does not offer a parallel reassignment path.
 
 ## State boundaries
 
 - Assignees express ownership.
 - `status:needs-human` is cleared by the authorized hand-back path, not inferred
   from the newest comment author.
-- GitHub Actions and Agent LCARS telemetry express queued/running/completed
-  execution state.
+- Agent LCARS Work Tasks/Runs express queued/running/completed execution
+  state. GitHub Actions may report repository automation, but is not an agent
+  lifecycle authority.
 - GitHub's mergeability is authoritative. Sprinkles does not mirror conflicts
   into a durable `conflicting` label.
 - Sprinkles auto-heal attempt counts live in one workflow-owned ledger comment,

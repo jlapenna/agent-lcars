@@ -168,9 +168,21 @@ export async function mintItem(
     taskId: { workId: input.id },
     requestId: input.id,
     pipeline: input.spec.pipeline,
+    params: { mode: 'implement' },
     work: { origin: input.origin, spec: input.spec },
+    // This comparison must execute in the store transaction. Two native
+    // creates can both observe an absent Task above; the loser must not mint
+    // a Run against the winner's immutable Work specification.
+    isStoredWorkCompatible: (stored) =>
+      sameSpec(workPayloadSchema.parse(stored).spec, input.spec),
   });
   if (isRefusal(outcome)) {
+    if (outcome.reason === 'work-spec-mismatch') {
+      return {
+        kind: 'conflict',
+        message: `item ${input.id} already exists with a different spec`,
+      };
+    }
     return { kind: 'conflict', message: outcome.reason };
   }
   await context.runtime.drain();

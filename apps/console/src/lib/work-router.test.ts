@@ -216,6 +216,9 @@ describe('items routes', () => {
       origin: { principal: 'user:jlapenna', channel: 'console' },
       spec,
     });
+    expect((await ctx.runtime.store.readRun(`work:${ID}/r1`))?.params).toEqual({
+      mode: 'implement',
+    });
 
     // Idempotency is the guarantee, not the status code: the contract
     // declares `successStatus: 201` for create, so a replay answers 201
@@ -233,6 +236,27 @@ describe('items routes', () => {
       spec: { ...spec, title: 'something else' },
     });
     expect(r.status).toBe(409);
+  });
+
+  it('atomically refuses an overlapping first create with a different immutable spec', async () => {
+    const ctx = context();
+    // Both requests finish the route-level absence check before either enters
+    // the orchestrator transaction. The second transaction must compare the
+    // stored Work rather than mint a run for its own different specification.
+    const [left, right] = await Promise.all([
+      call(ctx, 'PUT', `/items/${ID}`, { spec }),
+      call(ctx, 'PUT', `/items/${ID}`, {
+        spec: { ...spec, title: 'concurrent different work' },
+      }),
+    ]);
+    const outcomes = [left, right];
+    const created = outcomes.find((outcome) => outcome.status === 201);
+    const conflict = outcomes.find((outcome) => outcome.status === 409);
+    expect(created).toBeDefined();
+    expect(conflict).toMatchObject({
+      json: { message: `item ${ID} already exists with a different spec` },
+    });
+    expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(1);
   });
 
   it('refuses a pipeline outside the grant with 403', async () => {
@@ -331,10 +355,10 @@ describe('items routes', () => {
     expect(r.status).toBe(200);
     expect(r.json.runs).toHaveLength(2);
     expect(r.json.state).toBe('running');
-    // No `resumeSessionId` in the request -- unchanged behaviour, no params
-    // land on the fresh run.
+    // No `resumeSessionId` in the request, but every admitted native run
+    // still records its explicit dispatch behavior.
     const fresh = await ctx.runtime.store.readRun(`work:${ID}/r2`);
-    expect(fresh?.params).toBeUndefined();
+    expect(fresh?.params).toEqual({ mode: 'implement' });
   });
 
   it('redispatch creates a fresh run', async () => {
@@ -434,6 +458,7 @@ describe('items routes', () => {
       expect(r.status).toBe(200);
       const fresh = await ctx.runtime.store.readRun(`work:${ID}/r2`);
       expect(fresh?.params).toEqual({
+        mode: 'implement',
         resumeSessionId: 'sess_1',
         resumeTranscriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
       });

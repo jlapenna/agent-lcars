@@ -260,7 +260,7 @@ export const workRouter = os.router({
         taskId: { workId: input.id },
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
-        ...(resumeParams === undefined ? {} : { params: resumeParams }),
+        params: { mode: 'implement', ...resumeParams },
       });
       if (isRefusal(outcome)) {
         throw errors.CONFLICT({ message: outcome.reason });

@@ -8,10 +8,9 @@ import { dispatchUnstickPrs } from './actions';
 import { showErrorToast } from './show-error-toast';
 
 /**
- * Dispatches playbook-unstick-prs.yml, which finds/creates an anchor issue
- * and hands it to the Claude issue agent with the unstick-prs runbook. The
- * console joins the resulting run to its own card via the run-name's
- * leading "#N:" prefix, so no polling is needed here beyond a refresh.
+ * Finds or creates the repository's audit anchor, then admits the Claude
+ * runbook through the Work API. GitHub stores the human-readable incident
+ * thread; it is not an execution hop.
  *
  * `defaultContext` lets a queue card prefill "#N title" so a maintainer can
  * dispatch scoped to one stuck item in a single click instead of retyping
@@ -26,10 +25,8 @@ export function UnstickPrsButton({
   size?: string;
   label?: string;
   defaultContext?: string;
-  /** The item's repo when dispatching from a card - omitted, the action
-   * falls back to the primary watched repo (the old, wrong-for-secondary
-   * -repos behavior, now only a last resort for the global variant). */
-  repo?: { owner: string; name: string };
+  /** Repository whose pull-request queue should be unstuck. */
+  repo: { owner: string; name: string };
 }) {
   const [opened, setOpened] = useState(false);
   const [context, setContext] = useState(defaultContext);
@@ -48,7 +45,7 @@ export function UnstickPrsButton({
       }
       setContext(defaultContext);
       notifications.show({
-        message: 'unstick-prs playbook dispatched',
+        message: 'unstick-prs runbook dispatched',
         color: 'green',
       });
     });

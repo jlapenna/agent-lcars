@@ -29,7 +29,7 @@ describe('action textarea labels', () => {
   });
 
   it('labels the optional unstick context without changing its name', async () => {
-    renderAction(<UnstickPrsButton />);
+    renderAction(<UnstickPrsButton repo={{ owner: 'o', name: 'r' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Run unstick-prs' }));
 
     expect(

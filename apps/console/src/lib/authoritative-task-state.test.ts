@@ -64,18 +64,18 @@ describe('readAuthoritativeTaskState', () => {
     });
   });
 
-  it('omits spec when the task carries no work payload', async () => {
+  it('rejects a task with no immutable Work payload', async () => {
     await seedTask({
       task: { repo: 'jlapenna/agent-lcars', issue: 43 },
       runCount: 0,
       updatedAt: T0,
     });
 
-    const state = await readAuthoritativeTaskState({
-      repository: 'jlapenna/agent-lcars',
-      issue: 43,
-    });
-
-    expect(state?.spec).toBeUndefined();
+    await expect(
+      readAuthoritativeTaskState({
+        repository: 'jlapenna/agent-lcars',
+        issue: 43,
+      }),
+    ).rejects.toThrow();
   });
 });

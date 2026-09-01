@@ -93,7 +93,7 @@ if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
     exit 1
   fi
   work_json="$(jq -c . <<<"$WORK")"
-  anchor_json="$(jq -cn --argjson w "$work_json" --arg console "${CONSOLE_URL:-https://lcars.jlapenna.net}" '{
+  anchor_json="$(jq -cn --argjson w "$work_json" --arg console "${CONSOLE_URL:?CONSOLE_URL is required}" '{
     type: "work",
     id: $w.id,
     title: $w.spec.title,

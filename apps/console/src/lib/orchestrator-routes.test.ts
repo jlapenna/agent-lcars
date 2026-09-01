@@ -110,6 +110,7 @@ function labeledIssuePayload(overrides: Record<string, unknown> = {}) {
     repository: { full_name: REPO },
     issue: { number: ISSUE.issue, title: 'Issue title', body: 'Issue body' },
     label: { name: 'agent:claude' },
+    sender: { login: 'jlapenna' },
     ...overrides,
   };
 }
@@ -438,6 +439,7 @@ describe('handleWebhookDelivery', () => {
           body: '@claude continue with the new detail',
           author_association: 'OWNER',
         },
+        sender: { login: 'jlapenna' },
       },
     });
 
@@ -462,6 +464,7 @@ describe('handleWebhookDelivery', () => {
         body: 'Pull request body',
       },
       label: { name: 'review:codex' },
+      sender: { login: 'jlapenna' },
     };
     const first = await handleWebhookDelivery(deps, {
       event: 'pull_request',

@@ -18,7 +18,9 @@ set +x
 
 : "${LCARS_RUN_ID:?LCARS_RUN_ID is required}"
 : "${LCARS_RUN_TOKEN:?LCARS_RUN_TOKEN is required}"
-CONSOLE_URL="${LCARS_CONSOLE_URL:-https://lcars.jlapenna.net}"
+: "${LCARS_CONSOLE_URL:?LCARS_CONSOLE_URL is required}"
+CONSOLE_URL="$LCARS_CONSOLE_URL"
+export CONSOLE_URL
 # Run ids look like `work:<ulid>/r<n>` -- the embedded `/` must be
 # percent-encoded before it lands in a URL path segment, or it silently
 # splits the request into extra path segments the OpenAPI route's single
@@ -84,7 +86,7 @@ case "$PIPELINE" in
 esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
-MODE="$(jq -r '.mode // "implement"' <<<"$brief")"
+MODE="$(jq -er '.mode' <<<"$brief")"
 REPLY="$(jq -r '.reply // ""' <<<"$brief")"
 RUNBOOK="$(jq -r '.runbook // ""' <<<"$brief")"
 CONTEXT="$(jq -r '.context // ""' <<<"$brief")"
@@ -161,6 +163,13 @@ if [ "$AGENT_NAME" = "Unknown" ]; then
   echo "FATAL: direct runner does not support pipeline '$PIPELINE'" >&2
   exit 1
 fi
+case "$MODE" in
+  implement|review|reply) ;;
+  *)
+    echo "FATAL: direct runner received unsupported mode '$MODE'" >&2
+    exit 1
+    ;;
+esac
 
 checkout="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/checkout-token"
@@ -219,24 +228,28 @@ GIT_LOGIN="${LCARS_GIT_LOGIN:-agent-lcars[bot]}"
 git config --local user.name "$GIT_LOGIN"
 git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
 
-# Restore uses the telemetry writer's own store. Fail-soft:
-# any missing input or failed download leaves RESUME_FLAG empty and this
-# run proceeds as a fresh dispatch (`|| true` below), never blocking the
-# agent on a broken restore.
+# Restore uses the telemetry writer's own store. A caller that asked to
+# resume must never silently become a fresh dispatch: that loses the exact
+# conversation state the Work API persisted for this run.
 RESUME_FLAG=()
 if [ "$PIPELINE" = "claude" ] && [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
   # GOOGLE_APPLICATION_CREDENTIALS and AGENT_TELEMETRY_PROJECT_ID are
   # exported inline exactly as sidecar-lifecycle.sh already does for
   # `runner sidecar`/`runner finalize` -- the same telemetry-writer
   # credential and GCS project the transcript was uploaded to/from.
-  resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
+  if ! resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
     AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
     node /usr/local/lib/agent-lcars/sidecar.cjs runner resume \
     --session-id "$RESUME_SESSION_ID" --transcript-uri "$RESUME_TRANSCRIPT_URI" \
-    --cwd "$PWD" 2>/dev/null || true)"
-  if [ -n "$resumed_path" ]; then
-    RESUME_FLAG=(--resume "$RESUME_SESSION_ID")
+    --cwd "$PWD" 2>/dev/null)"; then
+    echo "FATAL: requested Claude session restore failed" >&2
+    exit 1
   fi
+  if [ -z "$resumed_path" ]; then
+    echo "FATAL: requested Claude session restore returned no local path" >&2
+    exit 1
+  fi
+  RESUME_FLAG=(--resume "$RESUME_SESSION_ID")
 fi
 
 export WORKSPACE="$workspace"

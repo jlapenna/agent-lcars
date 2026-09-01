@@ -26,11 +26,6 @@ function freshGithubClientModule() {
 }
 
 const ENV_KEY = 'AGENT_LCARS_WATCHED_REPOS';
-const CLAUDE_INTEGRATION = {
-  label: 'agent:claude',
-  replyTrigger: '@claude',
-};
-
 afterEach(() => {
   delete process.env[ENV_KEY];
 });
@@ -356,12 +351,12 @@ describe('getWatchedRepos', () => {
   it('parses a valid JSON array from the env var', () => {
     process.env[ENV_KEY] = JSON.stringify([
       { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b', agents: { opencode: null } },
+      { owner: 'org-b', name: 'repo-b', agents: false },
     ]);
 
     expect(getWatchedRepos()).toEqual([
       { owner: 'org-a', name: 'repo-a' },
-      { owner: 'org-b', name: 'repo-b', agents: { opencode: null } },
+      { owner: 'org-b', name: 'repo-b', agents: false },
     ]);
   });
 
@@ -380,14 +375,14 @@ describe('getWatchedRepos', () => {
     expect(() => getWatchedRepos()).toThrow(/name must be a non-empty string/);
   });
 
-  it('throws when an agent integration is not an object or null', () => {
+  it('throws when agents is not the explicit false opt-out', () => {
     process.env[ENV_KEY] = JSON.stringify([
-      { owner: 'org-a', name: 'repo-a', agents: { claude: 42 } },
+      { owner: 'org-a', name: 'repo-a', agents: {} },
     ]);
-    expect(() => getWatchedRepos()).toThrow(/must be an object or null/);
+    expect(() => getWatchedRepos()).toThrow(/must be false when present/);
   });
 
-  it('throws when an agent integration is incomplete', () => {
+  it('rejects repository-specific integration configuration', () => {
     process.env[ENV_KEY] = JSON.stringify([
       {
         owner: 'org-a',
@@ -395,31 +390,18 @@ describe('getWatchedRepos', () => {
         agents: { claude: { label: 'agent:claude' } },
       },
     ]);
-    expect(() => getWatchedRepos()).toThrow(/agents\.claude\.replyTrigger/);
+    expect(() => getWatchedRepos()).toThrow(/must be false when present/);
   });
 
-  it('parses a complete agent integration', () => {
+  it('parses the explicit no-agents opt-out', () => {
     process.env[ENV_KEY] = JSON.stringify([
       {
         owner: 'org-a',
         name: 'repo-a',
-        agents: { claude: CLAUDE_INTEGRATION },
+        agents: false,
       },
     ]);
-    expect(getWatchedRepos()[0].agents?.claude).toEqual(CLAUDE_INTEGRATION);
-  });
-
-  it('throws when reply-trigger aliases are malformed', () => {
-    process.env[ENV_KEY] = JSON.stringify([
-      {
-        owner: 'org-a',
-        name: 'repo-a',
-        agents: {
-          claude: { ...CLAUDE_INTEGRATION, replyTriggerAliases: [''] },
-        },
-      },
-    ]);
-    expect(() => getWatchedRepos()).toThrow(/replyTriggerAliases/);
+    expect(getWatchedRepos()[0].agents).toBe(false);
   });
 
   it('parses an alias', () => {
@@ -450,13 +432,13 @@ describe('getWatchedRepos', () => {
 describe('resolveWatchedRepo', () => {
   it('returns the canonical watched-list entry for a match', () => {
     process.env[ENV_KEY] = JSON.stringify([
-      { owner: 'org-a', name: 'repo-a', agents: { opencode: null } },
+      { owner: 'org-a', name: 'repo-a', agents: false },
     ]);
 
     expect(resolveWatchedRepo({ owner: 'org-a', name: 'repo-a' })).toEqual({
       owner: 'org-a',
       name: 'repo-a',
-      agents: { opencode: null },
+      agents: false,
     });
   });
 

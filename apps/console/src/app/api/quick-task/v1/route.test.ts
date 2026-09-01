@@ -16,7 +16,14 @@ const {
 
 vi.mock('@/auth', () => ({ auth }));
 vi.mock('@/lib/backend-actions', () => ({
-  ActionError: class ActionError extends Error {},
+  ActionError: class ActionError extends Error {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
+      super(message);
+    }
+  },
   createQuickTask,
 }));
 vi.mock('@/lib/github-client', () => ({ resolveWatchedRepo }));
@@ -74,7 +81,7 @@ function request(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  auth.mockResolvedValue({ user: { isAdmin: true } });
+  auth.mockResolvedValue({ user: { isAdmin: true, login: 'jlapenna' } });
   resolveWatchedRepo.mockImplementation((repo) => repo);
   createLifecycle.mockResolvedValue({
     prepare: vi.fn(),
@@ -108,6 +115,7 @@ describe('POST /api/quick-task/v1', () => {
     expect(createQuickTask).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: intent.requestId,
+        actorLogin: 'jlapenna',
         description: expect.stringContaining(
           `/api/quick-task-evidence/v1/${intent.evidenceId}`,
         ),

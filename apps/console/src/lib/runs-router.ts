@@ -313,8 +313,12 @@ export const runsRouter = os.router({
   brief: os.brief.handler(async ({ input, context, errors }) => {
     const run = await requireRunToken(context, input.runId);
     const task = await context.store.readTask(run.task);
+    const mode = run.params?.['mode'];
+    if (!mode || !['implement', 'review', 'reply'].includes(mode)) {
+      throw errors.UNAUTHORIZED({ message: 'run has no valid dispatch mode' });
+    }
     const params = {
-      mode: run.params?.['mode'] ?? 'implement',
+      mode,
       reply: run.params?.['reply'] ?? '',
       runbook: run.params?.['runbook'] ?? '',
       context: run.params?.['context'] ?? '',

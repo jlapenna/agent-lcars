@@ -14,7 +14,7 @@ import {
   ActionError,
   approveAndMergePr,
   approveAndRebasePr,
-  clearHumanNeededLabel,
+  clearNeedsHumanLabel,
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
@@ -67,7 +67,7 @@ vi.mock('../lib/backend-actions', () => {
     ActionError,
     approveAndMergePr: vi.fn(),
     approveAndRebasePr: vi.fn(),
-    clearHumanNeededLabel: vi.fn(),
+    clearNeedsHumanLabel: vi.fn(),
     closeIssue: vi.fn(),
     createQuickTask: vi.fn(),
     dispatchUnstickPrs: vi.fn(),
@@ -124,7 +124,7 @@ describe('agent-lcars Server Actions', () => {
     ]);
     vi.clearAllMocks();
     (auth as Mock).mockResolvedValue({
-      user: { id: 'admin-1', isAdmin: true },
+      user: { id: 'admin-1', isAdmin: true, login: 'jlapenna' },
     });
   });
 
@@ -216,7 +216,9 @@ describe('agent-lcars Server Actions', () => {
         }),
       );
 
-      await expect(dispatchUnstickPrs()).resolves.toEqual({
+      await expect(
+        dispatchUnstickPrs(undefined, DEFAULT_REPO),
+      ).resolves.toEqual({
         ok: false,
         message: 'Resource not accessible',
       });
@@ -264,7 +266,7 @@ describe('agent-lcars Server Actions', () => {
     });
 
     it('clearHumanNeeded returns { ok: false, message } instead of throwing', async () => {
-      (clearHumanNeededLabel as Mock).mockRejectedValue(
+      (clearNeedsHumanLabel as Mock).mockRejectedValue(
         new ActionError('Unexpected error', 500),
       );
 
@@ -313,14 +315,17 @@ describe('agent-lcars Server Actions', () => {
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
-    it('replyToItem forwards the item labels to postComment for mention routing', async () => {
+    it('replyToItem forwards the authenticated actor for direct admission', async () => {
       (postComment as Mock).mockResolvedValue({ url: 'https://x' });
 
-      await replyToItem(DEFAULT_REPO, 42, 'hi', ['opencode']);
+      await replyToItem(DEFAULT_REPO, 42, 'hi');
 
-      expect(postComment).toHaveBeenCalledWith(DEFAULT_REPO, 42, 'hi', [
-        'opencode',
-      ]);
+      expect(postComment).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        42,
+        'hi',
+        'jlapenna',
+      );
     });
 
     it('retriggerIssue forwards the note to retriggerIssueLib', async () => {
@@ -336,19 +341,21 @@ describe('agent-lcars Server Actions', () => {
         42,
         DISPATCH_ID,
         'try again',
-        undefined,
       );
     });
 
     it('dispatchUnstickPrs returns { ok: true } and forwards the context', async () => {
       (dispatchUnstickPrsLib as Mock).mockResolvedValue(undefined);
 
-      await expect(dispatchUnstickPrs('PR #123 stuck')).resolves.toEqual({
+      await expect(
+        dispatchUnstickPrs('PR #123 stuck', DEFAULT_REPO),
+      ).resolves.toEqual({
         ok: true,
       });
       expect(dispatchUnstickPrsLib).toHaveBeenCalledWith(
         'PR #123 stuck',
-        undefined,
+        DEFAULT_REPO,
+        'jlapenna',
       );
     });
 
@@ -360,7 +367,7 @@ describe('agent-lcars Server Actions', () => {
         ...QUICK_TASK_RECEIPT,
       });
       expect(createQuickTaskLib).toHaveBeenCalledWith(
-        QUICK_TASK_REQUEST,
+        { ...QUICK_TASK_REQUEST, actorLogin: 'jlapenna' },
         undefined,
         userIssueCreator,
       );
@@ -377,6 +384,7 @@ describe('agent-lcars Server Actions', () => {
         {
           ...QUICK_TASK_REQUEST,
           pipeline: 'opencode',
+          actorLogin: 'jlapenna',
         },
         undefined,
         userIssueCreator,
@@ -407,6 +415,7 @@ The refresh path has browser coverage.
         {
           ...QUICK_TASK_REQUEST,
           description,
+          actorLogin: 'jlapenna',
         },
         undefined,
         userIssueCreator,
@@ -441,12 +450,12 @@ The refresh path has browser coverage.
     });
 
     it('clearHumanNeeded returns { ok: true } and revalidates', async () => {
-      (clearHumanNeededLabel as Mock).mockResolvedValue(undefined);
+      (clearNeedsHumanLabel as Mock).mockResolvedValue(undefined);
 
       await expect(clearHumanNeeded(DEFAULT_REPO, 2709)).resolves.toEqual({
         ok: true,
       });
-      expect(clearHumanNeededLabel).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
+      expect(clearNeedsHumanLabel).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
@@ -468,6 +477,7 @@ The refresh path has browser coverage.
           owner: DEFAULT_REPO.owner,
           name: DEFAULT_REPO.name,
         }),
+        'jlapenna',
       );
     });
   });
@@ -540,10 +550,10 @@ The refresh path has browser coverage.
       expect(updateIssueContentLib).not.toHaveBeenCalled();
     });
 
-    it('clearHumanNeeded rejects without calling clearHumanNeededLabel', async () => {
+    it('clearHumanNeeded rejects without calling clearNeedsHumanLabel', async () => {
       const result = await clearHumanNeeded(UNWATCHED_REPO, 2709);
       expect(result.ok).toBe(false);
-      expect(clearHumanNeededLabel).not.toHaveBeenCalled();
+      expect(clearNeedsHumanLabel).not.toHaveBeenCalled();
     });
 
     it('createQuickTask rejects an unwatched repo without calling createQuickTaskLib', async () => {

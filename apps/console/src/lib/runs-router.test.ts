@@ -75,8 +75,8 @@ async function seedQueuedRun(
     /** A Codex credential run must still be authorized for this exact target
      * repository even though the credential lineage itself is central. */
     targetRepo?: string;
-    /** Mirrors what `redispatch` (Task 2) writes onto a fresh run's
-     *  `params` -- used by the `brief` resume tests below. */
+    /** Mirrors the explicit dispatch behavior persisted by native admission
+     *  and redispatch; used by the brief resume tests below. */
     params?: Record<string, string>;
   },
 ): Promise<string> {
@@ -94,7 +94,7 @@ async function seedQueuedRun(
         target: { repo: opts.targetRepo ?? 'jlapenna/agent-lcars' },
       },
     },
-    ...(opts.params === undefined ? {} : { params: opts.params }),
+    params: opts.params ?? { mode: 'implement' },
   });
   if ('refused' in outcome) {
     throw new Error(`unexpected refusal seeding ${opts.workId}`);
@@ -622,6 +622,7 @@ describe('brief', () => {
           target: { repo: 'octo/example' },
         },
       },
+      params: { mode: 'implement' },
     });
     if ('refused' in outcome || outcome.run === undefined) {
       throw new Error('expected a queued GitHub run');
@@ -701,6 +702,7 @@ describe('brief', () => {
       workId: wid('work-resume'),
       now: NOW,
       params: {
+        mode: 'implement',
         resumeSessionId: 'sess_1',
         resumeTranscriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
       },
@@ -750,6 +752,54 @@ describe('brief', () => {
     );
     expect(r.status).toBe(200);
     expect((r.json as { resume?: unknown }).resume).toBeUndefined();
+  });
+
+  it('refuses a claimed run with no persisted dispatch mode', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-no-mode'),
+      now: NOW,
+      params: {},
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(401);
+    expect(r.json).toMatchObject({ message: 'run has no valid dispatch mode' });
+  });
+
+  it('refuses a claimed run with an invalid persisted dispatch mode', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-invalid-mode'),
+      now: NOW,
+      params: { mode: 'legacy' },
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(401);
+    expect(r.json).toMatchObject({ message: 'run has no valid dispatch mode' });
   });
 });
 

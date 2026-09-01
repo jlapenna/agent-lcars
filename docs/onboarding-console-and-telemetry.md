@@ -140,11 +140,10 @@ set in this repo's `apphosting.yaml`): a JSON array of
   `repoKey()` produces. It never affects GitHub API calls, URLs, or the
   identity keys used to join items/runs/sessions to a repo — those always
   use the real `owner`/`name`.
-- Omit `agents` for the standard Claude, Codex, and OpenCode integrations.
-  Set `agents` to an empty object for a repository that has no agent dispatch,
-  or provide label and reply-trigger overrides when an integration differs.
-  QueueExecutor does not invoke a target-repository workflow file. Optional
-  `replyTriggerAliases` records equivalent accepted commands.
+- Omit `agents` for the canonical Claude, Codex, and OpenCode integrations.
+  Set `agents: false` only for a watched repository with no agent dispatch.
+  QueueExecutor does not invoke a target-repository workflow file; repository
+  configuration cannot override agent labels or reply commands.
 - `getGithubClient()` (see `github-client.ts`) mints a short-lived GitHub App
   installation token per request, scoped to the target repo, rather than
   using one long-lived ambient credential (#1284 retired the classic PAT
@@ -160,9 +159,8 @@ set in this repo's `apphosting.yaml`): a JSON array of
   from the UI through the Server Action. A single configured repository hides
   the picker but is still included in the mutation; there is no primary-repo
   fallback.
-- `primaryWatchedRepo()` is reserved for truly global operations without a
-  task context (currently only `unstick-prs`) and returns
-  `getWatchedRepos()[0]`.
+- Operations such as `unstick-prs` carry an explicit repository from the
+  selected card. The console never substitutes the first watched repository.
 
 ## Verifying it actually worked
 

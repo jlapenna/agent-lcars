@@ -232,13 +232,6 @@ export function getGithubClient(): Octokit {
   return client;
 }
 
-/** The repository targeted by truly global ops actions that do not have a
- * task/repository context (currently only unstick-prs). Quick Task creation
- * deliberately requires an explicit repository at every boundary. */
-export function primaryWatchedRepo(): WatchedRepo {
-  return getWatchedRepos()[0];
-}
-
 export class UnwatchedRepoError extends Error {
   constructor(owner: string, name: string) {
     super(`${owner}/${name} is not a watched repo`);

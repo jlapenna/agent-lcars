@@ -190,17 +190,12 @@ function clampedTitle(title: string): string {
 
 /**
  * The `work.origin.principal` for a GitHub-derived task: `github:<login>`
- * when the webhook (or the console session) named an actor, else
- * `github:label:<label>` for a label webhook whose delivery carried no
- * `sender`, else `github:unknown`. See the design spec's "`work` for
- * every anchor" derivation table.
+ * from the actor GitHub included in every admitted delivery. Admission
+ * refuses a malformed delivery without that identity rather than inventing
+ * a label- or unknown-derived principal.
  */
-export function githubOrigin(
-  actor: string | undefined,
-  label?: string,
-): WorkOrigin {
-  const suffix = actor ?? (label !== undefined ? `label:${label}` : 'unknown');
-  return { principal: `github:${suffix}`, channel: 'github' };
+export function githubOrigin(actor: string): WorkOrigin {
+  return { principal: `github:${actor}`, channel: 'github' };
 }
 
 export interface GithubWorkSource {
@@ -208,13 +203,9 @@ export interface GithubWorkSource {
   body: string | null | undefined;
   pipeline: Pipeline;
   repo: string;
-  /** The webhook `sender.login`, or the console session's github login for
-   *  a retrigger. */
-  actor: string | undefined;
-  /** Label-webhook fallback only, used by `githubOrigin` when `actor` is
-   *  absent -- irrelevant for a retrigger, which always has a session
-   *  actor. */
-  label?: string;
+  /** The webhook `sender.login`, or the console session's GitHub login for
+   * a retrigger. Every admitted source has a concrete actor. */
+  actor: string;
 }
 
 /**
@@ -224,7 +215,7 @@ export interface GithubWorkSource {
  */
 export function workPayloadFromGithub(source: GithubWorkSource): WorkPayload {
   return normalizeGithubWorkPayload({
-    origin: githubOrigin(source.actor, source.label),
+    origin: githubOrigin(source.actor),
     spec: {
       title: clampedTitle(source.title),
       description: source.body,
