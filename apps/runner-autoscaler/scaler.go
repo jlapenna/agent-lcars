@@ -43,6 +43,11 @@ type Scaler struct {
 	runners         runnerState
 	runnerImage     string
 	runnerMemory    int64
+	// runnerMemoryReservation is what the scheduler charges against a host's
+	// aggregate memory budget for one of this scale set's runners. It is at
+	// most runnerMemory (the cgroup ceiling); zero means "same as the
+	// ceiling". See memoryReservation and agent-lcars#1683.
+	runnerMemoryReservation int64
 	// memorySafetyMargin is the fraction of physical host memory kept outside
 	// aggregate declared runner reservations during placement.
 	memorySafetyMargin float64
@@ -1328,13 +1333,15 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
 
-	// runner_memory is both the Docker cgroup limit and the scheduler's
-	// reservation. Admit the candidate only where running containers plus
-	// in-flight starts leave the configured fraction of physical memory
-	// untouched. Candidates without runner_memory retain the historical
-	// unbounded behavior; operators must declare a requirement before it can
+	// runner_memory is the Docker cgroup limit; runner_memory_reservation
+	// (defaulting to that limit) is what the scheduler charges against the
+	// host. Admit the candidate only where running containers plus in-flight
+	// starts leave the configured fraction of physical memory untouched.
+	// Candidates without runner_memory retain the historical unbounded
+	// behavior; operators must declare a requirement before it can
 	// participate in reservation accounting.
 	if a.runnerMemory > 0 {
+		candidate := a.memoryReservation()
 		margin := a.resolvedMemorySafetyMargin()
 		var withinMemoryBudget []DockerHost
 		var blockedDetails []string
@@ -1350,18 +1357,19 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			if memoryErr := hostMemoryErrors[h.Name]; memoryErr != nil {
 				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
 				a.logger.Warn("Host memory inventory unavailable; refusing memory-bounded placement",
-					slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", a.runnerMemory), slog.Any("error", memoryErr))
+					slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", candidate), slog.Any("error", memoryErr))
 				continue
 			}
-			if reserved+a.runnerMemory > budget {
-				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d physical=%d", h.Name, reserved, a.runnerMemory, budget, total))
+			if reserved+candidate > budget {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d physical=%d", h.Name, reserved, candidate, budget, total))
 				a.logger.Info("Host lacks aggregate reserved-memory capacity for runner",
 					slog.String("host", h.Name),
 					slog.Int64("physical_memory_bytes", total),
 					slog.Int64("memory_budget_bytes", budget),
 					slog.Int64("running_reserved_bytes", running),
 					slog.Int64("in_flight_reserved_bytes", inFlight),
-					slog.Int64("candidate_reserved_bytes", a.runnerMemory),
+					slog.Int64("candidate_reserved_bytes", candidate),
+					slog.Int64("candidate_limit_bytes", a.runnerMemory),
 					slog.Float64("memory_safety_margin", margin))
 				continue
 			}
@@ -1369,7 +1377,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		}
 		if len(withinMemoryBudget) == 0 {
 			placementBlocked.WithLabelValues(scaleSet, placementReasonMemoryReservation).Inc()
-			return "", fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", a.runnerMemory, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+			return "", fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", candidate, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
 		}
 		withinHostLimits = withinMemoryBudget
 	}
@@ -1677,6 +1685,33 @@ const (
 	// since scale-set names are already process-wide unique.
 	runnerRegistrationLabelKey = "autoscaler.registration"
 )
+
+// memoryReservation is the per-runner amount charged against a host's
+// aggregate memory budget: runner_memory_reservation when declared, else the
+// runner_memory cgroup ceiling (agent-lcars#1683). Zero when the scale set is
+// unbounded.
+func (a *Scaler) memoryReservation() int64 {
+	if a.runnerMemoryReservation > 0 {
+		return a.runnerMemoryReservation
+	}
+	return a.runnerMemory
+}
+
+// repositoryFromURL reduces a registration URL such as
+// https://github.com/owner/name to the owner/name form the GitHub Actions
+// exporter uses in its repository label, so Prometheus can join queued-job
+// metrics to the scale sets declared for that repository.
+func repositoryFromURL(registrationURL string) string {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(registrationURL), "/")
+	trimmed = strings.TrimSuffix(trimmed, ".git")
+	if i := strings.Index(trimmed, "://"); i >= 0 {
+		trimmed = trimmed[i+3:]
+		if j := strings.Index(trimmed, "/"); j >= 0 {
+			trimmed = trimmed[j+1:]
+		}
+	}
+	return trimmed
+}
 
 func runnerLabels(scaleSet, registration string, memory int64) map[string]string {
 	return map[string]string{
@@ -2047,7 +2082,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 			Image:  preparedImage,
 			User:   "runner",
 			Cmd:    []string{"/home/runner/run.sh"},
-			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.runnerMemory),
+			Labels: runnerLabels(a.scaleSetName, a.registrationName, a.memoryReservation()),
 			Env:    runnerEnvironment(jit.EncodedJITConfig, host),
 		},
 		hostConfig,

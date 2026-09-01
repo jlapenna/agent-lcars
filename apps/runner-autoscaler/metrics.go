@@ -242,6 +242,27 @@ var (
 		},
 		[]string{"host"},
 	)
+	scaleSetMemoryReservationGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_scale_set_memory_reservation_bytes",
+			Help: "Per-runner memory reservation the scheduler charges against a host's budget when placing this scale set's runners; zero when the scale set is unbounded (agent-lcars#1683).",
+		},
+		[]string{"scale_set"},
+	)
+	scaleSetMemoryLimitGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_scale_set_memory_limit_bytes",
+			Help: "Docker cgroup memory ceiling applied to each of this scale set's runner containers; zero when unbounded.",
+		},
+		[]string{"scale_set"},
+	)
+	scaleSetInfoGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_scale_set_info",
+			Help: "Static description of a declared scale set: the registration and GitHub repository (owner/name) it serves. Always 1; join on repository against GitHub Actions queue metrics.",
+		},
+		[]string{"scale_set", "registration", "repository"},
+	)
 	drainingGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_draining",
@@ -421,6 +442,9 @@ func registerMetrics() {
 			hostFleetRunnersGauge,
 			hostMemoryReservedGauge,
 			hostMemoryBudgetGauge,
+			scaleSetMemoryReservationGauge,
+			scaleSetMemoryLimitGauge,
+			scaleSetInfoGauge,
 			drainingGauge,
 			drainAutoClearedTotal,
 			placementDecisions,

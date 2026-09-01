@@ -913,3 +913,36 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 		t.Errorf("readinessRequired not propagated to the coordinator: %#v", fleet.readinessRequired)
 	}
 }
+
+func TestOrchestratorConfigResolvesRunnerMemoryReservation(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  - name: default\n    labels: [default]\n", "  - name: default\n    labels: [default]\n    runner_memory: 14g\n    runner_memory_reservation: 8g\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range resolved.ScaleSets {
+		if c.ScaleSetName == "default" {
+			if c.RunnerMemory != "14g" || c.RunnerMemoryReservation != "8g" {
+				t.Fatalf("default scale set memory = (%q, %q), want (14g, 8g)", c.RunnerMemory, c.RunnerMemoryReservation)
+			}
+			return
+		}
+	}
+	t.Fatal("default scale set not resolved")
+}
+
+func TestOrchestratorConfigRejectsBadRunnerMemoryReservation(t *testing.T) {
+	cases := map[string]string{
+		"exceeds ceiling": "    runner_memory: 14g\n    runner_memory_reservation: 16g\n",
+		"without ceiling": "    runner_memory_reservation: 8g\n",
+		"unparseable":     "    runner_memory: 14g\n    runner_memory_reservation: lots\n",
+		"zero":            "    runner_memory: 14g\n    runner_memory_reservation: 0\n",
+	}
+	for name, extra := range cases {
+		body := strings.Replace(validOrchestratorYAML, "  - name: default\n    labels: [default]\n", "  - name: default\n    labels: [default]\n"+extra, 1)
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "runner_memory_reservation") {
+			t.Fatalf("%s: error = %v, want runner_memory_reservation complaint", name, err)
+		}
+	}
+}
