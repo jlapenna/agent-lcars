@@ -228,16 +228,24 @@ credentials revoked and their re-entry preflight, as today.
 | phase 2 | Usage-aware charging and per-host overcommit (C); `lane_admissible_slots` and host-labelled block reasons (E); host roles and the fleet invariant alert (F)                                            | proposed  |
 | phase 3 | Degradation ladder (D) with its floor invariant, behind a config flag, canaried on the heavy tier first                                                                                                | proposed  |
 
-## Open decisions
+## Decisions (approved 2026-09-01)
 
-- 8 GiB reservation for the default lane, or 10 GiB (five slots instead of
-  seven, a wider margin above p95)?
-- Is a 1.25 overcommit on the 30 GiB hosts acceptable, given pressure gates and
-  zero OOM kills in thirty days?
-- Should homelab, the control host, ever place a heavy runner, or only light
-  and control tiers (the proposal says only light and control)?
-- Tier names for the sprinkles split: `ci-light` / `ci-heavy`, or reuse
-  `control` for light and keep `default` heavy?
+The maintainer approved the proposal with its recommended defaults:
+
+- **Default-lane reservation: 8 GiB** (live since homelab#1079). Revisit only
+  with a fresh per-job measurement; 10 GiB stays the documented fallback if
+  co-tenant pressure ever shows up in the PSI gates.
+- **Overcommit: 1.25 on the 30 GiB hosts** (laforge, laptop), 1.0 elsewhere,
+  applied only while `MemAvailable` and memory PSI sit inside the soft
+  thresholds (phase 2).
+- **homelab (the control host) hosts only light and control tiers**, never a
+  heavy runner; its `runner_limit` rises to 2 only alongside a light tier.
+- **Tier names: `ci-light` and `ci-heavy`** for the sprinkles split; `control`
+  keeps its narrow meaning (control-plane glue), `default` is retired once
+  every consumer has moved.
+
+Implementation issues are tracked as sub-items of agent-lcars#1685, one per
+phase item.
 
 The expected result of phase 0 alone, with the same four hosts: seven default
 slots instead of two, and an alert that says "no host can admit this lane" the
