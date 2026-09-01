@@ -147,13 +147,10 @@ function issueResponse(overrides: Record<string, unknown> = {}) {
 }
 
 /** A schema-safe stand-in for `@agent-lcars/orchestrator`'s own
- * `{repo}#{issue}/r{generation}` runId format: `[A-Za-z0-9._:-]+` is the
- * *marker's* own intentId character class (`libs/dispatch-contracts/src/
- * marker.ts`'s `DISPATCH_MARKER_RE`), which a real runId's `/`/`#`
- * characters cannot satisfy - orchestrator-dispatch.ts currently passes the
- * real runId verbatim as `broker_intent_id`. The marker parser was widened
- * in #1187, so this fixture exercises the production-reachable join with an
- * id the marker regex can parse. */
+ * `{repo}#{issue}/r{generation}` runId format. Fixtures here use a simpler
+ * `intent-abc`-shaped ID rather than a real runId's `/`/`#`-bearing form;
+ * orchestrator-dispatch.ts passes the real runId verbatim as
+ * `broker_intent_id` in production. */
 function orchestratorRun(
   overrides: Partial<{
     runId: string;

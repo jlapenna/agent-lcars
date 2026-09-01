@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ulid, workIdFromIntentId } from './ulid';
+import { ulid } from './ulid';
 
 const WORK_ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
@@ -18,22 +18,5 @@ describe('ulid', () => {
   it('does not repeat across many calls', () => {
     const seen = new Set(Array.from({ length: 1000 }, () => ulid()));
     expect(seen.size).toBe(1000);
-  });
-});
-
-describe('workIdFromIntentId', () => {
-  it('extracts the ulid from a native run id', () => {
-    expect(workIdFromIntentId('work:01M107KR3X6VDH7NZ4JDXZNSS2/r3')).toBe(
-      '01M107KR3X6VDH7NZ4JDXZNSS2',
-    );
-  });
-
-  it.each([
-    'gh:jlapenna/agent-lcars#12/r1',
-    'work:01M107KR3X6VDH7NZ4JDXZNSS2',
-    'work:not-a-ulid/r1',
-    '',
-  ])('returns undefined for %j', (input) => {
-    expect(workIdFromIntentId(input)).toBeUndefined();
   });
 });

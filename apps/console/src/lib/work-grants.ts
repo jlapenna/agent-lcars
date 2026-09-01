@@ -64,7 +64,3 @@ export function workMaxLiveRuns(): number {
     );
   return n;
 }
-
-export function _resetWorkGrantsForTesting(): void {
-  cached = undefined;
-}

@@ -144,10 +144,6 @@ export type WorkAnchor = z.infer<typeof workAnchorSchema>;
 export const taskIdSchema = z.union([githubAnchorSchema, workAnchorSchema]);
 export type TaskId = z.infer<typeof taskIdSchema>;
 
-export function isGithubAnchor(id: TaskId): id is GithubAnchor {
-  return 'repo' in id;
-}
-
 export function isWorkAnchor(id: TaskId): id is WorkAnchor {
   return 'workId' in id;
 }

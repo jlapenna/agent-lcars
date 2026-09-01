@@ -1,7 +1,5 @@
 /// <reference lib="dom" />
 
-export * from '../log-level';
-export * from '../utils';
 export type {
   LogEnricher,
   LogEnrichment,

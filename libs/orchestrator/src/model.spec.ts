@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GITHUB_REPO_MAX_LENGTH,
-  isGithubAnchor,
   isWorkAnchor,
   outboxEntrySchema,
   RUN_ID_MAX_LENGTH,
@@ -21,7 +20,6 @@ describe('taskIdSchema', () => {
   it('keeps the GitHub anchor shape byte-for-byte', () => {
     const parsed = taskIdSchema.parse({ repo: 'octo/example', issue: 7 });
     expect(parsed).toEqual({ repo: 'octo/example', issue: 7 });
-    expect(isGithubAnchor(parsed)).toBe(true);
     expect(isWorkAnchor(parsed)).toBe(false);
   });
 
@@ -29,7 +27,6 @@ describe('taskIdSchema', () => {
     const parsed = taskIdSchema.parse({ workId: ULID });
     expect(parsed).toEqual({ workId: ULID });
     expect(isWorkAnchor(parsed)).toBe(true);
-    expect(isGithubAnchor(parsed)).toBe(false);
   });
 
   it('rejects an anchor that mixes both shapes', () => {

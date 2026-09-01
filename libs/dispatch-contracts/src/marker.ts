@@ -1,40 +1,14 @@
 /**
- * The dispatch attempt marker: `[dispatch:g<generation>:<intentId>]`.
+ * Attempt identity and the artifact-claim marker.
  *
- * It is the join key between a broker generation and the GitHub Actions run
- * that executed it. The worker workflows embed it in `run-name:`, so it
- * survives in `display_title` on every run listing — which is what lets the
- * broker rebind a run after a lost dispatch response, and what lets the
- * console attribute a run to the exact attempt (not merely to the issue).
- *
- * It had three independent implementations: two hand-built template literals
- * inside `.github/actions/dispatch-broker` (main.mjs's `assertWorkerRun` and
- * github-api.mjs's `findRunsForGeneration`, unguarded duplicates of each
- * other), the console's `DISPATCH_MARKER_RE`, and four copy-pasted `run-name:`
- * strings in YAML. Only the YAML-to-console join was contract-tested; the two
- * broker copies were not covered at all.
+ * `formatAttemptId` derives an attempt's stable identity from its generation
+ * and intent ID; `formatClaimMarker` renders the hidden HTML-comment marker
+ * an agent stamps into a deliverable artifact's body to claim it for that
+ * attempt. Both are canonical cross-language specs:
+ * `apps/runner-autoscaler/runner-image/runtime/verify-outcome.sh`'s bash
+ * matcher re-implements `formatClaimMarker`'s format and must be kept in
+ * lockstep with it.
  */
-
-/**
- * Anchored to the marker's own delimiters rather than to the end of the title,
- * because `run-name:` puts the issue number and role text in front of it.
- * The intent-ID character class matches what the legacy broker minted (the
- * `:` and `.` separators older intent IDs used) plus `/` and `#`, which
- * `@agent-lcars/orchestrator`'s run IDs (`{repo}#{issue}/r{generation}`,
- * e.g. `jlapenna/agent-lcars#1178/r1`) require -- the outbox drain
- * (`orchestrator-dispatch.ts`) passes that runId verbatim as
- * `broker_intent_id`, which becomes this marker's intentId unchanged.
- * `]` is deliberately excluded (not merely unlisted): it is the marker's own
- * closing delimiter, so admitting it into the class would let a
- * pathological intentId absorb the `]` and defeat the anchor below rather
- * than simply fail to match past it.
- */
-const DISPATCH_MARKER_RE = /\[dispatch:g(\d+):([A-Za-z0-9._:/#-]+)\]/u;
-
-export interface AttemptMarker {
-  generation: number;
-  intentId: string;
-}
 
 /** An attempt's generation and intent ID, accepted as either a number or the
  * literal Actions expression string used to render one before substitution. */
@@ -64,39 +38,6 @@ interface AttemptLike {
  */
 export function formatAttemptId({ generation, intentId }: AttemptLike): string {
   return `g${generation}:${intentId}`;
-}
-
-/**
- * Render the marker for a generation.
- *
- * The marker is the attempt ID in brackets — one definition, so the two can
- * never disagree about what identifies an attempt.
- *
- * Accepts strings as well as numbers so the workflow-contract tests can render
- * it with GitHub Actions' own `${{ inputs.broker_generation }}` expressions
- * substituted in, and assert the YAML template against this same function
- * instead of against another copy of the literal.
- */
-export function formatDispatchMarker(attempt: AttemptLike): string {
-  return `[dispatch:${formatAttemptId(attempt)}]`;
-}
-
-/**
- * Recover the attempt a run title names.
- *
- * Returns `undefined` for runs that predate the broker rollout and for any run
- * dispatched by hand outside it — a manual `workflow_dispatch` leaves the
- * inputs blank, which GitHub Actions renders as an empty `[dispatch:g:]` that
- * deliberately does not match. Both cases fall back to issue-number
- * attribution only.
- */
-export function parseDispatchMarker(
-  displayTitle: string | undefined | null,
-): AttemptMarker | undefined {
-  const match = displayTitle?.match(DISPATCH_MARKER_RE);
-  return match
-    ? { generation: Number(match[1]), intentId: match[2] }
-    : undefined;
 }
 
 /**

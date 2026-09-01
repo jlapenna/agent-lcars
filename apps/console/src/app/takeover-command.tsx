@@ -9,7 +9,7 @@ import { IconCheck, IconCopy } from '@tabler/icons-react';
  * (claimed-idle items, active CLI sessions) - extracted from the original
  * `ActionItemCard`-only inline markup (#3024) so all three places render it
  * identically. Copy interactivity needs its own client boundary, same
- * pattern as `CancelRunButton`/`RefreshButton` elsewhere in this app.
+ * pattern as `RefreshButton` elsewhere in this app.
  */
 export function TakeoverCommand({ command }: { command: string }) {
   return (
