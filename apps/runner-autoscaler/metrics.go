@@ -256,6 +256,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	scaleSetLabelInfoGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_scale_set_label_info",
+			Help: "One series per runs-on label a declared scale set serves. Always 1; join label to the GitHub Actions exporter's runs_on so queue depth is attributed to the lane that should drain it (agent-lcars#1699).",
+		},
+		[]string{"scale_set", "label"},
+	)
 	runnerJobInfoGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_runner_job_info",
@@ -453,6 +460,7 @@ func registerMetrics() {
 			scaleSetMemoryLimitGauge,
 			scaleSetInfoGauge,
 			runnerJobInfoGauge,
+			scaleSetLabelInfoGauge,
 			drainingGauge,
 			drainAutoClearedTotal,
 			placementDecisions,

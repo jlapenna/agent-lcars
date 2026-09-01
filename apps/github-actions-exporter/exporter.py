@@ -106,6 +106,44 @@ def workflow_label(run: dict[str, Any]) -> str:
     return metric_label(run.get("name"))
 
 
+# Labels GitHub itself understands for hosted runners; a job carrying only
+# these is not routed to the fleet at all.
+HOSTED_RUNNER_LABEL_PREFIXES = ("ubuntu-", "windows-", "macos-")
+HOSTED_RUNNER_LABELS = {
+    "self-hosted",
+    "linux",
+    "windows",
+    "macos",
+    "x64",
+    "arm64",
+    "arm",
+}
+
+
+def job_runs_on(job: dict[str, Any]) -> str:
+    """The fleet label a job's runs-on selects, or '' for a GitHub-hosted job.
+
+    The fleet declares every scale set under a short label and a long one
+    (`default`, `homelab-autoscale-default`); a workflow names either. The
+    first non-hosted label in the job's own order is exported so queue depth
+    can be attributed to the lane that should drain it (agent-lcars#1699).
+    Cardinality is bounded by the labels workflows actually use.
+    """
+    labels = job.get("labels")
+    if not isinstance(labels, list):
+        return ""
+    for label in labels:
+        if not isinstance(label, str):
+            continue
+        value = metric_label(label, "")
+        if not value or value in HOSTED_RUNNER_LABELS:
+            continue
+        if value.startswith(HOSTED_RUNNER_LABEL_PREFIXES):
+            continue
+        return value
+    return ""
+
+
 def job_execution(job: dict[str, Any]) -> str:
     """Classify an opt-in full-suite job using one bounded dimension."""
     if metric_label(job.get("status")) != "completed":
@@ -567,6 +605,10 @@ class Database:
                 self.connection.execute(
                     "ALTER TABLE jobs ADD COLUMN execution TEXT NOT NULL DEFAULT 'unknown'"
                 )
+            if "runs_on" not in columns:
+                self.connection.execute(
+                    "ALTER TABLE jobs ADD COLUMN runs_on TEXT NOT NULL DEFAULT ''"
+                )
             active_placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
             # A completed workflow cannot still have a queued/running job. GitHub's
             # run endpoint can become terminal a poll before its jobs endpoint does;
@@ -892,8 +934,8 @@ class Database:
                     INSERT INTO jobs (
                         repository, id, run_id, workflow, name, status,
                         conclusion, created_at, started_at, completed_at,
-                        runner_group, execution, concurrency_group
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        runner_group, execution, concurrency_group, runs_on
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(repository, id) DO UPDATE SET
                         run_id = excluded.run_id,
                         workflow = excluded.workflow,
@@ -905,7 +947,8 @@ class Database:
                         completed_at = excluded.completed_at,
                         runner_group = excluded.runner_group,
                         execution = excluded.execution,
-                        concurrency_group = excluded.concurrency_group
+                        concurrency_group = excluded.concurrency_group,
+                        runs_on = excluded.runs_on
                     """,
                     (
                         repository,
@@ -921,6 +964,7 @@ class Database:
                         metric_label(job.get("runner_group_name"), "unassigned"),
                         job_execution(job),
                         concurrency_group,
+                        job_runs_on(job),
                     ),
                 )
             jobs_snapshot_consistent = True
@@ -1211,15 +1255,17 @@ class DatabaseMetrics:
                 "status",
                 "runner_group",
                 "concurrency_group",
+                "runs_on",
             ),
         )
         for row in self.database.rows(
             f"""
             SELECT repository, workflow, name, status, runner_group, concurrency_group,
-                   COUNT(*) AS total
+                   runs_on, COUNT(*) AS total
             FROM jobs
             WHERE status IN ({placeholders})
-            GROUP BY repository, workflow, name, status, runner_group, concurrency_group
+            GROUP BY repository, workflow, name, status, runner_group, concurrency_group,
+                     runs_on
             """,
             ACTIVE_STATUSES,
         ):
@@ -1231,6 +1277,7 @@ class DatabaseMetrics:
                     row["status"],
                     row["runner_group"],
                     row["concurrency_group"],
+                    row["runs_on"],
                 ],
                 float(row["total"]),
             )
@@ -1238,22 +1285,22 @@ class DatabaseMetrics:
 
         oldest_queued = GaugeMetricFamily(
             "github_actions_job_oldest_queued_seconds",
-            "Age in seconds of the oldest currently queued job.",
-            labels=("repository", "workflow", "job"),
+            "Age in seconds of the oldest currently queued job. runs_on is the fleet label the job targets, empty for GitHub-hosted jobs (agent-lcars#1699).",
+            labels=("repository", "workflow", "job", "runs_on"),
         )
         placeholders = ",".join("?" for _ in QUEUED_STATUSES)
         now = time.time()
         for row in self.database.rows(
             f"""
-            SELECT repository, workflow, name, MIN(created_at) AS oldest
+            SELECT repository, workflow, name, runs_on, MIN(created_at) AS oldest
             FROM jobs
             WHERE status IN ({placeholders}) AND created_at IS NOT NULL
-            GROUP BY repository, workflow, name
+            GROUP BY repository, workflow, name, runs_on
             """,
             QUEUED_STATUSES,
         ):
             oldest_queued.add_metric(
-                [row["repository"], row["workflow"], row["name"]],
+                [row["repository"], row["workflow"], row["name"], row["runs_on"]],
                 max(0, now - float(row["oldest"])),
             )
         yield oldest_queued

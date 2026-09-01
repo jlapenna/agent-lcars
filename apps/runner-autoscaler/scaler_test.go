@@ -1941,3 +1941,28 @@ func TestWorkflowFromRef(t *testing.T) {
 		}
 	}
 }
+
+// agent-lcars#1699: every runs-on label a scale set declares is published so
+// queue depth carrying a runs_on label can be attributed to the lane.
+func TestPublishScaleSetInfoExportsEveryDeclaredLabel(t *testing.T) {
+	scaleSetLabelInfoGauge.Reset()
+	cfg := Config{
+		ScaleSetName: "ci-heavy", RegistrationName: "primary", RegistrationURL: "https://github.com/acme/widgets",
+		Labels: []string{"ci-heavy", "homelab-autoscale-ci-heavy"},
+	}
+	publishScaleSetInfo(cfg, 8*gibibyte, 14*gibibyte)
+	for _, label := range cfg.Labels {
+		if got := testutil.ToFloat64(scaleSetLabelInfoGauge.WithLabelValues("ci-heavy", label)); got != 1 {
+			t.Fatalf("scale_set_label_info{scale_set=ci-heavy,label=%s} = %v, want 1", label, got)
+		}
+	}
+	if n := testutil.CollectAndCount(scaleSetLabelInfoGauge); n != 2 {
+		t.Fatalf("label info series = %d, want exactly the two declared labels", n)
+	}
+	if got := testutil.ToFloat64(scaleSetInfoGauge.WithLabelValues("ci-heavy", "primary", "acme", "acme/widgets")); got != 1 {
+		t.Fatalf("scale_set_info for ci-heavy = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(scaleSetMemoryReservationGauge.WithLabelValues("ci-heavy")); got != float64(8*gibibyte) {
+		t.Fatalf("reservation gauge = %v, want 8 GiB", got)
+	}
+}
