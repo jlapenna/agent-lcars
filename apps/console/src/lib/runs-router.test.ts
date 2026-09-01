@@ -66,12 +66,14 @@ async function seedQueuedRun(
     workId: string;
     pipeline?: string;
     now: string;
-    /** Overrides the stored spec's shape entirely -- used only by the
-     *  "corrupted spec" brief test below, which needs a stored spec that
-     *  fails `workSpecSchema`, something a real request path (create,
+    /** Overrides the stored spec's shape entirely -- used by corrupted Work
+     *  brief tests, which need stored data a real request path (create,
      *  redispatch, the schedule tick) can never produce since they all
-     *  validate through it first. */
+     *  validate through the canonical Work schema first. */
     spec?: unknown;
+    /** Overrides the complete persisted Work payload for malformed-record
+     *  tests. The orchestrator deliberately stores Work opaquely. */
+    work?: Record<string, unknown>;
     /** A Codex credential run must still be authorized for this exact target
      * repository even though the credential lineage itself is central. */
     targetRepo?: string;
@@ -85,7 +87,7 @@ async function seedQueuedRun(
     taskId: { workId: opts.workId },
     requestId: opts.workId,
     pipeline,
-    work: {
+    work: opts.work ?? {
       origin: { principal: 'user:jlapenna', channel: 'api' },
       spec: opts.spec ?? {
         title: 't',
@@ -613,7 +615,7 @@ describe('brief', () => {
       work: {
         origin: {
           principal: 'github-actions:octo/example:workflow:dispatch.yml',
-          channel: 'github-dispatch',
+          channel: 'github',
         },
         spec: {
           title: 'A real GitHub title',
@@ -658,11 +660,52 @@ describe('brief', () => {
     });
   });
 
-  it('500s on a stored spec that no longer parses as workSpecSchema, without leaking it', async () => {
+  it('refuses a GitHub run whose stored Work has no origin', async () => {
+    const { store, orchestrator, now } = fixture();
+    const outcome = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue: 44 },
+      requestId: 'github-brief-missing-origin',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+      // The durable core stores opaque bounded Work, so this represents an
+      // old/corrupt record rather than a value current admission can create.
+      work: {
+        spec: {
+          title: 'Missing origin',
+          description: 'Must not execute.',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+    });
+    if ('refused' in outcome || outcome.run === undefined) {
+      throw new Error('expected a queued GitHub run');
+    }
+    const runId = outcome.run.runId;
+    await store.enqueueRun({ runId, now: NOW });
+    await orchestrator.confirmDispatch(runId);
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(401);
+    expect(r.json).toMatchObject({ message: 'run has no dispatchable Work' });
+  });
+
+  it('500s on a native stored Work with an invalid origin, without leaking it', async () => {
     // No real request path can produce this -- `mintItem` always validates
-    // through `workSpecSchema` first (`work-mint.ts`) -- so this reaches
+    // through `workPayloadSchema` first (`work-mint.ts`) -- so this reaches
     // under the router the same way `forceLeaseExpired` does, to prove the
-    // handler itself treats a corrupted stored spec as the server bug it
+    // handler itself treats a corrupted stored Work as the server bug it
     // is: a 500 that never echoes the raw stored value back to the caller.
     const errorSpy = vi
       .spyOn(console, 'error')
@@ -671,8 +714,16 @@ describe('brief', () => {
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-corrupt-spec'),
       now: NOW,
-      // Missing `pipeline` and `target` -- fails `workSpecSchema`.
-      spec: { title: 't', description: 'd', secretField: 'do-not-leak-me' },
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'not-a-channel' },
+        spec: {
+          title: 't',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'jlapenna/agent-lcars' },
+          secretField: 'do-not-leak-me',
+        },
+      },
     });
     const token = mintRunToken();
     await store.claimQueuedRun({
@@ -690,7 +741,7 @@ describe('brief', () => {
     expect(JSON.stringify(r.json)).not.toContain('secretField');
     expect(JSON.stringify(r.json)).not.toContain('do-not-leak-me');
     expect(errorSpy).toHaveBeenCalledWith(
-      'agent-lcars: claimed run has a stored spec that no longer parses',
+      'agent-lcars: claimed run has stored Work that no longer parses',
       expect.objectContaining({ runId }),
     );
     errorSpy.mockRestore();
@@ -752,6 +803,32 @@ describe('brief', () => {
     );
     expect(r.status).toBe(200);
     expect((r.json as { resume?: unknown }).resume).toBeUndefined();
+  });
+
+  it('refuses a claimed run with only one persisted resume field', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-partial-resume'),
+      now: NOW,
+      params: { mode: 'implement', resumeSessionId: 'sess_1' },
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(r.status).toBe(401);
+    expect(r.json).toMatchObject({
+      message: 'run has an incomplete resume request',
+    });
   });
 
   it('refuses a claimed run with no persisted dispatch mode', async () => {
