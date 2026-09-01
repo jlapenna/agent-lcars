@@ -256,6 +256,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	runnerJobInfoGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_runner_job_info",
+			Help: "Which GitHub Actions job a busy runner container is executing. One series per busy runner, removed on completion; join on runner (= container name) to cAdvisor memory to measure per-job footprints (agent-lcars#1693).",
+		},
+		[]string{"scale_set", "runner", "job_id", "job_name", "workflow", "repository"},
+	)
 	scaleSetInfoGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_scale_set_info",
@@ -445,6 +452,7 @@ func registerMetrics() {
 			scaleSetMemoryReservationGauge,
 			scaleSetMemoryLimitGauge,
 			scaleSetInfoGauge,
+			runnerJobInfoGauge,
 			drainingGauge,
 			drainAutoClearedTotal,
 			placementDecisions,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1888,6 +1889,55 @@ func TestRegistrationTarget(t *testing.T) {
 		owner, repository := registrationTarget(in)
 		if owner != want[0] || repository != want[1] {
 			t.Errorf("registrationTarget(%q) = (%q, %q), want (%q, %q)", in, owner, repository, want[0], want[1])
+		}
+	}
+}
+
+// agent-lcars#1693: the runner->job association is a metric keyed by the
+// container name, published at JobStarted and removed when the job completes
+// or the runner is deregistered, so cAdvisor memory can be joined to job names.
+func TestRunnerJobInfoFollowsTheJobLifecycle(t *testing.T) {
+	scaler := &Scaler{
+		scaleSetName: "default",
+		runners:      runnerState{idle: map[string]runnerRef{"runner-default-abc": {}}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	job := &scaleset.JobStarted{RunnerName: "runner-default-abc", JobMessageBase: scaleset.JobMessageBase{
+		JobID: "job-1", JobDisplayName: "Full verification", OwnerName: "supersprinklesracing", RepositoryName: "sprinkles",
+		JobWorkflowRef: "supersprinklesracing/sprinkles/.github/workflows/ci.yml@refs/heads/main",
+	}}
+	if err := scaler.HandleJobStarted(context.Background(), job); err != nil {
+		t.Fatalf("HandleJobStarted() error = %v", err)
+	}
+	labels := prometheus.Labels{"scale_set": "default", "runner": "runner-default-abc", "job_id": "job-1",
+		"job_name": "Full verification", "workflow": "ci", "repository": "supersprinklesracing/sprinkles"}
+	if got := testutil.ToFloat64(runnerJobInfoGauge.With(labels)); got != 1 {
+		t.Fatalf("runner_job_info = %v, want 1 while the job runs", got)
+	}
+	scaler.forgetRunnerJob("runner-default-abc")
+	if _, ok := scaler.runnerJobs.Load("runner-default-abc"); ok {
+		t.Fatal("job-info labels retained after forgetRunnerJob")
+	}
+	if n := testutil.CollectAndCount(runnerJobInfoGauge); n != 0 {
+		t.Fatalf("runner_job_info series after completion = %d, want 0", n)
+	}
+	// A job completed without ever being assigned a runner carries no name
+	// and must not publish an empty-runner series.
+	scaler.recordRunnerJob(&scaleset.JobStarted{JobMessageBase: scaleset.JobMessageBase{JobID: "job-2"}})
+	if n := testutil.CollectAndCount(runnerJobInfoGauge); n != 0 {
+		t.Fatalf("runner_job_info series for a runner-less job = %d, want 0", n)
+	}
+}
+
+func TestWorkflowFromRef(t *testing.T) {
+	for in, want := range map[string]string{
+		"supersprinklesracing/sprinkles/.github/workflows/ci.yml@refs/heads/main":  "ci",
+		"jlapenna/homelab/.github/workflows/reconcile-main.yaml@refs/pull/1/merge": "reconcile-main",
+		"deploy.yml": "deploy",
+		"":           "",
+	} {
+		if got := workflowFromRef(in); got != want {
+			t.Errorf("workflowFromRef(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

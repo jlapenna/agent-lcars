@@ -423,6 +423,27 @@ the remaining capacity. For example, one 12 GiB reservation on a 16 GiB host
 allows a 2 GiB candidate with the default margin but rejects a second 12 GiB
 candidate.
 
+## Measuring per-job memory
+
+Container labels are fixed at create time and a JIT runner only learns its
+job when GitHub assigns one, so the runner-to-job association is a metric:
+`github_runner_autoscaler_runner_job_info{scale_set,runner,job_id,job_name,workflow,repository}`
+is 1 for every busy runner and disappears on completion (agent-lcars#1693).
+`runner` is the container name, which is also cAdvisor's `name` label, so the
+peak memory of every job over a week is one query:
+
+```promql
+quantile by (job_name) (0.95,
+  max_over_time(container_memory_max_usage_bytes{name=~"runner-homelab-autoscale-.*"}[7d])
+  * on (name) group_left (job_name, workflow)
+  label_replace(last_over_time(github_runner_autoscaler_runner_job_info[7d]), "name", "$1", "runner", "(.*)")
+)
+```
+
+Swap `quantile` for `max` or `count` to size a lane's ceiling or see how many
+runs a job name accounts for; this is the measurement the light/heavy tier
+split is made from.
+
 New runner containers record their exact reservation (not the ceiling) in
 the `autoscaler.runner-memory-bytes` Docker label. That makes accounting stable
 across live config reloads; a missing label is a current-image contract error.
