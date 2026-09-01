@@ -12,7 +12,10 @@ import {
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import { admitGithubWork } from '@/lib/github-work-admission';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
-import { interpretDelivery } from '@/lib/orchestrator-ingest';
+import {
+  type IngestDecision,
+  interpretDelivery,
+} from '@/lib/orchestrator-ingest';
 
 /**
  * Pure-ish HTTP handlers for the two control-plane routes, kept out of
@@ -102,6 +105,22 @@ async function labelRedispatchParams(
       };
 }
 
+/** A delivery normally owns its own idempotency identity. Some intake
+ * protocols can also supply a durable identity shared with a separate
+ * first-writer path. Use it only before the anchor's Work exists: later
+ * deliveries are intentional redispatches and must retain their delivery ID.
+ * The authoritative Task read is merely a classification hint; the shared
+ * orchestrator transaction remains the final concurrency boundary. */
+async function admissionRequestId(
+  deps: Pick<OrchestratorRouteDeps, 'store'>,
+  decision: IngestDecision,
+): Promise<string> {
+  if (decision.unadmittedRequestId === undefined) return decision.requestId;
+  return (await deps.store.readTask(decision.taskId)) === undefined
+    ? decision.unadmittedRequestId
+    : decision.requestId;
+}
+
 function internalError(context: string, error: unknown): RouteResult {
   console.error(`agent-lcars: orchestrator ${context} handling failed`, error);
   return { status: 500, body: { error: 'internal' } };
@@ -171,10 +190,11 @@ export async function handleWebhookDelivery(
       taskId: interpreted.taskId,
       params: interpreted.params,
     });
+    const requestId = await admissionRequestId(deps, interpreted);
 
     const outcome = await admitGithubWork(deps, {
       anchor: interpreted.taskId,
-      requestId: interpreted.requestId,
+      requestId,
       params,
       work: interpreted.work,
     });

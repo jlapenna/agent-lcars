@@ -1,3 +1,4 @@
+import { formatQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import {
   MemoryStore,
   Orchestrator,
@@ -394,6 +395,43 @@ describe('handleWebhookDelivery', () => {
         },
       }),
     );
+  });
+
+  it('uses a later Quick Task label delivery as a redispatch after Work exists', async () => {
+    const { deps, store } = fixture();
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const payload = labeledIssuePayload({
+      issue: {
+        number: ISSUE.issue,
+        title: 'Quick Task',
+        body: `Fix this.\n\n${formatQuickTaskMarker({
+          requestId,
+          digest: 'a'.repeat(64),
+        })}`,
+      },
+    });
+
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'quick-task-first-label',
+      payload,
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+
+    const second = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'quick-task-relabel',
+      payload,
+    });
+
+    expect(second).toMatchObject({
+      status: 200,
+      body: { runId: `${REPO}#${ISSUE.issue}/r2` },
+    });
+    expect(await store.listRuns(ISSUE)).toMatchObject([
+      { requestId: `console-quick-task:${requestId}` },
+      { requestId: 'quick-task-relabel' },
+    ]);
   });
 
   it('acknowledges a changed pipeline label without reassigning immutable Work', async () => {

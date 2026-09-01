@@ -27,6 +27,10 @@ export interface IngestDecision {
   /** The `x-github-delivery` GUID; doubles as the orchestrator's
    *  idempotency key for this request. */
   requestId: string;
+  /** A durable first-admission identity, if the delivery carries one. The
+   * route selects it only while this anchor has no authoritative Task; once
+   * Work exists, later deliveries retain their own delivery identity. */
+  unadmittedRequestId?: string;
   pipeline: Pipeline;
   /** Always includes `mode`; includes `reply` when `mode` is `'reply'`. */
   params: Record<string, string>;
@@ -124,6 +128,7 @@ function buildRequestDecision(
   pipeline: Pipeline,
   params: Record<string, string>,
   work: WorkPayload,
+  unadmittedRequestId?: string,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
@@ -131,6 +136,7 @@ function buildRequestDecision(
     kind: 'request',
     taskId: taskId.data,
     requestId,
+    ...(unadmittedRequestId === undefined ? {} : { unadmittedRequestId }),
     pipeline,
     params,
     work,
@@ -138,15 +144,14 @@ function buildRequestDecision(
 }
 
 /** A Quick Task marker names the browser intent that created its issue. The
- * console's direct admission uses this same request identity, so a label
- * webhook that wins the race remains a duplicate even after its first Run
- * settles. Ordinary labeled issues retain their delivery-id idempotency. */
-function labelAdmissionRequestId(
+ * route may use this on an unadmitted anchor to converge its first label
+ * webhook with direct console admission. It deliberately does not replace a
+ * delivery identity once authoritative Work already exists. */
+function unadmittedLabelRequestId(
   body: string | null | undefined,
-  deliveryId: string,
-): string {
+): string | undefined {
   const quickTask = parseTerminalQuickTaskBody(body);
-  return quickTask ? `console-quick-task:${quickTask.requestId}` : deliveryId;
+  return quickTask ? `console-quick-task:${quickTask.requestId}` : undefined;
 }
 
 function interpretIssuesEvent(
@@ -175,12 +180,13 @@ function interpretIssuesEvent(
   return buildRequestDecision(
     repository.full_name,
     issue.number,
-    labelAdmissionRequestId(issue.body, deliveryId),
+    deliveryId,
     pipeline,
     {
       mode: 'implement',
     },
     work,
+    unadmittedLabelRequestId(issue.body),
   );
 }
 
