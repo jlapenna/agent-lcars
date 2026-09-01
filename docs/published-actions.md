@@ -15,14 +15,15 @@ their operating constraints.
 
 ## Published composite actions
 
-| Action                  | Purpose                                                            |
-| ----------------------- | ------------------------------------------------------------------ |
-| `mint-agent-token`      | Mint a scoped Agent LCARS App installation token.                  |
-| `assert-repo-vars`      | Report all missing required repository variables.                  |
-| `merge-live-base`       | Merge the live base into a PR head before validation.              |
-| `setup-nx-remote-cache` | Configure trusted Nx jobs for the shared L2 cache.                 |
-| `deploy-verify`         | Poll a deployed URL and optionally annotate deployment status.     |
-| `oidc-post`             | Send an OIDC-authenticated request and expose its single response. |
+| Action                  | Purpose                                                                 |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `mint-agent-token`      | Mint a scoped Agent LCARS App installation token.                       |
+| `assert-repo-vars`      | Report all missing required repository variables.                       |
+| `merge-live-base`       | Merge the live base into a PR head before validation.                   |
+| `setup-nx-remote-cache` | Configure trusted Nx jobs for the shared L2 cache.                      |
+| `deploy-verify`         | Poll a deployed URL and optionally annotate deployment status.          |
+| `oidc-post`             | Send an OIDC-authenticated request and expose its single response.      |
+| `control-flag`          | Make an engaged fleet control flag visible in logs and the job summary. |
 
 ## Published reusable workflows
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for the patches/nx+23.1.1.patch fix (issue #942,
+# Regression test for the patches/nx+23.1.2.patch fix (issue #942,
 # sprinkles#4255): a transient network failure reading the self-hosted Nx
 # remote cache must not crash an otherwise fully-green nx run. Runs the real
 # installed (patched) nx binary against a scratch fixture workspace and a
