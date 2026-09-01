@@ -411,9 +411,10 @@ host drops out. It requires `runner_memory`, must not exceed it, and defaults
 to it when omitted. The per-lane values are exported as
 `github_runner_autoscaler_scale_set_memory_reservation_bytes` and
 `github_runner_autoscaler_scale_set_memory_limit_bytes`, and
-`github_runner_autoscaler_scale_set_info{scale_set,registration,repository}`
-maps each lane to the GitHub repository it serves so queue-depth metrics can
-be joined to the lane that should drain them.
+`github_runner_autoscaler_scale_set_info{scale_set,registration,owner,repository}`
+maps each lane to the GitHub repository it serves (repository is empty for an
+organization-scoped registration, which serves many) so queue-depth metrics
+can be joined to the lane that should drain them.
 
 The margin must be greater than zero and less than one. Admission is
 candidate-sized rather than a global runner-count reduction: if a 12 GiB E2E

@@ -1876,15 +1876,18 @@ func TestFleetReservationChargesDeclaredReservation(t *testing.T) {
 	}
 }
 
-func TestRepositoryFromURL(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://github.com/supersprinklesracing/sprinkles": "supersprinklesracing/sprinkles",
-		"https://github.com/jlapenna/agent-lcars/":          "jlapenna/agent-lcars",
-		"https://github.com/jlapenna/nx-cache-server.git":   "jlapenna/nx-cache-server",
-		"": "",
+func TestRegistrationTarget(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"https://github.com/supersprinklesracing/sprinkles": {"supersprinklesracing", "supersprinklesracing/sprinkles"},
+		"https://github.com/jlapenna/agent-lcars/":          {"jlapenna", "jlapenna/agent-lcars"},
+		"https://github.com/jlapenna/nx-cache-server.git":   {"jlapenna", "jlapenna/nx-cache-server"},
+		"https://github.com/acme":                           {"acme", ""},
+		"https://github.com/":                               {"", ""},
+		"":                                                  {"", ""},
 	} {
-		if got := repositoryFromURL(in); got != want {
-			t.Errorf("repositoryFromURL(%q) = %q, want %q", in, got, want)
+		owner, repository := registrationTarget(in)
+		if owner != want[0] || repository != want[1] {
+			t.Errorf("registrationTarget(%q) = (%q, %q), want (%q, %q)", in, owner, repository, want[0], want[1])
 		}
 	}
 }

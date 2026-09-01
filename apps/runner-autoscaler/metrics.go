@@ -259,9 +259,9 @@ var (
 	scaleSetInfoGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_scale_set_info",
-			Help: "Static description of a declared scale set: the registration and GitHub repository (owner/name) it serves. Always 1; join on repository against GitHub Actions queue metrics.",
+			Help: "Static description of a declared scale set: the registration, GitHub owner, and repository (owner/name, empty for an organization-scoped registration) it serves. Always 1; join on repository against GitHub Actions queue metrics, or on owner for organization scopes.",
 		},
-		[]string{"scale_set", "registration", "repository"},
+		[]string{"scale_set", "registration", "owner", "repository"},
 	)
 	drainingGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{

@@ -597,7 +597,8 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 	}
 	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(reservation))
 	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memory))
-	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, repositoryFromURL(c.RegistrationURL)).Set(1)
+	owner, repository := registrationTarget(c.RegistrationURL)
+	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, owner, repository).Set(1)
 	shmSize := int64(0)
 	if c.RunnerShmSize != "" {
 		shmSize, err = units.RAMInBytes(c.RunnerShmSize)

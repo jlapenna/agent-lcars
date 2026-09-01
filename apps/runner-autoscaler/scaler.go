@@ -1697,20 +1697,32 @@ func (a *Scaler) memoryReservation() int64 {
 	return a.runnerMemory
 }
 
-// repositoryFromURL reduces a registration URL such as
-// https://github.com/owner/name to the owner/name form the GitHub Actions
-// exporter uses in its repository label, so Prometheus can join queued-job
-// metrics to the scale sets declared for that repository.
-func repositoryFromURL(registrationURL string) string {
+// registrationTarget splits a registration URL into the GitHub owner and,
+// when the URL names a repository rather than an organization, the
+// owner/name form the GitHub Actions exporter uses in its repository label.
+// An organization registration (https://github.com/acme) serves many
+// repositories, so it yields owner="acme" and an empty repository; a
+// repository registration yields both. Prometheus joins queued-job metrics to
+// scale sets on repository, and falls back to owner for organization scopes.
+func registrationTarget(registrationURL string) (owner, repository string) {
 	trimmed := strings.TrimSuffix(strings.TrimSpace(registrationURL), "/")
 	trimmed = strings.TrimSuffix(trimmed, ".git")
 	if i := strings.Index(trimmed, "://"); i >= 0 {
 		trimmed = trimmed[i+3:]
 		if j := strings.Index(trimmed, "/"); j >= 0 {
 			trimmed = trimmed[j+1:]
+		} else {
+			return "", ""
 		}
 	}
-	return trimmed
+	parts := strings.Split(trimmed, "/")
+	switch {
+	case len(parts) == 1 && parts[0] != "":
+		return parts[0], ""
+	case len(parts) == 2 && parts[0] != "" && parts[1] != "":
+		return parts[0], parts[0] + "/" + parts[1]
+	}
+	return "", ""
 }
 
 func runnerLabels(scaleSet, registration string, memory int64) map[string]string {
