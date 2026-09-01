@@ -1,5 +1,12 @@
-import { REPLY_COMMANDS } from '@agent-lcars/dispatch-contracts';
-import { type TaskId, taskIdSchema } from '@agent-lcars/orchestrator';
+import {
+  parseTerminalQuickTaskBody,
+  REPLY_COMMANDS,
+} from '@agent-lcars/dispatch-contracts';
+import {
+  type RequestBinding,
+  type TaskId,
+  taskIdSchema,
+} from '@agent-lcars/orchestrator';
 import { type WorkPayload } from '@agent-lcars/work';
 import { z } from 'zod';
 
@@ -24,6 +31,10 @@ export interface IngestDecision {
   /** The `x-github-delivery` GUID; doubles as the orchestrator's
    *  idempotency key for this request. */
   requestId: string;
+  /** Optional opaque durable binding for a first delivery that must converge
+   * with another admission path. The store, not this pure interpreter,
+   * atomically decides whether this source delivery owns that binding. */
+  requestBinding?: RequestBinding;
   pipeline: Pipeline;
   /** Always includes `mode`; includes `reply` when `mode` is `'reply'`. */
   params: Record<string, string>;
@@ -121,6 +132,7 @@ function buildRequestDecision(
   pipeline: Pipeline,
   params: Record<string, string>,
   work: WorkPayload,
+  requestBinding?: RequestBinding,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
@@ -128,10 +140,23 @@ function buildRequestDecision(
     kind: 'request',
     taskId: taskId.data,
     requestId,
+    ...(requestBinding === undefined ? {} : { requestBinding }),
     pipeline,
     params,
     work,
   };
+}
+
+/** A Quick Task marker names the browser intent that created its issue. The
+ * shared admission transaction binds the first webhook source that presents
+ * this opaque key, rather than relying on a non-atomic route pre-read. */
+function terminalQuickTaskBinding(
+  body: string | null | undefined,
+): RequestBinding | undefined {
+  const quickTask = parseTerminalQuickTaskBody(body);
+  if (!quickTask) return undefined;
+  const canonicalRequestId = `console-quick-task:${quickTask.requestId}`;
+  return { bindingKey: canonicalRequestId, canonicalRequestId };
 }
 
 function interpretIssuesEvent(
@@ -166,6 +191,7 @@ function interpretIssuesEvent(
       mode: 'implement',
     },
     work,
+    terminalQuickTaskBinding(issue.body),
   );
 }
 

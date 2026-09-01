@@ -629,6 +629,32 @@ describe('interpretDelivery', () => {
     });
   });
 
+  it('exposes a terminal Quick Task marker as a first-delivery binding', () => {
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const result = interpretDelivery({
+      event: 'issues',
+      deliveryId: DELIVERY_ID,
+      payload: issuesLabeledPayload({
+        issue: {
+          number: 55,
+          title: 'Quick task: fix the thing',
+          body:
+            'Please fix it.\n\n<!-- agent-lcars:quick-task-request:v1 ' +
+            `id=${requestId} digest=${'a'.repeat(64)} -->`,
+        },
+      }),
+    });
+
+    expect(result).toMatchObject({
+      kind: 'request',
+      requestId: DELIVERY_ID,
+      requestBinding: {
+        bindingKey: `console-quick-task:${requestId}`,
+        canonicalRequestId: `console-quick-task:${requestId}`,
+      },
+    });
+  });
+
   it('tolerates unrecognized extra fields on an otherwise valid payload', () => {
     const result = interpretDelivery({
       event: 'issues',

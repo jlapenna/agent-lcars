@@ -6,7 +6,6 @@ import {
   useCliSessionFixtures,
 } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
-import { seedOrchestratorTask } from './util/orchestrator-seed';
 
 /**
  * agent-lcars#307 (part A).
@@ -16,12 +15,11 @@ import { seedOrchestratorTask } from './util/orchestrator-seed';
  * (`apps/console/src/app/actions.ts`'s `createQuickTask`, not a helper or a
  * mock) through the browser UI, against an extended
  * `lib/e2e-github-fixtures.ts` that now behaves like a small stateful
- * GitHub - it assigns a real-looking incrementing issue number, remembers
- * the created issue so a later idempotency-lookup GET reflects it, and
- * synthesizes the marker-carrying workflow run a real router + dispatcher +
- * worker would eventually produce for the same create+label write. Broker
- * interactions exercised elsewhere in the suite stay inside the same local
- * GitHub fixture boundary (see that doc's security boundary).
+ * GitHub - it assigns a real-looking incrementing issue number and remembers
+ * the created issue so a later idempotency-lookup GET reflects it. The real
+ * server action strictly admits Work and drains its authoritative outbox;
+ * broker interactions exercised elsewhere in the suite stay inside the same
+ * local GitHub fixture boundary (see that doc's security boundary).
  *
  * Together these prove, end to end and through real UI interaction:
  *  - canonical `TaskRef` identity (docs/quick-task-identity.md);
@@ -176,25 +174,11 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     );
     await expect(page.getByRole('dialog')).toBeHidden();
 
-    // #1183/#1187: this fixture's quick-task creation only simulates the
-    // GitHub-side write, so seed a real `@agent-lcars/orchestrator` task
-    // directly against the emulator for this dynamically-created issue -
-    // same as populated-dashboard.spec.ts's #9008 case (see
-    // orchestrator-seed.ts's own doc comment for why a direct emulator
-    // write here is safe). The exact pipeline value doesn't matter: only
-    // the fixture workflow marker and the authoritative run are the same
-    // deterministic first-generation intent, as they are in production.
-    await seedOrchestratorTask({
-      issue: Number(issueNumber),
-      pipeline: 'claude',
-      requestId: `e2e-fixture-seed:quick-task-write-path:${issueNumber}`,
-      state: 'running',
-    });
-
     // Canonical task detail page (agent-lcars#306's route) - the real read
     // path (task-detail.ts -> deriveLogicalWork -> LogicalWorkCard), not a
-    // mock. Reaching this page at all proves the fixture's stateful
-    // issue-create reflected the write on a subsequent GET.
+    // mock. The Quick Task action above performs the Work admission and
+    // dispatch itself, so this reads its real Task and Run rather than a
+    // duplicate synthetic task.
     await page.goto(`/task/supersprinklesracing/sprinkles/${issueNumber}`);
     const card = page.getByTestId('logical-work-card');
     await expect(card).toBeVisible();
@@ -202,11 +186,10 @@ test.describe('Quick Task write path (agent-lcars#307)', () => {
     await expect(card).toContainText(`#${issueNumber}`);
 
     // Request + dispatch confirmation are two authoritative state changes.
-    // The fixed request id keeps that history stable under a retried seed.
     await expect(card).toContainText('authoritative state rev 2');
 
-    // Native Run presentation: one running authoritative Run, with no
-    // hosted-attempt title marker or compatibility attribution.
+    // One running authoritative Run, with no hosted-attempt title marker or
+    // compatibility attribution.
     const runs = card.getByTestId('runs-section');
     await expect(runs).toContainText('Runs (1)');
     await expect(runs).toContainText('running');

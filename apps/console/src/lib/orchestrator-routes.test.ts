@@ -1,3 +1,4 @@
+import { formatQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import {
   MemoryStore,
   Orchestrator,
@@ -7,6 +8,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
+import { admitGithubWork } from './github-work-admission';
 import { drainOutbox } from './orchestrator-dispatch';
 import {
   GITHUB_COMMENT_WINDOW_CONTEXT_PREFIX,
@@ -15,6 +17,7 @@ import {
   type OrchestratorRouteDeps,
   ProjectionRefreshError,
 } from './orchestrator-routes';
+import { workPayloadFromGithub } from './work-from-github';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
 // falls back to this deployment's default -- see deployment.ts/.test.ts.
@@ -394,6 +397,103 @@ describe('handleWebhookDelivery', () => {
         },
       }),
     );
+  });
+
+  it('uses a later Quick Task label delivery as a redispatch after Work exists', async () => {
+    const { deps, store } = fixture();
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const payload = labeledIssuePayload({
+      issue: {
+        number: ISSUE.issue,
+        title: 'Quick Task',
+        body: `Fix this.\n\n${formatQuickTaskMarker({
+          requestId,
+          digest: 'a'.repeat(64),
+        })}`,
+      },
+    });
+
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'quick-task-first-label',
+      payload,
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+
+    const second = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'quick-task-relabel',
+      payload,
+    });
+
+    expect(second).toMatchObject({
+      status: 200,
+      body: { runId: `${REPO}#${ISSUE.issue}/r2` },
+    });
+    expect(await store.listRuns(ISSUE)).toMatchObject([
+      { requestId: `console-quick-task:${requestId}` },
+      { requestId: 'quick-task-relabel' },
+    ]);
+  });
+
+  it('binds a delayed first Quick Task delivery to settled console Work across a projection retry', async () => {
+    const { deps, store } = fixture();
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const body = `Fix this.\n\n${formatQuickTaskMarker({
+      requestId,
+      digest: 'a'.repeat(64),
+    })}`;
+    const canonicalRequestId = `console-quick-task:${requestId}`;
+    const direct = await admitGithubWork(deps, {
+      anchor: ISSUE,
+      requestId: canonicalRequestId,
+      params: { mode: 'implement' },
+      work: workPayloadFromGithub({
+        title: 'Quick Task',
+        body,
+        pipeline: 'claude',
+        repo: REPO,
+        actor: 'jlapenna',
+      }),
+    });
+    if (direct.kind !== 'accepted') throw new Error('expected console run');
+    await deps.orchestrator.report(direct.runId, { ok: true });
+    let firstProjectionRefresh = true;
+    deps.refreshGithubAnchorProjection = vi.fn(async () => {
+      if (firstProjectionRefresh) {
+        firstProjectionRefresh = false;
+        throw new Error('projection store unavailable');
+      }
+    });
+    const delivery = {
+      event: 'issues',
+      deliveryId: 'delayed-first-quick-task-delivery',
+      payload: completeIssuePayload({
+        issue: {
+          number: ISSUE.issue,
+          title: 'Quick Task',
+          body,
+          html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}`,
+          state: 'open',
+          updated_at: T0,
+          user: { login: 'jlapenna' },
+          labels: [{ name: 'agent:claude' }],
+          assignees: [],
+        },
+        label: { name: 'agent:claude' },
+      }),
+    } as const;
+
+    await expect(handleWebhookDelivery(deps, delivery)).rejects.toMatchObject({
+      name: ProjectionRefreshError.name,
+    });
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+
+    await expect(handleWebhookDelivery(deps, delivery)).resolves.toEqual({
+      status: 200,
+      body: { duplicate: true, runId: direct.runId },
+    });
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
   });
 
   it('acknowledges a changed pipeline label without reassigning immutable Work', async () => {

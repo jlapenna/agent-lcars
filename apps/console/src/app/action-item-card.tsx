@@ -25,7 +25,7 @@ import {
   repoDisplayName,
   repoItemKey,
   repoKey,
-  selectedAgentPipeline,
+  selectedReplyPipeline,
 } from '../lib/watched-repo';
 import { approveAndRebase, mergePr, replyToItem } from './actions';
 import { githubIssueUrl } from './format';
@@ -233,9 +233,10 @@ export function ActionItemCard({
     setLabelsExpanded(false);
   }
 
-  // No agent label means a plain human reply. This matters for watched repos
-  // such as Homelab that intentionally expose no dispatch integration.
-  const pipeline = selectedAgentPipeline(item.repo, item.labels);
+  // No current canonical assignment means a plain human reply. This matters
+  // for watched repos with no agent integration and preserves review:* PR
+  // assignments alongside ordinary agent:* work.
+  const pipeline = selectedReplyPipeline(item.repo, item.labels, item.kind);
   const replyMention = pipeline
     ? agentIntegration(item.repo, pipeline)?.replyTrigger
     : undefined;
@@ -244,7 +245,12 @@ export function ActionItemCard({
     if (!replyBody.trim()) return;
     setError(undefined);
     startTransition(async () => {
-      const result = await replyToItem(item.repo, item.number, replyBody);
+      const result = await replyToItem(
+        item.repo,
+        item.number,
+        replyBody,
+        pipeline,
+      );
       if (!result.ok) {
         setError(result.message);
         return;

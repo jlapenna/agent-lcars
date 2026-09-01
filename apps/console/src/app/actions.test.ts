@@ -315,16 +315,17 @@ describe('agent-lcars Server Actions', () => {
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
     });
 
-    it('replyToItem forwards the authenticated actor for direct admission', async () => {
+    it('replyToItem forwards the authenticated actor and explicit assignment', async () => {
       (postComment as Mock).mockResolvedValue({ url: 'https://x' });
 
-      await replyToItem(DEFAULT_REPO, 42, 'hi');
+      await replyToItem(DEFAULT_REPO, 42, 'hi', 'codex');
 
       expect(postComment).toHaveBeenCalledWith(
         DEFAULT_REPO,
         42,
         'hi',
         'jlapenna',
+        'codex',
       );
     });
 

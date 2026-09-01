@@ -23,6 +23,7 @@ import {
 } from './model';
 import {
   type OrchestratorStore,
+  type RequestBinding,
   StoreConflict,
   type VersionedTask,
 } from './store';
@@ -58,6 +59,10 @@ export interface RequestInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  /** Optional opaque atomic request binding. Its owner supplies the key and
+   * canonical identity; the store records the first source request with the
+   * request transaction rather than leaving a pre-request race to a caller. */
+  requestBinding?: RequestBinding;
   /**
    * Called with an already-admitted Task's immutable Work while the request
    * transaction still owns its consistent snapshot. Returning false refuses
@@ -86,7 +91,10 @@ export class Orchestrator {
       taskId: input.taskId,
       requestId: input.requestId,
       requestSource,
-      decide: ({ task, activeRun, previousRun }) => {
+      ...(input.requestBinding === undefined
+        ? {}
+        : { requestBinding: input.requestBinding }),
+      decide: ({ task, activeRun, previousRun, requestId }) => {
         // This belongs inside transactRequest, not in a route-level pre-read:
         // two first admissions may otherwise both observe an absent Task, and
         // the loser can mint its pipeline after the winner persists different
@@ -111,7 +119,7 @@ export class Orchestrator {
           task: task?.task,
           taskId: input.taskId,
           activeRun,
-          requestId: input.requestId,
+          requestId,
           requestSource,
           pipeline: input.pipeline,
           ...(input.params === undefined ? {} : { params: input.params }),

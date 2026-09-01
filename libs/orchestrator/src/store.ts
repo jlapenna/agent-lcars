@@ -67,6 +67,11 @@ export interface OrchestratorStore {
     taskId: TaskId;
     requestId: string;
     requestSource: RequestSource;
+    /** Optional opaque first-request binding. The first source request binds
+     * to its canonical identity; later distinct source requests retain their
+     * own identities. The store resolves it inside this same transaction as
+     * history lookup and any new Run. */
+    requestBinding?: RequestBinding;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
   apply(input: {
@@ -246,6 +251,14 @@ export interface OrchestratorStore {
   listQueuedRuns(limit?: number): Promise<Run[]>;
 }
 
+/** Generic durable request-binding metadata. Callers own the binding key and
+ * canonical request identity; the orchestrator atomically records the first
+ * source request that presents this binding. */
+export interface RequestBinding {
+  readonly bindingKey: string;
+  readonly canonicalRequestId: string;
+}
+
 /** Opaque-at-the-API-boundary cursor for the all-anchor task feed. */
 export interface TaskListCursor {
   readonly updatedAt: string;
@@ -261,7 +274,9 @@ export interface VersionedTask {
 export interface RequestTransactionState {
   readonly task: VersionedTask | undefined;
   readonly activeRun: Run | undefined;
-  /** A previous run for this task with the caller's exact request id. */
+  /** The request identity resolved by the store's optional binding. */
+  readonly requestId: string;
+  /** A previous run for this task with the resolved request id. */
   readonly previousRun: Run | undefined;
 }
 

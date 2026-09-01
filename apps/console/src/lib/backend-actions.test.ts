@@ -27,6 +27,7 @@ import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { workPayloadFromGithub } from './work-from-github';
 
 const { refreshCurrentGithubAnchorProjection } = vi.hoisted(() => ({
   refreshCurrentGithubAnchorProjection: vi.fn(),
@@ -381,7 +382,10 @@ describe('clearNeedsHumanLabel', () => {
 });
 
 describe('postComment (direct Work admission)', () => {
-  function mockOctokit() {
+  function mockOctokit(
+    currentLabels = ['agent:codex'],
+    kind: 'issue' | 'pr' = 'issue',
+  ) {
     // clearNeedsHumanLabel's own sweep-the-orchestrator follow-up (#1183)
     // fires on every successful removeLabel below - give it somewhere real
     // to land instead of a bare unmocked createOrchestratorRuntime().
@@ -390,10 +394,18 @@ describe('postComment (direct Work admission)', () => {
       data: { html_url: 'https://github.com/o/r/issues/1#issuecomment-1' },
     });
     const removeLabel = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { createComment, removeLabel } },
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        labels: currentLabels,
+        ...(kind === 'pr'
+          ? { pull_request: { url: 'https://github.test/pr' } }
+          : {}),
+      },
     });
-    return { createComment, removeLabel };
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { createComment, get, removeLabel } },
+    });
+    return { createComment, get, removeLabel };
   }
 
   it('rejects a blank body without calling GitHub', async () => {
@@ -415,7 +427,7 @@ describe('postComment (direct Work admission)', () => {
     );
   });
 
-  it('admits reply mode directly from immutable Task Work without adding a trigger', async () => {
+  it('admits reply mode only when the canonical assignment is explicit', async () => {
     const { createComment } = mockOctokit();
     const { orchestrator, store } = fixtureOrchestratorRuntime();
     const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
@@ -429,7 +441,7 @@ describe('postComment (direct Work admission)', () => {
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna');
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna', 'codex');
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2' }),
@@ -441,17 +453,166 @@ describe('postComment (direct Work admission)', () => {
     });
   });
 
-  it('clears the needs-human status after posting', async () => {
+  it('admits a reply when the current assignment is a canonical review label', async () => {
+    const { removeLabel } = mockOctokit(['review:codex'], 'pr');
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review-reply',
+      pipeline: 'codex',
+      params: { mode: 'review' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Please address this',
+      'jlapenna',
+      'codex',
+    );
+
+    expect((await store.listRuns(taskId)).at(-1)?.params).toEqual({
+      mode: 'reply',
+      reply: 'Please address this',
+    });
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'status:needs-human' }),
+    );
+  });
+
+  it('leaves needs-human on a plain comment with no assignment', async () => {
     const { removeLabel } = mockOctokit();
 
     await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna');
+
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('treats a stale client assignment removed after render as a plain comment', async () => {
+    const { createComment, removeLabel } = mockOctokit([]);
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-stale-assignment',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(
+      DEFAULT_REPO,
+      2709,
+      'A human-only note',
+      'jlapenna',
+      'codex',
+    );
+
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('does not trust a crafted pipeline that differs from the current assignment', async () => {
+    const { removeLabel } = mockOctokit(['agent:claude']);
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-crafted-assignment',
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+      work: testWork('claude'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(
+      DEFAULT_REPO,
+      2709,
+      'A human-only note',
+      'jlapenna',
+      'codex',
+    );
+
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('does not revive immutable Work after the explicit assignment changes pipeline', async () => {
+    const { createComment, removeLabel } = mockOctokit(['agent:claude']);
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-rejected-label-change',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(
+      DEFAULT_REPO,
+      2709,
+      'A human-only note',
+      'jlapenna',
+      'claude',
+    );
+
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch or clear needs-human when Task outlives its assignment label', async () => {
+    const { removeLabel } = mockOctokit();
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-unassigned-comment',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(DEFAULT_REPO, 2709, 'A human-only note', 'jlapenna');
+
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('clears needs-human after an explicitly assigned reply starts a run', async () => {
+    const { removeLabel } = mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-needs-human-reply',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex');
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
     );
   });
 
-  it('posting a comment alone (no label actually cleared) does not sweep the orchestrator', async () => {
+  it('posting an unassigned comment does not sweep the orchestrator', async () => {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -460,9 +621,8 @@ describe('postComment (direct Work admission)', () => {
               html_url: 'https://github.com/o/r/issues/1#issuecomment-1',
             },
           }),
-          // 404: nothing to clear, so clearNeedsHumanLabel's own sweep never
-          // fires either - isolates that createComment itself is inert from
-          // the orchestrator's perspective, per the seam's own analysis.
+          // Plain comments never clear this handoff label, so creating one is
+          // inert from the orchestrator's perspective.
           removeLabel: vi
             .fn()
             .mockRejectedValue(
@@ -1198,6 +1358,205 @@ describe('createQuickTask', () => {
       pipeline: 'claude',
       params: { mode: 'implement' },
     });
+    const task = await quickTaskRuntime.store.readTask({
+      repo: DEFAULT_REPO_KEY,
+      issue: 99,
+    });
+    expect(task?.task.work.spec).toMatchObject({
+      title: 'Fix the flaky test',
+      description: expect.stringMatching(
+        /^Fix the flaky test\nmore context\n\n<!-- agent-lcars:quick-task-request:v1 /u,
+      ),
+    });
+  });
+
+  it('converges after a webhook-first run settles before console admission', async () => {
+    let persistedBody = '';
+    let persistedTitle = '';
+    let webhookRunId = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      persistedTitle = input.title;
+      return { data: { number: 99 } };
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [
+          {
+            number: 99,
+            title: request.description.trim(),
+            body: persistedBody,
+          },
+        ],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+    let directReadObservedEmpty = false;
+    vi.spyOn(quickTaskRuntime.store, 'readTask').mockImplementationOnce(
+      async (taskId) => {
+        expect(taskId).toEqual({ repo: DEFAULT_REPO_KEY, issue: 99 });
+        // Make admitQuickTask's preflight read return its original empty
+        // snapshot, then let the webhook write and finish the same marker
+        // request before console reaches admitGithubWork. Subsequent reads
+        // use the real store implementation.
+        directReadObservedEmpty = true;
+        const webhook = await quickTaskRuntime.orchestrator.request({
+          taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+          requestId: `console-quick-task:${request.requestId}`,
+          pipeline: request.pipeline,
+          params: { mode: 'implement' },
+          work: workPayloadFromGithub({
+            title: persistedTitle,
+            body: persistedBody,
+            pipeline: request.pipeline,
+            repo: DEFAULT_REPO_KEY,
+            actor: 'github-webhook-user',
+          }),
+        });
+        if ('refused' in webhook) {
+          throw new Error('webhook request was refused');
+        }
+        webhookRunId = webhook.run.runId;
+        await quickTaskRuntime.orchestrator.report(webhookRunId, { ok: true });
+        return undefined;
+      },
+    );
+
+    const directRecovery = await createQuickTask(request);
+    expect(directRecovery).toEqual(
+      expect.objectContaining({
+        task: { issueNumber: 99, repository: DEFAULT_REPO },
+      }),
+    );
+    expect(webhookRunId).not.toBe('');
+    expect(directReadObservedEmpty).toBe(true);
+    const taskId = {
+      repo: DEFAULT_REPO_KEY,
+      issue: 99,
+    };
+    expect(await quickTaskRuntime.store.listRuns(taskId)).toHaveLength(1);
+    expect(
+      (await quickTaskRuntime.store.readTask(taskId))?.task.work.spec
+        .description,
+    ).toBe(persistedBody);
+
+    const retry = await createQuickTask(request);
+
+    expect(retry).toEqual(directRecovery);
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(await quickTaskRuntime.store.listRuns(taskId)).toHaveLength(1);
+  });
+
+  it('fails closed when webhook-first Work does not match the marker request', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      const webhook = await quickTaskRuntime.orchestrator.request({
+        taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+        requestId: 'webhook-mismatched-quick-task',
+        pipeline: 'codex',
+        params: { mode: 'implement' },
+        work: workPayloadFromGithub({
+          title: input.title,
+          body: input.body,
+          pipeline: 'codex',
+          repo: DEFAULT_REPO_KEY,
+          actor: 'github-webhook-user',
+        }),
+      });
+      if ('refused' in webhook) throw new Error('webhook request was refused');
+      return { data: { number: 99 } };
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [
+          {
+            number: 99,
+            title: request.description.trim(),
+            body: persistedBody,
+          },
+        ],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Quick Task immutable Work does not match its marker request',
+    );
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Quick Task immutable Work does not match its marker request',
+    );
+
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(
+      await quickTaskRuntime.store.listRuns({
+        repo: DEFAULT_REPO_KEY,
+        issue: 99,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('retains claim and evidence after a post-create webhook Work conflict', async () => {
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      const webhook = await quickTaskRuntime.orchestrator.request({
+        taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+        requestId: 'webhook-post-create-conflict',
+        pipeline: 'codex',
+        params: { mode: 'implement' },
+        work: workPayloadFromGithub({
+          title: input.title,
+          body: input.body,
+          pipeline: 'codex',
+          repo: DEFAULT_REPO_KEY,
+          actor: 'github-webhook-user',
+        }),
+      });
+      if ('refused' in webhook) throw new Error('webhook request was refused');
+      return { data: { number: 99 } };
+    });
+    const { deleteRef } = mockOctokit({
+      createIssue,
+      // Simulate GitHub list/search propagation lag after the durable create.
+      listForRepo: vi.fn().mockResolvedValue({ data: [] }),
+    });
+    const { lifecycle, rollback } = evidenceLifecycle();
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task immutable Work does not match its marker request',
+    );
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task creation is already claimed but no issue is visible yet',
+    );
+
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(deleteRef).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it('retains claim and evidence after a post-create projection 4xx', async () => {
+    const createIssue = vi.fn().mockResolvedValue({ data: { number: 99 } });
+    const { deleteRef } = mockOctokit({
+      createIssue,
+      // Simulate GitHub list/search propagation lag after the durable create.
+      listForRepo: vi.fn().mockResolvedValue({ data: [] }),
+    });
+    const { lifecycle, rollback } = evidenceLifecycle();
+    refreshCurrentGithubAnchorProjection.mockRejectedValue(
+      Object.assign(new Error('projection rejected'), { status: 422 }),
+    );
+
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'projection rejected',
+    );
+    await expect(createQuickTask(request, lifecycle)).rejects.toThrow(
+      'Quick Task creation is already claimed but no issue is visible yet',
+    );
+
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(deleteRef).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
   });
 
   it('uses the signed-in user creator for the issue while the App client owns the claim ledger', async () => {
@@ -1344,7 +1703,7 @@ describe('createQuickTask', () => {
     expect(second.prepare).not.toHaveBeenCalled();
   });
 
-  it('returns the original issue when the same request is retried', async () => {
+  it('retries completed Quick Task Work after its GitHub issue was edited', async () => {
     let persistedBody = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
       persistedBody = input.body;
@@ -1354,15 +1713,45 @@ describe('createQuickTask', () => {
       .fn()
       .mockResolvedValueOnce({ data: [] })
       .mockImplementation(async () => ({
-        data: [{ number: 99, body: persistedBody }],
+        data: [
+          {
+            number: 99,
+            // The marker remains an identity record, while normal GitHub
+            // editing changes the visible task text after the first run.
+            title: 'Edited after completion',
+            body: `Edited after completion\n\n${persistedBody.slice(persistedBody.indexOf('<!--'))}`,
+          },
+        ],
       }));
     mockOctokit({ createIssue, listForRepo });
 
     const first = await createQuickTask(request);
+    await quickTaskRuntime.orchestrator.report(`${DEFAULT_REPO_KEY}#99/r1`, {
+      ok: true,
+    });
     const retry = await createQuickTask(request);
 
     expect(retry).toEqual(first);
     expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(
+      await quickTaskRuntime.store.listRuns({
+        repo: DEFAULT_REPO_KEY,
+        issue: 99,
+      }),
+    ).toHaveLength(1);
+    expect(
+      (
+        await quickTaskRuntime.store.readTask({
+          repo: DEFAULT_REPO_KEY,
+          issue: 99,
+        })
+      )?.task.work,
+    ).toMatchObject({
+      spec: {
+        title: deriveQuickTaskTitle(request.description),
+        description: persistedBody,
+      },
+    });
   });
 
   it('ignores a pull request that copied the Quick Task marker', async () => {
@@ -1377,7 +1766,11 @@ describe('createQuickTask', () => {
       .mockImplementation(async () => ({
         data: [
           { number: 123, body: persistedBody, pull_request: { url: 'pr' } },
-          { number: 99, body: persistedBody },
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
         ],
       }));
     mockOctokit({ createIssue, listForRepo });
@@ -1423,7 +1816,15 @@ describe('createQuickTask', () => {
     await createQuickTask(request);
     listForRepo.mockResolvedValue({ data: recent });
     searchIssues.mockResolvedValue({
-      data: { items: [{ number: 99, body }] },
+      data: {
+        items: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body,
+          },
+        ],
+      },
     });
 
     await expect(createQuickTask(request)).resolves.toEqual(
@@ -1550,7 +1951,8 @@ describe('createQuickTask', () => {
         data: [
           {
             number: 101,
-            body: `Winner\n\n<!-- agent-lcars:quick-task-request:v1 id=${request.requestId} digest=${digest} -->`,
+            title: deriveQuickTaskTitle(request.description),
+            body: `${request.description.trim()}\n\n<!-- agent-lcars:quick-task-request:v1 id=${request.requestId} digest=${digest} -->`,
           },
         ],
       }));
@@ -1664,7 +2066,13 @@ describe('createQuickTask', () => {
       .fn()
       .mockResolvedValueOnce({ data: [] })
       .mockImplementation(async () => ({
-        data: [{ number: 99, body: persistedBody }],
+        data: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
+        ],
       }));
     mockOctokit({ createIssue, listForRepo });
 
@@ -1677,6 +2085,41 @@ describe('createQuickTask', () => {
     expect(listForRepo).toHaveBeenCalledTimes(2);
   });
 
+  it('fails closed when a recovered marker issue was edited before first Work admission', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      throw new Error('socket timed out');
+    });
+    const editedIssue = () => ({
+      number: 99,
+      title: 'Edited before first admission',
+      body:
+        'Edited before first admission\n\n' +
+        persistedBody.slice(persistedBody.indexOf('<!--')),
+    });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({ data: [editedIssue()] }));
+    mockOctokit({ createIssue, listForRepo });
+
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Recovered Quick Task content does not match its marker request; manual reconciliation is required',
+    );
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Recovered Quick Task content does not match its marker request; manual reconciliation is required',
+    );
+
+    expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(
+      await quickTaskRuntime.store.listRuns({
+        repo: DEFAULT_REPO_KEY,
+        issue: 99,
+      }),
+    ).toHaveLength(0);
+  });
+
   it('reconciles an HTTP 408 instead of releasing the uniqueness claim', async () => {
     let persistedBody = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
@@ -1687,7 +2130,13 @@ describe('createQuickTask', () => {
       .fn()
       .mockResolvedValueOnce({ data: [] })
       .mockImplementation(async () => ({
-        data: [{ number: 99, body: persistedBody }],
+        data: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
+        ],
       }));
     const { deleteRef } = mockOctokit({ createIssue, listForRepo });
 

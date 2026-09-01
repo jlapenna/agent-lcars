@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   matchingAgentPipelines,
+  matchingReplyPipelines,
   selectedAgentPipeline,
+  selectedReplyPipeline,
   supportedAgentLabels,
   supportedAgentPipelines,
   taskRefKey,
@@ -31,6 +33,9 @@ describe('watched repository agent capabilities', () => {
     const repo = { ...standardRepo, agents: false };
     expect(supportedAgentPipelines(repo)).toEqual([]);
     expect(selectedAgentPipeline(repo, ['agent:claude'])).toBeUndefined();
+    expect(
+      selectedReplyPipeline(repo, ['review:claude'], 'pr'),
+    ).toBeUndefined();
   });
 
   it('does not accept repository-specific integration overrides', () => {
@@ -43,6 +48,33 @@ describe('watched repository agent capabilities', () => {
     expect(
       selectedAgentPipeline(standardRepo, ['agent:claude', 'agent:opencode']),
     ).toBeUndefined();
+  });
+
+  it('resolves one canonical reply assignment from either label family', () => {
+    expect(selectedReplyPipeline(standardRepo, ['review:codex'], 'pr')).toBe(
+      'codex',
+    );
+    expect(
+      selectedReplyPipeline(standardRepo, ['review:codex'], 'issue'),
+    ).toBeUndefined();
+    // A PR can carry both mode labels for its one executor without making
+    // Reply choose between two pipelines.
+    expect(
+      selectedReplyPipeline(
+        standardRepo,
+        ['agent:claude', 'review:claude'],
+        'pr',
+      ),
+    ).toBe('claude');
+  });
+
+  it('withholds a reply target when canonical label families select different pipelines', () => {
+    const labels = ['agent:claude', 'review:opencode'];
+    expect(matchingReplyPipelines(standardRepo, labels, 'pr')).toEqual([
+      'claude',
+      'opencode',
+    ]);
+    expect(selectedReplyPipeline(standardRepo, labels, 'pr')).toBeUndefined();
   });
 
   it('lets callers tell zero matches apart from contradictory multi-agent state', () => {

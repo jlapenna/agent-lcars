@@ -25,6 +25,7 @@ import type {
 import {
   agentIntegration,
   repoKey,
+  selectedReplyPipeline,
   supportedAgentPipelines,
   taskRefUrl,
 } from './watched-repo';
@@ -122,12 +123,19 @@ export async function postComment(
   issueNumber: number,
   body: string,
   actorLogin: string,
+  assignedPipeline?: Pipeline,
 ): Promise<{ url: string }> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
   }
   if (!actorLogin.trim()) {
     throw new ActionError('Comment actor is required', 400);
+  }
+  // Validate an explicit dispatch choice before creating any GitHub-side
+  // comment. The UI only supplies canonical selections, but Server Action
+  // arguments are still untrusted at the network boundary.
+  if (assignedPipeline !== undefined) {
+    requireAgentIntegration(repo, assignedPipeline);
   }
   const octokit = getGithubClient();
   const { data } = await octokit.rest.issues.createComment({
@@ -136,29 +144,73 @@ export async function postComment(
     issue_number: issueNumber,
     body,
   });
-  const runtime = createOrchestratorRuntime();
-  const taskId = { repo: repoKey(repo), issue: issueNumber };
-  const existingTask = await runtime.store.readTask(taskId);
-  // A repository item with no admitted Task is an ordinary human comment,
-  // not a dispatch failure. Once Work exists, however, Reply uses that
-  // immutable spec directly and does not ask a GitHub mention webhook to
-  // reconstruct it.
-  if (existingTask !== undefined) {
-    const work = workPayloadSchema.parse(existingTask.task.work);
-    const outcome = await admitGithubWork(runtime, {
-      anchor: taskId,
-      requestId: `console-reply:${randomUUID()}`,
-      params: { mode: 'reply', reply: body },
-      work,
+  // The inbox projection's exactly-one canonical agent label is the explicit
+  // console intent to hand this comment to an agent. A Task alone is not that
+  // signal: Work can remain after somebody removes an assignment label, and
+  // comments on that now-unassigned item must stay ordinary human comments.
+  // The immutable Task Work still supplies the authoritative target once the
+  // caller has made that explicit choice.
+  let handedBackToAgent = false;
+  if (assignedPipeline !== undefined) {
+    // A card's labels are only a render-time projection. Re-read the current
+    // GitHub labels at the dispatch boundary so a removed, changed, or
+    // contradictory assignment cannot be revived by a stale/crafted Server
+    // Action argument. `selectedReplyPipeline` accepts exactly one canonical
+    // agent:* target (or review:* target for a PR) and has no repo/provider-
+    // specific precedence.
+    const { data: issue } = await octokit.rest.issues.get({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
     });
-    if (outcome.kind === 'busy') {
-      throw new ActionError('A run is already active for this task', 409);
+    const currentLabels = issue.labels.map((label) =>
+      typeof label === 'string' ? label : (label.name ?? ''),
+    );
+    const currentAssignment = selectedReplyPipeline(
+      repo,
+      currentLabels,
+      issue.pull_request ? 'pr' : 'issue',
+    );
+    if (currentAssignment !== assignedPipeline) {
+      return { url: data.html_url };
     }
-    if (outcome.kind !== 'accepted') {
-      throw new ActionError(`Reply dispatch was ${outcome.kind}`, 409);
+    const runtime = createOrchestratorRuntime();
+    const taskId = { repo: repoKey(repo), issue: issueNumber };
+    const existingTask = await runtime.store.readTask(taskId);
+    // A label can be visible before its webhook admission reaches the
+    // control plane. Preserve the comment in that transient state; the
+    // webhook remains responsible for first Work admission.
+    if (existingTask !== undefined) {
+      const work = workPayloadSchema.parse(existingTask.task.work);
+      // Assignment labels are an explicit present-tense handoff, whereas
+      // Work's pipeline is immutable. A rejected label-change webhook can
+      // therefore leave a new label beside older Work. Do not revive that
+      // older Work on a reply: all three sources must agree before a run can
+      // begin or the human handoff can be cleared.
+      if (work.spec.pipeline !== assignedPipeline) {
+        return { url: data.html_url };
+      }
+      const outcome = await admitGithubWork(runtime, {
+        anchor: taskId,
+        requestId: `console-reply:${randomUUID()}`,
+        params: { mode: 'reply', reply: body },
+        work,
+      });
+      if (outcome.kind === 'busy') {
+        throw new ActionError('A run is already active for this task', 409);
+      }
+      if (outcome.kind !== 'accepted') {
+        throw new ActionError(`Reply dispatch was ${outcome.kind}`, 409);
+      }
+      handedBackToAgent = true;
     }
   }
-  await clearNeedsHumanLabel(repo, issueNumber);
+  // `status:needs-human` is the agent-to-human handoff. Clearing it is only
+  // correct after this comment actually began a new agent run; a plain
+  // comment on an unassigned item must leave that human-work signal intact.
+  if (handedBackToAgent) {
+    await clearNeedsHumanLabel(repo, issueNumber);
+  }
   return { url: data.html_url };
 }
 
@@ -668,8 +720,20 @@ interface NormalizedQuickTaskRequest extends QuickTaskRequest {
 
 interface ExistingQuickTaskIssue {
   number: number;
+  title: string;
   body?: string | null;
   pull_request?: unknown;
+}
+
+interface QuickTaskIssueSource {
+  number: number;
+  title: string;
+  body: string | null | undefined;
+}
+
+interface ExistingQuickTask {
+  receipt: QuickTaskReceipt;
+  source: QuickTaskIssueSource;
 }
 
 interface QuickTaskClaim {
@@ -807,23 +871,96 @@ function receiptFor(
   };
 }
 
+function quickTaskBody(
+  request: NormalizedQuickTaskRequest,
+  digest: string,
+): string {
+  return `${request.description}\n\n${formatQuickTaskMarker({ requestId: request.requestId, digest })}`;
+}
+
+function validateStoredQuickTaskWork(
+  request: NormalizedQuickTaskRequest,
+  digest: string,
+  issue: QuickTaskIssueSource,
+  storedWork: unknown,
+): void {
+  if (markerDigest(issue.body, request.requestId) !== digest) {
+    throw new ActionError(
+      'Quick Task marker does not match its request; manual reconciliation is required',
+      409,
+    );
+  }
+  const work = workPayloadSchema.parse(storedWork);
+  const expectedSpec = workPayloadFromGithub({
+    title: request.title,
+    body: quickTaskBody(request, digest),
+    pipeline: request.pipeline,
+    repo: repoKey(request.repository),
+    actor: request.actorLogin,
+  }).spec;
+  // A webhook may be the first writer, so its concrete GitHub principal can
+  // differ from the console actor. Its channel and every immutable spec field
+  // must nevertheless be the exact Work described by this marker request.
+  if (
+    work.origin.channel !== 'github' ||
+    work.spec.title !== expectedSpec.title ||
+    work.spec.description !== expectedSpec.description ||
+    work.spec.pipeline !== expectedSpec.pipeline ||
+    work.spec.target.repo !== expectedSpec.target.repo
+  ) {
+    throw new ActionError(
+      'Quick Task immutable Work does not match its marker request; manual reconciliation is required',
+      409,
+    );
+  }
+}
+
 async function admitQuickTask(
   request: NormalizedQuickTaskRequest,
-  issueNumber: number,
+  digest: string,
+  issue: QuickTaskIssueSource,
 ): Promise<void> {
-  const outcome = await admitGithubWork(createOrchestratorRuntime(), {
-    anchor: { repo: repoKey(request.repository), issue: issueNumber },
+  const runtime = createOrchestratorRuntime();
+  const anchor = { repo: repoKey(request.repository), issue: issue.number };
+  // A Quick Task marker is intentionally retained when the issue is edited.
+  // A browser retry must therefore use the immutable Work that was admitted
+  // for this anchor, not reconstruct a competing Work from the edited
+  // GitHub title/body before its original request id can be recognized.
+  const stored = await runtime.store.readTask(anchor);
+  if (stored !== undefined) {
+    validateStoredQuickTaskWork(request, digest, issue, stored.task.work);
+    // The first writer (normally the label webhook) already created the
+    // immutable Task. Do not turn a transient busy result into a second Run
+    // after it settles: this marker request has reached its canonical result.
+    return;
+  }
+  const canonicalBody = quickTaskBody(request, digest);
+  // Before a Task exists, the marker binds the only immutable Work source.
+  // A transport-recovered issue may have been edited after GitHub accepted
+  // creation but before a webhook/retry admits it; never let that mutable
+  // projection become the first Work specification. Once Work exists, the
+  // branch above intentionally permits ordinary issue edits while validating
+  // the stored immutable spec instead.
+  if (issue.title !== request.title || issue.body !== canonicalBody) {
+    throw new ActionError(
+      'Recovered Quick Task content does not match its marker request; manual reconciliation is required',
+      409,
+    );
+  }
+  const work = workPayloadFromGithub({
+    title: request.title,
+    body: canonicalBody,
+    pipeline: request.pipeline,
+    repo: repoKey(request.repository),
+    actor: request.actorLogin,
+  });
+  const outcome = await admitGithubWork(runtime, {
+    anchor,
     // The browser retains this UUID across retries. Reusing it here makes a
     // recovered issue-create response converge on the same Work request.
     requestId: `console-quick-task:${request.requestId}`,
     params: { mode: 'implement' },
-    work: workPayloadFromGithub({
-      title: request.title,
-      body: request.description,
-      pipeline: request.pipeline,
-      repo: repoKey(request.repository),
-      actor: request.actorLogin,
-    }),
+    work,
   });
   if (
     outcome.kind === 'accepted' ||
@@ -842,7 +979,7 @@ function resolveExistingQuickTask(
   request: NormalizedQuickTaskRequest,
   digest: string,
   issues: ExistingQuickTaskIssue[],
-): QuickTaskReceipt | undefined {
+): ExistingQuickTask | undefined {
   const matches = issues.flatMap((issue) => {
     // GitHub's issues listing includes pull requests. A PR may quote/copy a
     // Quick Task body, but it can never be the canonical intake issue.
@@ -863,13 +1000,20 @@ function resolveExistingQuickTask(
       409,
     );
   }
-  return receiptFor(request, matches[0].issue.number);
+  const issue = matches[0].issue;
+  return {
+    receipt: receiptFor(request, issue.number),
+    // listForRepo/search return the persisted GitHub representation. Using
+    // it rather than reconstructing from the retry request ensures recovery
+    // converges with a webhook that admitted this issue first.
+    source: { number: issue.number, title: issue.title, body: issue.body },
+  };
 }
 
 async function findExistingQuickTask(
   request: NormalizedQuickTaskRequest,
   digest: string,
-): Promise<QuickTaskReceipt | undefined> {
+): Promise<ExistingQuickTask | undefined> {
   const octokit = getGithubClient();
   const { data: recent } = await octokit.rest.issues.listForRepo({
     owner: request.repository.owner,
@@ -1151,8 +1295,8 @@ async function createQuickTaskOnce(
   );
   const existing = await findExistingQuickTask(request, digest);
   if (existing) {
-    await admitQuickTask(request, existing.task.issueNumber);
-    return existing;
+    await admitQuickTask(request, digest, existing.source);
+    return existing.receipt;
   }
 
   const claim = await createQuickTaskClaim(request, digest);
@@ -1162,8 +1306,8 @@ async function createQuickTaskOnce(
     // closed so this overlapping request can return the canonical receipt.
     const winner = await findExistingQuickTask(request, digest);
     if (winner) {
-      await admitQuickTask(request, winner.task.issueNumber);
-      return winner;
+      await admitQuickTask(request, digest, winner.source);
+      return winner.receipt;
     }
     // The other claimant may still be inside GitHub's issue-create request.
     // Never race it. The browser retains the request UUID, so a later retry
@@ -1208,20 +1352,23 @@ async function createQuickTaskOnce(
     }
   }
 
+  const body = quickTaskBody(request, digest);
+  let issue: { number: number };
   try {
-    const { data: issue } = await (
+    ({ data: issue } = await (
       issueCreator ?? ((parameters) => octokit.rest.issues.create(parameters))
     )({
       owner: request.repository.owner,
       repo: request.repository.name,
       title: request.title,
-      body: `${request.description}\n\n${formatQuickTaskMarker({ requestId: request.requestId, digest })}`,
+      body,
       labels: [QUICK_TASK_LABEL, integration.label],
-    });
-    await refreshGithubMutation(request.repository, issue.number);
-    await admitQuickTask(request, issue.number);
-    return receiptFor(request, issue.number);
+    }));
   } catch (error) {
+    // This handler is intentionally limited to the create request itself.
+    // Once GitHub has returned an issue, admission and projection failures
+    // must retain the claim (and evidence) so marker reconciliation remains
+    // the only recovery path instead of reopening duplicate creation.
     if (isDefinitiveCreateFailure(error)) {
       if (preparedEvidence && evidenceLifecycle) {
         await evidenceLifecycle.hook.rollbackDefinitiveCreateFailure(
@@ -1234,9 +1381,8 @@ async function createQuickTaskOnce(
         await releaseQuickTaskClaim(request, digest, claim.claimantId);
         throw error;
       }
-      // A 4xx proves GitHub did not create the issue, so releasing the claim
-      // is safe and lets the same browser intent retry after the validation,
-      // permission, or label problem is corrected.
+      // A 4xx from issues.create proves no issue was created, so releasing
+      // the claim lets the same browser intent retry after correction.
       await releaseQuickTaskClaim(request, digest, claim.claimantId);
       throw error;
     }
@@ -1247,8 +1393,8 @@ async function createQuickTaskOnce(
     // another one.
     const recovered = await findExistingQuickTask(request, digest);
     if (recovered) {
-      await admitQuickTask(request, recovered.task.issueNumber);
-      return recovered;
+      await admitQuickTask(request, digest, recovered.source);
+      return recovered.receipt;
     }
     // Keep the atomic claim on any ambiguous failure. It may represent an
     // issue GitHub committed after our reconciliation read; deleting it here
@@ -1256,6 +1402,21 @@ async function createQuickTaskOnce(
     // the marker, while a truly stranded claim is reconciled manually.
     throw error;
   }
+
+  // GitHub has now durably acknowledged creation. Every following failure
+  // retains the durable claim and any prepared evidence; a retry must find
+  // this marker-backed issue rather than recreate it.
+  // Admit before refreshing the read projection. The issue write above is
+  // the durable source of truth, so this exact title/body is also what a
+  // label webhook sees. Either ordering therefore records the same
+  // immutable Work specification.
+  await admitQuickTask(request, digest, {
+    number: issue.number,
+    title: request.title,
+    body,
+  });
+  await refreshGithubMutation(request.repository, issue.number);
+  return receiptFor(request, issue.number);
 }
 
 const inFlightQuickTasks = new Map<

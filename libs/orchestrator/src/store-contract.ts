@@ -123,6 +123,86 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('durably binds only the first source request to a canonical identity', async () => {
+        const { store, orchestrator } = await fixture();
+        const canonical = await started(orchestrator, 'canonical-request');
+        await orchestrator.report(canonical.run.runId, { ok: true });
+        const requestBinding = {
+          bindingKey: 'shared-intake-binding',
+          canonicalRequestId: 'canonical-request',
+        } as const;
+        const firstDelivery = await orchestrator.request({
+          taskId: TASK,
+          requestId: 'first-source-delivery',
+          pipeline: 'claude',
+          requestBinding,
+        });
+        expect(firstDelivery).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: canonical.run.runId }),
+        });
+
+        const retry = await orchestrator.request({
+          taskId: TASK,
+          requestId: 'first-source-delivery',
+          pipeline: 'claude',
+          requestBinding,
+        });
+        expect(retry).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: expect.objectContaining({ runId: canonical.run.runId }),
+        });
+
+        const laterDelivery = await orchestrator.request({
+          taskId: TASK,
+          requestId: 'later-source-delivery',
+          pipeline: 'claude',
+          requestBinding,
+        });
+        expect(laterDelivery).toMatchObject({
+          run: expect.objectContaining({
+            requestId: 'later-source-delivery',
+          }),
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(2);
+      });
+
+      it('atomically converges a canonical writer and first bound source', async () => {
+        const { store, orchestrator } = await fixture();
+        const requestBinding = {
+          bindingKey: 'concurrent-shared-intake-binding',
+          canonicalRequestId: 'canonical-request',
+        } as const;
+        const [canonical, firstSource] = await Promise.all([
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'canonical-request',
+            pipeline: 'claude',
+            work: TASK_WORK,
+          }),
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'first-source-delivery',
+            pipeline: 'claude',
+            work: TASK_WORK,
+            requestBinding,
+          }),
+        ]);
+        const outcomes = [canonical, firstSource];
+        expect(outcomes.filter((outcome) => !isRefusal(outcome))).toHaveLength(
+          1,
+        );
+        expect(
+          outcomes.filter(
+            (outcome) =>
+              isRefusal(outcome) && outcome.reason === 'duplicate-request',
+          ),
+        ).toHaveLength(1);
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+      });
+
       it('atomically maps overlapping same-id requests to the sole run', async () => {
         const { store, orchestrator } = await fixture();
         const input = {

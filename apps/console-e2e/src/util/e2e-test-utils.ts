@@ -7,13 +7,10 @@ import { Page, test } from '@playwright/test';
  * `X-e2e-auth-user` header read by `apps/console/src/auth.ts`'s
  * `getMockSession` and forwarded by `apps/console/src/proxy.ts`.
  */
-const E2E_ADMIN_USER = {
-  uid: 'e2e-agent-lcars-admin',
-  email: 'e2e-admin@example.com',
-  displayName: 'E2E Admin',
-  emailVerifed: true,
-  customClaims: { roles: ['admin'] },
-};
+// A GitHub-login-shaped identity, not a serialized profile: the console's
+// strict Work admission records the authenticated actor in immutable Work.
+// This header is admitted only by the non-Cloud-Run E2E adapter.
+const E2E_ADMIN_GITHUB_LOGIN = 'e2e-agent-lcars-admin';
 
 export function useE2eAdminBeforeEach() {
   test.beforeEach(async ({ page }) => {
@@ -27,7 +24,7 @@ export async function setE2eAdminUser(page: Page) {
     await route.continue({
       headers: {
         ...headers,
-        'X-e2e-auth-user': JSON.stringify(E2E_ADMIN_USER),
+        'X-e2e-auth-user': E2E_ADMIN_GITHUB_LOGIN,
       },
     });
   });

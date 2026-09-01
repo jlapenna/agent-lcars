@@ -29,6 +29,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  type RequestBinding,
   type RequestTransactionState,
   StoreConflict,
   type TaskListCursor,
@@ -40,12 +41,16 @@ import {
 const LIVE_STATES = runStateSchema.options.filter(isLive);
 
 const taskDocSchema = taskDocumentSchema;
+const requestBindingSchema = z.strictObject({
+  canonicalRequestId: z.string().min(1).max(512),
+  firstSourceRequestId: z.string().min(1).max(512),
+});
 
 export interface FirestoreStoreOptions {
   readonly projectId: string;
   readonly databaseId: string;
   /** Defaults to `orchestrator-`. Collections are `<prefix>tasks`,
-   *  `<prefix>runs`, `<prefix>outbox`. */
+   *  `<prefix>runs`, `<prefix>outbox`, `<prefix>request-bindings`. */
   readonly collectionPrefix?: string;
   /** Set to talk to a local Firestore emulator instead of the real service. */
   readonly emulatorHost?: string;
@@ -67,6 +72,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
   readonly #outbox: CollectionReference;
+  readonly #requestBindings: CollectionReference;
   readonly #githubAnchors: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
@@ -82,6 +88,9 @@ export class FirestoreStore implements OrchestratorStore {
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
+    this.#requestBindings = this.#firestore.collection(
+      `${prefix}request-bindings`,
+    );
     this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
   }
 
@@ -110,29 +119,63 @@ export class FirestoreStore implements OrchestratorStore {
     taskId: TaskId;
     requestId: string;
     requestSource: RequestSource;
+    requestBinding?: RequestBinding;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const taskRef = this.#taskRef(input.taskId);
+    const bindingRef =
+      input.requestBinding === undefined
+        ? undefined
+        : this.#requestBindingRef(
+            input.taskId,
+            input.requestBinding.bindingKey,
+          );
     return this.#firestore.runTransaction(async (tx) => {
       // The exact-key history query and the task/run reads share this
       // transaction with the accepted write. Firestore reruns the callback
       // if any concurrent request or settlement changes one of those reads,
       // closing the terminal-settlement replay window as well as the live-run
       // race without scanning the task's unbounded run history.
-      const taskSnapshot = await tx.get(taskRef);
+      const [taskSnapshot, bindingSnapshot] = await Promise.all([
+        tx.get(taskRef),
+        bindingRef === undefined
+          ? Promise.resolve(undefined)
+          : tx.get(bindingRef),
+      ]);
       const task = taskSnapshot.exists
         ? taskDocSchema.parse(taskSnapshot.data())
         : undefined;
+      const binding =
+        bindingSnapshot === undefined || !bindingSnapshot.exists
+          ? undefined
+          : requestBindingSchema.parse(bindingSnapshot.data());
+      let requestId = input.requestId;
+      let bindingToCreate: z.infer<typeof requestBindingSchema> | undefined;
+      if (input.requestBinding !== undefined) {
+        if (binding === undefined) {
+          requestId = input.requestBinding.canonicalRequestId;
+          bindingToCreate = {
+            canonicalRequestId: input.requestBinding.canonicalRequestId,
+            firstSourceRequestId: input.requestId,
+          };
+        } else {
+          if (
+            binding.canonicalRequestId !==
+            input.requestBinding.canonicalRequestId
+          ) {
+            throw new Error('request binding canonical identity mismatch');
+          }
+          if (binding.firstSourceRequestId === input.requestId) {
+            requestId = binding.canonicalRequestId;
+          }
+        }
+      }
       const [activeRunSnapshot, runsSnapshot] = await Promise.all([
         task?.task.activeRunId === undefined
           ? Promise.resolve(undefined)
           : tx.get(this.#runRef(task.task.activeRunId)),
         tx.get(
-          this.#runsForRequest(
-            input.taskId,
-            input.requestId,
-            input.requestSource,
-          ),
+          this.#runsForRequest(input.taskId, requestId, input.requestSource),
         ),
       ]);
       const activeRun =
@@ -142,7 +185,15 @@ export class FirestoreStore implements OrchestratorStore {
       const previousRun = runsSnapshot.docs
         .map((doc) => runSchema.parse(doc.data()))
         .find((run) => run.requestSource === input.requestSource);
-      const outcome = input.decide({ task, activeRun, previousRun });
+      const outcome = input.decide({
+        task,
+        activeRun,
+        requestId,
+        previousRun,
+      });
+      if (bindingToCreate !== undefined && bindingRef !== undefined) {
+        tx.create(bindingRef, bindingToCreate);
+      }
       if (isRefusal(outcome)) return outcome;
 
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
@@ -626,6 +677,12 @@ export class FirestoreStore implements OrchestratorStore {
 
   #outboxRef(entryId: string): DocumentReference {
     return this.#outbox.doc(encodeURIComponent(entryId));
+  }
+
+  #requestBindingRef(id: TaskId, bindingKey: string): DocumentReference {
+    return this.#requestBindings.doc(
+      encodeURIComponent(JSON.stringify([taskKey(id), bindingKey])),
+    );
   }
 
   #githubAnchorRef(

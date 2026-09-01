@@ -177,6 +177,9 @@ export async function handleWebhookDelivery(
       requestId: interpreted.requestId,
       params,
       work: interpreted.work,
+      ...(interpreted.requestBinding === undefined
+        ? {}
+        : { requestBinding: interpreted.requestBinding }),
     });
 
     if (outcome.kind === 'busy') {

@@ -19,6 +19,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  type RequestBinding,
   type RequestTransactionState,
   StoreConflict,
   type TaskListCursor,
@@ -30,6 +31,10 @@ export class MemoryStore implements OrchestratorStore {
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #runs = new Map<string, Run>();
   readonly #requestRuns = new Map<string, string>();
+  readonly #requestBindings = new Map<
+    string,
+    { canonicalRequestId: string; firstSourceRequestId: string }
+  >();
   readonly #outbox = new Map<string, OutboxEntry>();
   readonly #githubAnchorProjections = new Map<
     string,
@@ -62,6 +67,7 @@ export class MemoryStore implements OrchestratorStore {
     taskId: TaskId;
     requestId: string;
     requestSource: RequestSource;
+    requestBinding?: RequestBinding;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Do not await while this snapshot and its accepted write are in flight:
@@ -75,14 +81,31 @@ export class MemoryStore implements OrchestratorStore {
       activeRunId === undefined
         ? undefined
         : structuredClone(this.#runs.get(activeRunId));
+    const binding =
+      input.requestBinding === undefined
+        ? undefined
+        : this.#requestBindings.get(
+            this.#bindingKey(input.taskId, input.requestBinding.bindingKey),
+          );
+    const { requestId, nextBinding } = this.#resolveRequestBinding({
+      requestId: input.requestId,
+      binding: input.requestBinding,
+      current: binding,
+    });
     const previousRunId = this.#requestRuns.get(
-      this.#requestKey(input.taskId, input.requestSource, input.requestId),
+      this.#requestKey(input.taskId, input.requestSource, requestId),
     );
     const previousRun =
       previousRunId === undefined
         ? undefined
         : structuredClone(this.#runs.get(previousRunId));
-    const outcome = input.decide({ task, activeRun, previousRun });
+    const outcome = input.decide({ task, activeRun, requestId, previousRun });
+    if (nextBinding !== undefined && input.requestBinding !== undefined) {
+      this.#requestBindings.set(
+        this.#bindingKey(input.taskId, input.requestBinding.bindingKey),
+        nextBinding,
+      );
+    }
     if (isRefusal(outcome)) return outcome;
     this.#apply({ decision: outcome, expectedRevision: task?.revision });
     return outcome;
@@ -127,6 +150,40 @@ export class MemoryStore implements OrchestratorStore {
 
   #requestKey(id: TaskId, source: RequestSource, requestId: string): string {
     return JSON.stringify([taskKey(id), requestHistoryKey(source, requestId)]);
+  }
+
+  #bindingKey(id: TaskId, bindingKey: string): string {
+    return JSON.stringify([taskKey(id), bindingKey]);
+  }
+
+  #resolveRequestBinding(input: {
+    requestId: string;
+    binding?: RequestBinding;
+    current?: { canonicalRequestId: string; firstSourceRequestId: string };
+  }): {
+    requestId: string;
+    nextBinding?: { canonicalRequestId: string; firstSourceRequestId: string };
+  } {
+    if (input.binding === undefined) return { requestId: input.requestId };
+    const { binding } = input;
+    if (input.current === undefined) {
+      return {
+        requestId: binding.canonicalRequestId,
+        nextBinding: {
+          canonicalRequestId: binding.canonicalRequestId,
+          firstSourceRequestId: input.requestId,
+        },
+      };
+    }
+    if (input.current.canonicalRequestId !== binding.canonicalRequestId) {
+      throw new Error('request binding canonical identity mismatch');
+    }
+    return {
+      requestId:
+        input.current.firstSourceRequestId === input.requestId
+          ? binding.canonicalRequestId
+          : input.requestId,
+    };
   }
 
   async beginGithubAnchorProjectionRefresh(

@@ -26,6 +26,10 @@ async function getMockSession(userId: string): Promise<Session> {
       id: userId,
       name: 'LAN Preview',
       email: `${userId}@example.com`,
+      // The local E2E adapter supplies a deterministic GitHub login as its
+      // injected identity. Direct Work admission must retain the same
+      // concrete actor boundary as production rather than inventing one.
+      login: userId,
       isAdmin: true,
     },
     expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
