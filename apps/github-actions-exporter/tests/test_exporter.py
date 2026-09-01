@@ -313,6 +313,51 @@ class GitHubActionsExporterTests(unittest.TestCase):
             self.metrics(),
         )
 
+    def test_consecutive_failures_count_back_from_the_latest_decisive_run(self):
+        repository = "jlapenna/homelab"
+        # success, then two failures: streak 2. A cancelled run and a
+        # pull_request failure in between must neither extend nor reset it.
+        for run in (
+            workflow_run(id=1, conclusion="success", created_at="2026-08-05T01:00:00Z"),
+            workflow_run(id=2, conclusion="failure", created_at="2026-08-05T02:00:00Z"),
+            workflow_run(
+                id=3, conclusion="cancelled", created_at="2026-08-05T02:30:00Z"
+            ),
+            workflow_run(
+                id=4,
+                conclusion="failure",
+                event="pull_request",
+                created_at="2026-08-05T02:45:00Z",
+            ),
+            workflow_run(id=5, conclusion="failure", created_at="2026-08-05T03:00:00Z"),
+            # a different workflow that recovered: failure then success -> 0
+            workflow_run(
+                id=6,
+                name="deploy",
+                path=".github/workflows/deploy.yml",
+                conclusion="failure",
+                created_at="2026-08-05T01:00:00Z",
+            ),
+            workflow_run(
+                id=7,
+                name="deploy",
+                path=".github/workflows/deploy.yml",
+                conclusion="success",
+                created_at="2026-08-05T02:00:00Z",
+            ),
+        ):
+            self.database.upsert_run(repository, run)
+
+        metrics = self.metrics()
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures{repository="jlapenna/homelab",workflow="validate"} 2.0',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures{repository="jlapenna/homelab",workflow="deploy"} 0.0',
+            metrics,
+        )
+
     def test_rerun_attempt_preserves_the_previous_workflow_outcome(self):
         failed = workflow_run(conclusion="failure", run_attempt=1)
         succeeded = workflow_run(conclusion="success", run_attempt=2)
