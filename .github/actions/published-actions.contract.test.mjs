@@ -105,6 +105,17 @@ const PUBLISHED = {
     },
     outputs: ['response'],
   },
+  // Shared notice/summary surface for an engaged CI control flag
+  // (docs/ci-control-flags.md). Consumed cross-repo by sprinkles'
+  // e2e.yml (two jobs), in addition to this repo's own ci.yml.
+  'control-flag': {
+    inputs: {
+      name: { required: true },
+      lane: { required: true },
+      'restore-command': { required: true },
+    },
+    outputs: [],
+  },
 };
 
 // Minimal indentation-scoped parser for prettier-formatted action.yml:
