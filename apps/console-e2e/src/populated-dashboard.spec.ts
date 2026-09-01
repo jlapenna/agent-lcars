@@ -116,9 +116,7 @@ test.describe('populated dashboard', () => {
     ).toHaveCount(0);
   });
 
-  test('retrigger and pipeline reassignment use broker-safe GitHub writes', async ({
-    page,
-  }) => {
+  test('retrigger uses the server-owned Work admission', async ({ page }) => {
     await page.goto('/inbox');
     await page
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.humanNeeded}`)
@@ -139,25 +137,6 @@ test.describe('populated dashboard', () => {
       )
       .toMatchObject({ pipeline: 'claude', state: 'running' });
     await expect(retrigger).toBeEnabled();
-
-    const overflow = detail.getByRole('button', {
-      name: 'More actions for #9001',
-    });
-    await overflow.click();
-    await page.getByRole('menuitem', { name: 'Reassign to codex' }).click();
-    await expect(page.getByText('#9001 reassigned to codex')).toBeVisible();
-    await expect
-      .poll(() =>
-        readActiveOrchestratorRun({
-          issue: E2E_ITEM_NUMBERS.humanNeeded,
-          repository: E2E_FIXTURE_REPOSITORY,
-        }),
-      )
-      .toMatchObject({ pipeline: 'codex', state: 'running' });
-    // Both controls bind their `useTransition` state to disabled/loading;
-    // enabled again is the user-visible proof that the refreshed RSC
-    // payload settled before Playwright closes this test's page.
-    await expect(overflow).toBeEnabled();
   });
 
   test('edits issue content from the shared three-dot menu across dashboard surfaces', async ({

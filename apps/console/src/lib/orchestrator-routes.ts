@@ -1,6 +1,4 @@
 import {
-  decidedRun,
-  isRefusal,
   type Orchestrator,
   type OrchestratorStore,
   type Run,
@@ -12,6 +10,7 @@ import {
   githubAnchorProjectionDeletionFromDelivery,
 } from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
+import { admitGithubWork } from '@/lib/github-work-admission';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 
@@ -173,45 +172,42 @@ export async function handleWebhookDelivery(
       params: interpreted.params,
     });
 
-    const outcome = await deps.orchestrator.request({
-      taskId: interpreted.taskId,
+    const outcome = await admitGithubWork(deps, {
+      anchor: interpreted.taskId,
       requestId: interpreted.requestId,
-      pipeline: interpreted.pipeline,
       params,
       work: interpreted.work,
     });
 
-    if (isRefusal(outcome)) {
-      if (outcome.reason === 'task-busy') {
-        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-        return { status: 200, body: { refused: 'task-busy' } };
-      }
-      if (outcome.reason === 'duplicate-request') {
-        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-        return {
-          status: 200,
-          body: { duplicate: true, runId: outcome.existingRun?.runId },
-        };
-      }
-      // `request()` only ever refuses with `task-busy` or
-      // `duplicate-request` (see decide.ts's `requestRun`) -- any other
-      // reason means the decision layer's contract changed underneath us.
+    if (outcome.kind === 'busy') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      return { status: 200, body: { refused: 'task-busy' } };
+    }
+    if (outcome.kind === 'duplicate') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      return {
+        status: 200,
+        body: { duplicate: true, runId: outcome.runId },
+      };
+    }
+    if (outcome.kind === 'conflict') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      return { status: 200, body: { refused: 'work-spec-mismatch' } };
+    }
+    if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {
       console.error(
-        'agent-lcars: unexpected orchestrator refusal on request',
-        outcome.reason,
+        'agent-lcars: GitHub webhook admission rejected',
+        outcome.message,
       );
       return { status: 500, body: { error: 'internal' } };
     }
 
-    const drained = await deps.drain();
-    // `request()` never refuses this outcome without carrying a run.
-    const { runId } = decidedRun(outcome);
     await refreshGithubAnchorProjectionAfterAdmission(deps, input);
     return {
       status: 200,
       body: {
-        runId,
-        dispatched: drained.dispatched.includes(runId),
+        runId: outcome.runId,
+        dispatched: outcome.dispatched,
       },
     };
   } catch (error) {

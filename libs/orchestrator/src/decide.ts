@@ -40,6 +40,7 @@ export interface Refusal {
     | 'stale-lease' // renew/report from a run that already lost the lock
     | 'task-closed' // closeTask set closedAt; no further runs
     | 'missing-work' // strict Task documents always carry the Work payload
+    | 'work-spec-mismatch' // caller's immutable Work validation rejected it
     | 'unknown-task' // close on a task that was never created
     | 'not-native'; // closeTask on a GitHub anchor: closedAt is native-only
   /** For `duplicate-request`, the run the request already maps to. */

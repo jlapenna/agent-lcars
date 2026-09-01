@@ -371,58 +371,6 @@ export function resetIssueContentEdits(): void {
   (globalThis as Record<string, unknown>)[ISSUE_CONTENT_EDITS_KEY] = new Map();
 }
 
-export type ReassignFixtureIssuePipelineResult =
-  | { ok: true }
-  | {
-      ok: false;
-      reason:
-        | 'not-found'
-        | 'no-pipeline'
-        | 'already-targeted'
-        | 'conflicting-pipeline';
-    };
-
-/**
- * The fixture stand-in for the real pipeline-reassignment path's typed
- * rejections (today `reassignPipeline` in `@/lib/backend-actions.ts`; the
- * broker-era `applyPipelineReassignment` these reasons originally mirrored
- * was deleted with `apps/dispatch-broker`) - real
- * controller logic never runs against this fixture
- * (docs/e2e-security-boundary.md). Validates against the issue's current
- * fixture snapshot but, like every other GitHub label write this fixture
- * answers (the atomic label-set PUT below, and clearNeedsHumanLabel's own
- * DELETE), never persists a change of its own - each is a validate-then-echo,
- * so a spec's curated items stay stable for every later assertion in the
- * same test.
- *
- * Takes the resolved `targetLabel`/`pipelineLabels` pair the command itself
- * carries (agent-lcars#811 Codex review), not a bare pipeline name it would
- * have to reconstruct a label from - this fixture only ever sees the
- * fleet-wide default labels in practice, but matching the real command's
- * shape keeps the two from silently drifting.
- */
-export function reassignFixtureIssuePipeline(
-  number: number,
-  targetLabel: string,
-  pipelineLabels: string[],
-): ReassignFixtureIssuePipelineResult {
-  const fixtureIssue = issue(number);
-  if (!fixtureIssue) return { ok: false, reason: 'not-found' };
-  const currentPipelineLabels = fixtureIssue.labels
-    .map((label) => label.name)
-    .filter((name) => pipelineLabels.includes(name));
-  if (currentPipelineLabels.length === 0) {
-    return { ok: false, reason: 'no-pipeline' };
-  }
-  if (currentPipelineLabels.length > 1) {
-    return { ok: false, reason: 'conflicting-pipeline' };
-  }
-  if (currentPipelineLabels[0] === targetLabel) {
-    return { ok: false, reason: 'already-targeted' };
-  }
-  return { ok: true };
-}
-
 /**
  * Stateful Quick Task write-path fixture (agent-lcars#307 part A). Everything
  * `apps/console/src/lib/backend-actions.ts`'s `createQuickTask` actually
@@ -668,8 +616,8 @@ export function updateFixtureIssueContent(
   return issueFor(item);
 }
 
-/** Individual issue read used by rendered mutation flows such as retrigger
- * and atomic pipeline reassignment, and by the canonical `/task/<owner>/
+/** Individual issue read used by rendered mutation flows such as retrigger,
+ * and by the canonical `/task/<owner>/
  * <repo>/<issue>` detail page (task-detail.ts) - which is why a Quick
  * Task-created issue is checked first and unconditionally: that page must
  * resolve a freshly filed task regardless of whether populated mode is on. */

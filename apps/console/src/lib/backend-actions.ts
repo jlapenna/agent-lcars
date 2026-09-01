@@ -7,7 +7,7 @@ import {
   quickTaskDigest as sharedQuickTaskDigest,
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
-import { isRefusal } from '@agent-lcars/orchestrator';
+import { workPayloadSchema } from '@agent-lcars/work';
 
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
@@ -16,6 +16,7 @@ import {
   primaryWatchedRepo,
   type WatchedRepo,
 } from './github-client';
+import { admitGithubWork } from './github-work-admission';
 import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
@@ -523,20 +524,24 @@ export async function retriggerIssue(
   }
 
   const runtime = createOrchestratorRuntime();
-  const { store, orchestrator, drain } = runtime;
+  const { store } = runtime;
   const taskId = { repo: repoKey(repo), issue: issueNumber };
   const [runs, existingTask] = await Promise.all([
     store.listRuns(taskId),
     store.readTask(taskId),
   ]);
-  const previousPipeline = latestOrchestratorPipeline(runs);
-  if (previousPipeline === undefined) {
+  const existingWork =
+    existingTask === undefined
+      ? undefined
+      : workPayloadSchema.parse(existingTask.task.work);
+  const pipeline =
+    existingWork?.spec.pipeline ?? latestOrchestratorPipeline(runs);
+  if (pipeline === undefined) {
     throw new ActionError(
       'No authoritative pipeline is recorded for this task; assign an agent before retrying',
       409,
     );
   }
-  const pipeline = previousPipeline;
   const integration = requireAgentIntegration(repo, pipeline);
 
   await clearNeedsHumanLabel(repo, issueNumber);
@@ -561,158 +566,37 @@ export async function retriggerIssue(
 
   // An existing strict Task already carries Work and keeps it forever
   // (decide.ts's write-once rule). Only a new Task needs GitHub derivation.
-  let work;
-  if (existingTask === undefined) {
-    const octokit = getGithubClient();
-    const { data: issue } = await octokit.rest.issues.get({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-    });
-    work = workPayloadFromGithub({
-      title: issue.title,
-      body: issue.body,
-      pipeline,
-      repo: repoKey(repo),
-      actor: actorLogin,
-    });
-  }
+  const work =
+    existingWork ??
+    (await (async () => {
+      const octokit = getGithubClient();
+      const { data: issue } = await octokit.rest.issues.get({
+        owner: repo.owner,
+        repo: repo.name,
+        issue_number: issueNumber,
+      });
+      return workPayloadFromGithub({
+        title: issue.title,
+        body: issue.body,
+        pipeline,
+        repo: repoKey(repo),
+        actor: actorLogin,
+      });
+    })());
 
-  const outcome = await orchestrator.request({
-    taskId,
+  const outcome = await admitGithubWork(runtime, {
+    anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
-    pipeline,
     params: { mode: 'implement' },
-    ...(work === undefined ? {} : { work }),
+    work,
   });
-  if (isRefusal(outcome)) {
-    if (outcome.reason === 'task-busy') {
-      throw new ActionError('A run is already active for this task', 409);
-    }
-    // `request()` only ever refuses with `task-busy` or `duplicate-request`
-    // (see decide.ts's `requestRun`), and the freshly minted requestId above
-    // can never collide with an existing run - any other outcome means the
-    // decision layer's contract changed underneath us.
+  if (outcome.kind === 'busy') {
+    throw new ActionError('A run is already active for this task', 409);
+  }
+  if (outcome.kind !== 'accepted') {
     throw new ActionError('Retrigger could not be processed', 500);
   }
-  await drain();
   return;
-}
-
-// The console's "hand this off to a different agent" action (#143) - e.g. a
-// codex run got stuck and the maintainer wants claude to pick it up instead.
-// Distinct from retriggerIssue's same-pipeline cycle: this swaps which
-// pipeline label the issue carries rather than re-firing the one it already
-// has.
-//
-// #1183: this used to delegate the whole transition to the hosted
-// controller's `reassign-pipeline` command (a `DispatchLedger`-era concept -
-// see #811's history in git blame). The orchestrator has no notion of "a
-// pipeline label" at all (#1183's model is a per-task mutex over runs, not a
-// GitHub-label-driven admission loop), so this now does the two things a
-// reassignment actually means under that model directly: swap the issue's
-// own `agent:*` label (still the fleet's own routing/display truth - the
-// dashboard, RetriggerButton, and webhook-driven mention dispatch all read
-// it), then hand the task's lock to the new pipeline through the
-// orchestrator - canceling whatever run currently holds it before
-// requesting a fresh one. `callerId` remains the console's own stable
-// per-click UUID (see retrigger-button.tsx's `createRandomId()` sibling in
-// item-overflow-menu.tsx) for the malformed-input guard below; the
-// orchestrator idempotency key is minted fresh, same as retriggerIssue.
-export async function reassignPipeline(
-  repo: WatchedRepo,
-  issueNumber: number,
-  targetPipeline: Pipeline,
-  callerId: string,
-  actorLogin?: string,
-): Promise<void> {
-  if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
-    throw new ActionError('A valid dispatch caller ID is required', 400);
-  }
-  // Repo-config gate: does this specific watched repo even declare an
-  // integration for the target pipeline at all.
-  const targetIntegration = requireAgentIntegration(repo, targetPipeline);
-  // This repo's own configured labels (not the fleet-wide default): a
-  // watched repo's `agents` config can override the `agent:*` label per
-  // pipeline (#811 Codex review on #904).
-  const pipelineLabels = supportedAgentPipelines(repo)
-    .map((pipeline) => agentIntegration(repo, pipeline)?.label)
-    .filter((label): label is string => Boolean(label));
-
-  const octokit = getGithubClient();
-  const { data: issue } = await octokit.rest.issues.get({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-  });
-  const labels = issue.labels.map((label) =>
-    typeof label === 'string' ? label : (label.name ?? ''),
-  );
-  // Same reasoning as retriggerIssue's own clearNeedsHumanLabel call: a
-  // reassignment hands the task to a fresh agent, so any pending
-  // needs-human park state clears in the same atomic write rather than
-  // lingering under a pipeline label that no longer matches who owns it.
-  await octokit.rest.issues.setLabels({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-    labels: labels
-      .filter(
-        (label) =>
-          !pipelineLabels.includes(label) && label !== 'status:needs-human',
-      )
-      .concat(targetIntegration.label),
-  });
-  await refreshGithubMutation(repo, issueNumber);
-
-  const runtime = createOrchestratorRuntime();
-  const { store, orchestrator, drain } = runtime;
-  const taskId = { repo: repoKey(repo), issue: issueNumber };
-  const [activeRun, existingTask] = await Promise.all([
-    store.readActiveRun(taskId),
-    store.readTask(taskId),
-  ]);
-  if (activeRun) {
-    // `cancel` only ever refuses `unknown-run`/`run-not-live` - both mean
-    // the run already stopped being live between the read above and this
-    // call, which is exactly the outcome cancellation wants anyway.
-    await orchestrator.cancel(
-      activeRun.runId,
-      `reassigned to ${targetPipeline} from console`,
-    );
-  }
-
-  // Reuses the issue already read above for the label swap. An existing
-  // strict Task already carries Work, so only a new Task needs derivation.
-  const work =
-    existingTask === undefined
-      ? workPayloadFromGithub({
-          title: issue.title,
-          body: issue.body,
-          pipeline: targetPipeline,
-          repo: repoKey(repo),
-          actor: actorLogin,
-        })
-      : undefined;
-
-  const outcome = await orchestrator.request({
-    taskId,
-    requestId: `console-reassign:${randomUUID()}`,
-    pipeline: targetPipeline,
-    params:
-      activeRun?.params?.mode !== undefined
-        ? { mode: activeRun.params.mode }
-        : { mode: 'implement' },
-    ...(work === undefined ? {} : { work }),
-  });
-  if (isRefusal(outcome)) {
-    if (outcome.reason === 'task-busy') {
-      throw new ActionError('A run is already active for this task', 409);
-    }
-    // Same unreachable-in-practice guard as retriggerIssue's own request().
-    throw new ActionError('Reassignment could not be processed', 500);
-  }
-  await drain();
 }
 
 /** Assigns an unclaimed open issue to an agent pipeline. */
@@ -721,8 +605,22 @@ export async function assignPipeline(
   issueNumber: number,
   targetPipeline: Pipeline,
 ): Promise<void> {
-  const octokit = getGithubClient();
   const targetIntegration = requireAgentIntegration(repo, targetPipeline);
+  const taskId = { repo: repoKey(repo), issue: issueNumber };
+  const existingTask = await createOrchestratorRuntime().store.readTask(taskId);
+  if (existingTask !== undefined) {
+    // Work is written exactly once for every GitHub anchor. GitHub labels are
+    // only a request signal, so a manually removed agent label must not make
+    // the console recreate Reassign by relabeling an already-admitted task.
+    // Validate the durable payload before relying on its immutable contract.
+    workPayloadSchema.parse(existingTask.task.work);
+    throw new ActionError(
+      'Issue already has immutable Work; retry its admitted pipeline instead',
+      409,
+    );
+  }
+
+  const octokit = getGithubClient();
   const { data: issue } = await octokit.rest.issues.get({
     owner: repo.owner,
     repo: repo.name,

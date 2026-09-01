@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { authenticateWorkRequest, type WorkAuthDeps } from './work-auth';
-import { parseWorkGrants } from './work-grants';
+import { parseWorkGrants, type WorkGrant } from './work-grants';
 
 const grants = parseWorkGrants(
   JSON.stringify([
@@ -9,6 +9,7 @@ const grants = parseWorkGrants(
       principal: 'user:jlapenna',
       subjects: ['sa@example.iam.gserviceaccount.com', 'github:jlapenna'],
       pipelines: ['claude'],
+      scopes: ['work.operator'],
     },
   ]),
 );
@@ -141,6 +142,7 @@ describe('authenticateWorkRequest', () => {
           principal: 'workflow:member-automation',
           subjects: ['github-actions:other-org/other-repo'],
           pipelines: ['claude', 'codex', 'opencode'],
+          scopes: ['work.operator'],
         },
       ]),
     );
@@ -213,7 +215,7 @@ describe('authenticateWorkRequest', () => {
     expect(p?.scopes.has('work.cron')).toBe(true);
     expect(p?.scopes.has('work.operator')).toBe(false);
   });
-  it('maps a grant with an explicit scopes list onto the principal', async () => {
+  it('maps only explicitly granted scopes onto the principal', async () => {
     const executorGrants = parseWorkGrants(
       JSON.stringify([
         {
@@ -236,5 +238,26 @@ describe('authenticateWorkRequest', () => {
     );
     expect(principal?.scopes.has('work.executor')).toBe(true);
     expect(principal?.scopes.has('work.operator')).toBe(false);
+  });
+  it('does not synthesize work.operator if an invalid injected grant loses scopes at runtime', async () => {
+    const missingScopes = [
+      {
+        principal: 'svc:telemetry-writer',
+        subjects: ['telemetry-writer@agent-lcars.iam.gserviceaccount.com'],
+        pipelines: ['claude'],
+      },
+    ] as unknown as WorkGrant[];
+    const principal = await authenticateWorkRequest(
+      req({ authorization: 'Bearer tok' }),
+      deps({
+        verifyGoogleIdToken: async () => ({
+          email: 'telemetry-writer@agent-lcars.iam.gserviceaccount.com',
+          emailVerified: true,
+        }),
+        grants: () => missingScopes,
+      }),
+    );
+    expect(principal?.scopes.has('work.operator')).toBe(false);
+    expect(principal?.scopes.size).toBe(0);
   });
 });

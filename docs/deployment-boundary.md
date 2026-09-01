@@ -83,9 +83,10 @@ Sprinkles-specific branch nor a provider-routing selector.
 | max live runs            | `AGENT_LCARS_WORK_MAX_LIVE_RUNS` | `2`                                                                                                                                       |
 | Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE`      | `agent-lcars-work`                                                                                                                        |
 
-Unlike `deployment.ts`, these have no fallback identity baked into source —
-an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody can
-operate the API), not a default principal. Every admitted run uses
+Unlike `deployment.ts`, these have no fallback identity or scope baked into
+source — an unset `AGENT_LCARS_WORK_GRANTS` means an empty grant list (nobody
+can operate the API), and every configured grant must explicitly declare its
+non-empty `scopes` list. Every admitted run uses
 QueueExecutor, regardless of its provider or whether it came from GitHub, the
 console, a Work API GitHub-anchor dispatch, native Work, a schedule tick, or
 redispatch. Callers and work specifications never choose a route.
@@ -115,13 +116,13 @@ field an operator's grant uses to gate `create`/`redispatch`. `POST
 
 The current operator grants list all three supported pipelines (`claude`,
 `codex`, `opencode`), including the maintainer, repository-bounded
-`workflow:work-create`, and Sprinkles' App Hosting service principal. The
-published `work-create.yml` workflow is contract-tested against that list,
-so its provider canaries cannot fail at API admission. The telemetry-writer
+`workflow:work-create`, `workflow:member-automation`, and Sprinkles' App
+Hosting service principal. Each declares `work.operator` explicitly. The
+published `work-create.yml` workflow is contract-tested against that list, so
+its provider canaries cannot fail at API admission. The telemetry-writer
 identity remains a provider-neutral executor and scheduler, distinct from an
-operator. Its executor grant and the direct runner's claim support cover
-every admitted provider; its cron scope only permits the server-owned
-schedule tick.
+operator. Its executor grant and the direct runner's claim support cover every
+admitted provider; its cron scope only permits the server-owned schedule tick.
 
 #### Queue executor routing
 

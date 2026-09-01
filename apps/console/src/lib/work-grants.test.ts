@@ -14,11 +14,13 @@ const raw = JSON.stringify([
       'github:jlapenna',
     ],
     pipelines: ['claude', 'codex'],
+    scopes: ['work.operator'],
   },
   {
     principal: 'svc:lcars-admin',
     subjects: ['lcars-admin@agent-lcars.iam.gserviceaccount.com'],
     pipelines: ['claude'],
+    scopes: ['work.operator'],
   },
 ]);
 
@@ -67,17 +69,18 @@ describe('grantForPrincipal', () => {
 });
 
 describe('grant scopes', () => {
-  it('defaults scopes to work.operator when absent', () => {
-    const grants = parseWorkGrants(
-      JSON.stringify([
-        {
-          principal: 'user:jlapenna',
-          subjects: ['github:jlapenna'],
-          pipelines: ['claude'],
-        },
-      ]),
-    );
-    expect(grants[0]?.scopes).toBeUndefined();
+  it('rejects missing scopes rather than granting work.operator implicitly', () => {
+    expect(() =>
+      parseWorkGrants(
+        JSON.stringify([
+          {
+            principal: 'user:jlapenna',
+            subjects: ['github:jlapenna'],
+            pipelines: ['claude'],
+          },
+        ]),
+      ),
+    ).toThrow();
   });
 
   it('accepts an explicit work.executor scope', () => {
@@ -108,7 +111,7 @@ describe('grant scopes', () => {
     expect(grants[0]?.scopes).toEqual(['work.cron']);
   });
 
-  it('rejects an explicit empty scopes list as a config error rather than silently treating it as none', () => {
+  it('rejects an explicit empty scopes list as a config error', () => {
     expect(() =>
       parseWorkGrants(
         JSON.stringify([
@@ -135,6 +138,7 @@ describe('grant pipelines', () => {
             // A typo -- never matches a real workSpecSchema pipeline, so a
             // grant naming it would otherwise sit silently inert.
             pipelines: ['claud'],
+            scopes: ['work.operator'],
           },
         ]),
       ),

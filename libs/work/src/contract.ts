@@ -297,6 +297,9 @@ export const dispatchesContract = {
       BAD_REQUEST: {
         message: 'Anchor repository must equal the Work target repository',
       },
+      CONFLICT: {
+        message: 'GitHub anchor already has an immutable Work specification',
+      },
     })
     .input(
       z.strictObject({

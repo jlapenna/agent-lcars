@@ -20,7 +20,6 @@ import type { ActionItem } from '../lib/action-items';
 import { derivePrimaryAction, type Pipeline } from '../lib/primary-action';
 import {
   matchingAgentPipelines,
-  selectedAgentPipeline,
   supportedAgentPipelines,
 } from '../lib/watched-repo';
 import {
@@ -29,17 +28,15 @@ import {
   clearHumanNeeded,
   closeIssue,
   mergePr,
-  reassignPipeline,
   rebasePr,
   updateIssueContent,
 } from './actions';
-import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
 /**
  * An overflow menu, shared by queue cards and compact rows, for secondary
- * actions (closing an item's loop, clearing a label, rebasing a PR,
- * reassigning to a different agent) without a trip to GitHub. Renders
+ * actions (closing an item's loop, clearing a label, or rebasing a PR)
+ * without a trip to GitHub. Renders
  * nothing if no action applies to this item.
  */
 export function ItemOverflowMenu({
@@ -75,23 +72,12 @@ export function ItemOverflowMenu({
   // resolve with a single click rather than a trip to GitHub.
   const canRebase =
     item.kind === 'pr' && item.mergeableState === 'behind' && !canReview;
-  // Only issues carry a pipeline label (the control plane admits labeled
-  // issues, not PRs) - an issue with none of the
-  // three has never been handed to an agent, so there's nothing to
-  // reassign FROM.
   const pipelines = supportedAgentPipelines(item.repo);
-  const currentPipeline = selectedAgentPipeline(item.repo, item.labels);
-  const reassignTargets =
-    item.kind === 'issue' && currentPipeline
-      ? pipelines.filter((p) => p !== currentPipeline)
-      : [];
-  const canReassign = reassignTargets.length > 0;
   // Zero agent labels means "never assigned" - offer every pipeline. Two or
-  // more is contradictory state (selectedAgentPipeline also reports
-  // `undefined` here, but for the opposite reason): every "Assign to …"
-  // option would fail backend-actions.ts's assignPipeline, which rejects an
-  // issue that already carries an agent label, so the menu withholds
-  // assignment rather than offering actions that can never succeed.
+  // more is contradictory state: every "Assign to …" option would fail
+  // backend-actions.ts's assignPipeline, which rejects an issue that already
+  // carries an agent label, so the menu withholds assignment rather than
+  // offering actions that can never succeed.
   const assignTargets =
     item.kind === 'issue' &&
     matchingAgentPipelines(item.repo, item.labels).length === 0
@@ -105,8 +91,7 @@ export function ItemOverflowMenu({
     !canMute &&
     !canReview &&
     !canRebase &&
-    !canAssign &&
-    !canReassign
+    !canAssign
   )
     return null;
 
@@ -175,25 +160,6 @@ export function ItemOverflowMenu({
       }
       notifications.show({
         message: `Cleared needs-human on #${item.number}`,
-        color: 'green',
-      });
-    });
-  };
-
-  const handleReassign = (target: Pipeline) => {
-    startTransition(async () => {
-      const result = await reassignPipeline(
-        item.repo,
-        item.number,
-        target,
-        createRandomId(),
-      );
-      if (!result.ok) {
-        showErrorToast(result.message);
-        return;
-      }
-      notifications.show({
-        message: `#${item.number} reassigned to ${target}`,
         color: 'green',
       });
     });
@@ -316,11 +282,6 @@ export function ItemOverflowMenu({
               Rebase onto base branch
             </Menu.Item>
           )}
-          {reassignTargets.map((target) => (
-            <Menu.Item key={target} onClick={() => handleReassign(target)}>
-              Reassign to {target}
-            </Menu.Item>
-          ))}
           {assignTargets.map((target) => (
             <Menu.Item key={target} onClick={() => handleAssign(target)}>
               Assign to {target}

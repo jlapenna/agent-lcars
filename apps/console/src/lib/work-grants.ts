@@ -15,13 +15,8 @@ const grantSchema = z.strictObject({
   principal: z.string().min(1).max(128),
   subjects: z.array(z.string().min(1).max(256)).min(1),
   pipelines: z.array(pipelineNameSchema).min(1),
-  /** Absent means `['work.operator']` -- every grant written before this
-   *  field existed keeps its exact current meaning. Explicitly empty is
-   *  refused (`.min(1)`), not silently treated as "no scopes": there is no
-   *  reading of `scopes: []` in a config file that means anything other
-   *  than a mistake -- it is either absent (the operator default) or a
-   *  deliberate non-empty list. */
-  scopes: z.array(workScopeSchema).min(1).optional(),
+  /** Every grant must name the non-empty authority it confers. */
+  scopes: z.array(workScopeSchema).min(1),
 });
 const grantsSchema = z.array(grantSchema);
 

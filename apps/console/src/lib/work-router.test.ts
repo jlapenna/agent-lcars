@@ -815,6 +815,25 @@ describe('GitHub-anchor dispatch route', () => {
     });
   });
 
+  it('refuses a changed Work spec after the GitHub anchor settles', async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    await call(ctx, 'POST', '/dispatches/github', input);
+    await ctx.runtime.orchestrator.report('jlapenna/agent-lcars#1633/r1', {
+      ok: true,
+    });
+
+    const changed = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      requestId: 'workflow-run:124:changed-pipeline:1633',
+      spec: { ...input.spec, pipeline: 'claude' },
+    });
+    expect(changed.status).toBe(409);
+    expect(await ctx.runtime.store.listRuns(anchor)).toHaveLength(1);
+    expect((await ctx.runtime.store.readTask(anchor))?.task.work).toMatchObject(
+      { spec: { pipeline: 'codex' } },
+    );
+  });
+
   it('preserves the signed caller-repository boundary and requires the Work target to equal the anchor', async () => {
     const ctx = context({ principal: githubActionsOperator });
     const foreign = await call(ctx, 'POST', '/dispatches/github', {

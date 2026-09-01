@@ -53,7 +53,7 @@ available through Git history.
 | Failed worker has no outcome comment                      | Completion path        | Direct-runner completion logs, then Work API logs                    |
 | Completion reports success but no outcome comment appears | Outbox drain           | Pending/failed outbox entries from completion or reconcile response  |
 | Task is silent or appears stuck                           | Reconciliation         | `dispatch-reconcile.yml` history and reconcile response              |
-| Console Retry/Reassign fails                              | Console command path   | `backend-actions.ts` mutation and reconcile notification             |
+| Console Retry fails                                       | GitHub Work admission  | `github-work-admission.ts` and `backend-actions.ts` mutation         |
 
 ## Runner platform boundary
 
