@@ -32,7 +32,7 @@ semantics (allowlists, entrypoint, uid) it depends on.
   up, and verifies the container is actually stable/healthy afterward (not
   just "Up" per `docker ps`). Two independent knobs bound that
   verification, and they are not interchangeable: `HEALTH_TIMEOUT_SECONDS`
-  (default 240) is a _ceiling_ on the wait for Docker's HEALTHCHECK, so it
+  (default 600) is a _ceiling_ on the wait for Docker's HEALTHCHECK, so it
   exits the moment the container is healthy and a generous value costs
   nothing on a good deploy; `STABILITY_WINDOW_SECONDS` (default 90) is a
   fixed `sleep` used only when no HEALTHCHECK is defined, so raising it
