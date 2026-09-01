@@ -23,6 +23,11 @@
       "automergeType": "pr"
     },
     {
+      "description": "TypeScript 7 breaks Nx project-graph construction today. Hold only the 7.x line fleet-wide until Nx compatibility is proven, while leaving a later major available for its own review.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7 || >=8"
+    },
+    {
       "description": "Images hosted only on LAN registries (docker-registry.lan.jlapenna.net, local/ tags) are unreachable from Renovate's hosted runner, so lookups fail as recurring 'Error obtaining docker token' repository problems. These pins are deliberate and updated by hand.",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["local/**", "docker-registry.lan.jlapenna.net/**"],
