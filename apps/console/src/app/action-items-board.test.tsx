@@ -65,7 +65,7 @@ function renderBoard(waitingOnDeploy: ActionItem[] = []) {
 describe('Decision Inbox and Bridge surfaces', () => {
   it('does not add a low-value empty section when nothing is parked', () => {
     renderBoard();
-    expect(screen.queryByTestId('parked-work')).toBeNull();
+    expect(screen.queryByTestId('waiting-on-deploy')).toBeNull();
   });
 
   it('shows the empty-queue message when nothing needs the maintainer', () => {
@@ -107,14 +107,16 @@ describe('Decision Inbox and Bridge surfaces', () => {
     ]);
 
     expect(screen.queryByTestId('full-card')).toBeNull();
-    expect(screen.getByTestId('parked-item-2')).toBeTruthy();
+    expect(screen.getByTestId('deploy-wait-item-2')).toBeTruthy();
     expect(screen.queryByText(/Everything Else/)).toBeNull();
   });
 
   it('explains why parked work cannot move yet', () => {
     renderBoard([makeItem({ number: 5 }), makeItem({ number: 6 })]);
 
-    expect(screen.getByRole('heading', { name: 'Parked Work' })).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'Waiting on Deploy' }),
+    ).toBeTruthy();
     expect(
       screen.getByText(
         '2 items · Waiting for the next deploy before verification can continue.',
