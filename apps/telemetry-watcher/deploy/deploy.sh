@@ -50,11 +50,13 @@ CONTAINER_NAME=agent-lcars-telemetry-watcher
 #
 # A false failure is worse than a slow one. It trains whoever runs this to
 # ignore the gate -- the exact signal the gate exists to provide -- and it
-# fails any automation that trusts the exit code. 240s is ~3x the
-# healthcheck's own unhealthy threshold, and was chosen over the 180s that
-# happened to pass on two hosts because "the value that worked the one time
-# we measured" is not headroom.
-HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-240}"
+# fails any automation that trusts the exit code.  A first pass legitimately
+# walks and reduces every configured transcript, including a host's archived
+# Codex rollouts, before the single Node event loop can serve a probe. Give
+# that cold-cache catch-up a finite ten-minute ceiling. This is not a
+# host-specific override: any watcher with a large valid history needs the
+# same allowance, while a permanently unhealthy image still fails the deploy.
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-600}"
 # Fixed settling window for the no-HEALTHCHECK fallback below. Deliberately a
 # SEPARATE knob from the ceiling above, because this one is a `sleep` that is
 # paid in full on every deploy rather than an upper bound that exits early.
