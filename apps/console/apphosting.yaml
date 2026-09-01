@@ -152,8 +152,8 @@ env:
 
   # The curated repo list this console watches. It must exactly match
   # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES; either mismatch fails closed.
-  # Agent capabilities are explicit. Omitting `agents` opts a repository into
-  # the standard Claude, Codex, and OpenCode integrations.
+  # Every watched repository uses the canonical Claude, Codex, and OpenCode
+  # integrations. Only `agents: false` opts a repository out entirely.
   - variable: AGENT_LCARS_WATCHED_REPOS
     value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"agent-lcars"},{"owner":"jlapenna","name":"homelab","alias":"homelab"},{"owner":"supersprinklesracing","name":"www","alias":"www"},{"owner":"supersprinklesracing","name":"girosf","alias":"girosf"},{"owner":"jlapenna","name":"nx-cache-server","alias":"nx-cache-server"},{"owner":"jlapenna","name":"sync-padd","alias":"sync-padd"}]'
     availability:

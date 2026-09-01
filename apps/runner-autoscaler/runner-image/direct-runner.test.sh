@@ -119,11 +119,11 @@ case "$url" in
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
     else
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
 JSON
     fi
     ;;
@@ -319,14 +319,17 @@ FAKE
   # Fake node helper for the direct-runner resume test:
   # records its argv (proving direct-runner.sh's `runner resume` call site
   # passes the right session id/transcript uri/cwd) and either prints a
-  # fake resumed local path or, when FAKE_RESUME_FAIL is set, fails closed
-  # with no output -- exercising direct-runner.sh's own fail-soft handling
-  # (a failed restore must not stop the run, and must not add --resume).
+  # fake resumed local path or, when FAKE_RESUME_FAIL is set, fails. A
+  # successful command can also return an empty path, which is equally
+  # invalid for the requested-resume contract.
   cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$NODE_ARGS_LOG"
 if [ "${FAKE_RESUME_FAIL:-}" = "1" ]; then
   exit 1
+fi
+if [ "${FAKE_RESUME_EMPTY:-}" = "1" ]; then
+  exit 0
 fi
 echo "/fake/claude/projects/-fake-cwd/sess_1.jsonl"
 FAKE
@@ -372,7 +375,11 @@ run_scenario() {
   export PATH="$dir/bin:$PATH"
   export LCARS_RUN_ID="work:01DIRECTRUNNERTESTFIXTURE1/r1"
   export LCARS_RUN_TOKEN="test-token"
-  export LCARS_CONSOLE_URL="https://lcars.test"
+  if [ "${FAKE_MISSING_CONSOLE_URL:-}" = "1" ]; then
+    unset LCARS_CONSOLE_URL
+  else
+    export LCARS_CONSOLE_URL="https://lcars.test"
+  fi
   if [ "${FAKE_MISSING_RUNNER_TEMP:-}" = "1" ]; then
     # Direct-mode Docker launches do not inherit GitHub Actions' RUNNER_TEMP.
     # Put the script's fallback under this scenario's private directory so
@@ -797,6 +804,19 @@ grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
 
 echo "scenario missing-runner-temp: OK"
 
+# --- Scenario 1c: console endpoint is mandatory -----------------------------
+# Runner images carry no production console default. The launcher provides the
+# endpoint explicitly, and an incomplete launch must fail before any API call.
+export FAKE_MISSING_CONSOLE_URL=1
+run_scenario missing-console-url
+unset FAKE_MISSING_CONSOLE_URL
+
+[ "$rc" -ne 0 ] || fail "missing-console-url: expected missing URL failure"
+[ ! -f "$COMPLETE_LOG" ] ||
+  fail "missing-console-url: runner contacted the API without a console URL"
+
+echo "scenario missing-console-url: OK"
+
 # --- Scenario 1c: no resume in the brief -------------------------------------
 # A brief with no `resume` field must leave direct-runner.sh byte-identical
 # to today: no `runner resume` invocation, and claude receives no --resume
@@ -815,24 +835,36 @@ fi
 
 echo "scenario no-resume: OK"
 
-# --- Scenario 1d: resume present but the restore fails -----------------------
-# `runner resume` fails closed (simulating a missing/expired transcript);
-# direct-runner.sh's restore is fail-soft -- the run must still proceed to
-# a normal pull-request outcome, just without --resume on the claude
-# invocation.
+# --- Scenario 1d: requested resume must fail closed --------------------------
+# A restore error must settle this attempt as no-deliverable instead of
+# silently replacing it with a fresh Claude dispatch.
 export FAKE_RESUME_FAIL=1
 run_scenario resume-failed
 unset FAKE_RESUME_FAIL
 
-[ "$rc" -eq 0 ] || fail "resume-failed: expected exit 0 (fail-soft), got $rc"
+[ "$rc" -ne 0 ] || fail "resume-failed: expected a restore failure"
 [ -f "$COMPLETE_LOG" ] || fail "resume-failed: direct-runner.sh never called POST .../complete"
-grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
-  fail "resume-failed: complete call did not report outcome: pull-request ($(cat "$COMPLETE_LOG"))"
-if grep -q -- '--resume' "$CLAUDE_ARGS_LOG" 2>/dev/null; then
-  fail "resume-failed: claude was passed --resume despite a failed restore ($(cat "$CLAUDE_ARGS_LOG"))"
-fi
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "resume-failed: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+[ ! -f "$CLAUDE_ARGS_LOG" ] ||
+  fail "resume-failed: claude started after a failed restore ($(cat "$CLAUDE_ARGS_LOG"))"
 
 echo "scenario resume-failed: OK"
+
+# A sidecar bug that exits successfully but produces no local transcript path
+# is also not permission to start a fresh session.
+export FAKE_RESUME_EMPTY=1
+run_scenario resume-empty
+unset FAKE_RESUME_EMPTY
+
+[ "$rc" -ne 0 ] || fail "resume-empty: expected an empty restore failure"
+[ -f "$COMPLETE_LOG" ] || fail "resume-empty: direct-runner.sh never called POST .../complete"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "resume-empty: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+[ ! -f "$CLAUDE_ARGS_LOG" ] ||
+  fail "resume-empty: claude started after an empty restore ($(cat "$CLAUDE_ARGS_LOG"))"
+
+echo "scenario resume-empty: OK"
 
 # --- Scenario 2: no-deliverable ---------------------------------------------
 # The PR-marker lookup gh api call finds nothing, so the native verifier's
@@ -881,6 +913,20 @@ grep -q 'FATAL: direct runner does not support pipeline' "$scenario_log" ||
   fail "missing-run-pipeline: did not fail explicitly ($(cat "$scenario_log"))"
 
 echo "scenario missing-run-pipeline: OK"
+
+# A claimed run must carry one of the three modes the direct runner knows.
+# Unknown persisted values are corruption, not an implement-mode default.
+export FAKE_MODE=legacy
+run_scenario invalid-run-mode
+unset FAKE_MODE
+
+[ "$rc" -ne 0 ] || fail "invalid-run-mode: expected a non-zero exit, got $rc"
+[ ! -f "$CLAUDE_ARGS_LOG" ] || fail "invalid-run-mode: claude ran with an unsupported mode"
+[ -f "$COMPLETE_LOG" ] || fail "invalid-run-mode: claimed run did not report its malformed brief"
+grep -q "FATAL: direct runner received unsupported mode 'legacy'" "$scenario_log" ||
+  fail "invalid-run-mode: did not fail explicitly ($(cat "$scenario_log"))"
+
+echo "scenario invalid-run-mode: OK"
 
 # --- Scenario 4: missing claude token file -----------------------------------
 # A missing/unreadable CLAUDE_TOKEN_FILE must fail the run loudly rather

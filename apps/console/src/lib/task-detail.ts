@@ -39,8 +39,8 @@ export type TaskDetailResult =
       anchorState: 'open' | 'closed';
       /** Server-owned anchor projection timestamp. */
       generatedAt: string;
-      /** The task's `work.spec` snapshot, when one has been derived
-       *  (sub-project 5) -- see `AuthoritativeTaskState.spec`. */
+      /** The task's immutable Work specification, when this anchor has an
+       * authoritative Task record. */
       spec?: WorkSpec;
     }
   | { status: 'not-found' }

@@ -10,7 +10,7 @@ import {
   type OrchestratorStore,
   type Run,
 } from '@agent-lcars/orchestrator';
-import { runsContract, workSpecSchema } from '@agent-lcars/work';
+import { runsContract, workPayloadSchema } from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
@@ -313,8 +313,29 @@ export const runsRouter = os.router({
   brief: os.brief.handler(async ({ input, context, errors }) => {
     const run = await requireRunToken(context, input.runId);
     const task = await context.store.readTask(run.task);
+    const mode = run.params?.['mode'];
+    if (!mode || !['implement', 'review', 'reply'].includes(mode)) {
+      throw errors.UNAUTHORIZED({ message: 'run has no valid dispatch mode' });
+    }
+    const resumeSessionId = run.params?.['resumeSessionId'];
+    const resumeTranscriptGcsUri = run.params?.['resumeTranscriptGcsUri'];
+    if (
+      (resumeSessionId === undefined) !==
+      (resumeTranscriptGcsUri === undefined)
+    ) {
+      throw errors.UNAUTHORIZED({
+        message: 'run has an incomplete resume request',
+      });
+    }
+    const resume =
+      resumeSessionId !== undefined && resumeTranscriptGcsUri !== undefined
+        ? {
+            sessionId: resumeSessionId,
+            transcriptGcsUri: resumeTranscriptGcsUri,
+          }
+        : undefined;
     const params = {
-      mode: run.params?.['mode'] ?? 'implement',
+      mode,
       reply: run.params?.['reply'] ?? '',
       runbook: run.params?.['runbook'] ?? '',
       context: run.params?.['context'] ?? '',
@@ -327,21 +348,13 @@ export const runsRouter = os.router({
       attemptId: `g${generation}:${run.runId}`,
       generation,
       intentId: run.runId,
-      ...(run.params?.['resumeSessionId'] !== undefined &&
-      run.params?.['resumeTranscriptGcsUri'] !== undefined
-        ? {
-            resume: {
-              sessionId: run.params['resumeSessionId'],
-              transcriptGcsUri: run.params['resumeTranscriptGcsUri'],
-            },
-          }
-        : {}),
+      ...(resume === undefined ? {} : { resume }),
     };
 
     if (!isWorkAnchor(run.task)) {
-      const parsed = workSpecSchema.safeParse(task?.task.work?.['spec']);
+      const parsed = workPayloadSchema.safeParse(task?.task.work);
       if (!parsed.success) {
-        throw errors.UNAUTHORIZED({ message: 'run has no dispatchable spec' });
+        throw errors.UNAUTHORIZED({ message: 'run has no dispatchable Work' });
       }
       return {
         anchor: {
@@ -350,33 +363,32 @@ export const runsRouter = os.router({
           issue: run.task.issue,
           html_url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
         },
-        work: { spec: parsed.data },
+        work: { spec: parsed.data.spec },
         ...shared,
       };
     }
 
     const work = task?.task.work;
     if (work === undefined || task === undefined) {
-      throw errors.UNAUTHORIZED({ message: 'run has no dispatchable spec' });
+      throw errors.UNAUTHORIZED({ message: 'run has no dispatchable Work' });
     }
-    // `mintItem` never stores a spec that doesn't already pass this exact
-    // schema, so a claimed run whose stored spec fails to parse here is
-    // not a caller mistake -- it is a server bug (a schema tightened out
-    // from under an already-stored task, or corrupted data). Logged with
-    // the parse issues for diagnosis; the caller gets only the generic
-    // 500 an undeclared `ORPCError` already produces, never the parse
-    // detail or the raw stored value.
-    const parsed = workSpecSchema.safeParse(work['spec']);
+    // `mintItem` never stores a payload that doesn't already pass this exact
+    // schema, so a claimed run whose stored Work fails to parse here is not a
+    // caller mistake -- it is a server bug (a schema tightened out from under
+    // an already-stored task, or corrupted data). Logged with the parse
+    // issues for diagnosis; the caller gets only the generic 500, never the
+    // detail or raw stored value.
+    const parsed = workPayloadSchema.safeParse(work);
     if (!parsed.success) {
       console.error(
-        'agent-lcars: claimed run has a stored spec that no longer parses',
+        'agent-lcars: claimed run has stored Work that no longer parses',
         { runId: run.runId, workId: run.task.workId, error: parsed.error },
       );
       throw new ORPCError('INTERNAL_SERVER_ERROR', {
-        message: 'run has a corrupted spec',
+        message: 'run has corrupted Work',
       });
     }
-    const spec = parsed.data;
+    const { spec } = parsed.data;
     const target = anchorTarget(run, task.task);
     return {
       id: run.task.workId,

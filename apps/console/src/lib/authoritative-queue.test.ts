@@ -118,17 +118,12 @@ describe('getAuthoritativeQueueItems', () => {
     });
   });
 
-  it('uses configured repository labels and excludes unrelated open anchors', async () => {
+  it('uses canonical labels and excludes agent labels for opted-out repositories', async () => {
     getWatchedRepos.mockReturnValueOnce([
       {
         owner: 'jlapenna',
         name: 'agent-lcars',
-        agents: {
-          codex: {
-            label: 'queue:internal-agent',
-            replyTrigger: '/codex',
-          },
-        },
+        agents: false,
       },
     ]);
     listOpenGithubAnchorProjectionPage.mockResolvedValueOnce({
@@ -137,10 +132,10 @@ describe('getAuthoritativeQueueItems', () => {
           anchor: { repo: 'jlapenna/agent-lcars', issue: 44 },
           kind: 'issue',
           state: 'open',
-          title: 'Configured queue work',
+          title: 'Opted-out queue work',
           body: '',
           url: 'https://github.com/jlapenna/agent-lcars/issues/44',
-          labels: ['queue:internal-agent'],
+          labels: ['agent:codex'],
           assigneeLogins: [],
           sourceUpdatedAt: '2026-08-30T12:00:00.000Z',
           observedAt: '2026-08-30T12:00:01.000Z',
@@ -173,7 +168,7 @@ describe('getAuthoritativeQueueItems', () => {
     });
 
     await expect(getAuthoritativeQueueItems()).resolves.toEqual({
-      items: [expect.objectContaining({ number: 44 })],
+      items: [],
     });
   });
 

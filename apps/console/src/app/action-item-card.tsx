@@ -244,12 +244,7 @@ export function ActionItemCard({
     if (!replyBody.trim()) return;
     setError(undefined);
     startTransition(async () => {
-      const result = await replyToItem(
-        item.repo,
-        item.number,
-        replyBody,
-        item.labels,
-      );
+      const result = await replyToItem(item.repo, item.number, replyBody);
       if (!result.ok) {
         setError(result.message);
         return;

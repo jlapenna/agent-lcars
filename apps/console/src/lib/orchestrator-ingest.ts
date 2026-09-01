@@ -46,11 +46,11 @@ function ignore(reason: string): IngestIgnore {
 
 const repositorySchema = z.object({ full_name: z.string().min(1) });
 const labelSchema = z.object({ name: z.string().min(1) });
-/** GitHub always sends a top-level `sender` -- the actor who triggered
- *  this specific delivery (whoever applied the label, whoever posted the
- *  comment). Optional here only so a malformed/legacy-shaped test fixture
- *  degrades to the label fallback instead of failing to parse. */
-const senderSchema = z.object({ login: z.string().min(1) }).optional();
+/** GitHub sends the actor who triggered this specific delivery (whoever
+ * applied the label or posted the comment). A delivery without it is
+ * malformed: Work origin is never inferred from a label or an unknown
+ * placeholder. */
+const senderSchema = z.object({ login: z.string().min(1) });
 /** GitHub always sends `title`; `body` may be `null`. A title is required
  * because the Work specification is required at admission. */
 const issueBodySchema = z.object({
@@ -154,8 +154,7 @@ function interpretIssuesEvent(
     body: issue.body,
     pipeline,
     repo: repository.full_name,
-    actor: sender?.login,
-    label: label?.name,
+    actor: sender.login,
   });
 
   return buildRequestDecision(
@@ -196,8 +195,7 @@ function interpretPullRequestEvent(
       body: pullRequest.body,
       pipeline: implementPipeline,
       repo: repository.full_name,
-      actor: sender?.login,
-      label: labelName,
+      actor: sender.login,
     });
     return buildRequestDecision(
       repository.full_name,
@@ -216,8 +214,7 @@ function interpretPullRequestEvent(
       body: pullRequest.body,
       pipeline: reviewPipeline,
       repo: repository.full_name,
-      actor: sender?.login,
-      label: labelName,
+      actor: sender.login,
     });
     return buildRequestDecision(
       repository.full_name,
@@ -264,7 +261,7 @@ function interpretIssueCommentEvent(
     body: issue.body,
     pipeline,
     repo: repository.full_name,
-    actor: sender?.login,
+    actor: sender.login,
   });
 
   return buildRequestDecision(

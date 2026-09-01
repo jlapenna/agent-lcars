@@ -2,11 +2,7 @@ import 'server-only';
 
 import { required } from '@agent-lcars/util-server';
 
-import {
-  type AgentIntegration,
-  type AgentPipeline,
-  type WatchedRepo,
-} from './watched-repo';
+import { type WatchedRepo } from './watched-repo';
 
 export const WATCHED_REPOS_ENV = 'AGENT_LCARS_WATCHED_REPOS';
 
@@ -39,59 +35,17 @@ function validateWatchedRepo(entry: unknown, index: number): WatchedRepo {
   }
 
   const agents = record['agents'];
-  if (agents !== undefined) {
-    if (
-      typeof agents !== 'object' ||
-      agents === null ||
-      Array.isArray(agents)
-    ) {
-      throw new Error(
-        `${WATCHED_REPOS_ENV}[${index}].agents must be an object when present`,
-      );
-    }
-    const supportedPipelines: AgentPipeline[] = ['claude', 'codex', 'opencode'];
-    for (const [pipeline, value] of Object.entries(agents)) {
-      if (!supportedPipelines.includes(pipeline as AgentPipeline)) {
-        throw new Error(
-          `${WATCHED_REPOS_ENV}[${index}].agents.${pipeline} is not a supported agent pipeline`,
-        );
-      }
-      if (value === null) continue;
-      if (typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error(
-          `${WATCHED_REPOS_ENV}[${index}].agents.${pipeline} must be an object or null`,
-        );
-      }
-      for (const field of ['label', 'replyTrigger']) {
-        const fieldValue = (value as Record<string, unknown>)[field];
-        if (typeof fieldValue !== 'string' || fieldValue.length === 0) {
-          throw new Error(
-            `${WATCHED_REPOS_ENV}[${index}].agents.${pipeline}.${field} must be a non-empty string`,
-          );
-        }
-      }
-      const aliases = (value as Record<string, unknown>)['replyTriggerAliases'];
-      if (
-        aliases !== undefined &&
-        (!Array.isArray(aliases) ||
-          aliases.some(
-            (alias) => typeof alias !== 'string' || alias.length === 0,
-          ))
-      ) {
-        throw new Error(
-          `${WATCHED_REPOS_ENV}[${index}].agents.${pipeline}.replyTriggerAliases must be an array of non-empty strings`,
-        );
-      }
-    }
+  if (agents !== undefined && agents !== false) {
+    throw new Error(
+      `${WATCHED_REPOS_ENV}[${index}].agents must be false when present`,
+    );
   }
 
   return {
     owner,
     name,
     ...(alias !== undefined && { alias: alias as string }),
-    ...(agents && {
-      agents: agents as Partial<Record<AgentPipeline, AgentIntegration | null>>,
-    }),
+    ...(agents === false ? { agents } : {}),
   };
 }
 

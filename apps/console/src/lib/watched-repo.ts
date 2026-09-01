@@ -69,9 +69,9 @@ export interface TaskRef {
 }
 
 export interface WatchedRepo extends RepositoryRef {
-  /** Agent integrations available in this repository. Omit the whole map to
-   * use the standard integrations; an empty map declares no agent support. */
-  agents?: Partial<Record<AgentPipeline, AgentIntegration | null>>;
+  /** Omit for the canonical Claude, Codex, and OpenCode integrations. Set
+   * explicitly to false only for a watched repository with no agents. */
+  agents?: false;
   /** Display name shown in the UI instead of `owner/name` (repoKey's
    * format) wherever a repo badge/title is rendered - e.g. a shorter label
    * for a long or noisy repo name. Purely cosmetic: never affects GitHub
@@ -83,8 +83,9 @@ export function agentIntegration(
   repo: WatchedRepo,
   pipeline: AgentPipeline,
 ): AgentIntegration | undefined {
-  if (!repo.agents) return DEFAULT_AGENT_INTEGRATIONS[pipeline];
-  return repo.agents[pipeline] ?? undefined;
+  return repo.agents === false
+    ? undefined
+    : DEFAULT_AGENT_INTEGRATIONS[pipeline];
 }
 
 export function supportedAgentPipelines(repo: WatchedRepo): AgentPipeline[] {

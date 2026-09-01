@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import {
   formatQuickTaskMarker,
-  isDispatchPipeline,
   parseTerminalQuickTaskBody,
   quickTaskDigest as sharedQuickTaskDigest,
   quickTaskMarkerMatcher,
@@ -11,11 +10,7 @@ import { workPayloadSchema } from '@agent-lcars/work';
 
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
-import {
-  getGithubClient,
-  primaryWatchedRepo,
-  type WatchedRepo,
-} from './github-client';
+import { getGithubClient, type WatchedRepo } from './github-client';
 import { admitGithubWork } from './github-work-admission';
 import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -27,12 +22,9 @@ import type {
   QuickTaskEvidenceObject,
   QuickTaskEvidencePreIssueCreateHook,
 } from './quick-task-evidence-contract';
-import { matchReplyTrigger } from './reply-trigger';
 import {
-  type AgentIntegration,
   agentIntegration,
   repoKey,
-  selectedAgentPipeline,
   supportedAgentPipelines,
   taskRefUrl,
 } from './watched-repo';
@@ -46,28 +38,6 @@ export class ActionError extends Error {
     super(message);
     this.name = 'ActionError';
   }
-}
-
-function replyTriggers(integration: AgentIntegration): string[] {
-  return [integration.replyTrigger, ...(integration.replyTriggerAliases ?? [])];
-}
-
-function containsReplyTrigger(
-  body: string,
-  integration: AgentIntegration,
-): boolean {
-  return matchReplyTrigger(body, replyTriggers(integration)) !== undefined;
-}
-
-// A console reply must carry the repository integration's declared trigger,
-// unless the body already contains that trigger or one of its aliases.
-function ensureReplyTrigger(
-  body: string,
-  integration: AgentIntegration,
-): string {
-  return containsReplyTrigger(body, integration)
-    ? body
-    : `${body}\n\n${integration.replyTrigger}`;
 }
 
 function requireAgentIntegration(repo: WatchedRepo, pipeline: Pipeline) {
@@ -147,30 +117,47 @@ export async function clearNeedsHumanLabel(
   await notifyReconcile(issueNumber);
 }
 
-// Server-action API compatibility; the GitHub label itself is
-// `status:needs-human` and all label access is centralized above.
-export const clearHumanNeededLabel = clearNeedsHumanLabel;
-
 export async function postComment(
   repo: WatchedRepo,
   issueNumber: number,
   body: string,
-  labels: string[] = [],
+  actorLogin: string,
 ): Promise<{ url: string }> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
   }
+  if (!actorLogin.trim()) {
+    throw new ActionError('Comment actor is required', 400);
+  }
   const octokit = getGithubClient();
-  const selectedPipeline = selectedAgentPipeline(repo, labels);
-  const integration = selectedPipeline
-    ? requireAgentIntegration(repo, selectedPipeline)
-    : undefined;
   const { data } = await octokit.rest.issues.createComment({
     owner: repo.owner,
     repo: repo.name,
     issue_number: issueNumber,
-    body: integration ? ensureReplyTrigger(body, integration) : body,
+    body,
   });
+  const runtime = createOrchestratorRuntime();
+  const taskId = { repo: repoKey(repo), issue: issueNumber };
+  const existingTask = await runtime.store.readTask(taskId);
+  // A repository item with no admitted Task is an ordinary human comment,
+  // not a dispatch failure. Once Work exists, however, Reply uses that
+  // immutable spec directly and does not ask a GitHub mention webhook to
+  // reconstruct it.
+  if (existingTask !== undefined) {
+    const work = workPayloadSchema.parse(existingTask.task.work);
+    const outcome = await admitGithubWork(runtime, {
+      anchor: taskId,
+      requestId: `console-reply:${randomUUID()}`,
+      params: { mode: 'reply', reply: body },
+      work,
+    });
+    if (outcome.kind === 'busy') {
+      throw new ActionError('A run is already active for this task', 409);
+    }
+    if (outcome.kind !== 'accepted') {
+      throw new ActionError(`Reply dispatch was ${outcome.kind}`, 409);
+    }
+  }
   await clearNeedsHumanLabel(repo, issueNumber);
   return { url: data.html_url };
 }
@@ -411,7 +398,6 @@ export async function updateIssueContent(
   await refreshGithubMutation(repo, issueNumber);
 }
 
-const DEFAULT_BRANCH = 'main';
 const DISPATCH_CALLER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
@@ -455,52 +441,74 @@ async function notifyReconcile(anchor: number | string): Promise<void> {
   }
 }
 
-// dispatchUnstickPrs is console-level ops. A caller with a concrete item
-// (the card's per-PR "Unstick") passes that item's repo; the bare header
-// variant omits it and falls back to the primary watched repo.
+// dispatchUnstickPrs is console-level ops, but its repository is always
+// explicit. There is no primary-repository substitution.
 export async function dispatchUnstickPrs(
-  context?: string,
-  repo?: WatchedRepo,
+  context: string | undefined,
+  repo: WatchedRepo,
+  actorLogin?: string,
 ): Promise<void> {
-  const targetRepo = repo ?? primaryWatchedRepo();
+  const targetRepo = repo;
+  if (!actorLogin?.trim()) {
+    throw new ActionError('Unstick actor is required', 400);
+  }
   const octokit = getGithubClient();
   const trimmedContext = context?.trim();
-  try {
-    await octokit.rest.actions.createWorkflowDispatch({
+  const { data: openAnchors } = await octokit.rest.issues.listForRepo({
+    owner: targetRepo.owner,
+    repo: targetRepo.name,
+    state: 'open',
+    labels: 'automation:unstick-prs',
+    per_page: 1,
+  });
+  let anchor = openAnchors.find((item) => item.pull_request === undefined);
+  if (anchor) {
+    await octokit.rest.issues.createComment({
       owner: targetRepo.owner,
       repo: targetRepo.name,
-      workflow_id: 'playbook-unstick-prs.yml',
-      ref: DEFAULT_BRANCH,
-      inputs: trimmedContext ? { context: trimmedContext } : {},
+      issue_number: anchor.number,
+      body: `Re-dispatched by @${actorLogin}. Context: ${trimmedContext || '(none)'}`,
     });
-  } catch (error) {
-    // Deliberately fail loud rather than silently retargeting the primary
-    // repo: a watched repo without the playbook (GitHub answers 404 for an
-    // unknown workflow_id) needs the maintainer to know that, not an
-    // unstick run against some other repository (Codex review on #493).
-    if ((error as { status?: number }).status === 404) {
-      throw new ActionError(
-        `${targetRepo.owner}/${targetRepo.name} has no playbook-unstick-prs.yml - add the workflow there or dispatch from a primary-repo item`,
-        404,
-      );
-    }
-    throw error;
+  } else {
+    const { data: created } = await octokit.rest.issues.create({
+      owner: targetRepo.owner,
+      repo: targetRepo.name,
+      title: `playbook: unstick stuck PRs (${new Date().toISOString().slice(0, 10)})`,
+      labels: ['automation:unstick-prs'],
+      body:
+        `Dispatched by @${actorLogin} through the Agent LCARS Work API.\n\n` +
+        `Context: ${trimmedContext || '(none)'}\n\n` +
+        'Execute the unsticking-stuck-prs runbook and keep the per-PR summary here.',
+    });
+    anchor = created;
   }
-}
-
-/** The pipeline of a task's most recently created orchestrator run, or
- * `undefined` when the task has no authoritative supported pipeline.
- * Unrecognized historical values are never used for a fresh request. */
-function latestOrchestratorPipeline(
-  runs: { pipeline: string; createdAt: string }[],
-): Pipeline | undefined {
-  const latest = runs
-    .slice()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .at(0);
-  return latest && isDispatchPipeline(latest.pipeline)
-    ? latest.pipeline
-    : undefined;
+  const description =
+    anchor.body?.trim() || 'Unstick the current pull-request queue.';
+  const runtime = createOrchestratorRuntime();
+  const outcome = await admitGithubWork(runtime, {
+    anchor: { repo: repoKey(targetRepo), issue: anchor.number },
+    requestId: `console-unstick:${randomUUID()}`,
+    params: {
+      mode: 'implement',
+      reply:
+        'Post the queue diagnosis, actions taken, and remaining blockers on this issue.',
+      runbook: 'unsticking-stuck-prs',
+      context: trimmedContext ?? '',
+    },
+    work: workPayloadFromGithub({
+      title: anchor.title,
+      body: description,
+      pipeline: 'claude',
+      repo: repoKey(targetRepo),
+      actor: actorLogin,
+    }),
+  });
+  if (outcome.kind === 'busy') {
+    throw new ActionError('The unstick runbook is already active', 409);
+  }
+  if (outcome.kind !== 'accepted') {
+    throw new ActionError(`Unstick dispatch was ${outcome.kind}`, 409);
+  }
 }
 
 /**
@@ -517,7 +525,6 @@ export async function retriggerIssue(
   issueNumber: number,
   callerId: string,
   note?: string,
-  actorLogin?: string,
 ): Promise<void> {
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
@@ -526,23 +533,14 @@ export async function retriggerIssue(
   const runtime = createOrchestratorRuntime();
   const { store } = runtime;
   const taskId = { repo: repoKey(repo), issue: issueNumber };
-  const [runs, existingTask] = await Promise.all([
-    store.listRuns(taskId),
-    store.readTask(taskId),
-  ]);
-  const existingWork =
-    existingTask === undefined
-      ? undefined
-      : workPayloadSchema.parse(existingTask.task.work);
-  const pipeline =
-    existingWork?.spec.pipeline ?? latestOrchestratorPipeline(runs);
-  if (pipeline === undefined) {
+  const existingTask = await store.readTask(taskId);
+  if (existingTask === undefined) {
     throw new ActionError(
-      'No authoritative pipeline is recorded for this task; assign an agent before retrying',
+      'No authoritative Work is recorded for this task; assign an agent before retrying',
       409,
     );
   }
-  const integration = requireAgentIntegration(repo, pipeline);
+  const existingWork = workPayloadSchema.parse(existingTask.task.work);
 
   await clearNeedsHumanLabel(repo, issueNumber);
 
@@ -559,36 +557,13 @@ export async function retriggerIssue(
       issue_number: issueNumber,
       body: trimmedNote,
     });
-    if (containsReplyTrigger(trimmedNote, integration)) {
-      return;
-    }
   }
-
-  // An existing strict Task already carries Work and keeps it forever
-  // (decide.ts's write-once rule). Only a new Task needs GitHub derivation.
-  const work =
-    existingWork ??
-    (await (async () => {
-      const octokit = getGithubClient();
-      const { data: issue } = await octokit.rest.issues.get({
-        owner: repo.owner,
-        repo: repo.name,
-        issue_number: issueNumber,
-      });
-      return workPayloadFromGithub({
-        title: issue.title,
-        body: issue.body,
-        pipeline,
-        repo: repoKey(repo),
-        actor: actorLogin,
-      });
-    })());
 
   const outcome = await admitGithubWork(runtime, {
     anchor: taskId,
     requestId: `console-retry:${randomUUID()}`,
     params: { mode: 'implement' },
-    work,
+    work: existingWork,
   });
   if (outcome.kind === 'busy') {
     throw new ActionError('A run is already active for this task', 409);
@@ -604,6 +579,7 @@ export async function assignPipeline(
   repo: WatchedRepo,
   issueNumber: number,
   targetPipeline: Pipeline,
+  actorLogin: string,
 ): Promise<void> {
   const targetIntegration = requireAgentIntegration(repo, targetPipeline);
   const taskId = { repo: repoKey(repo), issue: issueNumber };
@@ -638,6 +614,25 @@ export async function assignPipeline(
   if (labels.some((label) => agentLabels.includes(label))) {
     throw new ActionError('Issue already has an agent assignment', 400);
   }
+  const runtime = createOrchestratorRuntime();
+  const outcome = await admitGithubWork(runtime, {
+    anchor: taskId,
+    requestId: `console-assign:${randomUUID()}`,
+    params: { mode: 'implement' },
+    work: workPayloadFromGithub({
+      title: issue.title,
+      body: issue.body,
+      pipeline: targetPipeline,
+      repo: repoKey(repo),
+      actor: actorLogin,
+    }),
+  });
+  if (outcome.kind === 'conflict') {
+    throw new ActionError(outcome.message, 409);
+  }
+  if (outcome.kind !== 'accepted' && outcome.kind !== 'busy') {
+    throw new ActionError(`Assignment dispatch was ${outcome.kind}`, 409);
+  }
   // The primary production scenario for this action is a
   // `status:ready-for-agent` Inbox item: clear that handoff status in the
   // same write, or action-items.ts keeps classifying the now-dispatched
@@ -668,6 +663,7 @@ export { deriveQuickTaskTitle } from './quick-task-evidence';
 interface NormalizedQuickTaskRequest extends QuickTaskRequest {
   repository: WatchedRepo;
   title: string;
+  actorLogin: string;
 }
 
 interface ExistingQuickTaskIssue {
@@ -690,9 +686,9 @@ export type QuickTaskIssueCreator = (
 ) => ReturnType<AppIssueCreate>;
 
 /**
- * Server-only input for the future multipart route. It is intentionally not
- * part of QuickTaskRequest: the existing action and broker wire contract stay
- * byte-for-byte compatible for Quick Tasks without evidence.
+ * Server-only evidence lifecycle. It is intentionally not part of the
+ * browser's QuickTaskRequest because upload state never crosses the Server
+ * Action boundary.
  */
 export interface QuickTaskEvidenceLifecycle {
   intent: QuickTaskEvidenceIntent;
@@ -700,7 +696,7 @@ export interface QuickTaskEvidenceLifecycle {
 }
 
 function normalizeQuickTaskRequest(
-  request: QuickTaskRequest & { repository: WatchedRepo },
+  request: QuickTaskRequest & { repository: WatchedRepo; actorLogin: string },
 ): NormalizedQuickTaskRequest {
   const trimmed = request.description.trim();
   if (!trimmed) {
@@ -708,6 +704,9 @@ function normalizeQuickTaskRequest(
   }
   if (!QUICK_TASK_REQUEST_ID_PATTERN.test(request.requestId)) {
     throw new ActionError('A valid Quick Task request ID is required', 400);
+  }
+  if (!request.actorLogin.trim()) {
+    throw new ActionError('Quick Task actor is required', 400);
   }
   return {
     ...request,
@@ -806,6 +805,37 @@ function receiptFor(
     task,
     url: taskRefUrl(task),
   };
+}
+
+async function admitQuickTask(
+  request: NormalizedQuickTaskRequest,
+  issueNumber: number,
+): Promise<void> {
+  const outcome = await admitGithubWork(createOrchestratorRuntime(), {
+    anchor: { repo: repoKey(request.repository), issue: issueNumber },
+    // The browser retains this UUID across retries. Reusing it here makes a
+    // recovered issue-create response converge on the same Work request.
+    requestId: `console-quick-task:${request.requestId}`,
+    params: { mode: 'implement' },
+    work: workPayloadFromGithub({
+      title: request.title,
+      body: request.description,
+      pipeline: request.pipeline,
+      repo: repoKey(request.repository),
+      actor: request.actorLogin,
+    }),
+  });
+  if (
+    outcome.kind === 'accepted' ||
+    outcome.kind === 'duplicate' ||
+    outcome.kind === 'busy'
+  ) {
+    return;
+  }
+  if (outcome.kind === 'conflict') {
+    throw new ActionError(outcome.message, 409);
+  }
+  throw new ActionError(`Quick Task dispatch was ${outcome.kind}`, 409);
 }
 
 function resolveExistingQuickTask(
@@ -1120,7 +1150,10 @@ async function createQuickTaskOnce(
     request.pipeline,
   );
   const existing = await findExistingQuickTask(request, digest);
-  if (existing) return existing;
+  if (existing) {
+    await admitQuickTask(request, existing.task.issueNumber);
+    return existing;
+  }
 
   const claim = await createQuickTaskClaim(request, digest);
   if (claim.state === 'existing') {
@@ -1128,7 +1161,10 @@ async function createQuickTaskOnce(
     // before our claim-ref write lost. Reconcile once more before failing
     // closed so this overlapping request can return the canonical receipt.
     const winner = await findExistingQuickTask(request, digest);
-    if (winner) return winner;
+    if (winner) {
+      await admitQuickTask(request, winner.task.issueNumber);
+      return winner;
+    }
     // The other claimant may still be inside GitHub's issue-create request.
     // Never race it. The browser retains the request UUID, so a later retry
     // will discover its marker or return this same fail-closed result.
@@ -1183,6 +1219,7 @@ async function createQuickTaskOnce(
       labels: [QUICK_TASK_LABEL, integration.label],
     });
     await refreshGithubMutation(request.repository, issue.number);
+    await admitQuickTask(request, issue.number);
     return receiptFor(request, issue.number);
   } catch (error) {
     if (isDefinitiveCreateFailure(error)) {
@@ -1209,7 +1246,10 @@ async function createQuickTaskOnce(
     // error so a retry returns the original canonical task instead of creating
     // another one.
     const recovered = await findExistingQuickTask(request, digest);
-    if (recovered) return recovered;
+    if (recovered) {
+      await admitQuickTask(request, recovered.task.issueNumber);
+      return recovered;
+    }
     // Keep the atomic claim on any ambiguous failure. It may represent an
     // issue GitHub committed after our reconciliation read; deleting it here
     // would turn a harmless retry into a duplicate. A later retry rechecks
@@ -1228,7 +1268,10 @@ const inFlightQuickTasks = new Map<
 >();
 
 export function createQuickTask(
-  rawRequest: QuickTaskRequest & { repository: WatchedRepo },
+  rawRequest: QuickTaskRequest & {
+    repository: WatchedRepo;
+    actorLogin: string;
+  },
   evidenceLifecycle?: QuickTaskEvidenceLifecycle,
   issueCreator?: QuickTaskIssueCreator,
 ): Promise<QuickTaskReceipt> {
@@ -1245,7 +1288,7 @@ export function createQuickTask(
         ),
       );
     }
-    // Evidence bytes are intentionally not in the broker-visible issue
+    // Evidence bytes are intentionally not in the durable issue
     // digest. A second HTTP request cannot prove it carries the same bytes as
     // an already-preparing upload, so never return that request the first
     // request's success. The multipart route may share this exact lifecycle

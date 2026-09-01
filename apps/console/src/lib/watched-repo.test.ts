@@ -27,24 +27,16 @@ describe('watched repository agent capabilities', () => {
     expect(selectedAgentPipeline(standardRepo, ['agent:codex'])).toBe('codex');
   });
 
-  it('declares no dispatch integrations with an empty agents map', () => {
-    const repo = { ...standardRepo, agents: {} };
+  it('declares no dispatch integrations with agents false', () => {
+    const repo = { ...standardRepo, agents: false };
     expect(supportedAgentPipelines(repo)).toEqual([]);
     expect(selectedAgentPipeline(repo, ['agent:claude'])).toBeUndefined();
   });
 
-  it('honors a repository integration label', () => {
-    const repo: WatchedRepo = {
-      ...standardRepo,
-      agents: {
-        codex: {
-          label: 'agent:custom-codex',
-          replyTrigger: '/custom-codex',
-        },
-      },
-    };
-    expect(supportedAgentLabels(repo)).toEqual(['agent:custom-codex']);
-    expect(selectedAgentPipeline(repo, ['agent:custom-codex'])).toBe('codex');
+  it('does not accept repository-specific integration overrides', () => {
+    const repo: WatchedRepo = { ...standardRepo, agents: false };
+    expect(supportedAgentLabels(repo)).toEqual([]);
+    expect(selectedAgentPipeline(repo, ['agent:custom-codex'])).toBeUndefined();
   });
 
   it('does not invent precedence for contradictory agent labels', () => {

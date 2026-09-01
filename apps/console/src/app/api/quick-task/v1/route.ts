@@ -84,6 +84,9 @@ export async function POST(request: Request) {
   if (!session?.user?.isAdmin)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
+    if (!session.user.login) {
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    }
     const form = await request.formData();
     const multipart = parseMultipart(form);
     const intent = parseIntent(multipart.intent);
@@ -141,6 +144,7 @@ export async function POST(request: Request) {
         repository,
         pipeline: intent.pipeline as never,
         description: body,
+        actorLogin: session.user.login,
       },
       lifecycle,
       quickTaskIssueCreatorFor(session),

@@ -44,6 +44,12 @@ function makeAuthoritativeState(
     task: { repo: 'supersprinklesracing/sprinkles', issue: 5 },
     storageRevision: 1,
     updatedAt: '2026-07-18T00:00:00Z',
+    spec: {
+      title: 'Stale claim',
+      description: 'A stalled task.',
+      pipeline: 'claude',
+      target: { repo: 'supersprinklesracing/sprinkles' },
+    },
     runs: [],
     ...overrides,
   };

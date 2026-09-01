@@ -13,7 +13,7 @@ import {
   approveAndMergePr,
   approveAndRebasePr,
   assignPipeline,
-  clearHumanNeededLabel,
+  clearNeedsHumanLabel,
   closeIssue,
   createQuickTask,
   deriveQuickTaskTitle,
@@ -58,7 +58,6 @@ vi.mock('./github-client', async (importOriginal) => {
     ...actual,
     getGithubClient: vi.fn(),
     getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
-    primaryWatchedRepo: vi.fn(() => DEFAULT_REPO),
   };
 });
 
@@ -324,7 +323,7 @@ describe('updatePrBranch', () => {
   });
 });
 
-describe('clearHumanNeededLabel', () => {
+describe('clearNeedsHumanLabel', () => {
   function mockOctokit() {
     const removeLabel = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
@@ -337,7 +336,7 @@ describe('clearHumanNeededLabel', () => {
     const { removeLabel } = mockOctokit();
     fixtureOrchestratorRuntime();
 
-    await clearHumanNeededLabel(DEFAULT_REPO, 2709);
+    await clearNeedsHumanLabel(DEFAULT_REPO, 2709);
 
     expect(removeLabel).toHaveBeenCalledWith({
       owner: 'supersprinklesracing',
@@ -352,7 +351,7 @@ describe('clearHumanNeededLabel', () => {
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
-    await clearHumanNeededLabel(DEFAULT_REPO, 2709);
+    await clearNeedsHumanLabel(DEFAULT_REPO, 2709);
 
     expect(sweepSpy).toHaveBeenCalledTimes(1);
   });
@@ -373,7 +372,7 @@ describe('clearHumanNeededLabel', () => {
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
     await expect(
-      clearHumanNeededLabel(DEFAULT_REPO, 2709),
+      clearNeedsHumanLabel(DEFAULT_REPO, 2709),
     ).resolves.toBeUndefined();
     // The label write never happened - nothing changed for the orchestrator
     // to catch up on.
@@ -381,7 +380,7 @@ describe('clearHumanNeededLabel', () => {
   });
 });
 
-describe('postComment (mention routing)', () => {
+describe('postComment (direct Work admission)', () => {
   function mockOctokit() {
     // clearNeedsHumanLabel's own sweep-the-orchestrator follow-up (#1183)
     // fires on every successful removeLabel below - give it somewhere real
@@ -400,93 +399,52 @@ describe('postComment (mention routing)', () => {
   it('rejects a blank body without calling GitHub', async () => {
     const { createComment } = mockOctokit();
 
-    await expect(postComment(DEFAULT_REPO, 2709, '   ')).rejects.toThrow(
-      'Comment body is required',
-    );
+    await expect(
+      postComment(DEFAULT_REPO, 2709, '   ', 'jlapenna'),
+    ).rejects.toThrow('Comment body is required');
     expect(createComment).not.toHaveBeenCalled();
   });
 
   it('posts plain text when no agent label is present', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2');
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna');
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2' }),
     );
   });
 
-  it('appends @claude for an item carrying only the claude label', async () => {
+  it('admits reply mode directly from immutable Task Work without adding a trigger', async () => {
     const { createComment } = mockOctokit();
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-reply',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', ['agent:claude']);
-
-    expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2\n\n@claude' }),
-    );
-  });
-
-  it('appends /oc for an item carrying only the opencode label', async () => {
-    const { createComment } = mockOctokit();
-
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', ['agent:opencode']);
-
-    expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2\n\n/oc' }),
-    );
-  });
-
-  it('appends /codex for an item carrying the codex label', async () => {
-    const { createComment } = mockOctokit();
-
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', ['agent:codex']);
-
-    expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2\n\n/codex' }),
-    );
-  });
-
-  it('posts plain text for contradictory multi-agent labels', async () => {
-    const { createComment } = mockOctokit();
-
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', [
-      'agent:claude',
-      'agent:opencode',
-    ]);
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna');
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2' }),
     );
-  });
-
-  it('preserves a GitHub-style @claude mention in ordinary prose', async () => {
-    const { createComment } = mockOctokit();
-
-    await postComment(DEFAULT_REPO, 2709, 'Ping @claude please', [
-      'agent:claude',
-    ]);
-
-    expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Ping @claude please' }),
-    );
-  });
-
-  it('appends an exact /oc command when prose merely mentions /opencode', async () => {
-    const { createComment } = mockOctokit();
-
-    await postComment(DEFAULT_REPO, 2709, 'Please /opencode this', [
-      'agent:opencode',
-    ]);
-
-    expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Please /opencode this\n\n/oc' }),
-    );
+    const runs = await store.listRuns(taskId);
+    expect(runs.at(-1)?.params).toEqual({
+      mode: 'reply',
+      reply: 'Use option 2',
+    });
   });
 
   it('clears the needs-human status after posting', async () => {
     const { removeLabel } = mockOctokit();
 
-    await postComment(DEFAULT_REPO, 2709, 'hi', ['agent:claude']);
+    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna');
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
@@ -516,7 +474,7 @@ describe('postComment (mention routing)', () => {
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
-    await postComment(DEFAULT_REPO, 2709, 'hi', ['agent:claude']);
+    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna');
 
     expect(sweepSpy).not.toHaveBeenCalled();
   });
@@ -672,33 +630,53 @@ describe('approveAndMergePr', () => {
 });
 
 describe('dispatchUnstickPrs', () => {
-  it('dispatches playbook-unstick-prs.yml with a trimmed context input', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
+  it('creates an audit anchor and admits the runbook through Work directly', async () => {
+    const listForRepo = vi.fn().mockResolvedValue({ data: [] });
+    const create = vi.fn().mockResolvedValue({
+      data: {
+        number: 88,
+        title: 'playbook: unstick stuck PRs (2026-08-31)',
+        body: 'Unstick the queue.',
+      },
+    });
     (getGithubClient as Mock).mockReturnValue({
-      rest: { actions: { createWorkflowDispatch } },
+      rest: { issues: { listForRepo, create } },
     });
+    const { store } = fixtureOrchestratorRuntime();
 
-    await dispatchUnstickPrs('  PR #123 stuck  ');
+    await dispatchUnstickPrs('  PR #123 stuck  ', DEFAULT_REPO, 'jlapenna');
 
-    expect(createWorkflowDispatch).toHaveBeenCalledWith({
-      owner: 'supersprinklesracing',
-      repo: 'sprinkles',
-      workflow_id: 'playbook-unstick-prs.yml',
-      ref: 'main',
-      inputs: { context: 'PR #123 stuck' },
-    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['automation:unstick-prs'] }),
+    );
+    const runs = await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 88 });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.params).toEqual(
+      expect.objectContaining({
+        mode: 'implement',
+        runbook: 'unsticking-stuck-prs',
+        context: 'PR #123 stuck',
+      }),
+    );
   });
 
-  it('omits the context input when none is given', async () => {
-    const createWorkflowDispatch = vi.fn().mockResolvedValue({});
-    (getGithubClient as Mock).mockReturnValue({
-      rest: { actions: { createWorkflowDispatch } },
+  it('reuses an open audit anchor without a repository workflow', async () => {
+    const listForRepo = vi.fn().mockResolvedValue({
+      data: [{ number: 88, title: 'Unstick', body: 'Existing anchor' }],
     });
+    const createComment = vi.fn().mockResolvedValue({});
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { listForRepo, createComment } },
+    });
+    fixtureOrchestratorRuntime();
 
-    await dispatchUnstickPrs();
+    await dispatchUnstickPrs(undefined, DEFAULT_REPO, 'jlapenna');
 
-    expect(createWorkflowDispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ inputs: {} }),
+    expect(createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issue_number: 88,
+        body: 'Re-dispatched by @jlapenna. Context: (none)',
+      }),
     );
   });
 });
@@ -730,13 +708,13 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
 
     await expect(
       retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
-    ).rejects.toThrow('No authoritative pipeline is recorded for this task');
+    ).rejects.toThrow('No authoritative Work is recorded for this task');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
   });
 
-  it("reads the task's latest orchestrator run for the dispatch pipeline instead of defaulting", async () => {
+  it("reads the task's immutable Work instead of defaulting", async () => {
     const { store, orchestrator, calls } = fixtureOrchestratorRuntime();
     mockOctokit();
     const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
@@ -802,8 +780,8 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     );
   });
 
-  it('skips the orchestrator request when a later line carries a reply-trigger alias (would double-dispatch)', async () => {
-    const { calls, orchestrator } = fixtureOrchestratorRuntime();
+  it('still dispatches directly when a steering note contains a GitHub reply trigger', async () => {
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
     const { createComment } = mockOctokit();
     const seeded = await orchestrator.request({
       taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
@@ -825,12 +803,9 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       expect.objectContaining({ body: 'This is working now.\n\n@agent' }),
     );
     expect(result).toBeUndefined();
-    // The webhook-driven mention path is the sole trigger here - a direct
-    // request() alongside it would double-dispatch (see this function's own
-    // doc comment).
-    expect(calls.some((c) => c.url.includes('/actions/workflows/'))).toBe(
-      false,
-    );
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toHaveLength(2);
   });
 
   it('400s on a malformed caller ID before ever touching the orchestrator', async () => {
@@ -868,13 +843,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const { get } = mockOctokit();
     const requestSpy = vi.spyOn(orchestrator, 'request');
 
-    await retriggerIssue(
-      DEFAULT_REPO,
-      2709,
-      DISPATCH_ID,
-      undefined,
-      'jlapenna',
-    );
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, undefined);
 
     expect(get).not.toHaveBeenCalled();
     expect(requestSpy).toHaveBeenCalledWith(
@@ -900,7 +869,14 @@ describe('assignPipeline', () => {
   ) {
     const runtime = fixtureOrchestratorRuntime();
     const get = vi.fn().mockResolvedValue({
-      data: { state: 'open', pull_request: undefined, labels, ...overrides },
+      data: {
+        state: 'open',
+        pull_request: undefined,
+        labels,
+        title: 'Fixture issue',
+        body: 'Fixture issue body.',
+        ...overrides,
+      },
     });
     const setLabels = vi.fn().mockResolvedValue({});
     (getGithubClient as Mock).mockReturnValue({
@@ -918,7 +894,9 @@ describe('assignPipeline', () => {
       work: testWork('claude'),
     });
 
-    await expect(assignPipeline(DEFAULT_REPO, 2709, 'codex')).rejects.toThrow(
+    await expect(
+      assignPipeline(DEFAULT_REPO, 2709, 'codex', 'jlapenna'),
+    ).rejects.toThrow(
       new ActionError(
         'Issue already has immutable Work; retry its admitted pipeline instead',
         409,
@@ -929,13 +907,25 @@ describe('assignPipeline', () => {
   });
 
   it('adds the target pipeline label to an unclaimed issue', async () => {
-    const { setLabels } = mockOctokit(['type:bug']);
+    const { setLabels, store } = mockOctokit(['type:bug']);
 
-    await assignPipeline(DEFAULT_REPO, 2709, 'claude');
+    await assignPipeline(DEFAULT_REPO, 2709, 'claude', 'jlapenna');
 
     expect(setLabels).toHaveBeenCalledWith(
       expect.objectContaining({ labels: ['type:bug', 'agent:claude'] }),
     );
+    const runs = await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      pipeline: 'claude',
+      params: { mode: 'implement' },
+    });
+    expect(
+      (await store.readTask({ repo: DEFAULT_REPO_KEY, issue: 2709 }))?.task
+        .work,
+    ).toMatchObject({
+      origin: { principal: 'github:jlapenna', channel: 'github' },
+    });
   });
 
   // The primary production path for this action: assigning straight from a
@@ -946,7 +936,7 @@ describe('assignPipeline', () => {
   it('clears status:ready-for-agent as part of the same label write', async () => {
     const { setLabels } = mockOctokit(['status:ready-for-agent', 'type:bug']);
 
-    await assignPipeline(DEFAULT_REPO, 2709, 'codex');
+    await assignPipeline(DEFAULT_REPO, 2709, 'codex', 'jlapenna');
 
     expect(setLabels).toHaveBeenCalledWith(
       expect.objectContaining({ labels: ['type:bug', 'agent:codex'] }),
@@ -956,25 +946,25 @@ describe('assignPipeline', () => {
   it('400s when the issue already has an agent assignment', async () => {
     mockOctokit(['agent:claude']);
 
-    await expect(assignPipeline(DEFAULT_REPO, 2709, 'codex')).rejects.toThrow(
-      'Issue already has an agent assignment',
-    );
+    await expect(
+      assignPipeline(DEFAULT_REPO, 2709, 'codex', 'jlapenna'),
+    ).rejects.toThrow('Issue already has an agent assignment');
   });
 
   it('400s for a closed issue', async () => {
     mockOctokit([], { state: 'closed' });
 
-    await expect(assignPipeline(DEFAULT_REPO, 2709, 'claude')).rejects.toThrow(
-      'Only open issues can be assigned to an agent',
-    );
+    await expect(
+      assignPipeline(DEFAULT_REPO, 2709, 'claude', 'jlapenna'),
+    ).rejects.toThrow('Only open issues can be assigned to an agent');
   });
 
   it('400s for a pull request', async () => {
     mockOctokit([], { pull_request: {} });
 
-    await expect(assignPipeline(DEFAULT_REPO, 2709, 'claude')).rejects.toThrow(
-      'Only open issues can be assigned to an agent',
-    );
+    await expect(
+      assignPipeline(DEFAULT_REPO, 2709, 'claude', 'jlapenna'),
+    ).rejects.toThrow('Only open issues can be assigned to an agent');
   });
 });
 
@@ -1003,7 +993,13 @@ describe('createQuickTask', () => {
     repository: DEFAULT_REPO,
     pipeline: 'claude' as const,
     description: '  Fix the flaky test\nmore context  ',
+    actorLogin: 'jlapenna',
   };
+
+  let quickTaskRuntime: ReturnType<typeof fixtureOrchestratorRuntime>;
+  beforeEach(() => {
+    quickTaskRuntime = fixtureOrchestratorRuntime();
+  });
 
   function mockOctokit(
     overrides: {
@@ -1192,6 +1188,15 @@ describe('createQuickTask', () => {
       requestId: request.requestId,
       task: { repository: DEFAULT_REPO, issueNumber: 99 },
       url: 'https://github.com/supersprinklesracing/sprinkles/issues/99',
+    });
+    const runs = await quickTaskRuntime.store.listRuns({
+      repo: DEFAULT_REPO_KEY,
+      issue: 99,
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      pipeline: 'claude',
+      params: { mode: 'implement' },
     });
   });
 

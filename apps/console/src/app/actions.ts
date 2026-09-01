@@ -14,7 +14,7 @@ import {
   approveAndMergePr,
   approveAndRebasePr,
   assignPipeline as assignPipelineLib,
-  clearHumanNeededLabel,
+  clearNeedsHumanLabel,
   closeIssue as closeIssueLib,
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
@@ -96,11 +96,18 @@ export async function replyToItem(
   repo: WatchedRepo,
   number: number,
   body: string,
-  labels: string[] = [],
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
-    await postComment(resolveWatchedRepo(repo), number, body, labels);
+    if (!session.user.login) {
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    }
+    await postComment(
+      resolveWatchedRepo(repo),
+      number,
+      body,
+      session.user.login,
+    );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {
@@ -156,15 +163,9 @@ export async function retriggerIssue(
   callerId: string,
   note?: string,
 ): Promise<ActionResult> {
-  const session = await requireAdmin();
+  await requireAdmin();
   try {
-    await retriggerIssueLib(
-      resolveWatchedRepo(repo),
-      number,
-      callerId,
-      note,
-      session.user.login,
-    );
+    await retriggerIssueLib(resolveWatchedRepo(repo), number, callerId, note);
     revalidateDashboard();
     return { ok: true };
   } catch (error) {
@@ -173,16 +174,20 @@ export async function retriggerIssue(
 }
 
 export async function dispatchUnstickPrs(
-  context?: string,
-  repo?: { owner: string; name: string },
+  context: string | undefined,
+  repo: { owner: string; name: string },
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
+    if (!session.user.login) {
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    }
     // resolveWatchedRepo: never forward a client-supplied repo unvalidated
     // (see its doc comment) - unknown repos throw instead of dispatching.
     await dispatchUnstickPrsLib(
       context,
-      repo ? resolveWatchedRepo(repo) : undefined,
+      resolveWatchedRepo(repo),
+      session.user.login,
     );
     return { ok: true };
   } catch (error) {
@@ -195,6 +200,9 @@ export async function createQuickTask(
 ): Promise<QuickTaskResult> {
   const session = await requireAdmin();
   try {
+    if (!session.user.login) {
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    }
     if (!request?.repository) {
       throw new ActionError('Quick Task repository is required', 400);
     }
@@ -202,6 +210,7 @@ export async function createQuickTask(
       {
         ...request,
         repository: resolveWatchedRepo(request.repository),
+        actorLogin: session.user.login,
       },
       undefined,
       quickTaskIssueCreatorFor(session),
@@ -268,7 +277,7 @@ export async function clearHumanNeeded(
 ): Promise<ActionResult> {
   await requireAdmin();
   try {
-    await clearHumanNeededLabel(resolveWatchedRepo(repo), number);
+    await clearNeedsHumanLabel(resolveWatchedRepo(repo), number);
     revalidateDashboard();
     return { ok: true };
   } catch (error) {
@@ -281,9 +290,17 @@ export async function assignPipeline(
   number: number,
   pipeline: Pipeline,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
-    await assignPipelineLib(resolveWatchedRepo(repo), number, pipeline);
+    if (!session.user.login) {
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    }
+    await assignPipelineLib(
+      resolveWatchedRepo(repo),
+      number,
+      pipeline,
+      session.user.login,
+    );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {
