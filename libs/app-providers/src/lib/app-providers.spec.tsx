@@ -2,7 +2,7 @@ import { getDefaultZIndex } from '@mantine/core';
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import AppProviders from './app-providers';
+import { AppProviders } from './app-providers';
 
 describe('AppProviders', () => {
   it('should render successfully', () => {

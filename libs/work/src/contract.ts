@@ -316,7 +316,6 @@ export const dispatchesContract = {
     )
     .output(githubDispatchResultSchema),
 };
-export type DispatchesContract = typeof dispatchesContract;
 
 /** A `cron` field is only accepted once it parses: `parseCron` throws on
  *  anything malformed, so a bad expression is refused at the API's input
@@ -481,7 +480,6 @@ export const schedulesContract = {
       }),
     ),
 };
-export type SchedulesContract = typeof schedulesContract;
 
 /** A broker run id, owned and minted by the orchestrator. The orchestrator's
  * longest legal GitHub run ID is 175 characters (140-char owner/repository,
@@ -733,4 +731,3 @@ export const runsContract = {
       }),
     ),
 };
-export type RunsContract = typeof runsContract;

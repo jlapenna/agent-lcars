@@ -5,13 +5,7 @@
  * Import this, do not re-derive it. See ../README.md.
  */
 
-export type { AttemptMarker } from './marker';
-export {
-  formatAttemptId,
-  formatClaimMarker,
-  formatDispatchMarker,
-  parseDispatchMarker,
-} from './marker';
+export { formatAttemptId, formatClaimMarker } from './marker';
 export type { DispatchOutcomeKind } from './outcomes';
 export type { AgentPipeline, PipelineContract } from './pipelines';
 export {

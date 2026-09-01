@@ -37,5 +37,3 @@ export function AppProviders({
     </MantineProvider>
   );
 }
-
-export default AppProviders;

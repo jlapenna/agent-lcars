@@ -1,4 +1,3 @@
-import type { DispatchOutcomeKind } from '@agent-lcars/dispatch-contracts';
 import type {
   IssueAgentSessionDoc,
   RunStatusClassification,
@@ -73,35 +72,6 @@ export const STATUS_COLORS: Record<RunStatusClassification, string> = {
   cancelled: 'yellow',
   'silent-error': 'orange',
 };
-
-export const OUTCOME_LABELS: Record<DispatchOutcomeKind, string> = {
-  'pull-request': 'pull request',
-  'merged-deliverable': 'merged',
-  'unknown-success': 'unclassified success',
-};
-
-export const OUTCOME_COLORS: Record<DispatchOutcomeKind, string> = {
-  'pull-request': 'green',
-  'merged-deliverable': 'green',
-  'unknown-success': 'gray',
-};
-
-export function DispatchOutcomeBadge({
-  outcome,
-}: {
-  outcome: DispatchOutcomeKind;
-}) {
-  return (
-    <Badge
-      variant="outline"
-      color={OUTCOME_COLORS[outcome]}
-      size="sm"
-      data-testid="dispatch-outcome"
-    >
-      {OUTCOME_LABELS[outcome]}
-    </Badge>
-  );
-}
 
 function budgetColor(fraction: number): string {
   if (fraction >= 0.8) return 'red';
