@@ -86,10 +86,12 @@ const TaskDetailView = withConsolePageShell(
               includeNavigation
               navigationHrefs={repoScopedConsoleHrefs(`${owner}/${repo}`)}
               signOutControl={<SignOutButton />}
+              item={
+                detail.status === 'ok' && detail.item.kind === 'issue'
+                  ? detail.item
+                  : undefined
+              }
             />
-            {detail.status === 'ok' && detail.item.kind === 'issue' && (
-              <ItemOverflowMenu item={detail.item} />
-            )}
           </Group>
         </div>
       </>

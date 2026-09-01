@@ -14,7 +14,7 @@ import {
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
-import { type FormEvent, useState, useTransition } from 'react';
+import { type FormEvent, type ReactNode, useState, useTransition } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
 import { derivePrimaryAction, type Pipeline } from '../lib/primary-action';
@@ -34,27 +34,32 @@ import {
 import { showErrorToast } from './show-error-toast';
 
 /**
- * An overflow menu, shared by queue cards and compact rows, for secondary
- * actions (closing an item's loop, clearing a label, or rebasing a PR)
- * without a trip to GitHub. Renders
- * nothing if no action applies to this item.
+ * The item-specific actions (edit, close, assign, merge/rebase, mute) an
+ * overflow menu offers, decoupled from the trigger button that opens them so
+ * a host that already renders its own single dots trigger (`QueueUtilityMenu`
+ * on the task detail header - agent-lcars#1676) can fold these `Menu.Item`s
+ * into that same dropdown instead of showing a second dots icon next to it.
+ * `item` is optional so a host that doesn't always have one (e.g. a page
+ * shell shared with non-item routes) can call this unconditionally.
  */
-export function ItemOverflowMenu({
-  item,
-  muted,
-  onToggleMute,
-}: {
-  item: ActionItem;
-  /** Current per-browser mute state (#59) - see use-muted-items.ts. Omit
-   * `onToggleMute` entirely on rows that don't offer muting (only "Your
-   * Queue" does today). */
-  muted?: boolean;
-  onToggleMute?: () => void;
-}) {
+export function useItemOverflowMenu(
+  item: ActionItem | undefined,
+  muted?: boolean,
+  onToggleMute?: () => void,
+): {
+  hasActions: boolean;
+  isPending: boolean;
+  items: ReactNode;
+  modal: ReactNode;
+} {
   const [isPending, startTransition] = useTransition();
   const [editOpened, setEditOpened] = useState(false);
-  const [editTitle, setEditTitle] = useState(item.title);
-  const [editBody, setEditBody] = useState(item.body ?? '');
+  const [editTitle, setEditTitle] = useState(item?.title ?? '');
+  const [editBody, setEditBody] = useState(item?.body ?? '');
+
+  if (!item) {
+    return { hasActions: false, isPending, items: null, modal: null };
+  }
 
   const canEdit = item.kind === 'issue';
   const canClose = item.kind === 'issue';
@@ -93,7 +98,7 @@ export function ItemOverflowMenu({
     !canRebase &&
     !canAssign
   )
-    return null;
+    return { hasActions: false, isPending, items: null, modal: null };
 
   const handleClose = () => {
     startTransition(async () => {
@@ -250,6 +255,121 @@ export function ItemOverflowMenu({
   const editUnchanged =
     editTitle.trim() === item.title && editBody === (item.body ?? '');
 
+  const items = (
+    <>
+      {canEdit && <Menu.Item onClick={openEdit}>Edit issue</Menu.Item>}
+      {canReview && (
+        <Menu.Item
+          disabled={reviewActionDisabled}
+          onClick={confirmReviewAction}
+        >
+          {reviewAction === 'approve-rebase'
+            ? 'Approve & Rebase'
+            : 'Approve & Merge'}
+        </Menu.Item>
+      )}
+      {canRebase && (
+        <Menu.Item onClick={handleRebase}>Rebase onto base branch</Menu.Item>
+      )}
+      {assignTargets.map((target) => (
+        <Menu.Item key={target} onClick={() => handleAssign(target)}>
+          Assign to {target}
+        </Menu.Item>
+      ))}
+      {canClearHumanNeeded && (
+        <Menu.Item onClick={handleClearHumanNeeded}>
+          Clear needs-human
+        </Menu.Item>
+      )}
+      {canMute && (
+        <Menu.Item onClick={onToggleMute}>
+          {muted ? 'Unmute' : 'Mute'}
+        </Menu.Item>
+      )}
+      {canClose && (
+        <Menu.Item color="red" onClick={confirmClose}>
+          Close issue
+        </Menu.Item>
+      )}
+    </>
+  );
+
+  const modal = canEdit && (
+    <Modal
+      opened={editOpened}
+      onClose={() => {
+        if (!isPending) setEditOpened(false);
+      }}
+      closeOnClickOutside={!isPending}
+      title={`Edit #${item.number}`}
+    >
+      <form onSubmit={handleEdit}>
+        <Stack gap="sm">
+          <TextInput
+            label="Title"
+            required
+            value={editTitle}
+            onChange={(event) => setEditTitle(event.currentTarget.value)}
+            disabled={isPending}
+          />
+          <Textarea
+            label="Body"
+            value={editBody}
+            onChange={(event) => setEditBody(event.currentTarget.value)}
+            autosize
+            minRows={10}
+            disabled={isPending}
+          />
+          <Group justify="flex-end" gap="xs">
+            <Button
+              type="button"
+              variant="default"
+              disabled={isPending}
+              onClick={() => setEditOpened(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              loading={isPending}
+              disabled={!editTitle.trim() || editUnchanged}
+            >
+              Save changes
+            </Button>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
+  );
+
+  return { hasActions: true, isPending, items, modal };
+}
+
+/**
+ * An overflow menu, shared by queue cards and compact rows, for secondary
+ * actions (closing an item's loop, clearing a label, or rebasing a PR)
+ * without a trip to GitHub. Renders nothing if no action applies to this
+ * item.
+ */
+export function ItemOverflowMenu({
+  item,
+  muted,
+  onToggleMute,
+}: {
+  item: ActionItem;
+  /** Current per-browser mute state (#59) - see use-muted-items.ts. Omit
+   * `onToggleMute` entirely on rows that don't offer muting (only "Your
+   * Queue" does today). */
+  muted?: boolean;
+  onToggleMute?: () => void;
+}) {
+  const { hasActions, isPending, items, modal } = useItemOverflowMenu(
+    item,
+    muted,
+    onToggleMute,
+  );
+  if (!hasActions) return null;
+
   return (
     <>
       <Menu withinPortal position="bottom-end" shadow="md">
@@ -265,92 +385,9 @@ export function ItemOverflowMenu({
             <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
           </ActionIcon>
         </Menu.Target>
-        <Menu.Dropdown>
-          {canEdit && <Menu.Item onClick={openEdit}>Edit issue</Menu.Item>}
-          {canReview && (
-            <Menu.Item
-              disabled={reviewActionDisabled}
-              onClick={confirmReviewAction}
-            >
-              {reviewAction === 'approve-rebase'
-                ? 'Approve & Rebase'
-                : 'Approve & Merge'}
-            </Menu.Item>
-          )}
-          {canRebase && (
-            <Menu.Item onClick={handleRebase}>
-              Rebase onto base branch
-            </Menu.Item>
-          )}
-          {assignTargets.map((target) => (
-            <Menu.Item key={target} onClick={() => handleAssign(target)}>
-              Assign to {target}
-            </Menu.Item>
-          ))}
-          {canClearHumanNeeded && (
-            <Menu.Item onClick={handleClearHumanNeeded}>
-              Clear needs-human
-            </Menu.Item>
-          )}
-          {canMute && (
-            <Menu.Item onClick={onToggleMute}>
-              {muted ? 'Unmute' : 'Mute'}
-            </Menu.Item>
-          )}
-          {canClose && (
-            <Menu.Item color="red" onClick={confirmClose}>
-              Close issue
-            </Menu.Item>
-          )}
-        </Menu.Dropdown>
+        <Menu.Dropdown>{items}</Menu.Dropdown>
       </Menu>
-      {canEdit && (
-        <Modal
-          opened={editOpened}
-          onClose={() => {
-            if (!isPending) setEditOpened(false);
-          }}
-          closeOnClickOutside={!isPending}
-          title={`Edit #${item.number}`}
-        >
-          <form onSubmit={handleEdit}>
-            <Stack gap="sm">
-              <TextInput
-                label="Title"
-                required
-                value={editTitle}
-                onChange={(event) => setEditTitle(event.currentTarget.value)}
-                disabled={isPending}
-              />
-              <Textarea
-                label="Body"
-                value={editBody}
-                onChange={(event) => setEditBody(event.currentTarget.value)}
-                autosize
-                minRows={10}
-                disabled={isPending}
-              />
-              <Group justify="flex-end" gap="xs">
-                <Button
-                  type="button"
-                  variant="default"
-                  disabled={isPending}
-                  onClick={() => setEditOpened(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  loading={isPending}
-                  disabled={!editTitle.trim() || editUnchanged}
-                >
-                  Save changes
-                </Button>
-              </Group>
-            </Stack>
-          </form>
-        </Modal>
-      )}
+      {modal}
     </>
   );
 }
