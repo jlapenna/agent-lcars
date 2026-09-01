@@ -2,7 +2,11 @@ import {
   parseTerminalQuickTaskBody,
   REPLY_COMMANDS,
 } from '@agent-lcars/dispatch-contracts';
-import { type TaskId, taskIdSchema } from '@agent-lcars/orchestrator';
+import {
+  type RequestBinding,
+  type TaskId,
+  taskIdSchema,
+} from '@agent-lcars/orchestrator';
 import { type WorkPayload } from '@agent-lcars/work';
 import { z } from 'zod';
 
@@ -27,10 +31,10 @@ export interface IngestDecision {
   /** The `x-github-delivery` GUID; doubles as the orchestrator's
    *  idempotency key for this request. */
   requestId: string;
-  /** A durable first-admission identity, if the delivery carries one. The
-   * route selects it only while this anchor has no authoritative Task; once
-   * Work exists, later deliveries retain their own delivery identity. */
-  unadmittedRequestId?: string;
+  /** Optional opaque durable binding for a first delivery that must converge
+   * with another admission path. The store, not this pure interpreter,
+   * atomically decides whether this source delivery owns that binding. */
+  requestBinding?: RequestBinding;
   pipeline: Pipeline;
   /** Always includes `mode`; includes `reply` when `mode` is `'reply'`. */
   params: Record<string, string>;
@@ -128,7 +132,7 @@ function buildRequestDecision(
   pipeline: Pipeline,
   params: Record<string, string>,
   work: WorkPayload,
-  unadmittedRequestId?: string,
+  requestBinding?: RequestBinding,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
@@ -136,7 +140,7 @@ function buildRequestDecision(
     kind: 'request',
     taskId: taskId.data,
     requestId,
-    ...(unadmittedRequestId === undefined ? {} : { unadmittedRequestId }),
+    ...(requestBinding === undefined ? {} : { requestBinding }),
     pipeline,
     params,
     work,
@@ -144,14 +148,15 @@ function buildRequestDecision(
 }
 
 /** A Quick Task marker names the browser intent that created its issue. The
- * route may use this on an unadmitted anchor to converge its first label
- * webhook with direct console admission. It deliberately does not replace a
- * delivery identity once authoritative Work already exists. */
-function unadmittedLabelRequestId(
+ * shared admission transaction binds the first webhook source that presents
+ * this opaque key, rather than relying on a non-atomic route pre-read. */
+function terminalQuickTaskBinding(
   body: string | null | undefined,
-): string | undefined {
+): RequestBinding | undefined {
   const quickTask = parseTerminalQuickTaskBody(body);
-  return quickTask ? `console-quick-task:${quickTask.requestId}` : undefined;
+  if (!quickTask) return undefined;
+  const canonicalRequestId = `console-quick-task:${quickTask.requestId}`;
+  return { bindingKey: canonicalRequestId, canonicalRequestId };
 }
 
 function interpretIssuesEvent(
@@ -186,7 +191,7 @@ function interpretIssuesEvent(
       mode: 'implement',
     },
     work,
-    unadmittedLabelRequestId(issue.body),
+    terminalQuickTaskBinding(issue.body),
   );
 }
 

@@ -629,7 +629,7 @@ describe('interpretDelivery', () => {
     });
   });
 
-  it('exposes a terminal Quick Task marker as an unadmitted label identity', () => {
+  it('exposes a terminal Quick Task marker as a first-delivery binding', () => {
     const requestId = '11111111-1111-4111-8111-111111111111';
     const result = interpretDelivery({
       event: 'issues',
@@ -648,7 +648,10 @@ describe('interpretDelivery', () => {
     expect(result).toMatchObject({
       kind: 'request',
       requestId: DELIVERY_ID,
-      unadmittedRequestId: `console-quick-task:${requestId}`,
+      requestBinding: {
+        bindingKey: `console-quick-task:${requestId}`,
+        canonicalRequestId: `console-quick-task:${requestId}`,
+      },
     });
   });
 

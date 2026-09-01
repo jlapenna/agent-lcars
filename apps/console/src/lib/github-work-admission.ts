@@ -4,6 +4,7 @@ import {
   decidedRun,
   isRefusal,
   isWorkAnchor,
+  type RequestBinding,
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
@@ -20,6 +21,9 @@ import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
 export interface GithubWorkAdmissionInput {
   anchor: TaskId;
   requestId: string;
+  /** Optional opaque source-to-canonical binding resolved atomically with
+   * this admission's history lookup and Run decision. */
+  requestBinding?: RequestBinding;
   params: Record<string, string>;
   /** Always passed, including a Retry of an existing task: a GitHub anchor
    * never relies on a caller default for its target or pipeline. */
@@ -93,6 +97,9 @@ export async function admitGithubWork(
   const outcome = await runtime.orchestrator.request({
     taskId: anchor,
     requestId: input.requestId,
+    ...(input.requestBinding === undefined
+      ? {}
+      : { requestBinding: input.requestBinding }),
     pipeline: work.spec.pipeline,
     params: input.params,
     work,
