@@ -60,6 +60,9 @@ export const githubDispatchRouter = os.router({
     if (outcome.kind === 'forbidden') {
       throw errors.FORBIDDEN({ message: outcome.message });
     }
+    if (outcome.kind === 'conflict') {
+      throw errors.CONFLICT({ message: outcome.message });
+    }
     if (outcome.kind === 'duplicate' || outcome.kind === 'busy') {
       return {
         outcome: outcome.kind,

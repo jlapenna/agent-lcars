@@ -123,4 +123,30 @@ describe('admitGithubWork', () => {
     ).resolves.toEqual({ kind: 'busy', runId: `${REPO}#${ANCHOR.issue}/r1` });
     expect(runtime.drain).toHaveBeenCalledOnce();
   });
+
+  it('refuses a changed specification after the GitHub Task is settled', async () => {
+    const runtime = fixture();
+    const input = {
+      anchor: ANCHOR,
+      requestId: 'delivery-1',
+      params: { mode: 'implement' },
+      work: work(),
+    };
+    const first = await admitGithubWork(runtime, input);
+    if (first.kind !== 'accepted') throw new Error('first admission failed');
+    await runtime.orchestrator.report(first.runId, { ok: true });
+
+    await expect(
+      admitGithubWork(runtime, {
+        ...input,
+        requestId: 'delivery-2',
+        work: work('codex'),
+      }),
+    ).resolves.toEqual({
+      kind: 'conflict',
+      message: 'GitHub Work specification is immutable once admitted',
+    });
+    expect(await runtime.store.listRuns(ANCHOR)).toHaveLength(1);
+    expect(runtime.drain).toHaveBeenCalledOnce();
+  });
 });

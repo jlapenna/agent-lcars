@@ -190,6 +190,10 @@ export async function handleWebhookDelivery(
         body: { duplicate: true, runId: outcome.runId },
       };
     }
+    if (outcome.kind === 'conflict') {
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+      return { status: 200, body: { refused: 'work-spec-mismatch' } };
+    }
     if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {
       console.error(
         'agent-lcars: GitHub webhook admission rejected',

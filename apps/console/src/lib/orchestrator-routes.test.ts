@@ -395,6 +395,31 @@ describe('handleWebhookDelivery', () => {
     );
   });
 
+  it('acknowledges a changed pipeline label without reassigning immutable Work', async () => {
+    const { deps, store } = fixture();
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'first-delivery',
+      payload: labeledIssuePayload(),
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+
+    await expect(
+      handleWebhookDelivery(deps, {
+        event: 'issues',
+        deliveryId: 'changed-pipeline-label',
+        payload: labeledIssuePayload({ label: { name: 'agent:codex' } }),
+      }),
+    ).resolves.toEqual({
+      status: 200,
+      body: { refused: 'work-spec-mismatch' },
+    });
+    expect(await store.listRuns(ISSUE)).toHaveLength(1);
+    expect((await store.readTask(ISSUE))?.task.work).toMatchObject({
+      spec: { pipeline: 'claude' },
+    });
+  });
+
   it('does not add a comment window to an initial label dispatch or a reply command', async () => {
     const { deps } = fixture();
     const requestSpy = vi.spyOn(deps.orchestrator, 'request');

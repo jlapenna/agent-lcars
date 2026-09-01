@@ -7,11 +7,11 @@ import {
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
-import type { WorkPayload } from '@agent-lcars/work';
+import { type WorkPayload, workPayloadSchema } from '@agent-lcars/work';
 
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { normalizeGithubWorkPayload } from './work-from-github';
-import { forbiddenReason, type GrantsPrincipal } from './work-mint';
+import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
 
 /** The one internal admission boundary for a GitHub issue or pull-request
  * anchor. HTTP, webhook, and console callers prepare their own identity and
@@ -37,6 +37,7 @@ export type GithubWorkAdmissionOutcome =
   | { kind: 'accepted'; runId: string; dispatched: boolean }
   | { kind: 'busy'; runId: string }
   | { kind: 'duplicate'; runId: string }
+  | { kind: 'conflict'; message: string }
   | { kind: 'invalid'; message: string }
   | { kind: 'forbidden'; message: string };
 
@@ -47,7 +48,7 @@ export type GithubWorkAdmissionOutcome =
  * second HTTP/auth boundary or drift from the public API's durable decision.
  */
 export async function admitGithubWork(
-  runtime: Pick<OrchestratorRouteDeps, 'orchestrator' | 'drain'>,
+  runtime: Pick<OrchestratorRouteDeps, 'store' | 'orchestrator' | 'drain'>,
   input: GithubWorkAdmissionInput,
 ): Promise<GithubWorkAdmissionOutcome> {
   const parsedAnchor = taskIdSchema.safeParse(input.anchor);
@@ -87,6 +88,22 @@ export async function admitGithubWork(
     );
     if (forbidden !== undefined)
       return { kind: 'forbidden', message: forbidden };
+  }
+
+  // The orchestrator writes Work exactly once when it first creates a Task.
+  // Re-check the durable spec before asking it for another run: otherwise a
+  // later webhook label or API call could mint (say) a Codex Run while the
+  // Task's immutable Work still said Claude. That would recreate Reassign as
+  // an admission side effect instead of making the conflict explicit.
+  const existing = await runtime.store.readTask(anchor);
+  if (existing !== undefined) {
+    const stored = workPayloadSchema.parse(existing.task.work);
+    if (!sameSpec(stored.spec, work.spec)) {
+      return {
+        kind: 'conflict',
+        message: 'GitHub Work specification is immutable once admitted',
+      };
+    }
   }
 
   const outcome = await runtime.orchestrator.request({

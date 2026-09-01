@@ -341,7 +341,7 @@ describe('generateWorkOpenApi', () => {
       'GET /items': ['200'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409', '429'],
-      'POST /dispatches/github': ['200', '400', '403'],
+      'POST /dispatches/github': ['200', '400', '403', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],
       'GET /schedules': ['200'],

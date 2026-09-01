@@ -2680,6 +2680,23 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "GitHub anchor already has an immutable Work specification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
           }
         },
         "security": [
