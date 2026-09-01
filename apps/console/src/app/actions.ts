@@ -96,6 +96,7 @@ export async function replyToItem(
   repo: WatchedRepo,
   number: number,
   body: string,
+  assignedPipeline?: Pipeline,
 ): Promise<ActionResult> {
   const session = await requireAdmin();
   try {
@@ -107,6 +108,7 @@ export async function replyToItem(
       number,
       body,
       session.user.login,
+      assignedPipeline,
     );
     revalidateDashboard();
     return { ok: true };

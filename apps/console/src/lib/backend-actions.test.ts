@@ -27,6 +27,7 @@ import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { workPayloadFromGithub } from './work-from-github';
 
 const { refreshCurrentGithubAnchorProjection } = vi.hoisted(() => ({
   refreshCurrentGithubAnchorProjection: vi.fn(),
@@ -415,7 +416,7 @@ describe('postComment (direct Work admission)', () => {
     );
   });
 
-  it('admits reply mode directly from immutable Task Work without adding a trigger', async () => {
+  it('admits reply mode only when the canonical assignment is explicit', async () => {
     const { createComment } = mockOctokit();
     const { orchestrator, store } = fixtureOrchestratorRuntime();
     const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
@@ -429,7 +430,7 @@ describe('postComment (direct Work admission)', () => {
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna');
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna', 'codex');
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: 'Use option 2' }),
@@ -441,17 +442,55 @@ describe('postComment (direct Work admission)', () => {
     });
   });
 
-  it('clears the needs-human status after posting', async () => {
+  it('leaves needs-human on a plain comment with no assignment', async () => {
     const { removeLabel } = mockOctokit();
 
     await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna');
+
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch or clear needs-human when Task outlives its assignment label', async () => {
+    const { removeLabel } = mockOctokit();
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-unassigned-comment',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(DEFAULT_REPO, 2709, 'A human-only note', 'jlapenna');
+
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('clears needs-human after an explicitly assigned reply starts a run', async () => {
+    const { removeLabel } = mockOctokit();
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-needs-human-reply',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex');
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
     );
   });
 
-  it('posting a comment alone (no label actually cleared) does not sweep the orchestrator', async () => {
+  it('posting an unassigned comment does not sweep the orchestrator', async () => {
     (getGithubClient as Mock).mockReturnValue({
       rest: {
         issues: {
@@ -460,9 +499,8 @@ describe('postComment (direct Work admission)', () => {
               html_url: 'https://github.com/o/r/issues/1#issuecomment-1',
             },
           }),
-          // 404: nothing to clear, so clearNeedsHumanLabel's own sweep never
-          // fires either - isolates that createComment itself is inert from
-          // the orchestrator's perspective, per the seam's own analysis.
+          // Plain comments never clear this handoff label, so creating one is
+          // inert from the orchestrator's perspective.
           removeLabel: vi
             .fn()
             .mockRejectedValue(
@@ -1198,6 +1236,53 @@ describe('createQuickTask', () => {
       pipeline: 'claude',
       params: { mode: 'implement' },
     });
+    const task = await quickTaskRuntime.store.readTask({
+      repo: DEFAULT_REPO_KEY,
+      issue: 99,
+    });
+    expect(task?.task.work.spec).toMatchObject({
+      title: 'Fix the flaky test',
+      description: expect.stringMatching(
+        /^Fix the flaky test\nmore context\n\n<!-- agent-lcars:quick-task-request:v1 /u,
+      ),
+    });
+  });
+
+  it('converges when the label webhook admits the persisted issue before direct admission', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      const webhook = await quickTaskRuntime.orchestrator.request({
+        taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+        requestId: 'webhook-quick-task',
+        pipeline: request.pipeline,
+        params: { mode: 'implement' },
+        work: workPayloadFromGithub({
+          title: input.title,
+          body: input.body,
+          pipeline: request.pipeline,
+          repo: DEFAULT_REPO_KEY,
+          actor: 'github-webhook-user',
+        }),
+      });
+      if ('refused' in webhook) throw new Error('webhook request was refused');
+      await quickTaskRuntime.orchestrator.report(webhook.run.runId, {
+        ok: true,
+      });
+      return { data: { number: 99 } };
+    });
+    mockOctokit({ createIssue });
+
+    await expect(createQuickTask(request)).resolves.toEqual(
+      expect.objectContaining({
+        task: { issueNumber: 99, repository: DEFAULT_REPO },
+      }),
+    );
+    const task = await quickTaskRuntime.store.readTask({
+      repo: DEFAULT_REPO_KEY,
+      issue: 99,
+    });
+    expect(task?.task.work.spec.description).toBe(persistedBody);
   });
 
   it('uses the signed-in user creator for the issue while the App client owns the claim ledger', async () => {
@@ -1354,7 +1439,13 @@ describe('createQuickTask', () => {
       .fn()
       .mockResolvedValueOnce({ data: [] })
       .mockImplementation(async () => ({
-        data: [{ number: 99, body: persistedBody }],
+        data: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
+        ],
       }));
     mockOctokit({ createIssue, listForRepo });
 
@@ -1377,7 +1468,11 @@ describe('createQuickTask', () => {
       .mockImplementation(async () => ({
         data: [
           { number: 123, body: persistedBody, pull_request: { url: 'pr' } },
-          { number: 99, body: persistedBody },
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
         ],
       }));
     mockOctokit({ createIssue, listForRepo });
@@ -1423,7 +1518,15 @@ describe('createQuickTask', () => {
     await createQuickTask(request);
     listForRepo.mockResolvedValue({ data: recent });
     searchIssues.mockResolvedValue({
-      data: { items: [{ number: 99, body }] },
+      data: {
+        items: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body,
+          },
+        ],
+      },
     });
 
     await expect(createQuickTask(request)).resolves.toEqual(
@@ -1550,6 +1653,7 @@ describe('createQuickTask', () => {
         data: [
           {
             number: 101,
+            title: deriveQuickTaskTitle(request.description),
             body: `Winner\n\n<!-- agent-lcars:quick-task-request:v1 id=${request.requestId} digest=${digest} -->`,
           },
         ],
@@ -1664,7 +1768,13 @@ describe('createQuickTask', () => {
       .fn()
       .mockResolvedValueOnce({ data: [] })
       .mockImplementation(async () => ({
-        data: [{ number: 99, body: persistedBody }],
+        data: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
+        ],
       }));
     mockOctokit({ createIssue, listForRepo });
 
@@ -1687,7 +1797,13 @@ describe('createQuickTask', () => {
       .fn()
       .mockResolvedValueOnce({ data: [] })
       .mockImplementation(async () => ({
-        data: [{ number: 99, body: persistedBody }],
+        data: [
+          {
+            number: 99,
+            title: deriveQuickTaskTitle(request.description),
+            body: persistedBody,
+          },
+        ],
       }));
     const { deleteRef } = mockOctokit({ createIssue, listForRepo });
 

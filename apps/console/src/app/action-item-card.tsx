@@ -244,7 +244,12 @@ export function ActionItemCard({
     if (!replyBody.trim()) return;
     setError(undefined);
     startTransition(async () => {
-      const result = await replyToItem(item.repo, item.number, replyBody);
+      const result = await replyToItem(
+        item.repo,
+        item.number,
+        replyBody,
+        pipeline,
+      );
       if (!result.ok) {
         setError(result.message);
         return;
