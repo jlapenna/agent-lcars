@@ -115,11 +115,24 @@ ceiling.
 | + homelab `runner_limit: 2` and a 6 GiB glue tier |       3 |      3 |       1 |       1 |     8 |
 
 Three co-tenants at 8 GiB each on a 30 GiB host can, in principle, all spike
-to their 14 GiB ceiling at once. With p99 RSS at 9.6 GiB and 21 runs above
-10 GiB in a month, the joint probability is negligible, and the existing
-pressure gates (`memory_soft`, PSI, swap) stop new placements as soon as real
-usage climbs. That is the trade Kubernetes makes with requests below limits,
-and it is the right one here.
+toward their 14 GiB ceilings at once, and placement gates only affect the
+_next_ placement; nothing today bounds runners already admitted. Two things
+close that gap, and the second is a precondition for any overcommit above
+1.0 (agent-lcars#1700):
+
+- **A host-level runner slice.** Every runner container starts under a
+  dedicated cgroup parent whose `memory.max` is the host's reservation budget
+  and whose `memory.high` sits just below it, so co-tenants are bounded
+  collectively and reclaim or an OOM kill stays inside the runner slice rather
+  than reaching the control plane, registry, or exporters on that host.
+- **A correlated measurement.** Per-run p99 treated as independent is the
+  wrong statistic for a build matrix that fans out together. With the
+  runner-to-job gauge (#1698) and cAdvisor, measure the p99 of the _sum_ of
+  co-tenant RSS per host over two weeks; the 8 GiB reservation stays, and
+  overcommit stays at 1.0, until that sum shows headroom under the slice bound.
+
+With those in place the trade is the one Kubernetes makes with requests below
+limits, and it is the right one here.
 
 ### B. Memory tiers instead of one default lane
 
@@ -129,10 +142,16 @@ glue, and a **heavy** tier (14 GiB ceiling, 8 GiB reservation) for full builds
 and E2E. Routing is a `runs-on` label per job. Light jobs stop waiting behind
 builds, and a 30 GiB host holds 20 of them.
 
-The measurement to make first: peak memory per _job name_, not per runner,
-by joining cAdvisor peaks to the exporter's job labels through the runner
-name. That is one query once the autoscaler stamps the job id on the
-container label at `JobStarted`; today it only stamps the scale set.
+The measurement to make first: peak memory per _job name_, not per runner.
+Container labels are fixed at creation, before GitHub assigns a job, and the
+Actions exporter deliberately carries no runner names, so the shared key is a
+metric the autoscaler publishes at `JobStarted` (#1698):
+`github_runner_autoscaler_runner_job_info{runner,job_id,job_name,workflow,repository}`,
+where `runner` is the container name and therefore cAdvisor's `name` label.
+Peak memory per job name over a week is then one PromQL join
+(documented in `apps/runner-autoscaler/README.md`, "Measuring per-job
+memory"); the series is removed on completion, so cardinality is bounded by
+concurrent busy runners.
 
 ### C. Usage-aware admission and a bounded overcommit
 
@@ -175,7 +194,11 @@ done on laforge on 2026-09-01.
 - `placement_blocked_total{scale_set,host,reason}` gains the host label so
   "which constraint binds where" is a panel, not a grep.
 - `scale_set_info{scale_set,registration,owner,repository}` (in #1684) joins
-  queue depth to the lane that should drain it.
+  queue depth to the lanes declared for a repository. Once a repository has
+  two lanes that join is ambiguous, so the exporter gains the job's `runs-on`
+  as a bounded `runs_on` label and the autoscaler publishes one
+  `scale_set_label_info{scale_set,label}` series per declared label; the
+  unserved-queue rule then matches lane to lane (agent-lcars#1699).
 - Alerts on cause, not symptom: `RunnerLaneNoAdmissibleHost`,
   `RunnerLaneUnservedQueue`, `DeliveryReconcilerCrashLooping`,
   `GitHubActionsMainWorkflowFailing` (homelab#1077, #1078).
