@@ -1370,8 +1370,9 @@ describe('createQuickTask', () => {
     });
   });
 
-  it('converges when the label webhook admits the persisted issue before direct admission', async () => {
+  it('converges on the webhook-first active run without minting a later retry run', async () => {
     let persistedBody = '';
+    let webhookRunId = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
       persistedBody = input.body;
       const webhook = await quickTaskRuntime.orchestrator.request({
@@ -1388,23 +1389,96 @@ describe('createQuickTask', () => {
         }),
       });
       if ('refused' in webhook) throw new Error('webhook request was refused');
-      await quickTaskRuntime.orchestrator.report(webhook.run.runId, {
-        ok: true,
-      });
+      webhookRunId = webhook.run.runId;
       return { data: { number: 99 } };
     });
-    mockOctokit({ createIssue });
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [
+          {
+            number: 99,
+            title: request.description.trim(),
+            body: persistedBody,
+          },
+        ],
+      }));
+    mockOctokit({ createIssue, listForRepo });
 
-    await expect(createQuickTask(request)).resolves.toEqual(
+    const directRecovery = await createQuickTask(request);
+    expect(directRecovery).toEqual(
       expect.objectContaining({
         task: { issueNumber: 99, repository: DEFAULT_REPO },
       }),
     );
-    const task = await quickTaskRuntime.store.readTask({
+    expect(webhookRunId).not.toBe('');
+    const taskId = {
       repo: DEFAULT_REPO_KEY,
       issue: 99,
+    };
+    expect(await quickTaskRuntime.store.listRuns(taskId)).toHaveLength(1);
+    expect(
+      (await quickTaskRuntime.store.readTask(taskId))?.task.work.spec
+        .description,
+    ).toBe(persistedBody);
+
+    await quickTaskRuntime.orchestrator.report(webhookRunId, { ok: true });
+    const retry = await createQuickTask(request);
+
+    expect(retry).toEqual(directRecovery);
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(await quickTaskRuntime.store.listRuns(taskId)).toHaveLength(1);
+  });
+
+  it('fails closed when webhook-first Work does not match the marker request', async () => {
+    let persistedBody = '';
+    const createIssue = vi.fn().mockImplementation(async (input) => {
+      persistedBody = input.body;
+      const webhook = await quickTaskRuntime.orchestrator.request({
+        taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+        requestId: 'webhook-mismatched-quick-task',
+        pipeline: 'codex',
+        params: { mode: 'implement' },
+        work: workPayloadFromGithub({
+          title: input.title,
+          body: input.body,
+          pipeline: 'codex',
+          repo: DEFAULT_REPO_KEY,
+          actor: 'github-webhook-user',
+        }),
+      });
+      if ('refused' in webhook) throw new Error('webhook request was refused');
+      return { data: { number: 99 } };
     });
-    expect(task?.task.work.spec.description).toBe(persistedBody);
+    const listForRepo = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [] })
+      .mockImplementation(async () => ({
+        data: [
+          {
+            number: 99,
+            title: request.description.trim(),
+            body: persistedBody,
+          },
+        ],
+      }));
+    mockOctokit({ createIssue, listForRepo });
+
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Quick Task immutable Work does not match its marker request',
+    );
+    await expect(createQuickTask(request)).rejects.toThrow(
+      'Quick Task immutable Work does not match its marker request',
+    );
+
+    expect(createIssue).toHaveBeenCalledOnce();
+    expect(
+      await quickTaskRuntime.store.listRuns({
+        repo: DEFAULT_REPO_KEY,
+        issue: 99,
+      }),
+    ).toHaveLength(1);
   });
 
   it('uses the signed-in user creator for the issue while the App client owns the claim ledger', async () => {

@@ -871,8 +871,53 @@ function receiptFor(
   };
 }
 
+function quickTaskBody(
+  request: NormalizedQuickTaskRequest,
+  digest: string,
+): string {
+  return `${request.description}\n\n${formatQuickTaskMarker({ requestId: request.requestId, digest })}`;
+}
+
+function validateStoredQuickTaskWork(
+  request: NormalizedQuickTaskRequest,
+  digest: string,
+  issue: QuickTaskIssueSource,
+  storedWork: unknown,
+): void {
+  if (markerDigest(issue.body, request.requestId) !== digest) {
+    throw new ActionError(
+      'Quick Task marker does not match its request; manual reconciliation is required',
+      409,
+    );
+  }
+  const work = workPayloadSchema.parse(storedWork);
+  const expectedSpec = workPayloadFromGithub({
+    title: request.title,
+    body: quickTaskBody(request, digest),
+    pipeline: request.pipeline,
+    repo: repoKey(request.repository),
+    actor: request.actorLogin,
+  }).spec;
+  // A webhook may be the first writer, so its concrete GitHub principal can
+  // differ from the console actor. Its channel and every immutable spec field
+  // must nevertheless be the exact Work described by this marker request.
+  if (
+    work.origin.channel !== 'github' ||
+    work.spec.title !== expectedSpec.title ||
+    work.spec.description !== expectedSpec.description ||
+    work.spec.pipeline !== expectedSpec.pipeline ||
+    work.spec.target.repo !== expectedSpec.target.repo
+  ) {
+    throw new ActionError(
+      'Quick Task immutable Work does not match its marker request; manual reconciliation is required',
+      409,
+    );
+  }
+}
+
 async function admitQuickTask(
   request: NormalizedQuickTaskRequest,
+  digest: string,
   issue: QuickTaskIssueSource,
 ): Promise<void> {
   const runtime = createOrchestratorRuntime();
@@ -882,16 +927,20 @@ async function admitQuickTask(
   // for this anchor, not reconstruct a competing Work from the edited
   // GitHub title/body before its original request id can be recognized.
   const stored = await runtime.store.readTask(anchor);
-  const work =
-    stored === undefined
-      ? workPayloadFromGithub({
-          title: issue.title,
-          body: issue.body,
-          pipeline: request.pipeline,
-          repo: repoKey(request.repository),
-          actor: request.actorLogin,
-        })
-      : workPayloadSchema.parse(stored.task.work);
+  if (stored !== undefined) {
+    validateStoredQuickTaskWork(request, digest, issue, stored.task.work);
+    // The first writer (normally the label webhook) already created the
+    // immutable Task. Do not turn a transient busy result into a second Run
+    // after it settles: this marker request has reached its canonical result.
+    return;
+  }
+  const work = workPayloadFromGithub({
+    title: issue.title,
+    body: issue.body,
+    pipeline: request.pipeline,
+    repo: repoKey(request.repository),
+    actor: request.actorLogin,
+  });
   const outcome = await admitGithubWork(runtime, {
     anchor,
     // The browser retains this UUID across retries. Reusing it here makes a
@@ -1233,7 +1282,7 @@ async function createQuickTaskOnce(
   );
   const existing = await findExistingQuickTask(request, digest);
   if (existing) {
-    await admitQuickTask(request, existing.source);
+    await admitQuickTask(request, digest, existing.source);
     return existing.receipt;
   }
 
@@ -1244,7 +1293,7 @@ async function createQuickTaskOnce(
     // closed so this overlapping request can return the canonical receipt.
     const winner = await findExistingQuickTask(request, digest);
     if (winner) {
-      await admitQuickTask(request, winner.source);
+      await admitQuickTask(request, digest, winner.source);
       return winner.receipt;
     }
     // The other claimant may still be inside GitHub's issue-create request.
@@ -1291,7 +1340,7 @@ async function createQuickTaskOnce(
   }
 
   try {
-    const body = `${request.description}\n\n${formatQuickTaskMarker({ requestId: request.requestId, digest })}`;
+    const body = quickTaskBody(request, digest);
     const { data: issue } = await (
       issueCreator ?? ((parameters) => octokit.rest.issues.create(parameters))
     )({
@@ -1305,7 +1354,7 @@ async function createQuickTaskOnce(
     // the durable source of truth, so this exact title/body is also what a
     // label webhook sees. Either ordering therefore records the same
     // immutable Work specification.
-    await admitQuickTask(request, {
+    await admitQuickTask(request, digest, {
       number: issue.number,
       title: request.title,
       body,
@@ -1338,7 +1387,7 @@ async function createQuickTaskOnce(
     // another one.
     const recovered = await findExistingQuickTask(request, digest);
     if (recovered) {
-      await admitQuickTask(request, recovered.source);
+      await admitQuickTask(request, digest, recovered.source);
       return recovered.receipt;
     }
     // Keep the atomic claim on any ambiguous failure. It may represent an
