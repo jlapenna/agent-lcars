@@ -1,4 +1,7 @@
-import { REPLY_COMMANDS } from '@agent-lcars/dispatch-contracts';
+import {
+  parseTerminalQuickTaskBody,
+  REPLY_COMMANDS,
+} from '@agent-lcars/dispatch-contracts';
 import { type TaskId, taskIdSchema } from '@agent-lcars/orchestrator';
 import { type WorkPayload } from '@agent-lcars/work';
 import { z } from 'zod';
@@ -134,6 +137,18 @@ function buildRequestDecision(
   };
 }
 
+/** A Quick Task marker names the browser intent that created its issue. The
+ * console's direct admission uses this same request identity, so a label
+ * webhook that wins the race remains a duplicate even after its first Run
+ * settles. Ordinary labeled issues retain their delivery-id idempotency. */
+function labelAdmissionRequestId(
+  body: string | null | undefined,
+  deliveryId: string,
+): string {
+  const quickTask = parseTerminalQuickTaskBody(body);
+  return quickTask ? `console-quick-task:${quickTask.requestId}` : deliveryId;
+}
+
 function interpretIssuesEvent(
   payload: unknown,
   deliveryId: string,
@@ -160,7 +175,7 @@ function interpretIssuesEvent(
   return buildRequestDecision(
     repository.full_name,
     issue.number,
-    deliveryId,
+    labelAdmissionRequestId(issue.body, deliveryId),
     pipeline,
     {
       mode: 'implement',

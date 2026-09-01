@@ -1370,26 +1370,13 @@ describe('createQuickTask', () => {
     });
   });
 
-  it('converges on the webhook-first active run without minting a later retry run', async () => {
+  it('converges after a webhook-first run settles before console admission', async () => {
     let persistedBody = '';
+    let persistedTitle = '';
     let webhookRunId = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
       persistedBody = input.body;
-      const webhook = await quickTaskRuntime.orchestrator.request({
-        taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
-        requestId: 'webhook-quick-task',
-        pipeline: request.pipeline,
-        params: { mode: 'implement' },
-        work: workPayloadFromGithub({
-          title: input.title,
-          body: input.body,
-          pipeline: request.pipeline,
-          repo: DEFAULT_REPO_KEY,
-          actor: 'github-webhook-user',
-        }),
-      });
-      if ('refused' in webhook) throw new Error('webhook request was refused');
-      webhookRunId = webhook.run.runId;
+      persistedTitle = input.title;
       return { data: { number: 99 } };
     });
     const listForRepo = vi
@@ -1405,6 +1392,36 @@ describe('createQuickTask', () => {
         ],
       }));
     mockOctokit({ createIssue, listForRepo });
+    let directReadObservedEmpty = false;
+    vi.spyOn(quickTaskRuntime.store, 'readTask').mockImplementationOnce(
+      async (taskId) => {
+        expect(taskId).toEqual({ repo: DEFAULT_REPO_KEY, issue: 99 });
+        // Make admitQuickTask's preflight read return its original empty
+        // snapshot, then let the webhook write and finish the same marker
+        // request before console reaches admitGithubWork. Subsequent reads
+        // use the real store implementation.
+        directReadObservedEmpty = true;
+        const webhook = await quickTaskRuntime.orchestrator.request({
+          taskId: { repo: DEFAULT_REPO_KEY, issue: 99 },
+          requestId: `console-quick-task:${request.requestId}`,
+          pipeline: request.pipeline,
+          params: { mode: 'implement' },
+          work: workPayloadFromGithub({
+            title: persistedTitle,
+            body: persistedBody,
+            pipeline: request.pipeline,
+            repo: DEFAULT_REPO_KEY,
+            actor: 'github-webhook-user',
+          }),
+        });
+        if ('refused' in webhook) {
+          throw new Error('webhook request was refused');
+        }
+        webhookRunId = webhook.run.runId;
+        await quickTaskRuntime.orchestrator.report(webhookRunId, { ok: true });
+        return undefined;
+      },
+    );
 
     const directRecovery = await createQuickTask(request);
     expect(directRecovery).toEqual(
@@ -1413,6 +1430,7 @@ describe('createQuickTask', () => {
       }),
     );
     expect(webhookRunId).not.toBe('');
+    expect(directReadObservedEmpty).toBe(true);
     const taskId = {
       repo: DEFAULT_REPO_KEY,
       issue: 99,
@@ -1423,7 +1441,6 @@ describe('createQuickTask', () => {
         .description,
     ).toBe(persistedBody);
 
-    await quickTaskRuntime.orchestrator.report(webhookRunId, { ok: true });
     const retry = await createQuickTask(request);
 
     expect(retry).toEqual(directRecovery);
