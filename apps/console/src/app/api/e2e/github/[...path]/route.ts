@@ -18,7 +18,6 @@ import {
   issueComments,
   pullRequest,
   quickTaskListingIssues,
-  reassignFixtureIssuePipeline,
   recordQuickTaskIssue,
   selfHostedRunners,
   updateFixtureIssueContent,
@@ -194,7 +193,7 @@ export async function POST(
     });
   }
   // The broker's outbox drain uses raw fetch rather than Octokit. These two
-  // handlers keep retrigger/reassignment coverage inside the same local
+  // handler keeps the QueueExecutor dispatch coverage inside the same local
   // GitHub boundary while validating the production request shape.
   if (
     path[0] === 'repos' &&
@@ -240,75 +239,6 @@ export async function POST(
         )
       : NextResponse.json(
           { message: 'Invalid issue comment fixture request' },
-          { status: 422 },
-        );
-  }
-  if (path[0] === 'controller-commands' && path.length === 1) {
-    const body = (await req.json()) as Record<string, unknown>;
-    const repository = body['repository'] as Record<string, unknown>;
-    const validBase =
-      repository?.['owner'] === E2E_FIXTURE_REPO.owner &&
-      repository?.['name'] === E2E_FIXTURE_REPO.name &&
-      Number.isSafeInteger(body['issueNumber']) &&
-      typeof body['requestId'] === 'string' &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
-        body['requestId'],
-      );
-    if (!validBase) {
-      return NextResponse.json(
-        { message: 'Invalid hosted controller command fixture request' },
-        { status: 422 },
-      );
-    }
-    // agent-lcars#811: no real dispatch-controller logic runs against this
-    // fixture (docs/e2e-security-boundary.md), so this stands in for
-    // applyPipelineReassignment's own atomic replace + typed rejections
-    // directly against the fixture's issue store, keeping the "one PUT,
-    // unrelated labels preserved" contract observable end to end. Reads
-    // targetLabel/pipelineLabels straight off the command body -- the
-    // console resolves the repo's own label contract before posting here
-    // (Codex review on #904), so this fixture never reconstructs a label
-    // from a bare pipeline name either.
-    if (body['kind'] === 'reassign-pipeline') {
-      const targetPipeline = String(body['targetPipeline']);
-      const targetLabel = body['targetLabel'];
-      const pipelineLabels = body['pipelineLabels'];
-      if (
-        !['claude', 'codex', 'opencode'].includes(targetPipeline) ||
-        typeof targetLabel !== 'string' ||
-        !targetLabel ||
-        !Array.isArray(pipelineLabels) ||
-        pipelineLabels.length === 0 ||
-        !pipelineLabels.every((label) => typeof label === 'string') ||
-        !pipelineLabels.includes(targetLabel)
-      ) {
-        return NextResponse.json(
-          { message: 'Invalid hosted controller command fixture request' },
-          { status: 422 },
-        );
-      }
-      const result = reassignFixtureIssuePipeline(
-        Number(body['issueNumber']),
-        targetLabel,
-        pipelineLabels,
-      );
-      return result.ok
-        ? NextResponse.json({ ok: true, requestId: body['requestId'] })
-        : NextResponse.json(
-            {
-              message: `Pipeline reassignment fixture rejected: ${result.reason}`,
-            },
-            { status: 422 },
-          );
-    }
-    const validCommand =
-      body['kind'] === 'reconcile' ||
-      (body['kind'] === 'retrigger' &&
-        ['claude', 'codex', 'opencode'].includes(String(body['pipeline'])));
-    return validCommand
-      ? NextResponse.json({ ok: true, requestId: body['requestId'] })
-      : NextResponse.json(
-          { message: 'Invalid hosted controller command fixture request' },
           { status: 422 },
         );
   }

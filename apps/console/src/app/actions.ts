@@ -19,7 +19,6 @@ import {
   createQuickTask as createQuickTaskLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
   postComment,
-  reassignPipeline as reassignPipelineLib,
   retriggerIssue as retriggerIssueLib,
   updateIssueContent as updateIssueContentLib,
   updatePrBranch,
@@ -270,28 +269,6 @@ export async function clearHumanNeeded(
   await requireAdmin();
   try {
     await clearHumanNeededLabel(resolveWatchedRepo(repo), number);
-    revalidateDashboard();
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
-  }
-}
-
-export async function reassignPipeline(
-  repo: WatchedRepo,
-  number: number,
-  pipeline: Pipeline,
-  callerId: string,
-): Promise<ActionResult> {
-  const session = await requireAdmin();
-  try {
-    await reassignPipelineLib(
-      resolveWatchedRepo(repo),
-      number,
-      pipeline,
-      callerId,
-      session.user.login,
-    );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {

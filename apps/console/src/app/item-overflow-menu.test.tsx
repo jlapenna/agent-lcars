@@ -11,7 +11,6 @@ import {
   clearHumanNeeded,
   closeIssue,
   mergePr,
-  reassignPipeline,
   rebasePr,
   updateIssueContent,
 } from './actions';
@@ -25,7 +24,6 @@ vi.mock('./actions', () => ({
   closeIssue: vi.fn(),
   mergePr: vi.fn(),
   clearHumanNeeded: vi.fn(),
-  reassignPipeline: vi.fn(),
   rebasePr: vi.fn(),
   updateIssueContent: vi.fn(),
 }));
@@ -413,15 +411,6 @@ describe('ItemOverflowMenu', () => {
     );
   });
 
-  it('offers the other two pipelines to reassign a codex-labeled issue to', async () => {
-    renderMenu(makeItem({ labels: ['agent:codex'] }));
-    await openMenu();
-
-    expect(screen.getByText('Reassign to claude')).toBeTruthy();
-    expect(screen.getByText('Reassign to opencode')).toBeTruthy();
-    expect(screen.queryByText('Reassign to codex')).toBeNull();
-  });
-
   it('offers first assignment for an issue with no pipeline label', async () => {
     renderMenu(makeItem());
     await openMenu();
@@ -440,77 +429,10 @@ describe('ItemOverflowMenu', () => {
     );
   });
 
-  // selectedAgentPipeline() reports `undefined` both for "no agent label"
-  // and for this contradictory "two agent labels" case. Offering every
-  // "Assign to ..." option here would be a trap: assignPipeline's backend
-  // check rejects any issue that already carries an agent label, so every
-  // one of those actions would fail (#859 review).
-  it('offers neither assign nor reassign for an issue with two agent labels', async () => {
+  it('offers no assignment for an issue with two agent labels', async () => {
     renderMenu(makeItem({ labels: ['agent:claude', 'agent:opencode'] }));
     await openMenu();
 
     expect(screen.queryByText(/Assign to/)).toBeNull();
-    expect(screen.queryByText(/Reassign to/)).toBeNull();
-  });
-
-  it('does not offer reassign for a PR, even a pipeline-labeled one', async () => {
-    renderMenu(
-      makeItem({
-        kind: 'pr',
-        labels: ['agent:codex'],
-        mergeableState: 'behind',
-      }),
-    );
-    await openMenu();
-
-    expect(screen.queryByText(/Reassign to/)).toBeNull();
-  });
-
-  it('reassigns to the clicked pipeline, then notifies', async () => {
-    (reassignPipeline as Mock).mockResolvedValue({ ok: true });
-    renderMenu(makeItem({ labels: ['agent:codex'] }));
-    await openMenu();
-
-    fireEvent.click(screen.getByText('Reassign to claude'));
-
-    await waitFor(() =>
-      expect(reassignPipeline).toHaveBeenCalledWith(
-        DEFAULT_REPO,
-        42,
-        'claude',
-        // The console's own stable per-click idempotency key (#811) -
-        // asserting a UUID shape here, not an exact value, matches how
-        // retrigger-button.tsx's own createRandomId() call is exercised.
-        expect.stringMatching(
-          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-        ),
-      ),
-    );
-    expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: '#42 reassigned to claude',
-        color: 'green',
-      }),
-    );
-  });
-
-  it('surfaces a failed reassign as a red notification', async () => {
-    (reassignPipeline as Mock).mockResolvedValue({
-      ok: false,
-      message: 'Issue is already assigned to claude',
-    });
-    renderMenu(makeItem({ labels: ['agent:codex'] }));
-    await openMenu();
-
-    fireEvent.click(screen.getByText('Reassign to claude'));
-
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'Issue is already assigned to claude',
-          color: 'red',
-        }),
-      ),
-    );
   });
 });

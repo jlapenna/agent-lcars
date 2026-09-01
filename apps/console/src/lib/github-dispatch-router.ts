@@ -1,11 +1,10 @@
 import 'server-only';
 
-import { decidedRun, isRefusal } from '@agent-lcars/orchestrator';
 import { dispatchesContract } from '@agent-lcars/work';
 import { implement, ORPCError } from '@orpc/server';
 
-import { normalizeGithubWorkPayload } from './work-from-github';
-import { forbiddenReason, type WorkContext } from './work-mint';
+import { admitGithubWork } from './github-work-admission';
+import type { WorkContext } from './work-mint';
 
 const os = implement(dispatchesContract).$context<WorkContext>();
 
@@ -32,75 +31,45 @@ const operator = os.use(async ({ context, next }) => {
 export const githubDispatchRouter = os.router({
   github: operator.github.handler(async ({ input, context, errors }) => {
     const { principal } = context;
-    // GitHub permits a body larger than the durable Work spec. Build and
-    // normalize the complete payload before authorization or storage, so
-    // JSON escapes and multi-byte text count against the exact serialized
-    // byte cap just as they do for webhook/console GitHub derivation.
-    const work = normalizeGithubWorkPayload({
-      origin: {
-        principal: principal.principal,
-        channel: principal.via === 'session' ? 'console' : 'api',
-      },
-      spec: input.spec,
-    });
-    const { spec } = work;
-    if (input.anchor.repo !== spec.target.repo) {
-      throw errors.BAD_REQUEST();
-    }
-    if (
-      principal.sourceRepository !== undefined &&
-      principal.sourceRepository !== input.anchor.repo
-    ) {
-      throw errors.FORBIDDEN({
-        message:
-          'GitHub Actions principal may only dispatch its own repository',
-      });
-    }
-
-    const forbidden = forbiddenReason(principal, spec);
-    if (forbidden !== undefined) {
-      throw errors.FORBIDDEN({ message: forbidden });
-    }
-
     const params: Record<string, string> = { mode: input.mode };
     if (input.reply !== undefined) params['reply'] = input.reply;
     if (input.runbook !== undefined) params['runbook'] = input.runbook;
     if (input.context !== undefined) params['context'] = input.context;
 
-    const outcome = await context.runtime.orchestrator.request({
-      taskId: input.anchor,
+    const outcome = await admitGithubWork(context.runtime, {
+      anchor: input.anchor,
       requestId: input.requestId,
-      pipeline: spec.pipeline,
       params,
-      work,
+      work: {
+        origin: {
+          principal: principal.principal,
+          channel: principal.via === 'session' ? 'console' : 'api',
+        },
+        spec: input.spec,
+      },
+      authorization: {
+        ...(principal.sourceRepository === undefined
+          ? {}
+          : { sourceRepository: principal.sourceRepository }),
+        grantsPrincipal: principal,
+      },
     });
-
-    if (isRefusal(outcome)) {
-      const existing = outcome.existingRun;
-      if (existing === undefined) {
-        console.error(
-          'agent-lcars: GitHub dispatch received unexpected orchestrator refusal',
-          outcome.reason,
-        );
-        throw new ORPCError('INTERNAL_SERVER_ERROR', {
-          message: 'GitHub dispatch refusal had no existing run',
-        });
-      }
+    if (outcome.kind === 'invalid') {
+      throw errors.BAD_REQUEST({ message: outcome.message });
+    }
+    if (outcome.kind === 'forbidden') {
+      throw errors.FORBIDDEN({ message: outcome.message });
+    }
+    if (outcome.kind === 'duplicate' || outcome.kind === 'busy') {
       return {
-        outcome:
-          outcome.reason === 'duplicate-request'
-            ? ('duplicate' as const)
-            : ('busy' as const),
-        runId: existing.runId,
+        outcome: outcome.kind,
+        runId: outcome.runId,
       };
     }
-
-    const { runId } = decidedRun(outcome);
-    const drained = await context.runtime.drain();
     return {
       outcome: 'accepted' as const,
-      runId,
-      dispatched: drained.dispatched.includes(runId),
+      runId: outcome.runId,
+      dispatched: outcome.dispatched,
     };
   }),
 });

@@ -55,7 +55,9 @@ pull-request state.
 Repository profiles deliberately share names without requiring every
 repository to install every label. Agent LCARS reads each watched repository's
 declared agent integrations; Homelab now declares the standard Claude, Codex,
-and OpenCode workflows and therefore exposes dispatch and reassignment actions.
+and OpenCode workflows and therefore exposes initial assignment and dispatch
+actions. An agent choice is immutable once the Work record is admitted; the
+console does not offer a parallel reassignment path.
 
 ## State boundaries
 

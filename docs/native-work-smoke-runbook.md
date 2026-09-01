@@ -1,10 +1,12 @@
 # Native work item production smoke runbook
 
-The current production route is Work API → orchestrator → QueueExecutor →
-direct container. Every GitHub-anchored admission derives a Work specification
-before it enters that route; no hosted provider workflow or raw-GitHub runner
-fallback is supported. The dated sections below are historical evidence only,
-not operational instructions.
+The current production route is Work API → GitHub Work admission →
+orchestrator → QueueExecutor → direct container. Webhooks, the public
+GitHub-anchor endpoint, and Console Retry all use that one admission service,
+which derives and validates a Work specification before it enters the route;
+no hosted provider workflow, raw-GitHub runner, or console-specific fallback
+is supported. The dated sections below are historical evidence only, not
+operational instructions.
 
 ## Safety rules
 
