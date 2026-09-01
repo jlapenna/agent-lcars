@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
 	"io"
 	"log/slog"
 	"math"
@@ -124,6 +125,10 @@ type Scaler struct {
 	// would adopt a runner mid-teardown and be left holding an entry for a
 	// container that no longer exists.
 	tearingDown sync.Map // map[string]struct{}
+	// runnerJobs remembers the exact label set published for each busy
+	// runner's job-info series so it can be deleted on completion or
+	// deregistration without re-deriving job fields (agent-lcars#1693).
+	runnerJobs sync.Map // map[string]prometheus.Labels
 	// bootCheckpoint is this scale set's slice of the checkpoint loaded at
 	// startup, consulted only by cleanupOrphans' boot pass. Empty on a first
 	// boot or an unreadable checkpoint, which falls adoption back to the
@@ -820,6 +825,7 @@ func (a *Scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStar
 		slog.Int64("runnerRequestId", jobInfo.RunnerRequestID),
 		slog.String("jobId", jobInfo.JobID),
 	)
+	a.recordRunnerJob(jobInfo)
 	if !a.runners.markBusy(jobInfo.RunnerName, jobInfo.JobID) {
 		if a.runners.isBusy(jobInfo.RunnerName) {
 			// Tracked and already busy -- e.g. a duplicate/replayed
@@ -844,6 +850,7 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 	// sweep would otherwise adopt as a runner the boot pass had missed.
 	a.beginTeardown(jobInfo.RunnerName)
 	defer a.endTeardown(jobInfo.RunnerName)
+	a.forgetRunnerJob(jobInfo.RunnerName)
 
 	runner, ok := a.runners.markDone(jobInfo.RunnerName)
 	a.runnersChanged()
@@ -885,7 +892,59 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 // crash-looped every e2e-docker runner placed on one fleet host, and
 // pruneDeadIdleRunners' local-only cleanup left 32 such ghosts behind in a
 // few hours (see jlapenna/homelab's docs/incidents.md for the postmortem).
+// recordRunnerJob publishes which job a runner is executing. Container
+// labels are fixed at create time and a JIT runner learns its job only when
+// GitHub assigns one, so the association lives in a metric instead: one
+// series per busy runner, keyed by the container name so cAdvisor's memory
+// series join to it. Jobs completed without a runner (cancelled while
+// queued) carry no runner name and are skipped.
+func (a *Scaler) recordRunnerJob(jobInfo *scaleset.JobStarted) {
+	if jobInfo == nil || jobInfo.RunnerName == "" {
+		return
+	}
+	a.forgetRunnerJob(jobInfo.RunnerName)
+	repository := jobInfo.RepositoryName
+	if jobInfo.OwnerName != "" && repository != "" {
+		repository = jobInfo.OwnerName + "/" + repository
+	}
+	labels := prometheus.Labels{
+		"scale_set":  a.scaleSetLabel(),
+		"runner":     jobInfo.RunnerName,
+		"job_id":     jobInfo.JobID,
+		"job_name":   jobInfo.JobDisplayName,
+		"workflow":   workflowFromRef(jobInfo.JobWorkflowRef),
+		"repository": repository,
+	}
+	runnerJobInfoGauge.With(labels).Set(1)
+	a.runnerJobs.Store(jobInfo.RunnerName, labels)
+}
+
+// forgetRunnerJob removes the runner's job-info series, if any.
+func (a *Scaler) forgetRunnerJob(name string) {
+	if name == "" {
+		return
+	}
+	if labels, ok := a.runnerJobs.LoadAndDelete(name); ok {
+		runnerJobInfoGauge.Delete(labels.(prometheus.Labels))
+	}
+}
+
+// workflowFromRef reduces a job workflow ref such as
+// owner/repo/.github/workflows/ci.yml@refs/heads/main to "ci", the same
+// short form the GitHub Actions exporter uses for its workflow label.
+func workflowFromRef(ref string) string {
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		ref = ref[i+1:]
+	}
+	ref = strings.TrimSuffix(ref, ".yaml")
+	return strings.TrimSuffix(ref, ".yml")
+}
+
 func (a *Scaler) deregisterRunner(ctx context.Context, name string) {
+	a.forgetRunnerJob(name)
 	// Bounded for the same reason removeIdleRunners' teardown is: both of
 	// these are GitHub round trips reached from the drain path, which runs
 	// inline in runOrchestrator's select loop. Best-effort already, so a
