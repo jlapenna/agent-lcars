@@ -545,6 +545,33 @@ describe('postComment (direct Work admission)', () => {
     expect(removeLabel).not.toHaveBeenCalled();
   });
 
+  it('does not revive immutable Work after the explicit assignment changes pipeline', async () => {
+    const { createComment, removeLabel } = mockOctokit(['agent:claude']);
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const seeded = await orchestrator.request({
+      taskId,
+      requestId: 'seed-rejected-label-change',
+      pipeline: 'codex',
+      params: { mode: 'implement' },
+      work: testWork('codex'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await postComment(
+      DEFAULT_REPO,
+      2709,
+      'A human-only note',
+      'jlapenna',
+      'claude',
+    );
+
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
   it('does not dispatch or clear needs-human when Task outlives its assignment label', async () => {
     const { removeLabel } = mockOctokit();
     const { orchestrator, store } = fixtureOrchestratorRuntime();

@@ -182,6 +182,14 @@ export async function postComment(
     // webhook remains responsible for first Work admission.
     if (existingTask !== undefined) {
       const work = workPayloadSchema.parse(existingTask.task.work);
+      // Assignment labels are an explicit present-tense handoff, whereas
+      // Work's pipeline is immutable. A rejected label-change webhook can
+      // therefore leave a new label beside older Work. Do not revive that
+      // older Work on a reply: all three sources must agree before a run can
+      // begin or the human handoff can be cleared.
+      if (work.spec.pipeline !== assignedPipeline) {
+        return { url: data.html_url };
+      }
       const outcome = await admitGithubWork(runtime, {
         anchor: taskId,
         requestId: `console-reply:${randomUUID()}`,
