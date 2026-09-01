@@ -57,10 +57,11 @@ export interface OrchestratorStore {
    * request maps to its original terminal run even if another request has
    * since taken the lock.
    *
-   * Implementations must run `decide` and the accepted decision's writes in
-   * one transaction. This is deliberately a store primitive rather than a
-   * route concern: every `Orchestrator.request()` caller gets the same
-   * durable idempotency contract.
+   * Implementations must run `decide` (including an optional immutable Work
+   * compatibility check from `Orchestrator.request`) and the accepted
+   * decision's writes in one transaction. This is deliberately a store
+   * primitive rather than a route concern: every `Orchestrator.request()`
+   * caller gets the same durable idempotency contract.
    */
   transactRequest(input: {
     taskId: TaskId;

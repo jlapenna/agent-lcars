@@ -154,6 +154,47 @@ export function runOrchestratorStoreContract(
         expect(await store.listRuns(TASK)).toHaveLength(1);
       });
 
+      it('checks immutable Work within the overlapping first-request transaction', async () => {
+        const { store, orchestrator } = await fixture();
+        const workFor = (pipeline: 'claude' | 'codex') => ({
+          spec: { title: 'immutable work', pipeline },
+        });
+        const request = (requestId: string, pipeline: 'claude' | 'codex') => {
+          const work = workFor(pipeline);
+          return orchestrator.request({
+            taskId: TASK,
+            requestId,
+            pipeline,
+            work,
+            isStoredWorkCompatible: (stored) =>
+              JSON.stringify(stored) === JSON.stringify(work),
+          });
+        };
+
+        const [left, right] = await Promise.all([
+          request('claude-first', 'claude'),
+          request('codex-first', 'codex'),
+        ]);
+        const outcomes = [left, right];
+        const accepted = outcomes.find((outcome) => !isRefusal(outcome));
+        const mismatch = outcomes.find(
+          (outcome) =>
+            isRefusal(outcome) && outcome.reason === 'work-spec-mismatch',
+        );
+        if (accepted === undefined || isRefusal(accepted)) {
+          throw new Error('expected one accepted request');
+        }
+
+        expect(mismatch).toMatchObject({
+          refused: true,
+          reason: 'work-spec-mismatch',
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+        expect(decidedRun(accepted).pipeline).toBe(
+          (accepted.task.work as { spec: { pipeline: string } }).spec.pipeline,
+        );
+      });
+
       it('returns the terminal request-id match before a newer live run', async () => {
         const { store, orchestrator } = await fixture();
         const first = await started(orchestrator, 'terminal-retry');

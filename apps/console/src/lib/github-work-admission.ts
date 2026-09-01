@@ -48,7 +48,7 @@ export type GithubWorkAdmissionOutcome =
  * second HTTP/auth boundary or drift from the public API's durable decision.
  */
 export async function admitGithubWork(
-  runtime: Pick<OrchestratorRouteDeps, 'store' | 'orchestrator' | 'drain'>,
+  runtime: Pick<OrchestratorRouteDeps, 'orchestrator' | 'drain'>,
   input: GithubWorkAdmissionInput,
 ): Promise<GithubWorkAdmissionOutcome> {
   const parsedAnchor = taskIdSchema.safeParse(input.anchor);
@@ -90,30 +90,25 @@ export async function admitGithubWork(
       return { kind: 'forbidden', message: forbidden };
   }
 
-  // The orchestrator writes Work exactly once when it first creates a Task.
-  // Re-check the durable spec before asking it for another run: otherwise a
-  // later webhook label or API call could mint (say) a Codex Run while the
-  // Task's immutable Work still said Claude. That would recreate Reassign as
-  // an admission side effect instead of making the conflict explicit.
-  const existing = await runtime.store.readTask(anchor);
-  if (existing !== undefined) {
-    const stored = workPayloadSchema.parse(existing.task.work);
-    if (!sameSpec(stored.spec, work.spec)) {
-      return {
-        kind: 'conflict',
-        message: 'GitHub Work specification is immutable once admitted',
-      };
-    }
-  }
-
   const outcome = await runtime.orchestrator.request({
     taskId: anchor,
     requestId: input.requestId,
     pipeline: work.spec.pipeline,
     params: input.params,
     work,
+    // This comparison must execute in the store transaction. A standalone
+    // read can race another first admission: its Work wins the Task write,
+    // but this request would otherwise mint a Run for a different pipeline.
+    isStoredWorkCompatible: (stored) =>
+      sameSpec(workPayloadSchema.parse(stored).spec, work.spec),
   });
   if (isRefusal(outcome)) {
+    if (outcome.reason === 'work-spec-mismatch') {
+      return {
+        kind: 'conflict',
+        message: 'GitHub Work specification is immutable once admitted',
+      };
+    }
     const runId = outcome.existingRun?.runId;
     if (runId === undefined) {
       return {

@@ -17,6 +17,7 @@ import {
   type RequestSource,
   type Run,
   type RunResult,
+  type Task,
   type TaskId,
   type WorkPayload,
 } from './model';
@@ -57,6 +58,17 @@ export interface RequestInput {
   pipeline: string;
   params?: Record<string, string>;
   work?: WorkPayload;
+  /**
+   * Called with an already-admitted Task's immutable Work while the request
+   * transaction still owns its consistent snapshot. Returning false refuses
+   * before request history or the live-run mutex can mint a Run against a
+   * different Work specification.
+   *
+   * The orchestrator stores Work opaquely, so its owner supplies this
+   * deterministic comparison rather than teaching the durable core a
+   * caller-specific payload schema.
+   */
+  isStoredWorkCompatible?: (stored: WorkPayload, task: Task) => boolean;
 }
 
 export class Orchestrator {
@@ -75,6 +87,18 @@ export class Orchestrator {
       requestId: input.requestId,
       requestSource,
       decide: ({ task, activeRun, previousRun }) => {
+        // This belongs inside transactRequest, not in a route-level pre-read:
+        // two first admissions may otherwise both observe an absent Task, and
+        // the loser can mint its pipeline after the winner persists different
+        // immutable Work. Firestore retries this callback with the winner's
+        // snapshot, and MemoryStore applies it without yielding.
+        if (
+          task !== undefined &&
+          input.isStoredWorkCompatible !== undefined &&
+          !input.isStoredWorkCompatible(task.task.work, task.task)
+        ) {
+          return refused('work-spec-mismatch');
+        }
         // The historical check precedes the live mutex. A retry remains a
         // duplicate even after its original run settled and a newer request
         // took the task lock; transactRequest keeps this check and minting

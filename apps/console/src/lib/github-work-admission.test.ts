@@ -149,4 +149,35 @@ describe('admitGithubWork', () => {
     expect(await runtime.store.listRuns(ANCHOR)).toHaveLength(1);
     expect(runtime.drain).toHaveBeenCalledOnce();
   });
+
+  it('atomically refuses an overlapping first admission with a different immutable spec', async () => {
+    const runtime = fixture();
+    const request = (requestId: string, pipeline: 'claude' | 'codex') =>
+      admitGithubWork(runtime, {
+        anchor: ANCHOR,
+        requestId,
+        params: { mode: 'implement' },
+        work: work(pipeline),
+      });
+
+    const [left, right] = await Promise.all([
+      request('claude-first', 'claude'),
+      request('codex-first', 'codex'),
+    ]);
+    const outcomes = [left, right];
+    const accepted = outcomes.find((outcome) => outcome.kind === 'accepted');
+    const conflict = outcomes.find((outcome) => outcome.kind === 'conflict');
+    if (accepted === undefined || conflict === undefined) {
+      throw new Error('expected one accepted admission and one conflict');
+    }
+
+    expect(conflict).toEqual({
+      kind: 'conflict',
+      message: 'GitHub Work specification is immutable once admitted',
+    });
+    const task = await runtime.store.readTask(ANCHOR);
+    const run = await runtime.store.readRun(accepted.runId);
+    expect(run?.pipeline).toBe((task?.task.work as WorkPayload).spec.pipeline);
+    expect(await runtime.store.listRuns(ANCHOR)).toHaveLength(1);
+  });
 });
