@@ -60,7 +60,7 @@ test.describe('populated dashboard', () => {
     // Deploy-wait-only work remains on the Bridge overview.
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { name: 'Parked Work' }),
+      page.getByRole('heading', { name: 'Waiting on Deploy' }),
     ).toBeVisible();
   });
 

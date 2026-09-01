@@ -2480,10 +2480,6 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-weight: 600;
 }
 
-.parked-work {
-  padding-inline: 0.5rem;
-}
-
 @media (max-width: 47.99em) {
   .deck-inbox-summary {
     gap: 0.65rem;

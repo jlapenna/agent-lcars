@@ -1,7 +1,8 @@
 import type { WorkSummary } from '@agent-lcars/work/derive';
-import { Anchor, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
 
 import { formatRelativeTime } from './format';
+import { lcarsPanelStyle } from './lcars';
 import { type WorkAction, WorkActions } from './work/work-actions';
 
 function summaryHref(item: WorkSummary): string {
@@ -27,7 +28,17 @@ export function ParkedWorkPanel({
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   if (parked.length === 0 && !hasMoreTasks) return null;
   return (
-    <section aria-label="Parked work" data-testid="parked-work-panel">
+    <Card
+      withBorder
+      radius="md"
+      padding="md"
+      mb="xl"
+      component="section"
+      aria-label="Parked work"
+      className="lcars-panel"
+      style={lcarsPanelStyle('amber')}
+      data-testid="parked-work-panel"
+    >
       <Title order={3} size="h5">
         Parked work ({parked.length})
       </Title>
@@ -69,6 +80,6 @@ export function ParkedWorkPanel({
           Older tasks may contain parked work.
         </Text>
       )}
-    </section>
+    </Card>
   );
 }
