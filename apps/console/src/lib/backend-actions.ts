@@ -862,19 +862,30 @@ async function admitQuickTask(
   request: NormalizedQuickTaskRequest,
   issue: QuickTaskIssueSource,
 ): Promise<void> {
-  const outcome = await admitGithubWork(createOrchestratorRuntime(), {
-    anchor: { repo: repoKey(request.repository), issue: issue.number },
+  const runtime = createOrchestratorRuntime();
+  const anchor = { repo: repoKey(request.repository), issue: issue.number };
+  // A Quick Task marker is intentionally retained when the issue is edited.
+  // A browser retry must therefore use the immutable Work that was admitted
+  // for this anchor, not reconstruct a competing Work from the edited
+  // GitHub title/body before its original request id can be recognized.
+  const stored = await runtime.store.readTask(anchor);
+  const work =
+    stored === undefined
+      ? workPayloadFromGithub({
+          title: issue.title,
+          body: issue.body,
+          pipeline: request.pipeline,
+          repo: repoKey(request.repository),
+          actor: request.actorLogin,
+        })
+      : workPayloadSchema.parse(stored.task.work);
+  const outcome = await admitGithubWork(runtime, {
+    anchor,
     // The browser retains this UUID across retries. Reusing it here makes a
     // recovered issue-create response converge on the same Work request.
     requestId: `console-quick-task:${request.requestId}`,
     params: { mode: 'implement' },
-    work: workPayloadFromGithub({
-      title: issue.title,
-      body: issue.body,
-      pipeline: request.pipeline,
-      repo: repoKey(request.repository),
-      actor: request.actorLogin,
-    }),
+    work,
   });
   if (
     outcome.kind === 'accepted' ||

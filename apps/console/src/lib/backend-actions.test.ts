@@ -1485,7 +1485,7 @@ describe('createQuickTask', () => {
     expect(second.prepare).not.toHaveBeenCalled();
   });
 
-  it('returns the original issue when the same request is retried', async () => {
+  it('retries completed Quick Task Work after its GitHub issue was edited', async () => {
     let persistedBody = '';
     const createIssue = vi.fn().mockImplementation(async (input) => {
       persistedBody = input.body;
@@ -1498,18 +1498,42 @@ describe('createQuickTask', () => {
         data: [
           {
             number: 99,
-            title: deriveQuickTaskTitle(request.description),
-            body: persistedBody,
+            // The marker remains an identity record, while normal GitHub
+            // editing changes the visible task text after the first run.
+            title: 'Edited after completion',
+            body: `Edited after completion\n\n${persistedBody.slice(persistedBody.indexOf('<!--'))}`,
           },
         ],
       }));
     mockOctokit({ createIssue, listForRepo });
 
     const first = await createQuickTask(request);
+    await quickTaskRuntime.orchestrator.report(`${DEFAULT_REPO_KEY}#99/r1`, {
+      ok: true,
+    });
     const retry = await createQuickTask(request);
 
     expect(retry).toEqual(first);
     expect(createIssue).toHaveBeenCalledTimes(1);
+    expect(
+      await quickTaskRuntime.store.listRuns({
+        repo: DEFAULT_REPO_KEY,
+        issue: 99,
+      }),
+    ).toHaveLength(1);
+    expect(
+      (
+        await quickTaskRuntime.store.readTask({
+          repo: DEFAULT_REPO_KEY,
+          issue: 99,
+        })
+      )?.task.work,
+    ).toMatchObject({
+      spec: {
+        title: deriveQuickTaskTitle(request.description),
+        description: persistedBody,
+      },
+    });
   });
 
   it('ignores a pull request that copied the Quick Task marker', async () => {
