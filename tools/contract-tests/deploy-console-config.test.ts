@@ -279,7 +279,7 @@ describe('console deployment workflow', () => {
     );
   });
 
-  it('lets the repository-bound work-create operator request every advertised pipeline', async () => {
+  it('keeps every deployed Work grant explicitly scoped', async () => {
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -293,16 +293,28 @@ describe('console deployment workflow', () => {
     const grants = JSON.parse(grantsValue ?? '[]') as Array<{
       principal: string;
       pipelines: string[];
+      scopes?: string[];
     }>;
     const workflowGrant = grants.find(
       ({ principal }) => principal === 'workflow:work-create',
     );
 
     // work-create.yml exposes PIPELINE as its native Work API pipeline
-    // choice. Keep its admission grant in sync with the provider canaries.
+    // choice. Keep its admission grant in sync with the provider canaries
+    // and fail closed if an old implicit operator scope reappears.
     expect(workflowGrant).toMatchObject({
       principal: 'workflow:work-create',
       pipelines: ['claude', 'codex', 'opencode'],
+      scopes: ['work.operator'],
+    });
+    expect(
+      grants.find(
+        ({ principal }) => principal === 'workflow:member-automation',
+      ),
+    ).toMatchObject({
+      principal: 'workflow:member-automation',
+      pipelines: ['claude', 'codex', 'opencode'],
+      scopes: ['work.operator'],
     });
     expect(
       grants.find(({ principal }) => principal === 'svc:telemetry-writer'),
@@ -319,6 +331,10 @@ describe('console deployment workflow', () => {
         ({ variable }) => variable === 'AGENT_LCARS_WORK_AUDIENCE',
       )?.value,
     ).toBe('agent-lcars-work');
+    for (const grant of grants) {
+      expect(grant.scopes).toEqual(expect.any(Array));
+      expect(grant.scopes).not.toHaveLength(0);
+    }
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {

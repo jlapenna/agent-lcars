@@ -38,7 +38,7 @@ export interface EnvVars {
   /** Audience the `lcars` CLI requests on Google ID tokens; the work API
    *  rejects any other audience. */
   AGENT_LCARS_WORK_AUDIENCE?: string;
-  /** JSON grant list: [{ principal, subjects[], pipelines[] }]. */
+  /** JSON grant list: [{ principal, subjects[], pipelines[], scopes[] }]. */
   AGENT_LCARS_WORK_GRANTS?: string;
   /** Global live-run cap for native work items (default 4). */
   AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;

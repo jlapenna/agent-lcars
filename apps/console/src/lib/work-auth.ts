@@ -71,7 +71,7 @@ function principalFor(
   return {
     principal: grant.principal,
     subject,
-    scopes: new Set<WorkScope>(grant.scopes ?? ['work.operator']),
+    scopes: new Set<WorkScope>(grant.scopes),
     pipelines: grant.pipelines,
     via,
   };
