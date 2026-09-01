@@ -388,6 +388,47 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
 
+    def test_queued_jobs_carry_the_fleet_label_they_target(self):
+        # agent-lcars#1699: the first non-hosted runs-on label is the routing
+        # dimension; a GitHub-hosted job exports an empty one.
+        repository = "jlapenna/homelab"
+        run = workflow_run(status="in_progress", conclusion=None)
+        self.database.upsert_run(repository, run)
+        self.database.upsert_jobs(
+            repository,
+            run,
+            [
+                workflow_job(
+                    id=1,
+                    name="heavy",
+                    status="queued",
+                    conclusion=None,
+                    labels=["self-hosted", "homelab-autoscale-default"],
+                ),
+                workflow_job(
+                    id=2,
+                    name="hosted",
+                    status="queued",
+                    conclusion=None,
+                    labels=["ubuntu-latest"],
+                ),
+            ],
+        )
+        metrics = self.metrics()
+        self.assertIn(
+            'github_actions_job_oldest_queued_seconds{job="heavy",repository="jlapenna/homelab",runs_on="homelab-autoscale-default",workflow="validate"}',
+            metrics,
+        )
+        self.assertIn(
+            'github_actions_job_oldest_queued_seconds{job="hosted",repository="jlapenna/homelab",runs_on="",workflow="validate"}',
+            metrics,
+        )
+        self.assertEqual(
+            exporter.job_runs_on({"labels": ["linux", "x64", "e2e"]}), "e2e"
+        )
+        self.assertEqual(exporter.job_runs_on({"labels": ["windows-2025"]}), "")
+        self.assertEqual(exporter.job_runs_on({}), "")
+
     def test_rerun_attempt_preserves_the_previous_workflow_outcome(self):
         failed = workflow_run(conclusion="failure", run_attempt=1)
         succeeded = workflow_run(conclusion="success", run_attempt=2)
@@ -481,7 +522,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
         self.assertIn(
-            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
+            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
             metrics,
         )
         self.assertIn("github_actions_job_oldest_queued_seconds", metrics)
@@ -633,7 +674,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
         self.assertEqual([row["status"] for row in rows], ["queued"])
         self.assertIn(
-            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",status="queued",workflow="validate"} 1.0',
+            'github_actions_jobs_current{concurrency_group="none",job="repository validation",repository="jlapenna/homelab",runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
             self.metrics(),
         )
 
@@ -655,7 +696,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.assertIn(
             'github_actions_jobs_current{concurrency_group="ci-refs/heads/main",'
             'job="repository validation",repository="jlapenna/homelab",'
-            'runner_group="Default",status="queued",workflow="validate"} 1.0',
+            'runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
             metrics,
         )
 
@@ -679,7 +720,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.assertIn(
             'github_actions_jobs_current{concurrency_group="unknown",'
             'job="repository validation",repository="jlapenna/homelab",'
-            'runner_group="Default",status="queued",workflow="validate"} 1.0',
+            'runner_group="Default",runs_on="",status="queued",workflow="validate"} 1.0',
             metrics,
         )
         self.assertNotIn('concurrency_group="none"', metrics)

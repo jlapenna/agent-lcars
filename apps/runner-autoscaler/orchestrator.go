@@ -572,6 +572,19 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	return runtimeGeneration{cancel: cancel, done: done}
 }
 
+// publishScaleSetInfo exports the static description of a declared scale set:
+// its memory reservation and ceiling, the registration and repository it
+// serves, and one series per runs-on label (agent-lcars#1683, #1699).
+func publishScaleSetInfo(c Config, reservation, memory int64) {
+	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(reservation))
+	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memory))
+	owner, repository := registrationTarget(c.RegistrationURL)
+	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, owner, repository).Set(1)
+	for _, label := range c.Labels {
+		scaleSetLabelInfoGauge.WithLabelValues(c.ScaleSetName, label).Set(1)
+	}
+}
+
 func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fleet *FleetCoordinator, checkpoints *checkpointStore, boot map[string]checkpointRunner) (*scaleSetRuntime, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -595,10 +608,7 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 			return nil, fmt.Errorf("scale set %q runner_memory_reservation %q must be positive and at most runner_memory %q", c.ScaleSetName, c.RunnerMemoryReservation, c.RunnerMemory)
 		}
 	}
-	scaleSetMemoryReservationGauge.WithLabelValues(c.ScaleSetName).Set(float64(reservation))
-	scaleSetMemoryLimitGauge.WithLabelValues(c.ScaleSetName).Set(float64(memory))
-	owner, repository := registrationTarget(c.RegistrationURL)
-	scaleSetInfoGauge.WithLabelValues(c.ScaleSetName, c.RegistrationName, owner, repository).Set(1)
+	publishScaleSetInfo(c, reservation, memory)
 	shmSize := int64(0)
 	if c.RunnerShmSize != "" {
 		shmSize, err = units.RAMInBytes(c.RunnerShmSize)
