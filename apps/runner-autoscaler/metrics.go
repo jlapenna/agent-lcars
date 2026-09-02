@@ -132,6 +132,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	jobsCompletedUnassignedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_jobs_completed_unassigned_total",
+			Help: "Jobs that completed or started without ever being assigned a runner -- cancelled or superseded while still queued -- by scale set. Routine during cancel/re-dispatch loops and distinct from the WARN-level untracked-runner case (a runner GitHub knows about that this control plane has no record of); see agent-lcars#1687.",
+		},
+		[]string{"scale_set"},
+	)
 	runnerStartDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "github_runner_autoscaler_runner_start_duration_seconds",
@@ -438,6 +445,7 @@ func registerMetrics() {
 			maxRunnersGauge,
 			jobsStartedCounter,
 			jobsCompletedCounter,
+			jobsCompletedUnassignedTotal,
 			runnerStartDuration,
 			runnerStartFailures,
 			runnerDiedIdleTotal,
