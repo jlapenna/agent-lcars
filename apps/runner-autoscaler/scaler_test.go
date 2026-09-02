@@ -1370,6 +1370,73 @@ func TestHandleDesiredRunnerCountDefersBusyRunnerReconciliation(t *testing.T) {
 	}
 }
 
+// countingLogHandler counts slog records whose message equals want. Used
+// below to assert an INFO log fires exactly once per drain rather than once
+// per (frequent) listener callback, without coupling the test to the log
+// line's exact attribute encoding.
+type countingLogHandler struct {
+	want  string
+	count int
+}
+
+func (h *countingLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *countingLogHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == h.want {
+		h.count++
+	}
+	return nil
+}
+func (h *countingLogHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *countingLogHandler) WithGroup(_ string) slog.Handler      { return h }
+
+// TestHandleDesiredRunnerCountWhileDrainingLogsOnceKeepsDesiredHonestAndCountsRefusals
+// covers agent-lcars#1722's second fix: refusing a placement because of an
+// active drain must log once per drain (not once per callback), keep
+// desired_runners tracking the real target instead of freezing it, and
+// increment placementsRefusedDrainingTotal on every refused call.
+func TestHandleDesiredRunnerCountWhileDrainingLogsOnceKeepsDesiredHonestAndCountsRefusals(t *testing.T) {
+	handler := &countingLogHandler{want: "Refusing runner placement while draining"}
+	scaler := &Scaler{
+		scaleSetName: "drain-refused",
+		maxRunners:   5,
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(handler),
+	}
+	scaler.draining.Store(true)
+
+	before := testutil.ToFloat64(placementsRefusedDrainingTotal.WithLabelValues("drain-refused"))
+
+	for i, assigned := range []int{2, 3, 3} {
+		got, err := scaler.HandleDesiredRunnerCount(context.Background(), assigned)
+		if err != nil {
+			t.Fatalf("call %d: HandleDesiredRunnerCount() error = %v", i, err)
+		}
+		if got != 0 {
+			t.Errorf("call %d: HandleDesiredRunnerCount() = %d, want 0 (nothing placed while draining)", i, got)
+		}
+	}
+
+	if handler.count != 1 {
+		t.Errorf("drain refusal logged %d times across 3 calls, want exactly 1 (once per drain)", handler.count)
+	}
+	if got := testutil.ToFloat64(placementsRefusedDrainingTotal.WithLabelValues("drain-refused")) - before; got != 3 {
+		t.Errorf("placementsRefusedDrainingTotal delta = %v, want 3 (once per refused call)", got)
+	}
+	if got := testutil.ToFloat64(desiredRunnersGauge.WithLabelValues("drain-refused")); got != 3 {
+		t.Errorf("desiredRunnersGauge = %v, want 3 (the real target from the last call), not frozen stale", got)
+	}
+
+	// A new drain must log the refusal again.
+	scaler.EndDrain()
+	scaler.BeginDrain(context.Background())
+	if _, err := scaler.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatalf("HandleDesiredRunnerCount() error = %v", err)
+	}
+	if handler.count != 2 {
+		t.Errorf("drain refusal logged %d times after a new drain began, want 2 (logs again per drain)", handler.count)
+	}
+}
+
 // TestCleanupOrphansScopedToScaleSet exercises the boot=true pass: stopped
 // owned containers are removed, running owned containers are adopted, and
 // other scale sets/unlabeled containers are untouched.
@@ -1433,10 +1500,17 @@ func TestTopHasRunnerWorker(t *testing.T) {
 	}
 }
 
-func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
+// TestBeginDrainPublishesImmediatelyWithoutTouchingIdleRunners covers the
+// agent-lcars#1722 fix: BeginDrain must mark the scale set draining and
+// publish drainingGauge without doing any Docker I/O itself, so a slow or
+// unreachable host on ANOTHER scale set's idle-runner teardown (now
+// DrainIdleRunners, see below) can never delay this one's acknowledgement.
+// See TestBeginDrainFleetAcknowledgesEveryLaneDespiteOneSlowHost in
+// orchestrator_config_test.go for the fleet-wide version of this property.
+func TestBeginDrainPublishesImmediatelyWithoutTouchingIdleRunners(t *testing.T) {
 	f := newFakeDockerServer(t)
 	scaler := &Scaler{
-		scaleSetName: "myset",
+		scaleSetName: "begin-drain-ack",
 		dockerHosts:  []DockerHost{{Name: "host-a", Client: f.client(t)}},
 		runners: runnerState{
 			idle: map[string]runnerRef{"idle": {host: "host-a", containerID: "i"}},
@@ -1449,6 +1523,50 @@ func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
 	if !scaler.draining.Load() {
 		t.Fatal("draining flag was not set")
 	}
+	if got := testutil.ToFloat64(drainingGauge.WithLabelValues("begin-drain-ack")); got != 1 {
+		t.Errorf("drainingGauge = %v, want 1 immediately after BeginDrain", got)
+	}
+	if len(scaler.runners.idle) != 1 {
+		t.Fatalf("BeginDrain must not remove idle runners itself: %#v", scaler.runners.idle)
+	}
+	if removed := f.removedIDs(); len(removed) != 0 {
+		t.Fatalf("BeginDrain must not call Docker at all: removed %v", removed)
+	}
+}
+
+// TestBeginDrainIsIdempotent covers BeginDrain's CompareAndSwap guard: a
+// second call while already draining must not re-log or re-touch state.
+func TestBeginDrainIsIdempotent(t *testing.T) {
+	scaler := &Scaler{
+		scaleSetName: "begin-drain-idempotent",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scaler.BeginDrain(context.Background())
+	scaler.drainRefusalLogged.Store(true) // simulate a refusal already logged this drain
+	scaler.BeginDrain(context.Background())
+	if !scaler.drainRefusalLogged.Load() {
+		t.Error("a second BeginDrain while already draining must not reset drainRefusalLogged")
+	}
+}
+
+// TestDrainIdleRunnersRemovesIdleAndPreservesBusy covers the half of the old
+// combined BeginDrain that now runs separately (and, in production, is
+// launched concurrently across scale sets by beginDrainFleet).
+func TestDrainIdleRunnersRemovesIdleAndPreservesBusy(t *testing.T) {
+	f := newFakeDockerServer(t)
+	scaler := &Scaler{
+		scaleSetName: "myset",
+		dockerHosts:  []DockerHost{{Name: "host-a", Client: f.client(t)}},
+		runners: runnerState{
+			idle: map[string]runnerRef{"idle": {host: "host-a", containerID: "i"}},
+			busy: map[string]runnerRef{"busy": {host: "host-a", containerID: "b"}},
+		},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scaler.draining.Store(true)
+	scaler.DrainIdleRunners(context.Background())
 	if len(scaler.runners.idle) != 0 {
 		t.Fatalf("idle runners remain: %#v", scaler.runners.idle)
 	}
@@ -1461,7 +1579,12 @@ func TestBeginDrainRemovesIdleAndPreservesBusy(t *testing.T) {
 	}
 }
 
-func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
+// TestEndDrainStuckClearsMetricsAndIsIdempotent covers the drain watchdog's
+// self-heal path (EndDrainStuck), which is the only caller that should ever
+// increment drainAutoClearedTotal -- see TestEndDrainDoesNotRecordAutoCleared
+// for why the bare EndDrain an operator's explicit second-SIGUSR1 uses must
+// not.
+func TestEndDrainStuckClearsMetricsAndIsIdempotent(t *testing.T) {
 	fleet := newFleetCoordinator(1, nil, map[string]int{"watchdog-stuck": 1}, nil, []string{"watchdog-stuck"})
 	scaler := &Scaler{
 		scaleSetName: "watchdog-stuck",
@@ -1479,24 +1602,75 @@ func TestEndDrainClearsMetricsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("pendingRunnersGauge while draining = %v, want 0", got)
 	}
 
-	scaler.EndDrain()
+	scaler.EndDrainStuck()
 	if scaler.draining.Load() {
-		t.Fatal("EndDrain did not clear the draining flag")
+		t.Fatal("EndDrainStuck did not clear the draining flag")
 	}
 	if got := testutil.ToFloat64(drainingGauge.WithLabelValues("watchdog-stuck")); got != 0 {
-		t.Errorf("drainingGauge = %v, want 0 after EndDrain", got)
+		t.Errorf("drainingGauge = %v, want 0 after EndDrainStuck", got)
 	}
 	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
 		t.Errorf("drainAutoClearedTotal delta = %v, want 1", got)
 	}
 	if got := testutil.ToFloat64(pendingRunnersGauge.WithLabelValues("watchdog-stuck")); got != 1 {
-		t.Errorf("pendingRunnersGauge after EndDrain = %v, want 1", got)
+		t.Errorf("pendingRunnersGauge after EndDrainStuck = %v, want 1", got)
 	}
 
 	// Calling again while already clear must not double-count the metric.
-	scaler.EndDrain()
+	scaler.EndDrainStuck()
 	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("watchdog-stuck")) - cleared; got != 1 {
-		t.Errorf("drainAutoClearedTotal delta after a second EndDrain = %v, want still 1 (idempotent)", got)
+		t.Errorf("drainAutoClearedTotal delta after a second EndDrainStuck = %v, want still 1 (idempotent)", got)
+	}
+}
+
+// TestEndDrainReturnsWhetherItClearedAnActiveDrain covers the contract
+// beginDrainFleet's sibling in orchestrator.go relies on: EndDrain (used
+// directly for the explicit second-SIGUSR1 end-drain signal, agent-lcars#1722)
+// reports whether it actually cleared an active drain, mirroring BeginDrain's
+// idempotent CompareAndSwap.
+func TestEndDrainReturnsWhetherItClearedAnActiveDrain(t *testing.T) {
+	scaler := &Scaler{
+		scaleSetName: "end-drain-return",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if got := scaler.EndDrain(); got {
+		t.Error("EndDrain on a scale set that was never draining = true, want false")
+	}
+	scaler.draining.Store(true)
+	if got := scaler.EndDrain(); !got {
+		t.Error("EndDrain on an actively draining scale set = false, want true")
+	}
+	if got := scaler.EndDrain(); got {
+		t.Error("a second EndDrain immediately after the first = true, want false (idempotent)")
+	}
+}
+
+// TestEndDrainDoesNotRecordAutoCleared covers the explicit end-drain signal
+// contract: a second SIGUSR1 while draining calls EndDrain directly (see
+// runOrchestrator's drainSignals case), and that must never be miscounted as
+// a stuck-drain self-heal -- only EndDrainStuck records
+// drainAutoClearedTotal.
+func TestEndDrainDoesNotRecordAutoCleared(t *testing.T) {
+	scaler := &Scaler{
+		scaleSetName: "end-drain-explicit",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	scaler.draining.Store(true)
+	drainingGauge.WithLabelValues("end-drain-explicit").Set(1)
+	before := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("end-drain-explicit"))
+
+	scaler.EndDrain()
+
+	if scaler.draining.Load() {
+		t.Error("EndDrain did not clear the draining flag")
+	}
+	if got := testutil.ToFloat64(drainingGauge.WithLabelValues("end-drain-explicit")); got != 0 {
+		t.Errorf("drainingGauge = %v, want 0 after EndDrain", got)
+	}
+	if got := testutil.ToFloat64(drainAutoClearedTotal.WithLabelValues("end-drain-explicit")) - before; got != 0 {
+		t.Errorf("drainAutoClearedTotal delta after explicit EndDrain = %v, want 0 (only EndDrainStuck records it)", got)
 	}
 }
 

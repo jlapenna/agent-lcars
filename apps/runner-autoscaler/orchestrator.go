@@ -239,15 +239,27 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			checkpoints.flush()
 		case <-drainSignals:
 			if draining {
+				// A second SIGUSR1 while already draining is the explicit
+				// end-drain signal: see beginDrainFleet's doc comment for why
+				// the first SIGUSR1 no longer blocks here, and the README's
+				// "Drain semantics" section for the full signal contract.
+				// This lets homelab's deploy script recover a drain it
+				// abandoned (e.g. an interrupted drain-and-restart.sh run)
+				// without waiting out drainStuckTimeout.
+				draining = false
+				queueDraining.Store(false)
+				drainZeroSince = time.Time{}
+				for _, runtime := range runtimes {
+					runtime.scaler.EndDrain()
+				}
+				logger.Info("Global drain ended by operator request (second SIGUSR1)")
 				continue
 			}
 			draining = true
 			queueDraining.Store(true)
 			drainZeroSince = time.Time{}
 			logger.Info("Global drain requested")
-			for _, runtime := range runtimes {
-				runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
-			}
+			beginDrainFleet(context.WithoutCancel(ctx), runtimes)
 		case <-drainWatchdog.C:
 			now := time.Now()
 			nextZeroSince, selfHeal := drainWatchdogTick(draining, fleetRunnerCount(runtimes), drainZeroSince, now)
@@ -258,11 +270,13 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			}
 			draining = false
 			queueDraining.Store(false)
+			assignedJobsWaiting := fleetAssignedJobs(runtimes)
 			for _, runtime := range runtimes {
-				runtime.scaler.EndDrain()
+				runtime.scaler.EndDrainStuck()
 			}
 			logger.Warn("Fleet drain self-healed after sitting at zero runners past the stuck timeout; a deploy was likely interrupted before its recreate step",
-				slog.Duration("stuck_for", stuckFor))
+				slog.Duration("stuck_for", stuckFor),
+				slog.Int64("assigned_jobs_waiting", assignedJobsWaiting))
 		case <-reloadSignals:
 			next, reloadErr := loadOrchestratorConfig(orchestratorConfigPath)
 			if reloadErr == nil {
@@ -319,9 +333,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				// spurious fleet-wide zero. Restart the stuck-drain clock so
 				// the watchdog measures from after adoption, not before it.
 				drainZeroSince = time.Time{}
-				for _, runtime := range runtimes {
-					runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
-				}
+				beginDrainFleet(context.WithoutCancel(ctx), runtimes)
 			}
 			generation = startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 			logger.Info("Configuration reloaded without draining runners")
@@ -708,7 +720,7 @@ func initializeGitHubScaleSet(ctx context.Context, runtime *scaleSetRuntime) err
 	// leaving it behind until GitHub happens to send another desired-count
 	// message. Busy runners remain protected by removeIdleRunners.
 	if runtime.scaler.draining.Load() {
-		runtime.scaler.removeIdleRunners(context.WithoutCancel(ctx))
+		runtime.scaler.DrainIdleRunners(context.WithoutCancel(ctx))
 	}
 	return nil
 }
@@ -866,14 +878,52 @@ func fleetRunnerCount(runtimes []*scaleSetRuntime) int {
 	return total
 }
 
+// fleetAssignedJobs sums each scale set's most recently observed
+// TotalAssignedJobs (Scaler.queuedJobs), mirroring fleetRunnerCount's
+// fleet-wide aggregation. Used only to size the drain watchdog's self-heal
+// WARN log below with how much GitHub-side demand sat refused for the
+// duration of a drain that outlived its deploy (agent-lcars#1722).
+func fleetAssignedJobs(runtimes []*scaleSetRuntime) int64 {
+	var total int64
+	for _, runtime := range runtimes {
+		total += runtime.scaler.queuedJobs.Load()
+	}
+	return total
+}
+
+// beginDrainFleet marks every scale set as draining and publishes
+// drainingGauge for all of them BEFORE starting any of the per-lane
+// idle-runner teardown, and then runs that teardown concurrently rather than
+// one scale set at a time.
+//
+// This split matters because Scaler.BeginDrain used to do both in one
+// synchronous call: mark-and-publish, then removeIdleRunners' Docker/SSH
+// round trips. Looping runtime-by-runtime over that combined call meant one
+// lane with an unreachable host (removeIdleRunnerTimeout /
+// deregisterRunnerTimeout: 15s each, per idle runner) delayed every later
+// lane's drainingGauge=1 -- observed as 4 of 5 controller deploys in one day
+// missing the deploy script's 30s fleet-wide drain acknowledgement
+// (agent-lcars#1722). Publishing first, for every lane, means the
+// acknowledgement is visible within about as long as this first loop takes
+// to run -- no Docker or GitHub I/O on it at all -- regardless of how slow
+// or unreachable any single lane's hosts are.
+func beginDrainFleet(ctx context.Context, runtimes []*scaleSetRuntime) {
+	for _, runtime := range runtimes {
+		runtime.scaler.BeginDrain(ctx)
+	}
+	for _, runtime := range runtimes {
+		go runtime.scaler.DrainIdleRunners(ctx)
+	}
+}
+
 // drainWatchdogTick decides what runOrchestrator's drain watchdog should do
 // on one tick, given the current draining state, the fleet's current runner
 // count, when the fleet was first observed at zero while draining
 // (zeroSince, zero value = not yet observed), and now. It returns the
 // zeroSince value to carry into the next tick and whether the fleet drain
 // should self-heal on this tick. Pure and side-effect-free -- runOrchestrator
-// applies the result (flips draining, calls EndDrain on every scaler, logs)
-// and is the only production caller, always passing time.Now(); tests call
+// applies the result (flips draining, calls EndDrainStuck on every scaler,
+// logs) and is the only production caller, always passing time.Now(); tests call
 // this directly instead of driving a live ticker.
 func drainWatchdogTick(draining bool, fleetRunnerCount int, zeroSince, now time.Time) (nextZeroSince time.Time, selfHeal bool) {
 	if !draining || fleetRunnerCount > 0 {

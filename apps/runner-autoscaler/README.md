@@ -1015,9 +1015,84 @@ Busy runners were already kept for startup adoption; idle ones are warm,
 already-registered capacity the replacement process adopts in milliseconds,
 and destroying them was pure loss once adoption became reliable.
 
-`SIGUSR1` still performs the full drain, unchanged, for the cases that
-genuinely need an empty fleet — removing a scale set, decommissioning a
-host.
+`SIGUSR1` still performs the full drain for the cases that genuinely need an
+empty fleet — removing a scale set, decommissioning a host. **A routine
+deploy must never send it.** Quiesce + checkpoint + adopt (above) is the
+whole restart story; a deploy that falls back to `SIGUSR1` gets the failure
+mode the rest of this section documents instead of a safe restart.
+
+### Drain semantics (`SIGUSR1`)
+
+Sending `SIGUSR1` to the orchestrator process begins a **fleet-wide** drain:
+every configured scale set stops accepting new placements while its
+already-assigned jobs finish normally. The listener's own gauge,
+`github_runner_autoscaler_draining{scale_set}`, is the source of truth for
+whether a given lane is currently refusing work; a monitor (or a deploy
+script gating a restart on an empty fleet) should read it per scale set
+rather than inferring drain state from runner counts alone.
+
+**The drain is acknowledged before any teardown work starts.** On the first
+`SIGUSR1`, the signal handler loops over every scale set marking it draining
+and setting its `draining` gauge to `1` -- a fast, in-memory-only pass with
+no Docker or GitHub calls on it. Only after every lane has been marked does
+idle-runner teardown begin, running **concurrently** across scale sets with
+its own bounded per-operation timeouts (`removeIdleRunnerTimeout`,
+`deregisterRunnerTimeout`: 15s each). Before agent-lcars#1722, marking and
+teardown were one synchronous call applied to each scale set in turn, so a
+single scale set with an unreachable Docker host could delay every later
+scale set's `draining=1` by tens of seconds -- observed as 4 of 5 controller
+deploys in one day missing a deploy script's 30s fleet-wide drain
+acknowledgement. Now every lane's gauge reads `1` within about as long as
+the marking loop itself takes to run, regardless of how slow or unreachable
+any single lane's hosts are.
+
+**Placements refused during a drain stay visible, not silent.** Each
+`HandleDesiredRunnerCount` callback GitHub sends while a scale set is
+draining:
+
+- keeps `github_runner_autoscaler_desired_runners{scale_set}` tracking the
+  real target (`min(max_runners, min_runners + assigned)`) instead of
+  freezing it at whatever it last read before the drain started -- GitHub
+  keeps assigning jobs throughout a drain, and a frozen gauge previously made
+  a drain that outlived its deploy indistinguishable from a lane with no
+  demand;
+- increments `github_runner_autoscaler_placements_refused_draining_total{scale_set}`
+  on every refused call, so a drain sitting open long after its deploy
+  finished shows up as accumulating refusals in the same place as ordinary
+  demand;
+- logs `"Refusing runner placement while draining"` at INFO **once per
+  drain** (naming the scale set and the currently assigned job count), not
+  once per callback -- callbacks arrive far more often than an operator
+  needs to see the same fact repeated.
+
+**A stuck drain self-heals, loudly.** `drainStuckTimeout` (5 minutes) bounds
+how long the fleet may sit fully drained (every scale set at zero runners)
+before the watchdog concludes an operator's drain-and-restart cycle was
+interrupted before its recreate step (Ctrl-C, an SSH drop, a refused
+unreachable host) and clears drain mode fleet-wide on its own. When it does,
+it logs at WARN with both how long the fleet sat stuck and
+`assigned_jobs_waiting` -- the sum of each scale set's most recently
+observed GitHub-assigned job count, i.e. how much demand sat refused for the
+duration -- and increments
+`github_runner_autoscaler_drain_auto_cleared_total{scale_set}`. Sustained
+nonzero on that counter indicates a deploy script keeps getting interrupted
+before its recreate step (homelab#321).
+
+**A second `SIGUSR1` while already draining ends the drain immediately,**
+without waiting for `drainStuckTimeout`. This is the explicit end-drain
+signal: it exists so an operator -- or a deploy script (homelab#1130) that
+sent the first `SIGUSR1` and then decided not to proceed with a restart --
+can recover a drain it abandoned on demand instead of waiting up to 5
+minutes for the watchdog. It does **not** increment
+`drain_auto_cleared_total`: that counter means specifically "the watchdog
+concluded this was stuck and healed it unattended," and an operator's
+explicit request is neither. In short, the full signal contract is:
+
+| Signal                                 | Effect                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| `SIGUSR1` while not draining           | Begin a fleet-wide drain.                                                 |
+| `SIGUSR1` while already draining       | End the drain immediately (explicit; no `drain_auto_cleared_total`).      |
+| (5 minutes at fleet-wide zero runners) | Watchdog ends the drain automatically; logs WARN, counts as auto-cleared. |
 
 ### What the checkpoint holds, and why
 

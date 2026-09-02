@@ -387,6 +387,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	placementsRefusedDrainingTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "github_runner_autoscaler_placements_refused_draining_total",
+			Help: "Runner placements refused because the scale set is draining, by scale set -- incremented on every HandleDesiredRunnerCount callback GitHub sends while draining, so a drain that outlives its deploy (agent-lcars#1722) is visible in the same place as demand instead of only in logs.",
+		},
+		[]string{"scale_set"},
+	)
 	placementDecisions = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "github_runner_autoscaler_placement_decisions_total",
@@ -629,6 +636,7 @@ func registerMetrics() {
 			scaleSetLabelInfoGauge,
 			drainingGauge,
 			drainAutoClearedTotal,
+			placementsRefusedDrainingTotal,
 			placementDecisions,
 			reservationGauge,
 			placementBlocked,

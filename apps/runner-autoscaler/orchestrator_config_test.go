@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const validOrchestratorYAML = `
@@ -442,6 +447,77 @@ func TestFleetRunnerCountSumsAcrossScaleSets(t *testing.T) {
 	}
 	if got := fleetRunnerCount(runtimes); got != 3 {
 		t.Fatalf("fleetRunnerCount = %d, want 3", got)
+	}
+}
+
+func TestFleetAssignedJobsSumsAcrossScaleSets(t *testing.T) {
+	runtimes := []*scaleSetRuntime{
+		{scaler: &Scaler{}},
+		{scaler: &Scaler{}},
+	}
+	runtimes[0].scaler.queuedJobs.Store(2)
+	runtimes[1].scaler.queuedJobs.Store(5)
+	if got := fleetAssignedJobs(runtimes); got != 7 {
+		t.Fatalf("fleetAssignedJobs = %d, want 7", got)
+	}
+}
+
+// TestBeginDrainFleetAcknowledgesEveryLaneDespiteOneSlowHost is the
+// agent-lcars#1722 regression test: a SIGUSR1 drain must publish
+// drainingGauge=1 for every scale set within roughly the time it takes to
+// loop over them, not gated behind any one lane's idle-runner teardown.
+// Before this fix, the SIGUSR1 handler called the combined BeginDrain (mark
+// + remove idle runners) once per runtime in a single sequential loop, so a
+// scale set with an unreachable Docker host stalled every LATER scale set's
+// acknowledgement behind removeIdleRunnerTimeout/deregisterRunnerTimeout
+// (15s each). Here the first lane's host never answers ContainerRemove at
+// all, and the test still requires every lane's gauge to read 1 within
+// 100ms of calling beginDrainFleet.
+func TestBeginDrainFleetAcknowledgesEveryLaneDespiteOneSlowHost(t *testing.T) {
+	f := newFakeDockerServer(t)
+	unblock := f.blockRemoves()
+	t.Cleanup(unblock)
+
+	blockedScaler := &Scaler{
+		scaleSetName: "blocked-lane",
+		dockerHosts:  []DockerHost{{Name: "host-a", Client: f.client(t)}},
+		runners: runnerState{
+			idle: map[string]runnerRef{"idle": {host: "host-a", containerID: "i"}},
+			busy: map[string]runnerRef{},
+		},
+		scalesetClient: newStubScalesetClient(t),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	healthyScaler := &Scaler{
+		scaleSetName: "healthy-lane",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	runtimes := []*scaleSetRuntime{
+		{scaler: blockedScaler}, // listed FIRST: the pre-fix sequential loop would stall here
+		{scaler: healthyScaler},
+	}
+
+	start := time.Now()
+	beginDrainFleet(context.Background(), runtimes)
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("beginDrainFleet itself took %v, want well under 100ms (teardown must not run inline)", elapsed)
+	}
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for _, name := range []string{"blocked-lane", "healthy-lane"} {
+		for {
+			if testutil.ToFloat64(drainingGauge.WithLabelValues(name)) == 1 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("drainingGauge for %q not 1 within 100ms of the drain signal", name)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if !blockedScaler.draining.Load() || !healthyScaler.draining.Load() {
+		t.Fatal("both scale sets should be marked draining")
 	}
 }
 

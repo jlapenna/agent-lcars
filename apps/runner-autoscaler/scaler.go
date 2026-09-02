@@ -97,6 +97,13 @@ type Scaler struct {
 	// of treating runner count as a sufficient proxy for host saturation.
 	hostMetricsURLTemplate string
 	draining               atomic.Bool
+	// drainRefusalLogged gates HandleDesiredRunnerCount's "refusing
+	// placement while draining" INFO log to once per drain instead of once
+	// per listener callback (which arrives far more often than an operator
+	// needs to see it repeated). Reset to false whenever draining flips
+	// false->true (BeginDrain) or true->false (EndDrain), so the next drain
+	// logs again.
+	drainRefusalLogged atomic.Bool
 	// quiescing refuses new placements during the fast shutdown path without
 	// draining's destructive half. draining tears idle capacity down because
 	// an operator asked for an empty fleet; quiescing only closes the window
@@ -687,13 +694,26 @@ func (a *Scaler) HandleDesiredRunnerCount(ctx context.Context, count int) (int, 
 	// inspect per busy runner on the listener callback's critical path.
 	a.reconcileIdleRunners(ctx)
 	currentCount := a.runners.count()
+	scaleSet := a.scaleSetLabel()
+	targetRunnerCount := min(a.maxRunners, a.minRunners+count)
 	if a.draining.Load() {
+		// Keep desired_runners honest instead of freezing it at whatever it
+		// last read before the drain started: GitHub keeps assigning jobs
+		// (count) throughout a drain, and a stale gauge previously made a
+		// drain that outlived its deploy indistinguishable from a
+		// low-demand scale set. See placementsRefusedDrainingTotal for the
+		// per-call refusal count, and drainRefusalLogged for why this logs
+		// only once per drain rather than once per (frequent) callback.
+		desiredRunnersGauge.WithLabelValues(scaleSet).Set(float64(targetRunnerCount))
+		placementsRefusedDrainingTotal.WithLabelValues(scaleSet).Inc()
+		if a.drainRefusalLogged.CompareAndSwap(false, true) {
+			a.logger.Info("Refusing runner placement while draining",
+				slog.String("scale_set", scaleSet), slog.Int("assigned", count))
+		}
 		a.removeIdleRunners(context.WithoutCancel(ctx))
 		return a.runners.count(), nil
 	}
-	targetRunnerCount := min(a.maxRunners, a.minRunners+count)
 
-	scaleSet := a.scaleSetLabel()
 	desiredRunnersGauge.WithLabelValues(scaleSet).Set(float64(targetRunnerCount))
 	minRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.minRunners))
 	maxRunnersGauge.WithLabelValues(scaleSet).Set(float64(a.maxRunners))
@@ -3042,16 +3062,35 @@ func (a *Scaler) reapUnavailableRunner(ctx context.Context, name, reason string)
 	return true
 }
 
-// BeginDrain is idempotent. It refuses future scale-ups and removes idle
-// capacity while allowing assigned jobs to finish normally. Operators send
-// SIGUSR1, wait for runners_total=0, then recreate the container.
+// BeginDrain is idempotent. It marks the scale set as draining and publishes
+// drainingGauge immediately, refusing future scale-ups -- deliberately
+// nothing else. See DrainIdleRunners for the (potentially slow,
+// Docker/SSH-bound) idle-capacity teardown, split out so runOrchestrator's
+// beginDrainFleet can publish every scale set's drainingGauge before
+// starting any of them, instead of one unreachable host's teardown delaying
+// every later scale set's drain acknowledgement (agent-lcars#1722; this
+// method used to do both inline). Operators send SIGUSR1, wait for
+// runners_total=0, then recreate the container; a second SIGUSR1 while
+// already draining ends the drain instead (see EndDrain and the README's
+// "Drain semantics" section).
 func (a *Scaler) BeginDrain(ctx context.Context) {
 	if !a.draining.CompareAndSwap(false, true) {
 		return
 	}
+	a.drainRefusalLogged.Store(false)
 	scaleSet := a.scaleSetLabel()
 	drainingGauge.WithLabelValues(scaleSet).Set(1)
 	a.logger.Info("Drain started; refusing new runner placements")
+}
+
+// DrainIdleRunners removes idle capacity while allowing assigned jobs to
+// finish normally. This is the (potentially slow) half of what used to be
+// BeginDrain's single synchronous call -- see BeginDrain's doc comment for
+// why it is now separate. ctx is not tied to the scale set's own lifetime
+// (callers pass context.WithoutCancel(ctx)), so removeIdleRunners' own
+// per-operation timeouts (removeIdleRunnerTimeout, deregisterRunnerTimeout)
+// are what bound this call, not ctx's cancellation.
+func (a *Scaler) DrainIdleRunners(ctx context.Context) {
 	a.removeIdleRunners(ctx)
 }
 
@@ -3080,20 +3119,40 @@ const drainWatchdogInterval = time.Minute
 // self-heals well before a human would need to notice the ticket.
 const drainStuckTimeout = 5 * time.Minute
 
-// EndDrain clears drain mode. Idempotent; a no-op if not currently draining.
-// Called by runOrchestrator's fleet-wide drain watchdog once every scale set
-// has sat at zero runners past drainStuckTimeout -- see drainStuckTimeout's
-// doc comment for why that decision is made fleet-wide rather than by each
-// Scaler independently. A normal deploy never reaches this path: it recreates
-// the whole process, which starts fresh with draining already false.
-func (a *Scaler) EndDrain() {
+// EndDrain clears drain mode. Idempotent; a no-op (returning false) if not
+// currently draining. Returns whether it actually cleared an active drain.
+//
+// Called from two places, which is why the drainAutoClearedTotal metric
+// lives in EndDrainStuck rather than here: runOrchestrator's SIGUSR1 handler
+// calls this directly when a second SIGUSR1 arrives while already draining
+// -- the explicit end-drain signal an operator (or homelab's deploy script,
+// homelab#1130) sends to recover a drain it abandoned, and never a "stuck"
+// condition worth counting as one. A normal deploy never reaches either
+// path: it recreates the whole process, which starts fresh with draining
+// already false.
+func (a *Scaler) EndDrain() bool {
 	if !a.draining.CompareAndSwap(true, false) {
-		return
+		return false
 	}
+	a.drainRefusalLogged.Store(false)
 	scaleSet := a.scaleSetLabel()
 	drainingGauge.WithLabelValues(scaleSet).Set(0)
-	drainAutoClearedTotal.WithLabelValues(scaleSet).Inc()
 	a.updateSchedulerDemand(time.Now())
+	return true
+}
+
+// EndDrainStuck clears drain mode the same way EndDrain does, additionally
+// recording drainAutoClearedTotal when it actually cleared an active drain.
+// Called only by runOrchestrator's fleet-wide drain watchdog once every
+// scale set has sat at zero runners past drainStuckTimeout -- see
+// drainStuckTimeout's doc comment for why that decision is made fleet-wide
+// rather than by each Scaler independently. Kept separate from EndDrain so
+// an operator's explicit end-drain (second SIGUSR1) is never miscounted as
+// an unattended stuck-drain recovery.
+func (a *Scaler) EndDrainStuck() {
+	if a.EndDrain() {
+		drainAutoClearedTotal.WithLabelValues(a.scaleSetLabel()).Inc()
+	}
 }
 
 // stopPlacing refuses new placements for the rest of this process's life. It
