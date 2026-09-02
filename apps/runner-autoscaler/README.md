@@ -29,6 +29,13 @@ provide those settings either. Keeping the Nx artifact consistent with that
 production boundary makes builds deterministic without discarding runtime
 metadata that any consumer uses.
 
+`go.mod`'s `github.com/actions/scaleset` dependency is pinned to a
+pseudo-version off upstream's `main` branch rather than its latest tag,
+because upstream's tags lag `main` by an unpredictable margin (agent-lcars#1716
+found our existing pin already _was_ `main`'s head commit while the newest
+tag predated it). `.github/workflows/scaleset-upstream.yml` runs weekly to
+propose the next bump as a PR once `main` actually advances.
+
 ## Runner connectivity metrics
 
 The control plane reconciles its locally tracked containers against GitHub's
