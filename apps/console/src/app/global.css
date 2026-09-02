@@ -942,7 +942,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   grid-template-columns: minmax(21rem, 38%) minmax(0, 1fr);
   gap: 12px;
   min-height: 38rem;
-  height: min(43rem, calc(100vh - 5rem));
+  height: calc(100vh - 5rem);
   border: 0;
   overflow: hidden;
   color: var(--mantine-color-text);
