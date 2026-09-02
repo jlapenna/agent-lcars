@@ -1175,26 +1175,218 @@ func (a *Scaler) resolvedMemorySafetyMargin() float64 {
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
-	placementHosts := a.placementHostSet()
+	scaleSet := a.scaleSetLabel()
+	probe := a.probeFleetHosts(ctx, fleet)
+	a.publishLaneAdmissibleSlots(fleet, probe)
 
-	type pingResult struct {
-		host                  DockerHost
-		ok                    bool
-		eligible              bool
-		err                   error
-		load                  hostLoad
-		loadErr               error
-		fleetRunners          int
-		hostMemoryBytes       int64
-		runningReservedMemory int64
-		memoryErr             error
-		// readinessBlocked distinguishes "this host was withheld by its
-		// readiness gate" from "this host is unreachable", so exhausting the
-		// fleet reports the real cause instead of blaming the network.
-		readinessBlocked bool
+	if len(probe.reachableHosts) == 0 {
+		// A host withheld by its readiness gate is reachable and healthy, so
+		// reporting it as "unreachable" would send whoever reads this at the
+		// network instead of at the signal that actually withheld it.
+		readinessBlockedHosts := 0
+		for _, res := range probe.results {
+			if res.readinessBlocked {
+				readinessBlockedHosts++
+				placementBlocked.WithLabelValues(scaleSet, res.host.Name, placementReasonReadiness).Inc()
+			}
+		}
+		if readinessBlockedHosts > 0 {
+			return "", fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlockedHosts, errFleetAtCapacity)
+		}
+		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(a.placementHostSet()), errFleetAtCapacity)
+	}
+	actualTotal := 0
+	for _, h := range a.dockerHosts {
+		if n, ok := probe.fleetCounts[h.Name]; ok {
+			fleet.lastFleetCounts[h.Name] = n
+		}
+		actualTotal += fleet.lastFleetCounts[h.Name]
+	}
+	reservedTotal := 0
+	for _, n := range fleet.reservations {
+		reservedTotal += n
+	}
+	if fleet.maxRunners > 0 && actualTotal+reservedTotal >= fleet.maxRunners {
+		// Fleet-level: no single host refused this, the fleet as a whole is
+		// at its configured ceiling.
+		placementBlocked.WithLabelValues(scaleSet, "", placementReasonFleetLimit).Inc()
+		return "", fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
+	}
+	var withinHostLimits []DockerHost
+	for _, h := range probe.reachableHosts {
+		if fleet.startInFlight[h.Name] {
+			continue
+		}
+		limit, limited := a.hostRunnerLimits[h.Name]
+		if !limited {
+			limit, limited = fleet.hostRunnerLimits[h.Name]
+		}
+		if !limited || probe.fleetCounts[h.Name]+fleet.reservations[h.Name] < limit {
+			withinHostLimits = append(withinHostLimits, h)
+		}
+	}
+	if len(withinHostLimits) == 0 {
+		// Fleet-level: every host individually refused on its own limit, so
+		// no single host name is more at fault than another.
+		placementBlocked.WithLabelValues(scaleSet, "", placementReasonHostLimits).Inc()
+		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
 	}
 
-	ch := make(chan pingResult, len(a.dockerHosts))
+	// runner_memory is the Docker cgroup limit; runner_memory_reservation
+	// (defaulting to that limit) is what the scheduler charges against the
+	// host. Admit the candidate only where running containers plus in-flight
+	// starts leave the configured fraction of physical memory untouched.
+	// Candidates without runner_memory retain the historical unbounded
+	// behavior; operators must declare a requirement before it can
+	// participate in reservation accounting.
+	if a.runnerMemory > 0 {
+		candidate := a.memoryReservation()
+		margin := a.resolvedMemorySafetyMargin()
+		var withinMemoryBudget []DockerHost
+		var blockedDetails []string
+		var blockedHosts []string
+		for _, h := range withinHostLimits {
+			total := probe.hostMemoryBytes[h.Name]
+			running := probe.hostRunningReservedMemory[h.Name]
+			inFlight := fleet.reservedMemory[h.Name]
+			reserved := running + inFlight
+			budget := int64(float64(total) * (1 - margin))
+			hostMemoryReservedGauge.WithLabelValues(h.Name).Set(float64(reserved))
+			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
+
+			if memoryErr := probe.hostMemoryErrors[h.Name]; memoryErr != nil {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
+				blockedHosts = append(blockedHosts, h.Name)
+				a.logger.Warn("Host memory inventory unavailable; refusing memory-bounded placement",
+					slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", candidate), slog.Any("error", memoryErr))
+				continue
+			}
+			if reserved+candidate > budget {
+				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d physical=%d", h.Name, reserved, candidate, budget, total))
+				blockedHosts = append(blockedHosts, h.Name)
+				a.logger.Info("Host lacks aggregate reserved-memory capacity for runner",
+					slog.String("host", h.Name),
+					slog.Int64("physical_memory_bytes", total),
+					slog.Int64("memory_budget_bytes", budget),
+					slog.Int64("running_reserved_bytes", running),
+					slog.Int64("in_flight_reserved_bytes", inFlight),
+					slog.Int64("candidate_reserved_bytes", candidate),
+					slog.Int64("candidate_limit_bytes", a.runnerMemory),
+					slog.Float64("memory_safety_margin", margin))
+				continue
+			}
+			withinMemoryBudget = append(withinMemoryBudget, h)
+		}
+		if len(withinMemoryBudget) == 0 {
+			// Per-host: each name in blockedHosts individually lacked
+			// budget, so the metric records which ones.
+			for _, name := range blockedHosts {
+				placementBlocked.WithLabelValues(scaleSet, name, placementReasonMemoryReservation).Inc()
+			}
+			return "", fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", candidate, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+		}
+		withinHostLimits = withinMemoryBudget
+	}
+
+	// Hard-overloaded hosts (and hosts still inside their post-overload
+	// cooldown -- see applyOverloadCooldown) are excluded outright, not just
+	// deprioritized by their virtual penalty. Without this, "lowest
+	// effective count wins" still placed a runner on the least-bad-looking
+	// overloaded host once every candidate was pressured (agent-lcars#259).
+	// A host with merely MISSING telemetry is not touched here: it only
+	// carries hostLoadPolicy.telemetryPenalty and stays a candidate, per
+	// probeHostLoad's fail-open policy.
+	var notOverloaded []DockerHost
+	var overloadedHosts []string
+	for _, h := range withinHostLimits {
+		if !probe.hostLoads[h.Name].overloaded {
+			notOverloaded = append(notOverloaded, h)
+		} else {
+			overloadedHosts = append(overloadedHosts, h.Name)
+		}
+	}
+	if len(notOverloaded) == 0 {
+		// Per-host: each name in overloadedHosts was individually excluded
+		// by its own pressure reading, not by a fleet-wide rule.
+		for _, name := range overloadedHosts {
+			placementBlocked.WithLabelValues(scaleSet, name, placementReasonOverload).Inc()
+		}
+		return "", fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
+	}
+	withinHostLimits = notOverloaded
+
+	candidates := withinHostLimits
+
+	effectiveCount := func(hostName string) int {
+		c := probe.fleetCounts[hostName] + fleet.reservations[hostName] + probe.hostLoads[hostName].penalty
+		if hostName == "spark" && probe.sparkLoaded {
+			c += 100
+		}
+		return c
+	}
+
+	bestCount := effectiveCount(candidates[0].Name)
+	var tied []string
+	for _, h := range candidates {
+		c := effectiveCount(h.Name)
+		if c < bestCount {
+			bestCount, tied = c, []string{h.Name}
+		} else if c == bestCount {
+			tied = append(tied, h.Name)
+		}
+	}
+	fleet.placementMu.Lock()
+	best := tied[fleet.placementCursor%len(tied)]
+	fleet.placementCursor++
+	fleet.placementMu.Unlock()
+	placementDecisions.WithLabelValues(scaleSet, best).Inc()
+	return best, nil
+}
+
+// hostPingResult is one host's outcome from probeFleetHosts's concurrent
+// inventory pass.
+type hostPingResult struct {
+	host                  DockerHost
+	ok                    bool
+	eligible              bool
+	err                   error
+	load                  hostLoad
+	loadErr               error
+	fleetRunners          int
+	hostMemoryBytes       int64
+	runningReservedMemory int64
+	memoryErr             error
+	// readinessBlocked distinguishes "this host was withheld by its
+	// readiness gate" from "this host is unreachable", so exhausting the
+	// fleet reports the real cause instead of blaming the network.
+	readinessBlocked bool
+}
+
+// fleetHostProbe is the concurrent per-host inventory pass pickHostLocked
+// admits against. laneAdmissibleSlots consumes the identical snapshot so the
+// published gauge can never drift from the admission decision itself -- see
+// probeFleetHosts.
+type fleetHostProbe struct {
+	results                   []hostPingResult
+	hostLoads                 map[string]hostLoad
+	fleetCounts               map[string]int
+	hostMemoryBytes           map[string]int64
+	hostRunningReservedMemory map[string]int64
+	hostMemoryErrors          map[string]error
+	reachableHosts            []DockerHost
+	sparkLoaded               bool
+}
+
+// probeFleetHosts concurrently pings, and inventories memory and fleet
+// runner counts on, every configured Docker host, applying the mains and
+// readiness gates along the way. It is the single source of host-inventory
+// truth: pickHostLocked admits against this snapshot, and
+// laneAdmissibleSlots (via publishLaneAdmissibleSlots) republishes capacity
+// from the exact same one, whether or not a placement is actually pending.
+func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) fleetHostProbe {
+	placementHosts := a.placementHostSet()
+
+	ch := make(chan hostPingResult, len(a.dockerHosts))
 	var wg sync.WaitGroup
 
 	for _, h := range a.dockerHosts {
@@ -1264,7 +1456,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
 				}
 			}
-			ch <- pingResult{
+			ch <- hostPingResult{
 				host: dh, ok: err == nil, eligible: eligible, err: err,
 				load: load, loadErr: loadErr, fleetRunners: fleetRunners,
 				hostMemoryBytes: hostMemoryBytes, runningReservedMemory: runningReservedMemory,
@@ -1285,13 +1477,12 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	wg.Wait()
 	close(ch)
 
-	var results []pingResult
+	var results []hostPingResult
 	hostLoads := make(map[string]hostLoad, len(a.dockerHosts))
 	fleetCounts := make(map[string]int, len(a.dockerHosts))
 	hostMemoryBytes := make(map[string]int64, len(a.dockerHosts))
 	hostRunningReservedMemory := make(map[string]int64, len(a.dockerHosts))
 	hostMemoryErrors := make(map[string]error, len(a.dockerHosts))
-	scaleSet := a.scaleSetLabel()
 	for res := range ch {
 		results = append(results, res)
 		if res.ok {
@@ -1343,150 +1534,102 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		}
 	}
 
-	if len(reachableHosts) == 0 {
-		// A host withheld by its readiness gate is reachable and healthy, so
-		// reporting it as "unreachable" would send whoever reads this at the
-		// network instead of at the signal that actually withheld it.
-		readinessBlocked := 0
-		for _, res := range results {
-			if res.readinessBlocked {
-				readinessBlocked++
-			}
-		}
-		if readinessBlocked > 0 {
-			placementBlocked.WithLabelValues(scaleSet, placementReasonReadiness).Inc()
-			return "", fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlocked, errFleetAtCapacity)
-		}
-		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(placementHosts), errFleetAtCapacity)
+	return fleetHostProbe{
+		results: results, hostLoads: hostLoads, fleetCounts: fleetCounts,
+		hostMemoryBytes: hostMemoryBytes, hostRunningReservedMemory: hostRunningReservedMemory,
+		hostMemoryErrors: hostMemoryErrors, reachableHosts: reachableHosts, sparkLoaded: sparkLoaded,
 	}
-	actualTotal := 0
-	for _, h := range a.dockerHosts {
-		if n, ok := fleetCounts[h.Name]; ok {
-			fleet.lastFleetCounts[h.Name] = n
-		}
-		actualTotal += fleet.lastFleetCounts[h.Name]
-	}
-	reservedTotal := 0
-	for _, n := range fleet.reservations {
-		reservedTotal += n
-	}
-	if fleet.maxRunners > 0 && actualTotal+reservedTotal >= fleet.maxRunners {
-		placementBlocked.WithLabelValues(scaleSet, placementReasonFleetLimit).Inc()
-		return "", fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
-	}
-	var withinHostLimits []DockerHost
-	for _, h := range reachableHosts {
-		if fleet.startInFlight[h.Name] {
+}
+
+// laneAdmissibleSlots computes how many more runners this lane could place
+// right now, from the identical inventory pass pickHostLocked itself admits
+// against -- see fleetHostProbe. A host counts only while reachable,
+// eligible (placement-configured, on mains if required, past its readiness
+// gate), not hard-overloaded or still cooling down, and not currently
+// absorbing an in-flight reservation. An unbounded lane (no configured
+// runner_memory) counts only the host's remaining runner_limit headroom,
+// since there is no memory ceiling to divide by; a host with neither bound
+// configured cannot contribute a finite number and is left out entirely
+// rather than reported as infinite capacity.
+func (a *Scaler) laneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostProbe) int {
+	candidate := a.memoryReservation()
+	margin := a.resolvedMemorySafetyMargin()
+	total := 0
+	for _, res := range probe.results {
+		name := res.host.Name
+		if !res.ok || !res.eligible || fleet.startInFlight[name] {
 			continue
 		}
-		limit, limited := a.hostRunnerLimits[h.Name]
+		if probe.hostLoads[name].overloaded {
+			continue
+		}
+
+		limit, limited := a.hostRunnerLimits[name]
 		if !limited {
-			limit, limited = fleet.hostRunnerLimits[h.Name]
+			limit, limited = fleet.hostRunnerLimits[name]
 		}
-		if !limited || fleetCounts[h.Name]+fleet.reservations[h.Name] < limit {
-			withinHostLimits = append(withinHostLimits, h)
+		headroom := 0
+		if limited {
+			headroom = limit - (probe.fleetCounts[name] + fleet.reservations[name])
+			if headroom < 0 {
+				headroom = 0
+			}
 		}
-	}
-	if len(withinHostLimits) == 0 {
-		placementBlocked.WithLabelValues(scaleSet, placementReasonHostLimits).Inc()
-		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
-	}
 
-	// runner_memory is the Docker cgroup limit; runner_memory_reservation
-	// (defaulting to that limit) is what the scheduler charges against the
-	// host. Admit the candidate only where running containers plus in-flight
-	// starts leave the configured fraction of physical memory untouched.
-	// Candidates without runner_memory retain the historical unbounded
-	// behavior; operators must declare a requirement before it can
-	// participate in reservation accounting.
-	if a.runnerMemory > 0 {
-		candidate := a.memoryReservation()
-		margin := a.resolvedMemorySafetyMargin()
-		var withinMemoryBudget []DockerHost
-		var blockedDetails []string
-		for _, h := range withinHostLimits {
-			total := hostMemoryBytes[h.Name]
-			running := hostRunningReservedMemory[h.Name]
-			inFlight := fleet.reservedMemory[h.Name]
-			reserved := running + inFlight
-			budget := int64(float64(total) * (1 - margin))
-			hostMemoryReservedGauge.WithLabelValues(h.Name).Set(float64(reserved))
-			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
-
-			if memoryErr := hostMemoryErrors[h.Name]; memoryErr != nil {
-				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
-				a.logger.Warn("Host memory inventory unavailable; refusing memory-bounded placement",
-					slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", candidate), slog.Any("error", memoryErr))
+		if a.runnerMemory <= 0 {
+			if !limited {
 				continue
 			}
-			if reserved+candidate > budget {
-				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: reserved=%d candidate=%d budget=%d physical=%d", h.Name, reserved, candidate, budget, total))
-				a.logger.Info("Host lacks aggregate reserved-memory capacity for runner",
-					slog.String("host", h.Name),
-					slog.Int64("physical_memory_bytes", total),
-					slog.Int64("memory_budget_bytes", budget),
-					slog.Int64("running_reserved_bytes", running),
-					slog.Int64("in_flight_reserved_bytes", inFlight),
-					slog.Int64("candidate_reserved_bytes", candidate),
-					slog.Int64("candidate_limit_bytes", a.runnerMemory),
-					slog.Float64("memory_safety_margin", margin))
-				continue
-			}
-			withinMemoryBudget = append(withinMemoryBudget, h)
+			total += headroom
+			continue
 		}
-		if len(withinMemoryBudget) == 0 {
-			placementBlocked.WithLabelValues(scaleSet, placementReasonMemoryReservation).Inc()
-			return "", fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", candidate, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
-		}
-		withinHostLimits = withinMemoryBudget
-	}
 
-	// Hard-overloaded hosts (and hosts still inside their post-overload
-	// cooldown -- see applyOverloadCooldown) are excluded outright, not just
-	// deprioritized by their virtual penalty. Without this, "lowest
-	// effective count wins" still placed a runner on the least-bad-looking
-	// overloaded host once every candidate was pressured (agent-lcars#259).
-	// A host with merely MISSING telemetry is not touched here: it only
-	// carries hostLoadPolicy.telemetryPenalty and stays a candidate, per
-	// probeHostLoad's fail-open policy.
-	var notOverloaded []DockerHost
-	for _, h := range withinHostLimits {
-		if !hostLoads[h.Name].overloaded {
-			notOverloaded = append(notOverloaded, h)
+		if probe.hostMemoryErrors[name] != nil {
+			continue
 		}
-	}
-	if len(notOverloaded) == 0 {
-		placementBlocked.WithLabelValues(scaleSet, placementReasonOverload).Inc()
-		return "", fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
-	}
-	withinHostLimits = notOverloaded
-
-	candidates := withinHostLimits
-
-	effectiveCount := func(hostName string) int {
-		c := fleetCounts[hostName] + fleet.reservations[hostName] + hostLoads[hostName].penalty
-		if hostName == "spark" && sparkLoaded {
-			c += 100
+		budget := int64(float64(probe.hostMemoryBytes[name]) * (1 - margin))
+		reserved := probe.hostRunningReservedMemory[name] + fleet.reservedMemory[name]
+		memorySlots := int((budget - reserved) / candidate)
+		if memorySlots < 0 {
+			memorySlots = 0
 		}
-		return c
-	}
-
-	bestCount := effectiveCount(candidates[0].Name)
-	var tied []string
-	for _, h := range candidates {
-		c := effectiveCount(h.Name)
-		if c < bestCount {
-			bestCount, tied = c, []string{h.Name}
-		} else if c == bestCount {
-			tied = append(tied, h.Name)
+		if limited && headroom < memorySlots {
+			memorySlots = headroom
 		}
+		total += memorySlots
 	}
-	fleet.placementMu.Lock()
-	best := tied[fleet.placementCursor%len(tied)]
-	fleet.placementCursor++
-	fleet.placementMu.Unlock()
-	placementDecisions.WithLabelValues(scaleSet, best).Inc()
-	return best, nil
+	return total
+}
+
+// publishLaneAdmissibleSlots republishes github_runner_autoscaler_lane_admissible_slots
+// from a probe pickHostLocked or refreshAdmissibleSlots just took.
+func (a *Scaler) publishLaneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostProbe) {
+	laneAdmissibleSlotsGauge.WithLabelValues(a.scaleSetLabel()).Set(float64(a.laneAdmissibleSlots(fleet, probe)))
+}
+
+// refreshAdmissibleSlots re-probes the fleet and republishes
+// lane_admissible_slots on its own, without attempting to place a runner.
+// pickHostLocked already refreshes the gauge on every placement attempt, but
+// a lane that sits at its desired count for a while never calls it, and
+// would otherwise leave the gauge showing a stale number from whatever it
+// last attempted. Called from the fleet-wide tracked-runner reconciler
+// (runFleetTrackedRunnerReconciler), which already re-probes every
+// initialized scale set once a minute regardless of demand.
+//
+// updateSchedulerDemand was deliberately NOT chosen for this: it holds
+// a.runners.mu for its whole body by design (see its own comment), and that
+// lock also guards the hot HandleJobStarted/HandleJobCompleted path, so an
+// inventory pass with 5s-scale SSH/Docker round trips has no business
+// running inside it. This still takes fleet.mu, the same lock a real
+// placement's reserve() holds -- but that is the fleet's existing,
+// already-accepted contention model (one more scale set placing costs the
+// same), not a new one; it never touches the weighted gate or
+// a.runners.mu that job-start/completion callbacks depend on.
+func (a *Scaler) refreshAdmissibleSlots(ctx context.Context) {
+	fleet := a.coordinator()
+	fleet.mu.Lock()
+	defer fleet.mu.Unlock()
+	a.publishLaneAdmissibleSlots(fleet, a.probeFleetHosts(ctx, fleet))
 }
 
 // hostOnMains is deliberately fail-closed for mains-required hosts: a missing

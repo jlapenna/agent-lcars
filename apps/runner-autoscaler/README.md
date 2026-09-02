@@ -376,9 +376,9 @@ future-dated timestamp, or a reading for a different host. Hosts without
 `require_readiness` are untouched, including when the publisher is broken.
 
 Observability: `github_runner_autoscaler_host_ready{host}` reports the current
-verdict per gated host, and exhausting the fleet through the gate increments
-`github_runner_autoscaler_placement_blocked_total{reason="readiness"}` rather
-than reporting those hosts as unreachable.
+verdict per gated host, and each host the gate withholds increments
+`github_runner_autoscaler_placement_blocked_total{host,reason="readiness"}`
+rather than reporting that host as unreachable.
 
 ## Aggregate reserved-memory admission
 
@@ -460,9 +460,9 @@ Observability:
 `github_runner_autoscaler_host_memory_reserved_bytes{host}` reports running
 plus in-flight declared reservations observed during placement;
 `github_runner_autoscaler_host_memory_budget_bytes{host}` reports physical
-memory after the safety margin; and exhausting all otherwise-eligible hosts
-increments
-`github_runner_autoscaler_placement_blocked_total{reason="memory_reservation"}`.
+memory after the safety margin; and each host that lacks budget for the
+candidate increments
+`github_runner_autoscaler_placement_blocked_total{host,reason="memory_reservation"}`.
 The placement log includes physical, budget, running, in-flight, and candidate
 byte values for each rejected host.
 
@@ -515,11 +515,40 @@ Observability:
 `github_runner_autoscaler_host_cooldown{host}` is `1` while a host is
 hard-overloaded or cooling down;
 `github_runner_autoscaler_host_load_penalty{host}` reports its current
-virtual penalty; and exhausting the fleet because every reachable,
-within-limit host is hard-overloaded or cooling down increments
-`github_runner_autoscaler_placement_blocked_total{reason="overload"}`,
+virtual penalty; and each hard-overloaded or still-cooling-down host
+increments
+`github_runner_autoscaler_placement_blocked_total{host,reason="overload"}`,
 distinct from `host_limits` (hosts busy with other work, not pressured) and
 from `readiness` (hosts withheld by an operator signal, not their own load).
+
+## Lane capacity: admissible slots
+
+`github_runner_autoscaler_lane_admissible_slots{scale_set}` is how many more
+runners a lane could place right now, computed by the exact same admission
+pass `pickHostLocked` uses to pick a host (agent-lcars#1695) — the fleet
+scheduler design's ["capacity as a first-class
+metric"](../../docs/fleet-scheduler-redesign.md). It is a sum over every
+host that is reachable, past its readiness gate, within its configured
+`runner_limit`, and not hard-overloaded or still cooling down:
+
+- A memory-bounded lane (`runner_memory` set) contributes
+  `floor((memory budget − reserved) / memoryReservation())` per host, where
+  `reserved` is running plus in-flight declared reservations, capped by that
+  host's remaining `runner_limit` headroom.
+- An unbounded lane (no `runner_memory`) contributes only the host's
+  remaining `runner_limit` headroom, since there is no memory ceiling to
+  divide by. A host with neither bound configured cannot contribute a finite
+  number and is left out of the sum rather than reported as infinite
+  capacity.
+
+The gauge refreshes on every placement attempt (whether or not it succeeds)
+and at least once a minute via the fleet-wide tracked-runner reconciler, so
+it stays current even while a lane sits at its desired count with nothing
+pending. Because it shares `pickHostLocked`'s own host inventory pass rather
+than re-deriving the computation, it cannot drift from the real admission
+decision — this is also what `placement_blocked_total`'s new `host` label
+(above) exists to make legible per host: "which constraint binds where" is a
+dashboard panel instead of a log grep.
 
 ## Deployment
 

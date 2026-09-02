@@ -795,6 +795,12 @@ const trackedRunnerReconcileInterval = time.Minute
 // set's in-memory map with Docker. Run once immediately so a checkpoint that
 // retained a container which exited during a restart cannot strand the first
 // queued job while waiting for a later desired-count callback.
+//
+// This is also the periodic refresh for lane_admissible_slots: a placement
+// attempt already republishes it (see pickHostLocked), but a lane sitting at
+// its desired count for a while never makes one, and this loop is the
+// fleet's own "still here, still evaluating" heartbeat regardless of
+// pending demand.
 func runFleetTrackedRunnerReconciler(ctx context.Context, runtimes []*scaleSetRuntime) {
 	reconcile := func() {
 		for _, runtime := range runtimes {
@@ -804,6 +810,7 @@ func runFleetTrackedRunnerReconciler(ctx context.Context, runtimes []*scaleSetRu
 			runtime.mu.RUnlock()
 			if initialized {
 				scaler.reconcileTrackedRunners(ctx)
+				scaler.refreshAdmissibleSlots(ctx)
 			}
 		}
 	}

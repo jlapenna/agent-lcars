@@ -178,7 +178,9 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 	defer f.mu.Unlock()
 	scaleSet := scaler.scaleSetLabel()
 	if protected := f.higherPriorityDemandLocked(scaleSet); protected != "" {
-		placementBlocked.WithLabelValues(scaleSet, placementReasonPriorityReservation).Inc()
+		// Fleet-level: a scheduler decision to protect another scale set's
+		// share, not any host refusing this one.
+		placementBlocked.WithLabelValues(scaleSet, "", placementReasonPriorityReservation).Inc()
 		return nil, fmt.Errorf("%w: reserving the next safe slot for higher-priority scale set %q", errFleetAtCapacity, protected)
 	}
 	host, err := scaler.pickHostLocked(ctx, f)

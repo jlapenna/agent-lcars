@@ -242,6 +242,13 @@ var (
 		},
 		[]string{"host"},
 	)
+	laneAdmissibleSlotsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_lane_admissible_slots",
+			Help: "How many more runners this lane could place right now, summed across reachable, ready, within-limit, unpressured hosts -- computed by the same admission pass pickHostLocked uses, so it cannot drift from the real decision (agent-lcars#1695). Refreshed on every placement attempt and at least once a minute regardless of pending demand.",
+		},
+		[]string{"scale_set"},
+	)
 	scaleSetMemoryReservationGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_scale_set_memory_reservation_bytes",
@@ -304,11 +311,14 @@ var (
 	}, []string{"scale_set", "host"})
 	placementBlocked = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_placement_blocked_total",
-		Help: "Placement attempts blocked by a fleet scheduling invariant, by reason: " +
+		Help: "Placement attempts blocked by a fleet scheduling invariant, by host and reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
 			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
-			placementReasonPriorityReservation + ".",
-	}, []string{"scale_set", "reason"})
+			placementReasonPriorityReservation + ". host names the specific host that refused the candidate for a " +
+			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload +
+			"); a fleet-level reason (" + placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonPriorityReservation +
+			") has no single host at fault and uses host=\"\".",
+	}, []string{"scale_set", "host", "reason"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
 		Help: "1 while the GitHub message listener for a scale set is connected and running.",
@@ -456,6 +466,7 @@ func registerMetrics() {
 			hostFleetRunnersGauge,
 			hostMemoryReservedGauge,
 			hostMemoryBudgetGauge,
+			laneAdmissibleSlotsGauge,
 			scaleSetMemoryReservationGauge,
 			scaleSetMemoryLimitGauge,
 			scaleSetInfoGauge,

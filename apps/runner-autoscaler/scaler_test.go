@@ -439,7 +439,7 @@ func TestPickHostMixedFleetPrefersHealthyHost(t *testing.T) {
 	fleet := scaler.coordinator()
 	seedHostLoad(fleet, "pike", hardOverloadedLoad(scaler, "pike", hostLoad{memoryAvailable: 1, normalizedLoad: 2}))
 
-	blocked := placementBlocked.WithLabelValues("set", placementReasonOverload)
+	blocked := placementBlocked.WithLabelValues("set", "pike", placementReasonOverload)
 	before := testutil.ToFloat64(blocked)
 
 	picked, err := scaler.pickHost(context.Background())
@@ -476,17 +476,24 @@ func TestPickHostAllOverloadedFleetReportsCapacityBlocked(t *testing.T) {
 		seedHostLoad(fleet, host, hardOverloadedLoad(scaler, host, hostLoad{memoryAvailable: 1, normalizedLoad: 2}))
 	}
 
-	blocked := placementBlocked.WithLabelValues("set", placementReasonOverload)
-	hostLimits := placementBlocked.WithLabelValues("set", placementReasonHostLimits)
-	beforeBlocked := testutil.ToFloat64(blocked)
+	pikeBlocked := placementBlocked.WithLabelValues("set", "pike", placementReasonOverload)
+	laforgeBlocked := placementBlocked.WithLabelValues("set", "laforge", placementReasonOverload)
+	hostLimits := placementBlocked.WithLabelValues("set", "", placementReasonHostLimits)
+	beforePike := testutil.ToFloat64(pikeBlocked)
+	beforeLaforge := testutil.ToFloat64(laforgeBlocked)
 	beforeHostLimits := testutil.ToFloat64(hostLimits)
 
 	host, err := scaler.pickHost(context.Background())
 	if host != "" || !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("pickHost() = (%q, %v), want (\"\", errFleetAtCapacity)", host, err)
 	}
-	if got := testutil.ToFloat64(blocked) - beforeBlocked; got != 1 {
-		t.Errorf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonOverload, got)
+	// Each overloaded host records its own refusal by name -- this is a
+	// per-host reason, not a fleet-wide one.
+	if got := testutil.ToFloat64(pikeBlocked) - beforePike; got != 1 {
+		t.Errorf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 1", "pike", placementReasonOverload, got)
+	}
+	if got := testutil.ToFloat64(laforgeBlocked) - beforeLaforge; got != 1 {
+		t.Errorf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 1", "laforge", placementReasonOverload, got)
 	}
 	// A saturation cause distinct from host_limits: without its own reason,
 	// this looks identical in Prometheus to hosts merely being busy with
@@ -527,7 +534,7 @@ func reservedRunner(id string, memory int64) container.Summary {
 // E2E reservations while also preserving a host safety margin.
 func TestPickHostRejectsSecondTwelveGiBReservationOnSixteenGiBHost(t *testing.T) {
 	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 12*gibibyte, []container.Summary{reservedRunner("first", 12*gibibyte)})
-	blocked := placementBlocked.WithLabelValues("e2e", placementReasonMemoryReservation)
+	blocked := placementBlocked.WithLabelValues("e2e", "janeway", placementReasonMemoryReservation)
 	before := testutil.ToFloat64(blocked)
 
 	host, err := scaler.pickHost(context.Background())
@@ -576,6 +583,93 @@ func TestPickHostHonorsConfiguredMemorySafetyMargin(t *testing.T) {
 
 	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("pickHost() with 25%% margin = (%q, %v), want capacity failure", host, err)
+	}
+}
+
+// TestLaneAdmissibleSlotsMatchesHandComputation pins agent-lcars#1695's
+// acceptance criterion: the gauge must match a hand computation on the test
+// fleet fixture. 32 GiB * 0.9 default safety margin = 28.8 GiB budget, minus
+// the 8 GiB already reserved by the running container = 20.8 GiB, divided by
+// the 8 GiB lane reservation = 2.6, floored to 2.
+func TestLaneAdmissibleSlotsMatchesHandComputation(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 32*gibibyte, 8*gibibyte, []container.Summary{reservedRunner("first", 8*gibibyte)})
+	if _, err := scaler.pickHost(context.Background()); err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 2 {
+		t.Fatalf("lane_admissible_slots = %v, want 2", got)
+	}
+}
+
+// A runner_limit of 2 with one already running leaves only 1 slot of
+// runner_limit headroom, which must cap the 2 memory-derived slots down to 1
+// -- the gauge is a floor over both dimensions, not memory alone.
+func TestLaneAdmissibleSlotsCapsAtRunnerLimitHeadroom(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 32*gibibyte, 8*gibibyte, []container.Summary{reservedRunner("first", 8*gibibyte)})
+	scaler.hostRunnerLimits = map[string]int{"janeway": 2}
+	if _, err := scaler.pickHost(context.Background()); err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 1 {
+		t.Fatalf("lane_admissible_slots = %v, want 1 (2 memory-derived slots capped by 1 remaining runner_limit headroom)", got)
+	}
+}
+
+// A hard-overloaded host contributes zero regardless of how much memory or
+// runner_limit headroom it would otherwise have -- reusing the fixture that
+// produced 2 in TestLaneAdmissibleSlotsMatchesHandComputation isolates
+// overload as the only thing that changed.
+func TestLaneAdmissibleSlotsZeroWhenHardOverloaded(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 32*gibibyte, 8*gibibyte, []container.Summary{reservedRunner("first", 8*gibibyte)})
+	fleet := scaler.coordinator()
+	seedHostLoad(fleet, "janeway", hardOverloadedLoad(scaler, "janeway", hostLoad{memoryAvailable: 1, normalizedLoad: 2}))
+
+	if _, err := scaler.pickHost(context.Background()); !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() error = %v, want errFleetAtCapacity", err)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 0 {
+		t.Fatalf("lane_admissible_slots = %v, want 0 when the only host is hard-overloaded", got)
+	}
+}
+
+// refreshAdmissibleSlots is the "nothing is pending" path: it must publish a
+// correct, fresh value on its own, without pickHost ever being called.
+func TestRefreshAdmissibleSlotsWithoutPlacementAttempt(t *testing.T) {
+	scaler := memoryBoundScaler(t, "solo", 32*gibibyte, 8*gibibyte, nil)
+	scaler.refreshAdmissibleSlots(context.Background())
+	// 32 GiB * 0.9 = 28.8 GiB budget, nothing reserved, divided by 8 GiB = 3.6,
+	// floored to 3.
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("solo")); got != 3 {
+		t.Fatalf("lane_admissible_slots after refreshAdmissibleSlots() = %v, want 3", got)
+	}
+}
+
+// placement_blocked_total's host label distinguishes a per-host refusal
+// (memory_reservation, readiness, overload -- pinned by the readiness,
+// overload, and memory-reservation tests above/below) from a fleet-level one
+// like host_limits, where every host individually refused on its own limit
+// and no single host is more at fault than another.
+func TestPlacementBlockedHostLimitsUsesEmptyHostLabel(t *testing.T) {
+	limited := newFakeDockerServer(t)
+	limited.setContainers([]container.Summary{{
+		ID: "1", Labels: map[string]string{runnerScaleSetLabelKey: "set"}, State: container.StateRunning,
+	}})
+	scaler := &Scaler{
+		scaleSetName:     "set",
+		dockerHosts:      []DockerHost{{Name: "janeway", Client: limited.client(t)}},
+		hostRunnerLimits: map[string]int{"janeway": 1},
+		runners:          runnerState{idle: make(map[string]runnerRef), busy: make(map[string]runnerRef)},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	blocked := placementBlocked.WithLabelValues("set", "", placementReasonHostLimits)
+	before := testutil.ToFloat64(blocked)
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want host-limit capacity failure", host, err)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Errorf("placement_blocked_total{host=\"\",reason=%q} rose by %v, want 1: host_limits is fleet-level, not attributed to janeway", placementReasonHostLimits, got)
 	}
 }
 
@@ -752,7 +846,7 @@ func TestPickHostExcludesEachHardOverloadSignal(t *testing.T) {
 			fleet := scaler.coordinator()
 			seedHostLoad(fleet, "pike", scaler.applyOverloadCooldown("pike", scored, time.Now()))
 
-			blocked := placementBlocked.WithLabelValues("set", placementReasonOverload)
+			blocked := placementBlocked.WithLabelValues("set", "pike", placementReasonOverload)
 			before := testutil.ToFloat64(blocked)
 
 			host, err := scaler.pickHost(context.Background())
@@ -1668,7 +1762,7 @@ func TestPickHostReadinessExhaustionReportsItsOwnReason(t *testing.T) {
 	// Drop the ungated peer so the gate is the only thing left deciding.
 	scaler.dockerHosts = scaler.dockerHosts[:1]
 
-	blocked := placementBlocked.WithLabelValues("set", placementReasonReadiness)
+	blocked := placementBlocked.WithLabelValues("set", "roamer", placementReasonReadiness)
 	before := testutil.ToFloat64(blocked)
 
 	_, err := scaler.pickHost(context.Background())
