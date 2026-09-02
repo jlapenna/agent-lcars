@@ -131,4 +131,60 @@ describe('refreshGithubAnchorProjection', () => {
       title: 'current',
     });
   });
+
+  it('backs off between fenced retries and applies once the fence clears', async () => {
+    const store = new MemoryStore();
+    let applyCalls = 0;
+    const applyGithubAnchorProjectionRefresh =
+      store.applyGithubAnchorProjectionRefresh.bind(store);
+    store.applyGithubAnchorProjectionRefresh = async (input) => {
+      applyCalls++;
+      // Simulate two concurrent racers beating this attempt's fence before
+      // any real contention is involved, so the retry/backoff path runs
+      // deterministically.
+      return applyCalls <= 2
+        ? false
+        : applyGithubAnchorProjectionRefresh(input);
+    };
+    const waits: number[] = [];
+
+    const result = await refreshGithubAnchorProjection(
+      {
+        store,
+        load: async () => projection('current'),
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+      },
+      anchor,
+    );
+
+    expect(result).toMatchObject({ title: 'current' });
+    expect(applyCalls).toBe(3);
+    // One backoff before each retry (attempts 1 and 2), none before the
+    // first attempt.
+    expect(waits).toHaveLength(2);
+  });
+
+  it('throws only after exhausting every fenced retry', async () => {
+    const store = new MemoryStore();
+    store.applyGithubAnchorProjectionRefresh = async () => false;
+    const waits: number[] = [];
+
+    await expect(
+      refreshGithubAnchorProjection(
+        {
+          store,
+          load: async () => projection('current'),
+          wait: async (ms) => {
+            waits.push(ms);
+          },
+        },
+        anchor,
+      ),
+    ).rejects.toThrow(/could not apply after 6 fenced attempts/);
+
+    // A backoff before every retry attempt but the very first.
+    expect(waits).toHaveLength(5);
+  });
 });
