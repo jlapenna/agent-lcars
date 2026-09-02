@@ -142,6 +142,16 @@ jobs:
       - name: Check repository symlink integrity
         run: bash tools/check-repo-symlinks.sh
 
+      # The check itself, against this checkout. Lint-staged's fast layer
+      # only runs on staged *.sh files at commit time; this covers the
+      # whole tools/, .github/, apps/ tree on every push and PR, including
+      # any pre-existing script a commit never touched. jlapenna/homelab#1074
+      # was exactly this shape (a bare `return` after `||` under `set -e`)
+      # silently killing merge-to-live's image publisher for hours; see
+      # jlapenna/homelab#1087.
+      - name: Check for bare `return` after `||` in shell scripts
+        run: bash tools/check-shell-bare-return.sh
+
       - name: Test workflows-permission grant verification (#868)
         run: bash .github/actions/mint-agent-token/verify-workflows-grant.test.sh
 
@@ -191,6 +201,9 @@ jobs:
       # consumer and was deleted with that advisory lane (#1605).
       - name: Test repository symlink integrity
         run: bash tools/check-repo-symlinks.test.sh
+
+      - name: Test shell bare-return lint (jlapenna/homelab#1087)
+        run: bash tools/check-shell-bare-return.test.sh
 
       - name: Test E2E runner node-tar repair (#1435)
         run: bash tools/e2e-runner/node-tar-health.test.sh
