@@ -30,6 +30,15 @@ const (
 	// the candidate's declared reservation after running and in-flight runner
 	// reservations plus the configured safety margin were accounted for.
 	placementReasonMemoryReservation = "memory_reservation"
+	// Every otherwise-eligible host's latest node_memory_MemAvailable_bytes
+	// sample -- independent of the reservation budget above, which only ever
+	// subtracts what this scheduler itself charged -- was below the
+	// candidate's own footprint plus the configured safety margin, or had no
+	// fresh sample to check at all (agent-lcars#1742, homelab incident
+	// 2026-09-02T19:29Z: a host with reservation budget to spare still got
+	// OOM-killed because non-runner work already consumed its real free
+	// memory). See memoryAvailableSampleStale and requiredFreeMemory.
+	placementReasonMemoryAvailable = "memory_available"
 	// Every eligible host was withheld by its operator-defined readiness
 	// gate. Distinct from unreachability: these hosts answered fine, the
 	// operator's own signal said not to use them.
@@ -409,9 +418,9 @@ var (
 		Name: "github_runner_autoscaler_placement_blocked_total",
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by host and reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
-			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
+			placementReasonMemoryReservation + ", " + placementReasonMemoryAvailable + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
 			placementReasonMaintenance + ", " + placementReasonPriorityReservation + ", " + placementReasonFloorOccupied + ". host names the specific host that refused the candidate for a " +
-			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance + ", " + placementReasonFloorOccupied +
+			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonMemoryAvailable + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance + ", " + placementReasonFloorOccupied +
 			"); a fleet-level reason (" + placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonPriorityReservation +
 			") has no single host at fault and uses host=\"\".",
 	}, []string{"scale_set", "host", "reason"})

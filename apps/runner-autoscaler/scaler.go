@@ -1329,6 +1329,84 @@ func (a *Scaler) effectiveMemoryOvercommit(host string, probe fleetHostProbe) fl
 	return 1.0
 }
 
+// memoryAvailableSampleStale reports whether load's node_memory_MemAvailable_bytes
+// reading is too old to trust for the real-free-memory admission gate
+// (agent-lcars#1742): never successfully probed at all (observedAt is the
+// zero Time -- host metrics unconfigured for this host, or the first probe
+// has not completed yet) or older than 2*hostSampleInterval, the same
+// staleness window currentHostLoad itself already trusts a cached read
+// within. Unlike scoreHostLoad's pressure gates -- which fail OPEN on
+// missing telemetry because a monitoring outage must never read as a fleet
+// outage -- this gate fails CLOSED: the whole reason it exists is that
+// budget-minus-reservations bookkeeping can say a host is free while reality
+// disagrees, so an unknown reality is not a reason to trust the bookkeeping
+// either. See pickHostLocked and laneAdmissibleSlotsOverHosts for the
+// "unless it is the only reachable host" escape hatch.
+func memoryAvailableSampleStale(load hostLoad, now time.Time) bool {
+	return load.observedAt.IsZero() || now.Sub(load.observedAt) > 2*hostSampleInterval
+}
+
+// hostMetricsConfigured reports whether host has a node-exporter pipeline
+// configured at all -- the exact condition probeHostLoad itself checks
+// before ever attempting a scrape. Every other memory/pressure-based gate
+// in this file is a no-op when this is false, because probeHostLoad's own
+// early return skips scoreHostLoad entirely rather than fabricating a
+// reading (see its doc comment); the real-free-memory gate follows the
+// same convention deliberately, so a fleet (or, far more commonly, a unit
+// test) that never wires up host metrics keeps its historical
+// budget-only admission behavior instead of being refused on data it was
+// never configured to produce.
+func (a *Scaler) hostMetricsConfigured(host string) bool {
+	return a.hostMetricsURLTemplate != "" || a.coordinator().metricsViaSSH[host]
+}
+
+// requiredFreeMemory is the live MemAvailable floor a host must clear to
+// admit candidateBytes, independent of the tracked reservation budget
+// (agent-lcars#1742): the candidate's own footprint plus the configured
+// safety margin's share of total physical memory -- the same margin the
+// reservation budget already sets aside, applied here directly against
+// reality instead of against the scheduler's own bookkeeping.
+func requiredFreeMemory(candidateBytes, totalBytes int64, margin float64) int64 {
+	return candidateBytes + int64(margin*float64(totalBytes))
+}
+
+// hostMemoryHeadroom is pickHostLocked's rung-1 host-preference score
+// (agent-lcars#1742), used to break effectiveCount ties among
+// memory-bounded candidates: the smaller of the tracked reservation
+// budget's remaining headroom (budget minus what is charged) and the
+// host's live MemAvailable once the safety margin's bytes are set aside
+// (math.MaxInt64 when host metrics are not configured for this host, so it
+// never wins the min() against a real reading elsewhere but also never
+// wrongly depresses a host this dimension has no opinion about).
+// Reservation bookkeeping and reality can drift in either direction -- a
+// host with plenty of budget left can still be busy with untracked,
+// non-runner work, and a host with a healthy MemAvailable reading can
+// still be fully committed by other lanes -- so the preference trusts
+// whichever number is more pessimistic, not whichever one alone looks best.
+func hostMemoryHeadroom(budgetHeadroom, realHeadroom int64) int64 {
+	return min(budgetHeadroom, realHeadroom)
+}
+
+// headroomPreferredHosts narrows tied (hosts already equal on
+// effectiveCount) to those with the highest hostMemoryHeadroom, so an
+// otherwise-tied pick prefers whichever host actually has more real
+// capacity left (agent-lcars#1742) instead of leaving the choice to
+// round-robin fairness alone. Order-stable: a further tie keeps tied's
+// original (fleet-configured) relative order.
+func headroomPreferredHosts(tied []string, headroom map[string]int64) []string {
+	best := headroom[tied[0]]
+	winners := tied[:1:1]
+	for _, name := range tied[1:] {
+		switch h := headroom[name]; {
+		case h > best:
+			best, winners = h, []string{name}
+		case h == best:
+			winners = append(winners, name)
+		}
+	}
+	return winners
+}
+
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (placementPick, error) {
@@ -1439,12 +1517,26 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 	// Candidates without runner_memory retain the historical unbounded
 	// behavior; operators must declare a requirement before it can
 	// participate in reservation accounting.
+	//
+	// hostMemoryHeadroom is a per-host score of how much real memory the
+	// preference below has to work with; only populated in this block and
+	// only ever consulted from the memory-bounded tie-break further down.
+	hostHeadroom := map[string]int64{}
 	if a.runnerMemory > 0 {
 		candidate := a.memoryReservation()
 		margin := a.resolvedMemorySafetyMargin()
+		// onlyHost marks the sole surviving candidate at this point in the
+		// funnel: agent-lcars#1742's "do not admit on an unknown/stale
+		// MemAvailable sample unless no other reachable host exists" escape
+		// hatch. Computed once, before either memory check below, so both
+		// share the identical notion of "no alternative" the log lines and
+		// tests can rely on.
+		onlyHost := len(withinHostLimits) == 1
+		now := time.Now()
 		var withinMemoryBudget []DockerHost
 		var blockedDetails []string
 		var blockedHosts []string
+		var blockedMemAvailHosts []string
 		for _, h := range withinHostLimits {
 			total := probe.hostMemoryBytes[h.Name]
 			running := probe.hostRunningReservedMemory[h.Name]
@@ -1490,13 +1582,72 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 					slog.Float64("memory_overcommit_effective", overcommit))
 				continue
 			}
+
+			// Real-free-memory floor (agent-lcars#1742, homelab incident
+			// 2026-09-02T19:29Z): independent of the reservation budget
+			// above, which only ever subtracts what THIS scheduler itself
+			// charged. A host busy with untracked, non-runner work --
+			// an interactive session, its Nx daemon, the observability
+			// stack -- looked exactly as free as an idle one by that
+			// arithmetic alone (reserved=0, budget=13.4 GiB) while its
+			// measured MemAvailable had already fallen to 3.8 GiB, well
+			// under the 7 GiB runner about to be admitted onto it. Both
+			// checks must pass; this one reads the same node-exporter
+			// sample the overload gate above already scores, but as an
+			// absolute floor sized to THIS candidate rather than a
+			// fleet-wide pressure ratio. A no-op when host metrics are not
+			// configured for this host at all -- see hostMetricsConfigured.
+			marginBytes := int64(margin * float64(total))
+			realHeadroom := int64(math.MaxInt64)
+			if a.hostMetricsConfigured(h.Name) {
+				load := probe.hostLoads[h.Name]
+				stale := memoryAvailableSampleStale(load, now)
+				required := requiredFreeMemory(candidate, total, margin)
+				available := int64(load.memoryAvailableBytes)
+				switch {
+				case stale && onlyHost:
+					// No fresher signal exists anywhere in the fleet right
+					// now: admit on the bookkeeping alone rather than
+					// refuse a placement no other host could take either,
+					// but say so loudly -- this is exactly the blind spot
+					// the gate exists to close, tolerated here only
+					// because there is no alternative.
+					a.logger.Warn("Admitting without a fresh MemAvailable sample: no other reachable host is eligible",
+						slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", candidate))
+				case stale:
+					blockedDetails = append(blockedDetails, fmt.Sprintf("%s: MemAvailable sample unknown or stale", h.Name))
+					blockedMemAvailHosts = append(blockedMemAvailHosts, h.Name)
+					a.logger.Info("Host has no fresh MemAvailable sample; refusing memory-bounded placement",
+						slog.String("host", h.Name), slog.Int64("candidate_reserved_bytes", candidate))
+					continue
+				case available < required:
+					blockedDetails = append(blockedDetails, fmt.Sprintf("%s: available=%d required=%d", h.Name, available, required))
+					blockedMemAvailHosts = append(blockedMemAvailHosts, h.Name)
+					a.logger.Info("Host lacks real free memory (MemAvailable) for runner",
+						slog.String("host", h.Name),
+						slog.Int64("memory_available_bytes", available),
+						slog.Int64("required_free_bytes", required),
+						slog.Int64("candidate_reserved_bytes", candidate),
+						slog.Int64("physical_memory_bytes", total),
+						slog.Float64("memory_safety_margin", margin))
+					continue
+				default:
+					realHeadroom = available - marginBytes
+				}
+			}
+
+			hostHeadroom[h.Name] = hostMemoryHeadroom(budget-reserved, realHeadroom)
 			withinMemoryBudget = append(withinMemoryBudget, h)
 		}
 		if len(withinMemoryBudget) == 0 {
-			// Per-host: each name in blockedHosts individually lacked
-			// budget, so the metric records which ones.
+			// Per-host: each name in blockedHosts/blockedMemAvailHosts
+			// individually lacked budget or real free memory, so the metric
+			// records which ones, under its own reason.
 			for _, name := range blockedHosts {
 				placementBlocked.WithLabelValues(scaleSet, name, placementReasonMemoryReservation).Inc()
+			}
+			for _, name := range blockedMemAvailHosts {
+				placementBlocked.WithLabelValues(scaleSet, name, placementReasonMemoryAvailable).Inc()
 			}
 			refusedErr := fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", candidate, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
 			if !a.degradationLadderEnabled {
@@ -1569,6 +1720,16 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 		} else if c == bestCount {
 			tied = append(tied, h.Name)
 		}
+	}
+	// Among hosts already tied on load (effectiveCount), a memory-bounded
+	// lane prefers whichever has more real headroom left -- min(free
+	// budget, MemAvailable - margin), agent-lcars#1742 -- before falling
+	// back to round-robin fairness for any tie that remains. Every member
+	// of tied survived the memory-bound loop above (or the block never ran,
+	// leaving hostHeadroom empty and this a no-op), so a lookup here always
+	// finds an entry.
+	if a.runnerMemory > 0 && len(tied) > 1 {
+		tied = headroomPreferredHosts(tied, hostHeadroom)
 	}
 	fleet.placementMu.Lock()
 	best := tied[fleet.placementCursor%len(tied)]
@@ -1975,11 +2136,22 @@ func (a *Scaler) lanePermanentAdmissibleSlots(fleet *FleetCoordinator, probe fle
 // counts only the host's remaining runner_limit headroom, since there is no
 // memory ceiling to divide by; a host with neither bound configured cannot
 // contribute a finite number and is left out entirely rather than reported
-// as infinite capacity.
+// as infinite capacity. A memory-bounded lane's per-host slot count is also
+// capped by the host's live MemAvailable, not just its reservation budget
+// (agent-lcars#1742): a host busy with non-runner work must not look
+// admissible here any more than it does to pickHostLocked itself, or the
+// gauge (and the alerts that read it) would claim headroom reality does not
+// have.
 func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fleetHostProbe, include func(name string) bool) int {
 	candidate := a.memoryReservation()
 	margin := a.resolvedMemorySafetyMargin()
-	total := 0
+
+	// eligible is every host this gauge would otherwise consider, computed
+	// as its own pass so onlyHost below reflects the true size of the
+	// candidate pool -- agent-lcars#1742's "unless no other reachable host
+	// exists" escape hatch needs to know that before either memory check
+	// runs, not host by host as the sum accumulates.
+	var eligible []hostPingResult
 	for _, res := range probe.results {
 		name := res.host.Name
 		if !res.ok || !res.eligible || fleet.startInFlight[name] {
@@ -1991,7 +2163,14 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 		if probe.hostLoads[name].overloaded {
 			continue
 		}
+		eligible = append(eligible, res)
+	}
+	onlyHost := len(eligible) == 1
+	now := time.Now()
 
+	total := 0
+	for _, res := range eligible {
+		name := res.host.Name
 		limit, limited := a.hostRunnerLimits[name]
 		if !limited {
 			limit, limited = fleet.hostRunnerLimits[name]
@@ -2015,12 +2194,43 @@ func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fle
 		if probe.hostMemoryErrors[name] != nil {
 			continue
 		}
-		budget := int64(float64(probe.hostMemoryBytes[name]) * (1 - margin) * a.effectiveMemoryOvercommit(name, probe))
+		hostTotal := probe.hostMemoryBytes[name]
+		budget := int64(float64(hostTotal) * (1 - margin) * a.effectiveMemoryOvercommit(name, probe))
 		reserved := probe.hostRunningReservedMemory[name] + fleet.reservedMemory[name]
 		memorySlots := int((budget - reserved) / candidate)
 		if memorySlots < 0 {
 			memorySlots = 0
 		}
+
+		// The same real-free-memory floor pickHostLocked applies
+		// (agent-lcars#1742): cap the budget-derived slot count by how many
+		// candidate-sized runners the host's live MemAvailable could
+		// actually hold once the safety margin is set aside, so the gauge
+		// (and the alerts that read it) cannot claim headroom a host does
+		// not really have. A no-op when host metrics are not configured for
+		// this host at all -- see hostMetricsConfigured. A stale/unknown
+		// sample (metrics configured, but no fresh reading) counts as zero
+		// real slots unless this is the only otherwise-eligible host, in
+		// which case the budget-derived figure stands uncapped, exactly as
+		// pickHostLocked itself falls back when it has no alternative.
+		if a.hostMetricsConfigured(name) {
+			load := probe.hostLoads[name]
+			if memoryAvailableSampleStale(load, now) {
+				if !onlyHost {
+					memorySlots = 0
+				}
+			} else {
+				marginBytes := int64(margin * float64(hostTotal))
+				realSlots := int((int64(load.memoryAvailableBytes) - marginBytes) / candidate)
+				if realSlots < 0 {
+					realSlots = 0
+				}
+				if realSlots < memorySlots {
+					memorySlots = realSlots
+				}
+			}
+		}
+
 		if limited && headroom < memorySlots {
 			memorySlots = headroom
 		}

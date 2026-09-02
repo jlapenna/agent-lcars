@@ -736,6 +736,57 @@ before a container starts; CPU, PSI, available-memory, and swap telemetry still
 react to measured host behavior after workloads are running. Both checks must
 pass for a bounded candidate to be placed.
 
+### Real-free-memory floor
+
+The reservation budget above only ever subtracts what THIS scheduler itself
+has charged. A host busy with untracked, non-runner work -- an interactive
+session, its Nx daemon, the observability stack, anything outside the
+runner's own cgroup -- looks exactly as free as an idle one to that
+arithmetic, right up until the kernel OOM killer disagrees. That is what
+happened on homelab at 2026-09-02T19:29Z: the scheduler admitted a 7 GiB
+build runner with `reserved=0` against a 13.4 GiB budget, while the host's
+actual `node_memory_MemAvailable_bytes` had already fallen to 3.8 GiB. The
+runner's own memory ceiling did not protect the host, because the other
+consumers were outside the runner slice entirely; the fleet only
+"self-corrected" afterward, via the overload penalty, once the OOM kill had
+already happened (agent-lcars#1742).
+
+Independent of the reservation-budget check, `pickHostLocked` refuses any
+host whose latest `node_memory_MemAvailable_bytes` sample is below the
+candidate's own reservation plus `memory_safety_margin`'s share of total
+physical memory, regardless of how much reservation budget that host has
+left:
+
+```
+required_free_bytes = candidate_reserved_bytes + memory_safety_margin * physical_memory_bytes
+```
+
+A sample older than `2 * hostSampleInterval` (30s at the fixed 15s probe
+interval) counts as unknown, not as "plenty free" -- host metrics that are
+unconfigured for a host, or whose most recent scrape failed, read the same
+way. An unknown sample refuses the host exactly like an insufficient one,
+**unless it is the only otherwise-eligible host reachable for this
+placement**, in which case admission falls back to the reservation budget
+alone (there is no fresher signal anywhere in the fleet to prefer instead)
+and logs why at `WARN`. Among hosts that pass both checks and are tied on
+load (`effectiveCount`), the tie-break additionally prefers whichever has
+more real headroom left -- `min(budget - reserved, MemAvailable -
+memory_safety_margin * physical_memory_bytes)` -- so an otherwise-equal pick
+does not default to round-robin fairness over a host that is quietly
+busier than its reservation bookkeeping shows.
+
+`lane_admissible_slots` and `lane_permanent_admissible_slots` (below) apply
+the identical floor to their own per-host slot count, so the gauges -- and
+the alerts that read them -- cannot claim headroom a host does not really
+have.
+
+Observability: each host refused on this floor increments
+`github_runner_autoscaler_placement_blocked_total{host,reason="memory_available"}`,
+distinct from `memory_reservation` (budget bookkeeping) even though both can
+refuse the same candidate for different reasons in the same placement
+attempt. The placement log includes the measured and required byte values
+for each host refused this way.
+
 ### Usage-aware charging and bounded overcommit
 
 Declared reservations are a floor, not a measurement: a runner that blows past
@@ -855,8 +906,13 @@ host that is reachable, past its readiness gate, within its configured
 
 - A memory-bounded lane (`runner_memory` set) contributes
   `floor((memory budget − reserved) / memoryReservation())` per host, where
-  `reserved` is running plus in-flight declared reservations, capped by that
-  host's remaining `runner_limit` headroom.
+  `reserved` is running plus in-flight declared reservations. That figure is
+  further capped by `floor((MemAvailable − memory_safety_margin ×
+physical_memory) / memoryReservation())` -- the same "Real-free-memory
+  floor" (above) `pickHostLocked` itself applies (agent-lcars#1742), so a
+  host busy with non-runner work cannot inflate this gauge past what it can
+  really admit -- and capped again by that host's remaining `runner_limit`
+  headroom.
 - An unbounded lane (no `runner_memory`) contributes only the host's
   remaining `runner_limit` headroom, since there is no memory ceiling to
   divide by. A host with neither bound configured cannot contribute a finite
