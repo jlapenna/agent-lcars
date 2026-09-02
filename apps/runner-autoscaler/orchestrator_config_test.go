@@ -154,6 +154,62 @@ func TestOrchestratorConfigRejectsInvalidMemoryOvercommit(t *testing.T) {
 	}
 }
 
+// TestOrchestratorConfigDefaultsRunnerCgroupParent covers agent-lcars#1700's
+// tri-state contract: omitting fleet.placement.runner_cgroup_parent entirely
+// (the fixture's bare "placement: {}") resolves to defaultRunnerCgroupParent
+// so the host-level slice bound is on by default.
+func TestOrchestratorConfigDefaultsRunnerCgroupParent(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.RunnerCgroupParent; got != defaultRunnerCgroupParent {
+		t.Fatalf("runner cgroup parent = %q, want default %q", got, defaultRunnerCgroupParent)
+	}
+}
+
+// TestOrchestratorConfigRunnerCgroupParentExplicitEmptyDisables covers the
+// other half of the tri-state: an explicit empty string (as opposed to
+// omitting the key) disables the host-level slice bound entirely.
+func TestOrchestratorConfigRunnerCgroupParentExplicitEmptyDisables(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    runner_cgroup_parent: \"\"", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.RunnerCgroupParent; got != "" {
+		t.Fatalf("runner cgroup parent = %q, want empty (disabled)", got)
+	}
+}
+
+// TestOrchestratorConfigRunnerCgroupParentConfigured covers an explicit
+// non-default slice name propagating through to the resolved config.
+func TestOrchestratorConfigRunnerCgroupParentConfigured(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    runner_cgroup_parent: custom-runners.slice", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.RunnerCgroupParent; got != "custom-runners.slice" {
+		t.Fatalf("runner cgroup parent = %q, want %q", got, "custom-runners.slice")
+	}
+}
+
+// TestOrchestratorConfigRejectsInvalidRunnerCgroupParent covers the bare
+// systemd slice name requirement -- no slashes, and it must end in
+// ".slice" -- which is both what Docker's systemd cgroup driver itself
+// requires and what keeps the value safe to interpolate into
+// defaultRunnerSliceApplier's remote SSH command line.
+func TestOrchestratorConfigRejectsInvalidRunnerCgroupParent(t *testing.T) {
+	for _, bad := range []string{"homelab-runners", "path/to.slice", "has space.slice", "semi;colon.slice"} {
+		body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    runner_cgroup_parent: \""+bad+"\"", 1)
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "runner_cgroup_parent") {
+			t.Fatalf("runner_cgroup_parent %q error = %v, want runner_cgroup_parent complaint", bad, err)
+		}
+	}
+}
+
 func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway\n      metrics_via_ssh: true", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
