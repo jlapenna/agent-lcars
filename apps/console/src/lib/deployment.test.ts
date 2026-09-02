@@ -12,7 +12,9 @@ import {
   controlPlaneRepository,
   isAdminGithubLogin,
   isControlPlaneRepository,
+  isPushWatchedRepository,
   maintainerLogin,
+  pushWatchedRepos,
   shareArtifactUrl,
 } from './deployment';
 
@@ -25,6 +27,7 @@ const VARS = [
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
   'AGENT_LCARS_WATCHED_REPOS',
   'AGENT_LCARS_CONSOLE_URL',
+  'AGENT_LCARS_PUSH_WATCHED_REPOS',
 ] as const;
 
 afterEach(() => {
@@ -186,6 +189,39 @@ describe('deployment config', () => {
       expect(isControlPlaneRepository('unlisted-org/unlisted-repo')).toBe(
         false,
       );
+    });
+  });
+
+  // Unlike controlPlaneRepositories(), this list is additive/opt-in: no
+  // anchor rendering depends on it, so an unset or malformed entry degrades
+  // to "nothing push-watched" rather than throwing.
+  describe('pushWatchedRepos / isPushWatchedRepository', () => {
+    it('is empty when unset', () => {
+      expect(pushWatchedRepos()).toEqual([]);
+      expect(isPushWatchedRepository('jlapenna/repo-tools')).toBe(false);
+    });
+
+    it('parses a comma-separated list from the environment', () => {
+      process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] =
+        'jlapenna/repo-tools, other-org/other-repo ';
+      expect(pushWatchedRepos()).toEqual([
+        'jlapenna/repo-tools',
+        'other-org/other-repo',
+      ]);
+      expect(isPushWatchedRepository('jlapenna/repo-tools')).toBe(true);
+      expect(isPushWatchedRepository('unlisted-org/unlisted-repo')).toBe(false);
+    });
+
+    it('drops malformed entries instead of throwing', () => {
+      process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] =
+        'jlapenna/repo-tools,not-a-repo-name,,owner/name/extra';
+      expect(pushWatchedRepos()).toEqual(['jlapenna/repo-tools']);
+    });
+
+    it('is case-sensitive and does not substring-match', () => {
+      process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] = 'jlapenna/repo-tools';
+      expect(isPushWatchedRepository('Jlapenna/Repo-Tools')).toBe(false);
+      expect(isPushWatchedRepository('jlapenna/repo-tools-fork')).toBe(false);
     });
   });
 

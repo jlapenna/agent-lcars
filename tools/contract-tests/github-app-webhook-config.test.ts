@@ -66,6 +66,7 @@ describe('GitHub App webhook configuration', () => {
               'pull_request',
               'pull_request_review',
               'pull_request_review_thread',
+              'push',
             ],
             hook_attributes: { active: true, url: webhookUrl },
           });
@@ -92,6 +93,7 @@ describe('GitHub App webhook configuration', () => {
         'pull_request',
         'pull_request_review',
         'pull_request_review_thread',
+        'push',
       ],
     });
     const patch = fetchImpl.mock.calls.find(
@@ -168,6 +170,7 @@ describe('GitHub App webhook configuration', () => {
                 'pull_request',
                 'pull_request_review',
                 'pull_request_review_thread',
+                'push',
               ],
               ...(hookAttributes ? { hook_attributes: hookAttributes } : {}),
             });
@@ -199,6 +202,7 @@ describe('GitHub App webhook configuration', () => {
           'pull_request',
           'pull_request_review',
           'pull_request_review_thread',
+          'push',
         ],
         hook_attributes: { active: true },
       }),

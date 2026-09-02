@@ -114,6 +114,19 @@ tests). `pipelines` gates which pipelines the executor may claim, the same
 field an operator's grant uses to gate `create`/`redispatch`. `POST
 /runs/claim` derives selection from that grant alone.
 
+`svc:push-watch` is a third shape: it never authenticates an HTTP request at
+all (no bearer token, no session), so `scopes` is present only because the
+schema requires a non-empty list, not because anything checks it on this
+path. `apps/console/src/lib/push-watch.ts`'s webhook handler looks it up
+directly via `grantForPrincipal`, the same internal mechanism
+`schedule-router.ts`'s tick handler already uses for a schedule's
+`createdBy` principal — independent of any caller's own authenticated
+identity. Its `subjects` entry is unused (no token is ever verified against
+it) but still required by the grant schema. Its only real effect is gating
+`push-watch.ts`'s own `mintItem` call through the ordinary
+`forbiddenReason` check (pipeline + target-repo admission), exactly like
+every other minted item.
+
 The current operator grants list all three supported pipelines (`claude`,
 `codex`, `opencode`), including the maintainer, repository-bounded
 `workflow:work-create`, `workflow:member-automation`, and Sprinkles' App

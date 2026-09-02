@@ -29,6 +29,9 @@ export interface EnvVars {
   AGENT_LCARS_CONTROL_PLANE_REPOSITORY?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORIES?: string;
   AGENT_LCARS_FLEET_GITHUB_LOGIN?: string;
+  /** Comma-separated `owner/name` repos whose `push` webhook mints a native
+   *  reconcile-the-fleet work item — see `push-watch.ts`. */
+  AGENT_LCARS_PUSH_WATCHED_REPOS?: string;
   AGENT_LCARS_WEBHOOK_QUEUE?: string;
   AGENT_LCARS_WEBHOOK_QUEUE_LOCATION?: string;
   AGENT_LCARS_WEBHOOK_SECRET?: string; // Secret
