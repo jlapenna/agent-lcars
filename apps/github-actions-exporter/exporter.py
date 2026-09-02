@@ -43,6 +43,9 @@ DURATION_BUCKETS = (
 ACTIVE_STATUSES = ("queued", "in_progress", "waiting", "pending", "requested")
 QUEUED_STATUSES = ("queued", "waiting", "pending", "requested")
 MAX_JOB_LABELS_PER_WORKFLOW = 100
+# Runs older than this do not count toward a workflow's consecutive-failure
+# streak, so a workflow that no longer runs stops reporting one (see collect()).
+CONSECUTIVE_FAILURE_WINDOW_SECONDS = 3 * 24 * 3600
 OVERFLOW_JOB_LABEL = "__other__"
 MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW = 100
 OVERFLOW_CONCURRENCY_GROUP_LABEL = "__other__"
@@ -1125,7 +1128,12 @@ class DatabaseMetrics:
 
         # The most recent decisive (success/failure-class, non-pull_request)
         # runs of each workflow that did not succeed, counted back from the
-        # latest until the first success. Counters alone cannot express run
+        # latest until the first success, over runs created in the last
+        # CONSECUTIVE_FAILURE_WINDOW_SECONDS only: a workflow that stopped
+        # running (retired, or its trigger removed) must drop out rather than
+        # report its final streak forever, which is how a five-day-old streak
+        # from a since-retired dispatch workflow stayed "failing" on
+        # 2026-09-02. Counters alone cannot express run
         # order: a success followed by two failures inside a rate window looks
         # identical to two failures followed by a success, and a low-volume
         # main-line workflow (deploy, post-merge reconcile) can fail on every
@@ -1160,6 +1168,7 @@ class DatabaseMetrics:
                   AND event != 'pull_request'
                   AND conclusion IN ('success', 'failure', 'timed_out',
                                      'action_required', 'startup_failure')
+                  AND created_at >= ?
             ),
             first_success AS (
                 SELECT repository, workflow, MIN(rn) AS rn
@@ -1176,7 +1185,8 @@ class DatabaseMetrics:
             LEFT JOIN first_success s
                    ON s.repository = o.repository AND s.workflow = o.workflow
             GROUP BY o.repository, o.workflow
-            """
+            """,
+            (time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,),
         ):
             consecutive_failures.add_metric(
                 [row["repository"], row["workflow"]], float(row["streak"])

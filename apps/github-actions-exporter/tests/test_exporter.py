@@ -56,6 +56,13 @@ def workflow_job(**overrides):
     return job
 
 
+def recent(hours_ago: float) -> str:
+    """An ISO timestamp inside the consecutive-failure window."""
+    return (datetime.now(UTC) - timedelta(hours=hours_ago)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
 def exported_metric_value(metrics: str, name: str) -> float:
     for line in metrics.splitlines():
         if line.startswith(f"{name} "):
@@ -318,32 +325,30 @@ class GitHubActionsExporterTests(unittest.TestCase):
         # success, then two failures: streak 2. A cancelled run and a
         # pull_request failure in between must neither extend nor reset it.
         for run in (
-            workflow_run(id=1, conclusion="success", created_at="2026-08-05T01:00:00Z"),
-            workflow_run(id=2, conclusion="failure", created_at="2026-08-05T02:00:00Z"),
-            workflow_run(
-                id=3, conclusion="cancelled", created_at="2026-08-05T02:30:00Z"
-            ),
+            workflow_run(id=1, conclusion="success", created_at=recent(6)),
+            workflow_run(id=2, conclusion="failure", created_at=recent(5)),
+            workflow_run(id=3, conclusion="cancelled", created_at=recent(4.5)),
             workflow_run(
                 id=4,
                 conclusion="failure",
                 event="pull_request",
-                created_at="2026-08-05T02:45:00Z",
+                created_at=recent(4.25),
             ),
-            workflow_run(id=5, conclusion="failure", created_at="2026-08-05T03:00:00Z"),
+            workflow_run(id=5, conclusion="failure", created_at=recent(4)),
             # a different workflow that recovered: failure then success -> 0
             workflow_run(
                 id=6,
                 name="deploy",
                 path=".github/workflows/deploy.yml",
                 conclusion="failure",
-                created_at="2026-08-05T01:00:00Z",
+                created_at=recent(6),
             ),
             workflow_run(
                 id=7,
                 name="deploy",
                 path=".github/workflows/deploy.yml",
                 conclusion="success",
-                created_at="2026-08-05T02:00:00Z",
+                created_at=recent(5),
             ),
         ):
             self.database.upsert_run(repository, run)
@@ -367,14 +372,48 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
 
+    def test_consecutive_failures_ignore_runs_outside_the_window(self):
+        # A workflow whose last decisive runs are older than the window has
+        # stopped running; it must not report its final streak forever.
+        repository = "jlapenna/homelab"
+        old = datetime.now(UTC) - timedelta(days=10)
+        for i in (1, 2):
+            self.database.upsert_run(
+                repository,
+                workflow_run(
+                    id=i,
+                    conclusion="failure",
+                    created_at=(old + timedelta(hours=i)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                ),
+            )
+        self.assertNotIn(
+            "github_actions_workflow_consecutive_failures{", self.metrics()
+        )
+        # A fresh failure inside the window starts a new streak of one: the
+        # stale history does not extend it.
+        self.database.upsert_run(
+            repository,
+            workflow_run(
+                id=3,
+                conclusion="failure",
+                created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ),
+        )
+        self.assertIn(
+            'github_actions_workflow_consecutive_failures{repository="jlapenna/homelab",workflow="validate"} 1.0',
+            self.metrics(),
+        )
+
     def test_consecutive_failures_without_a_stored_success_are_marked_incomplete(self):
         # A freshly backfilled database may hold only the tail of a longer
         # streak. The count is still reported (two observed failures are two
         # failures) but flagged as a lower bound.
         repository = "jlapenna/homelab"
         for run in (
-            workflow_run(id=1, conclusion="failure", created_at="2026-08-05T01:00:00Z"),
-            workflow_run(id=2, conclusion="failure", created_at="2026-08-05T02:00:00Z"),
+            workflow_run(id=1, conclusion="failure", created_at=recent(2)),
+            workflow_run(id=2, conclusion="failure", created_at=recent(1)),
         ):
             self.database.upsert_run(repository, run)
 
