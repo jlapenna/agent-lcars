@@ -1,0 +1,31 @@
+# Renovate (renovate.json) is this repo's dependency updater. It already
+# covers npm/pnpm version updates and, via `vulnerabilityAlerts.enabled`,
+# npm security updates too (see e.g. PR #1116, a Renovate-authored
+# `[security]` fix). GitHub's separate, config-file-independent Dependabot
+# security updates feature therefore only duplicates that coverage here —
+# and duplicates it badly: its npm_and_yarn updater has a long-standing
+# upstream bug (dependabot/dependabot-core) where fetching full registry
+# metadata for a dependency crashes with a TypeError
+# ("version 0.0.4 repository must be a string or object") whenever an old
+# published version's package.json has a malformed `repository` field.
+# `tmp`, `immutable`, and `svgo` all hit this, and it drove 24 consecutive
+# `dependabot-updates` workflow failures (#1690).
+#
+# This file exists solely to retire Dependabot's npm_and_yarn ecosystem in
+# favor of Renovate: `open-pull-requests-limit: 0` turns off version
+# updates (Renovate already does these), and the wildcard `ignore` rule
+# also suppresses security-update pull requests for every npm dependency
+# (the `ignore` key affects both update types — see
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#ignore).
+# That stops Dependabot from ever again running its npm_and_yarn updater
+# against this repo, so the crash can't recur under a different package
+# name either.
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: '*'
