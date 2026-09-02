@@ -130,7 +130,41 @@ type FleetHostConfig struct {
 	// Must be at least 1.0 and at most 2.0; zero (the default) selects 1.0,
 	// i.e. no overcommit.
 	MemoryOvercommit float64 `yaml:"memory_overcommit,omitempty"`
+	// Role declares this host's standing in the fleet invariant (the fleet
+	// scheduler redesign's phase 2, agent-lcars#1696,
+	// docs/fleet-scheduler-redesign.md#F): hostRolePermanent (the default,
+	// when empty), hostRoleOpportunistic, or hostRoleMaintenance. See those
+	// constants' doc comment for what each one means for placement and for
+	// github_runner_autoscaler_lane_permanent_admissible_slots.
+	Role string `yaml:"role,omitempty"`
 }
+
+// Fleet host roles (agent-lcars#1696, docs/fleet-scheduler-redesign.md#F).
+// The scheduler computes admissible slots per lane over permanent hosts
+// only (github_runner_autoscaler_lane_permanent_admissible_slots) so that
+// losing a non-permanent host never trips the fleet invariant alert.
+const (
+	// hostRolePermanent is the default: an ordinary host that counts toward
+	// both the fleet-wide lane_admissible_slots gauge and the
+	// permanent-only lane_permanent_admissible_slots gauge the invariant
+	// alert reads.
+	hostRolePermanent = "permanent"
+	// hostRoleOpportunistic hosts (laptop) are placed on exactly like a
+	// permanent host when reachable and ready -- pickHostLocked and
+	// lane_admissible_slots make no distinction -- but never count toward
+	// lane_permanent_admissible_slots, so losing one never fires the
+	// permanent-capacity invariant alert.
+	hostRoleOpportunistic = "opportunistic"
+	// hostRoleMaintenance hosts (pike) are never placement candidates --
+	// probeFleetHosts forces them ineligible and counts every probe under
+	// placementBlocked{reason=placementReasonMaintenance} -- but stay
+	// declared in fleet.hosts so host_reachable, host_ready, and
+	// host_role_info keep reporting on them. This is additive: removing a
+	// host from fleet.hosts entirely (today's mechanism, and pike's
+	// credentials-revoked/re-entry preflight) still works unchanged for a
+	// host that should not even be connected to.
+	hostRoleMaintenance = "maintenance"
+)
 
 type FleetPlacementFile struct {
 	HostMetricsURLTemplate string `yaml:"host_metrics_url_template,omitempty"`
@@ -320,8 +354,11 @@ type resolvedOrchestratorConfig struct {
 	// MemoryOvercommit is every fleet host's resolved memory_overcommit
 	// factor (default 1.0 for a host that does not set one).
 	MemoryOvercommit map[string]float64
-	Placement        hostLoadPolicy
-	Cooldown         time.Duration
+	// HostRoles is every configured fleet host's resolved role (defaulting
+	// to hostRolePermanent), keyed by host name (agent-lcars#1696).
+	HostRoles map[string]string
+	Placement hostLoadPolicy
+	Cooldown  time.Duration
 	// RunnerCgroupParent is the resolved fleet.placement.runner_cgroup_parent:
 	// defaultRunnerCgroupParent when the key is omitted, the configured value
 	// when set, or "" when explicitly disabled. See FleetPlacementFile.
@@ -380,6 +417,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	r.RunnerLimits = map[string]int{}
 	r.HostMetricsTimeouts = map[string]time.Duration{}
 	r.MemoryOvercommit = map[string]float64{}
+	r.HostRoles = map[string]string{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
 		h.Name, h.Docker = strings.TrimSpace(h.Name), strings.TrimSpace(h.Docker)
@@ -430,6 +468,17 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			return fmt.Errorf("host %q memory_overcommit must be at least 1.0 and at most 2.0", h.Name)
 		}
 		r.MemoryOvercommit[h.Name] = overcommit
+
+		role := strings.TrimSpace(h.Role)
+		if role == "" {
+			role = hostRolePermanent
+		}
+		switch role {
+		case hostRolePermanent, hostRoleOpportunistic, hostRoleMaintenance:
+		default:
+			return fmt.Errorf("host %q has invalid role %q (must be %s, %s, or %s)", h.Name, h.Role, hostRolePermanent, hostRoleOpportunistic, hostRoleMaintenance)
+		}
+		r.HostRoles[h.Name] = role
 	}
 
 	if err := validateFileMountAllowlist(c.Fleet.FileMountAllowlist); err != nil {

@@ -712,6 +712,58 @@ decision — this is also what `placement_blocked_total`'s new `host` label
 (above) exists to make legible per host: "which constraint binds where" is a
 dashboard panel instead of a log grep.
 
+## Host roles and the fleet invariant
+
+Each fleet host declares its standing in the fleet invariant with an optional
+`role` (agent-lcars#1696, `docs/fleet-scheduler-redesign.md#F`):
+
+```yaml
+fleet:
+  hosts:
+    - name: laforge # role omitted -- defaults to permanent
+      docker: ssh://runner@laforge
+    - name: laptop
+      docker: ssh://runner@laptop
+      role: opportunistic
+    - name: pike
+      docker: ssh://runner@pike
+      role: maintenance
+```
+
+- **`permanent`** (the default when `role` is omitted) is an ordinary host:
+  it counts toward both admissible-slots gauges below.
+- **`opportunistic`** hosts (laptop) are placed on exactly like a permanent
+  host whenever they are reachable and past their readiness gate —
+  `pickHostLocked` makes no distinction — but never count toward the
+  permanent-only gauge, so losing one (closing the lid) never fires an alert
+  that reads that gauge.
+- **`maintenance`** hosts (pike) are never placement candidates. Every
+  inventory probe forces them ineligible and counts it under
+  `placement_blocked_total{host,reason="maintenance"}`, but the host stays
+  declared in `fleet.hosts` — so `github_runner_autoscaler_host_reachable{host}`
+  and `github_runner_autoscaler_host_ready{host}` keep reporting on it exactly
+  as they would for any other managed host. This is additive: removing a host
+  from `fleet.hosts` entirely is still how you stop connecting to it at all
+  (pike's credentials-revoked/re-entry preflight is unchanged by this field —
+  see "Host readiness gate" and the homelab operational docs) — `role:
+  maintenance` is for a host you want the fleet to keep reachability/readiness
+  telemetry on while it never receives work.
+
+`github_runner_autoscaler_host_role_info{host,role}` is a static `1` per
+configured host, for joining a dashboard or alert to the role that host
+carries right now.
+
+`github_runner_autoscaler_lane_permanent_admissible_slots{scale_set}` is
+`lane_admissible_slots` restricted to `role: permanent` hosts — the same
+per-host slot computation, just filtered by host name before summing, so the
+two gauges can never disagree on the underlying arithmetic. This is the gauge
+the fleet invariant is about: a lane with pending consumers should always have
+at least one admissible slot on a host the fleet actually depends on, and that
+must stay true independent of whether an opportunistic host happens to be
+reachable right now. homelab's `RunnerLanePermanentCapacityLow` alert
+(`observability/prometheus/rules.yml`) reads this gauge, not
+`lane_admissible_slots`, for exactly that reason.
+
 ## Deployment
 
 The actual runtime config (`orchestrator.yml`: fleet host inventory, GitHub

@@ -210,6 +210,46 @@ func TestOrchestratorConfigRejectsInvalidRunnerCgroupParent(t *testing.T) {
 	}
 }
 
+// TestOrchestratorConfigDefaultsRoleToPermanent pins agent-lcars#1696's
+// default: a host that sets no role: at all must resolve as permanent, so
+// existing fleet.yml files with no role: lines keep counting fully toward
+// lane_permanent_admissible_slots after this upgrade.
+func TestOrchestratorConfigDefaultsRoleToPermanent(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.HostRoles["janeway"]; got != hostRolePermanent {
+		t.Fatalf("host role default = %q, want %q", got, hostRolePermanent)
+	}
+}
+
+func TestOrchestratorConfigResolvesRole(t *testing.T) {
+	for _, role := range []string{hostRolePermanent, hostRoleOpportunistic, hostRoleMaintenance} {
+		t.Run(role, func(t *testing.T) {
+			body := strings.Replace(validOrchestratorYAML, "      runner_limit: 1", "      runner_limit: 1\n      role: "+role, 1)
+			resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := resolved.HostRoles["janeway"]; got != role {
+				t.Fatalf("host role = %q, want %q", got, role)
+			}
+		})
+	}
+}
+
+// TestOrchestratorConfigRejectsInvalidRole pins the closed set of role
+// values: anything else (a typo, an old/renamed role) must fail config load
+// rather than silently defaulting to permanent or being ignored.
+func TestOrchestratorConfigRejectsInvalidRole(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      runner_limit: 1", "      runner_limit: 1\n      role: retired", 1)
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "invalid role") {
+		t.Fatalf("invalid role error = %v, want role validation error", err)
+	}
+}
+
 func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway\n      metrics_via_ssh: true", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))

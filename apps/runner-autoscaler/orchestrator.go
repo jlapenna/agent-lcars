@@ -496,10 +496,19 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.mainsRequired = resolved.MainsRequired
 	fleet.metricsViaSSH = resolved.MetricsViaSSH
 	fleet.readinessRequired = resolved.ReadinessRequired
+	fleet.hostRoles = resolved.HostRoles
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
 	fleet.priorities = resolved.Priorities
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
+	// Static description of every declared host's role, always 1
+	// (agent-lcars#1696): join against placementBlocked{reason="maintenance"}
+	// or lane_permanent_admissible_slots to name which hosts back either
+	// gauge. Republished on every reload; a role or host that no longer
+	// exists leaves its old series in place, same as scaleSetLabelInfoGauge.
+	for host, role := range resolved.HostRoles {
+		hostRoleInfoGauge.WithLabelValues(host, role).Set(1)
+	}
 }
 
 func pullConfiguredRunnerImages(ctx context.Context, dockerHosts []DockerHost, scaleSets []Config, logger *slog.Logger) {

@@ -1621,6 +1621,20 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 					hostReadyGauge.WithLabelValues(dh.Name).Set(1)
 				}
 			}
+			// Maintenance is a final, unconditional veto applied AFTER the
+			// mains/readiness gates above, deliberately not folded into their
+			// own eligible check: those gates' own gauges (host_ready) must
+			// keep reporting the operator's readiness signal for a
+			// maintenance host exactly as they would for any other host --
+			// role: maintenance only changes whether the fleet ever ACTS on
+			// eligibility, never whether the signal itself is measured.
+			if fleet.hostRoles[dh.Name] == hostRoleMaintenance {
+				// Structural, not conditional: a maintenance host is
+				// excluded regardless of reachability or any other gate, and
+				// every probe counts it -- see placementReasonMaintenance.
+				eligible = false
+				placementBlocked.WithLabelValues(a.scaleSetLabel(), dh.Name, placementReasonMaintenance).Inc()
+			}
 			ch <- hostPingResult{
 				host: dh, ok: err == nil, eligible: eligible, err: err,
 				load: load, loadErr: loadErr, fleetRunners: fleetRunners,
@@ -1712,21 +1726,51 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 
 // laneAdmissibleSlots computes how many more runners this lane could place
 // right now, from the identical inventory pass pickHostLocked itself admits
-// against -- see fleetHostProbe. A host counts only while reachable,
-// eligible (placement-configured, on mains if required, past its readiness
-// gate), not hard-overloaded or still cooling down, and not currently
-// absorbing an in-flight reservation. An unbounded lane (no configured
-// runner_memory) counts only the host's remaining runner_limit headroom,
-// since there is no memory ceiling to divide by; a host with neither bound
-// configured cannot contribute a finite number and is left out entirely
-// rather than reported as infinite capacity.
+// against -- see fleetHostProbe. It is laneAdmissibleSlotsOverHosts with no
+// host filter, i.e. summed over every eligible host regardless of role.
 func (a *Scaler) laneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostProbe) int {
+	return a.laneAdmissibleSlotsOverHosts(fleet, probe, nil)
+}
+
+// lanePermanentAdmissibleSlots is laneAdmissibleSlots restricted to role:
+// permanent hosts (the default role, and the zero value for a host with no
+// hostRoles entry) -- the fleet invariant github_runner_autoscaler_lane_permanent_admissible_slots
+// reads, so that an opportunistic host's absence never trips it
+// (agent-lcars#1696, docs/fleet-scheduler-redesign.md#F). A maintenance host
+// contributes to neither gauge: probeFleetHosts already forces it
+// ineligible, which laneAdmissibleSlotsOverHosts's own eligibility check
+// excludes before this filter ever runs.
+func (a *Scaler) lanePermanentAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostProbe) int {
+	return a.laneAdmissibleSlotsOverHosts(fleet, probe, func(name string) bool {
+		role := fleet.hostRoles[name]
+		return role == "" || role == hostRolePermanent
+	})
+}
+
+// laneAdmissibleSlotsOverHosts is the shared admission-slot computation
+// behind both github_runner_autoscaler_lane_admissible_slots and
+// github_runner_autoscaler_lane_permanent_admissible_slots (agent-lcars#1696):
+// the same effective budget and charging, just optionally narrowed to a
+// subset of hosts by name, so the two gauges can never drift apart on the
+// arithmetic itself. A host counts only while reachable, eligible
+// (placement-configured, on mains if required, past its readiness gate, and
+// not role: maintenance), not hard-overloaded or still cooling down, not
+// currently absorbing an in-flight reservation, and -- when include is
+// non-nil -- selected by it. An unbounded lane (no configured runner_memory)
+// counts only the host's remaining runner_limit headroom, since there is no
+// memory ceiling to divide by; a host with neither bound configured cannot
+// contribute a finite number and is left out entirely rather than reported
+// as infinite capacity.
+func (a *Scaler) laneAdmissibleSlotsOverHosts(fleet *FleetCoordinator, probe fleetHostProbe, include func(name string) bool) int {
 	candidate := a.memoryReservation()
 	margin := a.resolvedMemorySafetyMargin()
 	total := 0
 	for _, res := range probe.results {
 		name := res.host.Name
 		if !res.ok || !res.eligible || fleet.startInFlight[name] {
+			continue
+		}
+		if include != nil && !include(name) {
 			continue
 		}
 		if probe.hostLoads[name].overloaded {
@@ -1771,9 +1815,11 @@ func (a *Scaler) laneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostPro
 }
 
 // publishLaneAdmissibleSlots republishes github_runner_autoscaler_lane_admissible_slots
-// from a probe pickHostLocked or refreshAdmissibleSlots just took.
+// and github_runner_autoscaler_lane_permanent_admissible_slots from a probe
+// pickHostLocked or refreshAdmissibleSlots just took.
 func (a *Scaler) publishLaneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostProbe) {
 	laneAdmissibleSlotsGauge.WithLabelValues(a.scaleSetLabel()).Set(float64(a.laneAdmissibleSlots(fleet, probe)))
+	lanePermanentAdmissibleSlotsGauge.WithLabelValues(a.scaleSetLabel()).Set(float64(a.lanePermanentAdmissibleSlots(fleet, probe)))
 }
 
 // refreshAdmissibleSlots re-probes the fleet and republishes
