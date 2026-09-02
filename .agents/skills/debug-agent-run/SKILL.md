@@ -1,6 +1,6 @@
 ---
 name: debug-agent-run
-description: Diagnose a dispatched QueueExecutor/direct-runner agent run using the fleet's own observability instead of waiting on GitHub - the live runner container on laforge/janeway/spark, Loki, Prometheus, and the LiteLLM logs. Use when an agent run is slow, silent, stuck, or finished badly; when you want to know whether it has actually committed anything yet; when asking "is it working or hung"; or before concluding a run failed for a reason you have not measured.
+description: Diagnose a dispatched QueueExecutor/direct-runner agent run using the fleet's own observability instead of waiting on GitHub - the live runner container on laforge/janeway/picard, Loki, Prometheus, and the LiteLLM logs. Use when an agent run is slow, silent, stuck, or finished badly; when you want to know whether it has actually committed anything yet; when asking "is it working or hung"; or before concluding a run failed for a reason you have not measured.
 ---
 
 # Debugging a dispatched agent run
@@ -40,7 +40,7 @@ separate-users gotcha on `pike`). From there, scan the hosts:
 
 ```bash
 ssh homelab@homelab.lan.jlapenna.net
-for h in laforge janeway spark pike oldbook; do
+for h in laforge janeway picard pike oldbook; do
   ssh -i ~/p/homelab/ansible/ssh_key/id_ed25519 homelab@$h.lan.jlapenna.net \
     'docker ps --filter name=runner- --format "{{.Names}}|{{.CreatedAt}}"'
 done
@@ -101,7 +101,7 @@ throttling or a wedged engine, not thinking.
 
 **Serialise agent dispatches.** Two concurrent OpenCode runs measured ~2.3
 completions/min _combined_ — roughly half throughput each, with a five-minute
-near-stall. Spark is one GPU with a two-session ceiling. Dispatching a second
+near-stall. Picard is one GPU with a two-session ceiling. Dispatching a second
 agent to "get evidence faster" makes both runs slower and confounds whatever
 you were measuring.
 
@@ -154,7 +154,7 @@ which has the measured history and the bounds.
 
 ## Related
 
-- **oncall** (homelab) — bastion access, the fleet's alert pipeline, and Spark
+- **oncall** (homelab) — bastion access, the fleet's alert pipeline, and Picard
   inference troubleshooting when the model server itself is the problem.
 - **github-ci-monitor** — for _PRs_ awaiting checks, which is a different
   question from a _run_ behaving badly.
