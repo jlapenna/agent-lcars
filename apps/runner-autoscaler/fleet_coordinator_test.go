@@ -28,12 +28,12 @@ func TestFleetReservationMakesHostLimitAtomicAcrossScalers(t *testing.T) {
 			fleet:            fleet,
 		}
 	}
-	first, err := fleet.reserve(context.Background(), newScaler("default"))
+	first, err := fleet.reserve(context.Background(), newScaler("default"), "test-runner-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.release("default")
-	if _, err := fleet.reserve(context.Background(), newScaler("e2e")); err == nil {
+	if _, err := fleet.reserve(context.Background(), newScaler("e2e"), "test-runner-2"); err == nil {
 		t.Fatal("second scaler reserved janeway despite runner_limit=1")
 	}
 }
@@ -50,12 +50,12 @@ func TestFleetReservationEnforcesGlobalLimit(t *testing.T) {
 			runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}}, fleet: fleet,
 		}
 	}
-	reservation, err := fleet.reserve(context.Background(), newScaler("a"))
+	reservation, err := fleet.reserve(context.Background(), newScaler("a"), "test-runner-3")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reservation.release("a")
-	if _, err := fleet.reserve(context.Background(), newScaler("b")); err == nil {
+	if _, err := fleet.reserve(context.Background(), newScaler("b"), "test-runner-4"); err == nil {
 		t.Fatal("second reservation exceeded fleet max_runners=1")
 	}
 }
@@ -76,11 +76,11 @@ func TestFleetReservationProtectsOneRunnerForHigherPriorityDemand(t *testing.T) 
 	}
 
 	fleet.updateDemand("protected", 2, 0, time.Unix(100, 0))
-	if _, err := fleet.reserve(context.Background(), newScaler("default")); !errors.Is(err, errFleetAtCapacity) {
+	if _, err := fleet.reserve(context.Background(), newScaler("default"), "test-runner-5"); !errors.Is(err, errFleetAtCapacity) {
 		t.Fatalf("ordinary reservation error = %v, want capacity deferral", err)
 	}
 
-	protected, err := fleet.reserve(context.Background(), newScaler("protected"))
+	protected, err := fleet.reserve(context.Background(), newScaler("protected"), "test-runner-6")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestFleetReservationProtectsOneRunnerForHigherPriorityDemand(t *testing.T) 
 	// its second pending job must not monopolize the other fleet slot.
 	fleet.updateDemand("protected", 1, 1, time.Unix(101, 0))
 	protected.release("protected")
-	ordinary, err := fleet.reserve(context.Background(), newScaler("default"))
+	ordinary, err := fleet.reserve(context.Background(), newScaler("default"), "test-runner-7")
 	if err != nil {
 		t.Fatalf("ordinary reservation after protected service = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestFleetReservationsAreAtomicUnderConcurrentGoroutines(t *testing.T) {
 				name = "set-b"
 			}
 			for i := 0; i < itersPerWorker; i++ {
-				r, err := fleet.reserve(context.Background(), newScaler(name))
+				r, err := fleet.reserve(context.Background(), newScaler(name), "test-runner-8")
 				if err != nil {
 					continue // every host momentarily in-flight elsewhere; not an error under test.
 				}

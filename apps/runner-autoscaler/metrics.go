@@ -51,6 +51,30 @@ const (
 	// excluded rather than conditionally excluded, so the counter's rate is
 	// the standing signal that host_role_info's join names it as "out".
 	placementReasonMaintenance = "maintenance"
+	// A host currently holds a rung-3 free-memory-floor placement (the
+	// degradation ladder's floor invariant, docs/fleet-scheduler-redesign.md#D,
+	// agent-lcars#1697) and so is cordoned from every rung, for every lane,
+	// until that runner finishes. See FleetCoordinator.floorRunners.
+	placementReasonFloorOccupied = "floor_occupied"
+)
+
+// The complete set of `rung` label values github_runner_autoscaler_placement_degraded_total
+// is ever incremented with (docs/fleet-scheduler-redesign.md#D,
+// agent-lcars#1697). Rung 1, the declared reservation, is the normal path
+// and is never counted here -- only when it fails does the ladder walk
+// rungs 2 through 4.
+const (
+	// Admitted on a host whose free reserved-memory budget covers the
+	// lane's observed p95 usage over the configured window, instead of its
+	// (larger) declared reservation.
+	degradationRungObservedP95 = "observed_p95"
+	// Admitted one runner on the least-loaded reachable, non-hard-pressured
+	// host whose real MemAvailable exceeds the lane's ceiling, regardless of
+	// declared reservations -- the floor invariant.
+	degradationRungFreeMemoryFloor = "free_memory_floor"
+	// No rung admitted the candidate; the placement was refused and
+	// lane_admissible_slots already reads 0.
+	degradationRungRefused = "refused"
 )
 
 // The complete set of `reason` label values runnerDiedIdleTotal and
@@ -379,11 +403,46 @@ var (
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by host and reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
 			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
-			placementReasonMaintenance + ", " + placementReasonPriorityReservation + ". host names the specific host that refused the candidate for a " +
-			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance +
+			placementReasonMaintenance + ", " + placementReasonPriorityReservation + ", " + placementReasonFloorOccupied + ". host names the specific host that refused the candidate for a " +
+			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance + ", " + placementReasonFloorOccupied +
 			"); a fleet-level reason (" + placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonPriorityReservation +
 			") has no single host at fault and uses host=\"\".",
 	}, []string{"scale_set", "host", "reason"})
+	// placementDegradedTotal counts every degradation-ladder decision made
+	// AFTER rung 1 (the declared reservation) failed to admit a
+	// ladder-enabled lane's candidate: rung, one of degradationRungObservedP95,
+	// degradationRungFreeMemoryFloor, or degradationRungRefused (only counted
+	// for ladder-enabled lanes; a non-ladder lane's rung-1 failure is left to
+	// placementBlocked/placementReasonMemoryReservation alone, exactly as
+	// before the ladder existed) (docs/fleet-scheduler-redesign.md#D,
+	// agent-lcars#1697).
+	placementDegradedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_placement_degraded_total",
+		Help: "Placement decisions made by the degradation ladder after the declared reservation (rung 1) could not be admitted, by scale set and rung: " +
+			degradationRungObservedP95 + ", " + degradationRungFreeMemoryFloor + ", or " + degradationRungRefused + ". Only counted for lanes with the ladder enabled.",
+	}, []string{"scale_set", "rung"})
+	// placementDegradedActiveGauge tracks rung-3 free-memory-floor runners
+	// currently in flight (from the moment their host is claimed through
+	// completion/removal) -- at most one per host at a time, enforced by
+	// FleetCoordinator.floorRunners.
+	placementDegradedActiveGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_placement_degraded_active",
+		Help: "Rung-3 free-memory-floor runners currently in flight on a host, by scale set and host. At most 1 per host at a time (docs/fleet-scheduler-redesign.md#D, agent-lcars#1697).",
+	}, []string{"scale_set", "host"})
+	// laneObservedMemoryP95Gauge and laneObservedMemoryAgeGauge publish the
+	// degradation ladder's Prometheus-sourced input (rung 2): a lane's
+	// scale-set-labelled container_memory_rss p95 over the configured
+	// window, refreshed every refresh_interval for ladder-enabled lanes
+	// only. Neither is published until the first successful sample; a
+	// missing series means no sample has ever succeeded.
+	laneObservedMemoryP95Gauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_lane_observed_memory_p95_bytes",
+		Help: "This lane's observed memory p95 over fleet.placement.degradation_ladder.observed_window, as last queried from Prometheus. Rung 2's input (docs/fleet-scheduler-redesign.md#D, agent-lcars#1697).",
+	}, []string{"scale_set"})
+	laneObservedMemoryAgeGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_lane_observed_memory_age_seconds",
+		Help: "Age of the sample behind github_runner_autoscaler_lane_observed_memory_p95_bytes. Rung 2 is skipped once this exceeds 3x fleet.placement.degradation_ladder.refresh_interval.",
+	}, []string{"scale_set"})
 	listenerUpGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_listener_up",
 		Help: "1 while the GitHub message listener for a scale set is connected and running.",
@@ -549,6 +608,10 @@ func registerMetrics() {
 			placementDecisions,
 			reservationGauge,
 			placementBlocked,
+			placementDegradedTotal,
+			placementDegradedActiveGauge,
+			laneObservedMemoryP95Gauge,
+			laneObservedMemoryAgeGauge,
 			listenerUpGauge,
 			listenerRestarts,
 			quiesceGenerationTimeouts,

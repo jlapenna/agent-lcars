@@ -123,6 +123,13 @@ type Config struct {
 	ReadinessMetricsURL string
 	ReadinessMetric     string
 	ReadinessMaxAge     time.Duration
+	// DegradationLadderEnabled is this scale set's fully-resolved
+	// placement-degradation-ladder switch (agent-lcars#1697,
+	// docs/fleet-scheduler-redesign.md#D): true when its own
+	// scale_sets[].degradation_ladder override is true, or the override is
+	// unset and fleet.placement.degradation_ladder.enabled is true. Default
+	// off, so a lane never sees rungs 2-4 unless it (or the fleet) opts in.
+	DegradationLadderEnabled bool
 }
 
 func stringSet(values []string) map[string]bool {

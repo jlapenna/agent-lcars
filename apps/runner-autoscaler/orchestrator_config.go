@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/actions/scaleset"
@@ -213,6 +215,83 @@ type FleetPlacementFile struct {
 	SwapHard           float64 `yaml:"swap_hard,omitempty"`
 	OverloadCooldown   string  `yaml:"overload_cooldown,omitempty"`
 	TelemetryPenalty   int     `yaml:"telemetry_penalty,omitempty"`
+	// DegradationLadder configures the placement degradation ladder
+	// (agent-lcars#1697, docs/fleet-scheduler-redesign.md#D): when no host
+	// admits a lane's declared reservation, an ordered ladder of
+	// progressively looser admission rules runs instead of refusing
+	// outright. Default off fleet-wide; see ScaleSetConfigFile.DegradationLadder
+	// for the per-lane override.
+	DegradationLadder DegradationLadderConfigFile `yaml:"degradation_ladder,omitempty"`
+}
+
+// DegradationLadderConfigFile is the raw fleet.placement.degradation_ladder
+// block (agent-lcars#1697, docs/fleet-scheduler-redesign.md#D). See
+// resolvedDegradationLadder for the validated/defaulted form placement
+// actually consults.
+type DegradationLadderConfigFile struct {
+	// Enabled is the fleet-wide default: a lane's own degradation_ladder
+	// override (ScaleSetConfigFile.DegradationLadder) always wins when set.
+	Enabled bool `yaml:"enabled,omitempty"`
+	// PrometheusURL is the base URL (e.g. "http://prometheus:9090") queried
+	// for rung 2's observed-p95 figure. Empty disables rung 2 fleet-wide
+	// (regardless of any lane's own enablement): the ladder then goes
+	// straight from rung 1 to rung 3.
+	PrometheusURL string `yaml:"prometheus_url,omitempty"`
+	// ObservedWindow is the max_over_time window baked into ObservedQuery's
+	// default template, e.g. "168h" for seven days. Defaults to "168h".
+	ObservedWindow string `yaml:"observed_window,omitempty"`
+	// ObservedQuantile is the quantile computed over that window. Must be in
+	// (0, 1]. Defaults to 0.95.
+	ObservedQuantile float64 `yaml:"observed_quantile,omitempty"`
+	// ObservedQuery is a Go text/template string rendered with .ScaleSet,
+	// .Window, and .Quantile to produce the PromQL instant query rung 2
+	// evaluates per ladder-enabled lane. Defaults to
+	// defaultDegradationLadderQuery.
+	ObservedQuery string `yaml:"observed_query,omitempty"`
+	// RefreshInterval is how often every ladder-enabled lane's observed
+	// figure is re-queried. Defaults to "10m". A sample older than 3x this
+	// interval is treated as stale and skips rung 2.
+	RefreshInterval string `yaml:"refresh_interval,omitempty"`
+}
+
+// defaultDegradationLadderQuery is FleetPlacementFile.DegradationLadder's
+// default ObservedQuery (agent-lcars#1697): cAdvisor's
+// container_label_autoscaler_scale_set label already carries the scale-set
+// name onto every runner container it exports, and this measures the
+// max-per-run RSS (not the mean) over the window before taking the quantile
+// across runs, matching "what the worst run in the window actually used".
+const defaultDegradationLadderQuery = `quantile({{.Quantile}}, max_over_time(container_memory_rss{container_label_autoscaler_scale_set="{{.ScaleSet}}"}[{{.Window}}]))`
+
+// resolvedDegradationLadder is FleetPlacementFile.DegradationLadder after
+// defaulting and validation: the shared configuration every ladder-enabled
+// lane's rung 2 evaluation consults (agent-lcars#1697).
+type resolvedDegradationLadder struct {
+	// Enabled is the fleet-wide default; see DegradationLadderConfigFile.Enabled
+	// and Config.DegradationLadderEnabled for the fully-resolved per-lane
+	// value.
+	Enabled         bool
+	PrometheusURL   string
+	Window          string
+	Quantile        float64
+	QueryTemplate   *template.Template
+	RefreshInterval time.Duration
+	// MaxSampleAge is 3x RefreshInterval: a cached observed-p95 sample older
+	// than this is treated as stale and skips rung 2, per design.
+	MaxSampleAge time.Duration
+}
+
+// render produces the PromQL instant query for one ladder-enabled scale
+// set's rung 2 evaluation.
+func (d resolvedDegradationLadder) render(scaleSet string) (string, error) {
+	var buf bytes.Buffer
+	if err := d.QueryTemplate.Execute(&buf, struct {
+		ScaleSet string
+		Window   string
+		Quantile float64
+	}{ScaleSet: scaleSet, Window: d.Window, Quantile: d.Quantile}); err != nil {
+		return "", fmt.Errorf("rendering degradation ladder observed_query for scale set %q: %w", scaleSet, err)
+	}
+	return buf.String(), nil
 }
 
 type ScaleSetConfigFile struct {
@@ -239,6 +318,14 @@ type ScaleSetConfigFile struct {
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.
 	FileMounts []string `yaml:"file_mounts,omitempty"`
+	// DegradationLadder overrides fleet.placement.degradation_ladder.enabled
+	// for this one lane (agent-lcars#1697, docs/fleet-scheduler-redesign.md#D):
+	// a pointer so the tri-state matters -- unset defers to the fleet-wide
+	// default, true always enables the ladder for this lane even when the
+	// fleet default is off, and false always disables it even when the
+	// fleet default is on. Valid on both top-level scale_sets[] entries and
+	// registrations[].scale_sets[] entries.
+	DegradationLadder *bool `yaml:"degradation_ladder,omitempty"`
 }
 
 // dockerSocketPaths are every spelling of the Docker socket that config
@@ -366,9 +453,13 @@ type resolvedOrchestratorConfig struct {
 	// defaultRunnerCgroupParent when the key is omitted, the configured value
 	// when set, or "" when explicitly disabled. See FleetPlacementFile.
 	RunnerCgroupParent string
-	ScaleSets          []Config
-	Weights            map[string]int
-	Priorities         map[string]int
+	// DegradationLadder is the resolved fleet.placement.degradation_ladder
+	// block (agent-lcars#1697). See Config.DegradationLadderEnabled for each
+	// scale set's own resolved enablement.
+	DegradationLadder resolvedDegradationLadder
+	ScaleSets         []Config
+	Weights           map[string]int
+	Priorities        map[string]int
 }
 
 func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
@@ -573,6 +664,45 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 		return fmt.Errorf("fleet placement thresholds are not ordered correctly")
 	}
 
+	dl := &p.DegradationLadder
+	if dl.ObservedWindow == "" {
+		dl.ObservedWindow = "168h"
+	}
+	if dl.ObservedQuantile == 0 {
+		dl.ObservedQuantile = 0.95
+	}
+	if dl.ObservedQuery == "" {
+		dl.ObservedQuery = defaultDegradationLadderQuery
+	}
+	if dl.RefreshInterval == "" {
+		dl.RefreshInterval = "10m"
+	}
+	if math.IsNaN(dl.ObservedQuantile) || dl.ObservedQuantile <= 0 || dl.ObservedQuantile > 1 {
+		return fmt.Errorf("fleet.placement.degradation_ladder.observed_quantile must be greater than 0 and at most 1")
+	}
+	ladderWindow, err := time.ParseDuration(dl.ObservedWindow)
+	if err != nil || ladderWindow <= 0 {
+		return fmt.Errorf("fleet.placement.degradation_ladder.observed_window %q must be a positive duration", dl.ObservedWindow)
+	}
+	ladderRefresh, err := time.ParseDuration(dl.RefreshInterval)
+	if err != nil || ladderRefresh <= 0 {
+		return fmt.Errorf("fleet.placement.degradation_ladder.refresh_interval %q must be a positive duration", dl.RefreshInterval)
+	}
+	if strings.TrimSpace(dl.PrometheusURL) != "" {
+		if _, err := url.ParseRequestURI(dl.PrometheusURL); err != nil {
+			return fmt.Errorf("fleet.placement.degradation_ladder.prometheus_url %q is invalid: %w", dl.PrometheusURL, err)
+		}
+	}
+	ladderTemplate, err := template.New("degradation_ladder_observed_query").Parse(dl.ObservedQuery)
+	if err != nil {
+		return fmt.Errorf("fleet.placement.degradation_ladder.observed_query is not a valid template: %w", err)
+	}
+	r.DegradationLadder = resolvedDegradationLadder{
+		Enabled: dl.Enabled, PrometheusURL: strings.TrimSpace(dl.PrometheusURL),
+		Window: dl.ObservedWindow, Quantile: dl.ObservedQuantile, QueryTemplate: ladderTemplate,
+		RefreshInterval: ladderRefresh, MaxSampleAge: 3 * ladderRefresh,
+	}
+
 	if len(c.ScaleSets) == 0 && len(c.Registrations) == 0 {
 		return fmt.Errorf("at least one of scale_sets or registrations must be set")
 	}
@@ -745,6 +875,14 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 		maxSum += s.MaxRunners
 		r.Weights[s.Name] = s.Weight
 		r.Priorities[s.Name] = s.Priority
+		// A lane is ladder-enabled iff its own override is true, or the
+		// override is unset and the fleet-wide default is true -- an
+		// explicit false always wins over the fleet default
+		// (agent-lcars#1697, docs/fleet-scheduler-redesign.md#D).
+		ladderEnabled := r.DegradationLadder.Enabled
+		if s.DegradationLadder != nil {
+			ladderEnabled = *s.DegradationLadder
+		}
 		out = append(out, Config{
 			RegistrationURL: registrationURL, RunnerGroup: runnerGroup, RegistrationName: registrationName,
 			ScaleSetName: s.Name, Labels: s.Labels, RunnerImage: s.RunnerImage,
@@ -752,6 +890,7 @@ func (r *resolvedOrchestratorConfig) resolveScaleSets(registrationName, registra
 			MinRunners: s.MinRunners, MaxRunners: s.MaxRunners,
 			FileMounts: fileMounts,
 			LogLevel:   r.Raw.Server.LogLevel, LogFormat: r.Raw.Server.LogFormat,
+			DegradationLadderEnabled: ladderEnabled,
 		})
 	}
 	return out, maxSum, nil

@@ -1075,3 +1075,189 @@ func TestOrchestratorConfigRejectsBadRunnerMemoryReservation(t *testing.T) {
 		}
 	}
 }
+
+// TestDegradationLadderConfigDefaults pins agent-lcars#1697's documented
+// defaults for an omitted fleet.placement.degradation_ladder block: off,
+// with the window/quantile/query/refresh_interval defaults that make an
+// operator's later opt-in ("enabled: true") behave sensibly with no other
+// keys set.
+func TestDegradationLadderConfigDefaults(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dl := resolved.DegradationLadder
+	if dl.Enabled {
+		t.Error("degradation_ladder.enabled defaulted to true, want false")
+	}
+	if dl.PrometheusURL != "" {
+		t.Errorf("prometheus_url defaulted to %q, want empty", dl.PrometheusURL)
+	}
+	if dl.Window != "168h" {
+		t.Errorf("observed_window default = %q, want 168h", dl.Window)
+	}
+	if dl.Quantile != 0.95 {
+		t.Errorf("observed_quantile default = %v, want 0.95", dl.Quantile)
+	}
+	if dl.RefreshInterval != 10*time.Minute {
+		t.Errorf("refresh_interval default = %v, want 10m", dl.RefreshInterval)
+	}
+	if dl.MaxSampleAge != 30*time.Minute {
+		t.Errorf("MaxSampleAge = %v, want 3x the 10m default refresh_interval (30m)", dl.MaxSampleAge)
+	}
+	for _, c := range resolved.ScaleSets {
+		if c.DegradationLadderEnabled {
+			t.Errorf("scale set %q defaulted to ladder-enabled, want false", c.ScaleSetName)
+		}
+	}
+	rendered, err := dl.render("default")
+	if err != nil {
+		t.Fatalf("render() error = %v", err)
+	}
+	want := `quantile(0.95, max_over_time(container_memory_rss{container_label_autoscaler_scale_set="default"}[168h]))`
+	if rendered != want {
+		t.Errorf("default observed_query rendered = %q, want %q", rendered, want)
+	}
+}
+
+func degradationLadderYAML(placementBlock string) string {
+	return strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n"+placementBlock, 1)
+}
+
+// TestDegradationLadderConfigGlobalEnableAppliesToAllLanes pins the "global
+// enabled with no per-lane override" precedence rule.
+func TestDegradationLadderConfigGlobalEnableAppliesToAllLanes(t *testing.T) {
+	body := degradationLadderYAML("    degradation_ladder:\n      enabled: true\n      prometheus_url: http://prometheus:9090\n")
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.DegradationLadder.Enabled {
+		t.Error("resolved.DegradationLadder.Enabled = false, want true")
+	}
+	if resolved.DegradationLadder.PrometheusURL != "http://prometheus:9090" {
+		t.Errorf("prometheus_url = %q, want http://prometheus:9090", resolved.DegradationLadder.PrometheusURL)
+	}
+	for _, c := range resolved.ScaleSets {
+		if !c.DegradationLadderEnabled {
+			t.Errorf("scale set %q DegradationLadderEnabled = false, want true (fleet-wide default)", c.ScaleSetName)
+		}
+	}
+}
+
+// TestDegradationLadderConfigPerLaneOverridePrecedence pins agent-lcars#1697's
+// override rule both ways: an explicit false wins over a true fleet default,
+// and an explicit true wins over a false (the default) fleet default. Also
+// exercises registrations[].scale_sets[], not just the top-level list.
+func TestDegradationLadderConfigPerLaneOverridePrecedence(t *testing.T) {
+	// Global default on; "default" opts out, "e2e" inherits it.
+	body := degradationLadderYAML("    degradation_ladder:\n      enabled: true\n")
+	body = strings.Replace(body, "  - name: default\n    labels: [default]\n",
+		"  - name: default\n    labels: [default]\n    degradation_ladder: false\n", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, c := range resolved.ScaleSets {
+		got[c.ScaleSetName] = c.DegradationLadderEnabled
+	}
+	if got["default"] {
+		t.Error(`scale set "default" DegradationLadderEnabled = true, want false (explicit override)`)
+	}
+	if !got["e2e"] {
+		t.Error(`scale set "e2e" DegradationLadderEnabled = false, want true (inherits the fleet default)`)
+	}
+
+	// Global default off (the base config); an additional registration's
+	// lane opts in explicitly while its sibling in the same registration
+	// does not.
+	keyPath := filepath.Join(t.TempDir(), "third-app.pem")
+	if err := os.WriteFile(keyPath, []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	regBody := strings.Replace(validOrchestratorYAML, "max_runners: 2\n", "max_runners: 4\n", 1) + `registrations:
+  - name: third
+    github:
+      url: https://github.com/example/third-repo
+    app:
+      client_id: third-client
+      installation_id: 7
+      private_key_file: ` + keyPath + `
+    scale_sets:
+      - name: third-ladder
+        labels: [third-ladder]
+        runner_image: example/third:latest
+        min_runners: 0
+        max_runners: 1
+        degradation_ladder: true
+      - name: third-plain
+        labels: [third-plain]
+        runner_image: example/third:latest
+        min_runners: 0
+        max_runners: 1
+`
+	resolved, err = loadOrchestratorConfig(writeConfig(t, regBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = map[string]bool{}
+	for _, c := range resolved.ScaleSets {
+		got[c.ScaleSetName] = c.DegradationLadderEnabled
+	}
+	if !got["third-ladder"] {
+		t.Error(`registrations[].scale_sets[] "third-ladder" DegradationLadderEnabled = false, want true (explicit override)`)
+	}
+	if got["third-plain"] {
+		t.Error(`registrations[].scale_sets[] "third-plain" DegradationLadderEnabled = true, want false (no override, fleet default off)`)
+	}
+}
+
+func TestDegradationLadderConfigValidatesQuantile(t *testing.T) {
+	cases := []string{"1.5", "-0.2"}
+	for _, quantile := range cases {
+		body := degradationLadderYAML("    degradation_ladder:\n      observed_quantile: " + quantile + "\n")
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "observed_quantile") {
+			t.Fatalf("quantile %s: error = %v, want observed_quantile complaint", quantile, err)
+		}
+	}
+}
+
+func TestDegradationLadderConfigValidatesObservedWindow(t *testing.T) {
+	cases := []string{"not-a-duration", "-1h", "0h"}
+	for _, window := range cases {
+		body := degradationLadderYAML("    degradation_ladder:\n      observed_window: \"" + window + "\"\n")
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "observed_window") {
+			t.Fatalf("window %q: error = %v, want observed_window complaint", window, err)
+		}
+	}
+}
+
+func TestDegradationLadderConfigValidatesRefreshInterval(t *testing.T) {
+	cases := []string{"not-a-duration", "-5m", "0m"}
+	for _, interval := range cases {
+		body := degradationLadderYAML("    degradation_ladder:\n      refresh_interval: \"" + interval + "\"\n")
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "refresh_interval") {
+			t.Fatalf("interval %q: error = %v, want refresh_interval complaint", interval, err)
+		}
+	}
+}
+
+func TestDegradationLadderConfigValidatesPrometheusURL(t *testing.T) {
+	body := degradationLadderYAML("    degradation_ladder:\n      prometheus_url: \"not-a-url\"\n")
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "prometheus_url") {
+		t.Fatalf("error = %v, want prometheus_url complaint", err)
+	}
+}
+
+func TestDegradationLadderConfigValidatesObservedQueryTemplate(t *testing.T) {
+	body := degradationLadderYAML("    degradation_ladder:\n      observed_query: \"{{.Bogus\"\n")
+	_, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err == nil || !strings.Contains(err.Error(), "observed_query") {
+		t.Fatalf("error = %v, want observed_query complaint", err)
+	}
+}

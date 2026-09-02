@@ -776,6 +776,89 @@ reachable right now. homelab's `RunnerLanePermanentCapacityLow` alert
 (`observability/prometheus/rules.yml`) reads this gauge, not
 `lane_admissible_slots`, for exactly that reason.
 
+## Placement degradation ladder
+
+When no reachable host admits a lane's declared reservation, and the lane
+opts in, placement walks an ordered degradation ladder instead of refusing
+outright (agent-lcars#1697, phase 3 of
+[`docs/fleet-scheduler-redesign.md#D`](../../docs/fleet-scheduler-redesign.md#d-a-degradation-ladder-with-a-floor)).
+**The declared reservation is the normal path; the ladder is the exception
+path, counted per rung** — a healthy fleet never touches it, and every time
+it does is a Prometheus counter, not a silent decision. Default is off, both
+fleet-wide and per lane: with the ladder disabled, a lane's rung-1 failure is
+byte-for-byte the pre-ladder refusal.
+
+```yaml
+fleet:
+  placement:
+    degradation_ladder:
+      enabled: false # fleet-wide default; off unless a lane overrides it
+      prometheus_url: http://prometheus:9090
+      observed_window: 168h
+      observed_quantile: 0.95
+      observed_query: >-
+        quantile({{.Quantile}}, max_over_time(container_memory_rss{container_label_autoscaler_scale_set="{{.ScaleSet}}"}[{{.Window}}]))
+      refresh_interval: 10m
+scale_sets:
+  - name: ci-heavy
+    ...
+    degradation_ladder: true # per-lane override; canary this lane first
+```
+
+A lane is ladder-enabled iff its own `degradation_ladder` override is
+`true`, or the override is unset and the fleet-wide `enabled` is `true`; an
+explicit `false` always wins over the fleet default. `prometheus_url`,
+`observed_window`, `observed_quantile`, `observed_query`, and
+`refresh_interval` are fleet-wide only, not per lane. `observed_query` is a
+Go `text/template` string rendered with `.ScaleSet`, `.Window`, and
+`.Quantile`; `observed_quantile` must be in `(0, 1]`, and `observed_window`
+and `refresh_interval` must be positive durations.
+
+The ladder only runs once rung 1 fails for a ladder-enabled lane:
+
+1. **Declared reservation** (normal, uncounted). Exactly today's admission:
+   `runner_memory_reservation` (or `runner_memory` when unset) charged
+   against a host's aggregate reserved-memory budget.
+2. **`observed_p95`**: admit on the least-loaded candidate whose free budget
+   covers the lane's _observed_ p95 memory instead of its declared
+   reservation, provided the host is not hard-overloaded and not
+   soft-pressured (`memory_soft`, PSI, or swap — the same gates rung 1
+   already respects, just against a smaller number). The observed figure
+   comes from an instant Prometheus query (`observed_query`, rendered per
+   scale set), refreshed every `refresh_interval` for ladder-enabled lanes
+   only and never on placement's own critical path — the query runs
+   asynchronously, with a bounded 5s timeout, from a background refresher
+   that populates a shared cache placement only ever reads. A sample older
+   than `3 * refresh_interval`, a failed query, or no `prometheus_url`
+   configured at all means rung 2 is skipped (the ladder goes straight from
+   rung 1 to rung 3).
+3. **`free_memory_floor`**: admit exactly one runner on the least-loaded
+   reachable, non-hard-overloaded host whose latest real node-exporter
+   `MemAvailable` sample exceeds the lane's ceiling (`runner_memory`),
+   regardless of any declared reservation. At most one such runner per host
+   at a time — claimed the moment it is picked, released when that runner
+   completes or is removed, and cordoning that host from every rung (for
+   every lane) until then. This is the floor invariant: **a reachable idle
+   host with more free memory than the job's ceiling always runs the job.**
+4. **`refused`**: no rung admitted the candidate. Identical to the
+   pre-ladder refusal — `lane_admissible_slots{scale_set}` already reads
+   `0` — except now counted per rung so a canary review can tell "the fleet
+   is genuinely full" from "nothing looked at this yet".
+
+Observability:
+`github_runner_autoscaler_placement_degraded_total{scale_set,rung}` counts
+every rung-2/3/4 decision (rung 1 is never counted here — it's the normal
+path, not a rung); `github_runner_autoscaler_placement_degraded_active{scale_set,host}`
+tracks rung-3 runners currently in flight, at most `1` per host;
+`github_runner_autoscaler_lane_observed_memory_p95_bytes{scale_set}` and
+`github_runner_autoscaler_lane_observed_memory_age_seconds{scale_set}`
+publish rung 2's Prometheus-sourced input for every ladder-enabled lane,
+refreshed on the same `refresh_interval` (neither is published until the
+first successful query succeeds). Every degraded placement is also logged at
+`INFO` with the scale set, host, rung, reserved bytes, and the figure that
+justified it (the observed p95 for rung 2, the host's real `MemAvailable`
+for rung 3).
+
 ## Deployment
 
 The actual runtime config (`orchestrator.yml`: fleet host inventory, GitHub

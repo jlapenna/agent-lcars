@@ -2240,7 +2240,7 @@ func TestFleetReservationChargesDeclaredReservation(t *testing.T) {
 	scaler := memoryBoundScaler(t, "default", 32*gibibyte, 14*gibibyte, nil)
 	scaler.runnerMemoryReservation = 8 * gibibyte
 	fleet := scaler.coordinator()
-	reservation, err := fleet.reserve(context.Background(), scaler)
+	reservation, err := fleet.reserve(context.Background(), scaler, "test-runner-1")
 	if err != nil {
 		t.Fatalf("reserve() error = %v", err)
 	}

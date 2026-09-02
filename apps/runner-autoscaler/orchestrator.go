@@ -93,7 +93,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 		return fmt.Errorf("starting metrics server: %w", err)
 	}
 
-	generation := startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
+	generation := startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 
 	// queueDraining mirrors the fleet's own SIGUSR1 drain flag for the queue
 	// executor's poller goroutine below: a claim minted moments before this
@@ -303,7 +303,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 				logger.Error("Configuration reload could not build runtimes; restoring current configuration", slog.Any("error", buildErr))
 				closeDockerHostClients(nextPlacementHosts)
 				configureFleet(fleet, resolved)
-				generation = startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
+				generation = startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 				continue
 			}
 			closeUnusedDockerHostClients(managedHosts, nextManagedHosts)
@@ -323,7 +323,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 					runtime.scaler.BeginDrain(context.WithoutCancel(ctx))
 				}
 			}
-			generation = startRuntimeGeneration(ctx, runtimes, logger, statusPublisher)
+			generation = startRuntimeGeneration(ctx, runtimes, fleet, resolved.DegradationLadder, logger, statusPublisher)
 			logger.Info("Configuration reloaded without draining runners")
 		}
 	}
@@ -499,6 +499,7 @@ func configureFleet(fleet *FleetCoordinator, resolved resolvedOrchestratorConfig
 	fleet.hostRoles = resolved.HostRoles
 	fleet.gate = newWeightedPlacementGate(resolved.Weights, order)
 	fleet.priorities = resolved.Priorities
+	fleet.observedMemoryMaxAge = resolved.DegradationLadder.MaxSampleAge
 	fleet.mu.Unlock()
 	fleetMaxRunnersGauge.Set(float64(resolved.Raw.Fleet.MaxRunners))
 	// Static description of every declared host's role, always 1
@@ -562,7 +563,7 @@ func validateReloadCompatibility(current, next resolvedOrchestratorConfig) error
 	return nil
 }
 
-func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime, logger *slog.Logger, statusPublisher consoleStatusPublisher) runtimeGeneration {
+func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime, fleet *FleetCoordinator, ladder resolvedDegradationLadder, logger *slog.Logger, statusPublisher consoleStatusPublisher) runtimeGeneration {
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
 	orchestratorExpectedListeners.Store(int64(len(runtimes)))
@@ -570,6 +571,8 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	// sampler populates fleet load/cooldown state for every listener.
 	wg.Add(1)
 	go func() { defer wg.Done(); runtimes[0].scaler.RunHostSampler(ctx) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); runDegradationLadderRefresher(ctx, runtimes, fleet, ladder) }()
 	wg.Add(1)
 	go func() { defer wg.Done(); runConsoleStatusPublisher(ctx, runtimes, statusPublisher) }()
 	wg.Add(1)
@@ -639,17 +642,18 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		minRunners:         c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
-		hostLoadPolicy:       c.HostLoadPolicy,
-		hostMetricsTimeouts:  c.HostMetricsTimeouts,
-		hostMemoryExempt:     stringSet(c.HostMemoryExempt),
-		hostMemoryOvercommit: c.HostMemoryOvercommit,
-		memorySafetyMargin:   c.MemorySafetyMargin,
-		readinessMetricsURL:  c.ReadinessMetricsURL,
-		readinessMetric:      c.ReadinessMetric,
-		readinessMaxAge:      c.ReadinessMaxAge,
-		hostRunnerLimits:     fleet.hostRunnerLimits,
-		fleet:                fleet,
-		checkpoints:          checkpoints, bootCheckpoint: boot,
+		hostLoadPolicy:           c.HostLoadPolicy,
+		hostMetricsTimeouts:      c.HostMetricsTimeouts,
+		hostMemoryExempt:         stringSet(c.HostMemoryExempt),
+		hostMemoryOvercommit:     c.HostMemoryOvercommit,
+		memorySafetyMargin:       c.MemorySafetyMargin,
+		readinessMetricsURL:      c.ReadinessMetricsURL,
+		readinessMetric:          c.ReadinessMetric,
+		readinessMaxAge:          c.ReadinessMaxAge,
+		hostRunnerLimits:         fleet.hostRunnerLimits,
+		degradationLadderEnabled: c.DegradationLadderEnabled,
+		fleet:                    fleet,
+		checkpoints:              checkpoints, bootCheckpoint: boot,
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)
