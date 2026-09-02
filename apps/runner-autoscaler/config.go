@@ -109,6 +109,13 @@ type Config struct {
 	// memory that placement leaves outside declared runner reservations. A
 	// value of 0.10 keeps ten percent free; zero selects the default.
 	MemorySafetyMargin float64
+	// RunnerCgroupParent is a homelab addition (agent-lcars#1700): the
+	// systemd slice every runner container is created under, resolved from
+	// fleet.placement.runner_cgroup_parent by
+	// resolvedOrchestratorConfig.RunnerCgroupParent and copied here verbatim
+	// in buildOrchestratorRuntimes. Empty disables the collective host-level
+	// slice bound; runnerHostConfig then omits HostConfig.CgroupParent too.
+	RunnerCgroupParent string
 	// ReadinessMetricsURL, ReadinessMetric and ReadinessMaxAge configure the
 	// per-host readiness gate consulted for hosts that set
 	// require_readiness. See FleetPlacementFile for the semantics and

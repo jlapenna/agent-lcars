@@ -1700,14 +1700,14 @@ func TestRunnerBinds(t *testing.T) {
 
 func TestRunnerHostConfig(t *testing.T) {
 	t.Run("zero pids limit means unlimited, not zero", func(t *testing.T) {
-		hc := runnerHostConfig(nil, 0, 0, 0)
+		hc := runnerHostConfig(nil, 0, 0, 0, "")
 		if hc.Resources.PidsLimit != nil {
 			t.Fatalf("PidsLimit = %v, want nil (unlimited)", *hc.Resources.PidsLimit)
 		}
 	})
 
 	t.Run("memory, pids limit and shm size are all set", func(t *testing.T) {
-		hc := runnerHostConfig([]string{"/a:/b"}, 12<<30, 8192, 1<<30)
+		hc := runnerHostConfig([]string{"/a:/b"}, 12<<30, 8192, 1<<30, "")
 		if hc.Resources.Memory != 12<<30 {
 			t.Fatalf("Memory = %d, want %d", hc.Resources.Memory, int64(12<<30))
 		}
@@ -1719,6 +1719,23 @@ func TestRunnerHostConfig(t *testing.T) {
 		}
 		if len(hc.Binds) != 1 || hc.Binds[0] != "/a:/b" {
 			t.Fatalf("Binds = %#v", hc.Binds)
+		}
+	})
+
+	// agent-lcars#1700: every runner container joins the host-level runner
+	// slice when one is configured, and is left with Docker's own default
+	// (no CgroupParent at all) when the fleet disables it.
+	t.Run("cgroup parent carried when configured", func(t *testing.T) {
+		hc := runnerHostConfig(nil, 0, 0, 0, "homelab-runners.slice")
+		if hc.Resources.CgroupParent != "homelab-runners.slice" {
+			t.Fatalf("CgroupParent = %q, want %q", hc.Resources.CgroupParent, "homelab-runners.slice")
+		}
+	})
+
+	t.Run("cgroup parent omitted when disabled", func(t *testing.T) {
+		hc := runnerHostConfig(nil, 0, 0, 0, "")
+		if hc.Resources.CgroupParent != "" {
+			t.Fatalf("CgroupParent = %q, want empty (disabled)", hc.Resources.CgroupParent)
 		}
 	})
 }

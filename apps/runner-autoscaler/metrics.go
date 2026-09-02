@@ -263,6 +263,20 @@ var (
 		},
 		[]string{"host"},
 	)
+	runnerSliceBoundedGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_runner_slice_bounded",
+			Help: "1 when this host's collective runner cgroup slice memory.max/memory.high were successfully applied via systemctl set-property; 0 when the property could not be applied, in which case only each runner's own per-container ceiling holds (agent-lcars#1700).",
+		},
+		[]string{"host"},
+	)
+	runnerSliceMemoryMaxGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_runner_slice_memory_max_bytes",
+			Help: "The collective memory.max last successfully applied to this host's runner cgroup slice: physical memory times (1 - the configured safety margin). Meaningful only while runner_slice_bounded is 1.",
+		},
+		[]string{"host"},
+	)
 	laneAdmissibleSlotsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_lane_admissible_slots",
@@ -490,6 +504,8 @@ func registerMetrics() {
 			hostMemoryBudgetGauge,
 			hostMemoryObservedGauge,
 			hostMemoryOvercommitEffectiveGauge,
+			runnerSliceBoundedGauge,
+			runnerSliceMemoryMaxGauge,
 			laneAdmissibleSlotsGauge,
 			scaleSetMemoryReservationGauge,
 			scaleSetMemoryLimitGauge,

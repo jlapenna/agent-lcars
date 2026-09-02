@@ -154,6 +154,15 @@ type FleetPlacementFile struct {
 	// MemorySafetyMargin is the fraction of Docker-reported physical host
 	// memory that aggregate runner reservations may not consume.
 	MemorySafetyMargin float64 `yaml:"memory_safety_margin,omitempty"`
+	// RunnerCgroupParent is the systemd slice every runner container is
+	// created under (Docker's --cgroup-parent), so co-tenant runners on one
+	// host are bounded collectively by ensureRunnerSlice's memory.max /
+	// memory.high in addition to their own per-container ceilings
+	// (agent-lcars#1700). A pointer because the tri-state matters: an
+	// omitted key defaults to defaultRunnerCgroupParent, while an explicit
+	// empty string disables the slice bound entirely -- once YAML decoding
+	// is done a plain string can no longer tell those two apart.
+	RunnerCgroupParent *string `yaml:"runner_cgroup_parent,omitempty"`
 	LoadSoft           float64 `yaml:"load_soft,omitempty"`
 	LoadBusy           float64 `yaml:"load_busy,omitempty"`
 	LoadHard           float64 `yaml:"load_hard,omitempty"`
@@ -313,9 +322,13 @@ type resolvedOrchestratorConfig struct {
 	MemoryOvercommit map[string]float64
 	Placement        hostLoadPolicy
 	Cooldown         time.Duration
-	ScaleSets        []Config
-	Weights          map[string]int
-	Priorities       map[string]int
+	// RunnerCgroupParent is the resolved fleet.placement.runner_cgroup_parent:
+	// defaultRunnerCgroupParent when the key is omitted, the configured value
+	// when set, or "" when explicitly disabled. See FleetPlacementFile.
+	RunnerCgroupParent string
+	ScaleSets          []Config
+	Weights            map[string]int
+	Priorities         map[string]int
 }
 
 func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
@@ -458,6 +471,17 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	}
 	if math.IsNaN(p.MemorySafetyMargin) || math.IsInf(p.MemorySafetyMargin, 0) || p.MemorySafetyMargin < 0 || p.MemorySafetyMargin >= 1 {
 		return fmt.Errorf("fleet.placement.memory_safety_margin must be greater than 0 and less than 1")
+	}
+	switch {
+	case p.RunnerCgroupParent == nil:
+		r.RunnerCgroupParent = defaultRunnerCgroupParent
+	case strings.TrimSpace(*p.RunnerCgroupParent) == "":
+		r.RunnerCgroupParent = ""
+	default:
+		r.RunnerCgroupParent = strings.TrimSpace(*p.RunnerCgroupParent)
+	}
+	if r.RunnerCgroupParent != "" && !runnerCgroupParentPattern.MatchString(r.RunnerCgroupParent) {
+		return fmt.Errorf("fleet.placement.runner_cgroup_parent %q must be a bare systemd slice name ending in \".slice\", with no slashes", r.RunnerCgroupParent)
 	}
 	if strings.Count(p.HostMetricsURLTemplate, "%s") != 1 {
 		return fmt.Errorf("fleet.placement.host_metrics_url_template must contain exactly one %%s")

@@ -423,6 +423,110 @@ the remaining capacity. For example, one 12 GiB reservation on a 16 GiB host
 allows a 2 GiB candidate with the default margin but rejects a second 12 GiB
 candidate.
 
+### Host-level runner slice
+
+Reserved-memory admission above only ever gates _future_ placements. It does
+nothing about runners already admitted: three runners each individually
+inside their own ceiling can still grow together past what the host actually
+has, because nothing bounds them collectively once they are running
+(agent-lcars#1700, raised in review of #1689). The host-level runner slice
+closes that gap by giving every runner container on a host a shared cgroup
+ceiling, independent of and in addition to its own `runner_memory` limit:
+
+```yaml
+fleet:
+  placement:
+    memory_safety_margin: 0.10
+    runner_cgroup_parent: homelab-runners.slice # default; "" disables
+```
+
+Every runner container is created with `HostConfig.CgroupParent` set to this
+slice (Docker's `--cgroup-parent`), so on a systemd/cgroup v2 host the
+kernel enforces one collective `memory.max` across every co-tenant runner on
+that host, not just each container's own limit. Docker's systemd cgroup
+driver requires a bare slice name (no slashes) ending in `.slice` -- an
+invalid `runner_cgroup_parent` fails config validation for the same reason.
+The slice itself needs no host provisioning: systemd creates a missing
+`.slice` unit implicitly the first time anything references it (this is
+systemd's own documented behavior, not Docker's -- see [Red Hat, "Managing
+cgroups with
+systemd"](https://www.redhat.com/en/blog/cgroups-part-four): "if a parent
+does not exist, systemd creates it for you"; Docker's own [`dockerd`
+reference](https://docs.docker.com/reference/cli/dockerd/) confirms
+`--cgroup-parent` under the systemd cgroup driver must be given as a slice
+name for exactly this reason). What systemd does _not_ do on its own is put
+any limit on that slice -- Docker never sets resource properties on a
+`--cgroup-parent` it did not create the unit file for, so the slice exists
+unbounded until something applies `MemoryMax`/`MemoryHigh` to it explicitly.
+
+That "something" is `ensureRunnerSlice`, run before the first placement on a
+host and again whenever the computed budget changes (a re-measured physical
+total, or a reloaded safety margin) -- not on every placement, so a healthy
+host does not pay a `systemctl`/SSH round trip per runner start. The bound is
+the same figure reserved-memory admission already treats as the host's
+budget:
+
+```
+memory.max  = physical_memory × (1 − memory_safety_margin)
+memory.high = memory.max × 0.95
+```
+
+`memory.high` sits 5% below `memory.max` so cgroup reclaim pressure inside
+the slice starts before the hard ceiling is hit, giving the kernel room to
+throttle/reclaim within the runner slice rather than reaching for the OOM
+killer against the control plane, registry, or exporters sharing that host.
+Applying it runs `systemctl set-property <slice> MemoryMax=<bytes>
+MemoryHigh=<bytes>` on the host itself: directly for a `docker: local`
+target, or over the identical pinned fleet SSH key and target Docker itself
+already uses for a `docker: ssh://user@host` remote/SSH-proxied host (the
+same connection helper `newDockerClient` uses -- see hosts.go). The applier
+is injectable in tests; production uses this `systemctl` implementation
+unconditionally.
+
+A slice-bound failure is never placement-blocking. If the property cannot be
+applied -- the container lacks systemd/D-Bus access, the SSH target is
+unreachable, the host runs a non-systemd init -- it is logged at `WARN` and
+`github_runner_autoscaler_runner_slice_bounded{host}` is set to `0`; the
+runner is still placed under its own per-container ceiling exactly as
+before this feature existed. The failure is not cached as success, so the
+very next placement on that host retries automatically. On success,
+`runner_slice_bounded{host}` is `1` and
+`github_runner_autoscaler_runner_slice_memory_max_bytes{host}` reports the
+applied `memory.max`.
+
+**Follow-up: correlated measurement (tracked on agent-lcars#1700, kept
+open).** The slice bound above is a ceiling, not evidence that co-tenant
+runners actually approach it. Before raising `memory_overcommit` above 1.0
+per host (agent-lcars#1694), collect two weeks of the p99 of the _per-host
+sum_ of co-tenant runner RSS -- not each runner's own p99 treated as
+independent, which is exactly the assumption #1689's review flagged as
+unsafe. `runner` on
+`github_runner_autoscaler_runner_job_info{scale_set,runner,job_id,job_name,workflow,repository}`
+(agent-lcars#1693) is the container name, which is also cAdvisor's `name`
+label -- the same identity "Measuring per-job memory" below already relies
+on -- confirming that summing cAdvisor's per-container series by
+container-name pattern correctly captures every autoscaler-managed runner
+and nothing else. cAdvisor's own scrape target already identifies the
+physical host (its `instance` label), so the per-host sum needs no
+additional join:
+
+```promql
+quantile_over_time(0.99,
+  sum by (instance) (
+    max_over_time(container_memory_max_usage_bytes{name=~"runner-.*"}[5m])
+  )[14d:5m]
+)
+```
+
+This takes, at each 5-minute sample over the two-week window, the sum across
+every runner container co-resident on a host of that container's peak
+memory since the previous sample, then reports the 99th percentile of that
+per-host sum series. Swap in a `runs-on`/`job_name` breakdown from
+`runner_job_info` (as in "Measuring per-job memory") to see which jobs drive
+a host's total when this is elevated. Enable the higher overcommit factor
+only once this shows the slice bound is never approached at the proposed
+reservation on the hosts it would apply to.
+
 ## Measuring per-job memory
 
 Container labels are fixed at create time and a JIT runner only learns its

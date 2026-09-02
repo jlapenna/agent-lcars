@@ -428,6 +428,7 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
 		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
 		c.ReadinessMaxAge = resolved.ReadinessMaxAge
+		c.RunnerCgroupParent = resolved.RunnerCgroupParent
 		runtime, err := buildScaleSetRuntime(c, dockerHosts, placementHosts, fleet, checkpoints, restored.runners(c.ScaleSetName))
 		if err != nil {
 			return nil, fmt.Errorf("initializing scale set %q: %w", c.ScaleSetName, err)
@@ -625,7 +626,8 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
 		runnerImage:  c.RunnerImage,
 		runnerMemory: memory, runnerMemoryReservation: reservation, runnerPidsLimit: c.RunnerPidsLimit, runnerShmSize: shmSize,
-		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
+		runnerCgroupParent: c.RunnerCgroupParent,
+		minRunners:         c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
 		hostLoadPolicy:       c.HostLoadPolicy,

@@ -57,7 +57,18 @@ type Scaler struct {
 	// runnerShmSize: see Config.RunnerShmSize. Zero means Docker's own
 	// default (64m).
 	runnerShmSize int64
-	scaleSetID    int
+	// runnerCgroupParent: see Config.RunnerCgroupParent. Empty disables the
+	// host-level runner slice (agent-lcars#1700).
+	runnerCgroupParent string
+	// runnerSliceApplier applies a host's collective runner-slice memory
+	// bound; nil selects defaultRunnerSliceApplier. Injectable for tests --
+	// see ensureRunnerSlice.
+	runnerSliceApplier runnerSliceApplierFunc
+	// runnerSliceBudgets remembers, per host, the memory.max last
+	// successfully applied to that host's runner slice, so ensureRunnerSlice
+	// only re-runs the applier when the budget actually changes.
+	runnerSliceBudgets sync.Map // map[host]int64
+	scaleSetID         int
 	// Homelab change: a pool of docker hosts (local + SSH-proxied remotes)
 	// instead of a single client, so ONE scale set/label can spread runners
 	// across the whole fleet — see hosts.go. Order is round-robin fallback;
@@ -1016,6 +1027,18 @@ func (a *Scaler) hostClient(name string) (*dockerclient.Client, error) {
 		}
 	}
 	return nil, fmt.Errorf("unknown docker host %q", name)
+}
+
+// dockerHost looks up a configured DockerHost by name -- the same set
+// hostClient searches, but returning the full struct (including Target) for
+// callers that need it, e.g. applyRunnerSlice's SSH-vs-local dispatch.
+func (a *Scaler) dockerHost(name string) (DockerHost, bool) {
+	for _, h := range a.dockerHosts {
+		if h.Name == name {
+			return h, true
+		}
+	}
+	return DockerHost{}, false
 }
 
 func (a *Scaler) placementDockerHosts() []DockerHost {
@@ -2352,9 +2375,13 @@ func runnerEnvironment(encodedJITConfig, host string) []string {
 // resource-limit wiring is unit-testable without a live Docker API. A zero
 // pidsLimit means "no limit" -- container.Resources.PidsLimit is a pointer
 // specifically so that omitting it (nil) reads as "don't change/unlimited"
-// to the Docker API, which a literal 0 would not.
-func runnerHostConfig(binds []string, memory, pidsLimit, shmSize int64) *container.HostConfig {
-	resources := container.Resources{Memory: memory}
+// to the Docker API, which a literal 0 would not. cgroupParent, when
+// non-empty, places the container under the host-level runner slice
+// (agent-lcars#1700) whose collective memory.max/memory.high
+// ensureRunnerSlice maintains; empty omits HostConfig.CgroupParent entirely,
+// leaving Docker's own default.
+func runnerHostConfig(binds []string, memory, pidsLimit, shmSize int64, cgroupParent string) *container.HostConfig {
+	resources := container.Resources{Memory: memory, CgroupParent: cgroupParent}
 	if pidsLimit > 0 {
 		limit := pidsLimit
 		resources.PidsLimit = &limit
@@ -2408,6 +2435,12 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
 		return "", err
 	}
+	// Bound the host's runner slice collectively before this container joins
+	// it. Never placement-blocking: a failure here is logged and gauged, not
+	// returned -- see applyRunnerSlice.
+	if dh, ok := a.dockerHost(host); ok {
+		a.applyRunnerSlice(ctx, client, dh)
+	}
 	// The fleet's scheduled `docker image prune -a` can remove a runner image
 	// whenever that host happens to have no active runner. Startup refreshes
 	// alone are therefore insufficient for a long-lived control plane: verify
@@ -2432,7 +2465,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 
 	binds := runnerBinds(a.fileMounts)
-	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize)
+	hostConfig := runnerHostConfig(binds, a.runnerMemory, a.runnerPidsLimit, a.runnerShmSize, a.runnerCgroupParent)
 
 	c, err := a.createContainerWithImageRecovery(
 		ctx,
