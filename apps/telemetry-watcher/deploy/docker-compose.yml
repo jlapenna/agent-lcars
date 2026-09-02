@@ -45,7 +45,12 @@ services:
     # records the resolved digest at deploy time instead (see its
     # post-deploy output). That keeps the forensic value without the toil,
     # and records what DID run rather than what was intended to.
-    image: docker-registry.lan.jlapenna.net/agent-lcars/telemetry-watcher:latest
+    # AGENT_TELEMETRY_IMAGE_REGISTRY names the registry mirror this fleet
+    # pulls the image from (deploy.sh requires it -- issue #1732, no
+    # maintainer default: every deploying fleet has its own mirror or none
+    # at all). The image path/tag after it (agent-lcars/telemetry-watcher,
+    # `latest`) is this project's own published name, not fleet-specific.
+    image: ${AGENT_TELEMETRY_IMAGE_REGISTRY:?deploy.sh must export AGENT_TELEMETRY_IMAGE_REGISTRY}/agent-lcars/telemetry-watcher:latest
     container_name: agent-lcars-telemetry-watcher
     user: '${WATCHER_UID:?deploy.sh must export WATCHER_UID}:${WATCHER_GID:?deploy.sh must export WATCHER_GID}'
     # Shares the host PID namespace so isProcessAliveForCwd's /proc/<pid>/cwd

@@ -1,14 +1,37 @@
 # Deploying the telemetry watcher
 
-The `agent-lcars-telemetry-watcher` container (this app's Docker image,
-published from canonical `jlapenna/homelab` — see the app README's
-[Deployment](../README.md#deployment) section) runs as a per-host daemon on
-`pike`, `laforge`, and `janeway`, which are
-`jlapenna/homelab`-fleet Docker hosts.
+The `agent-lcars-telemetry-watcher` container (this app's Docker image — see
+the app README's [Deployment](../README.md#deployment) section) runs as a
+per-host daemon on whichever Docker hosts a deploying fleet designates. None
+of the deploy tooling in this directory assumes a specific fleet, user, or
+host set (issue #1732) — every identity input is required, with no
+maintainer default. This doc uses `jlapenna/homelab`'s fleet (hosts `pike`,
+`laforge`, `janeway`) as a **worked example** throughout; substitute your own
+fleet's users, hosts, and registry.
+
 This directory is the deployment config's canonical home — moved from
 `jlapenna/homelab` in homelab#218 Phase 6, on the reasoning that the
 deployment config should live with the image that builds it and the
 semantics (allowlists, entrypoint, uid) it depends on.
+
+## Configuration
+
+`deploy.sh` requires these three inputs and fails fast with no default when
+any is missing — set them directly in the invoking environment, or in a
+deploy env file at `$AGENT_TELEMETRY_DEPLOY_DIR/.env` (`deploy.sh` sources
+it before resolving any of the three; see `.env.example`):
+
+| Variable                         | Meaning                                                                                 | homelab's worked-example value                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `AGENT_TELEMETRY_WATCHER_USER`   | Login the watcher's uid/gid/home/transcripts derive from.                               | `jlapenna`                                                                         |
+| `AGENT_TELEMETRY_CHECKOUT_ROOTS` | Comma-separated absolute checkout roots to watch (privacy scope, not just a filter).    | `/home/jlapenna/p/sprinkles,/home/jlapenna/p/agent-lcars,/home/jlapenna/p/homelab` |
+| `AGENT_TELEMETRY_IMAGE_REGISTRY` | Registry mirror `docker-compose.yml` pulls `agent-lcars/telemetry-watcher:latest` from. | `docker-registry.lan.jlapenna.net`                                                 |
+
+Optional:
+
+| Variable                       | Meaning                                                                                                                                              | Default           |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `AGENT_TELEMETRY_REPO_ALIASES` | JSON object of pre-rename `"owner/name"` → `{"owner", "name"}`, for a fleet with repo-rename history a stale local `origin` remote can still report. | `{}` (no aliases) |
 
 > [!IMPORTANT]
 > The deploy is **not** run from this checkout directly. `deploy.sh` only
@@ -51,10 +74,11 @@ The watcher writer key must exist on each host at
 `deploy.sh` will bring the service up:
 
 - **`writer-key.json`** — the `telemetry-writer` service-account key
-  (JSON), bind-mounted read-only into the container and read as the host's
-  `jlapenna` uid (see the compose file's comment for why: the container's
-  process reads it directly under that account, unlike `.env`, which the
-  host's `docker` CLI reads under whatever identity invokes it).
+  (JSON), bind-mounted read-only into the container and read as the
+  `AGENT_TELEMETRY_WATCHER_USER` uid (see the compose file's comment for
+  why: the container's process reads it directly under that account, unlike
+  `.env`, which the host's `docker` CLI reads under whatever identity
+  invokes it).
 
   **This credential's source of truth stays `jlapenna/homelab`'s encrypted
   vault**, not this repo — per this repo's own [`AGENTS.md`](../../../AGENTS.md)
@@ -92,13 +116,15 @@ The watcher writer key must exist on each host at
   hand-placed) — this repo's deploy never needs to know which.
 
 The deployment derives the watcher uid, gid, home directory, and host label
-from the local `jlapenna` account. Its default privacy scope is the explicit
-set `~/p/sprinkles`, `~/p/agent-lcars`, and `~/p/homelab`. Override that scope
-for a host by setting `AGENT_TELEMETRY_CHECKOUT_ROOTS` to a comma-separated
-absolute-path list when invoking `deploy.sh`. Every override must resolve under
-`~/p`, the checkout tree mounted into the container; the deploy fails closed
-for roots outside it. There is intentionally no implicit "watch every
-checkout" mode.
+from the `AGENT_TELEMETRY_WATCHER_USER` account (see
+[Configuration](#configuration) above — no default). Its privacy scope is
+exactly the roots named in `AGENT_TELEMETRY_CHECKOUT_ROOTS`, which must
+resolve under that account's `~/p`, the checkout tree mounted into the
+container; the deploy fails closed for roots outside it. There is
+intentionally no implicit "watch every checkout" mode, and no built-in
+checkout-root guess — homelab's own value happens to be `~/p/sprinkles`,
+`~/p/agent-lcars`, and `~/p/homelab`, but that is this fleet's choice, not a
+default.
 
 ## Deploying
 

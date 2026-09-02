@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveGitRepo } from './git-repo';
 
@@ -32,8 +32,19 @@ function mockExecFileError(error: Error) {
 }
 
 describe('resolveGitRepo', () => {
+  const originalRepoAliases = process.env['AGENT_TELEMETRY_REPO_ALIASES'];
+
   beforeEach(() => {
     vi.resetAllMocks();
+    delete process.env['AGENT_TELEMETRY_REPO_ALIASES'];
+  });
+
+  afterEach(() => {
+    if (originalRepoAliases === undefined) {
+      delete process.env['AGENT_TELEMETRY_REPO_ALIASES'];
+    } else {
+      process.env['AGENT_TELEMETRY_REPO_ALIASES'] = originalRepoAliases;
+    }
   });
 
   it.each([
@@ -59,13 +70,48 @@ describe('resolveGitRepo', () => {
     );
   });
 
-  it('normalizes a stale pre-rename origin (supersprinklesracing/members) to the current name', async () => {
+  it('normalizes a stale pre-rename origin per AGENT_TELEMETRY_REPO_ALIASES', async () => {
+    process.env['AGENT_TELEMETRY_REPO_ALIASES'] = JSON.stringify({
+      'supersprinklesracing/members': {
+        owner: 'supersprinklesracing',
+        name: 'sprinkles',
+      },
+    });
     mockExecFileResult('git@github.com:supersprinklesracing/members.git\n');
 
     await expect(resolveGitRepo(cwd)).resolves.toEqual({
       owner: 'supersprinklesracing',
       name: 'sprinkles',
     });
+  });
+
+  it('leaves a pre-rename origin unchanged with no configured alias (default)', async () => {
+    mockExecFileResult('git@github.com:supersprinklesracing/members.git\n');
+
+    await expect(resolveGitRepo(cwd)).resolves.toEqual({
+      owner: 'supersprinklesracing',
+      name: 'members',
+    });
+  });
+
+  it('throws on malformed AGENT_TELEMETRY_REPO_ALIASES JSON', async () => {
+    process.env['AGENT_TELEMETRY_REPO_ALIASES'] = 'not json';
+    mockExecFileResult('git@github.com:supersprinklesracing/sprinkles.git\n');
+
+    await expect(resolveGitRepo(cwd)).rejects.toThrow(
+      /AGENT_TELEMETRY_REPO_ALIASES is not valid JSON/,
+    );
+  });
+
+  it('throws on an AGENT_TELEMETRY_REPO_ALIASES entry missing owner/name', async () => {
+    process.env['AGENT_TELEMETRY_REPO_ALIASES'] = JSON.stringify({
+      'supersprinklesracing/members': { owner: 'supersprinklesracing' },
+    });
+    mockExecFileResult('git@github.com:supersprinklesracing/members.git\n');
+
+    await expect(resolveGitRepo(cwd)).rejects.toThrow(
+      /must be an object with string "owner" and "name" fields/,
+    );
   });
 
   it('returns undefined for a non-GitHub remote', async () => {
