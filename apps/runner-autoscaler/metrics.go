@@ -495,6 +495,14 @@ var (
 		Name: "github_runner_autoscaler_runner_status_probe_up",
 		Help: "1 when the latest registration-scoped GitHub runner-status reconciliation succeeded, 0 when it failed.",
 	}, []string{"registration"})
+	ghostRunnersDeletedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_ghost_runners_deleted_total",
+		Help: "GitHub runner registrations deleted by the periodic ghost sweep (agent-lcars#1725): offline, not busy, older than the sweep's minimum candidate age, and backed by no tracked container, by scale set.",
+	}, []string{"scale_set"})
+	ghostRunnersGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_ghost_runners",
+		Help: "Ghost GitHub runner registrations found (and deleted) in the most recent periodic sweep, by scale set.",
+	}, []string{"scale_set"})
 	fleetMaxRunnersGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_fleet_max_runners",
 		Help: "Configured hard maximum runner count across the fleet.",
@@ -647,6 +655,8 @@ func registerMetrics() {
 			pendingSinceTimestampGauge,
 			githubUnavailableRunnersGauge,
 			runnerStatusProbeUpGauge,
+			ghostRunnersDeletedTotal,
+			ghostRunnersGauge,
 			fleetMaxRunnersGauge,
 			checkpointWriteFailures,
 			checkpointLastWriteTimestamp,
