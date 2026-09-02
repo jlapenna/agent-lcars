@@ -312,8 +312,12 @@ type ScaleSetConfigFile struct {
 	MaxRunners int    `yaml:"max_runners"`
 	Weight     int    `yaml:"weight,omitempty"`
 	// Priority protects one minimum-service runner for this scale set while
-	// it has pending demand. Higher numbers take precedence; equal priorities
-	// retain weighted round-robin ordering. Zero is the default ordinary tier.
+	// it has pending demand and no runner of its own -- but only when a
+	// lower-priority placement would actually leave it with zero admissible
+	// slots fleet-wide (agent-lcars#1718); a lower-priority lane is never
+	// refused just because this one is pending, as long as the fleet has
+	// room for both. Higher numbers take precedence; equal priorities retain
+	// weighted round-robin ordering. Zero is the default ordinary tier.
 	Priority int `yaml:"priority,omitempty"`
 	// FileMounts are "hostPath:containerPath" pairs, mounted read-only.
 	// See Config.FileMounts and fleet.file_mount_allowlist.

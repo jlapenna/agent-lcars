@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -29,6 +30,16 @@ type FleetCoordinator struct {
 	// probeFleetHosts' maintenance exclusion (agent-lcars#1696).
 	hostRoles map[string]string
 	gate      *weightedPlacementGate
+	// scalers is every registered scale set's own *Scaler, keyed by
+	// scaleSetLabel() (agent-lcars#1718). reserve's priority-reservation gate
+	// needs a protected lane's own admission math (its memory reservation and
+	// host limits can differ from the placement it's evaluating) to tell
+	// whether refusing is actually necessary, not just the lane's name and
+	// demand counters -- see protectedLaneWouldStarveLocked. Populated by
+	// registerScaler once per scale set at startup (and again on a live
+	// reload, replacing the previous instance for that name); guarded by mu
+	// like every other field a placement decision reads.
+	scalers map[string]*Scaler
 
 	hostSampleMu    sync.Mutex
 	hostSamples     map[string]hostSample
@@ -97,8 +108,22 @@ func newFleetCoordinator(maxRunners int, limits map[string]int, weights, priorit
 		hostRoles:   map[string]string{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		floorRunners: map[string]string{}, observedMemory: map[string]observedMemorySample{},
-		gate: newWeightedPlacementGate(weights, order),
+		gate:    newWeightedPlacementGate(weights, order),
+		scalers: map[string]*Scaler{},
 	}
+}
+
+// registerScaler makes scaler discoverable by its scale-set label for
+// reserve's priority-reservation gate (agent-lcars#1718): see the scalers
+// field's doc comment. Safe to call again for the same label -- a live
+// reload's replacement Scaler simply supersedes the one it replaces.
+func (f *FleetCoordinator) registerScaler(scaler *Scaler) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.scalers == nil {
+		f.scalers = map[string]*Scaler{}
+	}
+	f.scalers[scaler.scaleSetLabel()] = scaler
 }
 
 // setObservedMemory records scaleSet's latest rung-2 observed-p95
@@ -167,9 +192,15 @@ func (f *FleetCoordinator) updateDemand(scaleSet string, pending, active int, no
 }
 
 // higherPriorityDemandLocked returns a higher-priority scale set that still
-// needs its minimum service share. One active or in-flight runner satisfies
-// that share, so ordinary/default work can keep using every remaining slot;
-// this is not strict priority and cannot monopolize the fleet.
+// needs its minimum service share -- a NAME to protect, not yet a decision to
+// refuse anything. One active or in-flight runner satisfies that share, so
+// ordinary/default work can keep using every remaining slot. Naming a
+// candidate here is necessary but not sufficient for reserve to actually
+// refuse a lower-priority placement: it also requires protectedLaneWouldStarveLocked
+// to find that this placement would take the candidate's last admissible
+// slot (agent-lcars#1718) -- otherwise a lane with spare capacity elsewhere
+// in the fleet would be serialized behind one pending job, which is a hard
+// monopoly, not "cannot monopolize."
 func (f *FleetCoordinator) higherPriorityDemandLocked(scaleSet string) string {
 	priority := f.priorities[scaleSet]
 	winner := ""
@@ -256,16 +287,30 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler, runnerNa
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	scaleSet := scaler.scaleSetLabel()
-	if protected := f.higherPriorityDemandLocked(scaleSet); protected != "" {
-		// Fleet-level: a scheduler decision to protect another scale set's
-		// share, not any host refusing this one.
-		placementBlocked.WithLabelValues(scaleSet, "", placementReasonPriorityReservation).Inc()
-		return nil, fmt.Errorf("%w: reserving the next safe slot for higher-priority scale set %q", errFleetAtCapacity, protected)
-	}
 	pick, err := scaler.pickHostLocked(ctx, f)
 	if err != nil {
 		return nil, err
 	}
+
+	if protected := f.higherPriorityDemandLocked(scaleSet); protected != "" {
+		if starves, remaining := f.protectedLaneWouldStarveLocked(ctx, protected, pick); starves {
+			// Fleet-level: this specific placement would take the last
+			// admissible slot the protected lane's minimum service share
+			// needs -- not any host refusing this one, and not merely
+			// "someone else is pending" (agent-lcars#1718): a lane with spare
+			// capacity elsewhere in the fleet must not be serialized behind
+			// another lane's pending job just because that job hasn't landed
+			// a runner yet.
+			placementBlocked.WithLabelValues(scaleSet, "", placementReasonPriorityReservation).Inc()
+			priorityReservationRefusalsTotal.WithLabelValues(scaleSet, protected).Inc()
+			scaler.logger.Info("Refusing placement to preserve a higher-priority scale set's minimum service share",
+				slog.String("protected_scale_set", protected),
+				slog.Int("protected_pending", f.scaleSetDemand[protected].pending),
+				slog.Int("protected_admissible_slots_if_placed", remaining))
+			return nil, fmt.Errorf("%w: reserving the next safe slot for higher-priority scale set %q", errFleetAtCapacity, protected)
+		}
+	}
+
 	f.reservations[pick.host]++
 	f.reservedMemory[pick.host] += pick.reservedMemory
 	f.startInFlight[pick.host] = true
@@ -281,6 +326,41 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler, runnerNa
 		placementDegradedActiveGauge.WithLabelValues(scaleSet, pick.host).Inc()
 	}
 	return &hostReservation{fleet: f, host: pick.host, memory: pick.reservedMemory, rung: pick.rung}, nil
+}
+
+// protectedLaneWouldStarveLocked reports whether committing pick -- this
+// placement's chosen host and the memory it would reserve there -- would
+// leave protected (a higher-priority lane with pending demand and no active
+// or reserved runner of its own; see higherPriorityDemandLocked) without a
+// single admissible slot anywhere in the fleet. It runs the exact admission
+// math behind the lane_admissible_slots gauge (laneAdmissibleSlotsOverHosts),
+// scoped to protected's OWN Scaler -- its memory reservation and host limits
+// can differ from the lane asking to place, so only protected's own
+// computation can answer this -- with pick's reservation counters
+// hypothetically applied first. f.reservations and f.reservedMemory are
+// mutated and restored within this call, all still under the caller's held
+// f.mu, so no concurrent caller can ever observe the hypothetical state.
+//
+// protected not being a registered scaler (see registerScaler) means there
+// is no way to evaluate its capacity; this fails closed and reports a
+// starve, matching this gate's behavior before agent-lcars#1718. In the real
+// orchestrator every configured scale set registers at startup, so this only
+// matters for a FleetCoordinator built without going through it (mainly
+// tests that don't care about this gate's capacity awareness).
+func (f *FleetCoordinator) protectedLaneWouldStarveLocked(ctx context.Context, protected string, pick placementPick) (starves bool, remainingSlots int) {
+	protectedScaler := f.scalers[protected]
+	if protectedScaler == nil {
+		return true, 0
+	}
+	f.reservations[pick.host]++
+	f.reservedMemory[pick.host] += pick.reservedMemory
+	defer func() {
+		f.reservations[pick.host]--
+		f.reservedMemory[pick.host] -= pick.reservedMemory
+	}()
+	probe := protectedScaler.probeFleetHosts(ctx, f)
+	remaining := protectedScaler.laneAdmissibleSlotsOverHosts(f, probe, nil)
+	return remaining < 1, remaining
 }
 
 func (r *hostReservation) release(scaleSet string) {

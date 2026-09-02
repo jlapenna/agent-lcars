@@ -791,6 +791,61 @@ decision — this is also what `placement_blocked_total`'s new `host` label
 (above) exists to make legible per host: "which constraint binds where" is a
 dashboard panel instead of a log grep.
 
+## Priority reservation: minimum service share, capacity-aware
+
+A scale set can declare `priority` (default `0`, higher numbers take
+precedence):
+
+```yaml
+fleet:
+  scale_sets:
+    - name: homelab-ci
+      priority: 10
+      weight: 1
+      ...
+    - name: homelab-control
+      # priority omitted -- ordinary tier
+      weight: 1
+      ...
+```
+
+The gate this configures is a **minimum service share, not strict
+priority**: a higher-priority lane with pending demand and no active or
+in-flight runner of its own gets first claim on the next placement, but only
+when that lane would otherwise be left with **zero admissible slots**
+fleet-wide. `reserve` picks a host for the lower-priority candidate first,
+then evaluates the protected lane's own `laneAdmissibleSlotsOverHosts`
+computation — the same admission math behind
+[`lane_admissible_slots`](#lane-capacity-admissible-slots), scoped to the
+protected lane's own memory reservation and host limits, which can differ
+from the candidate's — with the candidate's reservation hypothetically
+applied to the host it picked. Only when that leaves the protected lane with
+fewer than one admissible slot does `reserve` actually refuse; otherwise the
+lower-priority placement proceeds normally (agent-lcars#1718).
+
+This distinction matters because a fleet with free capacity everywhere is
+common: one active or in-flight runner already satisfies a lane's minimum
+service share, so an established lane keeps using every remaining slot even
+while a higher-priority lane is momentarily busy — and, since agent-lcars#1718,
+a higher-priority lane simply being _pending_ no longer serializes every
+other lane behind it either, as long as the fleet can still serve both. On
+2026-09-02, before this fix, a 2 GiB `homelab-autoscale-control` runner was
+refused for 90 seconds by a `priority: 10` `homelab-autoscale-homelab-ci`
+lane that had a job pending and no runner of its own yet — while 15
+admissible slots sat free fleet-wide. The gate refused unconditionally
+whenever the protected lane had zero active runners, without ever checking
+whether the fleet had room for both.
+
+A refusal increments both
+`github_runner_autoscaler_placement_blocked_total{scale_set,host="",reason="priority_reservation"}`
+(the fleet-level reason shared with every other capacity-shaped refusal) and
+`github_runner_autoscaler_priority_reservation_refusals_total{scale_set,protected}`,
+which names the specific lane that was protected — join it to
+`lane_admissible_slots{scale_set="<protected>"}` to see how tight its
+capacity actually was. The refusal is also logged at `INFO` with the
+protected lane's name, its pending count, and the admissible-slot figure the
+decision was based on.
+
 ## Host roles and the fleet invariant
 
 Each fleet host declares its standing in the fleet invariant with an optional

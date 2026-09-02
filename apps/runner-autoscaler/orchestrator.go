@@ -657,6 +657,10 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)
+	// Make this scale set's own admission math reachable by name for the
+	// priority-reservation gate (agent-lcars#1718): see FleetCoordinator's
+	// scalers field.
+	fleet.registerScaler(scaler)
 	return &scaleSetRuntime{config: c, scaler: scaler}, nil
 }
 

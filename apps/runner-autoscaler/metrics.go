@@ -408,6 +408,18 @@ var (
 			"); a fleet-level reason (" + placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonPriorityReservation +
 			") has no single host at fault and uses host=\"\".",
 	}, []string{"scale_set", "host", "reason"})
+	// priorityReservationRefusalsTotal is placementBlocked{reason="priority_reservation"}'s
+	// own counter, with the protected lane broken out as a label so alerting
+	// can name the starving pair directly instead of joining scale_set against
+	// a log line (agent-lcars#1718). Incremented alongside, never instead of,
+	// placementBlocked -- only when refusing this placement would leave
+	// protected without a single admissible slot anywhere in the fleet (see
+	// FleetCoordinator.protectedLaneWouldStarveLocked), not merely because
+	// protected has pending demand.
+	priorityReservationRefusalsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_priority_reservation_refusals_total",
+		Help: "Placements refused to preserve a higher-priority scale set's minimum service share, by the refused scale_set and the protected lane it yielded to. A companion to placement_blocked_total{reason=\"priority_reservation\"} that names the protected lane (agent-lcars#1718).",
+	}, []string{"scale_set", "protected"})
 	// placementDegradedTotal counts every degradation-ladder decision made
 	// AFTER rung 1 (the declared reservation) failed to admit a
 	// ladder-enabled lane's candidate: rung, one of degradationRungObservedP95,
@@ -620,6 +632,7 @@ func registerMetrics() {
 			placementDecisions,
 			reservationGauge,
 			placementBlocked,
+			priorityReservationRefusalsTotal,
 			placementDegradedTotal,
 			placementDegradedActiveGauge,
 			laneObservedMemoryP95Gauge,
