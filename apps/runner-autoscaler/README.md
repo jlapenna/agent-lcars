@@ -745,8 +745,8 @@ fleet:
   as they would for any other managed host. This is additive: removing a host
   from `fleet.hosts` entirely is still how you stop connecting to it at all
   (pike's credentials-revoked/re-entry preflight is unchanged by this field —
-  see "Host readiness gate" and the homelab operational docs) — `role:
-  maintenance` is for a host you want the fleet to keep reachability/readiness
+  see "Host readiness gate" and the homelab operational docs). Use
+  `maintenance` for a host you want the fleet to keep reachability/readiness
   telemetry on while it never receives work.
 
 `github_runner_autoscaler_host_role_info{host,role}` is a static `1` per
