@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Write .nx-remote-cache.env so tools/nx can enable the self-hosted Nx remote
-# cache -- the "L2" server on spark that CI uses too. Safe to re-run.
+# cache -- the "L2" server that CI uses too. Safe to re-run.
 #
 # The credential is resolved from two sources, first hit wins:
 #
@@ -104,7 +104,7 @@ if [ -z "$token" ]; then
     echo "    in $GCP_PROJECT_ID were both empty or unavailable)." >&2
   fi
   echo "    Skipping remote cache setup. Builds still work -- they just" >&2
-  echo "    recompute locally instead of pulling from spark." >&2
+  echo "    recompute locally instead of pulling from the remote cache." >&2
   exit 0
 fi
 

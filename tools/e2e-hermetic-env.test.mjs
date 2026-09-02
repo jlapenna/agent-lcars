@@ -95,6 +95,25 @@ test('the remote cache capability crosses the E2E boundary only as a complete pa
   assert.equal(result.stdout, 'remote cache capability verified\n');
 });
 
+test('the remote cache capability is accepted for any fleet-provided server, not a hard-coded host', () => {
+  const remoteCache = {
+    NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://picard.lan.jlapenna.net:3123',
+    NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: 'test-token-not-a-credential',
+  };
+  const probe = `
+    const expected = ${JSON.stringify(remoteCache)};
+    if (Object.entries(expected).some(([key, value]) => process.env[key] !== value)) {
+      process.exit(9);
+    }
+    process.stdout.write('remote cache capability verified\\n');
+  `;
+
+  const result = runThroughE2eBoundary(probe, remoteCache);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote cache capability verified\n');
+});
+
 test('an incomplete remote cache capability cannot cross the E2E boundary', () => {
   const probe = `
     if (process.env.NX_SELF_HOSTED_REMOTE_CACHE_SERVER !== undefined) process.exit(9);

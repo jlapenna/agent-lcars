@@ -67,9 +67,10 @@ local-override path.
 
 `tools/e2e/validate-env.mjs` rejects verbose `DEBUG` mode and any
 credential-shaped key unless both its name and dummy value are explicitly
-approved. The sole runtime exception is the exact paired Spark L2 cache
-server/token capability, which this script admits only when both are
-set; it can cache deterministic build artifacts but not the E2E task. It also
+approved. The sole runtime exception is the paired remote-cache L2 server/
+token capability, which this script admits only when both are set to a
+complete pair (any server, not a hard-coded one); it can cache deterministic
+build artifacts but not the E2E task. It also
 rejects dotenv keys outside the checked-in fixture schema, including
 process-injection controls such as `NODE_OPTIONS`. The internal implementation
 target refuses to run without the isolation marker set by the wrapper or

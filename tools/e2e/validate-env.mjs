@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 const CANONICAL_ENV = fileURLToPath(new URL('./ci.env', import.meta.url));
 
 const SAFE_CREDENTIAL_VALUES = new Map([['AUTH_SECRET', 'dummy-secret']]);
-const REMOTE_CACHE_SERVER = 'http://nx-cache.lan.jlapenna.net:3123';
 const REMOTE_CACHE_TOKEN = 'NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN';
 const REMOTE_CACHE_URL = 'NX_SELF_HOSTED_REMOTE_CACHE_SERVER';
 
@@ -108,14 +107,17 @@ function validateFile(file, schema) {
 function validateProcessEnvironment() {
   const remoteCacheServer = process.env[REMOTE_CACHE_URL];
   const remoteCacheToken = process.env[REMOTE_CACHE_TOKEN];
+  // "Private L2" is whatever non-empty server/token pair the caller (a
+  // fleet's CI, or a developer's local setup) actually supplied -- not a
+  // fixed hostname. Different fleets, and the same fleet after a host
+  // rename, point this at different servers; the boundary only needs the
+  // pair to be complete, not to match a literal this repo hard-codes.
+  const remoteCacheConfigured =
+    remoteCacheServer !== undefined && remoteCacheToken !== undefined;
   if (remoteCacheServer !== undefined || remoteCacheToken !== undefined) {
-    if (
-      !remoteCacheServer ||
-      !remoteCacheToken ||
-      remoteCacheServer !== REMOTE_CACHE_SERVER
-    ) {
+    if (!remoteCacheServer || !remoteCacheToken) {
       throw new Error(
-        'process environment has an incomplete or unapproved remote-cache capability',
+        'process environment has an incomplete remote-cache capability',
       );
     }
   }
@@ -125,10 +127,7 @@ function validateProcessEnvironment() {
       continue;
     }
 
-    if (
-      key === REMOTE_CACHE_TOKEN &&
-      remoteCacheServer === REMOTE_CACHE_SERVER
-    ) {
+    if (key === REMOTE_CACHE_TOKEN && remoteCacheConfigured) {
       continue;
     }
 
