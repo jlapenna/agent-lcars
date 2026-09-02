@@ -420,6 +420,10 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 		}
 		c.HostLoadPolicy = resolved.Placement
 		c.HostMemoryExempt = append([]string(nil), resolved.Raw.Fleet.Placement.HostMemoryExempt...)
+		c.HostMemoryOvercommit = make(map[string]float64, len(resolved.MemoryOvercommit))
+		for host, factor := range resolved.MemoryOvercommit {
+			c.HostMemoryOvercommit[host] = factor
+		}
 		c.MemorySafetyMargin = resolved.Raw.Fleet.Placement.MemorySafetyMargin
 		c.ReadinessMetricsURL = resolved.Raw.Fleet.Placement.ReadinessMetricsURL
 		c.ReadinessMetric = resolved.Raw.Fleet.Placement.ReadinessMetric
@@ -624,16 +628,17 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		minRunners: c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
 		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
-		hostLoadPolicy:      c.HostLoadPolicy,
-		hostMetricsTimeouts: c.HostMetricsTimeouts,
-		hostMemoryExempt:    stringSet(c.HostMemoryExempt),
-		memorySafetyMargin:  c.MemorySafetyMargin,
-		readinessMetricsURL: c.ReadinessMetricsURL,
-		readinessMetric:     c.ReadinessMetric,
-		readinessMaxAge:     c.ReadinessMaxAge,
-		hostRunnerLimits:    fleet.hostRunnerLimits,
-		fleet:               fleet,
-		checkpoints:         checkpoints, bootCheckpoint: boot,
+		hostLoadPolicy:       c.HostLoadPolicy,
+		hostMetricsTimeouts:  c.HostMetricsTimeouts,
+		hostMemoryExempt:     stringSet(c.HostMemoryExempt),
+		hostMemoryOvercommit: c.HostMemoryOvercommit,
+		memorySafetyMargin:   c.MemorySafetyMargin,
+		readinessMetricsURL:  c.ReadinessMetricsURL,
+		readinessMetric:      c.ReadinessMetric,
+		readinessMaxAge:      c.ReadinessMaxAge,
+		hostRunnerLimits:     fleet.hostRunnerLimits,
+		fleet:                fleet,
+		checkpoints:          checkpoints, bootCheckpoint: boot,
 	}
 	drainingGauge.WithLabelValues(c.ScaleSetName).Set(0)
 	listenerUpGauge.WithLabelValues(c.ScaleSetName).Set(0)

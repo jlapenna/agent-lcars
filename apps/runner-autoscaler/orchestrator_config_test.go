@@ -119,6 +119,41 @@ func TestOrchestratorConfigRejectsInvalidMemorySafetyMargin(t *testing.T) {
 	}
 }
 
+func TestOrchestratorConfigDefaultsMemoryOvercommitToOne(t *testing.T) {
+	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.MemoryOvercommit["janeway"]; got != 1.0 {
+		t.Fatalf("memory_overcommit default = %v, want 1.0", got)
+	}
+}
+
+func TestOrchestratorConfigResolvesMemoryOvercommit(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "      runner_limit: 1", "      runner_limit: 1\n      memory_overcommit: 1.25", 1)
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.MemoryOvercommit["janeway"]; got != 1.25 {
+		t.Fatalf("memory_overcommit = %v, want 1.25", got)
+	}
+}
+
+// TestOrchestratorConfigRejectsInvalidMemoryOvercommit pins agent-lcars#1694's
+// bound: 0.5 is below 1.0 (an overcommit factor may never REDUCE the
+// budget), and 3.0 exceeds the 2.0 ceiling the fleet scheduler redesign
+// approved (docs/fleet-scheduler-redesign.md#C).
+func TestOrchestratorConfigRejectsInvalidMemoryOvercommit(t *testing.T) {
+	for _, factor := range []string{"0.5", "3.0", "-1", ".nan", ".inf"} {
+		body := strings.Replace(validOrchestratorYAML, "      runner_limit: 1", "      runner_limit: 1\n      memory_overcommit: "+factor, 1)
+		_, err := loadOrchestratorConfig(writeConfig(t, body))
+		if err == nil || !strings.Contains(err.Error(), "memory_overcommit") {
+			t.Fatalf("memory_overcommit %s error = %v, want memory_overcommit complaint", factor, err)
+		}
+	}
+}
+
 func TestLoadOrchestratorConfigResolvesSSHMetrics(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "docker: local", "docker: ssh://runner@janeway\n      metrics_via_ssh: true", 1)
 	resolved, err := loadOrchestratorConfig(writeConfig(t, body))

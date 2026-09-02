@@ -472,6 +472,64 @@ before a container starts; CPU, PSI, available-memory, and swap telemetry still
 react to measured host behavior after workloads are running. Both checks must
 pass for a bounded candidate to be placed.
 
+### Usage-aware charging and bounded overcommit
+
+Declared reservations are a floor, not a measurement: a runner that blows past
+its `runner_memory_reservation` still only _charges_ the host for the smaller
+declared figure unless admission also looks at what it is actually using. For
+every running autoscaled runner found during the same inventory pass, the
+scheduler samples its current memory usage (Docker's one-shot container
+stats, excluding reclaimable page cache) and charges the host the larger of
+that sample and the runner's declared reservation:
+
+- **Over its reservation** (using more than it declared): charged at its
+  sampled usage, so a host cannot be oversold by pretending the runner still
+  only needs its reservation.
+- **Under its reservation** (using less than it declared): still charged at
+  the declared reservation, so a quiet runner cannot make a host look safer
+  than the reservation model actually guarantees.
+- **Sample unavailable** (a short timeout, or a transient daemon error):
+  charged at the declared reservation, exactly as before this existed.
+
+In-flight reservations (runners not yet started) have no running container to
+sample and stay charged at their declared reservation, as before. The sampler
+is an injectable function on `Scaler`, so tests supply canned per-container
+usage without a real Docker daemon.
+
+Per fleet host, an optional `memory_overcommit` factor (default `1.0`, at
+least `1.0` and at most `2.0`) multiplies the reserved-memory admission
+budget:
+
+```yaml
+fleet:
+  hosts:
+    - name: laforge
+      docker: ssh://runner@laforge
+      memory_overcommit: 1.25 # 30 GiB hosts: docs/fleet-scheduler-redesign.md#C
+```
+
+The factor only applies while the host's latest load sample (the same cache
+the overload gate below reads, not a fresh probe) shows it unpressured:
+available-memory ratio above `memory_soft` **and** memory PSI below
+`psi_soft`. If either soft threshold is crossed, or the host's telemetry is
+missing or stale, the effective factor drops to `1.0` for that placement
+attempt -- overcommit never operates on a host admission cannot currently
+vouch for. `lane_admissible_slots` (below) is computed from the identical
+effective budget and usage-aware charge `pickHostLocked` itself admits
+against, so the gauge and the real admission decision can never disagree.
+
+Observability:
+`github_runner_autoscaler_host_memory_observed_bytes{host}` reports the sum
+of sampled usage across a host's running autoscaled runners (falling back to
+a runner's declared reservation when its sample failed) -- purely
+observational, never itself charged;
+`github_runner_autoscaler_host_memory_overcommit_effective{host}` reports the
+factor actually applied just now (`1.0` or the configured value); and
+`github_runner_autoscaler_host_memory_budget_bytes{host}` already includes
+the effective overcommit factor in its figure. The "Host lacks aggregate
+reserved-memory capacity for runner" log line adds a
+`memory_overcommit_effective` field alongside its existing byte values.
+
 ## Host load / overload admission
 
 Every placement scores each candidate host's load, CPU utilization, CPU/memory
