@@ -34,11 +34,13 @@
 #     --build-arg SANDBOX_IMAGE=<registry>/agent-lcars/e2e:$TAG \
 #     -f tools/e2e-runner/Dockerfile .
 
-# Digest-pinned mirror, matching apps/runner-autoscaler/runner-image's own
-# RUNNER_BASE in this repo. Only the agent payload is copied out of it --
-# none of its OS layers -- so the runtime environment stays exactly the
+# Digest-pinned, matching apps/runner-autoscaler/runner-image's own
+# RUNNER_BASE in this repo -- defaults to the upstream registry; a fleet
+# publish overrides it with the private-registry mirror (issue #1729, see
+# docs/image-publish-routing.md). Only the agent payload is copied out of it
+# -- none of its OS layers -- so the runtime environment stays exactly the
 # sandbox's.
-ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 ARG SANDBOX_IMAGE
 
 FROM ${RUNNER_BASE} AS agent

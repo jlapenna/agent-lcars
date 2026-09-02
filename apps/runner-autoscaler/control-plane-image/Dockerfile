@@ -4,7 +4,13 @@
 # local JavaScript broker action, and gh/jq for the few shell-based routers. They
 # do not need Docker, Buildx, Python, pnpm, the telemetry sidecar, or the
 # developer toolchain baked into homelab-runner:jit-node24.
-ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+# Defaults to the upstream project's registry so a plain `docker build`
+# resolves from any network; a fleet publish overrides this with
+# `--build-arg RUNNER_BASE=...` to build from the pre-pulled private-registry
+# mirror instead (issue #1729). See runner-image/Dockerfile and
+# docs/image-publish-routing.md for the rationale and the homelab mirror
+# example -- this ARG is kept in lockstep with that one's digest.
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 
 FROM ${RUNNER_BASE}
 

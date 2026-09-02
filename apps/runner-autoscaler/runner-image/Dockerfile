@@ -1,5 +1,6 @@
-# The single source for this image. It is built and published only by
-# publish-runner-autoscaler.yml; jlapenna/homelab pulls the result.
+# The single source for this image. The canonical `jlapenna/homelab` checkout
+# is the only publisher (see docs/image-publish-routing.md); it pulls the
+# result.
 #
 # There is no longer a duplicate copy in jlapenna/homelab. That copy existed
 # solely as a local-build fallback for when a registry pull failed on a
@@ -12,44 +13,26 @@
 # below (a build ARG used in a FROM line must be declared "globally", i.e.
 # ahead of the first FROM in the whole file - a stage-scoped declaration
 # only reaches instructions inside that same stage).
-# Mirrored into our own registry and pinned by DIGEST, not a floating tag.
 #
-# This is the base of the image every runner in the fleet executes, so an
-# unpinned `:latest` meant its contents could change with no source change
-# and no review -- and it made every build depend on an external registry
-# being up and not rate-limiting us.
+# Defaults to the upstream project's own registry, pinned by DIGEST rather
+# than a floating tag, so `docker build` with no build args works from any
+# network. This is the base of the image every runner in the fleet executes,
+# so an unpinned `:latest` meant its contents could change with no source
+# change and no review.
+#
+# A fleet publish overrides this with `--build-arg RUNNER_BASE=...` to build
+# from a pre-pulled private-registry mirror instead (issue #1729) -- that is
+# an operational choice of the publisher (avoiding an external registry
+# dependency and rate limits during a fleet build), not a property of this
+# image. See docs/image-publish-routing.md for the homelab example: the
+# mirror-update procedure, the registry login, and why the digest below must
+# still match whatever the mirror is pinned to.
 #
 # The digest is the multi-arch INDEX digest, so both linux/amd64 and
-# linux/arm64 resolve from it. Mirror is a manifest copy, so these are the
-# same bytes upstream published.
+# linux/arm64 resolve from it.
 #
-# This writes to the registry, so it needs the publisher credential first:
-# the registry enforces Bearer auth on writes again as of homelab#220
-# (agent-lcars#112). Anonymous pulls still work, so the `imagetools create`
-# below fails at the push with a 401, not at the read -- which reads like a
-# broken upstream digest if you do not know to log in.
-#
-# In the socketless publishing lane the credential arrives as a read-only
-# mount and there is no TTY, so use the stdin form -- an interactive prompt
-# just hangs there:
-#
-#   docker login docker-registry.lan.jlapenna.net \
-#     --username publisher --password-stdin < /secrets/registry-password
-#
-# From a workstation without that mount, drop `--password-stdin` and let it
-# prompt.
-#
-#   docker buildx imagetools create \
-#     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:vX.Y.Z \
-#     --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:latest \
-#     <verified-upstream-actions-runner-index-digest>
-#
-# To update: re-run that against the new upstream digest, then bump the
-# digest below. Deliberately two steps -- mirroring does not silently
-# change what gets built.
-#
-# Currently: upstream v2.336.0, mirrored 2026-07-26.
-ARG RUNNER_BASE=docker-registry.lan.jlapenna.net/mirror/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+# Currently: upstream v2.336.0.
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 
 # Keep the Go compiler embedded in the JIT image aligned with the module the
 # Verify job tests. toolchain-health.test.sh compares this value with

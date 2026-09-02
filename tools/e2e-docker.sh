@@ -213,7 +213,15 @@ DK_DIR="${E2E_DOCKER_CACHE_DIR:-$HOME/.cache/agent-lcars-e2e-docker}"
 # new tag. Must match homelab's publish-agent-lcars-images.sh derivation.
 DOCKERFILE="$ROOT/tools/e2e/Dockerfile"
 E2E_TAG="df-$(sha256sum "$DOCKERFILE" | cut -c1-12)"
-IMAGE="${E2E_DOCKER_IMAGE:-docker-registry.lan.jlapenna.net/agent-lcars/e2e:${E2E_TAG}}"
+
+# Where this image is published is a fleet operator's choice, not a property
+# of this repo (issue #1729) -- E2E_DOCKER_REGISTRY is the repo/env variable
+# for it. The unset fallback is deliberately a `.invalid` host (RFC 2606: an
+# IANA-reserved TLD that can never resolve), so a misconfigured checkout
+# fails fast with a clear DNS-style error instead of silently defaulting to
+# any one operator's private registry. See docs/image-publish-routing.md for
+# the homelab example value to set.
+IMAGE="${E2E_DOCKER_IMAGE:-${E2E_DOCKER_REGISTRY:-e2e-registry.invalid}/agent-lcars/e2e:${E2E_TAG}}"
 
 # The node_modules mount is only correct for a given (lockfile, workspace
 # package.json set, patches, image) tuple: hash the working-tree content of
@@ -272,8 +280,9 @@ if [ "$DRY_RUN" -eq 0 ] && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo ">> e2e-docker: ERROR — $IMAGE not found locally or in the registry." >&2
     echo ">> If tools/e2e/Dockerfile changed on a branch that hasn't reached" >&2
     echo ">> main yet, merge it, then publish e2e and e2e-runner from" >&2
-    echo ">> canonical homelab. Otherwise check connectivity to" >&2
-    echo ">> docker-registry.lan.jlapenna.net." >&2
+    echo ">> canonical homelab. Otherwise set E2E_DOCKER_IMAGE (or" >&2
+    echo ">> E2E_DOCKER_REGISTRY) to where your fleet publishes this image --" >&2
+    echo ">> see docs/image-publish-routing.md for the homelab example." >&2
     exit 1
   fi
 fi

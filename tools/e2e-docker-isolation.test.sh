@@ -38,7 +38,14 @@ grep -q 'unknown arg: --bogus' "$TEST_DIR/unknown-arg.log"
 # the same way.
 expected_tag="df-$(sha256sum "$REPO/tools/e2e/Dockerfile" | cut -c1-12)"
 run_dry "$PROJECT" >"$TEST_DIR/default.log" 2>&1
-grep -qF "docker-registry.lan.jlapenna.net/agent-lcars/e2e:${expected_tag}" "$TEST_DIR/default.log"
+grep -qF "e2e-registry.invalid/agent-lcars/e2e:${expected_tag}" "$TEST_DIR/default.log"
+
+# -- E2E_DOCKER_REGISTRY overrides just the registry host, keeping the
+# derived tag -------------------------------------------------------------
+E2E_DOCKER_REGISTRY=some-other-registry E2E_DOCKER_DRY_RUN=1 \
+  E2E_DOCKER_CACHE_DIR="$TEST_DIR/cache" "$SCRIPT" "$PROJECT" \
+  >"$TEST_DIR/registry-override.log" 2>&1
+grep -qF "some-other-registry/agent-lcars/e2e:${expected_tag}" "$TEST_DIR/registry-override.log"
 
 # -- baseline dry run: required mounts/flags, and the stamp-miss path -------
 # A fresh E2E_DOCKER_CACHE_DIR has no install.stamp, so this must be a miss:
