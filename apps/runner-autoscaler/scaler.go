@@ -58,16 +58,11 @@ type Scaler struct {
 	// default (64m).
 	runnerShmSize int64
 	// runnerCgroupParent: see Config.RunnerCgroupParent. Empty disables the
-	// host-level runner slice (agent-lcars#1700).
+	// host-level runner slice (agent-lcars#1700). The controller only
+	// declares this slice's expected memory bound (published in
+	// pickHostLocked); it does not apply it -- see runnerSliceBudget's doc
+	// comment (agent-lcars#1712).
 	runnerCgroupParent string
-	// runnerSliceApplier applies a host's collective runner-slice memory
-	// bound; nil selects defaultRunnerSliceApplier. Injectable for tests --
-	// see ensureRunnerSlice.
-	runnerSliceApplier runnerSliceApplierFunc
-	// runnerSliceBudgets remembers, per host, the memory.max last
-	// successfully applied to that host's runner slice, so ensureRunnerSlice
-	// only re-runs the applier when the budget actually changes.
-	runnerSliceBudgets sync.Map // map[host]int64
 	scaleSetID         int
 	// Homelab change: a pool of docker hosts (local + SSH-proxied remotes)
 	// instead of a single client, so ONE scale set/label can spread runners
@@ -1029,18 +1024,6 @@ func (a *Scaler) hostClient(name string) (*dockerclient.Client, error) {
 	return nil, fmt.Errorf("unknown docker host %q", name)
 }
 
-// dockerHost looks up a configured DockerHost by name -- the same set
-// hostClient searches, but returning the full struct (including Target) for
-// callers that need it, e.g. applyRunnerSlice's SSH-vs-local dispatch.
-func (a *Scaler) dockerHost(name string) (DockerHost, bool) {
-	for _, h := range a.dockerHosts {
-		if h.Name == name {
-			return h, true
-		}
-	}
-	return DockerHost{}, false
-}
-
 func (a *Scaler) placementDockerHosts() []DockerHost {
 	// Unit tests and the single-scaler path construct Scaler directly. Their
 	// zero-value placementHosts retains the historical "all hosts place"
@@ -1385,6 +1368,17 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
 			hostMemoryObservedGauge.WithLabelValues(h.Name).Set(float64(probe.hostObservedMemory[h.Name]))
 			hostMemoryOvercommitEffectiveGauge.WithLabelValues(h.Name).Set(overcommit)
+			// Declare (never apply -- agent-lcars#1712) this host's expected
+			// collective runner-slice bound alongside the other
+			// host-memory-observation gauges above, independent of whether
+			// this particular candidate is ultimately admitted. Nothing is
+			// published when the slice is disabled (runner_cgroup_parent ==
+			// "").
+			if a.runnerCgroupParent != "" {
+				sliceMax, sliceHigh := runnerSliceBudget(total, margin)
+				runnerSliceExpectedMemoryMaxGauge.WithLabelValues(h.Name, a.runnerCgroupParent).Set(float64(sliceMax))
+				runnerSliceExpectedMemoryHighGauge.WithLabelValues(h.Name, a.runnerCgroupParent).Set(float64(sliceHigh))
+			}
 
 			if memoryErr := probe.hostMemoryErrors[h.Name]; memoryErr != nil {
 				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
@@ -2480,12 +2474,6 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	if err := a.checkHostRunnerLimit(ctx, client, host); err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()
 		return "", err
-	}
-	// Bound the host's runner slice collectively before this container joins
-	// it. Never placement-blocking: a failure here is logged and gauged, not
-	// returned -- see applyRunnerSlice.
-	if dh, ok := a.dockerHost(host); ok {
-		a.applyRunnerSlice(ctx, client, dh)
 	}
 	// The fleet's scheduled `docker image prune -a` can remove a runner image
 	// whenever that host happens to have no active runner. Startup refreshes

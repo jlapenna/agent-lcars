@@ -278,19 +278,27 @@ var (
 		},
 		[]string{"host"},
 	)
-	runnerSliceBoundedGauge = prometheus.NewGaugeVec(
+	// runnerSliceExpectedMemoryMaxGauge and runnerSliceExpectedMemoryHighGauge
+	// are the autoscaler's DECLARATION of a host's collective runner-slice
+	// memory bound, not a report that anything was applied: the controller
+	// has no privilege to set systemd slice properties on a fleet host (see
+	// runnerSliceBudget's doc comment, agent-lcars#1712). Enforcement is
+	// Ansible's job in the homelab repo (jlapenna/homelab#1102); verify the
+	// declared numbers against cAdvisor's
+	// container_spec_memory_limit_bytes{id="/homelab.slice/<slice>"} series.
+	runnerSliceExpectedMemoryMaxGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "github_runner_autoscaler_runner_slice_bounded",
-			Help: "1 when this host's collective runner cgroup slice memory.max/memory.high were successfully applied via systemctl set-property; 0 when the property could not be applied, in which case only each runner's own per-container ceiling holds (agent-lcars#1700).",
+			Name: "github_runner_autoscaler_runner_slice_expected_memory_max_bytes",
+			Help: "The memory.max the autoscaler declares for this host's collective runner cgroup slice: physical memory times (1 - memory_safety_margin). Declared only -- Ansible enforces it (jlapenna/homelab#1102) and Prometheus verifies it against cAdvisor's container_spec_memory_limit_bytes{id=\"/homelab.slice/<slice>\"} (agent-lcars#1700, #1712).",
 		},
-		[]string{"host"},
+		[]string{"host", "slice"},
 	)
-	runnerSliceMemoryMaxGauge = prometheus.NewGaugeVec(
+	runnerSliceExpectedMemoryHighGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "github_runner_autoscaler_runner_slice_memory_max_bytes",
-			Help: "The collective memory.max last successfully applied to this host's runner cgroup slice: physical memory times (1 - the configured safety margin). Meaningful only while runner_slice_bounded is 1.",
+			Name: "github_runner_autoscaler_runner_slice_expected_memory_high_bytes",
+			Help: "The memory.high the autoscaler declares for this host's collective runner cgroup slice: 95% of the declared expected memory.max. Declared only -- see github_runner_autoscaler_runner_slice_expected_memory_max_bytes's help for the enforcement/verification split (agent-lcars#1700, #1712).",
 		},
-		[]string{"host"},
+		[]string{"host", "slice"},
 	)
 	laneAdmissibleSlotsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -527,8 +535,8 @@ func registerMetrics() {
 			hostMemoryBudgetGauge,
 			hostMemoryObservedGauge,
 			hostMemoryOvercommitEffectiveGauge,
-			runnerSliceBoundedGauge,
-			runnerSliceMemoryMaxGauge,
+			runnerSliceExpectedMemoryMaxGauge,
+			runnerSliceExpectedMemoryHighGauge,
 			laneAdmissibleSlotsGauge,
 			lanePermanentAdmissibleSlotsGauge,
 			scaleSetMemoryReservationGauge,
