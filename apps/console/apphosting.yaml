@@ -56,6 +56,23 @@ env:
     availability:
       - RUNTIME
 
+  # This console deployment's own public base URL (see lib/deployment.ts's
+  # consoleUrl). Required, no fallback (#1731) -- also the default --origin
+  # the saved-session CLI tools point at.
+  - variable: AGENT_LCARS_CONSOLE_URL
+    value: 'https://lcars.jlapenna.net'
+    availability:
+      - RUNTIME
+
+  # Optional -- see lib/deployment.ts's consoleDescription. Set explicitly
+  # so this deployment's own page metadata stays what it has always been,
+  # even though an unset value now falls back to a generic description
+  # rather than this string.
+  - variable: AGENT_LCARS_CONSOLE_DESCRIPTION
+    value: 'jlapenna/agent-lcars — multi-agent issue activity'
+    availability:
+      - RUNTIME
+
   # Not sensitive - the allowlisted GitHub logins that may operate the
   # console. Authorization is deliberately separate from queue ownership.
   - variable: AGENT_LCARS_ADMIN_GITHUB_LOGINS
@@ -135,10 +152,18 @@ env:
   # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES above, membership here does not
   # make a repository eligible for issue/PR dispatch. jlapenna/repo-tools is
   # not itself a control-plane repository; only its `main` branch moving is
-  # observed, and the resulting work item always targets jlapenna/homelab
-  # (already admitted above).
+  # observed, and the resulting work item always targets whatever
+  # AGENT_LCARS_PUSH_WATCH_TARGET_REPO names below (already admitted above).
   - variable: AGENT_LCARS_PUSH_WATCHED_REPOS
     value: 'jlapenna/repo-tools'
+    availability:
+      - RUNTIME
+
+  # Repository the resulting work item always targets, regardless of which
+  # AGENT_LCARS_PUSH_WATCHED_REPOS entry triggered it. Required, no fallback
+  # (#1731) -- see lib/deployment.ts's pushWatchTargetRepo.
+  - variable: AGENT_LCARS_PUSH_WATCH_TARGET_REPO
+    value: 'jlapenna/homelab'
     availability:
       - RUNTIME
 

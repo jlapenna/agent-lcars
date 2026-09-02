@@ -11,7 +11,16 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
-export const DEFAULT_ORIGIN = 'https://lcars.jlapenna.net';
+/**
+ * No hard-coded fallback (#1731): a deployment's own console URL is exactly
+ * `AGENT_LCARS_CONSOLE_URL`, the same variable `apps/console/apphosting.yaml`
+ * sets for the running console itself (see `lib/deployment.ts`'s
+ * `consoleUrl`), so pointing this tool at a deployment only means exporting
+ * that one variable. `undefined` when unset; each script's `--origin` flag
+ * still overrides it, and `normalizeOrigin` throws a clear message if
+ * neither is supplied.
+ */
+export const DEFAULT_ORIGIN = process.env.AGENT_LCARS_CONSOLE_URL;
 export const DEFAULT_PROJECT = 'agent-lcars';
 export const SESSION_ROLES = ['admin', 'user'];
 export const STORAGE_BACKENDS = ['local', 'secret'];
@@ -25,6 +34,13 @@ export function isStorageBackend(value) {
 }
 
 export function normalizeOrigin(value = DEFAULT_ORIGIN) {
+  if (value === undefined) {
+    throw new Error(
+      'Origin is required: pass --origin <origin>, or set AGENT_LCARS_CONSOLE_URL ' +
+        "to the deployment's console URL (the same value its " +
+        'apps/console/apphosting.yaml sets for that variable).',
+    );
+  }
   const url = new URL(value);
   if (
     !['http:', 'https:'].includes(url.protocol) ||

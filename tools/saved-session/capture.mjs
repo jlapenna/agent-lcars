@@ -21,7 +21,8 @@ function usage() {
   console.error(
     'Usage: ./tools/nx run @agent-lcars/console:capture-session -- [--role <admin|user>] ' +
       '[--storage <local|secret>] [--origin <origin>] [--state-file <path>] ' +
-      '[--project <gcp-project>] [--secret-name <name>]',
+      '[--project <gcp-project>] [--secret-name <name>]\n' +
+      '  --origin defaults to AGENT_LCARS_CONSOLE_URL when set',
   );
 }
 

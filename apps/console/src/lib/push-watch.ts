@@ -3,7 +3,11 @@ import 'server-only';
 import type { ScheduleStore } from '@agent-lcars/orchestrator';
 import { optional } from '@agent-lcars/util-server';
 
-import { isPushWatchedRepository } from './deployment';
+import {
+  controlPlaneRepository,
+  isPushWatchedRepository,
+  pushWatchTargetRepo,
+} from './deployment';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import {
   grantForPrincipal,
@@ -24,9 +28,6 @@ type RouteResult = { status: number; body: Record<string, unknown> };
  * item — see `docs/deployment-boundary.md`. */
 const PUSH_WATCH_PRINCIPAL = 'svc:push-watch';
 const PUSH_WATCH_PIPELINE = 'claude';
-/** The repository the resulting work item targets — not the repository
- * whose push triggered it. Already an admitted control-plane repository. */
-const PUSH_WATCH_TARGET_REPO = 'jlapenna/homelab';
 
 /** `mintItem` never reads `WorkContext.scheduleStore` — only
  * `schedule-router.ts`'s own tick logic does. Building the real
@@ -150,9 +151,9 @@ function pushWatchContext(runtime: OrchestratorRouteDeps): WorkContext {
  * text below for its exact, deliberately advisory-only scope.
  *
  * Never targets the pushing repository itself: this always targets
- * {@link PUSH_WATCH_TARGET_REPO}, an already-admitted control-plane
- * repository, so the pushing repository (`jlapenna/repo-tools` today) never
- * needs to become dispatch-eligible itself.
+ * {@link pushWatchTargetRepo}, an already-admitted control-plane
+ * repository (`AGENT_LCARS_PUSH_WATCH_TARGET_REPO`), so the pushing
+ * repository never needs to become dispatch-eligible itself.
  */
 export async function handlePushWebhookDelivery(
   deps: OrchestratorRouteDeps,
@@ -179,24 +180,26 @@ export async function handlePushWebhookDelivery(
   }
 
   const id = await pushDeliveryItemId(repo, sha, new Date(commitTimestamp));
+  const targetRepo = pushWatchTargetRepo();
+  const homeRepo = controlPlaneRepository();
   const spec = {
-    title: `repo-tools main advanced to ${shortSha(sha)}`,
+    title: `${repo} main advanced to ${shortSha(sha)}`,
     description:
-      `jlapenna/repo-tools' main branch advanced to \`${sha}\` ` +
+      `\`${repo}\`'s main branch advanced to \`${sha}\` ` +
       `(https://github.com/${repo}/commit/${sha}). Check whether this ` +
       "affects the fleet: whether `homelab-runner`'s currently-published " +
-      'image is now meaningfully stale relative to this repo-tools ' +
-      'revision (see docs/image-publish-routing.md in jlapenna/agent-lcars ' +
+      `image is now meaningfully stale relative to this ${repo} ` +
+      `revision (see docs/image-publish-routing.md in ${homeRepo} ` +
       '— publishing is intentionally a deliberate homelab-side operation, ' +
       'so do not run the publisher yourself, this is advisory only), and ' +
       "whether any consuming repo's guidance/docs need updating. If action " +
       'is warranted, search for an existing open tracking issue in ' +
-      'jlapenna/homelab first and update it rather than creating a ' +
+      `${targetRepo} first and update it rather than creating a ` +
       'duplicate; only open a new one if none exists. If nothing warrants ' +
       'action, park with a brief note rather than opening or updating ' +
       'anything.',
     pipeline: PUSH_WATCH_PIPELINE,
-    target: { repo: PUSH_WATCH_TARGET_REPO },
+    target: { repo: targetRepo },
   } as const;
 
   const context = pushWatchContext(deps);

@@ -26,19 +26,47 @@ file is the map.
 The **only** module in console source that names this instance. Everything
 else asks it:
 
-| Value                    | Env var                                | This deployment                     |
-| ------------------------ | -------------------------------------- | ----------------------------------- |
-| console admin logins     | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`      | `jlapenna,lizsprinkles`             |
-| maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`       | `jlapenna`                          |
-| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`       | `agent-lcars-bot`                   |
-| artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`  | `https://share.lan.jlapenna.net`    |
-| control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `jlapenna/agent-lcars`              |
-| watched repos            | `AGENT_LCARS_WATCHED_REPOS`            | required; matches control-plane set |
-| this console's own URL   | `AGENT_LCARS_CONSOLE_URL`              | `https://lcars.jlapenna.net`        |
+| Value                    | Env var                                             | This deployment                                                                                                                                               |
+| ------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| console admin logins     | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`                   | `jlapenna,lizsprinkles`                                                                                                                                       |
+| maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`                    | `jlapenna` -- **required**, no fallback                                                                                                                       |
+| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`                    | `agent-lcars-bot`                                                                                                                                             |
+| artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`               | `https://share.lan.jlapenna.net` -- **required**, no fallback                                                                                                 |
+| control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY`              | `jlapenna/agent-lcars`                                                                                                                                        |
+| watched repos            | `AGENT_LCARS_WATCHED_REPOS`                         | required; matches control-plane set                                                                                                                           |
+| this console's own URL   | `AGENT_LCARS_CONSOLE_URL`                           | `https://lcars.jlapenna.net` -- **required**, no fallback                                                                                                     |
+| console description      | `AGENT_LCARS_CONSOLE_DESCRIPTION`                   | `jlapenna/agent-lcars — multi-agent issue activity`; unset falls back to a generic, deployment-neutral string (build-time metadata can't read a required var) |
+| console repository URL   | derived from `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `https://github.com/jlapenna/agent-lcars` -- no separate var                                                                                                  |
+| push-watch target repo   | `AGENT_LCARS_PUSH_WATCH_TARGET_REPO`                | `jlapenna/homelab` -- **required**, no fallback                                                                                                               |
 
 Repository identity is explicit: the watched and control-plane sets are both
 required and must match exactly. `apphosting.yaml` records that shared set so
 what production runs with is visible in config rather than only in source.
+
+Five of the values above are `required()`: maintainer login, artifact share
+base URL, this console's own URL, control-plane repository, and the
+push-watch target repo (#1731). There is no fallback to this fleet's own
+values in source any more -- a fork that leaves one unset fails the process
+boot with a clear `process.env.<NAME> not defined` message
+(`validateDeploymentIdentity()`, called from `instrumentation.ts`'s
+`register()`), rather than silently inheriting `jlapenna`'s identity. The
+console description is the one exception, and deliberately so: it's read
+from `layout.tsx`'s static `export const metadata`, which Next.js evaluates
+during `next build` itself, before any runtime env is available -- a
+`required()` read there fails the production build, not a request. It falls
+back to a generic, deployment-neutral string instead.
+
+`push-watch.ts`'s minted work item always targets
+`AGENT_LCARS_PUSH_WATCH_TARGET_REPO`, regardless of which
+`AGENT_LCARS_PUSH_WATCHED_REPOS` entry triggered it -- see that module's own
+doc comment.
+
+`tools/saved-session`'s CLI tools (`capture.mjs`, `mint.mjs`, `verify.mjs`)
+default their `--origin` flag to `AGENT_LCARS_CONSOLE_URL` when it's set in
+the calling shell's environment -- the same variable this table names, so
+pointing the tools at a deployment means exporting that one variable, not
+editing source. Unset and no `--origin` flag is a clear startup error, not a
+silent fall-through to this fleet's console.
 
 Server-only. `@agent-lcars/util-server` must never reach a client bundle, which is
 why `shareArtifactUrl` lives here rather than in `format.ts` — that module

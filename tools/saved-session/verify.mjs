@@ -26,7 +26,8 @@ function usage() {
       '[--project <gcp-project>] [--secret-name <name>] ' +
       '[--wait-for <selector>] [--click <selector>] [--assert-text <text>] ' +
       '[--minimum-valid-days <days>] ' +
-      '[--screenshot <path>] [--screenshot-mode <viewport|full-page>]',
+      '[--screenshot <path>] [--screenshot-mode <viewport|full-page>]\n' +
+      '  --origin defaults to AGENT_LCARS_CONSOLE_URL when set',
   );
 }
 

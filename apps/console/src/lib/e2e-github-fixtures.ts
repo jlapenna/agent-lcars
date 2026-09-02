@@ -21,8 +21,15 @@ import type { AgentPipeline } from './watched-repo';
 // AGENT_LCARS_ADMIN_GITHUB_LOGIN to a dummy value, so a literal 'jlapenna'
 // here would no longer match the author/assignee metadata in the durable
 // queue fixture.
-const MAINTAINER = maintainerLogin();
-const FLEET = agentFleetLogin();
+//
+// Read lazily, inside `getFixtureItems()` below, rather than at this
+// module's top level: `maintainerLogin()` is `required()` (#1731), and this
+// module is imported at build time by the e2e API route's "collect page
+// data" pass -- a module-scope call would fail the production build itself
+// whenever `AGENT_LCARS_ADMIN_GITHUB_LOGIN` isn't set at build (confirmed
+// empirically: it fails `next build`, not just a request). Every real caller
+// only reaches these fixtures at request time, behind `isE2eTesting()`.
+let fixtureItems: FixtureItem[] | undefined;
 
 /** The single repo explicitly configured by `tools/e2e/ci.env`. */
 export const E2E_FIXTURE_REPO = {
@@ -90,173 +97,184 @@ interface FixtureItem {
   checkRuns?: { name: string; status: string; conclusion: string | null }[];
 }
 
-const FIXTURE_ITEMS: FixtureItem[] = [
-  {
-    number: E2E_ITEM_NUMBERS.humanNeeded,
-    title: 'Decide the retention window for archived agent transcripts',
-    body: 'The archive TTL was never settled. Needs a call before the watcher ships.',
-    isPr: false,
-    labels: ['status:needs-human', 'agent:claude'],
-    assignees: [MAINTAINER, FLEET],
-    author: FLEET,
-    updatedAt: minutesAgo(14),
-    comments: [
-      { author: MAINTAINER, body: 'Filing this so it does not get lost.' },
-      {
-        author: FLEET,
-        body: 'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
-      },
-    ],
-  },
-  {
-    number: E2E_ITEM_NUMBERS.runFailed,
-    title: 'fix(watcher): stop double-counting streamed cache reads',
-    body: 'Closes #9001.',
-    isPr: true,
-    labels: ['agent:claude'],
-    assignees: [FLEET],
-    author: FLEET,
-    updatedAt: minutesAgo(6),
-    comments: [
-      {
-        author: FLEET,
-        body: 'CI is red on the E2E job; re-running.',
-      },
-    ],
-    pr: {
-      draft: false,
-      // `unstable` is the real state for "a required check failed" — the
-      // card surfaces it alongside the failing-check list.
-      mergeableState: 'unstable',
-      headSha: HEAD_SHAS.runFailed,
-      requestedReviewers: [],
+function buildFixtureItems(): FixtureItem[] {
+  const MAINTAINER = maintainerLogin();
+  const FLEET = agentFleetLogin();
+  return [
+    {
+      number: E2E_ITEM_NUMBERS.humanNeeded,
+      title: 'Decide the retention window for archived agent transcripts',
+      body: 'The archive TTL was never settled. Needs a call before the watcher ships.',
+      isPr: false,
+      labels: ['status:needs-human', 'agent:claude'],
+      assignees: [MAINTAINER, FLEET],
+      author: FLEET,
+      updatedAt: minutesAgo(14),
+      comments: [
+        { author: MAINTAINER, body: 'Filing this so it does not get lost.' },
+        {
+          author: FLEET,
+          body: 'Parking this — 30 days and 90 days have different storage-cost profiles and I should not pick for you.',
+        },
+      ],
     },
-    checkRuns: [
-      { name: 'Verify', status: 'completed', conclusion: 'success' },
-      { name: 'E2E', status: 'completed', conclusion: 'failure' },
-      { name: 'CodeQL', status: 'in_progress', conclusion: null },
-    ],
-  },
-  {
-    number: E2E_ITEM_NUMBERS.reviewRequested,
-    title: 'feat(console): tap-icon refresh on the queue header',
-    body: 'Closes #9004.',
-    isPr: true,
-    labels: [],
-    assignees: [FLEET],
-    author: FLEET,
-    updatedAt: minutesAgo(41),
-    pr: {
-      draft: false,
-      // `behind` drives the "Base branch has moved" affordance — another
-      // state only ever exercised by unit tests until now.
-      mergeableState: 'behind',
-      headSha: HEAD_SHAS.reviewRequested,
-      requestedReviewers: [MAINTAINER],
-    },
-    checkRuns: [
-      { name: 'Verify', status: 'completed', conclusion: 'success' },
-      { name: 'E2E', status: 'completed', conclusion: 'success' },
-    ],
-  },
-  {
-    number: E2E_ITEM_NUMBERS.mergeBlockedThreads,
-    title: 'fix(console): tighten queue filter debounce',
-    body: 'Tightens the inbox search debounce.',
-    isPr: true,
-    labels: [],
-    assignees: [FLEET],
-    author: FLEET,
-    updatedAt: minutesAgo(50),
-    pr: {
-      draft: false,
-      // #538: green checks below, no requested reviewer, yet GitHub itself
-      // reports BLOCKED - the retro's (#521) exact "gh pr checks is green
-      // and reviewDecision is empty" shape. Only the unresolved review
-      // threads explain it.
-      mergeableState: 'blocked',
-      headSha: HEAD_SHAS.mergeBlockedThreads,
-      requestedReviewers: [],
-      reviewThreads: [false, false, false, true],
-    },
-    checkRuns: [
-      { name: 'Verify', status: 'completed', conclusion: 'success' },
-      { name: 'E2E', status: 'completed', conclusion: 'success' },
-    ],
-  },
-  {
-    number: E2E_ITEM_NUMBERS.postDeploy,
-    title: 'Verify the session-cost budget alert after the next deploy',
-    body: 'Parked until the alert ships to production.',
-    isPr: false,
-    labels: ['status:post-deploy-action'],
-    assignees: [MAINTAINER],
-    author: FLEET,
-    updatedAt: minutesAgo(180),
-    comments: [
-      {
-        author: FLEET,
-        body: 'Verified in staging; waiting on the production deploy to confirm.',
+    {
+      number: E2E_ITEM_NUMBERS.runFailed,
+      title: 'fix(watcher): stop double-counting streamed cache reads',
+      body: 'Closes #9001.',
+      isPr: true,
+      labels: ['agent:claude'],
+      assignees: [FLEET],
+      author: FLEET,
+      updatedAt: minutesAgo(6),
+      comments: [
+        {
+          author: FLEET,
+          body: 'CI is red on the E2E job; re-running.',
+        },
+      ],
+      pr: {
+        draft: false,
+        // `unstable` is the real state for "a required check failed" — the
+        // card surfaces it alongside the failing-check list.
+        mergeableState: 'unstable',
+        headSha: HEAD_SHAS.runFailed,
+        requestedReviewers: [],
       },
-    ],
-  },
-  {
-    number: E2E_ITEM_NUMBERS.readyForAgent,
-    title: 'Add retention metrics to the session archive',
-    body: 'Groomed and ready for the maintainer to choose an agent.',
-    isPr: false,
-    labels: ['status:ready-for-agent', 'app:console'],
-    assignees: [],
-    author: MAINTAINER,
-    updatedAt: minutesAgo(33),
-  },
-  {
-    number: E2E_ITEM_NUMBERS.humanNeededPostDeploy,
-    title: 'Confirm the archive TTL took effect in production',
-    body: 'Needs a call on the window, then a post-deploy check.',
-    isPr: false,
-    // Both types on one item deliberately: an item whose *only* type is
-    // status:post-deploy-action is `isDeployWaitOnly` and drops to the compact
-    // "Waiting on Next Deploy" tier, which renders no action-type badge at
-    // all. This is the only way the gray post-deploy action badge ever
-    // appears on a full card.
-    labels: ['status:needs-human', 'status:post-deploy-action'],
-    assignees: [MAINTAINER, FLEET],
-    author: FLEET,
-    updatedAt: minutesAgo(23),
-    comments: [
-      {
-        author: FLEET,
-        body: 'Blocked on the same retention decision as #9001.',
+      checkRuns: [
+        { name: 'Verify', status: 'completed', conclusion: 'success' },
+        { name: 'E2E', status: 'completed', conclusion: 'failure' },
+        { name: 'CodeQL', status: 'in_progress', conclusion: null },
+      ],
+    },
+    {
+      number: E2E_ITEM_NUMBERS.reviewRequested,
+      title: 'feat(console): tap-icon refresh on the queue header',
+      body: 'Closes #9004.',
+      isPr: true,
+      labels: [],
+      assignees: [FLEET],
+      author: FLEET,
+      updatedAt: minutesAgo(41),
+      pr: {
+        draft: false,
+        // `behind` drives the "Base branch has moved" affordance — another
+        // state only ever exercised by unit tests until now.
+        mergeableState: 'behind',
+        headSha: HEAD_SHAS.reviewRequested,
+        requestedReviewers: [MAINTAINER],
       },
-    ],
-  },
-  {
-    number: E2E_ITEM_NUMBERS.silentError,
-    title: 'chore(telemetry): prune expired session docs',
-    body: 'Routine cleanup.',
-    isPr: false,
-    labels: ['agent:claude'],
-    assignees: [FLEET],
-    author: FLEET,
-    updatedAt: minutesAgo(52),
-  },
-  {
-    number: E2E_ITEM_NUMBERS.duplicateDispatch,
-    title: 'feat(console): repo filter chips',
-    body: '',
-    isPr: false,
-    // No board-qualifying label/assignee on purpose - see this number's own
-    // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments)
-    // via an explicit bounded detail read
-    // (task-detail.ts), both of which key off FIXTURE_ITEMS directly rather
-    // than the filtered board.
-    labels: [],
-    assignees: [],
-    author: MAINTAINER,
-    updatedAt: minutesAgo(1),
-  },
-];
+      checkRuns: [
+        { name: 'Verify', status: 'completed', conclusion: 'success' },
+        { name: 'E2E', status: 'completed', conclusion: 'success' },
+      ],
+    },
+    {
+      number: E2E_ITEM_NUMBERS.mergeBlockedThreads,
+      title: 'fix(console): tighten queue filter debounce',
+      body: 'Tightens the inbox search debounce.',
+      isPr: true,
+      labels: [],
+      assignees: [FLEET],
+      author: FLEET,
+      updatedAt: minutesAgo(50),
+      pr: {
+        draft: false,
+        // #538: green checks below, no requested reviewer, yet GitHub itself
+        // reports BLOCKED - the retro's (#521) exact "gh pr checks is green
+        // and reviewDecision is empty" shape. Only the unresolved review
+        // threads explain it.
+        mergeableState: 'blocked',
+        headSha: HEAD_SHAS.mergeBlockedThreads,
+        requestedReviewers: [],
+        reviewThreads: [false, false, false, true],
+      },
+      checkRuns: [
+        { name: 'Verify', status: 'completed', conclusion: 'success' },
+        { name: 'E2E', status: 'completed', conclusion: 'success' },
+      ],
+    },
+    {
+      number: E2E_ITEM_NUMBERS.postDeploy,
+      title: 'Verify the session-cost budget alert after the next deploy',
+      body: 'Parked until the alert ships to production.',
+      isPr: false,
+      labels: ['status:post-deploy-action'],
+      assignees: [MAINTAINER],
+      author: FLEET,
+      updatedAt: minutesAgo(180),
+      comments: [
+        {
+          author: FLEET,
+          body: 'Verified in staging; waiting on the production deploy to confirm.',
+        },
+      ],
+    },
+    {
+      number: E2E_ITEM_NUMBERS.readyForAgent,
+      title: 'Add retention metrics to the session archive',
+      body: 'Groomed and ready for the maintainer to choose an agent.',
+      isPr: false,
+      labels: ['status:ready-for-agent', 'app:console'],
+      assignees: [],
+      author: MAINTAINER,
+      updatedAt: minutesAgo(33),
+    },
+    {
+      number: E2E_ITEM_NUMBERS.humanNeededPostDeploy,
+      title: 'Confirm the archive TTL took effect in production',
+      body: 'Needs a call on the window, then a post-deploy check.',
+      isPr: false,
+      // Both types on one item deliberately: an item whose *only* type is
+      // status:post-deploy-action is `isDeployWaitOnly` and drops to the compact
+      // "Waiting on Next Deploy" tier, which renders no action-type badge at
+      // all. This is the only way the gray post-deploy action badge ever
+      // appears on a full card.
+      labels: ['status:needs-human', 'status:post-deploy-action'],
+      assignees: [MAINTAINER, FLEET],
+      author: FLEET,
+      updatedAt: minutesAgo(23),
+      comments: [
+        {
+          author: FLEET,
+          body: 'Blocked on the same retention decision as #9001.',
+        },
+      ],
+    },
+    {
+      number: E2E_ITEM_NUMBERS.silentError,
+      title: 'chore(telemetry): prune expired session docs',
+      body: 'Routine cleanup.',
+      isPr: false,
+      labels: ['agent:claude'],
+      assignees: [FLEET],
+      author: FLEET,
+      updatedAt: minutesAgo(52),
+    },
+    {
+      number: E2E_ITEM_NUMBERS.duplicateDispatch,
+      title: 'feat(console): repo filter chips',
+      body: '',
+      isPr: false,
+      // No board-qualifying label/assignee on purpose - see this number's own
+      // doc comment on E2E_ITEM_NUMBERS. Still enrichable (comments)
+      // via an explicit bounded detail read
+      // (task-detail.ts), both of which key off FIXTURE_ITEMS directly rather
+      // than the filtered board.
+      labels: [],
+      assignees: [],
+      author: MAINTAINER,
+      updatedAt: minutesAgo(1),
+    },
+  ];
+}
+
+/** Memoized: built once, on first access, from the deployment identity
+ * configured at request time (see `buildFixtureItems`'s doc comment). */
+function getFixtureItems(): FixtureItem[] {
+  fixtureItems ??= buildFixtureItems();
+  return fixtureItems;
+}
 
 /**
  * The populated console fixture writes the same durable webhook-shaped
@@ -265,7 +283,7 @@ const FIXTURE_ITEMS: FixtureItem[] = [
  */
 export function populatedGithubAnchorProjections(): GithubAnchorProjection[] {
   const observedAt = new Date().toISOString();
-  return FIXTURE_ITEMS.map((item) => {
+  return getFixtureItems().map((item) => {
     const comments = item.comments ?? [];
     const lastComment = comments.at(-1);
     const unresolvedReviewThreadIds = (item.pr?.reviewThreads ?? []).flatMap(
@@ -526,7 +544,7 @@ function quickTaskIssueRestShape(item: QuickTaskFixtureIssue) {
     title: item.title,
     body: item.body,
     html_url: itemUrl(item.number, 'issues'),
-    user: { login: MAINTAINER },
+    user: { login: maintainerLogin() },
     state: 'open',
     updated_at: item.createdAt,
     labels: item.labels.map((name) => ({ name })),
@@ -608,7 +626,7 @@ export function updateFixtureIssueContent(
     return quickTaskIssueRestShape(quickTask);
   }
 
-  const item = FIXTURE_ITEMS.find(
+  const item = getFixtureItems().find(
     (candidate) => candidate.number === number && !candidate.isPr,
   );
   if (!item) return undefined;
@@ -625,7 +643,9 @@ export function issue(number: number) {
   const quickTask = quickTaskIssue(number);
   if (quickTask) return quickTask;
   if (!populatedFixturesEnabled()) return undefined;
-  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  const item = getFixtureItems().find(
+    (candidate) => candidate.number === number,
+  );
   return item ? issueFor(item) : undefined;
 }
 
@@ -633,7 +653,9 @@ export function issue(number: number) {
 export function issueComments(number: number) {
   const quickTask = quickTaskIssueComments(number);
   if (quickTask) return quickTask;
-  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  const item = getFixtureItems().find(
+    (candidate) => candidate.number === number,
+  );
   return (item?.comments ?? []).map((comment, index) => ({
     id: number * 100 + index,
     user: { login: comment.author },
@@ -666,7 +688,9 @@ export function githubAnchorGraphqlDetail(number: number) {
   }
 
   if (!populatedFixturesEnabled()) return undefined;
-  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  const item = getFixtureItems().find(
+    (candidate) => candidate.number === number,
+  );
   if (!item) return undefined;
   const edited = issueContentEdits().get(number);
   const comments = item.comments ?? [];
@@ -726,7 +750,9 @@ export function githubAnchorGraphqlDetail(number: number) {
 
 /** `GET /repos/{owner}/{repo}/pulls/{number}` */
 export function pullRequest(number: number) {
-  const item = FIXTURE_ITEMS.find((candidate) => candidate.number === number);
+  const item = getFixtureItems().find(
+    (candidate) => candidate.number === number,
+  );
   if (!item?.pr) return undefined;
   return {
     number,
