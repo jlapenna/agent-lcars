@@ -2427,6 +2427,218 @@ func TestFleetReservationChargesDeclaredReservation(t *testing.T) {
 	}
 }
 
+// TestMemoryAvailableSampleStale pins agent-lcars#1742's staleness rule in
+// isolation: never probed at all (the zero Time -- host metrics unconfigured
+// or the first probe has not completed) or older than 2*hostSampleInterval
+// both count as unknown; anything fresher does not.
+func TestMemoryAvailableSampleStale(t *testing.T) {
+	now := time.Now()
+	tests := map[string]struct {
+		load hostLoad
+		want bool
+	}{
+		"zero observedAt": {hostLoad{}, true},
+		"just probed":     {hostLoad{observedAt: now}, false},
+		"within 2x hostSampleInterval": {
+			hostLoad{observedAt: now.Add(-2*hostSampleInterval + time.Second)}, false,
+		},
+		"older than 2x hostSampleInterval": {
+			hostLoad{observedAt: now.Add(-2*hostSampleInterval - time.Second)}, true,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := memoryAvailableSampleStale(tt.load, now); got != tt.want {
+				t.Errorf("memoryAvailableSampleStale() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPickHostRefusesLowMemAvailableDespiteBudgetRoom reproduces the
+// 2026-09-02T19:29Z homelab incident (agent-lcars#1742): a 16 GiB host with
+// nothing running and a 7 GiB candidate looks entirely free by the tracked
+// reservation budget alone (reserved=0, 14.4 GiB budget), exactly as
+// homelab did at 19:29Z (reserved=0, 13.4 GiB budget) -- but its measured
+// MemAvailable had already fallen to 3 GiB, well under what the candidate
+// plus the safety margin requires. The independent real-free-memory gate
+// must refuse it anyway.
+func TestPickHostRefusesLowMemAvailableDespiteBudgetRoom(t *testing.T) {
+	scaler := memoryBoundScaler(t, "memavail-refuse", 16*gibibyte, 7*gibibyte, nil)
+	// Host metrics ARE configured (memoryBoundScaler's bare default leaves
+	// them unconfigured, under which this gate is deliberately a no-op --
+	// see hostMetricsConfigured) so the seeded sample below is actually
+	// consulted.
+	scaler.hostMetricsURLTemplate = "http://127.0.0.1:1/%s"
+	fleet := scaler.coordinator()
+	available := int64(3 * gibibyte)
+	seedHostLoad(fleet, "janeway", hostLoad{memoryAvailableBytes: float64(available), memoryAvailable: float64(available) / float64(16*gibibyte)})
+
+	blocked := placementBlocked.WithLabelValues("memavail-refuse", "janeway", placementReasonMemoryAvailable)
+	before := testutil.ToFloat64(blocked)
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want a real-free-memory capacity failure despite budget room", host, err)
+	}
+	margin, total := defaultMemorySafetyMargin, int64(16*gibibyte)
+	required := 7*gibibyte + int64(margin*float64(total))
+	wantDetail := fmt.Sprintf("available=%d required=%d", available, required)
+	if !strings.Contains(err.Error(), wantDetail) {
+		t.Errorf("error %q missing detail %q", err, wantDetail)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Fatalf("placement_blocked_total{reason=%q} rose by %v, want 1", placementReasonMemoryAvailable, got)
+	}
+}
+
+// TestPickHostExcludesHostWithUnknownMemAvailableWhenAlternativeExists pins
+// agent-lcars#1742's fail-closed staleness rule for the ordinary case: a
+// second, healthy host exists, so the host with no fresh MemAvailable
+// sample is excluded from candidacy rather than merely deprioritized, and
+// the fleet is not counted as exhausted (mirrors
+// TestPickHostMixedFleetPrefersHealthyHost's overload-reason assertion).
+func TestPickHostExcludesHostWithUnknownMemAvailableWhenAlternativeExists(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "unknown") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, "node_load1 1\n")
+		for cpu := range 4 {
+			fmt.Fprintf(w, "node_cpu_seconds_total{cpu=\"%d\",mode=\"idle\"} 1\n", cpu)
+		}
+		fmt.Fprintf(w, "node_memory_MemAvailable_bytes %d\n", 20*gibibyte)
+		fmt.Fprintf(w, "node_memory_MemTotal_bytes %d\n", 32*gibibyte)
+	}))
+	defer metrics.Close()
+
+	unknownDocker := newFakeDockerServer(t)
+	unknownDocker.setMemoryTotal(32 * gibibyte)
+	freshDocker := newFakeDockerServer(t)
+	freshDocker.setMemoryTotal(32 * gibibyte)
+
+	scaler := &Scaler{
+		scaleSetName:           "memavail-alt",
+		runnerMemory:           8 * gibibyte,
+		hostMetricsURLTemplate: metrics.URL + "/%s/metrics",
+		dockerHosts: []DockerHost{
+			{Name: "unknown", Client: unknownDocker.client(t)},
+			{Name: "fresh", Client: freshDocker.client(t)},
+		},
+		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	blocked := placementBlocked.WithLabelValues("memavail-alt", "unknown", placementReasonMemoryAvailable)
+	before := testutil.ToFloat64(blocked)
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v, want the healthy host to absorb the placement", err)
+	}
+	if host != "fresh" {
+		t.Fatalf("pickHost() = %q, want fresh (unknown has no fresh MemAvailable sample)", host)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 0 {
+		t.Errorf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 0: the fleet had a healthy candidate", "unknown", placementReasonMemoryAvailable, got)
+	}
+}
+
+// TestPickHostAdmitsOnlyReachableHostDespiteUnknownMemAvailable pins
+// agent-lcars#1742's escape hatch: when host metrics are configured but the
+// only reachable, otherwise-eligible host's sample is unreachable/unknown,
+// admission falls back to the reservation budget alone rather than refusing
+// a placement no other host could take either.
+func TestPickHostAdmitsOnlyReachableHostDespiteUnknownMemAvailable(t *testing.T) {
+	scaler := memoryBoundScaler(t, "memavail-only", 16*gibibyte, 7*gibibyte, nil)
+	scaler.hostMetricsURLTemplate = "http://127.0.0.1:1/%s"
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v, want the sole reachable host admitted despite an unknown MemAvailable sample", err)
+	}
+	if host != "janeway" {
+		t.Fatalf("pickHost() = %q, want janeway", host)
+	}
+}
+
+// TestPickHostPrefersMoreRealMemoryOnTiedLoad pins agent-lcars#1742's rung-1
+// host preference: two hosts tied on effectiveCount (both idle, nothing
+// reserved) must not be decided by round-robin alone once their real
+// MemAvailable differs -- the host with more real headroom wins.
+func TestPickHostPrefersMoreRealMemoryOnTiedLoad(t *testing.T) {
+	metrics := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		available := int64(30 * gibibyte)
+		if strings.Contains(r.URL.Path, "tight") {
+			available = 8 * gibibyte
+		}
+		fmt.Fprint(w, "node_load1 1\n")
+		for cpu := range 4 {
+			fmt.Fprintf(w, "node_cpu_seconds_total{cpu=\"%d\",mode=\"idle\"} 1\n", cpu)
+		}
+		fmt.Fprintf(w, "node_memory_MemAvailable_bytes %d\n", available)
+		fmt.Fprintf(w, "node_memory_MemTotal_bytes %d\n", 32*gibibyte)
+	}))
+	defer metrics.Close()
+
+	tightDocker := newFakeDockerServer(t)
+	tightDocker.setMemoryTotal(32 * gibibyte)
+	roomyDocker := newFakeDockerServer(t)
+	roomyDocker.setMemoryTotal(32 * gibibyte)
+
+	scaler := &Scaler{
+		scaleSetName:           "memavail-tie",
+		runnerMemory:           4 * gibibyte,
+		hostMetricsURLTemplate: metrics.URL + "/%s/metrics",
+		dockerHosts: []DockerHost{
+			{Name: "tight", Client: tightDocker.client(t)},
+			{Name: "roomy", Client: roomyDocker.client(t)},
+		},
+		runners: runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if host != "roomy" {
+		t.Fatalf("pickHost() = %q, want roomy: tied effectiveCount must be broken by real MemAvailable headroom", host)
+	}
+}
+
+// TestLaneAdmissibleSlotsCappedByRealMemAvailable pins agent-lcars#1742's
+// gauge parity requirement: 32 GiB * 0.9 default margin / 8 GiB reservation
+// is 3 budget-derived slots, but only 12 GiB of that is real MemAvailable --
+// (12 GiB - 3.2 GiB margin) / 8 GiB is 1.1, floored to 1 -- so the gauge
+// must report 1, not 3.
+func TestLaneAdmissibleSlotsCappedByRealMemAvailable(t *testing.T) {
+	scaler := memoryBoundScaler(t, "memavail-slots-capped", 32*gibibyte, 8*gibibyte, nil)
+	scaler.hostMetricsURLTemplate = "http://127.0.0.1:1/%s"
+	fleet := scaler.coordinator()
+	seedHostLoad(fleet, "janeway", hostLoad{memoryAvailableBytes: float64(12 * gibibyte), memoryAvailable: 12.0 / 32.0})
+
+	scaler.refreshAdmissibleSlots(context.Background())
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("memavail-slots-capped")); got != 1 {
+		t.Fatalf("lane_admissible_slots = %v, want 1 (capped by real MemAvailable, not the 3 budget-derived slots)", got)
+	}
+}
+
+// TestLaneAdmissibleSlotsUncappedWhenOnlyHostHasUnknownMemAvailable mirrors
+// TestPickHostAdmitsOnlyReachableHostDespiteUnknownMemAvailable for the
+// gauge: with no alternative host to prefer instead, the budget-derived
+// figure stands uncapped rather than being zeroed by an unknown sample.
+func TestLaneAdmissibleSlotsUncappedWhenOnlyHostHasUnknownMemAvailable(t *testing.T) {
+	scaler := memoryBoundScaler(t, "memavail-slots-onlyhost", 32*gibibyte, 8*gibibyte, nil)
+	scaler.hostMetricsURLTemplate = "http://127.0.0.1:1/%s"
+
+	scaler.refreshAdmissibleSlots(context.Background())
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("memavail-slots-onlyhost")); got != 3 {
+		t.Fatalf("lane_admissible_slots = %v, want 3 (uncapped: no alternative host to prefer instead)", got)
+	}
+}
+
 func TestRegistrationTarget(t *testing.T) {
 	for in, want := range map[string][2]string{
 		"https://github.com/supersprinklesracing/sprinkles": {"supersprinklesracing", "supersprinklesracing/sprinkles"},

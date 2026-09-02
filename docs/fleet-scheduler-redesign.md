@@ -163,6 +163,22 @@ Peak memory per job name over a week is then one PromQL join
 memory"); the series is removed on completion, so cardinality is bounded by
 concurrent busy runners.
 
+**Note (agent-lcars#1742).** Tiering is policy, not capacity: it decides
+which jobs _should_ share a slot of a given size, not whether a host has one
+free right now. Those are different questions with different failure modes.
+A light tier sized correctly still assumes the host it lands on has that
+much real memory to give, and on a shared homelab host that is not only a
+function of other runners -- interactive Claude/Codex sessions, their Nx
+daemons, and the observability stack all compete for the same RAM outside
+any runner's cgroup. The 2026-09-02T19:29Z incident was exactly this:
+budget-minus-reservations said a host had room, and it did, by that
+accounting; it did not have room in `MemAvailable`, because non-runner work
+had already spent it. Getting the tiers right (this section) does not by
+itself fix that -- capacity accounting has to look at the host's actual free
+memory too, which is what the real-free-memory floor in "Aggregate
+reserved-memory admission" (`apps/runner-autoscaler/README.md`) now does,
+independent of and in addition to whichever tier a job routes to.
+
 ### C. Usage-aware admission and a bounded overcommit
 
 Two additions to `pickHostLocked`, both behind config and both exported:
