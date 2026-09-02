@@ -23,7 +23,12 @@ type FleetCoordinator struct {
 	mainsRequired     map[string]bool
 	metricsViaSSH     map[string]bool
 	readinessRequired map[string]bool
-	gate              *weightedPlacementGate
+	// hostRoles is every configured fleet host's resolved role (permanent,
+	// opportunistic, or maintenance; empty reads as permanent for the
+	// zero-value/single-scaler test path) -- see hostRolePermanent and
+	// probeFleetHosts' maintenance exclusion (agent-lcars#1696).
+	hostRoles map[string]string
+	gate      *weightedPlacementGate
 
 	hostSampleMu    sync.Mutex
 	hostSamples     map[string]hostSample
@@ -57,6 +62,7 @@ func newFleetCoordinator(maxRunners int, limits map[string]int, weights, priorit
 		reservations: map[string]int{}, reservedMemory: map[string]int64{}, startInFlight: map[string]bool{},
 		scaleSetDemand: map[string]schedulerDemand{}, priorities: priorities, lastFleetCounts: map[string]int{},
 		hostRunnerLimits: limits, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
+		hostRoles:   map[string]string{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
 		gate: newWeightedPlacementGate(weights, order),
 	}

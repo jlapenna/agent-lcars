@@ -43,6 +43,14 @@ const (
 	// never excludes the host, because telemetry trouble must fail open, not
 	// closed (see probeHostLoad).
 	placementReasonOverload = "overload"
+	// The host is declared with role: maintenance (agent-lcars#1696,
+	// docs/fleet-scheduler-redesign.md#F) and so is never a placement
+	// candidate, independent of its reachability or readiness. Recorded on
+	// every probe, not just when it was the deciding factor -- unlike the
+	// other per-host reasons above, a maintenance host is structurally
+	// excluded rather than conditionally excluded, so the counter's rate is
+	// the standing signal that host_role_info's join names it as "out".
+	placementReasonMaintenance = "maintenance"
 )
 
 // The complete set of `reason` label values runnerDiedIdleTotal and
@@ -190,6 +198,13 @@ var (
 		},
 		[]string{"host"},
 	)
+	hostRoleInfoGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_role_info",
+			Help: "Static description of a declared fleet host's role: permanent, opportunistic, or maintenance. Always 1; join against placementBlocked{reason=\"maintenance\"} or lane_permanent_admissible_slots to name the hosts backing either (agent-lcars#1696).",
+		},
+		[]string{"host", "role"},
+	)
 	hostNormalizedLoadGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_host_normalized_load",
@@ -284,6 +299,13 @@ var (
 		},
 		[]string{"scale_set"},
 	)
+	lanePermanentAdmissibleSlotsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_lane_permanent_admissible_slots",
+			Help: "Like github_runner_autoscaler_lane_admissible_slots, but summed over role: permanent hosts only -- opportunistic hosts (e.g. laptop) still place runners but never count here, and maintenance hosts never contribute to either gauge. This is the fleet invariant an alert should read: it stays truthful when an opportunistic host disappears (agent-lcars#1696, docs/fleet-scheduler-redesign.md#F).",
+		},
+		[]string{"scale_set"},
+	)
 	scaleSetMemoryReservationGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_scale_set_memory_reservation_bytes",
@@ -349,8 +371,8 @@ var (
 		Help: "Placement attempts blocked by a fleet scheduling invariant, by host and reason: " +
 			placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " +
 			placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " +
-			placementReasonPriorityReservation + ". host names the specific host that refused the candidate for a " +
-			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload +
+			placementReasonMaintenance + ", " + placementReasonPriorityReservation + ". host names the specific host that refused the candidate for a " +
+			"per-host reason (" + placementReasonMemoryReservation + ", " + placementReasonReadiness + ", " + placementReasonOverload + ", " + placementReasonMaintenance +
 			"); a fleet-level reason (" + placementReasonFleetLimit + ", " + placementReasonHostLimits + ", " + placementReasonPriorityReservation +
 			") has no single host at fault and uses host=\"\".",
 	}, []string{"scale_set", "host", "reason"})
@@ -491,6 +513,7 @@ func registerMetrics() {
 			githubUnavailableRunnersReapedTotal,
 			hostReachableGauge,
 			hostReadyGauge,
+			hostRoleInfoGauge,
 			hostNormalizedLoadGauge,
 			hostCPUUtilizationGauge,
 			hostPressureGauge,
@@ -507,6 +530,7 @@ func registerMetrics() {
 			runnerSliceBoundedGauge,
 			runnerSliceMemoryMaxGauge,
 			laneAdmissibleSlotsGauge,
+			lanePermanentAdmissibleSlotsGauge,
 			scaleSetMemoryReservationGauge,
 			scaleSetMemoryLimitGauge,
 			scaleSetInfoGauge,

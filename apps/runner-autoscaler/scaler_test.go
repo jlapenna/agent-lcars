@@ -819,6 +819,96 @@ func TestRefreshAdmissibleSlotsWithoutPlacementAttempt(t *testing.T) {
 	}
 }
 
+// twoHostUnboundedScaler builds a Scaler with one docker host per limits
+// entry and no runner_memory ceiling, so laneAdmissibleSlotsOverHosts' headroom-only
+// path (a.runnerMemory <= 0) is exercised: each host's contribution is
+// exactly its configured runner_limit headroom, with no memory arithmetic to
+// entangle a multi-role fixture in.
+func twoHostUnboundedScaler(t *testing.T, name string, limits map[string]int) *Scaler {
+	t.Helper()
+	var hosts []DockerHost
+	for hostName := range limits {
+		fake := newFakeDockerServer(t)
+		hosts = append(hosts, DockerHost{Name: hostName, Client: fake.client(t)})
+	}
+	return &Scaler{
+		scaleSetName:     name,
+		dockerHosts:      hosts,
+		hostRunnerLimits: limits,
+		runners:          runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+// TestLanePermanentAdmissibleSlotsCountsOnlyPermanentHosts pins
+// agent-lcars#1696's acceptance criterion: a lane with 2 slots of headroom
+// on a permanent host and 3 on an opportunistic host must report 5 on the
+// fleet-wide gauge (both roles place runners) but only 2 on the
+// permanent-only gauge -- the fleet invariant an alert reads, which must stay
+// truthful when the opportunistic host disappears.
+func TestLanePermanentAdmissibleSlotsCountsOnlyPermanentHosts(t *testing.T) {
+	scaler := twoHostUnboundedScaler(t, "e2e", map[string]int{"perm1": 2, "opp1": 3})
+	fleet := scaler.coordinator()
+	fleet.hostRoles = map[string]string{"perm1": hostRolePermanent, "opp1": hostRoleOpportunistic}
+
+	scaler.refreshAdmissibleSlots(context.Background())
+
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 5 {
+		t.Fatalf("lane_admissible_slots = %v, want 5 (2 permanent + 3 opportunistic)", got)
+	}
+	if got := testutil.ToFloat64(lanePermanentAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 2 {
+		t.Fatalf("lane_permanent_admissible_slots = %v, want 2 (opportunistic host excluded)", got)
+	}
+}
+
+// TestLanePermanentAdmissibleSlotsDefaultsUnsetRoleToPermanent pins backward
+// compatibility for a Scaler built without ever populating fleet.hostRoles
+// (every pre-#1696 unit test, and the single-scaler/local-fleet path): a host
+// absent from hostRoles must still count as permanent, not be silently
+// dropped from the invariant gauge.
+func TestLanePermanentAdmissibleSlotsDefaultsUnsetRoleToPermanent(t *testing.T) {
+	scaler := memoryBoundScaler(t, "solo", 32*gibibyte, 8*gibibyte, nil)
+	scaler.refreshAdmissibleSlots(context.Background())
+	if got := testutil.ToFloat64(lanePermanentAdmissibleSlotsGauge.WithLabelValues("solo")); got != 3 {
+		t.Fatalf("lane_permanent_admissible_slots = %v, want 3 (unset role reads as permanent, matching lane_admissible_slots)", got)
+	}
+}
+
+// TestPickHostSkipsMaintenanceHost pins agent-lcars#1696's placement
+// exclusion: a role: maintenance host must never receive a placement, must
+// be excluded from both admissible-slots gauges even though it has far more
+// runner_limit headroom than the healthy host, and every probe must count it
+// under placement_blocked_total{reason="maintenance"} while still reporting
+// host_reachable exactly as an ordinary managed host would.
+func TestPickHostSkipsMaintenanceHost(t *testing.T) {
+	scaler := twoHostUnboundedScaler(t, "e2e", map[string]int{"perm1": 1, "maint1": 5})
+	fleet := scaler.coordinator()
+	fleet.hostRoles = map[string]string{"perm1": hostRolePermanent, "maint1": hostRoleMaintenance}
+
+	blocked := placementBlocked.WithLabelValues("e2e", "maint1", placementReasonMaintenance)
+	before := testutil.ToFloat64(blocked)
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if host != "perm1" {
+		t.Fatalf("pickHost() = %q, want perm1 (maint1 is under maintenance despite 5x the headroom)", host)
+	}
+	if got := testutil.ToFloat64(blocked) - before; got != 1 {
+		t.Fatalf("placement_blocked_total{host=%q,reason=%q} rose by %v, want 1", "maint1", placementReasonMaintenance, got)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 1 {
+		t.Fatalf("lane_admissible_slots = %v, want 1 (only perm1's headroom; maint1 excluded)", got)
+	}
+	if got := testutil.ToFloat64(lanePermanentAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 1 {
+		t.Fatalf("lane_permanent_admissible_slots = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(hostReachableGauge.WithLabelValues("maint1")); got != 1 {
+		t.Fatalf("host_reachable{host=%q} = %v, want 1: a maintenance host stays declared and probed", "maint1", got)
+	}
+}
+
 // placement_blocked_total's host label distinguishes a per-host refusal
 // (memory_reservation, readiness, overload -- pinned by the readiness,
 // overload, and memory-reservation tests above/below) from a fleet-level one
