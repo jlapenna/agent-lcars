@@ -163,6 +163,33 @@ export function isControlPlaneRepository(fullName: string): boolean {
   return controlPlaneRepositories().includes(fullName);
 }
 
+/**
+ * Repositories whose `push` webhook events mint a native "reconcile the
+ * fleet" work item (see `push-watch.ts`) — deliberately separate from
+ * {@link controlPlaneRepositories}. A repository here is *not* thereby made
+ * eligible for the fleet's full issue/PR dispatch machinery; it is only
+ * observed for its `main` branch moving. Parsed once from
+ * `AGENT_LCARS_PUSH_WATCHED_REPOS` (a comma-separated `owner/name` list).
+ *
+ * Unset or empty means nothing is push-watched — this feature is additive
+ * and opt-in, unlike {@link controlPlaneRepositories} (which throws on
+ * misconfiguration because accepting an anchor with no rendering path is a
+ * bug, not a degraded mode). There is no anchor here to render; an absent
+ * or malformed entry just means fewer repositories are watched.
+ */
+export function pushWatchedRepos(): string[] {
+  const raw = optional('AGENT_LCARS_PUSH_WATCHED_REPOS') ?? '';
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => OWNER_NAME_PATTERN.test(entry));
+}
+
+/** Exact, case-sensitive membership check against {@link pushWatchedRepos}. */
+export function isPushWatchedRepository(fullName: string): boolean {
+  return pushWatchedRepos().includes(fullName);
+}
+
 /** Command used to restore archived Claude transcripts: the fleet-tools
  * PATH bin (agent-lcars#1328) — installed on workstations and baked into
  * the runner image, so it is checkout-independent. */

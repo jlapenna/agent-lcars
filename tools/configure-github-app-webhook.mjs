@@ -13,6 +13,10 @@ const REQUIRED_EVENTS = [
   'pull_request',
   'pull_request_review',
   'pull_request_review_thread',
+  // Requires the App to also hold the "Contents: Read" permission — like
+  // event subscriptions, that is a settings-page/installation-approval
+  // control this script cannot grant, only verify is already in place.
+  'push',
 ];
 
 function required(name) {

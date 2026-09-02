@@ -91,7 +91,7 @@ env:
   # `/lcars` Slack command's direct GitHub issue filing with a native item.
   # Its current grant lists every supported pipeline.
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:push-watch","subjects":["push-watch"],"pipelines":["claude"],"scopes":["work.operator"]}]'
     availability:
       - RUNTIME
 
@@ -127,6 +127,18 @@ env:
   # retired.
   - variable: AGENT_LCARS_CONTROL_PLANE_REPOSITORIES
     value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab,supersprinklesracing/www,supersprinklesracing/girosf,jlapenna/nx-cache-server,jlapenna/sync-padd'
+    availability:
+      - RUNTIME
+
+  # Separate, narrower repo list: only `push` webhook events mint a native
+  # work item for these (`push-watch.ts`) — unlike
+  # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES above, membership here does not
+  # make a repository eligible for issue/PR dispatch. jlapenna/repo-tools is
+  # not itself a control-plane repository; only its `main` branch moving is
+  # observed, and the resulting work item always targets jlapenna/homelab
+  # (already admitted above).
+  - variable: AGENT_LCARS_PUSH_WATCHED_REPOS
+    value: 'jlapenna/repo-tools'
     availability:
       - RUNTIME
 
