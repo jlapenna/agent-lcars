@@ -608,7 +608,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 		p.HostMetricsURLTemplate = "http://%s.lan.jlapenna.net:9100/metrics"
 	}
 	if p.SparkMetricsURL == "" {
-		p.SparkMetricsURL = "http://spark.lan.jlapenna.net:8000/metrics"
+		p.SparkMetricsURL = "http://llama-swap.lan.jlapenna.net:8000/metrics"
 	}
 	if len(p.HostMemoryExempt) == 0 {
 		p.HostMemoryExempt = []string{"spark"}
