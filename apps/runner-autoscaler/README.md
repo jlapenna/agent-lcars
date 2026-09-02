@@ -46,6 +46,51 @@ The deployment-owned alert can page on unavailable runners persisting for ten
 minutes without mistaking the brief registration window during startup for a
 dead broker connection.
 
+## Scale-set listener statistics
+
+Each scale set's listener session implements `listener.MetricsRecorder`
+(`scale_set_stats_recorder.go`) and exports the full
+`RunnerScaleSetStatistic` GitHub sends it, rather than discarding everything
+but the assigned-job count the scaler already consumes:
+
+- `github_runner_autoscaler_scale_set_stats{scale_set,field}` -- one gauge
+  per statistic, updated on every `RecordStatistics` call (the initial
+  session and every subsequent polled message). `field` is one of
+  `available_jobs`, `acquired_jobs`, `assigned_jobs`, `running_jobs`,
+  `registered_runners`, `busy_runners`, `idle_runners`.
+- `github_runner_autoscaler_scale_set_last_message_timestamp_seconds{scale_set}`
+  -- unix time the listener last processed an actual message from GitHub.
+  Set from `RecordStatistics` only when the statistics arrived attached to a
+  polled message (not the one-time initial-session statistics), and
+  independently from `RecordJobStarted`/`RecordJobCompleted`, which fire
+  only for real messages.
+- `github_runner_autoscaler_scale_set_session_started_timestamp_seconds{scale_set}`
+  -- unix time the current listener session was (re)created. A session can
+  restart (and this timestamp jump forward) with no new message ever
+  following it; that gap between the two timestamps is the signal a
+  healthy-looking listener can still be silently starved.
+
+`github_runner_autoscaler_desired_runners` continues to be set only by
+`Scaler.HandleDesiredRunnerCount`, not by this recorder's
+`RecordDesiredRunners` hook -- the scaler's target-runner-count computation
+and the value this hook receives are not always bit-identical, and setting
+the same series from both places would race them against each other.
+
+**Stranded-queue signature (agent-lcars#1716):** a scale set is stuck when
+the GitHub Actions exporter shows `queued > 0` for the `runs_on` label this
+scale set serves (join via `github_runner_autoscaler_scale_set_label_info`)
+while this scale set's own `available_jobs + acquired_jobs + assigned_jobs +
+running_jobs == 0` and `github_runner_autoscaler_desired_runners == 0` --
+i.e. GitHub is not offering this scale set any of the work the exporter says
+is queued for its label, so nothing here can even try to scale up. That is
+the exact incident #1716 documents (GitHub stopped routing an ephemeral
+runner's follow-up job to the scale set that should have served it) and is
+what the homelab `RunnerLaneStrandedQueue` alert rule watches for. This
+recorder also logs once at INFO, cheaply and independently of that alert,
+whenever `available_jobs > 0` persists for two consecutive polls while
+`desired_runners == 0` -- jobs are being offered but never turning into
+runner demand.
+
 ## LCARS live runner status
 
 The autoscaler can publish its current queue depth and each scale set's
