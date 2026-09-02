@@ -13,12 +13,16 @@ recompiling the same unchanged libraries. Cache keys are content hashes over
 declared inputs, so sharing across branches is safe: different content hashes
 differently and cannot collide.
 
-**L2 — shared, over HTTP, on `spark`.** A self-hosted implementation of Nx
-23.1's built-in remote-cache protocol (`GET`/`PUT /v1/cache/{hash}`, bearer
-auth). It is deployed and documented in the `homelab` repo under
-`nx-cache-server/`. Because entries are keyed purely by content hash, L2
-dedupes across worktrees, across hosts, and between local development and CI
-automatically.
+**L2 — shared, over HTTP, on a fleet-provided host.** A self-hosted
+implementation of Nx 23.1's built-in remote-cache protocol
+(`GET`/`PUT /v1/cache/{hash}`, bearer auth). This repo's own fleet (homelab)
+deploys it on `picard` at `http://nx-cache.lan.jlapenna.net:3123` — a role
+alias that survives the server being renamed or moved, documented in the
+`homelab` repo under `nx-cache-server/`. Any fleet running this tooling points
+`NX_REMOTE_CACHE_URL` / `vars.NX_CACHE_URL` at its own equivalent endpoint;
+nothing here assumes a specific host. Because entries are keyed purely by
+content hash, L2 dedupes across worktrees, across hosts, and between local
+development and CI automatically.
 
 L1 is a per-host disk budget, not a shared directory — the fleet caps it via
 `nx_cache_cap_kb` in the homelab inventory (pike: 10G). Do **not** try to make
@@ -45,8 +49,8 @@ declared output instead of inheriting stale files. It is not, by itself, a
 persistence mechanism.
 
 The normal production path uses Firebase's managed App Hosting build. It starts
-cold for the reasons measured above, so Spark's private-LAN L2 is deliberately
-not part of the production build contract.
+cold for the reasons measured above, so the fleet's private-LAN L2 is
+deliberately not part of the production build contract.
 
 `workflow_dispatch` retains `build_mode: prebuilt` only as an explicit
 diagnostic option while the App Hosting prebuilt importer is repaired (#1128).
@@ -67,8 +71,10 @@ which would punish a laptop off the VPN.
 The token is resolved from two sources, in order:
 
 1. **The encrypted age secret store** (`secrets-cat`, key
-   `NX_CACHE_TOKEN_SPARK`). Covers the maintainer's home directory on any fleet
-   host, with no cloud login.
+   `NX_CACHE_TOKEN_SPARK` — the name predates the L2 host's rename to
+   `picard` and is tracked for a follow-up rename in `homegit`, the repo
+   that owns the secret store). Covers the maintainer's home directory on
+   any fleet host, with no cloud login.
 2. **This repo's own GCP project** (`nx-cache-access-token` in `agent-lcars`).
    Covers runs that do not happen in that home directory — CI containers,
    self-hosted runners, and any host with workload identity but no age key.

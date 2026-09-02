@@ -32,7 +32,7 @@ runs:
     # A same-repository PR is opened by a contributor who already has write
     # access, so it can safely warm the cache just like push and dispatch
     # builds. Forks cannot receive this capability and are routed to a
-    # GitHub-hosted runner without a route to spark.
+    # GitHub-hosted runner without a route to the private L2 host.
     - name: Configure Nx remote cache
       if: >-
         inputs.url != ''
