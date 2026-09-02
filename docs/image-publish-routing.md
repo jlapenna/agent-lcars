@@ -37,6 +37,47 @@ cache invalidates independently whenever repo-tools/main advances, even
 across rebuilds of an unchanged agent-lcars commit. The E2E runner receives
 the matching E2E sandbox reference as `SANDBOX_IMAGE`.
 
+## The `actions-runner` base image (RUNNER_BASE)
+
+`homelab-runner`, `control-plane-runner`, and `e2e-runner` all `FROM` the
+upstream `actions/runner` release via a `RUNNER_BASE` build ARG. Each
+Dockerfile defaults that ARG to the upstream `ghcr.io/actions/actions-runner`
+reference, pinned by the multi-arch index digest, so a plain `docker build`
+with no build args works from any network (issue #1729).
+
+A fleet publish is expected to override `RUNNER_BASE` with
+`--build-arg RUNNER_BASE=<mirror>@<digest>` so the images this fleet
+publishes build from a pre-pulled private-registry mirror instead of an
+external registry -- avoiding a registry-availability/rate-limit dependency
+during a fleet build, not a property of these images themselves.
+
+**Homelab example.** `jlapenna/homelab` mirrors the pinned upstream digest
+into its own registry and pins the mirror by the same digest
+(`registry/pinned-base-mirrors.json`). To update the mirror after an upstream
+`actions/runner` release:
+
+```bash
+# Socketless publishing lane: the credential arrives as a read-only mount
+# and there is no TTY, so use the stdin form -- an interactive prompt just
+# hangs there. From a workstation without that mount, drop
+# --password-stdin and let it prompt.
+docker login docker-registry.lan.jlapenna.net \
+  --username publisher --password-stdin < /secrets/registry-password
+
+docker buildx imagetools create \
+  --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:vX.Y.Z \
+  --tag docker-registry.lan.jlapenna.net/mirror/actions-runner:latest \
+  <verified-upstream-actions-runner-index-digest>
+```
+
+Then bump the digest in both `registry/pinned-base-mirrors.json` and each
+consuming Dockerfile's `RUNNER_BASE` default -- deliberately two steps so
+mirroring does not silently change what gets built. Anonymous pulls from the
+mirror work; only the `imagetools create` push needs the publisher
+credential (the registry enforces Bearer auth on writes, homelab#220 /
+agent-lcars#112 -- a missing login fails at the push with a 401, not at the
+read, which otherwise reads like a broken upstream digest).
+
 ## Select only artifacts whose inputs changed
 
 This command is intentionally explicit rather than triggered from GitHub.
