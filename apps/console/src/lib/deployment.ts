@@ -16,12 +16,16 @@ import { getWatchedRepos } from './watched-repos-config';
  * have to change?" a grep-and-hope question. Collecting them here makes the
  * boundary between the app and one instance of it a file boundary.
  *
- * Each reads an env var and falls back to this deployment's current value,
- * so nothing breaks if a var is unset. The fallbacks are the *only* place
- * instance identity appears in console source — changing this file plus
- * `apphosting.yaml` is the whole job. (Making them `required()` and
- * deleting the fallbacks is the stricter follow-up; it needs every test and
- * CI surface to supply them first.)
+ * The identity variables ({@link maintainerLogin}, {@link consoleUrl},
+ * {@link artifactShareBaseUrl}, {@link pushWatchTargetRepo},
+ * {@link consoleRepositoryUrl}) are `required()`: there is no fallback to
+ * this deployment's own values, so a fork that forgets to set one fails
+ * loudly instead of silently inheriting this fleet's identity (#1731).
+ * {@link validateDeploymentIdentity} calls every one of them eagerly from
+ * `instrumentation.ts`'s `register()`, so a missing variable fails at
+ * process startup with a clear message rather than on whichever request
+ * happens to touch it first. `apphosting.yaml` is the one place this
+ * deployment's concrete values live now.
  *
  * Server-only: `@agent-lcars/util-server` must never reach a client bundle. Client
  * components that need one of these take it as a prop from a server
@@ -33,7 +37,7 @@ import { getWatchedRepos } from './watched-repos-config';
  * {@link adminGithubLogins}, so adding another operator does not change whose
  * review queue the console curates. */
 export function maintainerLogin(): string {
-  return optional('AGENT_LCARS_ADMIN_GITHUB_LOGIN') ?? 'jlapenna';
+  return required('AGENT_LCARS_ADMIN_GITHUB_LOGIN');
 }
 
 /** GitHub logins authorized to operate this console. The plural setting is
@@ -77,14 +81,34 @@ export function agentFleetLogin(): string {
   return optional('AGENT_LCARS_FLEET_GITHUB_LOGIN') ?? 'agent-lcars-bot';
 }
 
-/** Copy identifying this console deployment in metadata and auth surfaces. */
+/**
+ * Copy identifying this console deployment in metadata and auth surfaces.
+ * Deliberately `optional()`, not `required()`: `layout.tsx`'s static
+ * `export const metadata` object evaluates this at module load, which runs
+ * during `next build` itself (confirmed empirically -- a `required()` read
+ * here fails the production build, not just a request, before any runtime
+ * env is available to satisfy it). The generic fallback names the product,
+ * never a specific deployment, so an unconfigured fork still builds and
+ * gets a truthful-if-generic description rather than another fleet's name.
+ */
 export function consoleDescription(): string {
-  return 'jlapenna/agent-lcars — multi-agent issue activity';
+  return (
+    optional('AGENT_LCARS_CONSOLE_DESCRIPTION') ??
+    'Agent LCARS — multi-agent issue activity'
+  );
 }
 
-/** Repository that contains and deploys this console. */
+/**
+ * Repository that contains and deploys this console. Derived from
+ * {@link controlPlaneRepository} -- "the repository whose controller this
+ * backend hosts" is exactly "the repository that deploys this console" --
+ * rather than a second, redundant env var. Unlike {@link consoleDescription},
+ * this is safe as `required()`: every caller renders inside the console's
+ * dynamic (cookie/header-gated) render tree, never from build-time static
+ * metadata (confirmed empirically alongside the above).
+ */
 export function consoleRepositoryUrl(): string {
-  return 'https://github.com/jlapenna/agent-lcars';
+  return `https://github.com/${controlPlaneRepository()}`;
 }
 
 /**
@@ -98,7 +122,7 @@ export function consoleRepositoryUrl(): string {
  * identity value's home, per this file's own doc comment above.
  */
 export function consoleUrl(): string {
-  return optional('AGENT_LCARS_CONSOLE_URL') ?? 'https://lcars.jlapenna.net';
+  return required('AGENT_LCARS_CONSOLE_URL');
 }
 
 /** Repository whose controller this backend hosts. GitHub Actions OIDC
@@ -190,6 +214,23 @@ export function isPushWatchedRepository(fullName: string): boolean {
   return pushWatchedRepos().includes(fullName);
 }
 
+/**
+ * Repository the work item minted by `push-watch.ts` always targets --
+ * already an admitted {@link controlPlaneRepositories} entry, distinct from
+ * whichever push-watched repository actually triggered the mint. `push-watch.ts`
+ * used to hard-code this as `PUSH_WATCH_TARGET_REPO`; there was no override,
+ * so a fork inherited this fleet's target with no way to redirect it.
+ */
+export function pushWatchTargetRepo(): string {
+  const raw = required('AGENT_LCARS_PUSH_WATCH_TARGET_REPO');
+  if (!OWNER_NAME_PATTERN.test(raw)) {
+    throw new Error(
+      `AGENT_LCARS_PUSH_WATCH_TARGET_REPO ${JSON.stringify(raw)} is not a valid owner/name repository`,
+    );
+  }
+  return raw;
+}
+
 /** Command used to restore archived Claude transcripts: the fleet-tools
  * PATH bin (agent-lcars#1328) — installed on workstations and baked into
  * the runner image, so it is checkout-independent. */
@@ -202,15 +243,12 @@ export function agentSessionResumeScript(): string {
  * `~/share/<conversation-id>/<filename>` on the originating host and are
  * served under `<base>/<host>/...` (LAN/Tailscale-only, behind Authelia).
  *
- * `required()`-shaped rather than optional would be wrong here: an
- * unreachable artifact link degrades to a dead link, which is strictly
- * better than refusing to render the session page at all.
+ * `required()`, not a jlapenna-shaped fallback (#1731): an unconfigured
+ * fork should fail closed at startup, not silently link every shared
+ * artifact at this fleet's share host.
  */
 export function artifactShareBaseUrl(): string {
-  return (
-    optional('AGENT_LCARS_ARTIFACT_SHARE_BASE_URL') ??
-    'https://share.lan.jlapenna.net'
-  );
+  return required('AGENT_LCARS_ARTIFACT_SHARE_BASE_URL');
 }
 
 /**
@@ -225,4 +263,22 @@ export function shareArtifactUrl(
   filename: string,
 ): string {
   return `${artifactShareBaseUrl()}/${host}/${sessionId}/${filename}`;
+}
+
+/**
+ * Eagerly reads every `required()` deployment-identity variable once at
+ * process startup (`instrumentation.ts`'s `register()`), so a missing one
+ * fails the boot with a clear `process.env.<NAME> not defined` message
+ * instead of surfacing later on whichever request happens to touch it
+ * first (#1731). `consoleDescription` is intentionally excluded: it is
+ * `optional()` with a generic, deployment-neutral fallback (see its own
+ * doc comment) precisely because it is evaluated at build time, before any
+ * runtime env is available to validate.
+ */
+export function validateDeploymentIdentity(): void {
+  maintainerLogin();
+  consoleUrl();
+  artifactShareBaseUrl();
+  pushWatchTargetRepo();
+  consoleRepositoryUrl();
 }

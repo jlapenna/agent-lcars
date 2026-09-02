@@ -21,7 +21,8 @@ function usage() {
     'Usage: ./tools/nx run @agent-lcars/console:mint-session -- ' +
       '[--storage <local|secret>] [--origin <origin>] [--state-file <path>] ' +
       '[--project <gcp-project>] [--secret-name <name>] ' +
-      '[--auth-secret-name <name>]',
+      '[--auth-secret-name <name>]\n' +
+      '  --origin defaults to AGENT_LCARS_CONSOLE_URL when set',
   );
 }
 

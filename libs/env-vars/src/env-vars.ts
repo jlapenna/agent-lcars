@@ -25,6 +25,8 @@ export interface EnvVars {
   // either is unset.
   AGENT_LCARS_APP_CLIENT_ID?: string; // Secret
   AGENT_LCARS_APP_PRIVATE_KEY?: string; // Secret
+  /** Base URL the share-media skill's files are served from. Required, no
+   *  fallback (#1731) -- see `deployment.ts`'s `artifactShareBaseUrl`. */
   AGENT_LCARS_ARTIFACT_SHARE_BASE_URL?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORY?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORIES?: string;
@@ -32,6 +34,11 @@ export interface EnvVars {
   /** Comma-separated `owner/name` repos whose `push` webhook mints a native
    *  reconcile-the-fleet work item — see `push-watch.ts`. */
   AGENT_LCARS_PUSH_WATCHED_REPOS?: string;
+  /** Repository the work item minted by a push-watch delivery always
+   *  targets, regardless of which push-watched repository triggered it.
+   *  Required, no fallback (#1731) -- see `deployment.ts`'s
+   *  `pushWatchTargetRepo`. */
+  AGENT_LCARS_PUSH_WATCH_TARGET_REPO?: string;
   AGENT_LCARS_WEBHOOK_QUEUE?: string;
   AGENT_LCARS_WEBHOOK_QUEUE_LOCATION?: string;
   AGENT_LCARS_WEBHOOK_SECRET?: string; // Secret
@@ -45,9 +52,16 @@ export interface EnvVars {
   AGENT_LCARS_WORK_MAX_LIVE_RUNS?: string;
   /** This console deployment's own public base URL, embedded in a native
    *  work item's `brief.anchor.html_url` for a direct-mode agent to read
-   *  back (`runs-router.ts`'s `brief` handler). Defaults to
-   *  `https://lcars.jlapenna.net` -- see `deployment.ts`'s `consoleUrl`. */
+   *  back (`runs-router.ts`'s `brief` handler), and the default `--origin`
+   *  the `saved-session` CLI tools point at
+   *  (`tools/saved-session/saved-session-lib.mjs`). Required, no fallback
+   *  (#1731) -- see `deployment.ts`'s `consoleUrl`. */
   AGENT_LCARS_CONSOLE_URL?: string;
+  /** Copy identifying this console deployment in metadata and auth surfaces
+   *  (page `<title>`/`description`). Optional: falls back to a generic,
+   *  deployment-neutral description -- see `deployment.ts`'s
+   *  `consoleDescription`. */
+  AGENT_LCARS_CONSOLE_DESCRIPTION?: string;
   DISPATCH_FIRESTORE_DATABASE_ID?: string;
   QUICK_TASK_EVIDENCE_BUCKET?: string;
 

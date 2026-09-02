@@ -15,7 +15,9 @@ import {
   isPushWatchedRepository,
   maintainerLogin,
   pushWatchedRepos,
+  pushWatchTargetRepo,
   shareArtifactUrl,
+  validateDeploymentIdentity,
 } from './deployment';
 
 const VARS = [
@@ -27,7 +29,9 @@ const VARS = [
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
   'AGENT_LCARS_WATCHED_REPOS',
   'AGENT_LCARS_CONSOLE_URL',
+  'AGENT_LCARS_CONSOLE_DESCRIPTION',
   'AGENT_LCARS_PUSH_WATCHED_REPOS',
+  'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
 ] as const;
 
 afterEach(() => {
@@ -41,6 +45,11 @@ describe('deployment config', () => {
   it('reads the maintainer login from the environment', () => {
     process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone-else';
     expect(maintainerLogin()).toBe('someone-else');
+  });
+
+  it('fails closed when the maintainer login is unset -- no jlapenna fallback', () => {
+    delete process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'];
+    expect(() => maintainerLogin()).toThrow('AGENT_LCARS_ADMIN_GITHUB_LOGIN');
   });
 
   describe('console admin authorization', () => {
@@ -63,6 +72,7 @@ describe('deployment config', () => {
     });
 
     it('rejects missing and unlisted profile logins', () => {
+      process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'jlapenna';
       process.env['AGENT_LCARS_ADMIN_GITHUB_LOGINS'] = 'jlapenna,lizsprinkles';
       expect(isAdminGithubLogin(undefined)).toBe(false);
       expect(isAdminGithubLogin(null)).toBe(false);
@@ -84,19 +94,55 @@ describe('deployment config', () => {
     );
   });
 
+  it('fails closed when the artifact share base URL is unset -- no jlapenna fallback', () => {
+    delete process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'];
+    expect(() => artifactShareBaseUrl()).toThrow(
+      'AGENT_LCARS_ARTIFACT_SHARE_BASE_URL',
+    );
+  });
+
   it('reads the control-plane repository from the environment', () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/controller';
     expect(controlPlaneRepository()).toBe('owner/controller');
   });
 
   describe('consoleUrl', () => {
-    it('defaults to this deployment when unset', () => {
-      expect(consoleUrl()).toBe('https://lcars.jlapenna.net');
-    });
-
     it('reads the console URL from the environment', () => {
       process.env['AGENT_LCARS_CONSOLE_URL'] = 'https://lcars.example.test';
       expect(consoleUrl()).toBe('https://lcars.example.test');
+    });
+
+    it('fails closed when unset -- no jlapenna fallback', () => {
+      delete process.env['AGENT_LCARS_CONSOLE_URL'];
+      expect(() => consoleUrl()).toThrow('AGENT_LCARS_CONSOLE_URL');
+    });
+  });
+
+  describe('consoleDescription', () => {
+    it('falls back to a generic, deployment-neutral description when unset', () => {
+      delete process.env['AGENT_LCARS_CONSOLE_DESCRIPTION'];
+      expect(consoleDescription()).toBe(
+        'Agent LCARS — multi-agent issue activity',
+      );
+    });
+
+    it('reads an explicit description from the environment', () => {
+      process.env['AGENT_LCARS_CONSOLE_DESCRIPTION'] = 'Fork — issue queue';
+      expect(consoleDescription()).toBe('Fork — issue queue');
+    });
+  });
+
+  describe('consoleRepositoryUrl', () => {
+    it('derives from the control-plane repository', () => {
+      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/fork';
+      expect(consoleRepositoryUrl()).toBe('https://github.com/owner/fork');
+    });
+
+    it('fails closed when the control-plane repository is unset', () => {
+      delete process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'];
+      expect(() => consoleRepositoryUrl()).toThrow(
+        'AGENT_LCARS_CONTROL_PLANE_REPOSITORY',
+      );
     });
   });
 
@@ -225,19 +271,63 @@ describe('deployment config', () => {
     });
   });
 
+  describe('pushWatchTargetRepo', () => {
+    it('reads the target repository from the environment', () => {
+      process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'owner/target';
+      expect(pushWatchTargetRepo()).toBe('owner/target');
+    });
+
+    it('fails closed when unset -- no jlapenna fallback', () => {
+      delete process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'];
+      expect(() => pushWatchTargetRepo()).toThrow(
+        'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
+      );
+    });
+
+    it('rejects a value that is not owner/name shaped', () => {
+      process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'not-a-repo-name';
+      expect(() => pushWatchTargetRepo()).toThrow(
+        /not a valid owner\/name repository/,
+      );
+    });
+  });
+
+  describe('validateDeploymentIdentity', () => {
+    function completeEnv() {
+      process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'someone';
+      process.env['AGENT_LCARS_CONSOLE_URL'] = 'https://lcars.example.test';
+      process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'] =
+        'https://share.example.test';
+      process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'owner/target';
+      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/console';
+    }
+
+    it('succeeds silently when every identity variable is set', () => {
+      completeEnv();
+      expect(() => validateDeploymentIdentity()).not.toThrow();
+    });
+
+    it('fails with a clear message naming the missing variable', () => {
+      completeEnv();
+      delete process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'];
+      expect(() => validateDeploymentIdentity()).toThrow(
+        'AGENT_LCARS_ADMIN_GITHUB_LOGIN',
+      );
+    });
+
+    it('fails when the push-watch target repository is unset', () => {
+      completeEnv();
+      delete process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'];
+      expect(() => validateDeploymentIdentity()).toThrow(
+        'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
+      );
+    });
+  });
+
   it('uses the remaining deployment identity defaults', () => {
+    process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] = 'jlapenna';
     expect(maintainerLogin()).toBe('jlapenna');
     expect(agentFleetLogin()).toBe('agent-lcars-bot');
-    expect(consoleDescription()).toBe(
-      'jlapenna/agent-lcars — multi-agent issue activity',
-    );
-    expect(consoleRepositoryUrl()).toBe(
-      'https://github.com/jlapenna/agent-lcars',
-    );
-    expect(controlPlaneRepository()).toBe('jlapenna/agent-lcars');
     expect(agentSessionResumeScript()).toBe('fleet-claude-agent-session');
-    expect(shareArtifactUrl('pike', 'abc', 'out.txt')).toBe(
-      'https://share.lan.jlapenna.net/pike/abc/out.txt',
-    );
   });
 });

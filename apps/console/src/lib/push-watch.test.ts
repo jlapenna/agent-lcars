@@ -20,6 +20,7 @@ const GRANT = JSON.stringify([
 
 const VARS = [
   'AGENT_LCARS_PUSH_WATCHED_REPOS',
+  'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
   'AGENT_LCARS_WORK_GRANTS',
   'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
   'AGENT_LCARS_WATCHED_REPOS',
@@ -31,6 +32,7 @@ afterEach(() => {
 
 function watchedEnv() {
   process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] = REPO;
+  process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = TARGET_REPO;
   process.env['AGENT_LCARS_WORK_GRANTS'] = GRANT;
   // isControlPlaneRepository() is unrelated to the push-watch gate, but
   // forbiddenReason() (called inside mintItem) checks it against the work
@@ -162,6 +164,7 @@ describe('handlePushWebhookDelivery', () => {
 
   it('refuses cleanly when no grant is configured for the principal', async () => {
     process.env['AGENT_LCARS_PUSH_WATCHED_REPOS'] = REPO;
+    process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = TARGET_REPO;
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] = TARGET_REPO;
     process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
       { owner: 'jlapenna', name: 'homelab' },
