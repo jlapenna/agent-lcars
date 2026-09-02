@@ -37,6 +37,33 @@ type FleetCoordinator struct {
 	overloadedUntil map[string]time.Time
 	placementMu     sync.Mutex
 	placementCursor int
+	// floorRunners tracks rung-3 free-memory-floor placements (the
+	// degradation ladder's floor invariant, agent-lcars#1697,
+	// docs/fleet-scheduler-redesign.md#D): runner name -> the host it
+	// cordons. Claimed in reserve() the moment pickHostLocked chooses that
+	// rung, released by releaseFloorClaim either when the runner never
+	// actually started (startRunner's failure path) or when a tracked
+	// runner that held one is later removed (HandleJobCompleted /
+	// reconcileTrackedRunners' markDoneWithState path). Guarded by mu, like
+	// every other in-flight reservation-shaped field on this struct.
+	floorRunners map[string]string
+	// observedMu guards observedMemory and observedMemoryMaxAge separately
+	// from mu: the degradation ladder's refresher writes these on its own
+	// timer, independent of any placement decision in flight, and
+	// pickHostLocked only ever needs a quick read.
+	observedMu     sync.Mutex
+	observedMemory map[string]observedMemorySample
+	// observedMemoryMaxAge is 3x fleet.placement.degradation_ladder.refresh_interval
+	// (resolvedDegradationLadder.MaxSampleAge, set once by configureFleet):
+	// a cached observed-p95 sample older than this skips rung 2, per design.
+	observedMemoryMaxAge time.Duration
+}
+
+// observedMemorySample is one lane's latest rung-2 input: the Prometheus
+// observed-p95 query result and when it was taken (agent-lcars#1697).
+type observedMemorySample struct {
+	bytes float64
+	at    time.Time
 }
 
 type schedulerDemand struct {
@@ -53,7 +80,12 @@ type hostReservation struct {
 	fleet  *FleetCoordinator
 	host   string
 	memory int64
-	once   sync.Once
+	// rung is the degradation-ladder rung pickHostLocked used to produce
+	// this reservation ("" for the normal declared-reservation path). See
+	// degradationRungObservedP95 / degradationRungFreeMemoryFloor
+	// (agent-lcars#1697).
+	rung string
+	once sync.Once
 }
 
 func newFleetCoordinator(maxRunners int, limits map[string]int, weights, priorities map[string]int, order []string) *FleetCoordinator {
@@ -64,8 +96,45 @@ func newFleetCoordinator(maxRunners int, limits map[string]int, weights, priorit
 		hostRunnerLimits: limits, mainsRequired: map[string]bool{}, metricsViaSSH: map[string]bool{}, readinessRequired: map[string]bool{},
 		hostRoles:   map[string]string{},
 		hostSamples: map[string]hostSample{}, hostLoadCache: map[string]hostLoad{}, overloadedUntil: map[string]time.Time{},
+		floorRunners: map[string]string{}, observedMemory: map[string]observedMemorySample{},
 		gate: newWeightedPlacementGate(weights, order),
 	}
+}
+
+// setObservedMemory records scaleSet's latest rung-2 observed-p95
+// Prometheus sample (agent-lcars#1697); see runDegradationLadderRefresher.
+func (f *FleetCoordinator) setObservedMemory(scaleSet string, bytes float64, at time.Time) {
+	f.observedMu.Lock()
+	defer f.observedMu.Unlock()
+	if f.observedMemory == nil {
+		f.observedMemory = map[string]observedMemorySample{}
+	}
+	f.observedMemory[scaleSet] = observedMemorySample{bytes: bytes, at: at}
+}
+
+// getObservedMemory returns scaleSet's most recently recorded sample, if
+// any has ever succeeded. It does not itself judge staleness -- callers
+// compare .at against observedMemoryMaxAge, since the ladder's "how old is
+// too old" is a placement-time question, not a storage-time one.
+func (f *FleetCoordinator) getObservedMemory(scaleSet string) (observedMemorySample, bool) {
+	f.observedMu.Lock()
+	defer f.observedMu.Unlock()
+	sample, ok := f.observedMemory[scaleSet]
+	return sample, ok
+}
+
+// releaseFloorClaim releases runnerName's rung-3 free-memory-floor host
+// cordon, if it held one (agent-lcars#1697, docs/fleet-scheduler-redesign.md#D).
+// Safe to call for any removed/failed runner: only a rung-3 placement ever
+// claims one, so ok is false for every other runner and nothing changes.
+func (f *FleetCoordinator) releaseFloorClaim(runnerName string) (host string, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	host, ok = f.floorRunners[runnerName]
+	if ok {
+		delete(f.floorRunners, runnerName)
+	}
+	return host, ok
 }
 
 // updateDemand persists the listener's latest runner deficit between GitHub
@@ -170,7 +239,11 @@ func (f *FleetCoordinator) restore(cp checkpointFleet, now time.Time) {
 	f.hostSampleMu.Unlock()
 }
 
-func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostReservation, error) {
+// reserve picks a placement host and reserves its capacity. runnerName is
+// the container name startRunner is about to create -- used only to key a
+// rung-3 free-memory-floor claim (agent-lcars#1697) if pickHostLocked
+// degrades to that rung; every other rung ignores it.
+func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler, runnerName string) (*hostReservation, error) {
 	releaseTurn, err := f.gate.acquire(ctx, scaler.scaleSetName)
 	if err != nil {
 		return nil, err
@@ -189,18 +262,25 @@ func (f *FleetCoordinator) reserve(ctx context.Context, scaler *Scaler) (*hostRe
 		placementBlocked.WithLabelValues(scaleSet, "", placementReasonPriorityReservation).Inc()
 		return nil, fmt.Errorf("%w: reserving the next safe slot for higher-priority scale set %q", errFleetAtCapacity, protected)
 	}
-	host, err := scaler.pickHostLocked(ctx, f)
+	pick, err := scaler.pickHostLocked(ctx, f)
 	if err != nil {
 		return nil, err
 	}
-	f.reservations[host]++
-	f.reservedMemory[host] += scaler.memoryReservation()
-	f.startInFlight[host] = true
+	f.reservations[pick.host]++
+	f.reservedMemory[pick.host] += pick.reservedMemory
+	f.startInFlight[pick.host] = true
 	demand := f.scaleSetDemand[scaleSet]
 	demand.reservations++
 	f.scaleSetDemand[scaleSet] = demand
-	reservationGauge.WithLabelValues(scaleSet, host).Inc()
-	return &hostReservation{fleet: f, host: host, memory: scaler.memoryReservation()}, nil
+	reservationGauge.WithLabelValues(scaleSet, pick.host).Inc()
+	if pick.rung == degradationRungFreeMemoryFloor {
+		if f.floorRunners == nil {
+			f.floorRunners = map[string]string{}
+		}
+		f.floorRunners[runnerName] = pick.host
+		placementDegradedActiveGauge.WithLabelValues(scaleSet, pick.host).Inc()
+	}
+	return &hostReservation{fleet: f, host: pick.host, memory: pick.reservedMemory, rung: pick.rung}, nil
 }
 
 func (r *hostReservation) release(scaleSet string) {

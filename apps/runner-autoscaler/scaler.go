@@ -123,7 +123,13 @@ type Scaler struct {
 	readinessMetricsURL string
 	readinessMetric     string
 	readinessMaxAge     time.Duration
-	logger              *slog.Logger
+	// degradationLadderEnabled is this lane's fully-resolved placement
+	// degradation ladder switch (Config.DegradationLadderEnabled,
+	// agent-lcars#1697, docs/fleet-scheduler-redesign.md#D). Default off:
+	// when false, pickHostLocked's rung-1 failure path is byte-for-byte the
+	// pre-ladder behavior.
+	degradationLadderEnabled bool
+	logger                   *slog.Logger
 	// fleet is shared by every scale-set listener in orchestrator mode. Tests
 	// and single-scaler construction paths get an equivalent private instance
 	// lazily through coordinator().
@@ -257,6 +263,16 @@ func (a *Scaler) scaleSetLabel() string {
 	return a.scaleSetName
 }
 
+// releaseFloorClaim releases name's rung-3 free-memory-floor host cordon, if
+// it held one (docs/fleet-scheduler-redesign.md#D, agent-lcars#1697). Safe
+// to call for every removed/failed runner: only a rung-3 placement ever
+// claims one, so this is a no-op for the overwhelming majority.
+func (a *Scaler) releaseFloorClaim(name string) {
+	if host, ok := a.coordinator().releaseFloorClaim(name); ok {
+		placementDegradedActiveGauge.WithLabelValues(a.scaleSetLabel(), host).Dec()
+	}
+}
+
 func (a *Scaler) coordinator() *FleetCoordinator {
 	if a.fleet != nil {
 		return a.fleet
@@ -278,10 +294,16 @@ type hostLoad struct {
 	cpuPressure     float64
 	memoryPressure  float64
 	memoryAvailable float64
-	swapPagesPerSec float64
-	penalty         int
-	overloaded      bool
-	observedAt      time.Time
+	// memoryAvailableBytes is node_memory_MemAvailable_bytes verbatim (not
+	// the memoryAvailable ratio above): the degradation ladder's rung 3
+	// (free_memory_floor, agent-lcars#1697, docs/fleet-scheduler-redesign.md#D)
+	// compares this directly against a lane's runner_memory ceiling. Zero
+	// when host metrics are unconfigured or the last probe failed.
+	memoryAvailableBytes float64
+	swapPagesPerSec      float64
+	penalty              int
+	overloaded           bool
+	observedAt           time.Time
 }
 
 type hostSample struct {
@@ -441,7 +463,7 @@ func (a *Scaler) probeHostLoad(ctx context.Context, host string) (hostLoad, erro
 		return hostLoad{}, fmt.Errorf("metrics missing node_load1 or idle CPU series")
 	}
 	now := time.Now()
-	load := hostLoad{normalizedLoad: load1 / float64(len(cpus)), memoryAvailable: 1, observedAt: now}
+	load := hostLoad{normalizedLoad: load1 / float64(len(cpus)), memoryAvailable: 1, memoryAvailableBytes: memAvailable, observedAt: now}
 	if memTotal > 0 {
 		load.memoryAvailable = memAvailable / memTotal
 	}
@@ -823,6 +845,7 @@ func (a *Scaler) reconcileRunners(ctx context.Context, includeBusy bool) {
 			// ContainerInspect was in flight. It owns cleanup in that case.
 			continue
 		}
+		a.releaseFloorClaim(e.name)
 		a.logger.Warn("Reconciling tracked runner whose container is not actually running",
 			slog.String("name", e.name), slog.String("host", runner.host), slog.String("state", state), slog.String("reason", reason))
 		trackedRunnerMismatchTotal.WithLabelValues(a.scaleSetLabel(), runner.host, state, metricReason).Inc()
@@ -905,6 +928,7 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 		a.logger.Warn("Job completed for untracked runner", slog.String("runnerName", jobInfo.RunnerName))
 		return nil
 	}
+	a.releaseFloorClaim(jobInfo.RunnerName)
 	// Best-effort cleanup from here down: a host being unreachable exactly
 	// when ITS job finishes must never be fatal to the whole listener --
 	// HandleJobCompleted errors bubble straight out of listener.Run() and
@@ -1188,7 +1212,8 @@ func (a *Scaler) pickHost(ctx context.Context) (string, error) {
 	fleet := a.coordinator()
 	fleet.mu.Lock()
 	defer fleet.mu.Unlock()
-	return a.pickHostLocked(ctx, fleet)
+	pick, err := a.pickHostLocked(ctx, fleet)
+	return pick.host, err
 }
 
 // errFleetAtCapacity marks a pickHostLocked failure as capacity-shaped
@@ -1286,10 +1311,22 @@ func (a *Scaler) effectiveMemoryOvercommit(host string, probe fleetHostProbe) fl
 
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
-func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
+func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (placementPick, error) {
 	scaleSet := a.scaleSetLabel()
 	probe := a.probeFleetHosts(ctx, fleet)
 	a.publishLaneAdmissibleSlots(fleet, probe)
+
+	// effectiveCount is the tie-break every rung uses to prefer the
+	// least-loaded candidate: the same "actual + in-flight + load penalty"
+	// figure the normal (rung 1) pick has always used, hoisted here so the
+	// degradation ladder's rungs 2 and 3 (agent-lcars#1697) can reuse it.
+	effectiveCount := func(hostName string) int {
+		c := probe.fleetCounts[hostName] + fleet.reservations[hostName] + probe.hostLoads[hostName].penalty
+		if hostName == "spark" && probe.sparkLoaded {
+			c += 100
+		}
+		return c
+	}
 
 	if len(probe.reachableHosts) == 0 {
 		// A host withheld by its readiness gate is reachable and healthy, so
@@ -1303,9 +1340,9 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			}
 		}
 		if readinessBlockedHosts > 0 {
-			return "", fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlockedHosts, errFleetAtCapacity)
+			return placementPick{}, fmt.Errorf("no docker host is eligible (%d withheld by their readiness gate): %w", readinessBlockedHosts, errFleetAtCapacity)
 		}
-		return "", fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(a.placementHostSet()), errFleetAtCapacity)
+		return placementPick{}, fmt.Errorf("all %d configured docker hosts are unreachable: %w", len(a.placementHostSet()), errFleetAtCapacity)
 	}
 	actualTotal := 0
 	for _, h := range a.dockerHosts {
@@ -1322,7 +1359,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		// Fleet-level: no single host refused this, the fleet as a whole is
 		// at its configured ceiling.
 		placementBlocked.WithLabelValues(scaleSet, "", placementReasonFleetLimit).Inc()
-		return "", fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
+		return placementPick{}, fmt.Errorf("fleet reached configured runner limit %d: %w", fleet.maxRunners, errFleetAtCapacity)
 	}
 	var withinHostLimits []DockerHost
 	for _, h := range probe.reachableHosts {
@@ -1341,7 +1378,38 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		// Fleet-level: every host individually refused on its own limit, so
 		// no single host name is more at fault than another.
 		placementBlocked.WithLabelValues(scaleSet, "", placementReasonHostLimits).Inc()
-		return "", fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
+		return placementPick{}, fmt.Errorf("every reachable docker host is at its configured runner limit: %w", errFleetAtCapacity)
+	}
+
+	// A host currently holding a rung-3 free-memory-floor placement is
+	// cordoned from every rung, for every lane, until that runner finishes:
+	// the floor's whole point is that a reachable idle host's spare memory
+	// went to the one job that needed it, so nothing else -- via rungs 1 or
+	// 2 -- may land beside it in the meantime
+	// (docs/fleet-scheduler-redesign.md#D, agent-lcars#1697). fleet.floorRunners
+	// is empty unless the degradation ladder is enabled somewhere in the
+	// fleet, so this is a no-op for the default-off configuration.
+	if len(fleet.floorRunners) > 0 {
+		floorOccupied := make(map[string]bool, len(fleet.floorRunners))
+		for _, host := range fleet.floorRunners {
+			floorOccupied[host] = true
+		}
+		var free []DockerHost
+		var occupiedNames []string
+		for _, h := range withinHostLimits {
+			if floorOccupied[h.Name] {
+				occupiedNames = append(occupiedNames, h.Name)
+				continue
+			}
+			free = append(free, h)
+		}
+		if len(free) == 0 {
+			for _, name := range occupiedNames {
+				placementBlocked.WithLabelValues(scaleSet, name, placementReasonFloorOccupied).Inc()
+			}
+			return placementPick{}, fmt.Errorf("every reachable docker host within its runner limit is occupied by a rung-3 free-memory-floor placement: %w", errFleetAtCapacity)
+		}
+		withinHostLimits = free
 	}
 
 	// runner_memory is the Docker cgroup limit; runner_memory_reservation
@@ -1410,7 +1478,35 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			for _, name := range blockedHosts {
 				placementBlocked.WithLabelValues(scaleSet, name, placementReasonMemoryReservation).Inc()
 			}
-			return "", fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", candidate, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+			refusedErr := fmt.Errorf("no reachable docker host can admit candidate memory reservation %d bytes (%s): %w", candidate, strings.Join(blockedDetails, "; "), errFleetAtCapacity)
+			if !a.degradationLadderEnabled {
+				return placementPick{}, refusedErr
+			}
+			// The degradation ladder (docs/fleet-scheduler-redesign.md#D,
+			// agent-lcars#1697): rung 1 (the declared reservation, above)
+			// admitted nothing. Walk rungs 2 and 3 before finally refusing.
+			// Both evaluate withinHostLimits as it stood before this memory
+			// filter -- the ordinary hard-overload exclusion below has not
+			// run yet, so each rung applies its own pressure gate against
+			// the wider, pre-memory-budget candidate pool.
+			if host, reserved, ok := a.degradationLadderObservedP95(fleet, probe, withinHostLimits, effectiveCount); ok {
+				placementDegradedTotal.WithLabelValues(scaleSet, degradationRungObservedP95).Inc()
+				a.logger.Info("Degraded placement: admitting at the lane's observed p95 instead of its declared reservation",
+					slog.String("scale_set", scaleSet), slog.String("host", host), slog.String("rung", degradationRungObservedP95),
+					slog.Int64("reserved_bytes", reserved))
+				return placementPick{host: host, reservedMemory: reserved, rung: degradationRungObservedP95}, nil
+			}
+			if host, available, ok := a.degradationLadderFreeMemoryFloor(probe, withinHostLimits, effectiveCount); ok {
+				placementDegradedTotal.WithLabelValues(scaleSet, degradationRungFreeMemoryFloor).Inc()
+				a.logger.Info("Degraded placement: admitting one runner on an idle host whose free memory exceeds the lane's ceiling",
+					slog.String("scale_set", scaleSet), slog.String("host", host), slog.String("rung", degradationRungFreeMemoryFloor),
+					slog.Int64("reserved_bytes", a.runnerMemory), slog.Int64("host_available_bytes", available))
+				return placementPick{host: host, reservedMemory: a.runnerMemory, rung: degradationRungFreeMemoryFloor}, nil
+			}
+			placementDegradedTotal.WithLabelValues(scaleSet, degradationRungRefused).Inc()
+			a.logger.Info("Degraded placement refused: no host admits the declared reservation, the observed p95, or the free-memory floor",
+				slog.String("scale_set", scaleSet), slog.String("rung", degradationRungRefused))
+			return placementPick{}, refusedErr
 		}
 		withinHostLimits = withinMemoryBudget
 	}
@@ -1438,19 +1534,11 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 		for _, name := range overloadedHosts {
 			placementBlocked.WithLabelValues(scaleSet, name, placementReasonOverload).Inc()
 		}
-		return "", fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
+		return placementPick{}, fmt.Errorf("every reachable docker host within its runner limit is hard-overloaded or in overload cooldown: %w", errFleetAtCapacity)
 	}
 	withinHostLimits = notOverloaded
 
 	candidates := withinHostLimits
-
-	effectiveCount := func(hostName string) int {
-		c := probe.fleetCounts[hostName] + fleet.reservations[hostName] + probe.hostLoads[hostName].penalty
-		if hostName == "spark" && probe.sparkLoaded {
-			c += 100
-		}
-		return c
-	}
 
 	bestCount := effectiveCount(candidates[0].Name)
 	var tied []string
@@ -1467,7 +1555,120 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 	fleet.placementCursor++
 	fleet.placementMu.Unlock()
 	placementDecisions.WithLabelValues(scaleSet, best).Inc()
-	return best, nil
+	return placementPick{host: best, reservedMemory: a.memoryReservation(), rung: ""}, nil
+}
+
+// placementPick is pickHostLocked's decision: which host, how much of that
+// host's memory budget to charge for the in-flight reservation window (see
+// hostReservation), and which degradation-ladder rung produced it -- "" for
+// the normal declared-reservation path (agent-lcars#1697).
+type placementPick struct {
+	host           string
+	reservedMemory int64
+	rung           string
+}
+
+// softPressured reports whether load fails the memory_soft, psi_soft, or
+// swap_soft gate -- the same soft thresholds scoreHostLoad bands into a
+// penalty, reused directly here as the degradation ladder's rung 2 "not
+// soft-pressured" admission gate (docs/fleet-scheduler-redesign.md#D,
+// agent-lcars#1697). CPU load/pressure are deliberately excluded: rung 2 is
+// a memory-budget decision, and the design calls out memory_soft/PSI/swap
+// specifically.
+func softPressured(load hostLoad, p hostLoadPolicy) bool {
+	return load.memoryAvailable <= p.memorySoft || load.memoryPressure >= p.psiSoft || load.swapPagesPerSec >= p.swapSoft
+}
+
+// leastLoaded picks the lowest-effectiveCount host among candidates,
+// breaking ties by configured fleet order (probeFleetHosts always restores
+// it before this runs). Unlike the normal rung-1 pick, the degradation
+// ladder's rungs do not rotate ties through fleet.placementCursor: they are
+// the rare degraded path, not the hot one fairness matters most for.
+func leastLoaded(candidates []DockerHost, effectiveCount func(string) int) string {
+	best := candidates[0].Name
+	bestCount := effectiveCount(best)
+	for _, h := range candidates[1:] {
+		if c := effectiveCount(h.Name); c < bestCount {
+			best, bestCount = h.Name, c
+		}
+	}
+	return best
+}
+
+// degradationLadderObservedP95 is rung 2 of the placement degradation
+// ladder (docs/fleet-scheduler-redesign.md#D, agent-lcars#1697): admit on
+// the least-loaded candidate whose free reserved-memory budget covers this
+// lane's observed p95 usage (refreshed from Prometheus by
+// runDegradationLadderRefresher), provided the host is not hard-overloaded
+// and not soft-pressured on memory, PSI, or swap -- the same gates rung 1
+// already respects, just against a smaller number than the declared
+// reservation. A missing, non-positive, or stale (older than
+// fleet.observedMemoryMaxAge, i.e. 3x refresh_interval) sample skips this
+// rung entirely: rung 2 never blocks a placement on Prometheus being slow
+// or down.
+func (a *Scaler) degradationLadderObservedP95(fleet *FleetCoordinator, probe fleetHostProbe, candidates []DockerHost, effectiveCount func(string) int) (host string, reservedBytes int64, ok bool) {
+	sample, found := fleet.getObservedMemory(a.scaleSetLabel())
+	if !found || sample.bytes <= 0 || time.Since(sample.at) > fleet.observedMemoryMaxAge {
+		return "", 0, false
+	}
+	observed := int64(math.Ceil(sample.bytes))
+	margin := a.resolvedMemorySafetyMargin()
+	policy := a.policy()
+	var eligible []DockerHost
+	for _, h := range candidates {
+		load := probe.hostLoads[h.Name]
+		if load.overloaded || softPressured(load, policy) {
+			continue
+		}
+		if probe.hostMemoryErrors[h.Name] != nil {
+			continue
+		}
+		total := probe.hostMemoryBytes[h.Name]
+		reserved := probe.hostRunningReservedMemory[h.Name] + fleet.reservedMemory[h.Name]
+		overcommit := a.effectiveMemoryOvercommit(h.Name, probe)
+		budget := int64(float64(total) * (1 - margin) * overcommit)
+		if reserved+observed > budget {
+			continue
+		}
+		eligible = append(eligible, h)
+	}
+	if len(eligible) == 0 {
+		return "", 0, false
+	}
+	return leastLoaded(eligible, effectiveCount), observed, true
+}
+
+// degradationLadderFreeMemoryFloor is rung 3 of the placement degradation
+// ladder, and its floor invariant (docs/fleet-scheduler-redesign.md#D,
+// agent-lcars#1697): admit one runner on the least-loaded reachable,
+// non-hard-pressured candidate whose latest real node-exporter MemAvailable
+// sample exceeds the lane's ceiling (not its reservation), regardless of
+// declared reservations. Soft pressure does NOT exclude a host here -- this
+// is the last rung before refusal, and the invariant is that a reachable
+// idle host with more free memory than the job's ceiling always runs the
+// job. Callers already excluded any host currently holding another rung-3
+// placement (see pickHostLocked's floor-cordon filter), so "at most one
+// floor runner per host at a time" is enforced there, not here.
+func (a *Scaler) degradationLadderFreeMemoryFloor(probe fleetHostProbe, candidates []DockerHost, effectiveCount func(string) int) (host string, availableBytes int64, ok bool) {
+	var eligible []DockerHost
+	available := map[string]int64{}
+	for _, h := range candidates {
+		load := probe.hostLoads[h.Name]
+		if load.overloaded {
+			continue
+		}
+		free := int64(load.memoryAvailableBytes)
+		if free <= a.runnerMemory {
+			continue
+		}
+		eligible = append(eligible, h)
+		available[h.Name] = free
+	}
+	if len(eligible) == 0 {
+		return "", 0, false
+	}
+	best := leastLoaded(eligible, effectiveCount)
+	return best, available[best], true
 }
 
 // hostPingResult is one host's outcome from probeFleetHosts's concurrent
@@ -2451,7 +2652,7 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	// prefix -- sanitized because it now flows into a Docker identifier, not
 	// just a Prometheus label/GitHub scale-set name.
 	name := fmt.Sprintf("runner-%s-%s", dockerSafeNamePart(a.scaleSetName), uuid.NewString()[:8])
-	reservation, err := a.coordinator().reserve(ctx, a)
+	reservation, err := a.coordinator().reserve(ctx, a, name)
 	if err != nil {
 		// No GitHub JIT registration has been generated yet at this point,
 		// so failing here (instead of pickHost's old dead-host fallback)
@@ -2463,6 +2664,20 @@ func (a *Scaler) startRunner(ctx context.Context) (string, error) {
 	}
 	host := reservation.host
 	defer reservation.release(scaleSet)
+	if reservation.rung == degradationRungFreeMemoryFloor {
+		// reserve() already claimed this host's rung-3 floor slot. If this
+		// runner never actually ends up tracked (any return below this
+		// point), the claim would otherwise cordon the host forever for
+		// nothing running there -- release it now; a successfully started
+		// runner instead holds the claim until HandleJobCompleted or
+		// reconcileTrackedRunners' markDoneWithState path removes it
+		// (agent-lcars#1697).
+		defer func() {
+			if !a.runners.isTracked(name) {
+				a.releaseFloorClaim(name)
+			}
+		}()
+	}
 	client, err := a.hostClient(host)
 	if err != nil {
 		runnerStartFailures.WithLabelValues(scaleSet, host).Inc()

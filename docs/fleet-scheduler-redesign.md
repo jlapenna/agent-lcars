@@ -196,6 +196,17 @@ Rung 3 is the invariant that a reachable, idle host with more free memory than
 the job's ceiling always runs the job. It is exactly what a human would have
 done on laforge on 2026-09-01.
 
+**Shipped** (agent-lcars#1697): behind `fleet.placement.degradation_ladder`
+(fleet-wide default off) and a per-lane `degradation_ladder` override,
+canaried on `homelab-autoscale-lcars-ci` first rather than `ci-heavy` (the
+sprinkles heavy tier from phase 1 was not yet live when this landed). Rung 2's
+observed p95 comes from an instant Prometheus query against
+`container_memory_rss`, refreshed on a timer and never on placement's own
+critical path — a missing `prometheus_url`, a failed query, or a sample older
+than 3x the refresh interval simply skips straight to rung 3. See
+`apps/runner-autoscaler/README.md`'s "Placement degradation ladder" section
+for the full config/metric contract.
+
 ### E. Capacity as a first-class metric
 
 - `lane_admissible_slots{scale_set}`: how many more runners each lane could
