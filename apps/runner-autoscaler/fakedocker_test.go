@@ -43,8 +43,14 @@ type fakeDockerServer struct {
 	// listDelay stalls every ContainerList response, standing in for a slow
 	// fleet host. Lets a test distinguish concurrent from serial fan-out by
 	// wall-clock rather than by inspecting goroutines.
-	listDelay        time.Duration
-	inspectDelay     time.Duration
+	listDelay    time.Duration
+	inspectDelay time.Duration
+	// removeBlock, when non-nil, makes every ContainerRemove request wait
+	// until it is closed (or the request's own context is cancelled, e.g. by
+	// the test server shutting down) -- standing in for a host that accepts
+	// the connection and then hangs indefinitely, unlike listDelay/
+	// inspectDelay's fixed durations. See blockRemoves.
+	removeBlock      chan struct{}
 	imagePresent     bool
 	imagePulls       int
 	pullStreamError  bool
@@ -149,6 +155,21 @@ func (f *fakeDockerServer) setInspectDelay(d time.Duration) {
 	f.mu.Lock()
 	f.inspectDelay = d
 	f.mu.Unlock()
+}
+
+// blockRemoves makes every ContainerRemove request against this fake host
+// hang until the returned unblock func is called (register it with
+// t.Cleanup so a test that never calls it explicitly still releases any
+// still-pending request when the fake server shuts down). Standing in for a
+// host that accepts a connection and then never answers -- the scenario
+// agent-lcars#1722's immediate drain acknowledgement exists to survive.
+func (f *fakeDockerServer) blockRemoves() (unblock func()) {
+	f.mu.Lock()
+	ch := make(chan struct{})
+	f.removeBlock = ch
+	f.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(ch) }) }
 }
 
 // setContainers configures the full ContainerList response.
@@ -256,6 +277,16 @@ func (f *fakeDockerServer) handle(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/containers/"):
+		f.mu.Lock()
+		block := f.removeBlock
+		f.mu.Unlock()
+		if block != nil {
+			select {
+			case <-block:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		id := containerIDFromPath(r.URL.Path)
 		f.mu.Lock()
 		f.removed = append(f.removed, id)
