@@ -91,6 +91,21 @@ whenever `available_jobs > 0` persists for two consecutive polls while
 `desired_runners == 0` -- jobs are being offered but never turning into
 runner demand.
 
+**Broker HTTP/2 keepalive probing (`scaleset_http_client.go`):** the
+listener session's long poll to `broker.actions.githubusercontent.com` blocks
+for up to ~50s server-side, and `actions/scaleset#105` (tracking
+`actions-runner-controller#3682`) documents a proven failure mode against
+that broker where an HTTP/2 connection goes dead -- no RST, no FIN, the OS
+never notices -- and every call that reuses it then hangs for 15-20 minutes
+before recovering, which looks exactly like the silently-starved listener
+this section's own stranded-queue signature exists to catch.
+`Config.ScalesetClient` therefore injects a `retryablehttp.Client` (via the
+library's `scaleset.WithRetryableHTTPClint`) whose transport has HTTP/2
+keepalive PINGs configured (`ReadIdleTimeout` 30s, `PingTimeout` 15s) and an
+overall per-request timeout of 90s -- comfortably above the broker's poll
+window, comfortably below the multi-minute hangs a dead connection otherwise
+causes.
+
 ## LCARS live runner status
 
 The autoscaler can publish its current queue depth and each scale set's

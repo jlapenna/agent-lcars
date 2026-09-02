@@ -251,6 +251,16 @@ func systemInfo(scaleSetID int) scaleset.SystemInfo {
 }
 
 func (c *Config) ScalesetClient() (*scaleset.Client, error) {
+	// newScaleSetHTTPClient (scaleset_http_client.go) hardens the transport
+	// against actions/scaleset#105's dead-HTTP/2-connection failure mode and
+	// bounds every request; see that file for why. WithLogger is required
+	// even though httpClient already carries a logger: common_client.go
+	// unconditionally overwrites the injected client's Logger field with
+	// whichever logger the scaleset.Client itself was built with (a discard
+	// logger, absent this option).
+	logger := c.Logger().With("component", "scaleset-client", "scale_set", c.ScaleSetName)
+	httpClient := newScaleSetHTTPClient(logger)
+
 	if err := c.GitHubApp.Validate(); err == nil {
 		return scaleset.NewClientWithGitHubApp(
 			scaleset.ClientWithGitHubAppConfig{
@@ -258,6 +268,8 @@ func (c *Config) ScalesetClient() (*scaleset.Client, error) {
 				GitHubAppAuth:   c.GitHubApp,
 				SystemInfo:      systemInfo(0),
 			},
+			scaleset.WithRetryableHTTPClint(httpClient),
+			scaleset.WithLogger(logger),
 		)
 	}
 
@@ -267,6 +279,8 @@ func (c *Config) ScalesetClient() (*scaleset.Client, error) {
 			PersonalAccessToken: c.Token,
 			SystemInfo:          systemInfo(0),
 		},
+		scaleset.WithRetryableHTTPClint(httpClient),
+		scaleset.WithLogger(logger),
 	)
 }
 
