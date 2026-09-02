@@ -1,0 +1,223 @@
+name: Scaleset Upstream Tracking
+
+# Keeps apps/runner-autoscaler's github.com/actions/scaleset dependency
+# pinned to upstream `main` rather than its last tag: agent-lcars#1716 found
+# our pin (v0.4.1-0.20260721134647-cb0405b2d874) already WAS upstream
+# main's head commit, while the last real tag (v0.4.0) predates it --
+# upstream's own tags lag its `main` branch by a wide, unpredictable margin.
+# Weekly (plus on-demand via workflow_dispatch), this bumps the pseudo-version
+# to whatever `main` is at now and, if that changes go.mod/go.sum, verifies
+# the result builds and passes its own test suite before opening or updating
+# a PR for a human to review and merge -- this workflow never merges on its
+# own beyond what agent-automerge.yml already does for any agent-lcars[bot]
+# PR once the repo's normal required CI goes green.
+#
+# Runs on ubuntu-latest, not this repo's self-hosted lcars-* runners: `go
+# get @main` and the upstream clone below both need open egress to
+# proxy.golang.org and github.com/actions/scaleset that a homelab runner
+# does not have reason to be granted.
+
+on:
+  schedule:
+    # Monday, offset off the hour like this repo's other cron schedules
+    # (e.g. label-contract-audit.yml) to avoid GitHub Actions' documented
+    # top-of-hour scheduling congestion.
+    - cron: '34 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump github.com/actions/scaleset to upstream main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/runner-autoscaler/go.mod
+          cache-dependency-path: apps/runner-autoscaler/go.mod
+          cache: false
+
+      # Minted up front (contents/pull-requests/issues:write) even though
+      # this job may end up making no changes: the branch reset, push, and
+      # gh pr create/edit steps below all need it, and issues:write is
+      # required for the label mutation specifically -- GitHub's label
+      # endpoints sit under the Issues permission even for a pull request
+      # (see .github/workflows/label-contract-audit.yml). agent-lcars[bot]
+      # (this same App) is already in the repo's AGENT_BOT_LOGINS variable,
+      # so a PR this mint opens is picked up by agent-automerge.yml exactly
+      # like any other agent-authored PR -- no new secret, no new bot
+      # identity, and (unlike a GITHUB_TOKEN-authored push) an App
+      # installation token's push/PR-open events are not subject to
+      # GitHub's same-token workflow-recursion suppression, so the repo's
+      # normal `pull_request` CI actually runs against it.
+      - name: Mint Agent LCARS identity token
+        id: mint
+        uses: ./.github/actions/mint-agent-token
+        with:
+          client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: Reset deps/scaleset-upstream from main
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+        run: |
+          git config user.name 'agent-lcars[bot]'
+          git config user.email 'agent-lcars[bot]@users.noreply.github.com'
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git fetch origin main
+          # Always rebuilt from the latest main rather than rebased onto a
+          # prior run's commit: this branch only ever carries one purpose
+          # (the current go.mod/go.sum bump), so there is nothing worth
+          # preserving from a previous run once a fresh attempt supersedes
+          # it, and starting clean avoids a stale bump conflicting with
+          # whatever landed on main since.
+          git checkout -B deps/scaleset-upstream origin/main
+
+      - name: Capture current scaleset version
+        id: before
+        working-directory: apps/runner-autoscaler
+        run: echo "version=$(go list -m -f '{{.Version}}' github.com/actions/scaleset)" >> "$GITHUB_OUTPUT"
+
+      - name: go get github.com/actions/scaleset@main
+        working-directory: apps/runner-autoscaler
+        run: |
+          go get github.com/actions/scaleset@main
+          go mod tidy
+
+      - name: Check for a go.mod/go.sum change
+        id: diff
+        run: |
+          if git diff --quiet -- apps/runner-autoscaler/go.mod apps/runner-autoscaler/go.sum; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Capture new scaleset version
+        id: after
+        if: steps.diff.outputs.changed == 'true'
+        working-directory: apps/runner-autoscaler
+        run: echo "version=$(go list -m -f '{{.Version}}' github.com/actions/scaleset)" >> "$GITHUB_OUTPUT"
+
+      # Fail-fast sanity check ahead of the repo's own full CI (which will
+      # also run against this PR once opened): a broken upstream main
+      # should surface here, not as a silently-unreviewed merge later.
+      - name: Build and test with the bumped dependency
+        if: steps.diff.outputs.changed == 'true'
+        working-directory: apps/runner-autoscaler
+        run: |
+          go build ./...
+          go test ./...
+
+      # go.mod's pseudo-version format is v0.0.0-yyyymmddhhmmss-abcdef012345;
+      # the trailing 12 hex characters are an abbreviated commit hash git
+      # accepts directly. A plain tag (e.g. v0.4.0, if upstream main happens
+      # to sit exactly on one) has no such suffix and is used as-is -- it
+      # resolves as a git ref in the clone below because go.mod tags always
+      # mirror the upstream repository's own tag names.
+      - name: Resolve upstream commit range
+        id: range
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          version_to_ref() {
+            if [[ "$1" =~ -([0-9a-f]{12})$ ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "$1"
+            fi
+          }
+          old_ref="$(version_to_ref '${{ steps.before.outputs.version }}')"
+          new_ref="$(version_to_ref '${{ steps.after.outputs.version }}')"
+
+          git clone --quiet https://github.com/actions/scaleset.git /tmp/scaleset-upstream
+          {
+            echo 'range<<SCALESET_RANGE_EOF'
+            git -C /tmp/scaleset-upstream log --oneline "${old_ref}..${new_ref}" || true
+            echo 'SCALESET_RANGE_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit the bump
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          OLD_VERSION: ${{ steps.before.outputs.version }}
+          NEW_VERSION: ${{ steps.after.outputs.version }}
+        run: |
+          git add apps/runner-autoscaler/go.mod apps/runner-autoscaler/go.sum
+          git commit \
+            -m "chore(runner-autoscaler): bump github.com/actions/scaleset to upstream main" \
+            -m "${OLD_VERSION} -> ${NEW_VERSION}" \
+            -m "Automated weekly bump (refs #1716); see the PR body for the upstream commit range."
+
+      - name: Push deps/scaleset-upstream
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+        run: git push --force-with-lease origin deps/scaleset-upstream
+
+      - name: Open or update the pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+          OLD_VERSION: ${{ steps.before.outputs.version }}
+          NEW_VERSION: ${{ steps.after.outputs.version }}
+          COMMIT_RANGE: ${{ steps.range.outputs.range }}
+        run: |
+          body="$(cat <<EOF
+          Automated weekly bump of \`github.com/actions/scaleset\` (the
+          runner scale-set listener library \`apps/runner-autoscaler\` uses)
+          to upstream \`main\`.
+
+          \`${OLD_VERSION}\` -> \`${NEW_VERSION}\`
+
+          Our pin tracks upstream \`main\` by pseudo-version rather than its
+          latest tag because upstream's tags lag \`main\` by an unpredictable
+          margin (agent-lcars#1716) -- this workflow exists to catch the next
+          real advance automatically instead of waiting for someone to
+          notice.
+
+          ## Upstream commits in this range
+
+          https://github.com/actions/scaleset/compare/${OLD_VERSION}...${NEW_VERSION}
+
+          \`\`\`
+          ${COMMIT_RANGE:-(no commits -- go.mod/go.sum changed from transitive dependency updates only)}
+          \`\`\`
+
+          \`go build ./...\` and \`go test ./...\` passed against the bumped
+          dependency before this PR was opened. The repo's normal required
+          CI still gates the merge.
+
+          Refs #1716.
+
+          🤖 Generated by [.github/workflows/scaleset-upstream.yml](https://github.com/${{ github.repository }}/blob/main/.github/workflows/scaleset-upstream.yml)
+          EOF
+          )"
+
+          existing_pr="$(gh pr list --head deps/scaleset-upstream --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_pr" ]; then
+            gh pr edit "$existing_pr" --body "$body"
+            echo "Updated PR #$existing_pr"
+          else
+            gh pr create \
+              --head deps/scaleset-upstream \
+              --base main \
+              --title "chore(runner-autoscaler): bump github.com/actions/scaleset to upstream main" \
+              --body "$body" \
+              --label type:dependency-update
+          fi
