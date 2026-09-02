@@ -587,6 +587,156 @@ func TestPickHostHonorsConfiguredMemorySafetyMargin(t *testing.T) {
 	}
 }
 
+// usageSampler builds a memoryUsageSampler that returns a canned usage value
+// per container ID, without touching Docker at all -- the injection point
+// agent-lcars#1694 added specifically so these tests never need a fake
+// /stats endpoint.
+func usageSampler(usage map[string]int64) func(context.Context, *dockerclient.Client, string) (int64, error) {
+	return func(_ context.Context, _ *dockerclient.Client, containerID string) (int64, error) {
+		bytes, ok := usage[containerID]
+		if !ok {
+			return 0, fmt.Errorf("no canned usage for container %q", containerID)
+		}
+		return bytes, nil
+	}
+}
+
+// TestPickHostChargesObservedUsageOverReservation pins agent-lcars#1694's
+// first admission rule: a runner sampled OVER its declared reservation is
+// charged for what it is actually using, not the smaller declared figure.
+// 16 GiB * 0.9 default margin = 14.4 GiB budget. The running runner declared
+// only 4 GiB but is observed using 10 GiB; a 5 GiB candidate fits the
+// declared-only arithmetic (4+5=9 <= 14.4) but must be refused once charged
+// at its observed usage (10+5=15 > 14.4).
+func TestPickHostChargesObservedUsageOverReservation(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 5*gibibyte, []container.Summary{reservedRunner("over", 4*gibibyte)})
+	scaler.memoryUsageSampler = usageSampler(map[string]int64{"over": 10 * gibibyte})
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want capacity failure: observed usage (10 GiB) must be charged over the 4 GiB declared reservation", host, err)
+	}
+	if !strings.Contains(err.Error(), "reserved=10737418240") {
+		t.Fatalf("error %q does not charge the observed 10 GiB usage", err)
+	}
+	if got := testutil.ToFloat64(hostMemoryObservedGauge.WithLabelValues("janeway")); got != float64(10*gibibyte) {
+		t.Errorf("host_memory_observed_bytes = %v, want 10 GiB", got)
+	}
+}
+
+// TestPickHostChargesReservationWhenUnderObservedUsage pins agent-lcars#1694's
+// second admission rule: a runner sampled UNDER its declared reservation is
+// still charged at the (larger) declared reservation, not its smaller
+// observed usage -- otherwise a low sample would let placement erode the
+// exact safety margin runner_memory_reservation exists to hold. The running
+// runner declared 12 GiB but is observed using only 1 GiB; a 3 GiB candidate
+// would fit if charged at observed usage (1+3=4 <= 14.4 GiB budget) but must
+// still be refused when charged at the 12 GiB reservation (12+3=15 > 14.4).
+func TestPickHostChargesReservationWhenUnderObservedUsage(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 3*gibibyte, []container.Summary{reservedRunner("under", 12*gibibyte)})
+	scaler.memoryUsageSampler = usageSampler(map[string]int64{"under": 1 * gibibyte})
+
+	host, err := scaler.pickHost(context.Background())
+	if host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() = (%q, %v), want capacity failure: under-reservation usage must still charge the declared 12 GiB", host, err)
+	}
+	if !strings.Contains(err.Error(), "reserved=12884901888") {
+		t.Fatalf("error %q does not charge the declared 12 GiB reservation", err)
+	}
+	if got := testutil.ToFloat64(hostMemoryObservedGauge.WithLabelValues("janeway")); got != float64(1*gibibyte) {
+		t.Errorf("host_memory_observed_bytes = %v, want the observed 1 GiB (purely observational, unlike the charged reservation)", got)
+	}
+}
+
+// TestPickHostFallsBackToReservationOnStatsFailure pins agent-lcars#1694's
+// fallback rule: when the usage sample errors (short timeout, transient
+// daemon error), admission charges the declared reservation exactly as it
+// did before usage-aware charging existed, instead of charging zero or
+// refusing outright.
+func TestPickHostFallsBackToReservationOnStatsFailure(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 2*gibibyte, []container.Summary{reservedRunner("first", 12*gibibyte)})
+	scaler.memoryUsageSampler = func(context.Context, *dockerclient.Client, string) (int64, error) {
+		return 0, fmt.Errorf("stats request timed out")
+	}
+
+	// 12 GiB declared + 2 GiB candidate = 14 GiB <= 14.4 GiB budget: fits at
+	// the declared reservation.
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() error = %v, want the declared reservation to admit the candidate", err)
+	}
+	if host != "janeway" {
+		t.Fatalf("pickHost() = %q, want janeway", host)
+	}
+	if got := testutil.ToFloat64(hostMemoryReservedGauge.WithLabelValues("janeway")); got != float64(12*gibibyte) {
+		t.Errorf("host_memory_reserved_bytes = %v, want the declared 12 GiB (usage sample failed)", got)
+	}
+	if got := testutil.ToFloat64(hostMemoryObservedGauge.WithLabelValues("janeway")); got != float64(12*gibibyte) {
+		t.Errorf("host_memory_observed_bytes = %v, want the declared 12 GiB fallback (usage sample failed)", got)
+	}
+}
+
+// TestPickHostOvercommitAdmitsWhenHostUnpressured pins agent-lcars#1694's
+// bounded-overcommit rule: 16 GiB * 0.9 margin = 14.4 GiB budget. A running
+// 12 GiB reservation plus a 4 GiB candidate (16 GiB) exceeds that budget at
+// the default 1.0 factor, but fits comfortably under a configured 1.25
+// factor (18 GiB) once the host's latest load sample shows it unpressured.
+func TestPickHostOvercommitAdmitsWhenHostUnpressured(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 4*gibibyte, []container.Summary{reservedRunner("first", 12*gibibyte)})
+
+	if host, err := scaler.pickHost(context.Background()); host != "" || !errors.Is(err, errFleetAtCapacity) {
+		t.Fatalf("pickHost() without overcommit = (%q, %v), want capacity failure", host, err)
+	}
+
+	scaler.hostMemoryOvercommit = map[string]float64{"janeway": 1.25}
+	fleet := scaler.coordinator()
+	seedHostLoad(fleet, "janeway", hostLoad{memoryAvailable: 0.5, memoryPressure: 0.01})
+
+	host, err := scaler.pickHost(context.Background())
+	if err != nil {
+		t.Fatalf("pickHost() with 1.25 overcommit on an unpressured host, error = %v", err)
+	}
+	if host != "janeway" {
+		t.Fatalf("pickHost() = %q, want janeway", host)
+	}
+	if got := testutil.ToFloat64(hostMemoryOvercommitEffectiveGauge.WithLabelValues("janeway")); got != 1.25 {
+		t.Errorf("host_memory_overcommit_effective = %v, want 1.25", got)
+	}
+	wantBudget := float64(int64(float64(16*gibibyte) * 0.9 * 1.25))
+	if got := testutil.ToFloat64(hostMemoryBudgetGauge.WithLabelValues("janeway")); got != wantBudget {
+		t.Errorf("host_memory_budget_bytes = %v, want %v (16 GiB * 0.9 margin * 1.25 overcommit)", got, wantBudget)
+	}
+}
+
+// TestPickHostOvercommitWithdrawnUnderSoftPressure pins agent-lcars#1694's
+// pressure gate: the same configured 1.25 factor that admits a candidate on
+// an unpressured host (TestPickHostOvercommitAdmitsWhenHostUnpressured) must
+// be withdrawn (falling back to 1.0) once the host's latest sample crosses
+// EITHER soft threshold -- available memory at or below memory_soft, or
+// memory PSI at or above psi_soft -- even though neither alone crosses the
+// HARD threshold that would exclude the host outright.
+func TestPickHostOvercommitWithdrawnUnderSoftPressure(t *testing.T) {
+	tests := map[string]hostLoad{
+		"low available memory": {memoryAvailable: 0.10, memoryPressure: 0.01}, // <= memory_soft (0.15), > memory_hard (0.08)
+		"high memory PSI":      {memoryAvailable: 0.5, memoryPressure: 0.10},  // >= psi_soft (0.10), < psi_hard (0.25)
+	}
+	for name, load := range tests {
+		t.Run(name, func(t *testing.T) {
+			scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 4*gibibyte, []container.Summary{reservedRunner("first", 12*gibibyte)})
+			scaler.hostMemoryOvercommit = map[string]float64{"janeway": 1.25}
+			seedHostLoad(scaler.coordinator(), "janeway", load)
+
+			host, err := scaler.pickHost(context.Background())
+			if host != "" || !errors.Is(err, errFleetAtCapacity) {
+				t.Fatalf("pickHost() on a soft-pressured host = (%q, %v), want capacity failure: overcommit must be withdrawn", host, err)
+			}
+			if got := testutil.ToFloat64(hostMemoryOvercommitEffectiveGauge.WithLabelValues("janeway")); got != 1.0 {
+				t.Errorf("host_memory_overcommit_effective = %v, want 1.0 (withdrawn under soft pressure)", got)
+			}
+		})
+	}
+}
+
 // TestLaneAdmissibleSlotsMatchesHandComputation pins agent-lcars#1695's
 // acceptance criterion: the gauge must match a hand computation on the test
 // fleet fixture. 32 GiB * 0.9 default safety margin = 28.8 GiB budget, minus
@@ -630,6 +780,30 @@ func TestLaneAdmissibleSlotsZeroWhenHardOverloaded(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 0 {
 		t.Fatalf("lane_admissible_slots = %v, want 0 when the only host is hard-overloaded", got)
+	}
+}
+
+// TestLaneAdmissibleSlotsUsesObservedChargingAndOvercommit pins agent-lcars#1694's
+// requirement that lane_admissible_slots and pickHostLocked's own admission
+// decision can never disagree: both must derive from the same effective
+// budget (safety margin times the effective overcommit factor) and the same
+// usage-aware charge (max(declared, observed) per running runner).
+//
+// 32 GiB * 0.9 default margin * 1.25 overcommit (host unpressured) = 36 GiB
+// budget. The one running runner declared only 8 GiB but is observed using
+// 16 GiB, so admission charges 16 GiB, not 8. (36 - 16) / 8 GiB lane
+// reservation = 2.5, floored to 2.
+func TestLaneAdmissibleSlotsUsesObservedChargingAndOvercommit(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 32*gibibyte, 8*gibibyte, []container.Summary{reservedRunner("first", 8*gibibyte)})
+	scaler.memoryUsageSampler = usageSampler(map[string]int64{"first": 16 * gibibyte})
+	scaler.hostMemoryOvercommit = map[string]float64{"janeway": 1.25}
+	seedHostLoad(scaler.coordinator(), "janeway", hostLoad{memoryAvailable: 0.5, memoryPressure: 0.01})
+
+	if _, err := scaler.pickHost(context.Background()); err != nil {
+		t.Fatalf("pickHost() error = %v", err)
+	}
+	if got := testutil.ToFloat64(laneAdmissibleSlotsGauge.WithLabelValues("e2e")); got != 2 {
+		t.Fatalf("lane_admissible_slots = %v, want 2 (the same effective budget and observed charging pickHostLocked's own admission used)", got)
 	}
 }
 

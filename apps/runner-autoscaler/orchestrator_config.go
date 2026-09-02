@@ -122,6 +122,14 @@ type FleetHostConfig struct {
 	// the operator's to define -- this only consumes the verdict.
 	RequireReadiness bool `yaml:"require_readiness,omitempty"`
 	RunnerLimit      *int `yaml:"runner_limit,omitempty"`
+	// MemoryOvercommit multiplies this host's reserved-memory admission
+	// budget (physical memory minus fleet.placement.memory_safety_margin)
+	// while its latest load sample shows it unpressured -- see
+	// effectiveMemoryOvercommit and the fleet scheduler redesign's "bounded
+	// overcommit" (agent-lcars#1694, docs/fleet-scheduler-redesign.md#C).
+	// Must be at least 1.0 and at most 2.0; zero (the default) selects 1.0,
+	// i.e. no overcommit.
+	MemoryOvercommit float64 `yaml:"memory_overcommit,omitempty"`
 }
 
 type FleetPlacementFile struct {
@@ -300,11 +308,14 @@ type resolvedOrchestratorConfig struct {
 	// operator-supplied readiness signal. Nil when no host opts in.
 	ReadinessRequired map[string]bool
 	ReadinessMaxAge   time.Duration
-	Placement         hostLoadPolicy
-	Cooldown          time.Duration
-	ScaleSets         []Config
-	Weights           map[string]int
-	Priorities        map[string]int
+	// MemoryOvercommit is every fleet host's resolved memory_overcommit
+	// factor (default 1.0 for a host that does not set one).
+	MemoryOvercommit map[string]float64
+	Placement        hostLoadPolicy
+	Cooldown         time.Duration
+	ScaleSets        []Config
+	Weights          map[string]int
+	Priorities       map[string]int
 }
 
 func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
@@ -355,6 +366,7 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 
 	r.RunnerLimits = map[string]int{}
 	r.HostMetricsTimeouts = map[string]time.Duration{}
+	r.MemoryOvercommit = map[string]float64{}
 	seenHosts := map[string]bool{}
 	for i, h := range c.Fleet.Hosts {
 		h.Name, h.Docker = strings.TrimSpace(h.Name), strings.TrimSpace(h.Docker)
@@ -397,6 +409,14 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			}
 			r.RunnerLimits[h.Name] = *h.RunnerLimit
 		}
+		overcommit := h.MemoryOvercommit
+		if overcommit == 0 {
+			overcommit = 1.0
+		}
+		if math.IsNaN(overcommit) || math.IsInf(overcommit, 0) || overcommit < 1.0 || overcommit > 2.0 {
+			return fmt.Errorf("host %q memory_overcommit must be at least 1.0 and at most 2.0", h.Name)
+		}
+		r.MemoryOvercommit[h.Name] = overcommit
 	}
 
 	if err := validateFileMountAllowlist(c.Fleet.FileMountAllowlist); err != nil {

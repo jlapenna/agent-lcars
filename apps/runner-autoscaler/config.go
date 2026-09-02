@@ -101,6 +101,10 @@ type Config struct {
 	// verbatim in runOrchestrator).
 	HostLoadPolicy   hostLoadPolicy
 	HostMemoryExempt []string
+	// HostMemoryOvercommit is every fleet host's resolved memory_overcommit
+	// factor (agent-lcars#1694); see FleetHostConfig.MemoryOvercommit and
+	// Scaler.effectiveMemoryOvercommit.
+	HostMemoryOvercommit map[string]float64
 	// MemorySafetyMargin is the fraction of Docker-reported physical host
 	// memory that placement leaves outside declared runner reservations. A
 	// value of 0.10 keeps ten percent free; zero selects the default.

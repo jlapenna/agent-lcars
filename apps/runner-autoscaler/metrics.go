@@ -245,7 +245,21 @@ var (
 	hostMemoryBudgetGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_runner_autoscaler_host_memory_budget_bytes",
-			Help: "Docker-reported physical host memory available to declared runner reservations after the configured safety margin.",
+			Help: "Docker-reported physical host memory available to declared runner reservations after the configured safety margin and effective overcommit factor (agent-lcars#1694).",
+		},
+		[]string{"host"},
+	)
+	hostMemoryObservedGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_memory_observed_bytes",
+			Help: "Sum of sampled current memory usage (Docker one-shot stats, excluding reclaimable page cache) across running autoscaled runner containers on a host, observed during placement; a runner whose sample failed contributes its declared reservation instead (agent-lcars#1694).",
+		},
+		[]string{"host"},
+	)
+	hostMemoryOvercommitEffectiveGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_runner_autoscaler_host_memory_overcommit_effective",
+			Help: "The memory_overcommit factor actually applied to a host's reserved-memory admission budget just now: the configured fleet.hosts[].memory_overcommit value while the host is unpressured (memory-available ratio above memory_soft and memory PSI below psi_soft), otherwise 1.0 (agent-lcars#1694).",
 		},
 		[]string{"host"},
 	)
@@ -474,6 +488,8 @@ func registerMetrics() {
 			hostFleetRunnersGauge,
 			hostMemoryReservedGauge,
 			hostMemoryBudgetGauge,
+			hostMemoryObservedGauge,
+			hostMemoryOvercommitEffectiveGauge,
 			laneAdmissibleSlotsGauge,
 			scaleSetMemoryReservationGauge,
 			scaleSetMemoryLimitGauge,

@@ -100,6 +100,18 @@ type Scaler struct {
 	hostLoadPolicy      hostLoadPolicy
 	hostMetricsTimeouts map[string]time.Duration
 	hostMemoryExempt    map[string]bool
+	// hostMemoryOvercommit optionally multiplies a host's reserved-memory
+	// admission budget while its latest load sample shows it unpressured --
+	// see fleet.hosts[].memory_overcommit and effectiveMemoryOvercommit
+	// (agent-lcars#1694). A missing entry, or a value at or below 1.0, means
+	// no overcommit (effective factor 1.0).
+	hostMemoryOvercommit map[string]float64
+	// memoryUsageSampler samples a running runner container's current memory
+	// usage for usage-aware admission charging (agent-lcars#1694); nil
+	// selects containerMemoryUsage against the real Docker daemon. Tests
+	// inject a canned per-container lookup instead of a real Docker stats
+	// endpoint -- see sampleContainerMemoryUsage.
+	memoryUsageSampler func(ctx context.Context, client *dockerclient.Client, containerID string) (int64, error)
 	// readiness* configure the operator-defined placement gate applied to
 	// hosts that set require_readiness. See hostReady.
 	readinessMetricsURL string
@@ -145,6 +157,10 @@ const (
 	dockerContainerOperationTimeout = 30 * time.Second
 	dockerContainerWaitTimeout      = 2 * time.Minute
 	dockerImagePullTimeout          = 90 * time.Second
+	// containerMemoryUsageTimeout bounds one running runner's one-shot
+	// memory-stats sample (see containerMemoryUsage) so a slow or stalled
+	// daemon cannot delay an entire host's inventory pass in probeFleetHosts.
+	containerMemoryUsageTimeout = 3 * time.Second
 	// A JIT runner exits immediately after its one job, while the scale-set
 	// listener delivers JobCompleted on a separate stream. Docker can win
 	// that race by a few seconds. Give a clean exit one listener-settlement
@@ -1197,6 +1213,71 @@ func (a *Scaler) resolvedMemorySafetyMargin() float64 {
 	return defaultMemorySafetyMargin
 }
 
+// containerMemoryUsage samples containerID's current memory usage via
+// Docker's one-shot stats endpoint, for usage-aware admission charging
+// (agent-lcars#1694): a runner that blew past its declared reservation is
+// charged for what it is actually using. It excludes reclaimable page cache
+// (memory_stats.stats.inactive_file) from the figure, the same convention
+// cAdvisor's max_usage measurements use -- Docker normalizes this stat key
+// identically whether the host runs cgroup v1 or v2. Errors bubble up so the
+// caller can fall back to the container's declared reservation instead of
+// silently charging zero.
+func containerMemoryUsage(ctx context.Context, client *dockerclient.Client, containerID string) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, containerMemoryUsageTimeout)
+	defer cancel()
+	reader, err := client.ContainerStatsOneShot(ctx, containerID)
+	if err != nil {
+		return 0, fmt.Errorf("sampling memory usage for container %q: %w", containerID, err)
+	}
+	defer reader.Body.Close()
+	var stats container.StatsResponse
+	if err := json.NewDecoder(reader.Body).Decode(&stats); err != nil {
+		return 0, fmt.Errorf("decoding memory stats for container %q: %w", containerID, err)
+	}
+	usage := int64(stats.MemoryStats.Usage)
+	if inactive, ok := stats.MemoryStats.Stats["inactive_file"]; ok {
+		usage -= int64(inactive)
+	}
+	if usage < 0 {
+		usage = 0
+	}
+	return usage, nil
+}
+
+// sampleContainerMemoryUsage samples containerID's current memory usage,
+// selecting a.memoryUsageSampler when injected (tests supply canned
+// per-container usage without a real Docker daemon) or the real Docker
+// one-shot stats endpoint otherwise.
+func (a *Scaler) sampleContainerMemoryUsage(ctx context.Context, client *dockerclient.Client, containerID string) (int64, error) {
+	if a.memoryUsageSampler != nil {
+		return a.memoryUsageSampler(ctx, client, containerID)
+	}
+	return containerMemoryUsage(ctx, client, containerID)
+}
+
+// effectiveMemoryOvercommit returns the multiplier pickHostLocked and
+// laneAdmissibleSlots apply to host's reserved-memory admission budget: the
+// configured fleet.hosts[].memory_overcommit factor while the host's latest
+// load sample -- the same hostLoadCache probeHostLoad/currentHostLoad
+// maintain, reused here rather than re-probed -- shows it unpressured
+// (available-memory ratio above memory_soft and memory PSI below psi_soft),
+// else 1.0 (agent-lcars#1694). Missing or stale telemetry reads back as the
+// zero-value hostLoad (memoryAvailable 0), which never clears the
+// memory_soft gate, so a host this pass cannot vouch for right now never
+// receives the factor.
+func (a *Scaler) effectiveMemoryOvercommit(host string, probe fleetHostProbe) float64 {
+	factor := a.hostMemoryOvercommit[host]
+	if factor <= 1.0 {
+		return 1.0
+	}
+	load := probe.hostLoads[host]
+	p := a.policy()
+	if load.memoryAvailable > p.memorySoft && load.memoryPressure < p.psiSoft {
+		return factor
+	}
+	return 1.0
+}
+
 // pickHostLocked selects against a Docker recount plus in-flight reservations.
 // The caller must hold fleet.mu through the subsequent reservation update.
 func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (string, error) {
@@ -1275,9 +1356,12 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 			running := probe.hostRunningReservedMemory[h.Name]
 			inFlight := fleet.reservedMemory[h.Name]
 			reserved := running + inFlight
-			budget := int64(float64(total) * (1 - margin))
+			overcommit := a.effectiveMemoryOvercommit(h.Name, probe)
+			budget := int64(float64(total) * (1 - margin) * overcommit)
 			hostMemoryReservedGauge.WithLabelValues(h.Name).Set(float64(reserved))
 			hostMemoryBudgetGauge.WithLabelValues(h.Name).Set(float64(budget))
+			hostMemoryObservedGauge.WithLabelValues(h.Name).Set(float64(probe.hostObservedMemory[h.Name]))
+			hostMemoryOvercommitEffectiveGauge.WithLabelValues(h.Name).Set(overcommit)
 
 			if memoryErr := probe.hostMemoryErrors[h.Name]; memoryErr != nil {
 				blockedDetails = append(blockedDetails, fmt.Sprintf("%s: memory inventory unavailable (%v)", h.Name, memoryErr))
@@ -1297,7 +1381,8 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 					slog.Int64("in_flight_reserved_bytes", inFlight),
 					slog.Int64("candidate_reserved_bytes", candidate),
 					slog.Int64("candidate_limit_bytes", a.runnerMemory),
-					slog.Float64("memory_safety_margin", margin))
+					slog.Float64("memory_safety_margin", margin),
+					slog.Float64("memory_overcommit_effective", overcommit))
 				continue
 			}
 			withinMemoryBudget = append(withinMemoryBudget, h)
@@ -1371,16 +1456,27 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (s
 // hostPingResult is one host's outcome from probeFleetHosts's concurrent
 // inventory pass.
 type hostPingResult struct {
-	host                  DockerHost
-	ok                    bool
-	eligible              bool
-	err                   error
-	load                  hostLoad
-	loadErr               error
-	fleetRunners          int
-	hostMemoryBytes       int64
+	host            DockerHost
+	ok              bool
+	eligible        bool
+	err             error
+	load            hostLoad
+	loadErr         error
+	fleetRunners    int
+	hostMemoryBytes int64
+	// runningReservedMemory is the sum, across this host's running autoscaled
+	// runners, of what admission CHARGES each one: max(its declared
+	// reservation, its sampled current usage), or the declared reservation
+	// alone when sampling failed (agent-lcars#1694). See
+	// observedReservedMemory for the sampled figure alone.
 	runningReservedMemory int64
-	memoryErr             error
+	// observedReservedMemory is the sum of each running runner's SAMPLED
+	// usage (falling back to its declared reservation when the sample
+	// failed) -- purely observational, exported via
+	// github_runner_autoscaler_host_memory_observed_bytes and never itself
+	// used for admission.
+	observedReservedMemory int64
+	memoryErr              error
 	// readinessBlocked distinguishes "this host was withheld by its
 	// readiness gate" from "this host is unreachable", so exhausting the
 	// fleet reports the real cause instead of blaming the network.
@@ -1397,9 +1493,12 @@ type fleetHostProbe struct {
 	fleetCounts               map[string]int
 	hostMemoryBytes           map[string]int64
 	hostRunningReservedMemory map[string]int64
-	hostMemoryErrors          map[string]error
-	reachableHosts            []DockerHost
-	sparkLoaded               bool
+	// hostObservedMemory is the per-host sum of hostPingResult's
+	// observedReservedMemory -- see its doc comment.
+	hostObservedMemory map[string]int64
+	hostMemoryErrors   map[string]error
+	reachableHosts     []DockerHost
+	sparkLoaded        bool
 }
 
 // probeFleetHosts concurrently pings, and inventories memory and fleet
@@ -1428,6 +1527,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			load, loadErr := a.currentHostLoad(ctx, dh.Name)
 			fleetRunners := 0
 			runningReservedMemory := int64(0)
+			observedReservedMemory := int64(0)
 			var memoryErr error
 			if err == nil {
 				allRunners, listErr := dh.Client.ContainerList(ctx, container.ListOptions{
@@ -1443,12 +1543,29 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				}
 				if a.runnerMemory > 0 && listErr == nil {
 					for _, runner := range allRunners {
-						memory, runnerMemoryErr := declaredRunnerMemory(runner)
+						declared, runnerMemoryErr := declaredRunnerMemory(runner)
 						if runnerMemoryErr != nil {
 							memoryErr = errors.Join(memoryErr, runnerMemoryErr)
 							break
 						}
-						runningReservedMemory += memory
+						// Charge the larger of the declared reservation and
+						// the runner's actual current usage
+						// (agent-lcars#1694): a runner that blew past its
+						// reservation counts for what it uses, one under it
+						// still counts for its reservation. A failed sample
+						// (short timeout, transient daemon error) falls back
+						// to the declared reservation for both the charge and
+						// the purely-observational sum below, rather than
+						// silently charging or reporting zero.
+						observed := declared
+						if usage, statsErr := a.sampleContainerMemoryUsage(ctx, dh.Client, runner.ID); statsErr != nil {
+							a.logger.Debug("Runner memory usage sample unavailable; charging declared reservation",
+								slog.String("host", dh.Name), slog.String("container_id", runner.ID), slog.String("error", statsErr.Error()))
+						} else {
+							observed = usage
+						}
+						observedReservedMemory += observed
+						runningReservedMemory += max(declared, observed)
 					}
 				}
 			}
@@ -1485,7 +1602,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 				host: dh, ok: err == nil, eligible: eligible, err: err,
 				load: load, loadErr: loadErr, fleetRunners: fleetRunners,
 				hostMemoryBytes: hostMemoryBytes, runningReservedMemory: runningReservedMemory,
-				memoryErr: memoryErr, readinessBlocked: readinessBlocked,
+				observedReservedMemory: observedReservedMemory,
+				memoryErr:              memoryErr, readinessBlocked: readinessBlocked,
 			}
 		}(h)
 	}
@@ -1507,6 +1625,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 	fleetCounts := make(map[string]int, len(a.dockerHosts))
 	hostMemoryBytes := make(map[string]int64, len(a.dockerHosts))
 	hostRunningReservedMemory := make(map[string]int64, len(a.dockerHosts))
+	hostObservedMemory := make(map[string]int64, len(a.dockerHosts))
 	hostMemoryErrors := make(map[string]error, len(a.dockerHosts))
 	for res := range ch {
 		results = append(results, res)
@@ -1514,6 +1633,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 			fleetCounts[res.host.Name] = res.fleetRunners
 			hostMemoryBytes[res.host.Name] = res.hostMemoryBytes
 			hostRunningReservedMemory[res.host.Name] = res.runningReservedMemory
+			hostObservedMemory[res.host.Name] = res.observedReservedMemory
 			if res.memoryErr != nil {
 				hostMemoryErrors[res.host.Name] = res.memoryErr
 			}
@@ -1562,7 +1682,8 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 	return fleetHostProbe{
 		results: results, hostLoads: hostLoads, fleetCounts: fleetCounts,
 		hostMemoryBytes: hostMemoryBytes, hostRunningReservedMemory: hostRunningReservedMemory,
-		hostMemoryErrors: hostMemoryErrors, reachableHosts: reachableHosts, sparkLoaded: sparkLoaded,
+		hostObservedMemory: hostObservedMemory,
+		hostMemoryErrors:   hostMemoryErrors, reachableHosts: reachableHosts, sparkLoaded: sparkLoaded,
 	}
 }
 
@@ -1612,7 +1733,7 @@ func (a *Scaler) laneAdmissibleSlots(fleet *FleetCoordinator, probe fleetHostPro
 		if probe.hostMemoryErrors[name] != nil {
 			continue
 		}
-		budget := int64(float64(probe.hostMemoryBytes[name]) * (1 - margin))
+		budget := int64(float64(probe.hostMemoryBytes[name]) * (1 - margin) * a.effectiveMemoryOvercommit(name, probe))
 		reserved := probe.hostRunningReservedMemory[name] + fleet.reservedMemory[name]
 		memorySlots := int((budget - reserved) / candidate)
 		if memorySlots < 0 {
