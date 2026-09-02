@@ -197,9 +197,7 @@ func TestOrchestratorConfigRunnerCgroupParentConfigured(t *testing.T) {
 
 // TestOrchestratorConfigRejectsInvalidRunnerCgroupParent covers the bare
 // systemd slice name requirement -- no slashes, and it must end in
-// ".slice" -- which is both what Docker's systemd cgroup driver itself
-// requires and what keeps the value safe to interpolate into
-// defaultRunnerSliceApplier's remote SSH command line.
+// ".slice" -- which is what Docker's systemd cgroup driver itself requires.
 func TestOrchestratorConfigRejectsInvalidRunnerCgroupParent(t *testing.T) {
 	for _, bad := range []string{"homelab-runners", "path/to.slice", "has space.slice", "semi;colon.slice"} {
 		body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    runner_cgroup_parent: \""+bad+"\"", 1)

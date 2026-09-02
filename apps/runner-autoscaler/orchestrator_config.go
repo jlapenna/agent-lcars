@@ -190,9 +190,12 @@ type FleetPlacementFile struct {
 	MemorySafetyMargin float64 `yaml:"memory_safety_margin,omitempty"`
 	// RunnerCgroupParent is the systemd slice every runner container is
 	// created under (Docker's --cgroup-parent), so co-tenant runners on one
-	// host are bounded collectively by ensureRunnerSlice's memory.max /
-	// memory.high in addition to their own per-container ceilings
-	// (agent-lcars#1700). A pointer because the tri-state matters: an
+	// host are bounded collectively by a slice memory.max / memory.high in
+	// addition to their own per-container ceilings (agent-lcars#1700). The
+	// autoscaler only declares that bound (runnerSliceBudget, published as
+	// github_runner_autoscaler_runner_slice_expected_memory_max_bytes /
+	// _high_bytes); Ansible enforces it (jlapenna/homelab#1102,
+	// agent-lcars#1712). A pointer because the tri-state matters: an
 	// omitted key defaults to defaultRunnerCgroupParent, while an explicit
 	// empty string disables the slice bound entirely -- once YAML decoding
 	// is done a plain string can no longer tell those two apart.

@@ -122,9 +122,19 @@ close that gap, and the second is a precondition for any overcommit above
 
 - **A host-level runner slice.** Every runner container starts under a
   dedicated cgroup parent whose `memory.max` is the host's reservation budget
-  and whose `memory.high` sits just below it, so co-tenants are bounded
-  collectively and reclaim or an OOM kill stays inside the runner slice rather
-  than reaching the control plane, registry, or exporters on that host.
+  and whose `memory.high` sits just below it
+  (`memory.max = physical_memory * (1 - memory_safety_margin)`,
+  `memory.high = memory.max * 0.95`), so co-tenants are bounded collectively
+  and reclaim or an OOM kill stays inside the runner slice rather than
+  reaching the control plane, registry, or exporters on that host. The
+  autoscaler only **declares** that bound -- publishing it as
+  `github_runner_autoscaler_runner_slice_expected_memory_max_bytes{host,slice}`
+  / `_expected_memory_high_bytes{host,slice}` -- because it has no privilege
+  to apply it itself under this fleet's SSH forced-command model
+  (agent-lcars#1712). A static systemd unit in the homelab repo
+  (jlapenna/homelab#1102) **enforces** it, and Prometheus **verifies** the
+  declared numbers against cAdvisor's
+  `container_spec_memory_limit_bytes{id="/homelab.slice/<slice>"}`.
 - **A correlated measurement.** Per-run p99 treated as independent is the
   wrong statistic for a build matrix that fans out together. With the
   runner-to-job gauge (#1698) and cAdvisor, measure the p99 of the _sum_ of

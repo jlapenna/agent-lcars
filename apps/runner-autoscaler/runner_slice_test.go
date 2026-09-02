@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
-	"io"
-	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -24,164 +24,77 @@ func TestRunnerSliceBudget(t *testing.T) {
 	}
 }
 
-// TestApplyRunnerSliceCalledOncePerHostAndOnBudgetChange covers the
-// idempotency contract: ensureRunnerSlice (via applyRunnerSlice, which reads
-// the host's physical memory from the fake Docker server) must apply the
-// slice bound on the first placement, must NOT re-apply it while the budget
-// is unchanged, and must re-apply it once the host's reported physical
-// memory (and so the computed budget) changes.
-func TestApplyRunnerSliceCalledOncePerHostAndOnBudgetChange(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	fake.setMemoryTotal(100_000_000_000)
-	client := fake.client(t)
-	host := DockerHost{Name: "slice-host-budget", Target: "local", Client: client}
+// TestPickHostPublishesRunnerSliceExpectedBudget covers the replacement
+// contract for agent-lcars#1712: with a runner cgroup slice configured, the
+// autoscaler DECLARES (never applies -- there is no systemctl call left in
+// this package, see TestNoSystemctlReferenceRemains below) the host's
+// collective runner-slice memory bound as a gauge pair labeled by host and
+// slice, computed from the host's physical memory and the configured safety
+// margin exactly like runnerSliceBudget.
+func TestPickHostPublishesRunnerSliceExpectedBudget(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 2*gibibyte, nil)
+	scaler.runnerCgroupParent = "homelab-runners.slice"
+	scaler.memorySafetyMargin = 0.10
 
-	type call struct {
-		sliceName             string
-		memoryMax, memoryHigh int64
-	}
-	var calls []call
-	scaler := &Scaler{
-		runnerCgroupParent: "homelab-runners.slice",
-		memorySafetyMargin: 0.10,
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		runnerSliceApplier: func(_ context.Context, h DockerHost, sliceName string, memoryMax, memoryHigh int64) error {
-			calls = append(calls, call{sliceName, memoryMax, memoryHigh})
-			return nil
-		},
+	if _, err := scaler.pickHost(context.Background()); err != nil {
+		t.Fatalf("pickHost() error = %v", err)
 	}
 
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if len(calls) != 1 {
-		t.Fatalf("applier calls after first placement = %d, want 1", len(calls))
+	wantMax, wantHigh := runnerSliceBudget(16*gibibyte, 0.10)
+	if got := testutil.ToFloat64(runnerSliceExpectedMemoryMaxGauge.WithLabelValues("janeway", "homelab-runners.slice")); got != float64(wantMax) {
+		t.Errorf("runner_slice_expected_memory_max_bytes = %v, want %v", got, wantMax)
 	}
-	wantMax, wantHigh := runnerSliceBudget(100_000_000_000, 0.10)
-	if calls[0].memoryMax != wantMax || calls[0].memoryHigh != wantHigh {
-		t.Fatalf("applier called with (max=%d, high=%d), want (max=%d, high=%d)", calls[0].memoryMax, calls[0].memoryHigh, wantMax, wantHigh)
-	}
-	if calls[0].sliceName != "homelab-runners.slice" {
-		t.Fatalf("slice name = %q, want %q", calls[0].sliceName, "homelab-runners.slice")
-	}
-	if got := testutil.ToFloat64(runnerSliceBoundedGauge.WithLabelValues(host.Name)); got != 1 {
-		t.Fatalf("runner_slice_bounded = %v, want 1", got)
-	}
-	if got := testutil.ToFloat64(runnerSliceMemoryMaxGauge.WithLabelValues(host.Name)); got != float64(wantMax) {
-		t.Fatalf("runner_slice_memory_max_bytes = %v, want %v", got, wantMax)
-	}
-
-	// Second placement on the same host, same physical memory: the applier
-	// must not be called again.
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if len(calls) != 1 {
-		t.Fatalf("applier calls after unchanged budget = %d, want still 1", len(calls))
-	}
-
-	// The host's physical memory (and so the computed budget) changes: the
-	// applier must run again, with the new bytes.
-	fake.setMemoryTotal(200_000_000_000)
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if len(calls) != 2 {
-		t.Fatalf("applier calls after budget change = %d, want 2", len(calls))
-	}
-	newMax, newHigh := runnerSliceBudget(200_000_000_000, 0.10)
-	if calls[1].memoryMax != newMax || calls[1].memoryHigh != newHigh {
-		t.Fatalf("second applier call = (max=%d, high=%d), want (max=%d, high=%d)", calls[1].memoryMax, calls[1].memoryHigh, newMax, newHigh)
-	}
-	if got := testutil.ToFloat64(runnerSliceMemoryMaxGauge.WithLabelValues(host.Name)); got != float64(newMax) {
-		t.Fatalf("runner_slice_memory_max_bytes after change = %v, want %v", got, newMax)
+	if got := testutil.ToFloat64(runnerSliceExpectedMemoryHighGauge.WithLabelValues("janeway", "homelab-runners.slice")); got != float64(wantHigh) {
+		t.Errorf("runner_slice_expected_memory_high_bytes = %v, want %v", got, wantHigh)
 	}
 }
 
-// TestApplyRunnerSliceDisabledIsNoop covers fleet.placement.runner_cgroup_parent
-// == "" (explicitly disabled): the applier must never be invoked and no
-// Docker Info() round trip should even be attempted.
-func TestApplyRunnerSliceDisabledIsNoop(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	client := fake.client(t)
-	host := DockerHost{Name: "slice-host-disabled", Target: "local", Client: client}
+// TestPickHostOmitsRunnerSliceExpectedBudgetWhenDisabled covers
+// fleet.placement.runner_cgroup_parent == "" (the default before #1700 and
+// still available as an explicit opt-out): nothing is published for either
+// gauge, on a host name that no other test in this package touches so a
+// stray series from elsewhere cannot make this pass by accident.
+func TestPickHostOmitsRunnerSliceExpectedBudgetWhenDisabled(t *testing.T) {
+	scaler := memoryBoundScaler(t, "e2e", 16*gibibyte, 2*gibibyte, nil)
+	scaler.dockerHosts[0].Name = "slice-disabled-host"
+	scaler.runnerCgroupParent = ""
 
-	called := false
-	scaler := &Scaler{
-		runnerCgroupParent: "",
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		runnerSliceApplier: func(context.Context, DockerHost, string, int64, int64) error {
-			called = true
-			return nil
-		},
+	if _, err := scaler.pickHost(context.Background()); err != nil {
+		t.Fatalf("pickHost() error = %v", err)
 	}
 
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if called {
-		t.Fatal("applier must not be called when runner_cgroup_parent is disabled")
+	if got := testutil.ToFloat64(runnerSliceExpectedMemoryMaxGauge.WithLabelValues("slice-disabled-host", "homelab-runners.slice")); got != 0 {
+		t.Errorf("runner_slice_expected_memory_max_bytes = %v, want 0 (unset) when the slice is disabled", got)
+	}
+	if got := testutil.ToFloat64(runnerSliceExpectedMemoryHighGauge.WithLabelValues("slice-disabled-host", "homelab-runners.slice")); got != 0 {
+		t.Errorf("runner_slice_expected_memory_high_bytes = %v, want 0 (unset) when the slice is disabled", got)
 	}
 }
 
-// TestApplyRunnerSliceApplierErrorSetsGaugeZeroAndDoesNotBlock is the other
-// half of the acceptance criteria: when the applier fails (e.g. systemctl
-// unreachable over SSH, or the host lacks systemd), applyRunnerSlice must
-// not return an error or panic -- startRunner calls it without checking a
-// return value, precisely so a slice-bound failure can never block placing
-// the runner under its own per-container ceiling -- and must record the
-// failure as the exported gauge going to 0, not as an application that
-// should be treated as done: the very next placement retries.
-func TestApplyRunnerSliceApplierErrorSetsGaugeZeroAndDoesNotBlock(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	fake.setMemoryTotal(64_000_000_000)
-	client := fake.client(t)
-	host := DockerHost{Name: "slice-host-err", Target: "ssh://homelab@example.lan", Client: client}
-
-	calls := 0
-	scaler := &Scaler{
-		runnerCgroupParent: "homelab-runners.slice",
-		memorySafetyMargin: 0.10,
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		runnerSliceApplier: func(context.Context, DockerHost, string, int64, int64) error {
-			calls++
-			return errors.New("systemctl: permission denied")
-		},
+// TestNoSystemctlReferenceRemains pins the removal half of agent-lcars#1712:
+// the controller must never invoke systemctl (or shell out to it over SSH)
+// against a fleet host -- that authority was the root cause this issue
+// removes, not just a bug to patch (see runnerSliceBudget's doc comment).
+// Scoped to non-test *.go sources in this package so a test fixture or this
+// very sentence describing the constraint can still say the word.
+func TestNoSystemctlReferenceRemains(t *testing.T) {
+	matches, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob *.go: %v", err)
 	}
-
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if calls != 1 {
-		t.Fatalf("applier calls = %d, want 1", calls)
+	if len(matches) == 0 {
+		t.Fatal("glob *.go matched nothing -- test is not running from the package directory")
 	}
-	if got := testutil.ToFloat64(runnerSliceBoundedGauge.WithLabelValues(host.Name)); got != 0 {
-		t.Fatalf("runner_slice_bounded = %v, want 0 after applier error", got)
-	}
-
-	// A failed application must not be cached as done -- placement retries
-	// on the next call with the same budget.
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if calls != 2 {
-		t.Fatalf("applier calls after retry = %d, want 2 (a failed application must not be treated as idempotently applied)", calls)
-	}
-}
-
-// TestApplyRunnerSlicePhysicalMemoryUnavailable covers the other failure
-// mode -- Docker's own /info call failing or reporting no memory -- which
-// must degrade exactly like an applier failure rather than panicking or
-// propagating an error startRunner would have to handle.
-func TestApplyRunnerSlicePhysicalMemoryUnavailable(t *testing.T) {
-	fake := newFakeDockerServer(t)
-	fake.setMemoryTotal(0)
-	client := fake.client(t)
-	host := DockerHost{Name: "slice-host-no-mem", Target: "local", Client: client}
-
-	called := false
-	scaler := &Scaler{
-		runnerCgroupParent: "homelab-runners.slice",
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		runnerSliceApplier: func(context.Context, DockerHost, string, int64, int64) error {
-			called = true
-			return nil
-		},
-	}
-
-	scaler.applyRunnerSlice(context.Background(), client, host)
-	if called {
-		t.Fatal("applier must not be called when physical memory could not be read")
-	}
-	if got := testutil.ToFloat64(runnerSliceBoundedGauge.WithLabelValues(host.Name)); got != 0 {
-		t.Fatalf("runner_slice_bounded = %v, want 0 when physical memory is unavailable", got)
+	for _, path := range matches {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if strings.Contains(string(data), "systemctl") {
+			t.Errorf("%s still references systemctl; the controller must only declare the runner slice bound, never apply it", path)
+		}
 	}
 }

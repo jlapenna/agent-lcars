@@ -459,12 +459,25 @@ any limit on that slice -- Docker never sets resource properties on a
 `--cgroup-parent` it did not create the unit file for, so the slice exists
 unbounded until something applies `MemoryMax`/`MemoryHigh` to it explicitly.
 
-That "something" is `ensureRunnerSlice`, run before the first placement on a
-host and again whenever the computed budget changes (a re-measured physical
-total, or a reloaded safety margin) -- not on every placement, so a healthy
-host does not pay a `systemctl`/SSH round trip per runner start. The bound is
-the same figure reserved-memory admission already treats as the host's
-budget:
+**The autoscaler declares that bound; it does not apply it (agent-lcars#1712).**
+An earlier version of this feature tried to apply `MemoryMax`/`MemoryHigh` to
+the slice itself, by running a systemd property change on the host directly
+for a `docker: local` target, or over the pinned fleet SSH key for a
+`docker: ssh://user@host` remote/SSH-proxied host. That failed on every host,
+on every placement, because it cannot succeed under this fleet's privilege
+model: the controller image has no systemd bus access of its own, and the
+fleet SSH automation key runs behind a forced-command dispatcher that
+authorizes exactly two commands -- neither a unit-property change -- by
+design (homelab#1061); widening that allowlist would hand the controller
+root-equivalent authority over every host, which is the wrong direction.
+Host resource policy belongs to Ansible, not the controller.
+
+So the controller only computes and publishes the bound Ansible must
+declare and Prometheus must verify -- `runnerSliceBudget` in
+`runner_slice.go`, computed the same place `github_runner_autoscaler_host_memory_budget_bytes`/`_observed_bytes`
+are (`pickHostLocked` in scaler.go), for every placement host whenever its
+physical memory is (re)observed, independent of which placement (if any) is
+actually admitted:
 
 ```
 memory.max  = physical_memory × (1 − memory_safety_margin)
@@ -475,24 +488,23 @@ memory.high = memory.max × 0.95
 the slice starts before the hard ceiling is hit, giving the kernel room to
 throttle/reclaim within the runner slice rather than reaching for the OOM
 killer against the control plane, registry, or exporters sharing that host.
-Applying it runs `systemctl set-property <slice> MemoryMax=<bytes>
-MemoryHigh=<bytes>` on the host itself: directly for a `docker: local`
-target, or over the identical pinned fleet SSH key and target Docker itself
-already uses for a `docker: ssh://user@host` remote/SSH-proxied host (the
-same connection helper `newDockerClient` uses -- see hosts.go). The applier
-is injectable in tests; production uses this `systemctl` implementation
-unconditionally.
+These numbers are published as:
 
-A slice-bound failure is never placement-blocking. If the property cannot be
-applied -- the container lacks systemd/D-Bus access, the SSH target is
-unreachable, the host runs a non-systemd init -- it is logged at `WARN` and
-`github_runner_autoscaler_runner_slice_bounded{host}` is set to `0`; the
-runner is still placed under its own per-container ceiling exactly as
-before this feature existed. The failure is not cached as success, so the
-very next placement on that host retries automatically. On success,
-`runner_slice_bounded{host}` is `1` and
-`github_runner_autoscaler_runner_slice_memory_max_bytes{host}` reports the
-applied `memory.max`.
+- `github_runner_autoscaler_runner_slice_expected_memory_max_bytes{host,slice}`
+- `github_runner_autoscaler_runner_slice_expected_memory_high_bytes{host,slice}`
+
+Nothing is published for a host while `runner_cgroup_parent` is disabled
+(`""`). **Enforcement** is a static systemd unit file declared by Ansible in
+the homelab repo (jlapenna/homelab#1102) that sets these same
+`MemoryMax`/`MemoryHigh` properties and re-realizes edits live via
+`daemon-reload`, with no controller involvement at runtime. **Verification**
+is Prometheus comparing the two gauges above against cAdvisor's own
+`container_spec_memory_limit_bytes{id="/homelab.slice/<slice>"}` series --
+cAdvisor already exports the nested slice cgroup (systemd places
+`homelab-runners.slice` at
+`/sys/fs/cgroup/homelab.slice/homelab-runners.slice/`), so no new emitter is
+needed; homelab's `RunnerSliceUnbounded`/`RunnerSliceBoundDrift` alerts fire
+on a mismatch between the declared and the enforced value.
 
 **Follow-up: correlated measurement (tracked on agent-lcars#1700, kept
 open).** The slice bound above is a ceiling, not evidence that co-tenant
