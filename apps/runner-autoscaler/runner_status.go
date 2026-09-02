@@ -55,8 +55,10 @@ type githubRunnerStatusClient struct {
 type githubRunnerStatusList struct {
 	TotalCount int `json:"total_count"`
 	Runners    []struct {
+		ID     int    `json:"id"`
 		Name   string `json:"name"`
 		Status string `json:"status"`
+		Busy   bool   `json:"busy"`
 	} `json:"runners"`
 }
 

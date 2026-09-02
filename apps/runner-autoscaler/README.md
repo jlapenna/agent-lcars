@@ -53,6 +53,87 @@ The deployment-owned alert can page on unavailable runners persisting for ten
 minutes without mistaking the brief registration window during startup for a
 dead broker connection.
 
+## Ghost runner registrations
+
+The section above covers a container GitHub can no longer see. The opposite
+direction is also possible, and more dangerous: a GitHub runner
+**registration** can outlive its container entirely. `GenerateJitRunnerConfig`
+registers a runner's name with GitHub _before_ its container ever starts
+(see `startRunner`), so a container that is removed without its runner
+process deregistering cleanly — the host it ran on disappears from fleet
+config, an orphan-cleanup pass reaps a non-exited container, the process is
+OOM-killed, or the container simply fails to create or start — leaves a
+registration behind with nothing backing it. GitHub still counts that
+registration toward the scale set and, worse, still appears to dispatch jobs
+to it: every job that lands there strands for the runner's own ~10-minute
+retry cycle. This exact failure took down every `homelab-ci` job on
+2026-09-02: `runner-homelab-autoscale-homelab-ci-268b9908` was
+`status=offline, busy=false`, had no container anywhere on the fleet, and had
+no trace in recent controller logs — its container, and the tracking that
+would have caught its loss, were both long gone by the time anyone looked
+(jlapenna/homelab#7809; agent-lcars#1725).
+
+**The invariant this control plane maintains: no registration without a
+container.** Two mechanisms enforce it:
+
+- **Delete on removal.** `deregisterRunner` is called from every path that
+  removes or forgets a runner whose container did not exit cleanly:
+  `reconcileTrackedRunners`' not-running branch, orphan cleanup
+  (`cleanupOrphansOnHost`), the drain-only `removeIdleRunners`, the
+  GitHub-side unavailable-runner reaper (`reapUnavailableRunner`, previous
+  section), and `startRunner`'s own container-create and container-start
+  failure paths — the last two matter specifically because
+  `GenerateJitRunnerConfig` has already registered the name by the time
+  either can fail.
+- **Periodic sweep**, because the paths above only fire when this process
+  itself performs the removal. The 2026-09-02 incident's registration
+  predated the sweeper's existence, and its container (and the in-memory
+  tracking that would have flagged it) never survived a restart in the first
+  place — deleting on removal cannot help a registration whose loss this
+  process never witnessed. Every five minutes, per GitHub registration, the
+  control plane lists that registration's runners and deletes any that are
+  simultaneously:
+  - reported `offline`,
+  - not busy,
+  - not one of this process's currently tracked containers (by name, scoped
+    to the scale set that name's `runner-<scale-set>-<uuid>` prefix
+    identifies — see `startRunner`), and
+  - have looked that way for at least two minutes across consecutive
+    sweeps — long enough that a runner still inside `startRunner`'s own
+    create/start window (registered, container not yet up) is never raced.
+
+  Each deletion logs one line (`"Deleted ghost runner registration"` with
+  the registration, scale set, runner name, ID, and observed age) and
+  increments `github_runner_autoscaler_ghost_runners_deleted_total{scale_set}`.
+  `github_runner_autoscaler_ghost_runners{scale_set}` gauges how many ghosts
+  the most recent sweep found. A summary line
+  (`"Ghost runner sweep complete"`) is logged every pass regardless of
+  whether anything was found, so an empty sweep is as visible as an active
+  one.
+
+**Listing scope, per registration.** GitHub's runner list is scoped to where
+the registration lives, exactly like the connectivity-metrics reconciler
+above: `/repos/{owner}/{repo}/actions/runners` for a repository
+registration, `/orgs/{org}/actions/runners` for an organization one. That is
+also the only scope this control plane's GitHub App can act on — it holds
+`administration: write` on its installed repositories, not the broader
+org-level self-hosted-runners permission, and this sweep must never ask for
+that to be widened. Repo scope is not universal, though:
+supersprinklesracing's scale set registers against its repository URL, yet
+`GET /repos/supersprinklesracing/sprinkles/actions/runners` returns
+`total_count=0` even while that scale set is busy (verified live,
+2026-09-02). There is no alternate scope this App can reach instead — the
+`github.com/actions/scaleset` library's own scale-set-scoped listing
+(`GetRunnerByName`'s underlying pool endpoint) is reachable, but its
+`RunnerReference` type carries no status/busy field a ghost check needs.
+Rather than silently sweep nothing forever for a mis-scoped registration,
+the sweep detects the mismatch directly: when a registration's listing comes
+back empty while this process is tracking runners as running for it, that
+pass is skipped with a warning naming the registration instead of reporting
+a false "no ghosts found". Sprinkles' registration cannot be swept until it
+(or its App installation) gains repo-scope runner visibility — a follow-up
+outside this change's App-permission constraint.
+
 ## Scale-set listener statistics
 
 Each scale set's listener session implements `listener.MetricsRecorder`

@@ -580,6 +580,7 @@ func startRuntimeGeneration(parent context.Context, runtimes []*scaleSetRuntime,
 	wg.Add(1)
 	go func() { defer wg.Done(); runFleetTrackedRunnerReconciler(ctx, runtimes) }()
 	startGitHubRunnerStatusMonitors(ctx, runtimes, logger, &wg)
+	startGhostRunnerSweepers(ctx, runtimes, logger, &wg)
 	for _, runtime := range runtimes {
 		wg.Add(1)
 		go func(rt *scaleSetRuntime) { defer wg.Done(); runListenerSupervisor(ctx, rt, logger) }(runtime)
