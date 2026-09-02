@@ -78,7 +78,7 @@ test('ambient credentials cannot cross the E2E boundary', () => {
 
 test('the remote cache capability crosses the E2E boundary only as a complete pair', () => {
   const remoteCache = {
-    NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://spark.lan.jlapenna.net:3123',
+    NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://nx-cache.lan.jlapenna.net:3123',
     NX_SELF_HOSTED_REMOTE_CACHE_ACCESS_TOKEN: 'test-token-not-a-credential',
   };
   const probe = `
@@ -105,7 +105,8 @@ test('an incomplete remote cache capability cannot cross the E2E boundary', () =
   const result = runThroughE2eBoundary(
     probe,
     {
-      NX_SELF_HOSTED_REMOTE_CACHE_SERVER: 'http://spark.lan.jlapenna.net:3123',
+      NX_SELF_HOSTED_REMOTE_CACHE_SERVER:
+        'http://nx-cache.lan.jlapenna.net:3123',
     },
     [
       'NX_SELF_HOSTED_REMOTE_CACHE_SERVER',

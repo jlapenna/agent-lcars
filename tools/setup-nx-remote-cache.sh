@@ -35,7 +35,7 @@ if [ "$PRIMARY_ROOT" != "$ROOT" ]; then
 fi
 
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-agent-lcars}"
-NX_REMOTE_CACHE_URL="${NX_REMOTE_CACHE_URL:-http://spark.lan.jlapenna.net:3123}"
+NX_REMOTE_CACHE_URL="${NX_REMOTE_CACHE_URL:-http://nx-cache.lan.jlapenna.net:3123}"
 SECRET_NAME="${NX_CACHE_SECRET_NAME:-nx-cache-access-token}"
 ENV_FILE=.nx-remote-cache.env
 
