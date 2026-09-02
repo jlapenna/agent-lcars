@@ -139,6 +139,23 @@ type FleetHostConfig struct {
 	// constants' doc comment for what each one means for placement and for
 	// github_runner_autoscaler_lane_permanent_admissible_slots.
 	Role string `yaml:"role,omitempty"`
+	// InferenceMetricsURL is a per-host inference-load probe
+	// (agent-lcars#1726, generalized from the earlier spark-only
+	// fleet.placement.spark_metrics_url): when set, pickHost's
+	// effectiveCount applies a virtual load penalty to THIS host while it
+	// reports active inference load, so other idle fleet hosts are
+	// preferred for CI placement over a host also serving interactive/batch
+	// AI workloads. Any host may set it; there is no name requirement. Both
+	// vLLM (`vllm:num_requests_running` / `_waiting`) and llama-swap
+	// (`llamaswap_gpu_power_draw_watts`) exposition shapes are understood --
+	// see isHostInferenceLoaded.
+	InferenceMetricsURL string `yaml:"inference_metrics_url,omitempty"`
+	// InferenceIdleWatts overrides defaultInferenceIdleWatts (the measured
+	// 30W GB10 idle ceiling) for this host's power-draw reading. Zero
+	// selects the default; only meaningful when InferenceMetricsURL is set
+	// and the probe reports llama-swap's power-draw metric rather than
+	// vLLM's request-count metrics.
+	InferenceIdleWatts float64 `yaml:"inference_idle_watts,omitempty"`
 }
 
 // Fleet host roles (agent-lcars#1696, docs/fleet-scheduler-redesign.md#F).
@@ -169,8 +186,17 @@ const (
 )
 
 type FleetPlacementFile struct {
+	// HostMetricsURLTemplate has no fleet-named default (agent-lcars#1728):
+	// unset disables load-aware placement. When set, it must contain
+	// exactly one %s, replaced with the Docker host name.
 	HostMetricsURLTemplate string `yaml:"host_metrics_url_template,omitempty"`
-	SparkMetricsURL        string `yaml:"spark_metrics_url,omitempty"`
+	// SparkMetricsURL is DEPRECATED (agent-lcars#1726): use
+	// fleet.hosts[].inference_metrics_url instead, which works for a host
+	// of any name. This key is accepted for one release as a
+	// backward-compatible alias that applies ONLY to a host literally named
+	// "spark" (exactly its pre-#1726 behavior) and logs a startup warning
+	// when used. It has no default.
+	SparkMetricsURL string `yaml:"spark_metrics_url,omitempty"`
 	// ReadinessMetricsURL is a Prometheus-format endpoint published by the
 	// operator, serving ReadinessMetric for every host that sets
 	// require_readiness. One endpoint for the whole fleet rather than one
@@ -185,7 +211,10 @@ type FleetPlacementFile struct {
 	// this. Strongly recommended: the gate is fail-closed, so a publisher
 	// that dies leaves its last reading served forever and a stale "ready"
 	// would fail the gate OPEN -- the one outcome it exists to prevent.
-	ReadinessMaxAge  string   `yaml:"readiness_max_age,omitempty"`
+	ReadinessMaxAge string `yaml:"readiness_max_age,omitempty"`
+	// HostMemoryExempt names hosts excluded from the host-memory-pressure
+	// penalty in scoreHostLoad. No fleet-named default (agent-lcars#1726):
+	// unset means no host is exempt.
 	HostMemoryExempt []string `yaml:"host_memory_exempt,omitempty"`
 	// MemorySafetyMargin is the fraction of Docker-reported physical host
 	// memory that aggregate runner reservations may not consume.
@@ -196,11 +225,12 @@ type FleetPlacementFile struct {
 	// addition to their own per-container ceilings (agent-lcars#1700). The
 	// autoscaler only declares that bound (runnerSliceBudget, published as
 	// github_runner_autoscaler_runner_slice_expected_memory_max_bytes /
-	// _high_bytes); Ansible enforces it (jlapenna/homelab#1102,
-	// agent-lcars#1712). A pointer because the tri-state matters: an
-	// omitted key defaults to defaultRunnerCgroupParent, while an explicit
-	// empty string disables the slice bound entirely -- once YAML decoding
-	// is done a plain string can no longer tell those two apart.
+	// _high_bytes); a consumer's own host provisioning enforces it (e.g.
+	// jlapenna/homelab#1102, agent-lcars#1712). There is no fleet-named
+	// default (agent-lcars#1728): an omitted key and an explicit empty
+	// string both disable the slice bound. The field stays a pointer so the
+	// tri-state is documented in the type even though both "not configured"
+	// cases now resolve the same way.
 	RunnerCgroupParent *string `yaml:"runner_cgroup_parent,omitempty"`
 	LoadSoft           float64 `yaml:"load_soft,omitempty"`
 	LoadBusy           float64 `yaml:"load_busy,omitempty"`
@@ -451,11 +481,27 @@ type resolvedOrchestratorConfig struct {
 	// HostRoles is every configured fleet host's resolved role (defaulting
 	// to hostRolePermanent), keyed by host name (agent-lcars#1696).
 	HostRoles map[string]string
+	// InferenceMetricsURLs is every fleet host's resolved
+	// fleet.hosts[].inference_metrics_url (agent-lcars#1726), keyed by host
+	// name. Also carries fleet.placement.spark_metrics_url's deprecated
+	// alias under the key "spark" when set and no host already configured
+	// its own inference_metrics_url there.
+	InferenceMetricsURLs map[string]string
+	// InferenceIdleWatts is every fleet host's resolved
+	// fleet.hosts[].inference_idle_watts override; a missing entry means
+	// defaultInferenceIdleWatts applies.
+	InferenceIdleWatts map[string]float64
+	// Warnings collects non-fatal deprecation/compatibility notices
+	// produced while resolving the config, surfaced by the caller (which
+	// holds the logger resolve itself does not) once loadOrchestratorConfig
+	// returns successfully.
+	Warnings  []string
 	Placement hostLoadPolicy
 	Cooldown  time.Duration
 	// RunnerCgroupParent is the resolved fleet.placement.runner_cgroup_parent:
-	// defaultRunnerCgroupParent when the key is omitted, the configured value
-	// when set, or "" when explicitly disabled. See FleetPlacementFile.
+	// the configured value when set, or "" (no fleet-named default,
+	// agent-lcars#1728) when the key is omitted or explicitly empty. See
+	// FleetPlacementFile.
 	RunnerCgroupParent string
 	// DegradationLadder is the resolved fleet.placement.degradation_ladder
 	// block (agent-lcars#1697). See Config.DegradationLadderEnabled for each
@@ -551,6 +597,21 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 			}
 			r.ReadinessRequired[h.Name] = true
 		}
+		if raw := strings.TrimSpace(h.InferenceMetricsURL); raw != "" {
+			if r.InferenceMetricsURLs == nil {
+				r.InferenceMetricsURLs = map[string]string{}
+			}
+			r.InferenceMetricsURLs[h.Name] = raw
+		}
+		if h.InferenceIdleWatts != 0 {
+			if math.IsNaN(h.InferenceIdleWatts) || math.IsInf(h.InferenceIdleWatts, 0) || h.InferenceIdleWatts <= 0 {
+				return fmt.Errorf("host %q inference_idle_watts must be positive", h.Name)
+			}
+			if r.InferenceIdleWatts == nil {
+				r.InferenceIdleWatts = map[string]float64{}
+			}
+			r.InferenceIdleWatts[h.Name] = h.InferenceIdleWatts
+		}
 		r.DockerHosts = append(r.DockerHosts, h.Name+"="+h.Docker)
 		if h.RunnerLimit != nil {
 			if *h.RunnerLimit < 1 {
@@ -604,14 +665,34 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 
 	p := &c.Fleet.Placement
 	defaults := defaultHostLoadPolicy()
+	// No fleet-named domain default (agent-lcars#1728): a consumer that
+	// wants host load sensing must set this explicitly. "%s:9100/metrics"
+	// (no domain) is the neutral fallback for a fleet whose Docker host
+	// names alone resolve node-exporter directly.
 	if p.HostMetricsURLTemplate == "" {
-		p.HostMetricsURLTemplate = "http://%s.lan.jlapenna.net:9100/metrics"
+		p.HostMetricsURLTemplate = "http://%s:9100/metrics"
 	}
-	if p.SparkMetricsURL == "" {
-		p.SparkMetricsURL = "http://llama-swap.lan.jlapenna.net:8000/metrics"
-	}
-	if len(p.HostMemoryExempt) == 0 {
-		p.HostMemoryExempt = []string{"spark"}
+	// p.SparkMetricsURL and p.HostMemoryExempt are deliberately NOT
+	// defaulted here (agent-lcars#1726): empty means no host carries an
+	// inference probe / no host is memory-exempt, and there is no
+	// fleet-named host to default either to.
+	//
+	// SparkMetricsURL is DEPRECATED: it is a one-release backward-compatible
+	// alias for fleet.hosts[].inference_metrics_url on a host literally
+	// named "spark" -- exactly the pre-#1726 behavior, which keyed the load
+	// penalty on that literal host name. It never applies to any other
+	// host, so a fleet that renamed its inference host must move to the
+	// per-host key to keep the penalty working. An explicit
+	// inference_metrics_url already set on the "spark" host wins; the alias
+	// only fills the gap.
+	if raw := strings.TrimSpace(p.SparkMetricsURL); raw != "" {
+		if r.InferenceMetricsURLs == nil {
+			r.InferenceMetricsURLs = map[string]string{}
+		}
+		if _, ok := r.InferenceMetricsURLs["spark"]; !ok {
+			r.InferenceMetricsURLs["spark"] = raw
+		}
+		r.Warnings = append(r.Warnings, "fleet.placement.spark_metrics_url is deprecated and will be removed in a future release; set inference_metrics_url on the \"spark\" host under fleet.hosts[] instead (agent-lcars#1726)")
 	}
 	if p.MemorySafetyMargin == 0 {
 		p.MemorySafetyMargin = defaultMemorySafetyMargin
@@ -619,12 +700,12 @@ func (r *resolvedOrchestratorConfig) resolve() error {
 	if math.IsNaN(p.MemorySafetyMargin) || math.IsInf(p.MemorySafetyMargin, 0) || p.MemorySafetyMargin < 0 || p.MemorySafetyMargin >= 1 {
 		return fmt.Errorf("fleet.placement.memory_safety_margin must be greater than 0 and less than 1")
 	}
-	switch {
-	case p.RunnerCgroupParent == nil:
-		r.RunnerCgroupParent = defaultRunnerCgroupParent
-	case strings.TrimSpace(*p.RunnerCgroupParent) == "":
-		r.RunnerCgroupParent = ""
-	default:
+	// No fleet-named default (agent-lcars#1728): an omitted key and an
+	// explicit empty string both resolve to "" -- no collective host-level
+	// slice bound. The pointer still matters for the YAML tag's
+	// omitempty/round-trip behavior and documents the tri-state explicitly,
+	// even though both non-configured cases now agree on the same result.
+	if p.RunnerCgroupParent != nil {
 		r.RunnerCgroupParent = strings.TrimSpace(*p.RunnerCgroupParent)
 	}
 	if r.RunnerCgroupParent != "" && !runnerCgroupParentPattern.MatchString(r.RunnerCgroupParent) {

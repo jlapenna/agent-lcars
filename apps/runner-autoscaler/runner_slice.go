@@ -4,16 +4,18 @@ import (
 	"regexp"
 )
 
-// defaultRunnerCgroupParent is the systemd slice every runner container is
-// created under when fleet.placement.runner_cgroup_parent is not configured
-// (agent-lcars#1700). Docker's systemd cgroup driver requires a bare slice
-// name (no slashes) ending in ".slice", and systemd creates that slice unit
-// on demand the first time anything references it -- see README "Host-level
-// runner slice" for the citations -- so no host provisioning step is needed
-// for the slice to exist. Bounding its memory.max/memory.high is a separate
-// step this controller cannot perform itself (agent-lcars#1712): see
-// runnerSliceBudget below.
-const defaultRunnerCgroupParent = "homelab-runners.slice"
+// There is no fleet-named default runner cgroup slice (agent-lcars#1728):
+// omitting fleet.placement.runner_cgroup_parent resolves to "", i.e. no
+// collective host-level slice bound -- Docker's own default cgroup parent
+// applies to each runner container individually instead. A fleet that wants
+// the collective bound (agent-lcars#1700) must set the key explicitly.
+// Docker's systemd cgroup driver requires a bare slice name (no slashes)
+// ending in ".slice" for whatever value IS configured, and systemd creates
+// that slice unit on demand the first time anything references it -- see
+// README "Host-level runner slice" for the citations -- so no host
+// provisioning step is needed for the slice to exist. Bounding its
+// memory.max/memory.high is a separate step this controller cannot perform
+// itself (agent-lcars#1712): see runnerSliceBudget below.
 
 // runnerCgroupParentPattern bounds fleet.placement.runner_cgroup_parent to a
 // bare systemd slice name: alphanumeric plus "_.-", ending in ".slice", no

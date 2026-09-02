@@ -39,6 +39,9 @@ type runtimeGeneration struct {
 
 func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) error {
 	logger := resolved.ScaleSets[0].Logger().With("component", "orchestrator")
+	for _, warning := range resolved.Warnings {
+		logger.Warn(warning)
+	}
 	placementHosts, err := newDockerHostPool(resolved.DockerHosts)
 	if err != nil {
 		return fmt.Errorf("connecting fleet docker hosts: %w", err)
@@ -325,6 +328,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			checkpoints.setSnapshot(orchestratorSnapshot(runtimes, fleet))
 			managedHosts, placementHosts = nextManagedHosts, nextPlacementHosts
 			logger = resolved.ScaleSets[0].Logger().With("component", "orchestrator")
+			for _, warning := range resolved.Warnings {
+				logger.Warn(warning)
+			}
 			pullConfiguredRunnerImages(ctx, placementHosts, resolved.ScaleSets, logger)
 			if draining {
 				// The replacement scalers re-adopt already-running containers
@@ -424,7 +430,14 @@ func buildOrchestratorRuntimes(resolved resolvedOrchestratorConfig, dockerHosts,
 	for _, base := range resolved.ScaleSets {
 		c := base
 		c.DockerHosts = append([]string(nil), resolved.DockerHosts...)
-		c.SparkMetricsURL = resolved.Raw.Fleet.Placement.SparkMetricsURL
+		c.InferenceMetricsURLs = make(map[string]string, len(resolved.InferenceMetricsURLs))
+		for host, url := range resolved.InferenceMetricsURLs {
+			c.InferenceMetricsURLs[host] = url
+		}
+		c.InferenceIdleWatts = make(map[string]float64, len(resolved.InferenceIdleWatts))
+		for host, watts := range resolved.InferenceIdleWatts {
+			c.InferenceIdleWatts[host] = watts
+		}
 		c.HostMetricsURLTemplate = resolved.Raw.Fleet.Placement.HostMetricsURLTemplate
 		c.HostMetricsTimeouts = make(map[string]time.Duration, len(resolved.HostMetricsTimeouts))
 		for host, timeout := range resolved.HostMetricsTimeouts {
@@ -654,7 +667,8 @@ func buildScaleSetRuntime(c Config, dockerHosts, placementHosts []DockerHost, fl
 		runnerCgroupParent: c.RunnerCgroupParent,
 		minRunners:         c.MinRunners, maxRunners: c.MaxRunners,
 		dockerHosts: dockerHosts, placementHosts: placementHosts, fileMounts: c.FileMounts,
-		sparkMetricsURL: c.SparkMetricsURL, hostMetricsURLTemplate: c.HostMetricsURLTemplate,
+		inferenceMetricsURLs: c.InferenceMetricsURLs, inferenceIdleWatts: c.InferenceIdleWatts,
+		hostMetricsURLTemplate:   c.HostMetricsURLTemplate,
 		hostLoadPolicy:           c.HostLoadPolicy,
 		hostMetricsTimeouts:      c.HostMetricsTimeouts,
 		hostMemoryExempt:         stringSet(c.HostMemoryExempt),

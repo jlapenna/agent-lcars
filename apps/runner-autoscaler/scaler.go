@@ -88,11 +88,16 @@ type Scaler struct {
 	// hostImageLocks prevent multiple scale-set listeners from concurrently
 	// pulling the same image after a host-side prune removes it.
 	hostImageLocks sync.Map // map[host+image]*sync.Mutex
-	// Homelab change: URL to probe for spark inference load. When spark is
-	// running active vLLM inference requests, or is short on host memory /
-	// swapping, pickHost adds a virtual load penalty so other idle fleet
-	// hosts are preferred.
-	sparkMetricsURL string
+	// inferenceMetricsURLs holds a per-host URL to probe for inference load
+	// (agent-lcars#1726), keyed by Docker host name. When a host that
+	// carries a probe is running active vLLM inference requests, or its
+	// GPU power draw is above the idle ceiling, pickHost adds a virtual
+	// load penalty to THAT host so other idle fleet hosts are preferred. A
+	// host with no entry here is never probed or penalized this way.
+	inferenceMetricsURLs map[string]string
+	// inferenceIdleWatts optionally overrides defaultInferenceIdleWatts per
+	// host; a missing or non-positive entry uses the default.
+	inferenceIdleWatts map[string]float64
 	// hostMetricsURLTemplate feeds generic fleet load into placement instead
 	// of treating runner count as a sufficient proxy for host saturation.
 	hostMetricsURLTemplate string
@@ -1101,59 +1106,72 @@ func parseMetricValue(line string) (float64, bool) {
 	return val, true
 }
 
-// sparkIdleGPUWatts is the power-draw ceiling, in watts, below which spark's
-// GB10 is considered idle rather than serving inference.
+// defaultInferenceIdleWatts is the power-draw ceiling, in watts, below which
+// a host's GPU is considered idle rather than serving inference. Overridable
+// per host via fleet.hosts[].inference_idle_watts.
 //
 // llama-swap's GB10 readings are mostly unusable: gpu_util_percent,
-// gpu_memory_used_bytes and gpu_memory_total_bytes all report 0 on this
+// gpu_memory_used_bytes and gpu_memory_total_bytes all report 0 on that
 // hardware (the Grace-Blackwell unified-memory design has no discrete VRAM
 // pool to report), so the usual "is the GPU busy" signals are dead ends.
 // Power draw is the one that actually tracks work: an idle module sits at
-// ~10W (measured 9.94W on 2026-07-26 with a model resident but no requests
-// in flight), against a ~140W module TDP under load. 30W leaves generous
-// headroom over the idle floor while still tripping well before the GPU is
-// saturated.
-const sparkIdleGPUWatts = 30.0
+// ~10W (measured 9.94W on spark, 2026-07-26, with a model resident but no
+// requests in flight), against a ~140W module TDP under load. 30W leaves
+// generous headroom over the idle floor while still tripping well before the
+// GPU is saturated. Other GPUs' idle draw may differ, hence the per-host
+// override.
+const defaultInferenceIdleWatts = 30.0
 
-// isSparkLoaded probes spark's metrics URL for signals that it's a bad
-// placement target right now: active inference. Absolute free memory and
-// allocated swap are deliberately ignored because resident model weights and
-// K/V cache make those normal on Spark. The fleet sampler handles actual CPU,
-// PSI, load, and active swap-I/O pressure independently.
+// isHostInferenceLoaded probes host's configured inference metrics URL
+// (agent-lcars#1726, generalized from the earlier Spark-only single global
+// probe) for signals that it's a bad placement target right now: active
+// inference. Returns false immediately for a host with no configured probe.
+// Absolute free memory and allocated swap are deliberately ignored because
+// resident model weights and K/V cache make those normal on an inference
+// host. The fleet sampler handles actual CPU, PSI, load, and active swap-I/O
+// pressure independently.
 //
 // Two exposition formats are accepted, because the inference server behind
 // this endpoint has changed once already and silently broke this probe:
 //
 //   - vLLM (`vllm:num_requests_running` / `_waiting`) — the original shape.
-//   - llama-swap (`llamaswap_gpu_power_draw_watts`) — what spark:8000 serves
-//     today. It publishes no request-count metric at all, so power draw
-//     stands in for one; see sparkIdleGPUWatts.
+//   - llama-swap (`llamaswap_gpu_power_draw_watts`) — what homelab's
+//     inference host serves today. It publishes no request-count metric at
+//     all, so power draw stands in for one; see defaultInferenceIdleWatts.
 //
-// Matching both matters: the vLLM-only version of this function returned
-// false on every call for as long as llama-swap has been the server, which
-// silently disabled spark's inference protection entirely. The unit tests
-// did not catch it because they feed synthetic `vllm:` lines rather than a
-// real payload.
-func (a *Scaler) isSparkLoaded(ctx context.Context) bool {
-	return a.isSparkLoadedAbove(ctx, sparkIdleGPUWatts)
+// Matching both matters: a vLLM-only version of this function returned false
+// on every call for as long as llama-swap has been the server, which
+// silently disabled inference-aware placement entirely. The unit tests did
+// not catch it because they fed synthetic `vllm:` lines rather than a real
+// payload.
+func (a *Scaler) isHostInferenceLoaded(ctx context.Context, host string) bool {
+	url := a.inferenceMetricsURLs[host]
+	if url == "" {
+		return false
+	}
+	ceiling := a.inferenceIdleWatts[host]
+	if ceiling <= 0 {
+		ceiling = defaultInferenceIdleWatts
+	}
+	return a.isHostInferenceLoadedAbove(ctx, host, url, ceiling)
 }
 
-// isSparkLoadedAbove is isSparkLoaded with the idle ceiling injected. The
-// seam exists so the probe can be re-verified against the LIVE spark
-// endpoint by forcing the ceiling under the current idle draw: a probe that
-// fires then is demonstrably parsing the real payload, not just synthetic
-// fixtures. That distinction is not academic here -- the registry write-auth
-// change (homelab#160/#163) was reverted precisely because it was validated
-// against a path production does not use. The committed tests stay hermetic
-// per agent-lcars#121; the live check is run by hand.
-func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
-	if a.sparkMetricsURL == "" {
+// isHostInferenceLoadedAbove is isHostInferenceLoaded with the URL and idle
+// ceiling injected. The seam exists so the probe can be re-verified against
+// a LIVE endpoint by forcing the ceiling under the current idle draw: a
+// probe that fires then is demonstrably parsing the real payload, not just
+// synthetic fixtures. That distinction is not academic here -- the registry
+// write-auth change (homelab#160/#163) was reverted precisely because it was
+// validated against a path production does not use. The committed tests
+// stay hermetic per agent-lcars#121; the live check is run by hand.
+func (a *Scaler) isHostInferenceLoadedAbove(ctx context.Context, host, url string, ceiling float64) bool {
+	if url == "" {
 		return false
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, a.sparkMetricsURL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return false
 	}
@@ -1176,7 +1194,8 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 		switch {
 		case strings.HasPrefix(line, "vllm:num_requests_running"), strings.HasPrefix(line, "vllm:num_requests_waiting"):
 			if val, ok := parseMetricValue(line); ok && val > 0 {
-				a.logger.Info("Spark has active inference load, deprioritizing placement",
+				a.logger.Info("Host has active inference load, deprioritizing placement",
+					slog.String("host", host),
 					slog.String("metric", strings.Fields(line)[0]),
 					slog.Float64("value", val),
 				)
@@ -1184,7 +1203,8 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 			}
 		case strings.HasPrefix(line, "llamaswap_gpu_power_draw_watts"):
 			if val, ok := parseMetricValue(line); ok && val > ceiling {
-				a.logger.Info("Spark has active inference load, deprioritizing placement",
+				a.logger.Info("Host has active inference load, deprioritizing placement",
+					slog.String("host", host),
 					slog.String("metric", strings.Fields(line)[0]),
 					slog.Float64("value", val),
 					slog.Float64("idle_ceiling_watts", ceiling),
@@ -1198,10 +1218,11 @@ func (a *Scaler) isSparkLoadedAbove(ctx context.Context, ceiling float64) bool {
 
 // pickHost returns the fleet member this call should place a runner on: the
 // reachable host with the fewest runners currently placed on it (idle+busy),
-// so a burst of jobs spreads across every active configured host. If spark
-// is running active vLLM inference requests (or is low on memory / under
-// swap pressure), a virtual load penalty (+100) is applied to spark so other
-// idle fleet hosts are preferred over it.
+// so a burst of jobs spreads across every active configured host. If a host
+// that carries an inference probe (fleet.hosts[].inference_metrics_url) is
+// running active vLLM inference requests (or its GPU power draw is above the
+// idle ceiling), a virtual load penalty (+100) is applied to THAT host so
+// other idle fleet hosts are preferred over it.
 //
 // Hard overload is different from a soft penalty: a host scoreHostLoad marks
 // hard-overloaded (load/CPU/PSI/memory pressure past its *Hard threshold --
@@ -1420,7 +1441,7 @@ func (a *Scaler) pickHostLocked(ctx context.Context, fleet *FleetCoordinator) (p
 	// degradation ladder's rungs 2 and 3 (agent-lcars#1697) can reuse it.
 	effectiveCount := func(hostName string) int {
 		c := probe.fleetCounts[hostName] + fleet.reservations[hostName] + probe.hostLoads[hostName].penalty
-		if hostName == "spark" && probe.sparkLoaded {
+		if probe.inferenceLoaded[hostName] {
 			c += 100
 		}
 		return c
@@ -1897,7 +1918,10 @@ type fleetHostProbe struct {
 	hostObservedMemory map[string]int64
 	hostMemoryErrors   map[string]error
 	reachableHosts     []DockerHost
-	sparkLoaded        bool
+	// inferenceLoaded is every probed host's isHostInferenceLoaded result
+	// (agent-lcars#1726), keyed by host name. A host absent here (no
+	// configured probe, or the probe wasn't run) reads back false.
+	inferenceLoaded map[string]bool
 }
 
 // probeFleetHosts concurrently pings, and inventories memory and fleet
@@ -2021,13 +2045,17 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 		}(h)
 	}
 
-	var sparkLoaded bool
-	if a.sparkMetricsURL != "" {
+	var inferenceMu sync.Mutex
+	inferenceLoaded := make(map[string]bool, len(a.inferenceMetricsURLs))
+	for host := range a.inferenceMetricsURLs {
 		wg.Add(1)
-		go func() {
+		go func(host string) {
 			defer wg.Done()
-			sparkLoaded = a.isSparkLoaded(ctx)
-		}()
+			loaded := a.isHostInferenceLoaded(ctx, host)
+			inferenceMu.Lock()
+			inferenceLoaded[host] = loaded
+			inferenceMu.Unlock()
+		}(host)
 	}
 
 	wg.Wait()
@@ -2096,7 +2124,7 @@ func (a *Scaler) probeFleetHosts(ctx context.Context, fleet *FleetCoordinator) f
 		results: results, hostLoads: hostLoads, fleetCounts: fleetCounts,
 		hostMemoryBytes: hostMemoryBytes, hostRunningReservedMemory: hostRunningReservedMemory,
 		hostObservedMemory: hostObservedMemory,
-		hostMemoryErrors:   hostMemoryErrors, reachableHosts: reachableHosts, sparkLoaded: sparkLoaded,
+		hostMemoryErrors:   hostMemoryErrors, reachableHosts: reachableHosts, inferenceLoaded: inferenceLoaded,
 	}
 }
 

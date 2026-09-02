@@ -14,10 +14,20 @@ func TestConfigValidation(t *testing.T) {
 				RegistrationURL: "https://github.com/org/repo",
 				ScaleSetName:    "test-scaleset",
 				Token:           "ghp_secret",
+				RunnerImage:     "registry.example/mirror/actions-runner:latest",
 				MinRunners:      0,
 				MaxRunners:      5,
 			},
 			wantErr: false,
+		},
+		{
+			name: "missing runner image",
+			cfg: Config{
+				RegistrationURL: "https://github.com/org/repo",
+				ScaleSetName:    "test-scaleset",
+				Token:           "ghp_secret",
+			},
+			wantErr: true,
 		},
 		{
 			name: "invalid registration URL",
@@ -69,32 +79,50 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
-// TestConfigEmptyDisablesFeatures verifies that an explicitly empty
-// SparkMetricsURL survives Validate() as empty: empty is a meaningful,
-// documented "feature disabled" value, and defaults() deliberately does not
-// fill it in (the cobra flags in main.go supply the non-empty default for
-// the unset case instead -- see Config.defaults's comment).
+// TestConfigEmptyDisablesFeatures verifies that a nil InferenceMetricsURLs
+// map survives Validate(): empty/nil is a meaningful, documented "no host
+// carries a probe" value, and defaults() deliberately does not fill it in.
 func TestConfigEmptyDisablesFeatures(t *testing.T) {
 	cfg := Config{
-		RegistrationURL: "https://github.com/org/repo",
-		ScaleSetName:    "x",
-		Token:           "t",
-		SparkMetricsURL: "",
+		RegistrationURL:      "https://github.com/org/repo",
+		ScaleSetName:         "x",
+		Token:                "t",
+		RunnerImage:          "registry.example/mirror/actions-runner:latest",
+		InferenceMetricsURLs: nil,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Config.Validate() returned unexpected error: %v", err)
 	}
-	if cfg.SparkMetricsURL != "" {
-		t.Errorf("expected SparkMetricsURL to remain empty after Validate(), got %q", cfg.SparkMetricsURL)
+	if len(cfg.InferenceMetricsURLs) != 0 {
+		t.Errorf("expected InferenceMetricsURLs to remain empty after Validate(), got %v", cfg.InferenceMetricsURLs)
 	}
 }
 
-func TestConfigDefaultsUseInternalRunnerMirror(t *testing.T) {
+// TestConfigDefaultsLeaveRunnerImageEmpty covers agent-lcars#1728: there is
+// no fleet-named default runner image, so an unset scale_sets[].runner_image
+// stays empty through defaults() and Validate() rejects it explicitly below
+// (TestConfigRequiresRunnerImage) rather than silently guessing a registry.
+func TestConfigDefaultsLeaveRunnerImageEmpty(t *testing.T) {
 	cfg := Config{}
 	cfg.defaults()
 
-	if got, want := cfg.RunnerImage, "docker-registry.lan.jlapenna.net/mirror/actions-runner:latest"; got != want {
-		t.Errorf("RunnerImage default = %q, want %q", got, want)
+	if cfg.RunnerImage != "" {
+		t.Errorf("RunnerImage default = %q, want empty (no fleet-named default)", cfg.RunnerImage)
+	}
+}
+
+func TestConfigRequiresRunnerImage(t *testing.T) {
+	cfg := Config{
+		RegistrationURL: "https://github.com/org/repo",
+		ScaleSetName:    "test-scaleset",
+		Token:           "ghp_secret",
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Config.Validate() accepted a config with no runner image")
+	}
+	if got := err.Error(); got != "runner image is required" {
+		t.Errorf("Validate() error = %q, want %q", got, "runner image is required")
 	}
 }
 

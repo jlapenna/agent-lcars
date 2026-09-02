@@ -62,6 +62,76 @@ func TestLoadOrchestratorConfig(t *testing.T) {
 	if got := resolved.Raw.Fleet.Placement.MemorySafetyMargin; got != defaultMemorySafetyMargin {
 		t.Fatalf("memory safety margin = %v, want default %v", got, defaultMemorySafetyMargin)
 	}
+	// agent-lcars#1728: host_metrics_url_template has no fleet-named
+	// default; unset resolves to a domain-free template.
+	if got, want := resolved.Raw.Fleet.Placement.HostMetricsURLTemplate, "http://%s:9100/metrics"; got != want {
+		t.Fatalf("host_metrics_url_template default = %q, want %q", got, want)
+	}
+	// agent-lcars#1726: no host is memory-exempt, and no host carries an
+	// inference probe, by default.
+	if len(resolved.Raw.Fleet.Placement.HostMemoryExempt) != 0 {
+		t.Fatalf("host_memory_exempt default = %v, want empty", resolved.Raw.Fleet.Placement.HostMemoryExempt)
+	}
+	if len(resolved.InferenceMetricsURLs) != 0 {
+		t.Fatalf("InferenceMetricsURLs default = %v, want empty", resolved.InferenceMetricsURLs)
+	}
+}
+
+// TestOrchestratorConfigDeprecatedSparkMetricsURLAlias covers
+// agent-lcars#1726's one-release backward-compatible alias:
+// fleet.placement.spark_metrics_url still populates the inference probe for
+// a host named "spark" and produces a deprecation warning.
+func TestOrchestratorConfigDeprecatedSparkMetricsURLAlias(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "    - name: janeway", "    - name: spark", 1)
+	body = strings.Replace(body, "  placement: {}", "  placement:\n    spark_metrics_url: http://spark.example.invalid:8000/metrics", 1)
+
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.InferenceMetricsURLs["spark"]; got != "http://spark.example.invalid:8000/metrics" {
+		t.Fatalf("InferenceMetricsURLs[spark] = %q, want the deprecated alias URL", got)
+	}
+	if len(resolved.Warnings) == 0 || !strings.Contains(resolved.Warnings[0], "spark_metrics_url is deprecated") {
+		t.Fatalf("Warnings = %v, want a spark_metrics_url deprecation notice", resolved.Warnings)
+	}
+}
+
+// TestOrchestratorConfigDeprecatedSparkMetricsURLAliasOnlyAppliesToSpark
+// covers the alias's narrow scope: it does not retarget to a differently
+// named host even when that's the only host configured (agent-lcars#1726 --
+// the whole point of the issue is that a rename silently orphaned this
+// alias, and the generalized per-host key is the fix, not a smarter alias).
+func TestOrchestratorConfigDeprecatedSparkMetricsURLAliasOnlyAppliesToSpark(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "  placement: {}", "  placement:\n    spark_metrics_url: http://spark.example.invalid:8000/metrics", 1)
+
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.InferenceMetricsURLs["janeway"]; got != "" {
+		t.Fatalf("InferenceMetricsURLs[janeway] = %q, want empty: the alias must not apply to a non-spark host", got)
+	}
+	if got := resolved.InferenceMetricsURLs["spark"]; got != "http://spark.example.invalid:8000/metrics" {
+		t.Fatalf("InferenceMetricsURLs[spark] = %q, want the deprecated alias URL even with no host literally named spark configured", got)
+	}
+}
+
+// TestOrchestratorConfigHostInferenceMetricsURLPreferredOverAlias covers the
+// new-style per-host key taking precedence when both it and the deprecated
+// alias are set for the "spark" host.
+func TestOrchestratorConfigHostInferenceMetricsURLPreferredOverAlias(t *testing.T) {
+	body := strings.Replace(validOrchestratorYAML, "    - name: janeway\n      docker: local",
+		"    - name: spark\n      docker: local\n      inference_metrics_url: http://explicit.example.invalid:8000/metrics", 1)
+	body = strings.Replace(body, "  placement: {}", "  placement:\n    spark_metrics_url: http://deprecated.example.invalid:8000/metrics", 1)
+
+	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.InferenceMetricsURLs["spark"]; got != "http://explicit.example.invalid:8000/metrics" {
+		t.Fatalf("InferenceMetricsURLs[spark] = %q, want the explicit per-host URL to win over the deprecated alias", got)
+	}
 }
 
 func TestOrchestratorConfigResolvesSchedulingPriority(t *testing.T) {
@@ -159,17 +229,18 @@ func TestOrchestratorConfigRejectsInvalidMemoryOvercommit(t *testing.T) {
 	}
 }
 
-// TestOrchestratorConfigDefaultsRunnerCgroupParent covers agent-lcars#1700's
-// tri-state contract: omitting fleet.placement.runner_cgroup_parent entirely
-// (the fixture's bare "placement: {}") resolves to defaultRunnerCgroupParent
-// so the host-level slice bound is on by default.
+// TestOrchestratorConfigDefaultsRunnerCgroupParent covers agent-lcars#1728:
+// there is no fleet-named default, so omitting
+// fleet.placement.runner_cgroup_parent entirely (the fixture's bare
+// "placement: {}") resolves to "" -- the host-level slice bound is off by
+// default, same as an explicit empty string.
 func TestOrchestratorConfigDefaultsRunnerCgroupParent(t *testing.T) {
 	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := resolved.RunnerCgroupParent; got != defaultRunnerCgroupParent {
-		t.Fatalf("runner cgroup parent = %q, want default %q", got, defaultRunnerCgroupParent)
+	if got := resolved.RunnerCgroupParent; got != "" {
+		t.Fatalf("runner cgroup parent = %q, want empty (no fleet-named default)", got)
 	}
 }
 
@@ -1054,10 +1125,10 @@ func TestOrchestratorConfigRejectsBadAllowlistWithoutAnyFileMounts(t *testing.T)
 // was asked about. Assert the whole copied block, not just one field, so the
 // next addition that forgets this line fails here instead of in production.
 func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T) {
-	body := strings.Replace(validOrchestratorYAML, "      docker: local", "      docker: local\n      metrics_timeout: 5s\n      require_readiness: true", 1)
+	body := strings.Replace(validOrchestratorYAML, "      docker: local",
+		"      docker: local\n      metrics_timeout: 5s\n      require_readiness: true\n      inference_metrics_url: http://janeway.example.invalid:8000/metrics", 1)
 	body = strings.Replace(body, "  placement: {}", `  placement:
     host_metrics_url_template: http://%s.example.invalid:9100/metrics
-    spark_metrics_url: http://spark.example.invalid:8000/metrics
     readiness_metrics_url: http://readiness.example.invalid/metrics
     readiness_metric: host_ci_ready
     readiness_max_age: 5m`, 1)
@@ -1098,8 +1169,8 @@ func TestBuildOrchestratorRuntimesCarriesPlacementConfigIntoScaler(t *testing.T)
 		}
 		// Neighbours in the same copied block, so this test guards the whole
 		// hand-off rather than only the field that broke.
-		if s.sparkMetricsURL != "http://spark.example.invalid:8000/metrics" {
-			t.Errorf("scale set %q: sparkMetricsURL = %q", s.scaleSetName, s.sparkMetricsURL)
+		if got := s.inferenceMetricsURLs["janeway"]; got != "http://janeway.example.invalid:8000/metrics" {
+			t.Errorf("scale set %q: inferenceMetricsURLs[janeway] = %q", s.scaleSetName, got)
 		}
 		if s.hostMetricsURLTemplate != "http://%s.example.invalid:9100/metrics" {
 			t.Errorf("scale set %q: hostMetricsURLTemplate = %q", s.scaleSetName, s.hostMetricsURLTemplate)
