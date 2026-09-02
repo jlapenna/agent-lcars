@@ -11,9 +11,11 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/prometheus/client_golang v1.24.1
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.296.0
 )
@@ -40,7 +42,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.20 // indirect
 	github.com/googleapis/gax-go/v2 v2.24.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
-	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -63,7 +64,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
