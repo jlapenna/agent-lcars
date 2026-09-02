@@ -826,6 +826,19 @@ func (a *Scaler) HandleJobStarted(ctx context.Context, jobInfo *scaleset.JobStar
 		slog.String("jobId", jobInfo.JobID),
 	)
 	a.recordRunnerJob(jobInfo)
+	if jobInfo.RunnerName == "" {
+		// A job cancelled or superseded while still queued can complete
+		// without ever being assigned a runner, and GitHub's own replay/order
+		// can surface that as a JobStarted with no runner name too. This is
+		// routine -- cancel/re-dispatch loops can fire it dozens of times an
+		// hour (agent-lcars#1687) -- and must not be confused with the WARN
+		// below: a runner GitHub knows about that this control plane has no
+		// record of at all. Skip markBusy/isBusy and the gauge refresh below;
+		// there is no tracked state to touch.
+		jobsCompletedUnassignedTotal.WithLabelValues(scaleSet).Inc()
+		a.logger.Info("Job started without an assigned runner", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
+		return nil
+	}
 	if !a.runners.markBusy(jobInfo.RunnerName, jobInfo.JobID) {
 		if a.runners.isBusy(jobInfo.RunnerName) {
 			// Tracked and already busy -- e.g. a duplicate/replayed
@@ -844,6 +857,18 @@ func (a *Scaler) HandleJobCompleted(ctx context.Context, jobInfo *scaleset.JobCo
 	scaleSet := a.scaleSetLabel()
 	jobsCompletedCounter.WithLabelValues(scaleSet).Inc()
 	a.logger.Info("Job completed", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
+
+	if jobInfo.RunnerName == "" {
+		// A job cancelled or superseded while still queued completes without
+		// ever being assigned a runner. This is routine -- cancel/re-dispatch
+		// loops can fire it dozens of times an hour (agent-lcars#1687) -- and
+		// must not be confused with the WARN below: a runner GitHub knows
+		// about that this control plane has no record of at all. Skip
+		// beginTeardown/markDone; there is no tracked runner to tear down.
+		jobsCompletedUnassignedTotal.WithLabelValues(scaleSet).Inc()
+		a.logger.Info("Job completed without an assigned runner", slog.Int64("runnerRequestId", jobInfo.RunnerRequestID), slog.String("jobId", jobInfo.JobID))
+		return nil
+	}
 
 	// Marked before markDone and held until the container is gone: between
 	// those two the container is running and untracked, which the periodic

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1926,6 +1927,116 @@ func TestRunnerJobInfoFollowsTheJobLifecycle(t *testing.T) {
 	scaler.recordRunnerJob(&scaleset.JobStarted{JobMessageBase: scaleset.JobMessageBase{JobID: "job-2"}})
 	if n := testutil.CollectAndCount(runnerJobInfoGauge); n != 0 {
 		t.Fatalf("runner_job_info series for a runner-less job = %d, want 0", n)
+	}
+}
+
+// agent-lcars#1687: a job cancelled or superseded while still queued
+// completes without ever being assigned a runner -- GitHub sends an empty
+// RunnerName. That is routine (cancel/re-dispatch loops fired it 57 times in
+// 4h on 2026-09-01) and must log at INFO with its own counter, not the WARN
+// meant for a runner GitHub knows about that this control plane has no
+// record of at all.
+func TestHandleJobCompletedUnassignedRunner(t *testing.T) {
+	var logBuf bytes.Buffer
+	scaler := &Scaler{
+		scaleSetName: "e2e",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	before := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e"))
+
+	job := &scaleset.JobCompleted{JobMessageBase: scaleset.JobMessageBase{JobID: "job-1", RunnerRequestID: 42}}
+	if err := scaler.HandleJobCompleted(context.Background(), job); err != nil {
+		t.Fatalf("HandleJobCompleted() error = %v", err)
+	}
+
+	if got := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e")) - before; got != 1 {
+		t.Fatalf("jobs_completed_unassigned_total{e2e} increment = %v, want 1", got)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "level=INFO") || !strings.Contains(logged, "Job completed without an assigned runner") {
+		t.Fatalf("expected an INFO \"Job completed without an assigned runner\" log, got: %s", logged)
+	}
+	if strings.Contains(logged, "level=WARN") {
+		t.Fatalf("expected no WARN log for a job completed without an assigned runner, got: %s", logged)
+	}
+}
+
+// The non-empty case -- a runner name GitHub reports that this tracker has
+// never heard of -- keeps its existing WARN behaviour untouched by the new
+// empty-name branch, and must not increment the new unassigned counter.
+func TestHandleJobCompletedUntrackedRunnerStillWarns(t *testing.T) {
+	var logBuf bytes.Buffer
+	scaler := &Scaler{
+		scaleSetName: "e2e",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	before := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e"))
+
+	job := &scaleset.JobCompleted{RunnerName: "runner-ghost", JobMessageBase: scaleset.JobMessageBase{JobID: "job-2"}}
+	if err := scaler.HandleJobCompleted(context.Background(), job); err != nil {
+		t.Fatalf("HandleJobCompleted() error = %v", err)
+	}
+
+	if got := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e")) - before; got != 0 {
+		t.Fatalf("jobs_completed_unassigned_total{e2e} increment = %v, want 0 for a non-empty untracked name", got)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "Job completed for untracked runner") {
+		t.Fatalf("expected the existing WARN \"Job completed for untracked runner\" log, got: %s", logged)
+	}
+}
+
+// Mirrors TestHandleJobCompletedUnassignedRunner for HandleJobStarted, which
+// treats an empty RunnerName the same way as an "untracked runner" today.
+func TestHandleJobStartedUnassignedRunner(t *testing.T) {
+	var logBuf bytes.Buffer
+	scaler := &Scaler{
+		scaleSetName: "e2e",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	before := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e"))
+
+	job := &scaleset.JobStarted{JobMessageBase: scaleset.JobMessageBase{JobID: "job-3", RunnerRequestID: 7}}
+	if err := scaler.HandleJobStarted(context.Background(), job); err != nil {
+		t.Fatalf("HandleJobStarted() error = %v", err)
+	}
+
+	if got := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e")) - before; got != 1 {
+		t.Fatalf("jobs_completed_unassigned_total{e2e} increment = %v, want 1", got)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "level=INFO") || !strings.Contains(logged, "Job started without an assigned runner") {
+		t.Fatalf("expected an INFO \"Job started without an assigned runner\" log, got: %s", logged)
+	}
+	if strings.Contains(logged, "level=WARN") {
+		t.Fatalf("expected no WARN log for a job started without an assigned runner, got: %s", logged)
+	}
+}
+
+// The non-empty case for HandleJobStarted keeps its existing WARN behaviour.
+func TestHandleJobStartedUntrackedRunnerStillWarns(t *testing.T) {
+	var logBuf bytes.Buffer
+	scaler := &Scaler{
+		scaleSetName: "e2e",
+		runners:      runnerState{idle: map[string]runnerRef{}, busy: map[string]runnerRef{}},
+		logger:       slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+	before := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e"))
+
+	job := &scaleset.JobStarted{RunnerName: "runner-ghost", JobMessageBase: scaleset.JobMessageBase{JobID: "job-4"}}
+	if err := scaler.HandleJobStarted(context.Background(), job); err != nil {
+		t.Fatalf("HandleJobStarted() error = %v", err)
+	}
+
+	if got := testutil.ToFloat64(jobsCompletedUnassignedTotal.WithLabelValues("e2e")) - before; got != 0 {
+		t.Fatalf("jobs_completed_unassigned_total{e2e} increment = %v, want 0 for a non-empty untracked name", got)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "Received job started for untracked runner") {
+		t.Fatalf("expected the existing WARN \"Received job started for untracked runner\" log, got: %s", logged)
 	}
 }
 
