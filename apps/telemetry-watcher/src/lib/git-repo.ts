@@ -1,3 +1,4 @@
+import { optional } from '@agent-lcars/env';
 import { execFile } from 'child_process';
 
 function runGit(cwd: string, args: string[]): Promise<string> {
@@ -49,26 +50,64 @@ function parseGitHubRemote(
 }
 
 /**
- * Repo renames this fleet has been through, keyed by the pre-rename
- * `owner/name` a stale local `origin` remote can still report (GitHub
- * renaming a repo does not rewrite anyone's local remote config). Applied
- * after parsing so every `resolveGitRepo` caller gets the current
- * canonical identity even from a checkout nobody's re-pointed yet, rather
- * than every repo-identity comparison site needing its own alias
- * awareness (see e.g. console's `sessionReferencesItemNumber`).
+ * Parses `AGENT_TELEMETRY_REPO_ALIASES`: a JSON object keyed by the
+ * pre-rename `owner/name` a stale local `origin` remote can still report
+ * (GitHub renaming a repo does not rewrite anyone's local remote config),
+ * mapping to the current `{owner, name}`. Every deploying fleet has its own
+ * repo-rename history (or none at all), so there is no built-in alias here —
+ * an unset or empty value means no aliases apply. Throws with a specific
+ * reason on malformed input rather than silently ignoring it, matching
+ * `config.ts`'s `AGENT_TELEMETRY_WATCH_ROOTS` convention.
  */
-const LEGACY_REPO_ALIASES: Record<string, { owner: string; name: string }> = {
-  'supersprinklesracing/members': {
-    owner: 'supersprinklesracing',
-    name: 'sprinkles',
-  },
-};
+function parseRepoAliasesJson(
+  raw: string,
+): Record<string, { owner: string; name: string }> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `AGENT_TELEMETRY_REPO_ALIASES is not valid JSON: ${(error as Error).message}`,
+      { cause: error },
+    );
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      'AGENT_TELEMETRY_REPO_ALIASES must be a JSON object of {"owner/name": {"owner": string, "name": string}} entries',
+    );
+  }
+  const result: Record<string, { owner: string; name: string }> = {};
+  for (const [key, value] of Object.entries(
+    parsed as Record<string, unknown>,
+  )) {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      typeof (value as { owner?: unknown }).owner !== 'string' ||
+      typeof (value as { name?: unknown }).name !== 'string'
+    ) {
+      throw new Error(
+        `AGENT_TELEMETRY_REPO_ALIASES["${key}"] must be an object with string "owner" and "name" fields`,
+      );
+    }
+    result[key] = {
+      owner: (value as { owner: string }).owner,
+      name: (value as { name: string }).name,
+    };
+  }
+  return result;
+}
 
-function normalizeRepoAlias(repo: { owner: string; name: string }): {
-  owner: string;
-  name: string;
-} {
-  return LEGACY_REPO_ALIASES[`${repo.owner}/${repo.name}`] ?? repo;
+/**
+ * Loads the configured rename aliases fresh on every call (like
+ * `config.ts`'s env-driven fields) rather than caching at module scope, so
+ * tests can set `AGENT_TELEMETRY_REPO_ALIASES` per case and a long-lived
+ * daemon process picks up an env change on next resolution without a
+ * restart-triggering code path of its own.
+ */
+function loadRepoAliases(): Record<string, { owner: string; name: string }> {
+  const raw = optional('AGENT_TELEMETRY_REPO_ALIASES');
+  return raw ? parseRepoAliasesJson(raw) : {};
 }
 
 /**
@@ -78,14 +117,20 @@ function normalizeRepoAlias(repo: { owner: string; name: string }): {
  * other `git` failure — same shape as `resolveGitBranch`'s error handling,
  * so a resolution hiccup degrades to an unrepoed doc rather than crashing a
  * tick. Async for the same reason as `resolveGitBranch`.
+ *
+ * A malformed `AGENT_TELEMETRY_REPO_ALIASES` is deliberately NOT part of
+ * that fail-soft behavior: it is parsed before the fail-soft `try`, so a
+ * bad config throws loudly on every call instead of being silently
+ * swallowed alongside ordinary git-resolution failures.
  */
 export async function resolveGitRepo(
   cwd: string,
 ): Promise<{ owner: string; name: string } | undefined> {
+  const repoAliases = loadRepoAliases();
   try {
     const stdout = await runGit(cwd, ['remote', 'get-url', 'origin']);
     const repo = parseGitHubRemote(stdout.trim());
-    return repo && normalizeRepoAlias(repo);
+    return repo && (repoAliases[`${repo.owner}/${repo.name}`] ?? repo);
   } catch {
     return undefined;
   }

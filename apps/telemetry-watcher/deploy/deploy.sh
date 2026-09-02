@@ -22,9 +22,17 @@
 #     still running and hasn't restarted (or is reporting healthy, when a
 #     HEALTHCHECK is defined) before declaring success.
 #
-# Usage: run directly on a watcher host as the deployment identity (normally
-# the `homelab` service account, with sudo available for ownership fixups):
+# Usage: run directly on a watcher host as the deployment identity (a
+# service account with sudo available for ownership fixups):
 #   ./deploy.sh
+#
+# Requires (issue #1732 -- no maintainer defaults, every deploying fleet
+# supplies its own): AGENT_TELEMETRY_WATCHER_USER (the login the watcher
+# runs as) and AGENT_TELEMETRY_CHECKOUT_ROOTS (comma-separated absolute
+# checkout roots to watch). Set them directly in the invoking environment,
+# or in a deploy env file at $DEPLOY_DIR/.env (same file .env.example
+# documents for Compose-only overrides) -- this script sources it before
+# resolving either.
 set -euo pipefail
 
 DEPLOY_DIR="${AGENT_TELEMETRY_DEPLOY_DIR:-${HOME}/agent-lcars-telemetry-watcher}"
@@ -32,6 +40,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER_KEY="$DEPLOY_DIR/writer-key.json"
 ENV_FILE="$DEPLOY_DIR/.env"
 CONTAINER_NAME=agent-lcars-telemetry-watcher
+
+# An optional deploy env file lets a host supply the identity inputs below
+# (AGENT_TELEMETRY_WATCHER_USER, AGENT_TELEMETRY_CHECKOUT_ROOTS) alongside
+# the Compose-only overrides .env.example documents, instead of requiring
+# every invoker to set process environment directly. Sourced (not just
+# passed to `docker compose --env-file`) specifically so these two identity
+# vars are visible to this script's own resolution below, not only to the
+# container -- ordinary shell/dotenv precedence applies, so a value this
+# file sets wins over one already present in the invoking process's
+# environment.
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
 # Upper bound on the wait for a Docker HEALTHCHECK to report healthy. This is
 # a ceiling, not a delay: the loop below breaks the moment the container is
 # healthy, so a generous value costs nothing on a good deploy and only delays
@@ -64,7 +88,17 @@ HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-600}"
 # value big enough to stop the false failure would have added that many
 # seconds to every no-healthcheck deploy.
 STABILITY_WINDOW_SECONDS="${STABILITY_WINDOW_SECONDS:-90}"
-WATCHER_USER="${AGENT_TELEMETRY_WATCHER_USER:-jlapenna}"
+
+# No maintainer default here (issue #1732): every deploying fleet has its
+# own watcher account, and silently falling back to someone else's login
+# would deploy against the wrong home directory and transcript trees. Set
+# AGENT_TELEMETRY_WATCHER_USER directly, or in the deploy env file sourced
+# above.
+if [ -z "${AGENT_TELEMETRY_WATCHER_USER:-}" ]; then
+  echo "AGENT_TELEMETRY_WATCHER_USER must be set (directly, or via $ENV_FILE) -- the login the watcher runs as on this host. There is no default." >&2
+  exit 1
+fi
+WATCHER_USER="$AGENT_TELEMETRY_WATCHER_USER"
 watcher_passwd="$(getent passwd "$WATCHER_USER" || true)"
 
 if [ -z "$watcher_passwd" ]; then
@@ -76,7 +110,24 @@ WATCHER_UID="$(cut -d: -f3 <<<"$watcher_passwd")"
 WATCHER_GID="$(cut -d: -f4 <<<"$watcher_passwd")"
 WATCHER_HOME="$(cut -d: -f6 <<<"$watcher_passwd")"
 WATCHER_HOST="${AGENT_TELEMETRY_HOST:-$(hostname -s)}"
-WATCHER_CHECKOUT_ROOTS="${AGENT_TELEMETRY_CHECKOUT_ROOTS:-$WATCHER_HOME/p/sprinkles,$WATCHER_HOME/p/agent-lcars,$WATCHER_HOME/p/homelab}"
+
+# Same no-default policy as AGENT_TELEMETRY_WATCHER_USER above: the
+# checkout roots are a privacy boundary (only these roots' transcripts
+# ship), so there is no built-in guess at which checkouts exist on this
+# host.
+if [ -z "${AGENT_TELEMETRY_CHECKOUT_ROOTS:-}" ]; then
+  echo "AGENT_TELEMETRY_CHECKOUT_ROOTS must be set (directly, or via $ENV_FILE) -- a comma-separated list of absolute checkout roots under \$WATCHER_HOME/p to watch. There is no default." >&2
+  exit 1
+fi
+WATCHER_CHECKOUT_ROOTS="$AGENT_TELEMETRY_CHECKOUT_ROOTS"
+
+# Same no-default policy again: docker-compose.yml requires this to resolve
+# the image, and there is no registry a fleet-neutral script could guess.
+if [ -z "${AGENT_TELEMETRY_IMAGE_REGISTRY:-}" ]; then
+  echo "AGENT_TELEMETRY_IMAGE_REGISTRY must be set (directly, or via $ENV_FILE) -- the registry mirror to pull agent-lcars/telemetry-watcher from. There is no default." >&2
+  exit 1
+fi
+export AGENT_TELEMETRY_IMAGE_REGISTRY
 
 if [[ -z "$WATCHER_HOME" || "$WATCHER_HOME" != /* ]]; then
   echo "Cannot derive an absolute home directory for watcher account $WATCHER_USER" >&2
@@ -169,18 +220,16 @@ ensure_watcher_dir "$WATCHER_HOME/.gemini/antigravity-cli" 0700
 # else has touched yet.
 ensure_watcher_dir "$WATCHER_HOME/.local/state/agent-lcars/session-metadata" 0700
 
-# --- writer-key.json: must exist; the CONTAINER reads it as jlapenna -------
+# --- writer-key.json: must exist; the CONTAINER reads it as $WATCHER_USER -
 if [ ! -f "$WRITER_KEY" ]; then
   cat >&2 <<EOF
 $WRITER_KEY must exist.
 
-Preferred: add agent_lcars_writer_key_json to jlapenna/homelab's encrypted
-ansible/secrets.yml (via ./bin/manage-secrets.sh there), then run
-deploy_secrets.yml followed by sync_agent_lcars_writer_key.yml -- see
-deploy/README.md's "Secrets" section for the full pipeline.
+Preferred: deliver it through your fleet's own secret-management pipeline
+(an encrypted secret store your deploy orchestrator owns) -- see
+deploy/README.md's "Secrets" section for a worked example pipeline.
 
-Fallback (hand-placed, never committed -- same convention as homelab's
-github-runner RUNNER_TOKEN .env):
+Fallback (hand-placed, never committed):
   gcloud secrets versions access latest --project=agent-lcars \\
     --secret=AGENT_TELEMETRY_WRITER_KEY_JSON > "$WRITER_KEY"
   chmod 600 "$WRITER_KEY"

@@ -88,6 +88,13 @@ export interface EnvVars {
    * Every source's default privacy allowlist derives from this one value;
    * host mode deliberately has no built-in path fallback. */
   AGENT_TELEMETRY_CHECKOUT_ROOTS?: string;
+  /** JSON object of pre-rename `"owner/name"` -> `{owner, name}` entries
+   * (issue #1732). A stale local `origin` remote can still report a repo's
+   * pre-rename identity after GitHub renames it; this lets a deploying
+   * fleet declare its own rename history so `resolveGitRepo` normalizes it.
+   * No built-in default — every fleet's rename history differs, and most
+   * have none. See `apps/telemetry-watcher/src/lib/git-repo.ts`. */
+  AGENT_TELEMETRY_REPO_ALIASES?: string;
   /** Root of `~/.claude/projects` to watch; overridable for tests/Docker fixture mounts.
    * Ignored once `AGENT_TELEMETRY_WATCH_ROOTS` is set - see that var's doc comment. */
   AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR?: string;
