@@ -143,7 +143,7 @@ func TestRunnerStateUntracked(t *testing.T) {
 	}
 }
 
-func TestIsSparkLoaded(t *testing.T) {
+func TestIsHostInferenceLoaded(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("busy") == "true" {
 			w.WriteHeader(http.StatusOK)
@@ -156,28 +156,33 @@ func TestIsSparkLoaded(t *testing.T) {
 	defer server.Close()
 
 	scaler := &Scaler{
-		sparkMetricsURL: server.URL + "?busy=true",
-		logger:          slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		inferenceMetricsURLs: map[string]string{"picard": server.URL + "?busy=true"},
+		logger:               slog.New(slog.NewTextHandler(os.Stdout, nil)),
 	}
 
-	if !scaler.isSparkLoaded(context.Background()) {
-		t.Errorf("expected isSparkLoaded to return true when vllm:num_requests_running > 0")
+	if !scaler.isHostInferenceLoaded(context.Background(), "picard") {
+		t.Errorf("expected isHostInferenceLoaded to return true when vllm:num_requests_running > 0")
 	}
 
-	scaler.sparkMetricsURL = server.URL + "?busy=false"
-	if scaler.isSparkLoaded(context.Background()) {
-		t.Errorf("expected isSparkLoaded to return false when vllm:num_requests_running == 0")
+	scaler.inferenceMetricsURLs["picard"] = server.URL + "?busy=false"
+	if scaler.isHostInferenceLoaded(context.Background(), "picard") {
+		t.Errorf("expected isHostInferenceLoaded to return false when vllm:num_requests_running == 0")
+	}
+
+	// A host with no configured probe never reads as loaded.
+	if scaler.isHostInferenceLoaded(context.Background(), "some-other-host") {
+		t.Errorf("expected isHostInferenceLoaded to return false for a host with no configured probe")
 	}
 }
 
-// TestIsSparkLoadedLlamaSwapPowerDraw pins the llama-swap arm of the probe
-// against a payload shaped like the real spark:8000 response, including the
-// GB10 readings that are structurally zero on this hardware
-// (gpu_util_percent / gpu_memory_*). A vLLM-only isSparkLoaded returns false
-// for both cases below, which is exactly the regression this covers: the
-// probe was inert in production while TestIsSparkLoaded stayed green against
-// synthetic `vllm:` lines.
-func TestIsSparkLoadedLlamaSwapPowerDraw(t *testing.T) {
+// TestIsHostInferenceLoadedLlamaSwapPowerDraw pins the llama-swap arm of the
+// probe against a payload shaped like a real GB10 host's response, including
+// the GB10 readings that are structurally zero on that hardware
+// (gpu_util_percent / gpu_memory_*). A vLLM-only isHostInferenceLoaded
+// returns false for both cases below, which is exactly the regression this
+// covers: the probe was inert in production while a vLLM-only version
+// stayed green against synthetic `vllm:` lines.
+func TestIsHostInferenceLoadedLlamaSwapPowerDraw(t *testing.T) {
 	const idleWatts = "9.94"
 	const busyWatts = "87.5"
 
@@ -197,33 +202,56 @@ func TestIsSparkLoadedLlamaSwapPowerDraw(t *testing.T) {
 	defer server.Close()
 
 	scaler := &Scaler{
-		sparkMetricsURL: server.URL + "?busy=true",
-		logger:          slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		inferenceMetricsURLs: map[string]string{"picard": server.URL + "?busy=true"},
+		logger:               slog.New(slog.NewTextHandler(os.Stdout, nil)),
 	}
-	if !scaler.isSparkLoaded(context.Background()) {
-		t.Errorf("expected isSparkLoaded to return true when GPU power draw (%sW) exceeds the %.0fW idle ceiling", busyWatts, sparkIdleGPUWatts)
+	if !scaler.isHostInferenceLoaded(context.Background(), "picard") {
+		t.Errorf("expected isHostInferenceLoaded to return true when GPU power draw (%sW) exceeds the %.0fW idle ceiling", busyWatts, defaultInferenceIdleWatts)
 	}
 
-	scaler.sparkMetricsURL = server.URL + "?busy=false"
-	if scaler.isSparkLoaded(context.Background()) {
-		t.Errorf("expected isSparkLoaded to return false at the measured %sW idle floor", idleWatts)
+	scaler.inferenceMetricsURLs["picard"] = server.URL + "?busy=false"
+	if scaler.isHostInferenceLoaded(context.Background(), "picard") {
+		t.Errorf("expected isHostInferenceLoaded to return false at the measured %sW idle floor", idleWatts)
 	}
 }
 
-func TestIsSparkLoadedIgnoresResidentModelMemory(t *testing.T) {
+// TestIsHostInferenceLoadedCustomIdleWatts covers fleet.hosts[].inference_idle_watts:
+// a host with a lower configured idle ceiling trips the penalty at a power
+// draw that would sit under the default 30W ceiling.
+func TestIsHostInferenceLoadedCustomIdleWatts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("llamaswap_gpu_power_draw_watts{id=\"0\"} 15\n"))
+	}))
+	defer server.Close()
+
+	scaler := &Scaler{
+		inferenceMetricsURLs: map[string]string{"other-gpu": server.URL},
+		inferenceIdleWatts:   map[string]float64{"other-gpu": 10},
+		logger:               slog.New(slog.NewTextHandler(os.Stdout, nil)),
+	}
+	if !scaler.isHostInferenceLoaded(context.Background(), "other-gpu") {
+		t.Error("expected 15W to exceed a configured 10W idle ceiling")
+	}
+}
+
+func TestIsHostInferenceLoadedIgnoresResidentModelMemory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("llamaswap_memory_free_bytes 1073741824\nllamaswap_swap_used_bytes 3221225472\n"))
 	}))
 	defer server.Close()
 
-	scaler := &Scaler{sparkMetricsURL: server.URL, logger: slog.New(slog.NewTextHandler(os.Stdout, nil))}
-	if scaler.isSparkLoaded(context.Background()) {
-		t.Error("resident model memory and allocated swap must not penalize Spark without active pressure")
+	scaler := &Scaler{inferenceMetricsURLs: map[string]string{"picard": server.URL}, logger: slog.New(slog.NewTextHandler(os.Stdout, nil))}
+	if scaler.isHostInferenceLoaded(context.Background(), "picard") {
+		t.Error("resident model memory and allocated swap must not penalize an inference host without active pressure")
 	}
 }
 
-func TestPickHostSparkLoadPenalty(t *testing.T) {
+// TestPickHostInferenceLoadPenalty covers agent-lcars#1726: the penalty
+// applies to whichever host owns the inference probe, by any name -- not
+// just a host literally named "spark".
+func TestPickHostInferenceLoadPenalty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("vllm:num_requests_running{model=\"default\"} 2.0\n"))
@@ -240,9 +268,9 @@ func TestPickHostSparkLoadPenalty(t *testing.T) {
 	fakeDaemon := newFakeDockerServer(t)
 
 	scaler := &Scaler{
-		sparkMetricsURL: server.URL,
+		inferenceMetricsURLs: map[string]string{"picard": server.URL},
 		dockerHosts: []DockerHost{
-			{Name: "spark", Client: fakeDaemon.client(t)},
+			{Name: "picard", Client: fakeDaemon.client(t)},
 			{Name: "pike", Client: fakeDaemon.client(t)},
 		},
 		runners: runnerState{
@@ -252,13 +280,38 @@ func TestPickHostSparkLoadPenalty(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
 	}
 
-	// Even though spark has 0 runners and pike has 0 runners, spark is loaded so pike should be picked
+	// Even though picard has 0 runners and pike has 0 runners, picard is
+	// loaded (it carries the inference probe) so pike should be picked.
 	picked, err := scaler.pickHost(context.Background())
 	if err != nil {
 		t.Fatalf("pickHost returned error: %v", err)
 	}
 	if picked != "pike" {
-		t.Errorf("expected pickHost to choose pike when spark has active inference load, got %s", picked)
+		t.Errorf("expected pickHost to choose pike when picard has active inference load, got %s", picked)
+	}
+}
+
+// TestPickHostNoInferenceProbeNoPenalty covers the other half of
+// agent-lcars#1726's acceptance criteria: when no host carries an inference
+// probe, no host is ever penalized this way, regardless of name.
+func TestPickHostNoInferenceProbeNoPenalty(t *testing.T) {
+	fakeDaemon := newFakeDockerServer(t)
+
+	scaler := &Scaler{
+		dockerHosts: []DockerHost{
+			{Name: "picard", Client: fakeDaemon.client(t)},
+			{Name: "pike", Client: fakeDaemon.client(t)},
+		},
+		runners: runnerState{
+			idle: make(map[string]runnerRef),
+			busy: make(map[string]runnerRef),
+		},
+		logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
+	}
+
+	probe := scaler.probeFleetHosts(context.Background(), &FleetCoordinator{})
+	if len(probe.inferenceLoaded) != 0 {
+		t.Errorf("expected no inference-loaded hosts when no host carries a probe, got %v", probe.inferenceLoaded)
 	}
 }
 

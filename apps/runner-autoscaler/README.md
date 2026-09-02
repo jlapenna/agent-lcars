@@ -504,7 +504,7 @@ ceiling, independent of and in addition to its own `runner_memory` limit:
 fleet:
   placement:
     memory_safety_margin: 0.10
-    runner_cgroup_parent: homelab-runners.slice # default; "" disables
+    runner_cgroup_parent: homelab-runners.slice # no fleet-named default; "" (or omitted) disables
 ```
 
 Every runner container is created with `HostConfig.CgroupParent` set to this
@@ -712,6 +712,57 @@ factor actually applied just now (`1.0` or the configured value); and
 the effective overcommit factor in its figure. The "Host lacks aggregate
 reserved-memory capacity for runner" log line adds a
 `memory_overcommit_effective` field alongside its existing byte values.
+
+## Fleet-specific configuration a consumer must set
+
+This package ships no fleet-named defaults (agent-lcars#1728): every
+consumer's `orchestrator.yml` must set these explicitly, or the matching
+feature simply stays off/unconfigured rather than silently pointing at
+someone else's domain or registry.
+
+| Key                                         | Required?          | What an unset value means                                                          |
+| ------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
+| `scale_sets[].runner_image`                 | Required           | `Validate()` rejects the config: "runner image is required"                        |
+| `fleet.placement.host_metrics_url_template` | Optional           | Load-aware placement (host CPU/PSI/memory/swap scoring) is disabled                |
+| `fleet.placement.runner_cgroup_parent`      | Optional           | No collective host-level runner cgroup slice bound (see "Host-level runner slice") |
+| `fleet.hosts[].inference_metrics_url`       | Optional, per host | That host carries no inference-load probe and is never penalized for one           |
+
+`host_metrics_url_template` has no domain baked in when set without one --
+e.g. `http://%s:9100/metrics` resolves purely from the Docker host name via
+whatever DNS/hosts resolution the controller's own network already has, with
+no assumption about a private domain suffix.
+
+## Inference-aware placement (per host)
+
+Any fleet host can carry an inference-load probe (agent-lcars#1726,
+generalizing an earlier single global Spark-only probe):
+
+```yaml
+fleet:
+  hosts:
+    - name: gpu-box
+      docker: local
+      inference_metrics_url: http://gpu-box.example.internal:8000/metrics
+      inference_idle_watts: 30 # optional; default 30W (measured GB10 idle ceiling)
+```
+
+While `gpu-box` reports active inference load -- either vLLM's
+`vllm:num_requests_running`/`_waiting` above zero, or llama-swap's
+`llamaswap_gpu_power_draw_watts` above the idle ceiling -- `pickHost` applies
+a virtual +100 load penalty to placement on `gpu-box` specifically, so other
+idle fleet hosts are preferred for CI runners over a host also serving
+interactive/batch AI workloads. A host with no `inference_metrics_url` is
+never probed or penalized this way; there is no name requirement (the
+feature no longer assumes a host called `spark`).
+
+**Deprecated alias.** `fleet.placement.spark_metrics_url` is accepted for one
+release as a backward-compatible alias: it populates the probe for a host
+literally named `spark` (exactly its pre-#1726 behavior) and logs a startup
+deprecation warning. It does not apply to any other host name -- a fleet that
+renamed its inference host must move to `fleet.hosts[].inference_metrics_url`
+on that host to keep the penalty working. An explicit
+`inference_metrics_url` already set on the `spark` host takes precedence
+over the alias.
 
 ## Host load / overload admission
 

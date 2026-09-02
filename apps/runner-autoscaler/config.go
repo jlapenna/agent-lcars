@@ -81,17 +81,23 @@ type Config struct {
 	// /dev/shm than Docker's 64m default) is satisfied by sizing /dev/shm
 	// directly, without also handing the container the host's IPC namespace.
 	RunnerShmSize string
-	// SparkMetricsURL is a homelab addition: URL to probe for Spark inference
-	// metrics. Both exposition shapes are understood — vLLM
-	// (vllm:num_requests_running / waiting) and llama-swap
-	// (llamaswap_gpu_power_draw_watts, what spark serves today); see
-	// isSparkLoaded. When active inference is detected, placement on spark is
-	// penalized to preserve GPU throughput for interactive/batch AI workloads.
-	SparkMetricsURL string
+	// InferenceMetricsURLs is a per-host URL to probe for inference load
+	// (agent-lcars#1726, generalized from an earlier Spark-specific single
+	// global probe), keyed by Docker host name. Both exposition shapes are
+	// understood — vLLM (vllm:num_requests_running / waiting) and
+	// llama-swap (llamaswap_gpu_power_draw_watts); see
+	// isHostInferenceLoaded. When active inference is detected on a host
+	// that carries a probe, placement on THAT host is penalized to preserve
+	// GPU throughput for interactive/batch AI workloads. A host with no
+	// entry here carries no probe and is never penalized this way.
+	InferenceMetricsURLs map[string]string
+	// InferenceIdleWatts optionally overrides defaultInferenceIdleWatts per
+	// host; a missing entry uses the default.
+	InferenceIdleWatts map[string]float64
 	// HostMetricsURLTemplate is a homelab addition: fmt.Sprintf-style URL
 	// template used to fetch node-exporter metrics for every placement host.
 	// The single %s is replaced with the Docker host name. Empty disables
-	// load-aware placement.
+	// load-aware placement. No fleet-named default (agent-lcars#1728).
 	HostMetricsURLTemplate string
 	// HostMetricsTimeouts optionally overrides the one-second telemetry probe
 	// deadline for individual fleet hosts.
@@ -113,8 +119,10 @@ type Config struct {
 	// systemd slice every runner container is created under, resolved from
 	// fleet.placement.runner_cgroup_parent by
 	// resolvedOrchestratorConfig.RunnerCgroupParent and copied here verbatim
-	// in buildOrchestratorRuntimes. Empty disables the collective host-level
-	// slice bound; runnerHostConfig then omits HostConfig.CgroupParent too.
+	// in buildOrchestratorRuntimes. There is no fleet-named default
+	// (agent-lcars#1728): empty (the default when the key is unset) disables
+	// the collective host-level slice bound; runnerHostConfig then omits
+	// HostConfig.CgroupParent too.
 	RunnerCgroupParent string
 	// ReadinessMetricsURL, ReadinessMetric and ReadinessMaxAge configure the
 	// per-host readiness gate consulted for hosts that set
@@ -149,17 +157,14 @@ func (c *Config) defaults() {
 	if c.RegistrationName == "" {
 		c.RegistrationName = primaryRegistrationName
 	}
-	if c.RunnerImage == "" {
-		// The fleet must never fall back to a public image registry. The
-		// multi-architecture Actions runner base is mirrored into the
-		// homelab registry before any runner image is published.
-		c.RunnerImage = "docker-registry.lan.jlapenna.net/mirror/actions-runner:latest"
-	}
-	// SparkMetricsURL is deliberately NOT defaulted here: empty is a
-	// meaningful, documented value (disables spark-aware placement), and the
-	// cobra flags in main.go already supply the non-empty default for the
-	// unset case. Re-filling it here would make "pass an empty flag to
-	// disable" impossible.
+	// RunnerImage has no fleet-named default (agent-lcars#1728): a consumer
+	// must set scale_sets[].runner_image explicitly. The fleet must never
+	// silently fall back to a public image registry -- Validate rejects an
+	// empty value outright below rather than guessing one.
+	//
+	// InferenceMetricsURLs is deliberately NOT defaulted here: an empty map
+	// is a meaningful, documented value (no host carries an inference
+	// probe).
 	if c.HostLoadPolicy.loadHard == 0 {
 		c.HostLoadPolicy = defaultHostLoadPolicy()
 	}

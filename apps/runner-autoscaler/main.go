@@ -43,6 +43,15 @@ var cmd = &cobra.Command{
 		if err := resolved.loadCredentials(); err != nil {
 			return err
 		}
+		if len(resolved.Warnings) > 0 {
+			startupLogger := slog.Default()
+			if len(resolved.ScaleSets) > 0 {
+				startupLogger = resolved.ScaleSets[0].Logger()
+			}
+			for _, warning := range resolved.Warnings {
+				startupLogger.Warn(warning)
+			}
+		}
 		// Probed before --check-config returns, so the preflight the deploy
 		// runs catches a missing or unwritable state volume rather than the
 		// process discovering it after cutover.
