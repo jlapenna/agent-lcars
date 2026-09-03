@@ -47,7 +47,10 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 	if err != nil {
 		return resolvedOrchestratorConfig{}, err
 	}
-	images := directRunnerPreflightImages()
+	images, err := directRunnerPreflightImages()
+	if err != nil {
+		return resolvedOrchestratorConfig{}, err
+	}
 	targets, order, err := ParseDockerHosts(resolved.DockerHosts)
 	if err != nil {
 		return resolvedOrchestratorConfig{}, err
@@ -72,8 +75,12 @@ func directRunnerPreflightHosts(ctx context.Context, resolved resolvedOrchestrat
 // directRunnerPreflightImages returns the one direct-runner image that every
 // provider uses after claim. GitHub scale-set configuration is unrelated to
 // QueueExecutor placement.
-func directRunnerPreflightImages() []string {
-	return []string{directRunnerImage()}
+func directRunnerPreflightImages() ([]string, error) {
+	image, err := directRunnerImage()
+	if err != nil {
+		return nil, err
+	}
+	return []string{image}, nil
 }
 
 func directRunnerPreflightHostImages(ctx context.Context, newClient func(string) (*dockerclient.Client, error), host, target string, images []string, mounts []directRunnerCredentialMount, logger *slog.Logger) error {

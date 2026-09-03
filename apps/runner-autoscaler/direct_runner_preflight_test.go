@@ -21,6 +21,7 @@ func configureDirectRunnerPreflightMounts(t *testing.T) {
 	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
 	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
 	t.Setenv("LCARS_QUEUE_OPENCODE_KEY_HOST_PATH", "/secrets/opencode-llm-api-key")
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
 }
 
 func TestDirectRunnerPreflightExcludesUnreadableHostsFromLaunchPool(t *testing.T) {

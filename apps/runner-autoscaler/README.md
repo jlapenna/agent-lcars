@@ -248,6 +248,7 @@ LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH=/secrets/telemetry-writer.json
 LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH=/secrets/claude-code-oauth-token
 LCARS_QUEUE_OPENCODE_KEY_HOST_PATH=/secrets/opencode-llm-api-key
 LCARS_QUEUE_MAX_CONCURRENT=1
+LCARS_QUEUE_RUNNER_IMAGE=registry.example.com/homelab-runner:jit-node24
 ```
 
 With those durable console and credential settings present, daemon startup
@@ -323,6 +324,14 @@ containers may run concurrently on any one host. Placement itself is
 round-robin over the same `--docker-hosts` pool used for GitHub-mode
 runners -- deliberately not `Scaler`'s load-aware host scoring, a stated
 simplification for this first cut.
+
+`LCARS_QUEUE_RUNNER_IMAGE` is the one container image reference every
+direct-mode run launches, whichever pipeline (Claude, Codex, or OpenCode)
+claimed it -- GitHub scale-set image/label configuration is a separate,
+unrelated axis. It has no fleet-named default: this is deployment-specific
+registry/tag knowledge the autoscaler cannot infer, so it is required for
+queue-executor startup and a claim fails loudly, naming the missing
+variable, rather than launching against a guessed image.
 
 ### Readiness and claim outcomes
 
