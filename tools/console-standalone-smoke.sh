@@ -44,6 +44,7 @@ AGENT_LCARS_CONSOLE_URL="$smoke_url" \
 AGENT_LCARS_ARTIFACT_SHARE_BASE_URL="$smoke_url/standalone-smoke-share" \
 AGENT_LCARS_PUSH_WATCH_TARGET_REPO=standalone-smoke/standalone-smoke \
 AGENT_LCARS_CONTROL_PLANE_REPOSITORY=standalone-smoke/standalone-smoke \
+AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT=standalone-smoke/standalone-smoke/auth.json \
 node dist/apps/console/.next/standalone/apps/console/server.js \
   >"$smoke_dir/server.log" 2>&1 &
 server_pid=$!

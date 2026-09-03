@@ -44,6 +44,7 @@ if [ ! -d "$PAGE_DIR" ]; then
 fi
 if [ -z "${AGENT_LCARS_CI_LOG_LOKI_URL:-}" ]; then
   diagnose "Loki URL is empty; start skipped"
+  echo "::notice::ci-log-stream: no loki-url input (or AGENT_LCARS_CI_LOG_LOKI_URL) was supplied; live CI log shipping is disabled for this job."
   exit 0
 fi
 

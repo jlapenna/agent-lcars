@@ -26,28 +26,30 @@ file is the map.
 The **only** module in console source that names this instance. Everything
 else asks it:
 
-| Value                    | Env var                                             | This deployment                                                                                                                                               |
-| ------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| console admin logins     | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`                   | `jlapenna,lizsprinkles`                                                                                                                                       |
-| maintainer login         | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`                    | `jlapenna` -- **required**, no fallback                                                                                                                       |
-| agent fleet login        | `AGENT_LCARS_FLEET_GITHUB_LOGIN`                    | `agent-lcars-bot`                                                                                                                                             |
-| artifact share base URL  | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`               | `https://share.lan.jlapenna.net` -- **required**, no fallback                                                                                                 |
-| control-plane repository | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY`              | `jlapenna/agent-lcars`                                                                                                                                        |
-| watched repos            | `AGENT_LCARS_WATCHED_REPOS`                         | required; matches control-plane set                                                                                                                           |
-| this console's own URL   | `AGENT_LCARS_CONSOLE_URL`                           | `https://lcars.jlapenna.net` -- **required**, no fallback                                                                                                     |
-| console description      | `AGENT_LCARS_CONSOLE_DESCRIPTION`                   | `jlapenna/agent-lcars — multi-agent issue activity`; unset falls back to a generic, deployment-neutral string (build-time metadata can't read a required var) |
-| console repository URL   | derived from `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `https://github.com/jlapenna/agent-lcars` -- no separate var                                                                                                  |
-| push-watch target repo   | `AGENT_LCARS_PUSH_WATCH_TARGET_REPO`                | `jlapenna/homelab` -- **required**, no fallback                                                                                                               |
+| Value                     | Env var                                             | This deployment                                                                                                                                               |
+| ------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| console admin logins      | `AGENT_LCARS_ADMIN_GITHUB_LOGINS`                   | `jlapenna,lizsprinkles`                                                                                                                                       |
+| maintainer login          | `AGENT_LCARS_ADMIN_GITHUB_LOGIN`                    | `jlapenna` -- **required**, no fallback                                                                                                                       |
+| agent fleet login         | `AGENT_LCARS_FLEET_GITHUB_LOGIN`                    | `agent-lcars-bot`                                                                                                                                             |
+| artifact share base URL   | `AGENT_LCARS_ARTIFACT_SHARE_BASE_URL`               | `https://share.lan.jlapenna.net` -- **required**, no fallback                                                                                                 |
+| control-plane repository  | `AGENT_LCARS_CONTROL_PLANE_REPOSITORY`              | `jlapenna/agent-lcars`                                                                                                                                        |
+| watched repos             | `AGENT_LCARS_WATCHED_REPOS`                         | required; matches control-plane set                                                                                                                           |
+| this console's own URL    | `AGENT_LCARS_CONSOLE_URL`                           | `https://lcars.jlapenna.net` -- **required**, no fallback                                                                                                     |
+| console description       | `AGENT_LCARS_CONSOLE_DESCRIPTION`                   | `jlapenna/agent-lcars — multi-agent issue activity`; unset falls back to a generic, deployment-neutral string (build-time metadata can't read a required var) |
+| console repository URL    | derived from `AGENT_LCARS_CONTROL_PLANE_REPOSITORY` | `https://github.com/jlapenna/agent-lcars` -- no separate var                                                                                                  |
+| push-watch target repo    | `AGENT_LCARS_PUSH_WATCH_TARGET_REPO`                | `jlapenna/homelab` -- **required**, no fallback                                                                                                               |
+| Codex central auth object | `AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT`             | `jlapenna/agent-lcars/auth.json` -- **required**, no fallback (#1751)                                                                                         |
 
 Repository identity is explicit: the watched and control-plane sets are both
 required and must match exactly. `apphosting.yaml` records that shared set so
 what production runs with is visible in config rather than only in source.
 
-Five of the values above are `required()`: maintainer login, artifact share
-base URL, this console's own URL, control-plane repository, and the
-push-watch target repo (#1731). There is no fallback to this fleet's own
-values in source any more -- a fork that leaves one unset fails the process
-boot with a clear `process.env.<NAME> not defined` message
+Six of the values above are `required()`: maintainer login, artifact share
+base URL, this console's own URL, control-plane repository, the
+push-watch target repo (#1731), and the Codex central auth object (#1751).
+There is no fallback to this fleet's own values in source any more -- a
+fork that leaves one unset fails the process boot with a clear
+`process.env.<NAME> not defined` message
 (`validateDeploymentIdentity()`, called from `instrumentation.ts`'s
 `register()`), rather than silently inheriting `jlapenna`'s identity. The
 console description is the one exception, and deliberately so: it's read
