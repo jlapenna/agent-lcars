@@ -483,10 +483,23 @@ func TestPollOnceClaimResponseTooLargeIsError(t *testing.T) {
 	}
 }
 
-func TestDirectRunnerImageUsesTheSingleQueueExecutorContract(t *testing.T) {
-	if got := directRunnerImage(); got != directRunnerImageRef {
-		t.Fatalf("directRunnerImage() = %q, want %q", got, directRunnerImageRef)
-	}
+func TestDirectRunnerImage(t *testing.T) {
+	t.Run("required", func(t *testing.T) {
+		t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "")
+		if _, err := directRunnerImage(); err == nil {
+			t.Fatalf("expected an error when LCARS_QUEUE_RUNNER_IMAGE is unset")
+		}
+	})
+	t.Run("passes through a configured image", func(t *testing.T) {
+		t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "docker-registry.lan.jlapenna.net/homelab-runner:jit-node24")
+		got, err := directRunnerImage()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "docker-registry.lan.jlapenna.net/homelab-runner:jit-node24" {
+			t.Errorf("got %q", got)
+		}
+	})
 }
 
 func TestDirectRunnerMaxConcurrent(t *testing.T) {
@@ -1120,6 +1133,7 @@ func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
 func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
 	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
 	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "/secrets/claude-code-oauth-token")
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
 
 	full := newFakeDockerServer(t)
 	full.mu.Lock()
@@ -1159,6 +1173,7 @@ func TestLaunchDirectRunnerRoundRobinsPastAFullHost(t *testing.T) {
 func TestLaunchDirectRunnerCodexDoesNotRequireClaudeTokenPath(t *testing.T) {
 	t.Setenv("LCARS_QUEUE_TELEMETRY_WRITER_HOST_PATH", "/secrets/telemetry-writer.json")
 	t.Setenv("LCARS_QUEUE_CLAUDE_TOKEN_HOST_PATH", "")
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
 
 	f := newFakeDockerServer(t)
 	resolved := resolvedOrchestratorConfig{

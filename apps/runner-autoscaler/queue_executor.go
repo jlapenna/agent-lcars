@@ -439,7 +439,10 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 	if len(order) == 0 {
 		return fmt.Errorf("no docker hosts configured to launch a direct-mode runner")
 	}
-	runnerImage := directRunnerImage()
+	runnerImage, err := directRunnerImage()
+	if err != nil {
+		return err
+	}
 	writerKeyHostPath, err := directRunnerTelemetryWriterHostPath()
 	if err != nil {
 		return err
@@ -469,10 +472,16 @@ func launchDirectRunnerWithClient(ctx context.Context, resolved resolvedOrchestr
 // directRunnerImage is the one image contract for QueueExecutor containers.
 // GitHub scale-set labels are not a QueueExecutor routing input: Claude,
 // Codex, and OpenCode all execute through this same direct-container image.
-const directRunnerImageRef = "docker-registry.lan.jlapenna.net/homelab-runner:jit-node24"
-
-func directRunnerImage() string {
-	return directRunnerImageRef
+// LCARS_QUEUE_RUNNER_IMAGE is homelab deployment knowledge (this fleet's own
+// registry and image tag) this repo cannot infer, so -- same reasoning and
+// shape as directRunnerTelemetryWriterHostPath below -- it is required,
+// explicit, and fails loudly rather than defaulting to any fleet's image.
+func directRunnerImage() (string, error) {
+	image := strings.TrimSpace(os.Getenv("LCARS_QUEUE_RUNNER_IMAGE"))
+	if image == "" {
+		return "", fmt.Errorf("LCARS_QUEUE_RUNNER_IMAGE is required to launch a direct-mode runner (the QueueExecutor container image reference, e.g. registry.example.com/homelab-runner:jit-node24)")
+	}
+	return image, nil
 }
 
 // directRunnerMaxConcurrent bounds how many direct-mode containers
