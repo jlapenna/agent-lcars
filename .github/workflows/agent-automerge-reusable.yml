@@ -399,6 +399,136 @@ jobs:
           echo "Reconciliation checked=$CHECKED armed=$ARMED failed=$FAILED"
           [ "$FAILED" -eq 0 ]
 
+      # #1748: the fleet's `Protect main` ruleset requires an up-to-date
+      # head, and GitHub's auto-merge never updates a branch on its own --
+      # so once any other PR merges, every armed PR behind it sits forever
+      # until a human rebases it (jlapenna/homelab#1121 sat 16h behind a
+      # green, armed, no-review-comments PR for exactly this reason). This
+      # is the opt-in half of the mechanism: auto-merge already being armed
+      # is the opt-in, so this acts on any author's PR, not only
+      # agent-authored ones. Parked (status:needs-human) and draft PRs are
+      # left alone, matching the arm step above. A branch update restarts
+      # CI, so this only touches a PR whose checks are already green with
+      # nothing still running, to avoid manufacturing churn on one that is
+      # mid-flight. Bounded to a handful of updates per run so one sweep
+      # cannot rewrite half the queue's heads at once.
+      - name: Update behind branches of auto-merge-armed PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          MAX_UPDATES=5
+          CANDIDATES=0
+          UPDATED=0
+          FAILED=0
+
+          OPEN_PRS_FILE="$RUNNER_TEMP/agent-automerge-behind-prs.tsv"
+          gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" \
+            --jq '.[] | select(.draft == false) | .number' \
+            >"$OPEN_PRS_FILE"
+          mapfile -t OPEN_PRS <"$OPEN_PRS_FILE"
+
+          for PR in "${OPEN_PRS[@]}"; do
+            if [ "$UPDATED" -ge "$MAX_UPDATES" ]; then
+              echo "Reached the per-run cap of $MAX_UPDATES branch update(s); stopping."
+              break
+            fi
+
+            VIEW=$(gh pr view "$PR" --repo "$REPO" \
+              --json autoMergeRequest,labels,mergeStateStatus,statusCheckRollup)
+
+            # Auto-merge armed by anyone is the opt-in for this sweep --
+            # unlike the arm step above, this is not limited to agent
+            # bot-logins.
+            if ! jq -e '
+              .autoMergeRequest != null and
+              ([.labels[].name] | index("status:needs-human") == null)
+            ' <<<"$VIEW" >/dev/null; then
+              continue
+            fi
+
+            # Every completed check must be green and none may still be
+            # running. A StatusContext (legacy commit status) carries
+            # `state` instead of CheckRun's `status`/`conclusion`; handle
+            # both shapes the same way restore-main-checks's rollup
+            # handling does.
+            if ! jq -e '
+              ([.statusCheckRollup[]?] | all(.status == null or .status == "COMPLETED")) and
+              ([.statusCheckRollup[]?] | all(
+                if has("conclusion") and .conclusion != "" then .conclusion == "SUCCESS"
+                elif has("state") then .state == "SUCCESS"
+                else true end
+              ))
+            ' <<<"$VIEW" >/dev/null; then
+              continue
+            fi
+
+            # A stale UNKNOWN is GitHub still computing mergeability from a
+            # prior state; re-view once to force a fresh read before giving
+            # up on this PR for this sweep.
+            STATUS=$(jq -r '.mergeStateStatus' <<<"$VIEW")
+            if [ "$STATUS" = UNKNOWN ]; then
+              STATUS=$(gh pr view "$PR" --repo "$REPO" \
+                --json mergeStateStatus --jq '.mergeStateStatus')
+            fi
+            if [ "$STATUS" != BEHIND ]; then
+              continue
+            fi
+            CANDIDATES=$((CANDIDATES + 1))
+
+            # gh pr view has no reviewThreads field (unlike GraphQL); ask
+            # GraphQL directly, the same way the PR-workflow doc's
+            # thread-resolution recipe does. --paginate walks every page so
+            # a busier PR's threads past the first 50 are not silently
+            # dropped.
+            # shellcheck disable=SC2016
+            UNRESOLVED=$(gh api graphql --paginate \
+              -f query='query($owner:String!,$name:String!,$pr:Int!,$endCursor:String){
+                repository(owner:$owner,name:$name){
+                  pullRequest(number:$pr){
+                    reviewThreads(first:50, after:$endCursor){
+                      nodes { isResolved }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }' \
+              -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)' \
+              | wc -l)
+            if [ "$UNRESOLVED" -gt 0 ]; then
+              echo "PR #$PR is BEHIND but has $UNRESOLVED unresolved review thread(s); leaving it for a human."
+              continue
+            fi
+
+            UPDATE_ERR="$RUNNER_TEMP/agent-automerge-update-branch-$PR.err"
+            if gh pr update-branch "$PR" --repo "$REPO" --rebase >/dev/null 2>"$UPDATE_ERR"; then
+              METHOD=rebase
+            elif gh pr update-branch "$PR" --repo "$REPO" >/dev/null 2>"$UPDATE_ERR"; then
+              # The rebase form of the update-branch API is refused for some
+              # PRs (e.g. a merge conflict rebase cannot resolve); fall back
+              # to GitHub's default merge-commit update rather than leaving
+              # the PR stuck.
+              echo "::warning::Rebase update-branch was refused for PR #$PR ($(tr '\n' ' ' <"$UPDATE_ERR")); used the default merge update instead."
+              METHOD=merge
+            else
+              echo "::error::Could not update behind branch for PR #$PR: $(tr '\n' ' ' <"$UPDATE_ERR")"
+              rm -f "$UPDATE_ERR"
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+            rm -f "$UPDATE_ERR"
+
+            NEW_HEAD=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+            echo "Updated behind branch for PR #$PR via $METHOD; new head $NEW_HEAD."
+            UPDATED=$((UPDATED + 1))
+          done
+
+          echo "Behind-branch update sweep: candidates=$CANDIDATES updated=$UPDATED failed=$FAILED (cap=$MAX_UPDATES)"
+          [ "$FAILED" -eq 0 ]
+
   restore-main-checks:
     # Three ways in: a workflow_run completion (the fast path - only fires
     # when a human push triggered the PR's CI), the original pull_request

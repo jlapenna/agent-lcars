@@ -324,6 +324,16 @@ cannot be armed, park with the exact failure instead of requesting review or
 claiming the PR is ready. A deliberately parked draft stays draft and must not
 be armed until its blocker is cleared.
 
+That backstop also keeps an armed PR moving once `main` moves out from under
+it: under a strict "up to date" ruleset, GitHub's own auto-merge never
+updates a BEHIND branch on its own, so a scheduled sweep in
+`reconcile-automerge` rebases (falling back to a merge update if rebase is
+refused) any open, non-draft, non-parked PR with auto-merge armed and green,
+non-running checks and no unresolved review thread, capped at a few updates
+per run (#1748). Do not manually rebase an armed, green, unparked PR to chase
+a moving `main` — that sweep runs on a short interval and will pick it up;
+spend your own turn budget on the actual work instead.
+
 ## 7. Budget discipline
 
 State your job's hard timeout up front (check your own workflow's

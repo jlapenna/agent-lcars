@@ -37,6 +37,19 @@ their operating constraints.
 Hosted provider workflows are retired; providers execute through the Console
 QueueExecutor instead.
 
+`agent-automerge-reusable.yml`'s `reconcile-automerge` job also updates a
+BEHIND branch on any open, non-draft, non-parked PR that already has
+auto-merge armed (any author -- arming auto-merge is the opt-in, not
+agent-authorship): GitHub's own auto-merge arms a PR but never updates its
+branch, so under a strict "up to date" ruleset a PR whose head falls behind
+`main` after another merge stalls indefinitely until a human rebases it
+(#1748; jlapenna/homelab#1121 sat 16 hours this way with green checks and
+auto-merge armed). The sweep only acts once a PR's checks are all green with
+none still running and it has no unresolved review thread, re-checks a
+stale `UNKNOWN` mergeability once, prefers `gh pr update-branch --rebase`
+and falls back to the default merge-commit update if the rebase form is
+refused, and is capped at 5 updates per run.
+
 ## Not consumer surfaces
 
 | Tier     | Names                              |
