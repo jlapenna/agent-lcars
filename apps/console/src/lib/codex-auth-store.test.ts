@@ -2,11 +2,11 @@ import type { Bucket } from '@google-cloud/storage';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  CODEX_CENTRAL_AUTH_OBJECT,
   CODEX_GLOBAL_LEASE_OBJECT,
   CodexAuthStoreError,
   GcsCodexAuthStore,
 } from './codex-auth-store';
+import { codexCentralAuthObject } from './deployment';
 
 describe('GcsCodexAuthStore', () => {
   it('downloads the exact generation whose metadata it observed', async () => {
@@ -24,8 +24,8 @@ describe('GcsCodexAuthStore', () => {
 
     const snapshot = await store.read();
 
-    expect(file).toHaveBeenNthCalledWith(1, CODEX_CENTRAL_AUTH_OBJECT);
-    expect(file).toHaveBeenNthCalledWith(2, CODEX_CENTRAL_AUTH_OBJECT, {
+    expect(file).toHaveBeenNthCalledWith(1, codexCentralAuthObject());
+    expect(file).toHaveBeenNthCalledWith(2, codexCentralAuthObject(), {
       generation: '1700000000000001',
     });
     expect(download).toHaveBeenCalledWith({ validation: 'crc32c' });

@@ -47,6 +47,22 @@ RUNNER_ENVIRONMENT=self-hosted \
 grep -Fq 'stop ci-log-stream' "$calls" || \
   fail 'stop did not delegate when the page directory was gone'
 
+# No loki-url input (or repository variable) supplied: this is the
+# fail-soft disabled-shipper state (#1751 removed the fleet-specific
+# action.yml default), so it must no-op AND surface an explicit
+# ::notice:: rather than silently shipping nowhere.
+mkdir -p "$page_dir"
+rm -f "$calls"
+notice_output="$test_root/notice-output"
+RUNNER_ENVIRONMENT=self-hosted \
+  JOB_DAEMON_BIN="$stub" \
+  CALLS="$calls" \
+  AGENT_LCARS_CI_LOG_PAGE_DIR="$page_dir" \
+  "$action_dir/lifecycle.sh" start >"$notice_output"
+[ ! -e "$calls" ] || fail 'empty Loki URL start called the daemon'
+grep -Fq '::notice::ci-log-stream:' "$notice_output" || \
+  fail 'empty Loki URL start did not emit an explicit ::notice::'
+
 RUNNER_ENVIRONMENT=self-hosted \
   JOB_DAEMON_BIN="$stub" \
   CALLS="$calls" \

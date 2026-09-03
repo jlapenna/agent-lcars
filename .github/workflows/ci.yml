@@ -44,6 +44,11 @@ jobs:
         uses: ./.github/actions/ci-log-stream
         with:
           mode: start
+          # No fleet default lives in the action itself (#1751); this
+          # repository variable supplies this deployment's Loki endpoint.
+          # Unset (a fork with no CI_LOG_LOKI_URL variable) cleanly disables
+          # the shipper rather than silently pushing to homelab's Loki.
+          loki-url: ${{ vars.CI_LOG_LOKI_URL }}
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:

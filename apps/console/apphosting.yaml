@@ -64,6 +64,14 @@ env:
     availability:
       - RUNTIME
 
+  # GCS object path for the one centrally-owned Codex subscription
+  # credential (see lib/deployment.ts's codexCentralAuthObject and
+  # lib/codex-auth-store.ts). Required, no fallback (#1731, #1751).
+  - variable: AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT
+    value: 'jlapenna/agent-lcars/auth.json'
+    availability:
+      - RUNTIME
+
   # Optional -- see lib/deployment.ts's consoleDescription. Set explicitly
   # so this deployment's own page metadata stays what it has always been,
   # even though an unset value now falls back to a generic description

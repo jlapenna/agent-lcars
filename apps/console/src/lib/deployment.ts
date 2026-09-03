@@ -239,6 +239,20 @@ export function agentSessionResumeScript(): string {
 }
 
 /**
+ * GCS object path holding the one centrally-owned Codex subscription
+ * credential. The Console owns the one rotating Codex subscription
+ * lineage; target repositories are authorized by the broker-bound run
+ * token, not by choosing a different credential object per repository (see
+ * `codex-auth-store.ts`'s doc comment for the rest of the storage
+ * contract). `required()`, no jlapenna-shaped fallback (#1731, #1751): a
+ * fork that forgets to set this fails closed at startup instead of quietly
+ * reading and writing this fleet's own bucket object.
+ */
+export function codexCentralAuthObject(): string {
+  return required('AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT');
+}
+
+/**
  * Base URL the share-media skill's files are served from. Files land at
  * `~/share/<conversation-id>/<filename>` on the originating host and are
  * served under `<base>/<host>/...` (LAN/Tailscale-only, behind Authelia).
@@ -281,4 +295,5 @@ export function validateDeploymentIdentity(): void {
   artifactShareBaseUrl();
   pushWatchTargetRepo();
   consoleRepositoryUrl();
+  codexCentralAuthObject();
 }

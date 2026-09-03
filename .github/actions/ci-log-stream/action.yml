@@ -8,9 +8,14 @@ inputs:
     description: Start or stop the in-job shipper.
     required: true
   loki-url:
-    description: Loki push API endpoint reachable from trusted fleet runners.
+    description: >-
+      Loki push API endpoint reachable from trusted fleet runners. No
+      default: an unset or empty value is this action's normal
+      disabled-shipper state (lifecycle.sh no-ops when
+      AGENT_LCARS_CI_LOG_LOKI_URL is empty), matching every other fail-soft
+      branch in this action rather than shipping a fleet-specific default
+      into forks or other consumers.
     required: false
-    default: http://homelab.lan.jlapenna.net:3100/loki/api/v1/push
 
 runs:
   using: composite

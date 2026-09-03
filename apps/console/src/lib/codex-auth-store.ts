@@ -4,13 +4,9 @@ import crypto from 'node:crypto';
 
 import { type Bucket, Storage } from '@google-cloud/storage';
 
+import { codexCentralAuthObject } from './deployment';
+
 export const CODEX_AUTH_MAX_BYTES = 256 * 1024;
-/**
- * The Console owns the one rotating Codex subscription lineage. Target
- * repositories are authorized by the broker-bound run token, not by choosing
- * a different credential object for each repository.
- */
-export const CODEX_CENTRAL_AUTH_OBJECT = 'jlapenna/agent-lcars/auth.json';
 export const CODEX_GLOBAL_LEASE_OBJECT = '_leases/codex-subscription.json';
 
 export type CodexAuthStoreErrorKind =
@@ -120,7 +116,7 @@ export class GcsCodexAuthStore implements CodexAuthStore {
   constructor(private readonly bucket: Bucket) {}
 
   async read(): Promise<CodexAuthSnapshot> {
-    const name = CODEX_CENTRAL_AUTH_OBJECT;
+    const name = codexCentralAuthObject();
     try {
       const [metadata] = await this.bucket.file(name).getMetadata();
       const generation = metadata.generation;
@@ -270,7 +266,7 @@ export class GcsCodexAuthStore implements CodexAuthStore {
   }): Promise<void> {
     const bytes = decodedAuth(input.authBase64);
     try {
-      await this.bucket.file(CODEX_CENTRAL_AUTH_OBJECT).save(bytes, {
+      await this.bucket.file(codexCentralAuthObject()).save(bytes, {
         resumable: false,
         validation: 'crc32c',
         preconditionOpts: {

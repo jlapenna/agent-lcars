@@ -5,6 +5,7 @@ import {
   agentFleetLogin,
   agentSessionResumeScript,
   artifactShareBaseUrl,
+  codexCentralAuthObject,
   consoleDescription,
   consoleRepositoryUrl,
   consoleUrl,
@@ -32,6 +33,7 @@ const VARS = [
   'AGENT_LCARS_CONSOLE_DESCRIPTION',
   'AGENT_LCARS_PUSH_WATCHED_REPOS',
   'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
+  'AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT',
 ] as const;
 
 afterEach(() => {
@@ -98,6 +100,19 @@ describe('deployment config', () => {
     delete process.env['AGENT_LCARS_ARTIFACT_SHARE_BASE_URL'];
     expect(() => artifactShareBaseUrl()).toThrow(
       'AGENT_LCARS_ARTIFACT_SHARE_BASE_URL',
+    );
+  });
+
+  it('reads the Codex central auth object path from the environment', () => {
+    process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'] =
+      'other-owner/other-repo/auth.json';
+    expect(codexCentralAuthObject()).toBe('other-owner/other-repo/auth.json');
+  });
+
+  it('fails closed when the Codex central auth object path is unset -- no jlapenna fallback', () => {
+    delete process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'];
+    expect(() => codexCentralAuthObject()).toThrow(
+      'AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT',
     );
   });
 
@@ -300,6 +315,8 @@ describe('deployment config', () => {
         'https://share.example.test';
       process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'] = 'owner/target';
       process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORY'] = 'owner/console';
+      process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'] =
+        'owner/console/auth.json';
     }
 
     it('succeeds silently when every identity variable is set', () => {
@@ -320,6 +337,14 @@ describe('deployment config', () => {
       delete process.env['AGENT_LCARS_PUSH_WATCH_TARGET_REPO'];
       expect(() => validateDeploymentIdentity()).toThrow(
         'AGENT_LCARS_PUSH_WATCH_TARGET_REPO',
+      );
+    });
+
+    it('fails when the Codex central auth object path is unset', () => {
+      completeEnv();
+      delete process.env['AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT'];
+      expect(() => validateDeploymentIdentity()).toThrow(
+        'AGENT_LCARS_CODEX_CENTRAL_AUTH_OBJECT',
       );
     });
   });
