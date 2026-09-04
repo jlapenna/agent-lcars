@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import { revalidateTag } from 'next/cache';
 import { NextResponse } from 'next/server';
@@ -84,7 +85,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       required('AGENT_LCARS_WEBHOOK_SECRET'),
     )
   ) {
-    console.warn('agent-lcars: rejected queued webhook with bad signature');
+    logger.warn('agent-lcars: rejected queued webhook with bad signature');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -124,10 +125,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         payload,
       },
     );
-    console.info(
-      'agent-lcars: orchestrator webhook delivery processed',
-      result,
-    );
+    logger.info('agent-lcars: orchestrator webhook delivery processed', result);
     return NextResponse.json(result.body, {
       status: result.status,
       headers: { 'Cache-Control': 'no-store' },
@@ -139,7 +137,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // (structured, severity ERROR) so the drop stays observable; the
       // reconcile scan rebuilds any state the event carried from GitHub
       // itself.
-      console.error(
+      logger.error(
         JSON.stringify({
           severity: 'ERROR',
           message:
@@ -171,7 +169,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           signature: header(request, 'x-hub-signature-256'),
           repairGeneration: repairGeneration + 1,
         });
-        console.error(
+        logger.error(
           `agent-lcars: handed projection-only webhook repair generation ${repairGeneration + 1} to a durable successor after ${attempt} attempts`,
           error,
         );
@@ -180,7 +178,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           { status: 200, headers: { 'Cache-Control': 'no-store' } },
         );
       }
-      console.error(
+      logger.error(
         `agent-lcars: retaining projection-only webhook repair after ${attempt} attempts`,
         error,
       );
@@ -190,7 +188,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
     if (attempt >= MAX_PROCESS_ATTEMPTS) {
-      console.error(
+      logger.error(
         `agent-lcars: dropping webhook delivery after ${attempt} failed attempts; reconcile will heal any state it carried`,
         error,
       );
@@ -199,7 +197,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 200, headers: { 'Cache-Control': 'no-store' } },
       );
     }
-    console.error('agent-lcars: orchestrator webhook delivery failed', error);
+    logger.error('agent-lcars: orchestrator webhook delivery failed', error);
     return NextResponse.json(
       { error: 'Hosted admission failed' },
       { status: 500 },

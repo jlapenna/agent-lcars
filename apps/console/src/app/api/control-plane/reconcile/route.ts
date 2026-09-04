@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { NextResponse } from 'next/server';
 
 import {
@@ -23,7 +24,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       repository,
     );
   } catch (error) {
-    console.warn('agent-lcars: rejected hosted reconcile request', error);
+    logger.warn('agent-lcars: rejected hosted reconcile request', error);
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -38,13 +39,13 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const result = await handleReconcile(createOrchestratorRuntime());
-    console.info('agent-lcars: orchestrator reconcile completed', result);
+    logger.info('agent-lcars: orchestrator reconcile completed', result);
     return NextResponse.json(result.body, {
       status: result.status,
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    console.error('agent-lcars: orchestrator reconcile failed', error);
+    logger.error('agent-lcars: orchestrator reconcile failed', error);
     return NextResponse.json({ error: 'internal' }, { status: 500 });
   }
 }

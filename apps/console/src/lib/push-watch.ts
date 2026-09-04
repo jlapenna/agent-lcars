@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { ScheduleStore } from '@agent-lcars/orchestrator';
 import { optional } from '@agent-lcars/util-server';
 
@@ -218,7 +219,7 @@ export async function handlePushWebhookDelivery(
   // crashing on `grant.pipelines`.
   const grant = grantForPrincipal(PUSH_WATCH_PRINCIPAL, context.grants());
   if (grant === undefined) {
-    console.error(
+    logger.error(
       'agent-lcars: push-watch mint refused, no grant configured for',
       PUSH_WATCH_PRINCIPAL,
     );
@@ -239,7 +240,7 @@ export async function handlePushWebhookDelivery(
   });
 
   if (result.kind === 'forbidden' || result.kind === 'conflict') {
-    console.error('agent-lcars: push-watch mint refused', result.message);
+    logger.error('agent-lcars: push-watch mint refused', result.message);
     return {
       status: 200,
       body: { deliveryId: input.deliveryId, refused: result.message },
