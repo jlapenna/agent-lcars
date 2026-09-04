@@ -584,10 +584,11 @@ independent of each other and can run in parallel worktrees. Status as of
    Rollout restore, `codex exec resume`, `-o` capture, and `codex` in
    `RESUMABLE_PIPELINES`. No `fleet-tools` adapter was added; the session
    page's note was narrowed instead. **Proof 3 outstanding.**
-4. **OpenCode continuity** — **not started, blocked on decision 3.** The
-   measurement below shows a sanitized export cannot carry a
-   conversation, so this sub-project exists only if raw exports may be
-   archived. No plan has been written, deliberately.
+4. **OpenCode continuity** — **decision 3 decided 2026-09-04 (archive
+   the raw export); planned in
+   `…-4-opencode.md`.** A second, raw artifact is archived beside the
+   sanitized one and pointed at by a new `resumeGcsUri`; the sanitized
+   artifact the console renders is unchanged. Proof 4 outstanding.
 5. **Slack threads** — **not started.** `origin.thread`, the `slack`
    channel, the outbox webhook case, and the sprinkles bot changes (root
    message, thread listener, reply call, webhook receiver). Depends on
@@ -637,12 +638,15 @@ token counts. Neither artifact can rebuild a conversation.
    anchor resumes the agent (recommended, behind a flag), or only
    comments carrying a trigger word do.
 2. **Reply on `done` items.** Allowed (recommended) or parked only.
-3. **Raw OpenCode exports in the transcripts bucket.** Same treatment as
-   the raw Claude and Codex archives (recommended), or keep OpenCode
-   non-resumable. Measurement (below) removes the third option this was
-   written to leave open: a sanitized export cannot carry a conversation,
-   so there is no middle path, and OpenCode continuity stands or falls on
-   this decision alone.
+3. **Raw OpenCode exports in the transcripts bucket.** **Decided
+   2026-09-04 by the maintainer: archive the raw export, the same
+   treatment Claude and Codex already get.** Measurement (below) had
+   already removed the third option this was written to leave open — a
+   sanitized export cannot carry a conversation, so there was no middle
+   path, and OpenCode continuity stood or fell on this decision alone.
+   Implemented by plan 4: a second, raw artifact is archived beside the
+   sanitized one, and the sanitized artifact the console renders is
+   unchanged.
 4. **Slack outbound via the outbox webhook** (recommended, reliable and
    consistent with GitHub outcome comments) or the bot polling
    `GET /items?state=parked` on a timer (no new inbound endpoint in
