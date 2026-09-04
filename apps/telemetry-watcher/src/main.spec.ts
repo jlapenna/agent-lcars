@@ -212,4 +212,61 @@ describe('runner resume subcommand', () => {
     expect(first).toBe(second);
     expect(fs.readFileSync(second as string, 'utf8')).toBe('{"line":2}\n');
   });
+
+  // Task 2 (direct-runner.sh) invokes `runner resume --agent codex
+  // --codex-home "$CODEX_HOME" ...`. The flag parser must thread both
+  // through to resumeTranscript so a codex rollout lands under CODEX_HOME
+  // rather than the Claude projects dir.
+  it('threads --agent codex and --codex-home through to resumeTranscript', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resume-'));
+    const codexHome = path.join(tmp, 'codex-home');
+    const printed = await _runRunnerResumeForTesting(
+      [
+        '--agent',
+        'codex',
+        '--session-id',
+        '019fb1be-238c-77d2-a0b2-14961c202368',
+        '--transcript-uri',
+        'gs://bucket/runs/r1/codex/019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
+        '--cwd',
+        '/home/runner/work/repo/repo',
+        '--codex-home',
+        codexHome,
+      ],
+      { download: async () => '{"type":"session_meta"}\n' },
+    );
+    const expected = path.join(
+      codexHome,
+      'sessions/1970/01/01',
+      'rollout-1970-01-01T00-00-00-019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
+    );
+    expect(printed).toBe(expected);
+    expect(fs.readFileSync(expected, 'utf8')).toBe('{"type":"session_meta"}\n');
+  });
+
+  // Defaults to claude-code so every existing production call site (none
+  // of which pass --agent) is unaffected.
+  it('defaults to the claude-code agent when --agent is omitted', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resume-'));
+    const projectsDir = path.join(tmp, 'projects');
+    const printed = await _runRunnerResumeForTesting(
+      [
+        '--session-id',
+        'sess_1',
+        '--transcript-uri',
+        'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+        '--cwd',
+        '/home/runner/work/repo/repo',
+        '--projects-dir',
+        projectsDir,
+      ],
+      { download: async () => '{"line":1}\n' },
+    );
+    const expected = path.join(
+      projectsDir,
+      '-home-runner-work-repo-repo',
+      'sess_1.jsonl',
+    );
+    expect(printed).toBe(expected);
+  });
 });

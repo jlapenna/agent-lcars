@@ -6,10 +6,14 @@ import * as path from 'path';
 import { downloadTranscript } from './transcript-upload';
 
 export interface ResumeTranscriptOptions {
+  /** Defaults to 'claude-code' so existing callers are unchanged. */
+  agent?: 'claude-code' | 'codex';
   sessionId: string;
   transcriptGcsUri: string;
   cwd: string;
   claudeProjectsDir: string;
+  /** Required when `agent` is 'codex': the per-run CODEX_HOME. */
+  codexHome?: string;
   projectId?: string;
   download?: (
     gcsUri: string,
@@ -17,6 +21,40 @@ export interface ResumeTranscriptOptions {
   ) => Promise<string>;
   mkdir?: (dir: string) => void;
   writeFile?: (filePath: string, contents: string) => void;
+}
+
+/**
+ * Where the restored transcript has to land for each CLI to find it.
+ *
+ * Claude Code keys its store by a slug of the checkout directory, so the
+ * path depends on `cwd`. Codex does not: it resolves a thread by the uuid
+ * in the rollout's basename, and ignores both the date directory and the
+ * timestamp in the name (measured against codex-cli 0.151.0 and
+ * re-confirmed against the runner image's actual 0.153.2; see the plan's
+ * "Verified Codex behavior" table). The epoch date below is therefore a
+ * deliberate constant, not a derived value -- it makes a restored rollout
+ * obvious on sight and avoids inventing a timestamp the archive no longer
+ * carries, since the uploader renames the file to `<sessionId>.jsonl`.
+ *
+ * Returns `undefined` when `agent` is 'codex' but no `codexHome` was
+ * given -- the caller is direct-runner.sh, which only knows CODEX_HOME
+ * inside the codex branch, so a missing one here is a caller bug, not
+ * something to crash on.
+ */
+function destinationFor(options: ResumeTranscriptOptions): string | undefined {
+  if ((options.agent ?? 'claude-code') === 'codex') {
+    if (options.codexHome === undefined) return undefined;
+    return path.join(
+      options.codexHome,
+      'sessions/1970/01/01',
+      `rollout-1970-01-01T00-00-00-${options.sessionId}.jsonl`,
+    );
+  }
+  return path.join(
+    options.claudeProjectsDir,
+    claudeProjectSlugFor(options.cwd),
+    `${options.sessionId}.jsonl`,
+  );
 }
 
 /**
@@ -57,17 +95,14 @@ export async function resumeTranscript(
     ((filePath: string, contents: string) =>
       fs.writeFileSync(filePath, contents));
 
-  const dir = path.join(
-    options.claudeProjectsDir,
-    claudeProjectSlugFor(options.cwd),
-  );
-  const file = path.join(dir, `${options.sessionId}.jsonl`);
+  const file = destinationFor(options);
+  if (file === undefined) return undefined;
 
   try {
     const contents = await download(options.transcriptGcsUri, {
       projectId: options.projectId,
     });
-    mkdir(dir);
+    mkdir(path.dirname(file));
     writeFile(file, contents);
     return file;
   } catch (error) {
