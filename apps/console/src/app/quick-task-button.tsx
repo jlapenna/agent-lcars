@@ -83,7 +83,15 @@ function deriveQuickTaskItemState(
   if (!latest) return 'unknown';
   if (latest.state === 'pending' || latest.state === 'running')
     return 'running';
-  if (latest.state === 'finished') return latest.result?.ok ? 'done' : 'parked';
+  if (latest.state === 'finished') {
+    // #1608 put `park` in OK_OUTCOMES (apps/console/src/lib/run-result.ts),
+    // so a run that parked with real evidence now settles `ok: true` too --
+    // `summary` is what still distinguishes it from an ordinary success.
+    // Same rule as `@agent-lcars/work`'s `deriveItemState` (#1759).
+    return latest.result?.ok && latest.result.summary !== 'park'
+      ? 'done'
+      : 'parked';
+  }
   return 'parked'; // 'canceled' | 'lost'
 }
 
