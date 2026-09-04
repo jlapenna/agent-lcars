@@ -1,17 +1,23 @@
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 import { logger } from '@agent-lcars/logging';
 import { initNodeLogging } from '@agent-lcars/logging/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** The control-plane ingestion path: every module whose logs are read to
- *  answer "did this delivery arrive, and why did it fail". */
+ *  answer "did this delivery arrive, and why did it fail".
+ *
+ *  Resolved against this file rather than the working directory: CI runs
+ *  this project's vitest with its cwd at `apps/console`, so repo-relative
+ *  paths silently resolve to nothing there while passing from the repo root.
+ */
 const INGESTION_MODULES = [
-  'apps/console/src/app/api/control-plane/webhook/route.ts',
-  'apps/console/src/app/api/control-plane/webhook/process/route.ts',
-  'apps/console/src/app/api/control-plane/reconcile/route.ts',
-  'apps/console/src/lib/orchestrator-routes.ts',
-  'apps/console/src/lib/push-watch.ts',
+  '../app/api/control-plane/webhook/route.ts',
+  '../app/api/control-plane/webhook/process/route.ts',
+  '../app/api/control-plane/reconcile/route.ts',
+  './orchestrator-routes.ts',
+  './push-watch.ts',
 ];
 
 describe('control-plane structured logging', () => {
@@ -65,7 +71,10 @@ describe('control-plane structured logging', () => {
   it('routes every control-plane ingestion log through the shared logger', async () => {
     const offenders: string[] = [];
     for (const path of INGESTION_MODULES) {
-      const source = await readFile(path, 'utf8');
+      const source = await readFile(
+        fileURLToPath(new URL(path, import.meta.url)),
+        'utf8',
+      );
       const bare = source.match(/\bconsole\.(error|warn|info|log|debug)\(/g);
       if (bare) offenders.push(`${path}: ${bare.join(', ')}`);
     }
