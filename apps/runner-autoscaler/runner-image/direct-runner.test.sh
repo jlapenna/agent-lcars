@@ -280,6 +280,19 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
 printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
+# Real codex writes the final message to the file named by
+# --output-last-message, not to stdout -- opt-in, mirroring the fake
+# claude's own FAKE_CLAUDE_STDOUT convention.
+if [ -n "${FAKE_CODEX_LAST_MESSAGE:-}" ]; then
+  prev=''
+  for arg in "$@"; do
+    if [ "$prev" = "--output-last-message" ]; then
+      printf '%s' "$FAKE_CODEX_LAST_MESSAGE" > "$arg"
+      break
+    fi
+    prev="$arg"
+  done
+fi
 if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   [ -n "${ATTEMPT_ID:-}" ] || exit 2
   [ -n "${NATIVE_WORK_OUTCOME_FILE:-}" ] || exit 2
@@ -540,12 +553,13 @@ fi
 
 echo "scenario happy-path: OK"
 
-# --- Scenario 1a: Codex provider dispatch and auth broker -------------------
-# Codex must run without the Claude host-token mount, restore only through the
-# run-token broker, and persist the changed auth.json with the exact restored
-# generation/hash. A resume object is deliberately present in the brief: Codex
-# has archived telemetry but no live-resume implementation, so runner resume
-# must remain Claude-only.
+# --- Scenario 1a: Codex provider dispatch, resume, and the auth broker ------
+# Codex must run without the Claude host-token mount, restore only through
+# the run-token broker, and persist the changed auth.json with the exact
+# restored generation/hash. The default brief's resume object (session
+# sess_1) must now resume the same Codex thread: runner resume gets
+# --agent codex and --codex-home, and codex itself gets `exec resume
+# sess_1`, keeping --json and the bypass flag exactly as before.
 export FAKE_MISSING_CLAUDE_TOKEN=1
 run_scenario codex-happy codex
 unset FAKE_MISSING_CLAUDE_TOKEN
@@ -554,7 +568,7 @@ unset FAKE_MISSING_CLAUDE_TOKEN
 [ -s "$CODEX_ARGS_LOG" ] || fail "codex happy path: codex was not invoked"
 [ "$(cat "$CODEX_ENV_LOG")" = "$FAKE_TOKEN" ] ||
   fail "codex happy path: Codex did not receive the short-lived rerun token ($(cat "$CODEX_ENV_LOG"))"
-grep -q -- 'exec --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
+grep -q -- 'exec resume sess_1 --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
   fail "codex happy path: wrong invocation ($(cat "$CODEX_ARGS_LOG"))"
 if grep -q -- '--ephemeral' "$CODEX_ARGS_LOG"; then
   fail "codex happy path: ephemeral execution suppresses telemetry sessions"
@@ -562,10 +576,17 @@ fi
 [ ! -f "$CLAUDE_ARGS_LOG" ] || fail "codex happy path: claude was invoked"
 [ -s "$CODEX_SESSIONS_DIR_LOG" ] || fail "codex happy path: fake Codex did not receive its session root"
 codex_sessions_dir="$(cat "$CODEX_SESSIONS_DIR_LOG")"
-if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
-  fail "codex happy path: Claude resume helper was invoked"
-fi
 [ -f "$NODE_ARGS_LOG" ] || fail "codex happy path: sidecar never invoked node"
+grep -q -- 'runner resume' "$NODE_ARGS_LOG" ||
+  fail "codex happy path: runner resume was not invoked despite a resume brief ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--agent codex' "$NODE_ARGS_LOG" ||
+  fail "codex happy path: runner resume was not passed --agent codex ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- "--codex-home $LCARS_CODEX_VOLATILE_DIR" "$NODE_ARGS_LOG" ||
+  fail "codex happy path: runner resume was not passed --codex-home ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--session-id sess_1' "$NODE_ARGS_LOG" ||
+  fail "codex happy path: runner resume was not passed the session id ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE_ARGS_LOG" ||
+  fail "codex happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
 sidecar_session_calls="$(grep -Fc -- "--codex-sessions-dir $codex_sessions_dir" "$NODE_ARGS_LOG" || true)"
 if [ "$sidecar_session_calls" -lt 2 ]; then
   fail "codex happy path: sidecar start/finalize did not both receive Codex sessions root ($(cat "$NODE_ARGS_LOG"))"
@@ -581,6 +602,59 @@ if find "$LCARS_CODEX_VOLATILE_DIR" -mindepth 1 -print -quit | grep -q .; then
 fi
 
 echo "scenario codex-happy: OK"
+
+# --- Scenario 1a-i: no resume in the brief keeps the fresh codex path -------
+# Regression pin: a brief with no `resume` field must leave Codex's dispatch
+# byte-identical to today -- no `runner resume` invocation, and codex gets
+# plain `exec`, never `resume`.
+export FAKE_BRIEF_NO_RESUME=1
+run_scenario codex-no-resume codex
+unset FAKE_BRIEF_NO_RESUME
+
+[ "$rc" -eq 0 ] || fail "codex no-resume: expected exit 0, got $rc"
+if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
+  fail "codex no-resume: runner resume was invoked despite no resume field in the brief ($(cat "$NODE_ARGS_LOG"))"
+fi
+grep -q -- 'exec --json --dangerously-bypass-approvals-and-sandbox' "$CODEX_ARGS_LOG" ||
+  fail "codex no-resume: codex was not invoked with a fresh exec ($(cat "$CODEX_ARGS_LOG"))"
+if grep -q -- 'exec resume' "$CODEX_ARGS_LOG"; then
+  fail "codex no-resume: codex received a resume subcommand despite no resume field in the brief ($(cat "$CODEX_ARGS_LOG"))"
+fi
+
+echo "scenario codex-no-resume: OK"
+
+# --- Scenario 1a-ii: a requested Codex restore that fails is fatal ----------
+# A resume request that cannot be restored must never silently become a
+# fresh Codex thread -- same fail-closed contract as Claude's resume-failed
+# scenario above.
+export FAKE_RESUME_FAIL=1
+run_scenario codex-resume-failed codex
+unset FAKE_RESUME_FAIL
+
+[ "$rc" -ne 0 ] || fail "codex resume-failed: expected a restore failure"
+[ -f "$COMPLETE_LOG" ] || fail "codex resume-failed: direct-runner.sh never called POST .../complete"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "codex resume-failed: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+[ ! -f "$CODEX_ARGS_LOG" ] ||
+  fail "codex resume-failed: codex started after a failed restore ($(cat "$CODEX_ARGS_LOG"))"
+
+echo "scenario codex-resume-failed: OK"
+
+# --- Scenario 1a-iii: the agent's final message reaches /complete -----------
+# Real codex writes its last message to the file named by
+# --output-last-message, not to stdout; direct-runner.sh must read that file
+# into the same `message` field Claude's stdout capture already produces.
+export FAKE_CODEX_LAST_MESSAGE='PARK waiting on the maintainer'
+run_scenario codex-last-message codex
+unset FAKE_CODEX_LAST_MESSAGE
+
+[ "$rc" -eq 0 ] || fail "codex last-message: expected exit 0, got $rc"
+grep -q -- '--output-last-message' "$CODEX_ARGS_LOG" ||
+  fail "codex last-message: codex was not invoked with --output-last-message ($(cat "$CODEX_ARGS_LOG"))"
+jq -e '.message | contains("PARK waiting on the maintainer")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex last-message: complete payload did not carry the captured message ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario codex-last-message: OK"
 
 # A positive #1192 refresh-failure signature must reach the broker as the
 # narrow enum that makes persistence an authoritative no-write. The agent run

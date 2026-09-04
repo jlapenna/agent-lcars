@@ -458,6 +458,38 @@ CURLCFG
   fi
   codex login status
 
+  # Native work items sub-project 9 (resumable conversations, plan 3): a
+  # requested resume must restore Codex's own thread, exactly as the
+  # Claude branch above does for its own CLI. This must run after
+  # $CODEX_HOME is seeded from the image config copy-in and after the
+  # auth restore just above, and before codex exec -- ordering the plan
+  # calls load-bearing, because CODEX_HOME does not exist until now.
+  CODEX_RESUME_ARGS=()
+  if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
+    # Same telemetry-writer credential and project the upload used. A
+    # caller that asked to resume must never silently become a fresh
+    # thread, so any failure here is fatal -- matching the Claude branch.
+    if ! resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
+      AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+      node /usr/local/lib/agent-lcars/sidecar.cjs runner resume \
+      --agent codex --codex-home "$CODEX_HOME" \
+      --session-id "$RESUME_SESSION_ID" --transcript-uri "$RESUME_TRANSCRIPT_URI" \
+      --cwd "$PWD" 2>/dev/null)"; then
+      echo "FATAL: requested Codex session restore failed" >&2
+      exit 1
+    fi
+    if [ -z "$resumed_path" ]; then
+      echo "FATAL: requested Codex session restore returned no local path" >&2
+      exit 1
+    fi
+    # Codex resolves the thread by the uuid in that file's name; no
+    # migration step is needed and the recorded cwd need not match
+    # (measured against codex-cli 0.151.0 and re-confirmed against the
+    # runner image's actual 0.153.2 -- see the plan's "Verified Codex
+    # behavior" table).
+    CODEX_RESUME_ARGS=(resume "$RESUME_SESSION_ID")
+  fi
+
   CODEX_FAILURE_MESSAGES="$CODEX_RUNTIME_DIR/failure-messages"
   CODEX_STDERR="$CODEX_RUNTIME_DIR/stderr"
   CODEX_STDERR_PIPE="$CODEX_RUNTIME_DIR/stderr.pipe"
@@ -477,9 +509,17 @@ CURLCFG
   fi
   tee "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
   CODEX_STDERR_TEE_PID=$!
+  # Deviation from the plan: NOT under $CODEX_RUNTIME_DIR. That whole
+  # directory is rm -rf'd by cleanup_codex_material once finalize runs,
+  # which happens before the completion payload below reads
+  # $LAST_MESSAGE_FILE -- a file placed there would already be gone.
+  # $RUNNER_TEMP lives for the whole script, exactly where Claude's own
+  # LAST_MESSAGE_FILE already lives.
+  CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
   set +e
   timeout --signal=TERM --kill-after=30s "${CODEX_TIMEOUT_SECONDS}s" \
-    codex exec --json --dangerously-bypass-approvals-and-sandbox \
+    codex exec "${CODEX_RESUME_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
+    --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
     "$AGENT_PROMPT" 2> "$CODEX_STDERR_PIPE" |
     while IFS= read -r codex_event; do
       printf '%s\n' "$codex_event"
@@ -496,6 +536,11 @@ CURLCFG
     done
   AGENT_EXIT=${PIPESTATUS[0]}
   set -e
+  # Same shared completion payload build plan 1 added for Claude
+  # (`$LAST_MESSAGE_FILE`, read near the end of this script) -- Codex's
+  # final message lands in its own `-o`/`--output-last-message` file
+  # instead of stdout, so point the shared variable at it here.
+  LAST_MESSAGE_FILE="$CODEX_LAST_MESSAGE_FILE"
   wait "$CODEX_STDERR_TEE_PID" || true
   CODEX_STDERR_TEE_PID=''
   rm -f -- "$CODEX_STDERR_PIPE"

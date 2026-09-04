@@ -82,6 +82,22 @@ describe('selectResumeSession', () => {
     ).toBeUndefined();
     expect(selectResumeSession([session({})], runIds, 'codex')).toBeUndefined();
   });
+
+  it('selects a codex session for a codex reply', () => {
+    const doc = session({ agent: 'codex' });
+    expect(selectResumeSession([doc], runIds, 'codex')?.sessionId).toBe(
+      doc.sessionId,
+    );
+  });
+
+  it('still refuses to cross pipelines', () => {
+    expect(
+      selectResumeSession([session({ agent: 'codex' })], runIds, 'claude'),
+    ).toBeUndefined();
+    expect(
+      selectResumeSession([session({ agent: 'claude-code' })], runIds, 'codex'),
+    ).toBeUndefined();
+  });
 });
 
 // Matches vitest-setup.ts's default AGENT_LCARS_CONTROL_PLANE_REPOSITORIES

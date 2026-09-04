@@ -225,9 +225,31 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           </Stack>
         )}
 
+      {/* Codex sessions are archived raw and are now genuinely resumable
+          (resumable-conversations plan 3): a reply on the owning work item
+          resumes this exact thread through `POST /items/{id}/reply`
+          (`work-reply.ts`'s `RESUMABLE_PIPELINES`). What is still missing
+          is only the *operator's own workstation* command -- `fleet-tools`
+          has no Codex adapter for `resume-archive` yet -- so this note
+          must not claim the conversation itself is stuck, only that the
+          manual command doesn't exist. */}
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
-        doc.agent !== 'claude-code' && (
+        doc.agent === 'codex' && (
+          <Stack gap={4}>
+            <Eyebrow>Archived transcript</Eyebrow>
+            <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
+              Archived at <code>{doc.transcriptGcsUri}</code>. No workstation
+              resume command yet for Codex sessions, but replying on this item
+              continues the same conversation automatically.
+            </Text>
+          </Stack>
+        )}
+
+      {doc.source === 'issue-agent' &&
+        doc.transcriptGcsUri &&
+        doc.agent !== 'claude-code' &&
+        doc.agent !== 'codex' && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">

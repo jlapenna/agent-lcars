@@ -101,4 +101,101 @@ describe('resumeTranscript', () => {
     expect(mkdir).not.toHaveBeenCalled();
     expect(writeFile).not.toHaveBeenCalled();
   });
+
+  it('writes a codex rollout under the codex home, keyed only by session id', async () => {
+    const written: Record<string, string> = {};
+    const path = await resumeTranscript({
+      agent: 'codex',
+      sessionId: '019fb1be-238c-77d2-a0b2-14961c202368',
+      transcriptGcsUri:
+        'gs://b/runs/r1/codex/019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
+      cwd: '/home/runner/_work/checkout',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      codexHome: '/run/codex/home',
+      download: async () => '{"type":"session_meta"}\n',
+      mkdir: () => undefined,
+      writeFile: (p, c) => {
+        written[p] = c;
+      },
+    });
+    // Codex resolves a thread purely by the uuid in the basename; the date
+    // path is inert, so it is a constant rather than derived from anything.
+    expect(path).toBe(
+      '/run/codex/home/sessions/1970/01/01/rollout-1970-01-01T00-00-00-019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
+    );
+    expect(written[path!]).toContain('session_meta');
+  });
+
+  it('still writes a claude session to the claude projects dir', async () => {
+    const download = vi.fn().mockResolvedValue('{"line":1}\n');
+    const mkdir = vi.fn();
+    const writeFile = vi.fn();
+    const result = await resumeTranscript({
+      agent: 'claude-code',
+      sessionId: 'sess_1',
+      transcriptGcsUri: 'gs://bucket/runs/x/claude-code/sess_1.jsonl',
+      cwd: '/home/runner/work/agent-lcars/agent-lcars',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download,
+      mkdir,
+      writeFile,
+    });
+
+    expect(mkdir).toHaveBeenCalledWith(
+      '/home/runner/.claude/projects/-home-runner-work-agent-lcars-agent-lcars',
+    );
+    expect(writeFile).toHaveBeenCalledWith(
+      '/home/runner/.claude/projects/-home-runner-work-agent-lcars-agent-lcars/sess_1.jsonl',
+      '{"line":1}\n',
+    );
+    expect(result).toBe(
+      '/home/runner/.claude/projects/-home-runner-work-agent-lcars-agent-lcars/sess_1.jsonl',
+    );
+  });
+
+  it('rejects an unsafe codex session id before touching the filesystem', async () => {
+    const download = vi.fn().mockResolvedValue('{"line":1}\n');
+    const mkdir = vi.fn();
+    const writeFile = vi.fn();
+    const path = await resumeTranscript({
+      agent: 'codex',
+      sessionId: '../../etc/passwd',
+      transcriptGcsUri: 'gs://b/runs/r1/codex/x.jsonl',
+      cwd: '/home/runner/_work/checkout',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      codexHome: '/run/codex/home',
+      download,
+      mkdir,
+      writeFile,
+    });
+
+    expect(path).toBeUndefined();
+    expect(download).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('returns undefined for codex when no codex home was given', async () => {
+    const download = vi.fn().mockResolvedValue('{"line":1}\n');
+    const mkdir = vi.fn();
+    const writeFile = vi.fn();
+    const path = await resumeTranscript({
+      agent: 'codex',
+      sessionId: '019fb1be-238c-77d2-a0b2-14961c202368',
+      transcriptGcsUri:
+        'gs://b/runs/r1/codex/019fb1be-238c-77d2-a0b2-14961c202368.jsonl',
+      cwd: '/home/runner/_work/checkout',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download,
+      mkdir,
+      writeFile,
+    });
+
+    // The caller is direct-runner.sh, which only knows CODEX_HOME inside
+    // the codex branch; a missing one here is a caller bug, not a crash.
+    expect(path).toBeUndefined();
+    expect(download).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
 });

@@ -168,11 +168,13 @@ function runRunnerFinalize(argv: string[]): void {
 }
 
 interface RunnerResumeFlags {
+  agent?: string;
   sessionId?: string;
   transcriptUri?: string;
   cwd?: string;
   projectsDir?: string;
   projectId?: string;
+  codexHome?: string;
 }
 
 /**
@@ -187,7 +189,10 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
     const arg = argv[i];
     const next = argv[i + 1];
     if (next === undefined) continue;
-    if (arg === '--session-id') {
+    if (arg === '--agent') {
+      flags.agent = next;
+      i++;
+    } else if (arg === '--session-id') {
       flags.sessionId = next;
       i++;
     } else if (arg === '--transcript-uri') {
@@ -201,6 +206,9 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
       i++;
     } else if (arg === '--project-id') {
       flags.projectId = next;
+      i++;
+    } else if (arg === '--codex-home') {
+      flags.codexHome = next;
       i++;
     }
   }
@@ -226,6 +234,12 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
  * `RunnerConfig.firestoreProjectId` (`finalize.ts` passes that value as
  * `uploadTranscript`'s own `projectId`), so a caller that already exports
  * it for `runner sidecar`/`runner finalize` needs no extra flag here.
+ * `--agent <claude-code|codex>` defaults to `claude-code` so every
+ * existing production call site (none of which pass it) is unaffected;
+ * any other value is rejected the same fail-soft way as a missing
+ * required flag. `--codex-home` is required only when `--agent codex` is
+ * given -- `resumeTranscript`'s own `destinationFor` rejects a codex
+ * resume with no codex home.
  * Exported for testing so a spec can exercise the real logic without
  * spawning `node` and without a real GCS call.
  */
@@ -237,11 +251,13 @@ export async function _runRunnerResumeForTesting(
   } = {},
 ): Promise<string | undefined> {
   const flags = parseRunnerResumeFlags(argv);
+  const agent = flags.agent ?? 'claude-code';
   if (
     !flags.sessionId ||
     !flags.transcriptUri ||
     !flags.cwd ||
-    !isSafeIdentifier(flags.sessionId)
+    !isSafeIdentifier(flags.sessionId) ||
+    (agent !== 'claude-code' && agent !== 'codex')
   ) {
     return undefined;
   }
@@ -249,10 +265,12 @@ export async function _runRunnerResumeForTesting(
     flags.projectId ?? process.env['AGENT_TELEMETRY_PROJECT_ID'];
   const resume = deps.resumeTranscript ?? resumeTranscript;
   return resume({
+    agent,
     sessionId: flags.sessionId,
     transcriptGcsUri: flags.transcriptUri,
     cwd: flags.cwd,
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
+    ...(flags.codexHome && { codexHome: flags.codexHome }),
     ...(projectId && { projectId }),
     ...(deps.download && { download: deps.download }),
   });
