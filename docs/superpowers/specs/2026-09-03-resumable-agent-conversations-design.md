@@ -1,6 +1,6 @@
 # Resumable agent conversations: multi-round work items across GitHub, Slack, and the console
 
-Status: design, awaiting maintainer review. Extends
+Status: sub-projects 1-3 shipped; 4 blocked on decision 3, 5 not started; all live proofs outstanding (see Sequencing). Extends
 [native work items](2026-08-23-native-work-items-design.md), whose
 sub-project 6 shipped the Claude-only half of this.
 
@@ -564,21 +564,40 @@ round's own status line in `docs/native-work-smoke-runbook.md`.
 ### 11. Sequencing
 
 Five sub-projects. The first is the foundation; the other four are
-independent of each other and can run in parallel worktrees.
+independent of each other and can run in parallel worktrees. Status as of
+2026-09-04:
 
-1. **Reply primitive and Claude round-trip.** `requestReply`, the reply
-   route, `Run.result.message`, the park state fix, the reply prompt,
-   `REPLY` no longer forced empty, Claude final-message capture, console
-   reply box and conversation view. Proof 1.
-2. **GitHub implicit replies.** Ingest branch behind the flag; outcome
-   comment carrying `message` under projections. Proof 2.
-3. **Codex continuity.** Sidecar adapter, rollout restore, `exec resume`,
-   `-o` capture, `fleet-tools` adapter. Proof 3.
-4. **OpenCode continuity.** Raw export capture and `resumeGcsUri`,
-   `import`, `--session`, message capture, `fleet-tools` adapter. Proof 4.
-5. **Slack threads.** `origin.thread`, the `slack` channel, the outbox
-   webhook case, and the sprinkles bot changes (root message, thread
-   listener, reply call, webhook receiver). Proof 5.
+1. **Reply primitive and Claude round-trip** — **shipped** (#1769, plan
+   `2026-09-04-resumable-conversations-1-reply-primitive.md`).
+   `requestReply`, the reply route, `Run.result.message`, the reply
+   prompt, `REPLY` no longer forced empty, Claude final-message capture,
+   console reply box and conversation view. The park state fix this line
+   also named shipped separately as #1759 (with #1765 for the quick-task
+   badge's own copy of the same bug). **Proof 1 outstanding.**
+2. **GitHub implicit replies** — **shipped** (#1773, plan
+   `…-2-github-replies.md`). An ordinary `OWNER`/`MEMBER` comment on a
+   parked anchor resumes the session, gated per repository by
+   `AGENT_LCARS_IMPLICIT_REPLY_REPOS`, **declared empty**: the behavior is
+   off until a maintainer sets it. The outcome comment carries
+   `result.message`. **Enabling the allowlist and proof 2 outstanding.**
+3. **Codex continuity** — **shipped** (#1774, plan `…-3-codex.md`).
+   Rollout restore, `codex exec resume`, `-o` capture, and `codex` in
+   `RESUMABLE_PIPELINES`. No `fleet-tools` adapter was added; the session
+   page's note was narrowed instead. **Proof 3 outstanding.**
+4. **OpenCode continuity** — **not started, blocked on decision 3.** The
+   measurement below shows a sanitized export cannot carry a
+   conversation, so this sub-project exists only if raw exports may be
+   archived. No plan has been written, deliberately.
+5. **Slack threads** — **not started.** `origin.thread`, the `slack`
+   channel, the outbox webhook case, and the sprinkles bot changes (root
+   message, thread listener, reply call, webhook receiver). Depends on
+   decision 4. Proof 5.
+
+Every live real-path proof is outstanding: each needs a maintainer-gated
+dispatch, so none of the shipped sub-projects has yet been demonstrated
+end to end on a real runner. The mechanisms are covered by unit, contract
+and shell-fixture tests, and Claude's underlying resume path was proven
+live on 2026-08-27 (`docs/native-work-smoke-runbook.md`, section 6).
 
 ### Measured: OpenCode export and import
 
