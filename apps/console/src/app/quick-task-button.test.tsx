@@ -183,6 +183,70 @@ describe('QuickTaskButton', () => {
     expect(await screen.findByText(/running/i)).toBeInTheDocument();
   });
 
+  it('derives parked, not done, for a latest run that finished with a park outcome (#1763)', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    (readQuickTaskState as Mock).mockResolvedValue({
+      schema: 'agent-lcars.authoritative-task-state/v2',
+      task: { repo: 'supersprinklesracing/sprinkles', issue: 99 },
+      storageRevision: 1,
+      updatedAt: '2026-08-27T00:00:00.000Z',
+      runs: [
+        {
+          runId: 'supersprinklesracing/sprinkles#99/r1',
+          state: 'finished',
+          result: { ok: true, summary: 'park' },
+        },
+      ],
+    });
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+
+    await waitFor(() =>
+      expect(notifications.update).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'green' }),
+      ),
+    );
+    const success = (notifications.update as Mock).mock.calls.find(
+      ([update]) => update.color === 'green',
+    )![0];
+    render(<MantineProvider>{success.message}</MantineProvider>);
+    expect(await screen.findByText('parked')).toBeInTheDocument();
+  });
+
+  it('still derives done for a latest run that finished with a pull-request outcome (#1763)', async () => {
+    (createQuickTask as Mock).mockResolvedValue(receipt());
+    (readQuickTaskState as Mock).mockResolvedValue({
+      schema: 'agent-lcars.authoritative-task-state/v2',
+      task: { repo: 'supersprinklesracing/sprinkles', issue: 99 },
+      storageRevision: 1,
+      updatedAt: '2026-08-27T00:00:00.000Z',
+      runs: [
+        {
+          runId: 'supersprinklesracing/sprinkles#99/r1',
+          state: 'finished',
+          result: { ok: true, summary: 'pull-request' },
+        },
+      ],
+    });
+    renderButton();
+    await openDialog();
+    enterDescription();
+    submit();
+
+    await waitFor(() =>
+      expect(notifications.update).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'green' }),
+      ),
+    );
+    const success = (notifications.update as Mock).mock.calls.find(
+      ([update]) => update.color === 'green',
+    )![0];
+    render(<MantineProvider>{success.message}</MantineProvider>);
+    expect(await screen.findByText('done')).toBeInTheDocument();
+  });
+
   it('generates a request ID on an insecure HTTP context', async () => {
     vi.stubGlobal('crypto', {
       getRandomValues: (bytes: Uint8Array) => {
