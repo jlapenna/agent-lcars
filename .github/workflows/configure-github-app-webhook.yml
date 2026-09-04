@@ -7,6 +7,16 @@ on:
         description: Secret Manager version already deployed to App Hosting
         required: true
         type: string
+  # A verify-only pass, which needs no secret because it changes nothing.
+  # Without this the assertions below only ran when an operator happened to
+  # dispatch the workflow: push-watch was inert in production for five days
+  # with every check green (#1754, #1761).
+  # Daily rather than weekly: #1542 established that GitHub drops most
+  # scheduled runs in this repository, so a weekly cadence can silently mean
+  # months between checks. Daily is cheap (a handful of read-only App API
+  # calls) and gives drift several chances a week to be caught.
+  schedule:
+    - cron: '17 8 * * *'
 
 permissions:
   contents: read
@@ -35,9 +45,18 @@ jobs:
           APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
           WEBHOOK_SECRET_VERSION: ${{ inputs.webhook_secret_version }}
           WEBHOOK_URL: https://lcars.jlapenna.net/api/control-plane/webhook
+          VERIFY_ONLY: ${{ github.event_name == 'schedule' }}
         run: |
           set -euo pipefail
           umask 077
+          # A scheduled run asserts configuration and changes nothing, so it
+          # never touches the webhook secret. Fetching one would only give
+          # the unattended path a credential it has no use for -- and there
+          # is no version input to fetch by.
+          if [[ "$VERIFY_ONLY" == "true" ]]; then
+            node tools/configure-github-app-webhook.mjs
+            exit 0
+          fi
           if [[ ! "$WEBHOOK_SECRET_VERSION" =~ ^[1-9][0-9]*$ ]]; then
             echo "webhook_secret_version must be a positive integer" >&2
             exit 1

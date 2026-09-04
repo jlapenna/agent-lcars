@@ -2,12 +2,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   configureAppWebhook,
   createAppJwt,
+  pushWatchedReposFromApphosting,
   readWebhookSecret,
 } from '../configure-github-app-webhook.mjs';
 
@@ -24,6 +26,16 @@ function response(body: unknown): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+const REQUIRED_EVENTS = [
+  'check_run',
+  'issue_comment',
+  'issues',
+  'pull_request',
+  'pull_request_review',
+  'pull_request_review_thread',
+  'push',
+];
 
 describe('GitHub App webhook configuration', () => {
   it('signs a short-lived RS256 App JWT with the configured client ID', () => {
@@ -95,6 +107,7 @@ describe('GitHub App webhook configuration', () => {
         'pull_request_review_thread',
         'push',
       ],
+      pushWatchedRepos: [],
     });
     const patch = fetchImpl.mock.calls.find(
       ([url, options]) =>
@@ -218,5 +231,150 @@ describe('GitHub App webhook configuration', () => {
       }),
     ).rejects.toThrow('missing required webhook events: issue_comment');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  // #1754: push-watch shipped 2026-09-01 and never fired, because the App
+  // was not installed on jlapenna/repo-tools. Every check stayed green for
+  // five days -- an App only delivers events for repositories it is
+  // installed on, and nothing asserted that.
+  it('refuses a push-watched repository the App is not installed on', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/repos/jlapenna/repo-tools/installation')) {
+        return new Response(JSON.stringify({ message: 'Not Found' }), {
+          status: 404,
+        });
+      }
+      if (url.endsWith('/installation')) {
+        return response({ id: 987 });
+      }
+      return response({
+        slug: 'agent-lcars',
+        events: REQUIRED_EVENTS,
+        hook_attributes: { active: true },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      configureAppWebhook({
+        clientId: 'Iv1.client',
+        privateKey: privatePem,
+        webhookSecret: 'secret',
+        webhookUrl: 'https://console.test/api/control-plane/webhook',
+        pushWatchedRepos: ['jlapenna/homelab', 'jlapenna/repo-tools'],
+        fetchImpl,
+      }),
+    ).rejects.toThrow(
+      'not installed on push-watched repositories: jlapenna/repo-tools',
+    );
+  });
+
+  it('reports the events GitHub actually has, not the required list', async () => {
+    // The summary used to echo REQUIRED_EVENTS, so its output described
+    // intent while reading like state. That is why a run log listing six
+    // events was misread as proof `push` was unsubscribed (#1754).
+    const configured = [...REQUIRED_EVENTS, 'release'];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/app/hook/config')) {
+        return response({
+          url: 'https://console.test/api/control-plane/webhook',
+          content_type: 'json',
+        });
+      }
+      return response({
+        slug: 'agent-lcars',
+        events: configured,
+        hook_attributes: { active: true },
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await configureAppWebhook({
+      clientId: 'Iv1.client',
+      privateKey: privatePem,
+      webhookSecret: 'secret',
+      webhookUrl: 'https://console.test/api/control-plane/webhook',
+      fetchImpl,
+    });
+
+    expect(result.events).toEqual(configured);
+  });
+
+  it('changes nothing in verify-only mode, so it can run unattended', async () => {
+    const calls: { method: string; url: string }[] = [];
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({ method: init?.method ?? 'GET', url: String(input) });
+        if (String(input).endsWith('/app/hook/config')) {
+          return response({
+            url: 'https://console.test/api/control-plane/webhook',
+            content_type: 'json',
+          });
+        }
+        return response({
+          slug: 'agent-lcars',
+          events: REQUIRED_EVENTS,
+          hook_attributes: { active: true },
+        });
+      },
+    ) as unknown as typeof fetch;
+
+    const result = await configureAppWebhook({
+      clientId: 'Iv1.client',
+      privateKey: privatePem,
+      // No secret at all: a scheduled run has none, which is the whole
+      // reason verify-only exists.
+      webhookUrl: 'https://console.test/api/control-plane/webhook',
+      verifyOnly: true,
+      fetchImpl,
+    });
+
+    expect(calls.every(({ method }) => method === 'GET')).toBe(true);
+    expect(result.verifiedOnly).toBe(true);
+  });
+
+  it('reads the push-watched repositories from the deployed config', () => {
+    // Single source of truth: the list asserted against GitHub is the same
+    // one the console actually push-watches.
+    expect(
+      pushWatchedReposFromApphosting(
+        [
+          'env:',
+          '  - variable: AGENT_LCARS_PUSH_WATCHED_REPOS',
+          "    value: 'jlapenna/repo-tools, jlapenna/homelab'",
+          '    availability:',
+          '      - RUNTIME',
+        ].join('\n'),
+      ),
+    ).toEqual(['jlapenna/repo-tools', 'jlapenna/homelab']);
+
+    expect(pushWatchedReposFromApphosting('env: []')).toEqual([]);
+
+    // A variable declared with no value must yield nothing rather than
+    // adopting the next entry's value.
+    expect(
+      pushWatchedReposFromApphosting(
+        [
+          '  - variable: AGENT_LCARS_PUSH_WATCHED_REPOS',
+          '  - variable: SOMETHING_ELSE',
+          "    value: 'jlapenna/not-this-one'",
+        ].join('\n'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('parses the real apphosting.yaml this workflow asserts against', async () => {
+    // The synthetic cases above pin the parser; this pins it against the
+    // actual file shape, which is what the scheduled run reads. A parser
+    // that only handles fixtures would assert nothing in production.
+    const source = await fs.readFile(
+      fileURLToPath(
+        new URL('../../apps/console/apphosting.yaml', import.meta.url),
+      ),
+      'utf8',
+    );
+    const repos = pushWatchedReposFromApphosting(source);
+
+    expect(repos.length).toBeGreaterThan(0);
+    for (const repo of repos) expect(repo).toMatch(/^[\w.-]+\/[\w.-]+$/);
   });
 });
