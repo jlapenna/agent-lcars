@@ -124,7 +124,10 @@ describe('refreshGithubAnchorProjection', () => {
     );
     older.resolve(projection('stale'));
 
-    await expect(first).resolves.toMatchObject({ title: 'current' });
+    // The loser now returns undefined instead of re-loading to rewrite the
+    // value the winner already wrote (#1762); what matters is that the
+    // stored projection is the newer one, asserted below.
+    await expect(first).resolves.toBeUndefined();
     await expect(
       store.readGithubAnchorProjection(anchor),
     ).resolves.toMatchObject({
@@ -132,59 +135,58 @@ describe('refreshGithubAnchorProjection', () => {
     });
   });
 
-  it('backs off between fenced retries and applies once the fence clears', async () => {
+  it('stops without retrying when a newer refresh supersedes its fence', async () => {
     const store = new MemoryStore();
     let applyCalls = 0;
-    const applyGithubAnchorProjectionRefresh =
-      store.applyGithubAnchorProjectionRefresh.bind(store);
-    store.applyGithubAnchorProjectionRefresh = async (input) => {
+    store.applyGithubAnchorProjectionRefresh = async () => {
       applyCalls++;
-      // Simulate two concurrent racers beating this attempt's fence before
-      // any real contention is involved, so the retry/backoff path runs
-      // deterministically.
-      return applyCalls <= 2
-        ? false
-        : applyGithubAnchorProjectionRefresh(input);
+      return false;
     };
-    const waits: number[] = [];
+    const beginGithubAnchorProjectionRefresh =
+      store.beginGithubAnchorProjectionRefresh.bind(store);
+    let beginCalls = 0;
+    store.beginGithubAnchorProjectionRefresh = async (input) => {
+      beginCalls++;
+      return beginGithubAnchorProjectionRefresh(input);
+    };
+    let loadCalls = 0;
 
-    const result = await refreshGithubAnchorProjection(
-      {
-        store,
-        load: async () => projection('current'),
-        wait: async (ms) => {
-          waits.push(ms);
+    // Losing the fence means some racer called `begin` after this attempt
+    // did, so its exact read is strictly fresher than anything this one
+    // could produce. Re-`begin`ing to retry would invalidate that racer --
+    // which is what turned a burst of deliveries for one anchor into
+    // mutual starvation (#1762).
+    await expect(
+      refreshGithubAnchorProjection(
+        {
+          store,
+          load: async () => {
+            loadCalls++;
+            return projection('current');
+          },
         },
-      },
-      anchor,
-    );
+        anchor,
+      ),
+    ).resolves.toBeUndefined();
 
-    expect(result).toMatchObject({ title: 'current' });
-    expect(applyCalls).toBe(3);
-    // One backoff before each retry (attempts 1 and 2), none before the
-    // first attempt.
-    expect(waits).toHaveLength(2);
+    expect(applyCalls).toBe(1);
+    expect(beginCalls).toBe(1);
+    expect(loadCalls).toBe(1);
   });
 
-  it('throws only after exhausting every fenced retry', async () => {
+  it('still propagates a failing exact load rather than swallowing it', async () => {
     const store = new MemoryStore();
-    store.applyGithubAnchorProjectionRefresh = async () => false;
-    const waits: number[] = [];
 
     await expect(
       refreshGithubAnchorProjection(
         {
           store,
-          load: async () => projection('current'),
-          wait: async (ms) => {
-            waits.push(ms);
+          load: async () => {
+            throw Object.assign(new Error('GitHub is down'), { status: 500 });
           },
         },
         anchor,
       ),
-    ).rejects.toThrow(/could not apply after 6 fenced attempts/);
-
-    // A backoff before every retry attempt but the very first.
-    expect(waits).toHaveLength(5);
+    ).rejects.toThrow('GitHub is down');
   });
 });
