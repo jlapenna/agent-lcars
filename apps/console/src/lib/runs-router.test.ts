@@ -583,6 +583,53 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     expect(task).toBeDefined();
     expect(deriveItemState(task!.task, runs)).toBe('parked');
   });
+
+  it("carries the agent's final message onto the stored result", async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-park-message'),
+      now: NOW,
+    });
+
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claimed.status).toBe(200);
+    const { token, workId } = claimed.json as { token: string; workId: string };
+
+    const runCtx: RunsContext = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      bearerToken: token,
+    };
+
+    const complete = await call(runCtx, 'POST', runPath(runId, '/complete'), {
+      outcome: 'park',
+      outcomeReference: null,
+      message: 'Which database?',
+    });
+    expect(complete.status).toBe(200);
+    expect((complete.json as { state: string }).state).toBe('finished');
+
+    const settled = await store.readRun(runId);
+    expect(settled?.result?.message).toBe('Which database?');
+
+    const task = await store.readTask({ workId });
+    const runs = await store.listRuns({ workId });
+    expect(task).toBeDefined();
+    expect(deriveItemState(task!.task, runs)).toBe('parked');
+  });
 });
 
 describe('brief', () => {

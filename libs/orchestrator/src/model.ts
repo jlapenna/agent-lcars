@@ -217,6 +217,13 @@ export const runResultSchema = z.strictObject({
   summary: z.string().max(4_096).optional(),
   /** e.g. a PR URL; opaque to the orchestrator. */
   ref: z.string().max(1_024).optional(),
+  /**
+   * The agent's own final message for this round -- its question when it
+   * parked, its summary when it opened a PR. Durable so every surface can
+   * render the round without reading a transcript. Opaque to the
+   * orchestrator, exactly like `summary` and `ref`.
+   */
+  message: z.string().max(16_384).optional(),
 });
 export type RunResult = z.infer<typeof runResultSchema>;
 

@@ -28,6 +28,9 @@ const runResultSchema = z.strictObject({
   ok: z.boolean(),
   summary: z.string().max(4_096).optional(),
   ref: z.string().max(1_024).optional(),
+  /** The agent's final message for this round, e.g. its question when it
+   *  parked. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
+  message: z.string().max(16_384).optional(),
 });
 
 export const itemRunViewSchema = z.strictObject({
@@ -635,6 +638,10 @@ export const runsContract = {
         runId: runIdSchema,
         outcome: z.unknown(),
         outcomeReference: z.unknown().optional(),
+        /** The agent's final message for this round (spec: "Runner
+         *  changes"). Bounded here as well as in `toRunResult` so an
+         *  oversized body is refused at the boundary, not silently cut. */
+        message: z.string().max(16_384).optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),

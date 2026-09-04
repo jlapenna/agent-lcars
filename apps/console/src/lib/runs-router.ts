@@ -437,6 +437,7 @@ export const runsRouter = os.router({
       target.repo,
       input.outcome,
       input.outcomeReference,
+      input.message,
     );
     try {
       const settled = await context.orchestrator.report(run.runId, result);

@@ -397,6 +397,10 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "message": {
+                                "type": "string",
+                                "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
@@ -670,6 +674,10 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "message": {
+                                "type": "string",
+                                "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
@@ -960,6 +968,10 @@
                                     "ref": {
                                       "type": "string",
                                       "maxLength": 1024
+                                    },
+                                    "message": {
+                                      "type": "string",
+                                      "maxLength": 16384
                                     }
                                   },
                                   "required": ["ok"],
@@ -1203,6 +1215,10 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "message": {
+                                "type": "string",
+                                "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
@@ -1477,6 +1493,10 @@
                               "ref": {
                                 "type": "string",
                                 "maxLength": 1024
+                              },
+                              "message": {
+                                "type": "string",
+                                "maxLength": 16384
                               }
                             },
                             "required": ["ok"],
@@ -3198,7 +3218,11 @@
                 "type": "object",
                 "properties": {
                   "outcome": {},
-                  "outcomeReference": {}
+                  "outcomeReference": {},
+                  "message": {
+                    "type": "string",
+                    "maxLength": 16384
+                  }
                 },
                 "required": ["outcome"]
               }
