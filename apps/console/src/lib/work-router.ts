@@ -275,7 +275,7 @@ export const workRouter = os.router({
 
   reply: operator.reply.handler(async ({ input, context, errors }) => {
     const outcome = await requestReply(context, {
-      id: input.id,
+      task: { workId: input.id },
       text: input.text,
       // The console session and a service principal are the only two
       // callers this route has today; plan 2's GitHub ingest and plan 5's

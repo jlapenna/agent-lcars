@@ -1,6 +1,11 @@
 import 'server-only';
 
-import { decidedRun, isRefusal } from '@agent-lcars/orchestrator';
+import {
+  decidedRun,
+  isRefusal,
+  type TaskId,
+  taskKey,
+} from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
@@ -24,7 +29,11 @@ const RESUMABLE_PIPELINES: Record<string, string> = { claude: 'claude-code' };
 export const REPLY_MAX = 16_384;
 
 export interface ReplyRequest {
-  id: string;
+  /** The orchestrator's own anchor union: `{ workId }` for a native item,
+   *  `{ repo, issue }` for a GitHub-anchored task. A GitHub-anchored reply
+   *  routes through exactly the machinery a native item already does --
+   *  see `implicit-reply.ts`. */
+  task: TaskId;
   text: string;
   channel: 'api' | 'console' | 'github' | 'slack';
   principal: string;
@@ -94,11 +103,11 @@ export async function requestReply(
   }
   const { principal } = context;
 
-  const task = await context.runtime.store.readTask({ workId: request.id });
+  const task = await context.runtime.store.readTask(request.task);
   if (task === undefined)
     return { ok: false, code: 'NOT_FOUND', message: 'no such item' };
 
-  const runs = await context.runtime.store.listRuns({ workId: request.id });
+  const runs = await context.runtime.store.listRuns(request.task);
   const state = deriveItemState(task.task, runs);
   // A reply is new information for an item that has stopped. A live run
   // already has the conversation open; queuing the reply is option B's
@@ -152,10 +161,10 @@ export async function requestReply(
   }
 
   const outcome = await context.runtime.orchestrator.request({
-    taskId: { workId: request.id },
+    taskId: request.task,
     requestId:
       request.ref === undefined
-        ? `${request.id}:${task.task.runCount + 1}`
+        ? `${taskKey(request.task)}:${task.task.runCount + 1}`
         : `reply:${request.ref}`,
     pipeline,
     params: {
