@@ -11,6 +11,7 @@ import {
 } from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import { admitGithubWork } from '@/lib/github-work-admission';
+import { handleImplicitReplyDelivery } from '@/lib/implicit-reply';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { interpretDelivery } from '@/lib/orchestrator-ingest';
 import { handlePushWebhookDelivery } from '@/lib/push-watch';
@@ -159,6 +160,14 @@ export async function handleWebhookDelivery(
   try {
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore') {
+      // An ordinary comment the pure interpreter declined may still be a
+      // maintainer answering a parked agent -- only the store can tell
+      // whether the anchor is parked, so that check happens here rather
+      // than in the interpreter (resumable-conversations plan 2).
+      if (interpreted.reason === 'no-reply-command') {
+        const replied = await handleImplicitReplyDelivery(deps, input);
+        if (replied !== undefined) return replied;
+      }
       try {
         await refreshGithubAnchorProjection(deps, input);
       } catch (error) {

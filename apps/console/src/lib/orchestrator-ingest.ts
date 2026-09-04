@@ -86,7 +86,11 @@ const pullRequestEventSchema = z.object({
   sender: senderSchema,
 });
 
-const issueCommentEventSchema = z.object({
+/** Exported for `implicit-reply.ts`'s stateful second pass over an
+ *  `issue_comment` this pure interpreter already declined -- deciding "is
+ *  this anchor parked" needs the store, which this module deliberately
+ *  never touches, so that check happens in the route instead. */
+export const issueCommentEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
   issue: issueBodySchema,
@@ -94,6 +98,12 @@ const issueCommentEventSchema = z.object({
     body: z.string(),
     author_association: z.string(),
     user: z.object({ type: z.string() }).optional(),
+    /** GitHub always sends this; optional here so a malformed or
+     *  future-shaped payload still parses for the existing explicit-trigger
+     *  path, which never reads it. `implicit-reply.ts` uses it to derive an
+     *  idempotent request id -- absent, it falls back to a less precise
+     *  one. */
+    html_url: z.string().min(1).optional(),
   }),
   sender: senderSchema,
 });

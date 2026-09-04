@@ -33,15 +33,17 @@ type RouteResult = { status: number; body: Record<string, unknown> };
 const PUSH_WATCH_PRINCIPAL = 'svc:push-watch';
 const PUSH_WATCH_PIPELINE = 'claude';
 
-/** `mintItem` never reads `WorkContext.scheduleStore` — only
+/** `mintItem`/`requestReply` never read `WorkContext.scheduleStore` — only
  * `schedule-router.ts`'s own tick logic does. Building the real
  * Firestore-backed store (`createScheduleStore()`) here would be both
- * wasted work on every push delivery and an unwanted `PROJECT_ID`
+ * wasted work on every webhook delivery and an unwanted `PROJECT_ID`
  * dependency this handler otherwise has no reason to need. Every method
  * throws if ever actually called, so a future change that starts reading
- * schedules from this context fails loudly instead of silently hitting
- * production Firestore from a webhook handler. */
-const unreachableScheduleStore: ScheduleStore = {
+ * schedules from a context built this way fails loudly instead of silently
+ * hitting production Firestore from a webhook handler. Exported so
+ * `implicit-reply.ts`'s own `WorkContext` builder shares it rather than
+ * keeping a second copy of the same four throwing methods. */
+export const unreachableScheduleStore: ScheduleStore = {
   readSchedule: () => {
     throw new Error('push-watch: scheduleStore is not available here');
   },

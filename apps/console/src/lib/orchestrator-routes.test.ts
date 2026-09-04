@@ -647,6 +647,72 @@ describe('handleWebhookDelivery push routing', () => {
   });
 });
 
+describe('handleWebhookDelivery implicit reply routing', () => {
+  afterEach(() => {
+    delete process.env['AGENT_LCARS_IMPLICIT_REPLY_REPOS'];
+  });
+
+  function issueCommentPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      action: 'created',
+      repository: { full_name: REPO },
+      issue: { number: ISSUE.issue, title: 'Issue title', body: 'Issue body' },
+      comment: {
+        body: 'Use Firestore.',
+        author_association: 'MEMBER',
+        html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}#issuecomment-1`,
+      },
+      sender: { login: 'jlapenna' },
+      ...overrides,
+    };
+  }
+
+  /** Admits and parks `ISSUE` (a trigger-label delivery, then a `park`
+   *  report) -- the precondition both cases below share. Not a re-test of
+   *  `implicit-reply.ts`'s own gating (`implicit-reply.test.ts` covers that
+   *  directly) -- these only prove `handleWebhookDelivery` routes a
+   *  `no-reply-command` ignore to it and back correctly. */
+  async function parkedRun(deps: OrchestratorRouteDeps): Promise<string> {
+    const runId = await dispatchedRun(deps, 'label-delivery');
+    await deps.orchestrator.report(runId, { ok: true, summary: 'park' });
+    return runId;
+  }
+
+  it('routes an ordinary comment on a parked anchor to the implicit-reply path when the repo is allow-listed', async () => {
+    process.env['AGENT_LCARS_IMPLICIT_REPLY_REPOS'] = REPO;
+    const { deps } = fixture();
+    await parkedRun(deps);
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'implicit-reply-delivery',
+      payload: issueCommentPayload(),
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body['replied']).toBeDefined();
+  });
+
+  it('falls through to the existing ignore-and-refresh path when the allowlist is empty', async () => {
+    const { deps } = fixture();
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    deps.refreshGithubAnchorProjection = refresh;
+    await parkedRun(deps);
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'ignored-delivery',
+      payload: issueCommentPayload(),
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      body: { ignored: 'no-reply-command' },
+    });
+    expect(refresh).toHaveBeenCalledWith(ISSUE);
+  });
+});
+
 describe('handleReconcile', () => {
   it('marks an expired run lost, auto-retries it, dispatches the retry, and drains the outcome comment', async () => {
     const { deps, clock, calls, store } = fixture();
