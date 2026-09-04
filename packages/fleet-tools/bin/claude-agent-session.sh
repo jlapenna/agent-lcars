@@ -51,41 +51,58 @@ resolve_archive_uri() {
   echo "${matches[0]}"
 }
 
-[ "${1:-}" = 'resume-archive' ] || usage
-[ $# -eq 2 ] || usage
-gcs_uri="$(resolve_archive_uri "$2")"
+# The same cwd -> project-dir slug Claude Code itself computes:
+# `claudeProjectSlugFor()` in libs/telemetry/src/lib/runner-capture.ts
+# replaces every non-alphanumeric character with '-', one-for-one (nothing
+# collapsed). Mirror that exactly -- a checkout path containing '_', '+', or
+# any other punctuation must still resolve to the directory `claude --resume`
+# will actually look in. Extracted as its own function (rather than inlined
+# where it's used) so the shell test can pin it against the same table of
+# paths the TypeScript spec uses, without needing real directories at those
+# paths.
+claude_project_slug_for() {
+  printf '%s' "$1" | sed 's/[^a-zA-Z0-9]/-/g'
+}
 
-base="$(basename "$gcs_uri")"
-session_id="${base%.jsonl}"
-if [ "$base" = "$session_id" ]; then
-  echo "Not a .jsonl transcript URI: $gcs_uri" >&2
-  exit 1
-fi
+main() {
+  [ "${1:-}" = 'resume-archive' ] || usage
+  [ $# -eq 2 ] || usage
+  gcs_uri="$(resolve_archive_uri "$2")"
 
-# The same cwd -> project-dir slug Claude Code itself computes: '/' and '.'
-# both become '-'.
-slug="$(printf '%s' "$PWD" | sed 's/[\/.]/-/g')"
-dest_dir="$HOME/.claude/projects/$slug"
-dest_file="$dest_dir/$session_id.jsonl"
-
-tmp_file="$(mktemp)"
-trap 'rm -f "$tmp_file"' EXIT
-echo "Downloading $gcs_uri ..." >&2
-gcloud storage cp "$gcs_uri" "$tmp_file"
-
-mkdir -p "$dest_dir"
-if [ -e "$dest_file" ]; then
-  if cmp -s "$tmp_file" "$dest_file"; then
-    echo "Already present and identical: $dest_file (no-op)" >&2
-  else
-    echo "Refusing to overwrite $dest_file: existing content differs from $gcs_uri." >&2
+  base="$(basename "$gcs_uri")"
+  session_id="${base%.jsonl}"
+  if [ "$base" = "$session_id" ]; then
+    echo "Not a .jsonl transcript URI: $gcs_uri" >&2
     exit 1
   fi
-else
-  mv "$tmp_file" "$dest_file"
-  echo "Saved transcript to $dest_file" >&2
-fi
 
-echo
-echo "cd $PWD && claude --resume $session_id"
-echo "# Caveat: cwd/file paths inside this transcript refer to the runner's checkout, not this one." >&2
+  slug="$(claude_project_slug_for "$PWD")"
+  dest_dir="$HOME/.claude/projects/$slug"
+  dest_file="$dest_dir/$session_id.jsonl"
+
+  tmp_file="$(mktemp)"
+  trap 'rm -f "$tmp_file"' EXIT
+  echo "Downloading $gcs_uri ..." >&2
+  gcloud storage cp "$gcs_uri" "$tmp_file"
+
+  mkdir -p "$dest_dir"
+  if [ -e "$dest_file" ]; then
+    if cmp -s "$tmp_file" "$dest_file"; then
+      echo "Already present and identical: $dest_file (no-op)" >&2
+    else
+      echo "Refusing to overwrite $dest_file: existing content differs from $gcs_uri." >&2
+      exit 1
+    fi
+  else
+    mv "$tmp_file" "$dest_file"
+    echo "Saved transcript to $dest_file" >&2
+  fi
+
+  echo
+  echo "cd $PWD && claude --resume $session_id"
+  echo "# Caveat: cwd/file paths inside this transcript refer to the runner's checkout, not this one." >&2
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
