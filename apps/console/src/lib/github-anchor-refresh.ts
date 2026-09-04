@@ -10,19 +10,6 @@ import { getGithubClient } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 const ENRICHMENT_BATCH_SIZE = 25;
-const MAX_REFRESH_GENERATION_RETRIES = 6;
-// A losing attempt's generation was invalidated by a concurrent racer for
-// the same anchor (e.g. a burst of `check_run` deliveries for one busy PR).
-// Retrying immediately puts every racer back in lockstep, so the same set
-// keeps colliding on every round; jitter spreads retries out so one attempt
-// gets a clear begin-then-apply window (agent-lcars#1745).
-function refreshRetryBackoffMs(attempt: number): number {
-  return Math.floor(Math.random() * 20 * attempt);
-}
-
-function defaultWait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 interface RawAnchorDetails {
   body?: string | null;
@@ -219,9 +206,6 @@ export interface GithubAnchorProjectionRefreshDeps {
   load(
     anchor: GithubAnchorProjection['anchor'],
   ): Promise<GithubAnchorProjection>;
-  /** Test seam for the inter-attempt backoff; production sleeps a short
-   * jittered delay between fenced retries (see `refreshRetryBackoffMs`). */
-  wait?(ms: number): Promise<void>;
 }
 
 function isGithubNotFound(error: unknown): boolean {
@@ -234,36 +218,44 @@ function isGithubNotFound(error: unknown): boolean {
 }
 
 /** One fence-protected exact refresh path for webhook invalidations. No
- * webhook payload is merged into persisted state. */
+ * webhook payload is merged into persisted state.
+ *
+ * Returns `undefined` when this attempt wrote nothing: the anchor was
+ * deleted or 404s, or a newer refresh superseded this one.
+ *
+ * Superseded is a success, not a failure, and it is deliberately not
+ * retried. `applyGithubAnchorProjectionRefresh` returns `false` for exactly
+ * one reason -- some racer called `begin` after we did -- and because every
+ * projection comes from an exact live GitHub read rather than the delivery
+ * payload, that racer's read starts strictly later than ours and is
+ * therefore strictly fresher. Retrying would mean calling `begin` again,
+ * which invalidates the very racer about to apply; under a burst of
+ * deliveries for one busy anchor that turns into mutual starvation, with
+ * every attempt eventually giving up (#1762, after #1747's backoff proved
+ * far too short to decorrelate reads that take hundreds of milliseconds).
+ * A racer that instead dies before applying is covered by its own delivery:
+ * a Cloud Tasks task is not acked until its handler returns 2xx. */
 export async function refreshGithubAnchorProjection(
   deps: GithubAnchorProjectionRefreshDeps,
   anchor: GithubAnchorProjection['anchor'],
   input: { deleted?: boolean } = {},
 ): Promise<GithubAnchorProjection | undefined> {
-  for (let attempt = 0; attempt < MAX_REFRESH_GENERATION_RETRIES; attempt++) {
-    if (attempt > 0) {
-      await (deps.wait ?? defaultWait)(refreshRetryBackoffMs(attempt));
+  const generation =
+    await deps.store.beginGithubAnchorProjectionRefresh(anchor);
+  let projection: GithubAnchorProjection | undefined;
+  if (!input.deleted) {
+    try {
+      projection = await deps.load(anchor);
+    } catch (error) {
+      if (!isGithubNotFound(error)) throw error;
     }
-    const generation =
-      await deps.store.beginGithubAnchorProjectionRefresh(anchor);
-    let projection: GithubAnchorProjection | undefined;
-    if (!input.deleted) {
-      try {
-        projection = await deps.load(anchor);
-      } catch (error) {
-        if (!isGithubNotFound(error)) throw error;
-      }
-    }
-    const applied = await deps.store.applyGithubAnchorProjectionRefresh({
-      anchor,
-      generation,
-      ...(projection === undefined ? {} : { projection }),
-    });
-    if (applied) return projection;
   }
-  throw new Error(
-    `GitHub anchor refresh could not apply after ${MAX_REFRESH_GENERATION_RETRIES} fenced attempts: ${anchor.repo}#${anchor.issue}`,
-  );
+  const applied = await deps.store.applyGithubAnchorProjectionRefresh({
+    anchor,
+    generation,
+    ...(projection === undefined ? {} : { projection }),
+  });
+  return applied ? projection : undefined;
 }
 
 async function loadCurrentGithubAnchorProjection(
