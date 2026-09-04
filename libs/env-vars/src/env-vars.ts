@@ -31,6 +31,12 @@ export interface EnvVars {
   AGENT_LCARS_CONTROL_PLANE_REPOSITORY?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORIES?: string;
   AGENT_LCARS_FLEET_GITHUB_LOGIN?: string;
+  /** Comma-separated `owner/repo` list whose issue and PR threads accept an
+   *  ordinary maintainer comment on a PARKED anchor as a reply that resumes
+   *  the agent's session. Empty or unset disables the behavior everywhere;
+   *  explicit `@claude`/`/codex`/`/oc` triggers are unaffected. Mirrors
+   *  AGENT_LCARS_PUSH_WATCHED_REPOS below -- see `implicit-reply.ts`. */
+  AGENT_LCARS_IMPLICIT_REPLY_REPOS?: string;
   /** Comma-separated `owner/name` repos whose `push` webhook mints a native
    *  reconcile-the-fleet work item — see `push-watch.ts`. */
   AGENT_LCARS_PUSH_WATCHED_REPOS?: string;

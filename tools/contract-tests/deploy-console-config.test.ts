@@ -337,6 +337,23 @@ describe('console deployment workflow', () => {
     }
   });
 
+  it('deploys the implicit-reply allowlist empty until a maintainer enables it', async () => {
+    // Resumable-conversations plan 2: merging the feature must change no
+    // behavior until a maintainer deliberately sets this per repository
+    // (plan task 4 step 2, maintainer-gated) -- see implicit-reply.ts.
+    const config = parseYaml(
+      await readFile('apps/console/apphosting.yaml', 'utf8'),
+    ) as {
+      env?: Array<{ variable?: string; value?: string }>;
+    };
+    const entry = config.env?.find(
+      ({ variable }) => variable === 'AGENT_LCARS_IMPLICIT_REPLY_REPOS',
+    );
+
+    expect(entry).toBeDefined();
+    expect(entry?.value).toBe('');
+  });
+
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {
     const fixtureRoot = await mkdtemp(
       path.join(os.tmpdir(), 'agent-lcars-cloud-build-prebuild-'),

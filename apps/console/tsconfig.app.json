@@ -33,22 +33,25 @@
   ],
   "references": [
     {
-      "path": "../../libs/work/tsconfig.lib.json"
+      "path": "../../libs/env-vars/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/orchestrator/tsconfig.lib.json"
+      "path": "../../libs/work/tsconfig.lib.json"
     },
     {
       "path": "../../libs/app-providers/tsconfig.lib.json"
     },
     {
+      "path": "../../libs/orchestrator/tsconfig.lib.json"
+    },
+    {
       "path": "../../libs/logging/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/util-server/tsconfig.lib.json"
+      "path": "../../libs/dispatch-contracts/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/dispatch-contracts/tsconfig.lib.json"
+      "path": "../../libs/util-server/tsconfig.lib.json"
     },
     {
       "path": "../../libs/telemetry/tsconfig.lib.json"
