@@ -272,6 +272,15 @@ interface IssueAgentSessionDocBase extends BaseSessionDoc {
 export interface ArchivedIssueAgentSessionDoc extends IssueAgentSessionDocBase {
   transcriptGcsUri: string;
   renderable: boolean;
+  /**
+   * The artifact a later run can actually resume from, when that is not the
+   * same file the console renders. Claude and Codex archive their raw CLI
+   * session, so `transcriptGcsUri` is both; OpenCode's rendered archive is
+   * sanitized to redaction markers, so its resumable artifact is a separate
+   * raw export and only this field points at it. Absent means "resume from
+   * `transcriptGcsUri`".
+   */
+  resumeGcsUri?: string;
 }
 
 /** Summary-only issue-agent records have no transcript capability to state. */
@@ -313,6 +322,9 @@ export interface BuildSessionDocOptions {
   repo?: { owner: string; name: string };
   /** `issue-agent` sessions only. */
   transcriptGcsUri?: string;
+  /** `issue-agent` sessions only. Only ever set when `transcriptGcsUri` is
+   * also set — see {@link ArchivedIssueAgentSessionDoc.resumeGcsUri}. */
+  resumeGcsUri?: string;
 }
 
 /**

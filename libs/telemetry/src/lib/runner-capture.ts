@@ -114,6 +114,17 @@ export function transcriptObjectPath(options: {
   return `runs/${options.runId ?? 'unknown'}/${options.adapter}/${options.sessionId}.jsonl`;
 }
 
+/** The resumable sibling of {@link transcriptObjectPath}. A distinct
+ *  extension, so the `*.jsonl` transcript discovery never picks it up as a
+ *  session of its own. */
+export function resumeObjectPath(options: {
+  runId: string | undefined;
+  adapter: SessionAgent;
+  sessionId: string;
+}): string {
+  return `runs/${options.runId ?? 'unknown'}/${options.adapter}/${options.sessionId}.export.json`;
+}
+
 /**
  * Claude Code's own project-directory encoding for an absolute checkout
  * path: every character other than `[A-Za-z0-9]` becomes `-`, one-for-one

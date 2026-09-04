@@ -9,7 +9,7 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 import { describe, expect, it } from 'vitest';
 
 import type { WorkContext } from './work-mint';
-import { requestReply, selectResumeSession } from './work-reply';
+import { requestReply, resumeUriFor, selectResumeSession } from './work-reply';
 
 /** A minimal, valid `IssueAgentSessionDoc` -- every field the type
  *  requires, none of the ones it doesn't. Mirrors `work-router.test.ts`'s
@@ -97,6 +97,40 @@ describe('selectResumeSession', () => {
     expect(
       selectResumeSession([session({ agent: 'claude-code' })], runIds, 'codex'),
     ).toBeUndefined();
+  });
+
+  it('does not select an opencode session that has only a sanitized transcript', () => {
+    // The whole point of resumeGcsUri: a sanitized-only archive is NOT
+    // resumable, and selecting it would resume into redaction markers.
+    const doc = session({ agent: 'opencode', resumeGcsUri: undefined });
+    expect(selectResumeSession([doc], runIds, 'opencode')).toBeUndefined();
+  });
+
+  it('selects an opencode session that has a raw export', () => {
+    const doc = session({
+      agent: 'opencode',
+      resumeGcsUri: 'gs://b/runs/r1/opencode/s1.export.json',
+    });
+    expect(selectResumeSession([doc], runIds, 'opencode')?.sessionId).toBe(
+      doc.sessionId,
+    );
+  });
+});
+
+describe('resumeUriFor', () => {
+  it('prefers resumeGcsUri over transcriptGcsUri when both exist', () => {
+    const doc = session({
+      agent: 'opencode',
+      transcriptGcsUri: 'gs://b/runs/r1/opencode/s1.jsonl',
+      resumeGcsUri: 'gs://b/runs/r1/opencode/s1.export.json',
+    });
+    expect(resumeUriFor(doc)).toBe('gs://b/runs/r1/opencode/s1.export.json');
+  });
+
+  it('falls back to transcriptGcsUri for claude and codex', () => {
+    expect(resumeUriFor(session({ agent: 'claude-code' }))).toBe(
+      'gs://b/runs/work:01ABC%2Fr1/claude-code/s1.jsonl',
+    );
   });
 });
 

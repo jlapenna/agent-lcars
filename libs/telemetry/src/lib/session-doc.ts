@@ -137,6 +137,7 @@ export function buildSessionDoc(
         ...issueAgentBase,
         transcriptGcsUri: options.transcriptGcsUri,
         renderable: isRenderableTranscriptAgent(agent),
+        ...(options.resumeGcsUri && { resumeGcsUri: options.resumeGcsUri }),
       };
     }
     return issueAgentBase;

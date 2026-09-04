@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   claudeProjectSlugFor,
+  resumeObjectPath,
   RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   transcriptObjectPath,
@@ -92,6 +93,18 @@ describe('transcriptObjectPath', () => {
         sessionId: 'session-c',
       }),
     ).toBe('runs/unknown/claude-code/session-c.jsonl');
+  });
+});
+
+describe('resumeObjectPath', () => {
+  it('names the resumable artifact beside the rendered one', () => {
+    expect(
+      resumeObjectPath({
+        runId: 'work:01ABC/r1',
+        adapter: 'opencode',
+        sessionId: 's1',
+      }),
+    ).toBe('runs/work:01ABC/r1/opencode/s1.export.json');
   });
 });
 
