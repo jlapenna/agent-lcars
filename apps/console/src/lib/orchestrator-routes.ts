@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import {
   type Orchestrator,
   type OrchestratorStore,
@@ -105,7 +106,7 @@ async function labelRedispatchParams(
 }
 
 function internalError(context: string, error: unknown): RouteResult {
-  console.error(`agent-lcars: orchestrator ${context} handling failed`, error);
+  logger.error(`agent-lcars: orchestrator ${context} handling failed`, error);
   return { status: 500, body: { error: 'internal' } };
 }
 
@@ -215,7 +216,7 @@ export async function handleWebhookDelivery(
       return { status: 200, body: { refused: 'work-spec-mismatch' } };
     }
     if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {
-      console.error(
+      logger.error(
         'agent-lcars: GitHub webhook admission rejected',
         outcome.message,
       );

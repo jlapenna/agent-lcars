@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
@@ -43,7 +44,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       required('AGENT_LCARS_WEBHOOK_SECRET'),
     )
   ) {
-    console.warn('agent-lcars: rejected GitHub webhook with bad signature');
+    logger.warn('agent-lcars: rejected GitHub webhook with bad signature');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -65,7 +66,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     payload = JSON.parse(rawBody.toString('utf8')) as GitHubWebhookPayload;
   } catch {
-    console.warn('agent-lcars: ignored malformed signed GitHub webhook');
+    logger.warn('agent-lcars: ignored malformed signed GitHub webhook');
     return NextResponse.json(
       { deliveryId, eventName, outcome: 'ignored', reason: 'malformed JSON' },
       { status: 202, headers: { 'Cache-Control': 'no-store' } },
@@ -83,7 +84,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? isPushWatchedRepository(repository)
       : isControlPlaneRepository(repository));
   if (!admitted) {
-    console.info('agent-lcars: ignored webhook outside control plane', {
+    logger.info('agent-lcars: ignored webhook outside control plane', {
       deliveryId,
       eventName,
       repository,
@@ -106,13 +107,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       eventName,
       signature: header(request, 'x-hub-signature-256'),
     });
-    console.info('agent-lcars: hosted admission durably queued', result);
+    logger.info('agent-lcars: hosted admission durably queued', result);
     return NextResponse.json(result, {
       status: 202,
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    console.error('agent-lcars: hosted admission enqueue failed', error);
+    logger.error('agent-lcars: hosted admission enqueue failed', error);
     return NextResponse.json(
       { error: 'Hosted admission enqueue failed' },
       { status: 500 },
