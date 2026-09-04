@@ -163,6 +163,90 @@ describe('captureOpenCodeExports', () => {
     );
   });
 
+  it('captures a raw export beside the sanitized one', async () => {
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
+    const calls: string[][] = [];
+    const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
+      calls.push(args);
+      fs.writeFileSync(
+        output,
+        JSON.stringify({ info: { id: 'ses_1' }, messages: [] }),
+      );
+    };
+
+    await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+      runOpenCodeToFile,
+    });
+
+    // Two invocations per session: one --sanitize (the rendered artifact),
+    // one without (the resumable one).
+    expect(calls).toContainEqual(['--pure', 'export', 'ses_1', '--sanitize']);
+    expect(calls).toContainEqual(['--pure', 'export', 'ses_1']);
+    expect(fs.existsSync(path.join(root, 'sessions', 'ses_1.jsonl'))).toBe(
+      true,
+    );
+    expect(
+      fs.existsSync(path.join(root, 'sessions', 'ses_1.export.json')),
+    ).toBe(true);
+  });
+
+  it('prunes a stale raw export whose session is gone', async () => {
+    const sessionsDir = path.join(root, 'sessions');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionsDir, 'ses_gone.export.json'), '{}');
+    const runOpenCode: RunOpenCode = () => '[]';
+
+    await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+    });
+
+    expect(fs.existsSync(path.join(sessionsDir, 'ses_gone.export.json'))).toBe(
+      false,
+    );
+  });
+
+  it('keeps the sanitized artifact when the raw export fails', async () => {
+    // A raw-export failure must not cost us the rendered timeline.
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
+      if (args.includes('--sanitize')) {
+        fs.writeFileSync(
+          output,
+          JSON.stringify({ info: { id: 'ses_1' }, messages: [] }),
+        );
+        return;
+      }
+      throw new Error('raw export failed');
+    };
+
+    const result = await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+      runOpenCodeToFile,
+    });
+
+    expect(result).toEqual({
+      status: 'ok',
+      selected: 1,
+      exported: 1,
+      failed: 0,
+    });
+    expect(fs.existsSync(path.join(root, 'sessions', 'ses_1.jsonl'))).toBe(
+      true,
+    );
+    expect(
+      fs.existsSync(path.join(root, 'sessions', 'ses_1.export.json')),
+    ).toBe(false);
+  });
+
   it('accepts legacy nested time fields and caps exports to the newest sessions', async () => {
     const sessions = Array.from(
       { length: OPENCODE_CAPTURE_LIMITS.sessions + 5 },
@@ -172,10 +256,15 @@ describe('captureOpenCodeExports', () => {
         time: { updated: index },
       }),
     );
+    // Each selected session now produces two runOpenCodeToFile calls (the
+    // sanitized artifact this test cares about, plus the raw resumable
+    // export) -- track them separately rather than asserting on every call.
     const exports: string[] = [];
     const runOpenCode: RunOpenCode = () => JSON.stringify(sessions);
     const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
-      exports.push(args[2] as string);
+      if (args.includes('--sanitize')) {
+        exports.push(args[2] as string);
+      }
       fs.writeFileSync(
         output,
         JSON.stringify({ info: { id: args[2] }, messages: [] }),

@@ -3,6 +3,7 @@ import {
   applySessionTitleOverlay,
   buildSessionWrite,
   getTranscriptAdapter,
+  resumeObjectPath,
   RUNNER_CAPTURE_AGENTS,
   runnerWatchRoots,
   SessionAgent,
@@ -63,6 +64,11 @@ export interface FinalizeSidecarOptions {
   /** Test-only injection points, mirrored from `StartSidecarOptions`. */
   discover?: (rootPath: string, allowlist: string[]) => string[];
   readFile?: (filePath: string) => string;
+  /** Test-only injection point; production uses real `fs.existsSync`. Used
+   * to check for the OpenCode raw-export sibling file beside the
+   * discovered transcript (see {@link finalizeSummary}'s `resumeGcsUri`
+   * block) without a hard dependency on `fs` in the test double. */
+  exists?: (filePath: string) => boolean;
   resolveGitBranch?: (cwd: string) => Promise<string | undefined>;
   resolveGitRepo?: (
     cwd: string,
@@ -137,6 +143,7 @@ export async function finalizeSidecar(
   const discover = options.discover ?? discoverTranscriptFiles;
   const readFile =
     options.readFile ?? ((p: string) => fs.readFileSync(p, 'utf8'));
+  const exists = options.exists ?? ((p: string) => fs.existsSync(p));
   const resolveGitBranch = options.resolveGitBranch ?? defaultResolveGitBranch;
   const resolveGitRepo = options.resolveGitRepo ?? defaultResolveGitRepo;
   const uploadTranscript = options.uploadTranscript ?? defaultUploadTranscript;
@@ -239,6 +246,9 @@ export async function finalizeSidecar(
         uploadTranscript,
         statusAnnotations,
         titleOverlay,
+        file,
+        exists,
+        readFile,
       });
     }
   }
@@ -280,6 +290,13 @@ async function finalizeSummary(
      * `undefined` when `config.sessionStateDir` was unset there. */
     statusAnnotations?: ReadonlyMap<string, SessionStatusAnnotationV1>;
     titleOverlay?: ReturnType<typeof defaultReadSessionTitleOverlay>;
+    /** The discovered transcript file this summary was reduced from —
+     * needed to locate the OpenCode raw-export sibling (see the
+     * `resumeGcsUri` block below), which discovery never reports on its
+     * own (it only ever matches `*.jsonl`). */
+    file: string;
+    exists: (filePath: string) => boolean;
+    readFile: (filePath: string) => string;
   },
 ): Promise<void> {
   const { config, store } = deps;
@@ -310,6 +327,42 @@ async function finalizeSummary(
       transcriptGcsUri = `gs://${config.transcriptsBucket}/${object}`;
     } catch (error) {
       const message = `agent-lcars-telemetry-watcher: finalize failed to upload transcript for session ${summary.sessionId}, shipping doc without transcriptGcsUri`;
+      logger.warn(message, error);
+      annotateWarning(`${message}: ${error}`);
+    }
+  }
+
+  // The resumable sibling of the sanitized transcript above (spec decision
+  // 3, decided 2026-09-04, resumable-conversations plan 4). Discovery only
+  // ever reports `*.jsonl`, so the raw export is located beside it by
+  // extension rather than discovered on its own. Only OpenCode's raw
+  // export can carry a conversation forward -- `--sanitize` replaces every
+  // word with a redaction marker -- so this is entirely additive for
+  // Claude and Codex, which never have one.
+  let resumeGcsUri: string | undefined;
+  const rawExport = deps.file.replace(/\.jsonl$/u, '.export.json');
+  if (
+    config.transcriptsBucket &&
+    adapter === 'opencode' &&
+    deps.exists(rawExport)
+  ) {
+    const object = resumeObjectPath({
+      runId: config.runId,
+      adapter,
+      sessionId: summary.sessionId,
+    });
+    try {
+      await deps.uploadTranscript({
+        projectId: config.firestoreProjectId,
+        bucket: config.transcriptsBucket,
+        object,
+        contents: deps.readFile(rawExport),
+      });
+      resumeGcsUri = `gs://${config.transcriptsBucket}/${object}`;
+    } catch (error) {
+      // Same fail-soft shape as the transcript upload above: losing the
+      // resumable artifact costs continuity, never the run.
+      const message = `agent-lcars-telemetry-watcher: finalize failed to upload the resumable export for session ${summary.sessionId}, shipping doc without resumeGcsUri`;
       logger.warn(message, error);
       annotateWarning(`${message}: ${error}`);
     }
@@ -358,6 +411,7 @@ async function finalizeSummary(
     // rather than flipping a Codex session back to `cli` at the end.
     forceSource: 'issue-agent',
     ...(transcriptGcsUri && { transcriptGcsUri }),
+    ...(resumeGcsUri && { resumeGcsUri }),
   });
 
   try {

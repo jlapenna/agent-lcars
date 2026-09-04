@@ -271,12 +271,36 @@ describe('SessionHeader', () => {
     expect(note.textContent).toMatch(/repl(y|ies)/i);
   });
 
-  it('still says no resume path exists yet for a non-Codex, non-Claude agent', () => {
+  it('offers no Claude resume command for an archived OpenCode session, but says a reply continues it', () => {
     renderHeader(
       agentDoc({
         agent: 'opencode',
         transcriptGcsUri:
-          'gs://agent-lcars-agent-session-transcripts/runs/5150/opencode.json',
+          'gs://agent-lcars-agent-session-transcripts/runs/5150/opencode.jsonl',
+        renderable: false,
+      }),
+    );
+
+    // resume-archive cannot resume an OpenCode session either -- it writes
+    // a Claude-shaped JSONL, not an import into OpenCode's own SQLite
+    // store -- so no command is offered here, same as Codex above.
+    expect(screen.queryByText(/resume-archive/)).toBeNull();
+    const note = screen.getByTestId('archive-no-resume-note');
+    expect(note.textContent).toContain(
+      'gs://agent-lcars-agent-session-transcripts/runs/5150/opencode.jsonl',
+    );
+    // Plan 4: a reply on the item now resumes this exact OpenCode session
+    // too (work-reply.ts's RESUMABLE_PIPELINES) -- the note must say so,
+    // not repeat the generic "no resume path exists yet" claim.
+    expect(note.textContent).toMatch(/repl(y|ies)/i);
+  });
+
+  it('still says no resume path exists yet for a non-Codex, non-Claude, non-OpenCode agent', () => {
+    renderHeader(
+      agentDoc({
+        agent: 'gemini',
+        transcriptGcsUri:
+          'gs://agent-lcars-agent-session-transcripts/runs/5150/gemini.jsonl',
         renderable: false,
       }),
     );
@@ -284,7 +308,7 @@ describe('SessionHeader', () => {
     expect(screen.queryByText(/resume-archive/)).toBeNull();
     const note = screen.getByTestId('archive-no-resume-note');
     expect(note.textContent).toContain(
-      'gs://agent-lcars-agent-session-transcripts/runs/5150/opencode.json',
+      'gs://agent-lcars-agent-session-transcripts/runs/5150/gemini.jsonl',
     );
     expect(note.textContent).toContain('No resume command yet');
   });
