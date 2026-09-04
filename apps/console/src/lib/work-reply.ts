@@ -16,11 +16,16 @@ import {
   type WorkContext,
 } from './work-mint';
 
-/** The one pipeline whose CLI session this plan can restore. Plans 3 and 4
- *  add `codex` and `opencode`; until then a reply on those pipelines is a
- *  fresh session carrying the reply text, which is exactly today's
- *  behavior and strictly better than refusing the reply. */
-const RESUMABLE_PIPELINES: Record<string, string> = { claude: 'claude-code' };
+/** The pipelines whose CLI session can be restored. Plan 4 adds
+ *  `opencode`; until then a reply on that pipeline is a fresh session
+ *  carrying the reply text, which is exactly today's behavior and
+ *  strictly better than refusing the reply. Values are `SessionAgent`
+ *  members (`libs/telemetry/src/lib/types.ts`), matching what
+ *  `selectResumeSession` compares against `doc.agent` below. */
+const RESUMABLE_PIPELINES: Record<string, string> = {
+  claude: 'claude-code',
+  codex: 'codex',
+};
 
 /** Bounded to match `WORK_DESCRIPTION_MAX`: a reply is the same kind of
  *  prose an item's description is (spec decision 5). `runSchema.params`'s

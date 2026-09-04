@@ -243,7 +243,7 @@ describe('SessionHeader', () => {
     ).toBeNull();
   });
 
-  it('offers no Claude resume command for an archived Codex session', () => {
+  it('offers no Claude resume command for an archived Codex session, but says a reply continues it', () => {
     renderHeader(
       agentDoc({
         agent: 'codex',
@@ -255,13 +255,38 @@ describe('SessionHeader', () => {
 
     // resume-archive installs the JSONL under ~/.claude/projects and runs
     // `claude --resume`; it cannot resume a Codex rollout, so offering it
-    // would be a command that silently does the wrong thing.
+    // would be a command that silently does the wrong thing. No
+    // fleet-tools Codex adapter exists for the operator's own
+    // workstation command (plan 3's Task 3 step 4 decision).
     expect(screen.queryByText(/resume-archive/)).toBeNull();
     // The archive location is still surfaced - just without a command.
     const note = screen.getByTestId('archive-no-resume-note');
     expect(note.textContent).toContain(
       'gs://agent-lcars-agent-session-transcripts/runs/5150/codex.jsonl',
     );
+    // Unlike the generic "no resume command yet" claim this note used to
+    // make for every non-Claude agent, a reply on the item DOES continue
+    // this exact Codex thread now (the automated path, work-reply.ts's
+    // RESUMABLE_PIPELINES) -- the note must not claim otherwise.
+    expect(note.textContent).toMatch(/repl(y|ies)/i);
+  });
+
+  it('still says no resume path exists yet for a non-Codex, non-Claude agent', () => {
+    renderHeader(
+      agentDoc({
+        agent: 'opencode',
+        transcriptGcsUri:
+          'gs://agent-lcars-agent-session-transcripts/runs/5150/opencode.json',
+        renderable: false,
+      }),
+    );
+
+    expect(screen.queryByText(/resume-archive/)).toBeNull();
+    const note = screen.getByTestId('archive-no-resume-note');
+    expect(note.textContent).toContain(
+      'gs://agent-lcars-agent-session-transcripts/runs/5150/opencode.json',
+    );
+    expect(note.textContent).toContain('No resume command yet');
   });
 
   it('omits the resume-archive command for an issue-agent session with no transcriptGcsUri', () => {
