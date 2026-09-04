@@ -75,9 +75,11 @@ The control plane already has most of the pieces (file references are on
 
 ### Verified CLI facts
 
-Checked against the installed binaries on 2026-09-03. Codex thread
-lookup by explicit id, OpenCode id preservation on import, and OpenCode
-event shapes are marked for the real-path proof rather than assumed.
+Checked against the installed binaries on 2026-09-03. The OpenCode
+export/import round trip was measured on 2026-09-04 (see "Measured:
+OpenCode export and import" below) and is no longer an assumption; the
+Codex column is measured in plan 3. OpenCode event shapes are still for
+the real-path proof.
 
 | Concern                        | Claude Code 2.1.260                                                           | Codex CLI 0.151.0                                                                                       | OpenCode 1.18.21                                                            |
 | ------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -560,6 +562,38 @@ independent of each other and can run in parallel worktrees.
    webhook case, and the sprinkles bot changes (root message, thread
    listener, reply call, webhook receiver). Proof 5.
 
+### Measured: OpenCode export and import
+
+Measured on 2026-09-04 against OpenCode 1.18.21, using a real session and
+an isolated `XDG_DATA_HOME` so the live database was never written.
+
+| Question                                           | Measured answer                                                                                                   |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Does `export` then `import` preserve the session?  | **Yes.** `opencode import` into an empty data directory reported the same id and listed it with its title intact. |
+| Does the session id survive the round trip?        | **Yes**, byte-for-byte. So a restored session is addressable by `opencode run --session <id>`.                    |
+| Is an isolated data directory honored?             | **Yes.** `XDG_DATA_HOME` redirects the whole store, so a container restore cannot touch anything else.            |
+| Can the **sanitized** export carry a conversation? | **No.** See below. This is the finding that decides decision 3.                                                   |
+
+`opencode export --sanitize` preserves a session's _structure_ exactly —
+the same 148 messages, 35 text parts, 136 tool parts — while replacing the
+_content_ of each with a redaction marker. The first user turn reads
+`[redacted:text:<partId>]` instead of its actual words; tool output,
+reasoning, the working directory and the repository root are redacted the
+same way. Raw and sanitized differ 1,031,211 against 392,223 bytes for the
+same session.
+
+The consequence is narrow and decisive: a sanitized export **imports
+successfully and resumes into a conversation the model cannot read**,
+which is worse than refusing to resume at all, because it looks like it
+worked. Archiving the raw export is therefore not a convenience for
+OpenCode continuity, it is the only way to have it. The alternative is not
+"resume with less content", it is "no OpenCode continuity".
+
+Note that this is about `--sanitize` alone. The artifact archived today is
+narrower still: the watcher post-processes that output through
+`materializeSafeExport`, which allowlists only ids, roles, timings and
+token counts. Neither artifact can rebuild a conversation.
+
 ## Decisions for the maintainer
 
 1. **Implicit GitHub replies.** Any maintainer comment on a parked
@@ -568,7 +602,10 @@ independent of each other and can run in parallel worktrees.
 2. **Reply on `done` items.** Allowed (recommended) or parked only.
 3. **Raw OpenCode exports in the transcripts bucket.** Same treatment as
    the raw Claude and Codex archives (recommended), or keep OpenCode
-   non-resumable until a redaction pass exists.
+   non-resumable. Measurement (below) removes the third option this was
+   written to leave open: a sanitized export cannot carry a conversation,
+   so there is no middle path, and OpenCode continuity stands or falls on
+   this decision alone.
 4. **Slack outbound via the outbox webhook** (recommended, reliable and
    consistent with GitHub outcome comments) or the bot polling
    `GET /items?state=parked` on a timer (no new inbound endpoint in
