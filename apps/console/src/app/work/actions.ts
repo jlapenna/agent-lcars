@@ -11,6 +11,7 @@ const functionable = createServerFunctionable({ context });
 const createItemFn = functionable(workRouter.create);
 const cancelItemFn = functionable(workRouter.cancel);
 const redispatchItemFn = functionable(workRouter.redispatch);
+const replyItemFn = functionable(workRouter.reply);
 const getItemFn = functionable(workRouter.get);
 const listItemsFn = functionable(workRouter.list);
 
@@ -32,6 +33,11 @@ export async function redispatchItem(
   input: Parameters<typeof redispatchItemFn>[0],
 ) {
   return redispatchItemFn(input);
+}
+export async function replyToWorkItem(
+  input: Parameters<typeof replyItemFn>[0],
+) {
+  return replyItemFn(input);
 }
 export async function getItem(input: Parameters<typeof getItemFn>[0]) {
   return getItemFn(input);

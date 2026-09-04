@@ -12,6 +12,7 @@ const {
   verifySessionPinTickOidcToken,
   sessionsForRuns,
   sessionForResume,
+  sessionDocsForRuns,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   authenticateWorkRequest: vi.fn(),
@@ -19,6 +20,7 @@ const {
   verifySessionPinTickOidcToken: vi.fn(),
   sessionsForRuns: vi.fn(async () => []),
   sessionForResume: vi.fn(async () => undefined),
+  sessionDocsForRuns: vi.fn(async () => []),
 }));
 
 vi.mock('@/auth', () => ({ auth }));
@@ -32,7 +34,11 @@ vi.mock('@/lib/work-auth', () => ({
   }),
   rawBearerToken: () => undefined,
 }));
-vi.mock('@/lib/work-sessions', () => ({ sessionsForRuns, sessionForResume }));
+vi.mock('@/lib/work-sessions', () => ({
+  sessionsForRuns,
+  sessionForResume,
+  sessionDocsForRuns,
+}));
 
 // Plain top-level bindings, not `vi.hoisted` -- `vi.hoisted`'s callback runs
 // before this file's own static imports resolve, so `MemoryStore` et al.

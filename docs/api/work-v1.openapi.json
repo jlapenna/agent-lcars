@@ -1972,6 +1972,9 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "resumed": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -1982,7 +1985,8 @@
                     "createdAt",
                     "updatedAt",
                     "runs",
-                    "sessions"
+                    "sessions",
+                    "resumed"
                   ],
                   "additionalProperties": false
                 }

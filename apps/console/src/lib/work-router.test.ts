@@ -553,6 +553,7 @@ describe('items routes', () => {
         text: 'Use Firestore.',
       });
       expect(r.status).toBe(200);
+      expect(r.json.resumed).toBe(true);
       const run = r.json.runs.at(-1);
       expect(run.reply).toBe('Use Firestore.');
       const stored = await ctx.runtime.store.readRun(run.runId);
@@ -594,6 +595,7 @@ describe('items routes', () => {
         resume: false,
       });
       expect(r.status).toBe(200);
+      expect(r.json.resumed).toBe(false);
       const run = r.json.runs.at(-1);
       const stored = await ctx.runtime.store.readRun(run.runId);
       expect(stored?.params?.['resumeSessionId']).toBeUndefined();

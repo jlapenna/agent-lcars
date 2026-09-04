@@ -16,62 +16,54 @@ describe('WorkActions', () => {
     const noop = vi.fn(async () => [null, undefined] as const);
     const { rerender } = render(
       <MantineProvider>
-        <WorkActions id="x" state="parked" cancel={noop} redispatch={noop} />
+        <WorkActions
+          id="x"
+          state="parked"
+          cancel={noop}
+          redispatch={noop}
+          reply={noop}
+        />
       </MantineProvider>,
     );
     expect(screen.getByRole('button', { name: /Redispatch/ })).toBeEnabled();
     expect(screen.getByRole('button', { name: /Cancel/ })).toBeEnabled();
     rerender(
       <MantineProvider>
-        <WorkActions id="x" state="done" cancel={noop} redispatch={noop} />
+        <WorkActions
+          id="x"
+          state="done"
+          cancel={noop}
+          redispatch={noop}
+          reply={noop}
+        />
       </MantineProvider>,
     );
     expect(screen.queryByRole('button', { name: /Redispatch/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Cancel/ })).toBeNull();
   });
 
-  it('offers a checked-by-default resume checkbox when a resumeCandidate exists', async () => {
-    const redispatch = vi.fn().mockResolvedValue([null, {}]);
-    render(
+  it('offers no actions at all while a run is live', () => {
+    const noop = vi.fn(async () => [null, undefined] as const);
+    const { container } = render(
       <MantineProvider>
         <WorkActions
-          id="ID1"
-          state="parked"
-          cancel={vi.fn().mockResolvedValue([null, {}])}
-          redispatch={redispatch}
-          resumeCandidate={{ sessionId: 'sess_1', title: 'Prior turn' }}
+          id="x"
+          state="running"
+          cancel={noop}
+          redispatch={noop}
+          reply={noop}
         />
       </MantineProvider>,
     );
-    expect(screen.getByText(/Resume from session/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Redispatch/i }));
-    await waitFor(() =>
-      expect(redispatch).toHaveBeenCalledWith({
-        id: 'ID1',
-        resumeSessionId: 'sess_1',
-      }),
-    );
+    // Cancel is offered while running; reply is not (there is nothing yet
+    // to answer), and nothing else renders unexpectedly.
+    expect(screen.getByRole('button', { name: /Cancel/ })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Reply/ })).toBeNull();
+    expect(container.querySelector('textarea')).toBeNull();
   });
 
-  it('omits resumeSessionId once the checkbox is unchecked', async () => {
-    const redispatch = vi.fn().mockResolvedValue([null, {}]);
-    render(
-      <MantineProvider>
-        <WorkActions
-          id="ID1"
-          state="parked"
-          cancel={vi.fn().mockResolvedValue([null, {}])}
-          redispatch={redispatch}
-          resumeCandidate={{ sessionId: 'sess_1' }}
-        />
-      </MantineProvider>,
-    );
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: /Redispatch/i }));
-    await waitFor(() => expect(redispatch).toHaveBeenCalledWith({ id: 'ID1' }));
-  });
-
-  it('renders no resume checkbox with no resumeCandidate', () => {
+  it('offers a reply box on a parked item and calls reply({ id, text })', async () => {
+    const reply = vi.fn().mockResolvedValue([null, { resumed: true }]);
     render(
       <MantineProvider>
         <WorkActions
@@ -79,9 +71,53 @@ describe('WorkActions', () => {
           state="parked"
           cancel={vi.fn()}
           redispatch={vi.fn()}
+          reply={reply}
         />
       </MantineProvider>,
     );
-    expect(screen.queryByText(/Resume from session/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Use Firestore.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    await waitFor(() =>
+      expect(reply).toHaveBeenCalledWith({ id: 'ID1', text: 'Use Firestore.' }),
+    );
+  });
+
+  it('offers a reply box on a done item too -- "one more tweak"', () => {
+    render(
+      <MantineProvider>
+        <WorkActions
+          id="ID1"
+          state="done"
+          cancel={vi.fn()}
+          redispatch={vi.fn()}
+          reply={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole('button', { name: /Reply/i })).toBeInTheDocument();
+  });
+
+  it('surfaces a subdued note when the reply response reports resumed: false', async () => {
+    const reply = vi.fn().mockResolvedValue([null, { resumed: false }]);
+    render(
+      <MantineProvider>
+        <WorkActions
+          id="ID1"
+          state="parked"
+          cancel={vi.fn()}
+          redispatch={vi.fn()}
+          reply={reply}
+        />
+      </MantineProvider>,
+    );
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'try again' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/started a fresh session/i)).toBeInTheDocument(),
+    );
   });
 });

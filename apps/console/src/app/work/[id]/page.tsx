@@ -2,7 +2,6 @@ import type { ItemView } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,
-  Code,
   Group,
   Stack,
   Table,
@@ -22,7 +21,13 @@ import { auth } from '@/auth';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
-import { cancelItem, getItem, redispatchItem } from '../actions';
+import {
+  cancelItem,
+  getItem,
+  redispatchItem,
+  replyToWorkItem,
+} from '../actions';
+import { Conversation } from '../conversation';
 import { safeHttpUrl } from '../safe-url';
 import { WorkActions } from '../work-actions';
 
@@ -176,27 +181,6 @@ export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
   }
 
   const { item } = detail;
-
-  // Offer resume from the latest session of the item's latest run - `runs`
-  // is sorted oldest-first (see `toItemView`), so `.at(-1)` is the latest.
-  const latestRunView = item.runs.at(-1);
-  const latestSession = latestRunView
-    ? [...item.sessions]
-        .filter((s) => s.runId === latestRunView.runId)
-        .sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt))[0]
-    : undefined;
-  // Gated on pipeline and an archived transcript (I2): `work-router.ts`'s
-  // resume validation rejects a non-claude-code session with BAD_REQUEST
-  // and a session with no `transcriptGcsUri` with CONFLICT. Telemetry
-  // starts for every pipeline, so a parked codex/opencode item has
-  // sessions too -- without this gate its Redispatch button (which works
-  // today with the checkbox unchecked) would start failing by default the
-  // moment the checked-by-default resume checkbox appears for it.
-  const resumeCandidate =
-    item.spec.pipeline === 'claude' &&
-    latestSession?.transcriptGcsUri !== undefined
-      ? latestSession
-      : undefined;
   const pinned = item.state === 'running' || item.state === 'parked';
 
   return (
@@ -209,23 +193,13 @@ export function WorkDetailViewContent({ detail }: WorkDetailViewProps) {
           {item.spec.target.repo} &middot; {item.spec.pipeline}
         </Text>
       </Group>
-      <Text size="sm" c="dimmed">
-        Requested by {item.origin.principal} via {item.origin.channel}
-      </Text>
-      <Code block>{item.spec.description}</Code>
+      <Conversation item={item} />
       <WorkActions
         id={item.id}
         state={item.state}
         cancel={cancelItem}
         redispatch={redispatchItem}
-        {...(resumeCandidate && {
-          resumeCandidate: {
-            sessionId: resumeCandidate.sessionId,
-            ...(resumeCandidate.title !== undefined && {
-              title: resumeCandidate.title,
-            }),
-          },
-        })}
+        reply={replyToWorkItem}
       />
       <Stack gap="xs">
         <Title order={2} size="h4">

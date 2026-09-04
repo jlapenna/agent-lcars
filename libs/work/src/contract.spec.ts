@@ -25,13 +25,14 @@ describe('WORK_ID_PATTERN', () => {
 });
 
 describe('itemsContract', () => {
-  it('declares the five item procedures', () => {
+  it('declares the six item procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
       'cancel',
       'create',
       'get',
       'list',
       'redispatch',
+      'reply',
     ]);
   });
 });
@@ -211,6 +212,8 @@ describe('runsContract.brief resume field', () => {
       pipeline: 'claude',
       mode: 'implement',
       reply: '',
+      replyChannel: '',
+      replyPrincipal: '',
       runbook: '',
       context: '',
       attemptId: 'g1:work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
@@ -244,6 +247,8 @@ describe('runsContract.brief resume field', () => {
       pipeline: 'opencode',
       mode: 'review',
       reply: '/opencode review this',
+      replyChannel: '',
+      replyPrincipal: '',
       runbook: 'pr-heal',
       context: 'nightly',
       attemptId: 'g1:octo/example#42/r1',
@@ -269,6 +274,7 @@ describe('generateWorkOpenApi', () => {
         '/items/{id}',
         '/items/{id}/cancel',
         '/items/{id}/redispatch',
+        '/items/{id}/reply',
         '/schedules',
         '/schedules/tick',
         '/schedules/{id}',
@@ -341,6 +347,7 @@ describe('generateWorkOpenApi', () => {
       'GET /items': ['200'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409', '429'],
+      'POST /items/{id}/reply': ['200', '403', '404', '409', '429'],
       'POST /dispatches/github': ['200', '400', '403', '409'],
       'PUT /schedules/{id}': ['201', '400', '403', '409'],
       'GET /schedules/{id}': ['200', '404'],

@@ -16,6 +16,7 @@ vi.mock('../actions', () => ({
   getItem: vi.fn(),
   cancelItem: vi.fn(),
   redispatchItem: vi.fn(),
+  replyToWorkItem: vi.fn(),
 }));
 
 // WorkDetailViewContent renders WorkActions, which calls useRouter --
@@ -89,11 +90,6 @@ describe('SessionsList', () => {
   });
 });
 
-// I2: `work-router.ts`'s resume validation rejects a non-claude-code
-// session with BAD_REQUEST and a session with no `transcriptGcsUri` with
-// CONFLICT -- since telemetry starts for every pipeline, a parked item
-// with a disqualified session must not offer a resume the redispatch call
-// would only reject.
 const parkedItem: ItemView = {
   id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
   state: 'parked',
@@ -138,24 +134,13 @@ function renderDetail(item: ItemView) {
   );
 }
 
-describe('WorkDetailViewContent resume gate', () => {
-  it('offers no resume for a codex item with sessions', () => {
-    renderDetail({
-      ...parkedItem,
-      spec: { ...parkedItem.spec, pipeline: 'codex' },
-      runs: parkedItem.runs.map((run) => ({ ...run, pipeline: 'codex' })),
-    });
-    expect(screen.queryByText(/Resume from session/i)).not.toBeInTheDocument();
-  });
-
-  it('offers no resume for a claude item whose session lacks transcriptGcsUri', () => {
-    renderDetail({
-      ...parkedItem,
-      sessions: parkedItem.sessions.map((session) => ({
-        ...session,
-        transcriptGcsUri: undefined,
-      })),
-    });
-    expect(screen.queryByText(/Resume from session/i)).not.toBeInTheDocument();
+describe('WorkDetailViewContent', () => {
+  it('renders the conversation view and a reply box for a parked item', () => {
+    renderDetail(parkedItem);
+    // The conversation view (Task 5) replaced the raw description block --
+    // round 1's human turn is the item's own description.
+    expect(screen.getByText('d')).toBeInTheDocument();
+    // `replyToWorkItem` is wired through, so a parked item offers a reply.
+    expect(screen.getByRole('button', { name: /Reply/i })).toBeInTheDocument();
   });
 });

@@ -301,7 +301,10 @@ export const workRouter = os.router({
     // same way `get` does.
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    return view(context, input.id, task.task);
+    return {
+      ...(await view(context, input.id, task.task)),
+      resumed: outcome.resumed,
+    };
   }),
 });
 

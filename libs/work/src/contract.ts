@@ -270,7 +270,16 @@ export const itemsContract = {
         pipeline: z.enum(['claude', 'codex', 'opencode']).optional(),
       }),
     )
-    .output(itemViewSchema),
+    .output(
+      z.strictObject({
+        ...itemViewSchema.shape,
+        /** Whether the minted round actually resumed a prior session --
+         *  `requestReply`'s own outcome (`work-reply.ts`), threaded onto
+         *  the item view so the console can tell the human "started a
+         *  fresh session" rather than silently degrading. */
+        resumed: z.boolean(),
+      }),
+    ),
 };
 export type ItemsContract = typeof itemsContract;
 
