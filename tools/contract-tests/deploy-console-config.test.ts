@@ -337,10 +337,16 @@ describe('console deployment workflow', () => {
     }
   });
 
-  it('deploys the implicit-reply allowlist empty until a maintainer enables it', async () => {
+  it('deploys the implicit-reply allowlist disabled until a maintainer enables it', async () => {
     // Resumable-conversations plan 2: merging the feature must change no
     // behavior until a maintainer deliberately sets this per repository
     // (plan task 4 step 2, maintainer-gated) -- see implicit-reply.ts.
+    //
+    // Disabled is expressed by *omitting* the variable, not by `value: ''`.
+    // `splitEnvList` maps an unset variable to `[]` and `implicit-reply.ts`
+    // returns early on an empty allowlist, so absence means exactly what the
+    // empty string was meant to mean -- and unlike the empty string, App
+    // Hosting accepts it (#1776).
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -350,8 +356,29 @@ describe('console deployment workflow', () => {
       ({ variable }) => variable === 'AGENT_LCARS_IMPLICIT_REPLY_REPOS',
     );
 
-    expect(entry).toBeDefined();
-    expect(entry?.value).toBe('');
+    expect(entry).toBeUndefined();
+  });
+
+  it('declares a non-empty value or a secret for every deployed env entry', async () => {
+    // App Hosting's preparer rejects an entry carrying neither with
+    // `either 'value' or 'secret' field is required`, and an empty string
+    // counts as neither. #1773 shipped `value: ''` and broke every console
+    // deploy for five hours while the test above -- which asserted exactly
+    // that empty string -- stayed green. This is the invariant that check
+    // should have been.
+    const config = parseYaml(
+      await readFile('apps/console/apphosting.yaml', 'utf8'),
+    ) as {
+      env?: Array<{ variable?: string; value?: unknown; secret?: unknown }>;
+    };
+
+    const invalid = (config.env ?? []).filter(
+      ({ value, secret }) =>
+        !(typeof secret === 'string' && secret !== '') &&
+        !(value !== undefined && value !== null && String(value) !== ''),
+    );
+
+    expect(invalid.map(({ variable }) => variable)).toEqual([]);
   });
 
   it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {

@@ -155,17 +155,22 @@ env:
     availability:
       - RUNTIME
 
+  # AGENT_LCARS_IMPLICIT_REPLY_REPOS is deliberately NOT declared here.
+  #
   # Resumable-conversations plan 2 (docs/superpowers/plans/2026-09-04-
-  # resumable-conversations-2-github-replies.md): a comma-separated
+  # resumable-conversations-2-github-replies.md): it is a comma-separated
   # owner/repo list whose issue/PR threads accept an ordinary OWNER/MEMBER
   # comment on a PARKED anchor as a reply that resumes the agent's session,
-  # no trigger word needed. Empty here on purpose -- merging the feature
-  # must change no behavior until a maintainer deliberately enables it for
-  # a repository (plan task 4 step 2, maintainer-gated).
-  - variable: AGENT_LCARS_IMPLICIT_REPLY_REPOS
-    value: ''
-    availability:
-      - RUNTIME
+  # no trigger word needed. Merging the feature must change no behavior
+  # until a maintainer deliberately enables it for a repository (plan task 4
+  # step 2, maintainer-gated).
+  #
+  # Disabled is expressed by omitting the variable, not by `value: ''`:
+  # App Hosting's preparer rejects an empty string with "either 'value' or
+  # 'secret' field is required" and fails the whole build (#1776, which cost
+  # five hours of blocked deploys). `splitEnvList` maps an unset variable to
+  # `[]` and `implicit-reply.ts` returns early on an empty allowlist, so
+  # absence means exactly what the empty string was meant to mean.
 
   # Separate, narrower repo list: only `push` webhook events mint a native
   # work item for these (`push-watch.ts`) — unlike
