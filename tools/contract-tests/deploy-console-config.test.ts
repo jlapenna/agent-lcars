@@ -337,16 +337,17 @@ describe('console deployment workflow', () => {
     }
   });
 
-  it('deploys the implicit-reply allowlist disabled until a maintainer enables it', async () => {
-    // Resumable-conversations plan 2: merging the feature must change no
-    // behavior until a maintainer deliberately sets this per repository
-    // (plan task 4 step 2, maintainer-gated) -- see implicit-reply.ts.
+  it('enables implicit replies only for this repository', async () => {
+    // Resumable-conversations plan 2, enabled on the maintainer's explicit
+    // instruction (2026-09-04, plan task 4 step 2). Pinned to exactly one
+    // repository rather than merely "non-empty": this flag changes what an
+    // ordinary maintainer comment DOES on a parked anchor, so widening it
+    // to another repository must be a deliberate edit that fails this test
+    // first, not a quiet addition to a list.
     //
-    // Disabled is expressed by *omitting* the variable, not by `value: ''`.
-    // `splitEnvList` maps an unset variable to `[]` and `implicit-reply.ts`
-    // returns early on an empty allowlist, so absence means exactly what the
-    // empty string was meant to mean -- and unlike the empty string, App
-    // Hosting accepts it (#1776).
+    // If it is ever disabled, DELETE the entry -- never set `value: ''`,
+    // which App Hosting rejects and which blocked deploys for five hours
+    // (#1776). The "non-empty value or secret" test below is the guard.
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -356,7 +357,7 @@ describe('console deployment workflow', () => {
       ({ variable }) => variable === 'AGENT_LCARS_IMPLICIT_REPLY_REPOS',
     );
 
-    expect(entry).toBeUndefined();
+    expect(entry?.value).toBe('jlapenna/agent-lcars');
   });
 
   it('declares a non-empty value or a secret for every deployed env entry', async () => {
