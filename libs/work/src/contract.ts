@@ -233,6 +233,44 @@ export const itemsContract = {
       }),
     )
     .output(itemViewSchema),
+  reply: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/items/{id}/reply',
+        operationId: 'replyToItem',
+        summary: "Answer a stopped item's agent and resume its session",
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such item' },
+      FORBIDDEN: {
+        message: 'Principal may not request this pipeline or repository',
+      },
+      // `task-busy` (a run is live) and `task-closed` (canceled) are both
+      // state conflicts, reusing the orchestrator's own refusal vocabulary
+      // rather than inventing a second one at this boundary.
+      CONFLICT: {
+        message: 'The item cannot take a reply in its current state',
+      },
+      TOO_MANY_REQUESTS: {
+        message: 'Fleet is at its live-run cap',
+        data: z.object({ retryAfterSeconds: z.number() }),
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        /** The human's turn. Bounded to WORK_DESCRIPTION_MAX: a reply is
+         *  the same kind of prose an item's description is. */
+        text: z.string().min(1).max(16_384),
+        /** Defaults to true. False starts a fresh session that still
+         *  carries the reply text. */
+        resume: z.boolean().optional(),
+        pipeline: z.enum(['claude', 'codex', 'opencode']).optional(),
+      }),
+    )
+    .output(itemViewSchema),
 };
 export type ItemsContract = typeof itemsContract;
 

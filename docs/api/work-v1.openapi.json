@@ -1732,6 +1732,339 @@
         ]
       }
     },
+    "/items/{id}/reply": {
+      "post": {
+        "operationId": "replyToItem",
+        "summary": "Answer a stopped item's agent and resume its session",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16384
+                  },
+                  "resume": {
+                    "type": "boolean"
+                  },
+                  "pipeline": {
+                    "type": "string",
+                    "enum": ["claude", "codex", "opencode"]
+                  }
+                },
+                "required": ["text"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": ["running", "done", "parked", "canceled"]
+                    },
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16384
+                        },
+                        "pipeline": {
+                          "type": "string",
+                          "enum": ["claude", "codex", "opencode"]
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "repo": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                            }
+                          },
+                          "required": ["repo"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "description",
+                        "pipeline",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "principal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": ["api", "cron", "console", "github"]
+                        }
+                      },
+                      "required": ["principal", "channel"],
+                      "additionalProperties": false
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "closedAt": {
+                      "type": "string"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "runId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "running",
+                              "finished",
+                              "canceled",
+                              "lost"
+                            ]
+                          },
+                          "pipeline": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "summary": {
+                                "type": "string",
+                                "maxLength": 4096
+                              },
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 1024
+                              },
+                              "message": {
+                                "type": "string",
+                                "maxLength": 16384
+                              }
+                            },
+                            "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "reply": {
+                            "type": "string",
+                            "maxLength": 16384
+                          },
+                          "replyChannel": {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          "replyPrincipal": {
+                            "type": "string",
+                            "maxLength": 256
+                          },
+                          "queue": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["queued", "claimed"]
+                              },
+                              "claimedBy": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["state"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "state",
+                          "pipeline",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "transcriptGcsUri": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "runId",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "state",
+                    "spec",
+                    "origin",
+                    "createdAt",
+                    "updatedAt",
+                    "runs",
+                    "sessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal may not request this pipeline or repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The item cannot take a reply in its current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Fleet is at its live-run cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TooManyRequests"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/schedules/{id}": {
       "put": {
         "operationId": "createSchedule",

@@ -21,6 +21,7 @@ import {
   view,
   type WorkContext,
 } from './work-mint';
+import { requestReply } from './work-reply';
 
 export type { WorkContext } from './work-mint';
 
@@ -271,6 +272,37 @@ export const workRouter = os.router({
       return view(context, input.id, outcome.task);
     },
   ),
+
+  reply: operator.reply.handler(async ({ input, context, errors }) => {
+    const outcome = await requestReply(context, {
+      id: input.id,
+      text: input.text,
+      // The console session and a service principal are the only two
+      // callers this route has today; plan 2's GitHub ingest and plan 5's
+      // Slack adapter call `requestReply` directly with their own channel.
+      channel: context.principal.via === 'session' ? 'console' : 'api',
+      principal: context.principal.principal,
+      ...(input.resume === undefined ? {} : { resume: input.resume }),
+      ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
+    });
+    if (!outcome.ok) {
+      if (outcome.code === 'NOT_FOUND') throw errors.NOT_FOUND();
+      if (outcome.code === 'FORBIDDEN')
+        throw errors.FORBIDDEN({ message: outcome.message });
+      if (outcome.code === 'TOO_MANY_REQUESTS')
+        throw errors.TOO_MANY_REQUESTS({
+          data: { retryAfterSeconds: RETRY_AFTER_SECONDS },
+        });
+      throw errors.CONFLICT({ message: outcome.message });
+    }
+    // `requestReply`'s outcome carries only the minted run id, not a fresh
+    // `Task` -- unlike `create`/`cancel`/`redispatch`, which get one back
+    // from the orchestrator call they each make directly. Re-read it, the
+    // same way `get` does.
+    const task = await context.runtime.store.readTask({ workId: input.id });
+    if (task === undefined) throw errors.NOT_FOUND();
+    return view(context, input.id, task.task);
+  }),
 });
 
 /**
