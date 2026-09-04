@@ -17,8 +17,10 @@ operational instructions.
   for a smoke.
 - One item at a time: `AGENT_LCARS_WORK_MAX_LIVE_RUNS` is `2` in production
   and this smoke should never need the second slot.
-- Cancel only through `POST /api/work/v1/items/{id}/cancel`. Cancelling from
-  the console's runs view does not settle a native run today (#1530).
+- Cancel through `POST /api/work/v1/items/{id}/cancel`, which is what the
+  console's own Cancel button calls (`work-actions.tsx` -> `workRouter.cancel`).
+  The separate runs-view cancel path that could not settle a native run is
+  gone with #1530 and the native run-history refactor (#1611).
 - Anything that fails is a finding on #1502 with the run URL — fix forward,
   never paper over it.
 
@@ -315,9 +317,20 @@ confirmation the brief carried a `work` payload derived from the issue.
 Residual/known: the park-projection failure (item 4) is **not** a
 sub-project 5 regression as such — the oldest stuck outbox entry predates
 `cfbb0e77` by six days, and the claim-side projection (item 1-3) works
-correctly. It does mean sub-project 5's park projection has never actually
-delivered in production for any run, including this one, until #1548 is
+correctly. It did mean sub-project 5's park projection had never actually
+delivered in production for any run, including this one, until #1548 was
 fixed. See #1548 for the live incident and root-cause evidence.
+
+**Resolved 2026-08-27.** #1548 landed (#1553) and was verified in
+production the same day: the `orchestrator-outbox` pending count went
+162 -> 0 with no entry left at `attempts: 0`, and the park projection was
+then _directly observed_ delivering on a real anchor -- throwaway PR
+[#1563](https://github.com/jlapenna/agent-lcars/pull/1563) received the
+park comment `IC_kwDOTemFxc8AAAABRJITvA` from `agent-lcars` at
+2026-08-27T21:23:25Z, with its outbox entry `outcome/jlapenna/agent-lcars#1563/r1`
+reaching `state: done` on `attempts: 1`. That closes item 4 above; the
+**FAIL** in the table is the original 2026-08-27 measurement, kept as the
+record of how the incident was found.
 
 ## Sub-project 6: session resume and reaper (2026-08-27)
 

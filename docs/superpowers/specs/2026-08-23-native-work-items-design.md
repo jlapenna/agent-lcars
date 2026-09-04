@@ -1,9 +1,15 @@
 # Native work items: a GitHub-independent task system
 
-- **Status:** Approved design, pre-implementation
+- **Status:** Implemented and shipped. All eight sub-projects landed and
+  the tracking issue ([#1502](https://github.com/jlapenna/agent-lcars/issues/1502))
+  closed 2026-08-29; the post-cutover compatibility deletions closed with
+  #1602-#1605, #1610, and #1630-#1634. This document is the design of
+  record, not a proposal.
 - **Date:** 2026-08-23 (rewritten 2026-08-25 on the one-store model)
-- **Scope:** Design for the whole program; implementation scope for
-  sub-project 1 only (see [Sequencing](#sequencing)).
+- **Scope:** Design for the whole program. Sub-project 1 was the original
+  implementation scope; the sub-project sections below were appended as each
+  later stage was designed, and all of them are now as-built
+  (see [Sequencing](#sequencing)).
 
 ## Problem
 
