@@ -376,7 +376,7 @@ describe('AppInstallationTokenProvider', () => {
       });
 
       await expect(provider.tokenFor(REPO)).rejects.toThrow(
-        `failed to resolve GitHub App installation for ${REPO}: GitHub returned 404`,
+        `failed to resolve GitHub App installation for ${REPO}: GitHub returned 404: Not Found`,
       );
     });
 
@@ -400,12 +400,71 @@ describe('AppInstallationTokenProvider', () => {
       expect(error).toBeInstanceOf(Error);
       const message = (error as Error).message;
       expect(message).toBe(
-        `failed to mint GitHub App installation access token for ${REPO}: GitHub returned 403`,
+        `failed to mint GitHub App installation access token for ${REPO}: GitHub returned 403: Forbidden`,
       );
       expect(message).not.toContain(PRIVATE_KEY_PEM);
       expect(message).not.toContain('BEGIN PRIVATE KEY');
       // No JWT (three dot-separated base64url segments) leaked either.
       expect(message).not.toMatch(/[\w-]+\.[\w-]+\.[\w-]+/);
+    });
+
+    // The 422 that made #1767's 291-error incident undiagnosable: the status
+    // alone cannot distinguish "repo not in the installation" from "permission
+    // the installation does not hold", but GitHub's body says which.
+    it("carries GitHub's validation detail into a 422 mint failure", async () => {
+      const { fetchImpl } = fakeAppFetch({
+        tokenStatus: 422,
+        tokenBody: {
+          message: 'Validation Failed',
+          errors: [
+            {
+              message:
+                'There is at least one repository that does not exist or is not accessible to the parent installation.',
+            },
+          ],
+          // Never echoed: it is a URL, and the security assertions below
+          // reject dot-separated segments.
+          documentation_url: 'https://docs.github.com/rest',
+        },
+      });
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      let error: unknown;
+      try {
+        await provider.tokenFor(REPO);
+      } catch (caught) {
+        error = caught;
+      }
+      const message = (error as Error).message;
+      expect(message).toContain('GitHub returned 422');
+      expect(message).toContain('Validation Failed');
+      expect(message).toContain('is not accessible to the parent installation');
+      expect(message).not.toContain('docs.github.com');
+      expect(message).not.toContain(PRIVATE_KEY_PEM);
+      expect(message).not.toMatch(/[\w-]+\.[\w-]+\.[\w-]+/);
+    });
+
+    it('still fails with the status alone when the error body is not JSON', async () => {
+      const fetchImpl = (async (input: RequestInfo | URL) =>
+        String(input).endsWith('/installation')
+          ? new Response(JSON.stringify({ id: 987 }), { status: 200 })
+          : new Response('<html>502 Bad Gateway</html>', {
+              status: 502,
+            })) as typeof fetch;
+      const provider = new AppInstallationTokenProvider({
+        clientId: CLIENT_ID,
+        privateKeyPem: PRIVATE_KEY_PEM,
+        fetchImpl,
+      });
+
+      // Reading the body must never throw a second error on top of the first.
+      await expect(provider.tokenFor(REPO)).rejects.toThrow(
+        `failed to mint GitHub App installation access token for ${REPO}: GitHub returned 502`,
+      );
     });
 
     it('wraps a network failure during installation resolution with a clear, token-free message', async () => {

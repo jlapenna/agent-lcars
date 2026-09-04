@@ -348,6 +348,43 @@ function splitRepo(repo: string): { owner: string; name: string } {
   return { owner: repo.slice(0, slash), name: repo.slice(slash + 1) };
 }
 
+/** GitHub's own explanation for a non-OK App response, for the thrown
+ *  message. A bare status cannot distinguish the several different causes
+ *  that all surface as 422 here -- a repository outside the installation, a
+ *  permission the installation does not hold, a suspended installation --
+ *  and dropping it left #1767's 291-error incident unexplainable after the
+ *  fact.
+ *
+ *  Only `message` and `errors[].message` are lifted, never the raw body:
+ *  that keeps `documentation_url` and anything else GitHub might add out of
+ *  a string this module is required to keep free of the JWT and private key.
+ *  Reading the body must never throw on top of the failure being reported,
+ *  so every step is defensive and an unparseable body yields `''`. */
+async function githubErrorDetail(response: Response): Promise<string> {
+  let raw: string;
+  try {
+    raw = await response.text();
+  } catch {
+    return '';
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return '';
+  }
+  if (typeof body !== 'object' || body === null) return '';
+  const { message, errors } = body as { message?: unknown; errors?: unknown };
+  const parts = typeof message === 'string' && message !== '' ? [message] : [];
+  if (Array.isArray(errors)) {
+    for (const entry of errors) {
+      const detail = (entry as { message?: unknown } | null)?.message;
+      if (typeof detail === 'string' && detail !== '') parts.push(detail);
+    }
+  }
+  return parts.join('; ').slice(0, 300);
+}
+
 async function resolveInstallationId(
   fetchImpl: typeof fetch,
   jwt: string,
@@ -365,8 +402,9 @@ async function resolveInstallationId(
     );
   }
   if (!response.ok) {
+    const detail = await githubErrorDetail(response);
     throw new Error(
-      `failed to resolve GitHub App installation for ${repo}: GitHub returned ${response.status}`,
+      `failed to resolve GitHub App installation for ${repo}: GitHub returned ${response.status}${detail === '' ? '' : `: ${detail}`}`,
     );
   }
 
@@ -408,8 +446,9 @@ async function mintInstallationAccessToken(
     );
   }
   if (!response.ok) {
+    const detail = await githubErrorDetail(response);
     throw new Error(
-      `failed to mint GitHub App installation access token for ${repo}: GitHub returned ${response.status}`,
+      `failed to mint GitHub App installation access token for ${repo}: GitHub returned ${response.status}${detail === '' ? '' : `: ${detail}`}`,
     );
   }
 
