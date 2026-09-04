@@ -3312,6 +3312,12 @@
                         "reply": {
                           "type": "string"
                         },
+                        "replyChannel": {
+                          "type": "string"
+                        },
+                        "replyPrincipal": {
+                          "type": "string"
+                        },
                         "runbook": {
                           "type": "string"
                         },
@@ -3350,6 +3356,8 @@
                         "pipeline",
                         "mode",
                         "reply",
+                        "replyChannel",
+                        "replyPrincipal",
                         "runbook",
                         "context",
                         "attemptId",
@@ -3436,6 +3444,12 @@
                         "reply": {
                           "type": "string"
                         },
+                        "replyChannel": {
+                          "type": "string"
+                        },
+                        "replyPrincipal": {
+                          "type": "string"
+                        },
                         "runbook": {
                           "type": "string"
                         },
@@ -3473,6 +3487,8 @@
                         "pipeline",
                         "mode",
                         "reply",
+                        "replyChannel",
+                        "replyPrincipal",
                         "runbook",
                         "context",
                         "attemptId",

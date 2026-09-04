@@ -20,7 +20,7 @@ bash "$RUNTIME_HELPERS_DIR/assert-consumer-boundaries.sh" "$WORKSPACE" "$REPOSIT
 # reviewed edit here. See the jq that applies them for the rationale on the
 # values.
 MAX_ANCHOR_BODY_CHARACTERS=6000
-MAX_REPLY_CHARACTERS=4000
+MAX_REPLY_CHARACTERS=16384
 MAX_CONTEXT_CHARACTERS=2000
 MAX_RESULT_BODY_CHARACTERS=2000
 MAX_ACCEPTANCE_CRITERIA=40
@@ -103,9 +103,10 @@ if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
     labels: [], assignees: [], state: "open", state_reason: null
   }')"
   comments_json='[]'
-  # A native run has no maintainer thread to reply on; force this
-  # regardless of what the caller happened to pass as REPLY.
-  REPLY=''
+  # A native anchor has no GitHub thread, but it does have a maintainer
+  # channel now: POST /items/{id}/reply puts the human's turn on
+  # `Run.params.reply`, and the brief is where the agent reads it. (This
+  # used to force REPLY='' because there was no such channel.)
 elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   # A GitHub-anchored task carries a Work payload.
   # The task text comes from WORK.spec -- the issue is evidence for

@@ -548,6 +548,11 @@ const runBriefSharedSchema = {
   /** The worker behavior requested at admission, never inferred from labels. */
   mode: z.string(),
   reply: z.string(),
+  /** Channel and principal of a reply round's human turn, from
+   *  `Run.params.replyChannel`/`replyPrincipal`. Empty for every other
+   *  mode, the same convention `reply` itself already uses. */
+  replyChannel: z.string(),
+  replyPrincipal: z.string(),
   runbook: z.string(),
   context: z.string(),
   attemptId: z.string(),

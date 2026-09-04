@@ -337,6 +337,8 @@ export const runsRouter = os.router({
     const params = {
       mode,
       reply: run.params?.['reply'] ?? '',
+      replyChannel: run.params?.['replyChannel'] ?? '',
+      replyPrincipal: run.params?.['replyPrincipal'] ?? '',
       runbook: run.params?.['runbook'] ?? '',
       context: run.params?.['context'] ?? '',
     };
