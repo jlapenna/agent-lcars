@@ -40,6 +40,12 @@ export interface WorkContext {
    *  validation (sub-project 6) -- the same read-only telemetry accessor
    *  `sessionsFor` uses, scoped to a single session. */
   getSessionDoc: (sessionId: string) => Promise<SessionDoc | undefined>;
+  /** Raw session docs for a set of runs, for `requestReply`'s resume
+   *  selection (`work-reply.ts`). Distinct from `sessionsFor`: that one
+   *  returns the console's trimmed `ItemSessionView` projection, which
+   *  drops `source`/`agent`/`intentId` -- exactly the fields resume
+   *  ownership and pipeline matching need. */
+  sessionDocsForRuns: (runIds: string[]) => Promise<SessionDoc[]>;
   maxLiveRuns: number;
   /** Schedule storage -- separate from `OrchestratorRouteDeps` on purpose:
    *  a schedule is not a `Task` (see `schedule-store.ts`). */

@@ -15,7 +15,11 @@ import {
   workMaxLiveRuns,
 } from './work-grants';
 import { mintItem, type WorkContext } from './work-mint';
-import { sessionForResume, sessionsForRuns } from './work-sessions';
+import {
+  sessionDocsForRuns,
+  sessionForResume,
+  sessionsForRuns,
+} from './work-sessions';
 
 type RouteResult = { status: number; body: Record<string, unknown> };
 
@@ -120,10 +124,10 @@ function shortSha(sha: string): string {
  * There is no bearer token or console session here — the caller has already
  * authenticated via the webhook's HMAC signature, one layer up — so
  * `principal` is left unset, matching every other field's real
- * implementation rather than a stub (`sessionsFor`/`getSessionDoc` are
- * unused by `mintItem` itself but are real, not stubbed, so a future reader
- * changing this handler to build a richer response doesn't inherit a silent
- * gap).
+ * implementation rather than a stub (`sessionsFor`/`getSessionDoc`/
+ * `sessionDocsForRuns` are unused by `mintItem` itself but are real, not
+ * stubbed, so a future reader changing this handler to build a richer
+ * response doesn't inherit a silent gap).
  *
  * `grants` deliberately re-parses `AGENT_LCARS_WORK_GRANTS` on every call
  * instead of reusing `work-grants.ts`'s cached `workGrants()` singleton:
@@ -136,6 +140,7 @@ function pushWatchContext(runtime: OrchestratorRouteDeps): WorkContext {
     runtime,
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
+    sessionDocsForRuns,
     maxLiveRuns: workMaxLiveRuns(),
     scheduleStore: unreachableScheduleStore,
     grants: () => parseWorkGrants(optional('AGENT_LCARS_WORK_GRANTS')),

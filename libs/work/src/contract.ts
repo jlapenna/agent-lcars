@@ -40,6 +40,12 @@ export const itemRunViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
+  /** The human turn that opened this round, for a `mode: reply` run.
+   *  Round 1's human turn is `spec.description`, not a reply. Mirrors
+   *  `@agent-lcars/work/derive`'s `ItemRunView`. */
+  reply: z.string().max(16_384).optional(),
+  replyChannel: z.string().max(64).optional(),
+  replyPrincipal: z.string().max(256).optional(),
   queue: z
     .strictObject({
       state: z.enum(['queued', 'claimed']),

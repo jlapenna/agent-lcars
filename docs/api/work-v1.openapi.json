@@ -406,6 +406,18 @@
                             "required": ["ok"],
                             "additionalProperties": false
                           },
+                          "reply": {
+                            "type": "string",
+                            "maxLength": 16384
+                          },
+                          "replyChannel": {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          "replyPrincipal": {
+                            "type": "string",
+                            "maxLength": 256
+                          },
                           "queue": {
                             "type": "object",
                             "properties": {
@@ -682,6 +694,18 @@
                             },
                             "required": ["ok"],
                             "additionalProperties": false
+                          },
+                          "reply": {
+                            "type": "string",
+                            "maxLength": 16384
+                          },
+                          "replyChannel": {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          "replyPrincipal": {
+                            "type": "string",
+                            "maxLength": 256
                           },
                           "queue": {
                             "type": "object",
@@ -977,6 +1001,18 @@
                                   "required": ["ok"],
                                   "additionalProperties": false
                                 },
+                                "reply": {
+                                  "type": "string",
+                                  "maxLength": 16384
+                                },
+                                "replyChannel": {
+                                  "type": "string",
+                                  "maxLength": 64
+                                },
+                                "replyPrincipal": {
+                                  "type": "string",
+                                  "maxLength": 256
+                                },
                                 "queue": {
                                   "type": "object",
                                   "properties": {
@@ -1223,6 +1259,18 @@
                             },
                             "required": ["ok"],
                             "additionalProperties": false
+                          },
+                          "reply": {
+                            "type": "string",
+                            "maxLength": 16384
+                          },
+                          "replyChannel": {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          "replyPrincipal": {
+                            "type": "string",
+                            "maxLength": 256
                           },
                           "queue": {
                             "type": "object",
@@ -1501,6 +1549,18 @@
                             },
                             "required": ["ok"],
                             "additionalProperties": false
+                          },
+                          "reply": {
+                            "type": "string",
+                            "maxLength": 16384
+                          },
+                          "replyChannel": {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          "replyPrincipal": {
+                            "type": "string",
+                            "maxLength": 256
                           },
                           "queue": {
                             "type": "object",

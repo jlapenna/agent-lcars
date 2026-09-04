@@ -71,6 +71,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     } as unknown as WorkContext['runtime'],
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
+    sessionDocsForRuns: async () => [],
     maxLiveRuns: 4,
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],

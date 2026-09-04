@@ -80,3 +80,30 @@ export async function sessionForResume(
     return undefined;
   }
 }
+
+/**
+ * Raw session docs for a set of runs, for `requestReply`'s resume selection
+ * (`work-reply.ts`). Same query shape as `sessionsForRuns`, but returns the
+ * telemetry-native `SessionDoc` instead of the console's trimmed
+ * `ItemSessionView` projection: resume ownership and pipeline matching need
+ * `source`, `agent`, and `intentId`, none of which survive that projection.
+ * Degrades to an empty list on failure, matching `sessionsForRuns`.
+ */
+export async function sessionDocsForRuns(
+  runIds: readonly string[],
+): Promise<SessionDoc[]> {
+  if (runIds.length === 0) return [];
+
+  try {
+    const firestore = await getAgentTelemetryReaderFirestore();
+    const perRun = await Promise.all(
+      runIds.map((intentId) =>
+        listSessionDocs(firestore, { intentId, source: 'issue-agent' }),
+      ),
+    );
+    return perRun.flat();
+  } catch (error) {
+    console.error('agent-lcars: failed to list session docs for reply:', error);
+    return [];
+  }
+}

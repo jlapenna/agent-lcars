@@ -265,8 +265,13 @@ export const runSchema = z.strictObject({
   /** Namespace for requestId in the durable idempotency ledger. */
   requestSource: requestSourceSchema,
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
-   *  time and handed verbatim to the executor. Never interpreted here. */
-  params: z.record(z.string().max(64), z.string().max(8_192)).optional(),
+   *  time and handed verbatim to the executor. Never interpreted here.
+   *  Value bound matches the native reply route's `REPLY_MAX`
+   *  (`work-reply.ts`, 16,384 bytes, the same budget `spec.description`
+   *  gets): raised from 8,192 so a full-length native reply can actually be
+   *  persisted here without a later `runSchema.parse` read throwing on the
+   *  run that stored it. */
+  params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
   /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
   /** A live run must renew before this instant or it is presumed lost. */

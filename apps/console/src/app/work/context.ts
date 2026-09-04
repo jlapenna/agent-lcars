@@ -11,7 +11,11 @@ import {
 } from '@/lib/work-auth';
 import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
 import type { WorkContext } from '@/lib/work-mint';
-import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
+import {
+  sessionDocsForRuns,
+  sessionForResume,
+  sessionsForRuns,
+} from '@/lib/work-sessions';
 
 /**
  * Builds the router's context from the console session rather than a bearer
@@ -48,6 +52,7 @@ export async function context(): Promise<WorkContext> {
     runtime: createOrchestratorRuntime(),
     sessionsFor: sessionsForRuns,
     getSessionDoc: sessionForResume,
+    sessionDocsForRuns,
     maxLiveRuns: workMaxLiveRuns(),
     scheduleStore: createScheduleStore(),
     grants: workGrants,
