@@ -53,6 +53,11 @@ export interface ItemRunView {
   updatedAt: string;
   result?: Run['result'];
   queue?: { state: 'queued' | 'claimed'; claimedBy?: string };
+  /** The human turn that opened this round, for a `mode: reply` run.
+   *  Round 1's human turn is `spec.description`, not a reply. */
+  reply?: string;
+  replyChannel?: string;
+  replyPrincipal?: string;
 }
 
 export interface ItemSessionView {
@@ -136,6 +141,17 @@ export function toItemView(input: {
                 : { claimedBy: r.queue.claimedBy }),
             },
           }),
+      // The human turn that opened a `mode: reply` round -- round 1's is
+      // `spec.description`, not on `params` at all.
+      ...(r.params?.['reply'] === undefined
+        ? {}
+        : { reply: r.params['reply'] }),
+      ...(r.params?.['replyChannel'] === undefined
+        ? {}
+        : { replyChannel: r.params['replyChannel'] }),
+      ...(r.params?.['replyPrincipal'] === undefined
+        ? {}
+        : { replyPrincipal: r.params['replyPrincipal'] }),
     })),
     sessions: [...(input.sessions ?? [])],
   };

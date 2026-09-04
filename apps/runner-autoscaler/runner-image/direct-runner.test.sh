@@ -119,11 +119,11 @@ case "$url" in
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
     else
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
 JSON
     fi
     ;;
@@ -263,6 +263,12 @@ FAKE
 #!/usr/bin/env bash
 echo "$@" >> "$CLAUDE_ARGS_LOG"
 printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
+# Opt-in: most scenarios don't care what claude "said", only what it was
+# asked and how it exited. Set to exercise direct-runner.sh's final-message
+# capture (`--print` piped through `tee`).
+if [ -n "${FAKE_CLAUDE_STDOUT:-}" ]; then
+  printf '%s' "$FAKE_CLAUDE_STDOUT"
+fi
 exit 0
 FAKE
   chmod +x "$bindir/claude"
@@ -506,6 +512,12 @@ grep -q -- "--cwd $workspace" "$NODE_ARGS_LOG" ||
   fail "happy path: runner resume was not passed the checkout cwd ($(cat "$NODE_ARGS_LOG"))"
 grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
   fail "happy path: claude was not passed --resume sess_1 ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+
+# mode:implement with no reply must keep the generic dispatch prompt: a
+# resumed round is not automatically a reply round.
+if grep -q 'A human replied on' "$CLAUDE_ARGS_LOG" 2>/dev/null; then
+  fail "happy path: reply-round framing leaked into a dispatch with no reply ($(cat "$CLAUDE_ARGS_LOG"))"
+fi
 
 # Production starts without RUNTIME_HELPERS_DIR in the QueueExecutor
 # container. Its default must be exported to prepare/verify helpers; the
@@ -865,6 +877,33 @@ grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
   fail "resume-empty: claude started after an empty restore ($(cat "$CLAUDE_ARGS_LOG"))"
 
 echo "scenario resume-empty: OK"
+
+# --- Scenario 1e: a resumed reply round gets the human's turn as its prompt,
+# and the agent's final message is captured onto the completion payload ----
+# A native reply round (mode:reply, a non-empty reply, and a resume request
+# the brief carries) must get the reply prompt, not the generic "work the
+# routed anchor" one -- and whatever claude prints to stdout must reach
+# /complete as `message`.
+export FAKE_MODE=reply
+export FAKE_REPLY='Use Firestore.'
+export FAKE_REPLY_CHANNEL='console'
+export FAKE_REPLY_PRINCIPAL='user:jlapenna'
+export FAKE_CLAUDE_STDOUT="Which database should I use?
+PARK waiting on the maintainer"
+run_scenario reply-prompt
+unset FAKE_MODE FAKE_REPLY FAKE_REPLY_CHANNEL FAKE_REPLY_PRINCIPAL FAKE_CLAUDE_STDOUT
+
+[ "$rc" -eq 0 ] || fail "reply-prompt: expected exit 0, got $rc"
+grep -q -- '--resume sess_1' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "reply-prompt: claude was not passed --resume sess_1 ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+grep -q 'A human replied on console (user:jlapenna):' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "reply-prompt: prompt did not carry the reply-round framing ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+grep -q 'Use Firestore.' "$CLAUDE_ARGS_LOG" 2>/dev/null ||
+  fail "reply-prompt: prompt did not carry the human's reply text ($(cat "$CLAUDE_ARGS_LOG" 2>/dev/null))"
+jq -e '.message | contains("Which database should I use?")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "reply-prompt: complete payload did not capture the agent's final message ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario reply-prompt: OK"
 
 # --- Scenario 2: no-deliverable ---------------------------------------------
 # The PR-marker lookup gh api call finds nothing, so the native verifier's

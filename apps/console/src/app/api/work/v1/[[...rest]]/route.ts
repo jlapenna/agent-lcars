@@ -28,7 +28,11 @@ import {
 } from '@/lib/work-auth';
 import { workGrants, workMaxLiveRuns } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
-import { sessionForResume, sessionsForRuns } from '@/lib/work-sessions';
+import {
+  sessionDocsForRuns,
+  sessionForResume,
+  sessionsForRuns,
+} from '@/lib/work-sessions';
 
 /** The `servers` URL in the generated OpenAPI document, and the prefix
  *  proxy.ts allow-lists (as `/api/work/v1/` -- see the comment there for
@@ -122,6 +126,7 @@ async function handle(request: Request): Promise<Response> {
       runtime,
       sessionsFor: sessionsForRuns,
       getSessionDoc: sessionForResume,
+      sessionDocsForRuns,
       maxLiveRuns: workMaxLiveRuns(),
       scheduleStore: createScheduleStore(),
       grants: workGrants,

@@ -71,6 +71,7 @@ function context(over: Partial<WorkContext> = {}): WorkContext {
     } as unknown as WorkContext['runtime'],
     sessionsFor: async () => [],
     getSessionDoc: async () => undefined,
+    sessionDocsForRuns: async () => [],
     maxLiveRuns: 4,
     scheduleStore: new MemoryScheduleStore(),
     grants: () => [],
@@ -516,6 +517,105 @@ describe('items routes', () => {
       expect((await call(ctx, 'GET', `/items/${ID}`)).json.runs).toHaveLength(
         1,
       );
+    });
+  });
+
+  describe('reply', () => {
+    /** Parks `ID` with exactly one finished claude run carrying an
+     *  archived session -- the precondition every "mints a reply run"
+     *  case below shares. */
+    async function parkedItemWithSession(ctx: WorkContext): Promise<void> {
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+        ok: true,
+        summary: 'park',
+      });
+    }
+
+    function contextWithSession(over: Partial<WorkContext> = {}): WorkContext {
+      return context({
+        sessionDocsForRuns: async () => [
+          sessionDoc({
+            sessionId: 'sess-1',
+            intentId: `work:${ID}/r1`,
+            transcriptGcsUri: 'gs://bucket/runs/x/claude-code/sess-1.jsonl',
+          }),
+        ],
+        ...over,
+      });
+    }
+
+    it('mints a reply run carrying the text and the resume request', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+
+      const r = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Use Firestore.',
+      });
+      expect(r.status).toBe(200);
+      expect(r.json.resumed).toBe(true);
+      const run = r.json.runs.at(-1);
+      expect(run.reply).toBe('Use Firestore.');
+      const stored = await ctx.runtime.store.readRun(run.runId);
+      expect(stored?.params).toMatchObject({
+        mode: 'reply',
+        reply: 'Use Firestore.',
+        replyChannel: 'console',
+        resumeSessionId: 'sess-1',
+      });
+    });
+
+    it('refuses a reply while a run is live', async () => {
+      const ctx = context();
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+
+      const r = await call(ctx, 'POST', `/items/${ID}/reply`, { text: 'hi' });
+      expect(r.status).toBe(409);
+      expect(r.json).toMatchObject({ message: 'task-busy' });
+    });
+
+    it('accepts a reply on a done item', async () => {
+      const ctx = contextWithSession();
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      await ctx.runtime.orchestrator.report(`work:${ID}/r1`, { ok: true });
+      expect((await call(ctx, 'GET', `/items/${ID}`)).json.state).toBe('done');
+
+      const r = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'one more tweak',
+      });
+      expect(r.status).toBe(200);
+    });
+
+    it('omits the resume request when resume is false', async () => {
+      const ctx = contextWithSession();
+      await parkedItemWithSession(ctx);
+
+      const r = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'fresh please',
+        resume: false,
+      });
+      expect(r.status).toBe(200);
+      expect(r.json.resumed).toBe(false);
+      const run = r.json.runs.at(-1);
+      const stored = await ctx.runtime.store.readRun(run.runId);
+      expect(stored?.params?.['resumeSessionId']).toBeUndefined();
+    });
+
+    it('omits the resume request when the pipeline switches', async () => {
+      const ctx = contextWithSession({
+        principal: { ...operator, pipelines: ['claude', 'codex'] },
+      });
+      await parkedItemWithSession(ctx);
+
+      const r = await call(ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'try codex',
+        pipeline: 'codex',
+      });
+      expect(r.status).toBe(200);
+      const run = r.json.runs.at(-1);
+      const stored = await ctx.runtime.store.readRun(run.runId);
+      expect(stored?.params?.['resumeSessionId']).toBeUndefined();
+      expect(stored?.pipeline).toBe('codex');
     });
   });
 

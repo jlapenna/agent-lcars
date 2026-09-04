@@ -168,6 +168,32 @@ describe('toItemView', () => {
       }),
     ).toThrow();
   });
+
+  it('carries a reply round human turn onto the run view', () => {
+    const view = toItemView({
+      workId: WORK_ID,
+      task: task(),
+      runs: [
+        run(1, 'finished', { result: { ok: true, summary: 'park' } }),
+        run(2, 'finished', {
+          params: {
+            mode: 'reply',
+            reply: 'Use Firestore.',
+            replyChannel: 'console',
+            replyPrincipal: 'user:jlapenna',
+          },
+          result: { ok: true, summary: 'park', message: 'Which region?' },
+        }),
+      ],
+    });
+    expect(view.runs[1]).toMatchObject({
+      reply: 'Use Firestore.',
+      replyChannel: 'console',
+      replyPrincipal: 'user:jlapenna',
+      result: { message: 'Which region?' },
+    });
+    expect(view.runs[0]?.reply).toBeUndefined();
+  });
 });
 
 describe('toWorkSummary', () => {

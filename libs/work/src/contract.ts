@@ -28,6 +28,9 @@ const runResultSchema = z.strictObject({
   ok: z.boolean(),
   summary: z.string().max(4_096).optional(),
   ref: z.string().max(1_024).optional(),
+  /** The agent's final message for this round, e.g. its question when it
+   *  parked. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
+  message: z.string().max(16_384).optional(),
 });
 
 export const itemRunViewSchema = z.strictObject({
@@ -37,6 +40,12 @@ export const itemRunViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
+  /** The human turn that opened this round, for a `mode: reply` run.
+   *  Round 1's human turn is `spec.description`, not a reply. Mirrors
+   *  `@agent-lcars/work/derive`'s `ItemRunView`. */
+  reply: z.string().max(16_384).optional(),
+  replyChannel: z.string().max(64).optional(),
+  replyPrincipal: z.string().max(256).optional(),
   queue: z
     .strictObject({
       state: z.enum(['queued', 'claimed']),
@@ -224,6 +233,53 @@ export const itemsContract = {
       }),
     )
     .output(itemViewSchema),
+  reply: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/items/{id}/reply',
+        operationId: 'replyToItem',
+        summary: "Answer a stopped item's agent and resume its session",
+      }),
+    )
+    .errors({
+      NOT_FOUND: { message: 'No such item' },
+      FORBIDDEN: {
+        message: 'Principal may not request this pipeline or repository',
+      },
+      // `task-busy` (a run is live) and `task-closed` (canceled) are both
+      // state conflicts, reusing the orchestrator's own refusal vocabulary
+      // rather than inventing a second one at this boundary.
+      CONFLICT: {
+        message: 'The item cannot take a reply in its current state',
+      },
+      TOO_MANY_REQUESTS: {
+        message: 'Fleet is at its live-run cap',
+        data: z.object({ retryAfterSeconds: z.number() }),
+      },
+    })
+    .input(
+      z.strictObject({
+        id: workIdSchema,
+        /** The human's turn. Bounded to WORK_DESCRIPTION_MAX: a reply is
+         *  the same kind of prose an item's description is. */
+        text: z.string().min(1).max(16_384),
+        /** Defaults to true. False starts a fresh session that still
+         *  carries the reply text. */
+        resume: z.boolean().optional(),
+        pipeline: z.enum(['claude', 'codex', 'opencode']).optional(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        ...itemViewSchema.shape,
+        /** Whether the minted round actually resumed a prior session --
+         *  `requestReply`'s own outcome (`work-reply.ts`), threaded onto
+         *  the item view so the console can tell the human "started a
+         *  fresh session" rather than silently degrading. */
+        resumed: z.boolean(),
+      }),
+    ),
 };
 export type ItemsContract = typeof itemsContract;
 
@@ -501,6 +557,11 @@ const runBriefSharedSchema = {
   /** The worker behavior requested at admission, never inferred from labels. */
   mode: z.string(),
   reply: z.string(),
+  /** Channel and principal of a reply round's human turn, from
+   *  `Run.params.replyChannel`/`replyPrincipal`. Empty for every other
+   *  mode, the same convention `reply` itself already uses. */
+  replyChannel: z.string(),
+  replyPrincipal: z.string(),
   runbook: z.string(),
   context: z.string(),
   attemptId: z.string(),
@@ -635,6 +696,10 @@ export const runsContract = {
         runId: runIdSchema,
         outcome: z.unknown(),
         outcomeReference: z.unknown().optional(),
+        /** The agent's final message for this round (spec: "Runner
+         *  changes"). Bounded here as well as in `toRunResult` so an
+         *  oversized body is refused at the boundary, not silently cut. */
+        message: z.string().max(16_384).optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),

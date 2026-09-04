@@ -184,6 +184,9 @@ jobs:
       - name: Test direct-runner.sh
         run: bash apps/runner-autoscaler/runner-image/direct-runner.test.sh
 
+      - name: Test prepare-dispatch.sh
+        run: bash apps/runner-autoscaler/runner-image/runtime/prepare-dispatch.test.sh
+
       - name: Test repo-variable assertion
         run: bash .github/actions/assert-repo-vars/assert.test.sh
 
