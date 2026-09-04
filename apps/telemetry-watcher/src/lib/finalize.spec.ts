@@ -288,14 +288,17 @@ describe('finalizeSidecar', () => {
       fs.rmSync(exportsDir, { recursive: true, force: true });
     }
 
-    expect(uploads).toHaveLength(1);
-    expect(uploads[0]).toMatchObject({
+    // Two uploads: the sanitized rendered artifact this test is about, plus
+    // the raw resumable export plan 4 captures beside it (resumeGcsUri).
+    expect(uploads).toHaveLength(2);
+    const sanitizedUpload = uploads.find((u) => u.object.endsWith('.jsonl'));
+    expect(sanitizedUpload).toMatchObject({
       projectId: undefined,
       bucket: 'agent-lcars-session-transcripts',
       object: 'runs/42/opencode/ses_opencode_final.jsonl',
     });
-    expect(uploads[0]?.contents).not.toContain('writer-secret');
-    expect(JSON.parse(uploads[0]?.contents ?? '')).toEqual({
+    expect(sanitizedUpload?.contents).not.toContain('writer-secret');
+    expect(JSON.parse(sanitizedUpload?.contents ?? '')).toEqual({
       info: {
         id: 'ses_opencode_final',
         directory: '/home/runner/_work/agent-lcars/agent-lcars',
@@ -308,6 +311,11 @@ describe('finalizeSidecar', () => {
         },
       ],
     });
+    const resumeUpload = uploads.find((u) => u.object.endsWith('.export.json'));
+    expect(resumeUpload).toMatchObject({
+      bucket: 'agent-lcars-session-transcripts',
+      object: 'runs/42/opencode/ses_opencode_final.export.json',
+    });
     expect(upserts).toEqual([
       expect.objectContaining({
         sessionId: 'ses_opencode_final',
@@ -315,8 +323,100 @@ describe('finalizeSidecar', () => {
         renderable: false,
         transcriptGcsUri:
           'gs://agent-lcars-session-transcripts/runs/42/opencode/ses_opencode_final.jsonl',
+        resumeGcsUri:
+          'gs://agent-lcars-session-transcripts/runs/42/opencode/ses_opencode_final.export.json',
       }),
     ]);
+  });
+
+  it('uploads the raw export and sets resumeGcsUri', async () => {
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript, uploads } = createFakeUploader();
+    const exportsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'opencode-finalize-resume-test-'),
+    );
+    try {
+      await captureOpenCodeExports({
+        workspaceDir: '/home/runner/_work/agent-lcars/agent-lcars',
+        exportsDir,
+        runOpenCode: () =>
+          JSON.stringify([
+            {
+              id: 'ses_1',
+              directory: '/home/runner/_work/agent-lcars/agent-lcars',
+            },
+          ]),
+        runOpenCodeToFile: (args, output) => {
+          const sanitized = args.includes('--sanitize');
+          fs.writeFileSync(
+            output,
+            JSON.stringify({
+              info: { id: 'ses_1', time: { created: 1, updated: 2 } },
+              messages: sanitized
+                ? []
+                : [
+                    {
+                      info: { role: 'user', time: { created: 1 } },
+                      parts: [{ type: 'text', text: 'raw content' }],
+                    },
+                  ],
+            }),
+          );
+        },
+      });
+
+      await finalizeSidecar({
+        config: baseConfig({
+          runId: 'r1',
+          transcriptsBucket: 'bucket',
+          opencodeExportsDir: exportsDir,
+        }),
+        store,
+        captureOpenCodeExports: () => ({
+          status: 'ok',
+          selected: 1,
+          exported: 1,
+          failed: 0,
+        }),
+        resolveGitBranch: async () => undefined,
+        resolveGitRepo: async () => undefined,
+        uploadTranscript,
+      });
+    } finally {
+      fs.rmSync(exportsDir, { recursive: true, force: true });
+    }
+
+    expect(uploads).toContainEqual(
+      expect.objectContaining({ object: 'runs/r1/opencode/ses_1.export.json' }),
+    );
+    expect(upserts[0]).toMatchObject({
+      resumeGcsUri: 'gs://bucket/runs/r1/opencode/ses_1.export.json',
+    });
+  });
+
+  it('ships the doc without resumeGcsUri when there is no raw export', async () => {
+    // Claude and Codex sessions have none, and must be unaffected.
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript } = createFakeUploader();
+    const files = {
+      '/home/runner/.claude/projects/proj/session-e.jsonl':
+        ISSUE_AGENT_TRANSCRIPT('session-e', '2026-07-19T10:00:00.000Z'),
+    };
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: '42',
+        transcriptsBucket: 'agent-lcars-session-transcripts',
+      }),
+      store,
+      discover: () => Object.keys(files),
+      readFile: (p: string) => files[p as keyof typeof files],
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(upserts[0]).not.toHaveProperty('resumeGcsUri');
   });
 
   it('reports a zero-session finalize pass loudly instead of shipping nothing silently (Bug 2, #645)', async () => {

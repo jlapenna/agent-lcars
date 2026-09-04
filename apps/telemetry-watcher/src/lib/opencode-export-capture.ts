@@ -539,7 +539,9 @@ export async function captureOpenCodeExports(
 
   const sessionsDir = path.join(options.exportsDir, 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
-  const selectedFiles = new Set(sessions.map(({ id }) => `${id}.jsonl`));
+  const selectedFiles = new Set(
+    sessions.flatMap(({ id }) => [`${id}.jsonl`, `${id}.export.json`]),
+  );
   let exported = 0;
   let failed = 0;
 
@@ -570,6 +572,46 @@ export async function captureOpenCodeExports(
       });
       fs.renameSync(normalizedFile, destination);
       exported++;
+
+      // The resumable artifact (spec decision 3, decided 2026-09-04). The
+      // sanitized file above is what the console renders; this one is the
+      // only thing a later run can actually resume from, because
+      // `--sanitize` replaces every word of the conversation with a
+      // redaction marker. Failing to capture it costs continuity, never the
+      // rendered timeline -- so it is caught separately from the loop's
+      // main try, and the sanitized artifact is already committed above.
+      const rawDestination = path.join(
+        sessionsDir,
+        `${session.id}.export.json`,
+      );
+      const rawTemporary = `${rawDestination}.tmp-${process.pid}-${Date.now()}`;
+      try {
+        await runOpenCodeToFile(
+          ['--pure', 'export', session.id],
+          rawTemporary,
+          {
+            timeout: commandTimeoutMs,
+            maxBytes: exportMaxBytes,
+          },
+        );
+        fs.chmodSync(rawTemporary, 0o600);
+        fs.renameSync(rawTemporary, rawDestination);
+      } catch (error) {
+        logger.warn(
+          `agent-lcars-telemetry-watcher: failed to capture a resumable OpenCode export for ${session.id}; this session will not be resumable`,
+          error,
+        );
+        try {
+          fs.unlinkSync(rawTemporary);
+        } catch (cleanupError) {
+          if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
+            logger.warn(
+              `agent-lcars-telemetry-watcher: failed to remove temporary OpenCode raw capture ${rawTemporary}`,
+              cleanupError,
+            );
+          }
+        }
+      }
     } catch (error) {
       failed++;
       logger.warn(
@@ -599,7 +641,8 @@ export async function captureOpenCodeExports(
     for (const entry of fs.readdirSync(sessionsDir, { withFileTypes: true })) {
       if (
         entry.isFile() &&
-        entry.name.endsWith('.jsonl') &&
+        (entry.name.endsWith('.jsonl') ||
+          entry.name.endsWith('.export.json')) &&
         !selectedFiles.has(entry.name)
       ) {
         fs.unlinkSync(path.join(sessionsDir, entry.name));
