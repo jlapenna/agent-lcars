@@ -97,21 +97,19 @@ containers: `direct-runner.sh:196` checks out into
 
 ### Two inconsistencies found on the way
 
-Both are pre-existing and small, and the recommended design fixes them in
-passing rather than working around them.
+Both were pre-existing and small, and both were fixed the day this design was written: #1759 (park item state, closes #1757) and #1760 (resume-archive slug, closes #1758). The quick-task button's own state derivation had the same park bug; #1763 tracks it.
 
 1. **A park reads as `done` on a native item.** #1608 (2026-08-29) added
    `park` to `run-result.ts`'s `OK_OUTCOMES`, so a park completes with
    `ok: true`. `deriveItemState` reads a finished `ok: true` run as
    `done`, not `parked`. The design spec's decision ("completion with
    `ok: false`; the item reads `parked`") and the 2026-08-27 proof both
-   predate this. No test pins the item state a park produces.
+   predate this. No test pinned the item state a park produced; #1759 added one at the `/complete` boundary.
 2. **The operator tool computes a different project slug.**
    `packages/fleet-tools`'s `resume-archive` slugs the cwd with
    `sed 's/[\/.]/-/g'`; the canonical `claudeProjectSlugFor`
    (`libs/telemetry/src/lib/runner-capture.ts`) replaces every
-   non-alphanumeric character. They disagree for a path containing `_`
-   or `+`.
+   non-alphanumeric character. They disagreed for a path containing `_` or `+`; #1760 aligned the tool and added a table test copied from the canonical spec.
 
 ## Goals
 
@@ -246,8 +244,7 @@ mismatch.
   round n>1's human turn is `params.reply`.
 - **Conversation**: the ordered rounds of an item, derived, never stored.
 - **Parked**: the latest run finished with `result.summary === 'park'`.
-  This replaces the `ok: false` test in `deriveItemState` and fixes
-  inconsistency 1: a park is neither a failure nor done. The runner keeps
+  `deriveItemState` keys on the summary since #1759 (inconsistency 1): a park is neither a failure nor done. The runner keeps
   reporting `outcome: park`; `toRunResult` keeps `ok: true` for it (a
   park is a legitimate run outcome), and item state keys on the summary.
   A parked item is exactly an item awaiting a human; no separate
@@ -454,8 +451,7 @@ from the runs: for each round, the human turn (`spec.description` with
 goes away: resume is the default and the reply route reports `resumed`
 in its response. The session page's resume-command note for Codex and
 OpenCode sessions is replaced by the same archive-resume command once
-`fleet-tools` gains the two adapters (a small follow-up that also fixes
-inconsistency 2).
+`fleet-tools` gains the two adapters (a small follow-up; inconsistency 2 is already fixed by #1760).
 
 ### 7. Concurrency, budgets, and failure modes
 
