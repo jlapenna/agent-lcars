@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { resumeTranscript } from './lib/resume-transcript';
 // This exercises the real CLI entrypoint end to end (fake network via a
 // stubbed fetch is not available for a spawned process, so this test
 // instead stubs the module-level Storage client the way
@@ -268,5 +269,40 @@ describe('runner resume subcommand', () => {
       'sess_1.jsonl',
     );
     expect(printed).toBe(expected);
+  });
+
+  // Task 3 (direct-runner.sh) invokes `runner resume --agent opencode
+  // --session-id <id> --transcript-uri <gcsUri> --cwd <dir>` -- the flag
+  // parser must accept `opencode` (previously rejected the same as any
+  // unrecognized agent) and thread it through to resumeTranscript, whose
+  // own opencode branch imports through the trusted binary rather than
+  // writing a file.
+  it('threads --agent opencode through to resumeTranscript', async () => {
+    let received: Parameters<typeof resumeTranscript>[0] | undefined;
+    const printed = await _runRunnerResumeForTesting(
+      [
+        '--agent',
+        'opencode',
+        '--session-id',
+        'ses_1',
+        '--transcript-uri',
+        'gs://bucket/runs/r1/opencode/ses_1.export.json',
+        '--cwd',
+        '/home/runner/work/repo/repo',
+      ],
+      {
+        resumeTranscript: async (options) => {
+          received = options;
+          return options.sessionId;
+        },
+      },
+    );
+
+    expect(received?.agent).toBe('opencode');
+    expect(received?.sessionId).toBe('ses_1');
+    expect(received?.transcriptGcsUri).toBe(
+      'gs://bucket/runs/r1/opencode/ses_1.export.json',
+    );
+    expect(printed).toBe('ses_1');
   });
 });

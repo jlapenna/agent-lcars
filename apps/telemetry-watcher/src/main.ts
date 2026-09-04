@@ -234,12 +234,15 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
  * `RunnerConfig.firestoreProjectId` (`finalize.ts` passes that value as
  * `uploadTranscript`'s own `projectId`), so a caller that already exports
  * it for `runner sidecar`/`runner finalize` needs no extra flag here.
- * `--agent <claude-code|codex>` defaults to `claude-code` so every
+ * `--agent <claude-code|codex|opencode>` defaults to `claude-code` so every
  * existing production call site (none of which pass it) is unaffected;
  * any other value is rejected the same fail-soft way as a missing
  * required flag. `--codex-home` is required only when `--agent codex` is
  * given -- `resumeTranscript`'s own `destinationFor` rejects a codex
- * resume with no codex home.
+ * resume with no codex home. `--agent opencode` needs neither
+ * `--projects-dir` nor `--codex-home`: `resumeTranscript` imports the
+ * downloaded export through the trusted OpenCode binary instead of
+ * writing a file to either directory.
  * Exported for testing so a spec can exercise the real logic without
  * spawning `node` and without a real GCS call.
  */
@@ -257,7 +260,7 @@ export async function _runRunnerResumeForTesting(
     !flags.transcriptUri ||
     !flags.cwd ||
     !isSafeIdentifier(flags.sessionId) ||
-    (agent !== 'claude-code' && agent !== 'codex')
+    (agent !== 'claude-code' && agent !== 'codex' && agent !== 'opencode')
   ) {
     return undefined;
   }

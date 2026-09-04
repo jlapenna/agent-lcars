@@ -706,12 +706,17 @@ echo "scenario codex-burned-stderr: OK"
 # Deliberately seed the direct runner's inherited environment so this proves
 # the adapter actively scrubs it rather than merely starting from a clean
 # fixture.  The value is a test sentinel, never a credential.
+#
+# The default brief's resume object (session sess_1) must now resume the
+# same OpenCode session (resumable-conversations plan 4): runner resume
+# gets --agent opencode, and opencode itself gets --session sess_1, keeping
+# --model and --auto exactly as before.
 export OPENCODE_LLM_API_KEY='ambient-opencode-key-must-not-reach-agent'
 run_scenario opencode-happy opencode
 unset OPENCODE_LLM_API_KEY
 [ "$rc" -eq 0 ] || fail "opencode happy path: expected exit 0, got $rc"
 [ -s "$OPENCODE_ARGS_LOG" ] || fail "opencode happy path: OpenCode was not invoked"
-grep -q -- 'run --model homelab/default-nothink --auto' "$OPENCODE_ARGS_LOG" ||
+grep -q -- 'run --model homelab/default-nothink --session sess_1 --auto' "$OPENCODE_ARGS_LOG" ||
   fail "opencode happy path: wrong invocation ($(cat "$OPENCODE_ARGS_LOG"))"
 [ "$(cat "$OPENCODE_ENV_LOG")" = "|$FAKE_TOKEN|$FAKE_TOKEN||" ] ||
   fail "opencode happy path: OpenCode inherited the LiteLLM key in its environment ($(cat "$OPENCODE_ENV_LOG"))"
@@ -719,6 +724,15 @@ grep -q -- 'run --model homelab/default-nothink --auto' "$OPENCODE_ARGS_LOG" ||
 [ ! -f "$CODEX_ARGS_LOG" ] || fail "opencode happy path: codex was invoked"
 grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
   fail "opencode happy path: completion was not a pull request ($(cat "$COMPLETE_LOG"))"
+[ -f "$NODE_ARGS_LOG" ] || fail "opencode happy path: sidecar never invoked node"
+grep -q -- 'runner resume' "$NODE_ARGS_LOG" ||
+  fail "opencode happy path: runner resume was not invoked despite a resume brief ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--agent opencode' "$NODE_ARGS_LOG" ||
+  fail "opencode happy path: runner resume was not passed --agent opencode ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--session-id sess_1' "$NODE_ARGS_LOG" ||
+  fail "opencode happy path: runner resume was not passed the session id ($(cat "$NODE_ARGS_LOG"))"
+grep -q -- '--transcript-uri gs://bucket/runs/x/claude-code/sess_1.jsonl' "$NODE_ARGS_LOG" ||
+  fail "opencode happy path: runner resume was not passed the transcript uri ($(cat "$NODE_ARGS_LOG"))"
 
 echo "scenario opencode-happy: OK"
 
@@ -728,6 +742,40 @@ echo "scenario opencode-happy: OK"
 if grep -q -- 'github run' "$OPENCODE_ARGS_LOG"; then
   fail "opencode happy path: invoked the GitHub Actions-only entrypoint ($(cat "$OPENCODE_ARGS_LOG"))"
 fi
+
+# Regression pin: a brief with no `resume` field must leave OpenCode's
+# dispatch byte-identical to today -- no `runner resume` invocation, and
+# opencode gets no --session flag.
+export FAKE_BRIEF_NO_RESUME=1
+run_scenario opencode-no-resume opencode
+unset FAKE_BRIEF_NO_RESUME
+
+[ "$rc" -eq 0 ] || fail "opencode no-resume: expected exit 0, got $rc"
+if grep -q -- 'runner resume' "$NODE_ARGS_LOG" 2>/dev/null; then
+  fail "opencode no-resume: runner resume was invoked despite no resume field in the brief ($(cat "$NODE_ARGS_LOG"))"
+fi
+grep -q -- 'run --model homelab/default-nothink --auto' "$OPENCODE_ARGS_LOG" ||
+  fail "opencode no-resume: opencode was not invoked with a fresh run ($(cat "$OPENCODE_ARGS_LOG"))"
+if grep -q -- '--session' "$OPENCODE_ARGS_LOG"; then
+  fail "opencode no-resume: opencode received --session despite no resume field in the brief ($(cat "$OPENCODE_ARGS_LOG"))"
+fi
+
+echo "scenario opencode-no-resume: OK"
+
+# A requested OpenCode restore that fails is fatal -- same fail-closed
+# contract as Claude's and Codex's own resume-failed scenarios.
+export FAKE_RESUME_FAIL=1
+run_scenario opencode-resume-failed opencode
+unset FAKE_RESUME_FAIL
+
+[ "$rc" -ne 0 ] || fail "opencode resume-failed: expected a restore failure"
+[ -f "$COMPLETE_LOG" ] || fail "opencode resume-failed: direct-runner.sh never called POST .../complete"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "opencode resume-failed: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+[ ! -s "$OPENCODE_ARGS_LOG" ] ||
+  fail "opencode resume-failed: opencode started after a failed restore ($(cat "$OPENCODE_ARGS_LOG"))"
+
+echo "scenario opencode-resume-failed: OK"
 
 # Native Work outcomes have no GitHub issue thread.  The direct runner must
 # export the exact attempt and the common private outcome-file path to every

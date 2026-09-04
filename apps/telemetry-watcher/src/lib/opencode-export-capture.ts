@@ -145,7 +145,7 @@ function killCommand(child: {
   child.kill('SIGKILL');
 }
 
-function defaultRunOpenCode(
+export function defaultRunOpenCode(
   executable: string,
   args: string[],
   options: CommandOptions,

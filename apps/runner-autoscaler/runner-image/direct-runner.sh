@@ -606,6 +606,30 @@ else
     echo "FATAL: trusted OpenCode executable $OPENCODE_BIN does not support QueueExecutor's --auto mode" >&2
     exit 1
   fi
+
+  # Native work items sub-project 10 (resumable conversations, plan 4): a
+  # requested resume must restore OpenCode's own session, exactly as the
+  # Claude and Codex branches above do for their own CLI. `opencode import`
+  # must complete before `opencode run` starts -- both open the same
+  # SQLite store -- so this runs synchronously here, before the run below.
+  OPENCODE_SESSION_ARGS=()
+  if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
+    # Same telemetry-writer credential and project the upload used. A
+    # caller that asked to resume must never silently become a fresh
+    # session, so any failure here is fatal -- matching the Claude and
+    # Codex branches.
+    if ! GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
+      AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+      node /usr/local/lib/agent-lcars/sidecar.cjs runner resume \
+      --agent opencode \
+      --session-id "$RESUME_SESSION_ID" --transcript-uri "$RESUME_TRANSCRIPT_URI" \
+      --cwd "$PWD" >/dev/null 2>&1; then
+      echo "FATAL: requested OpenCode session restore failed" >&2
+      exit 1
+    fi
+    OPENCODE_SESSION_ARGS=(--session "$RESUME_SESSION_ID")
+  fi
+
   OPENCODE_MODEL="${OPENCODE_MODEL:-homelab/default-nothink}"
   # OpenCode has
   # no max-elapsed-time switch, so bound the trusted executable itself and
@@ -624,14 +648,26 @@ else
     exit 1
   fi
 
+  # Best-effort, unlike Claude's --print and Codex's --output-last-message:
+  # `opencode run`'s default output is formatted progress, not just the
+  # final message, so this tail may include more than the agent's last
+  # turn. Still strictly better than no message at all. If the live proof
+  # shows it too noisy to read, the documented follow-up is `--format
+  # json` with the last assistant text part extracted -- not switched to
+  # speculatively here, because it changes the whole run log.
+  OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
   set +e
   env -u OPENCODE_LLM_API_KEY \
     GITHUB_TOKEN="$CHECKOUT_TOKEN" \
     timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
     "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
-      --auto "$AGENT_PROMPT"
-  AGENT_EXIT=$?
+      "${OPENCODE_SESSION_ARGS[@]}" \
+      --auto "$AGENT_PROMPT" | tee "$OPENCODE_LAST_MESSAGE_FILE"
+  AGENT_EXIT=${PIPESTATUS[0]}
   set -e
+  # Same shared completion payload build plan 1 added for Claude
+  # (`$LAST_MESSAGE_FILE`, read near the end of this script).
+  LAST_MESSAGE_FILE="$OPENCODE_LAST_MESSAGE_FILE"
 fi
 
 kill "$HEARTBEAT_PID" 2>/dev/null || true

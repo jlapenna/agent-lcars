@@ -175,6 +175,66 @@ describe('resumeTranscript', () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
+  it('imports an opencode export through the trusted binary', async () => {
+    const ran: string[][] = [];
+    const path = await resumeTranscript({
+      agent: 'opencode',
+      sessionId: 'ses_1',
+      transcriptGcsUri: 'gs://b/runs/r1/opencode/ses_1.export.json',
+      cwd: '/home/runner/_work/checkout',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download: async () => '{"info":{"id":"ses_1"},"messages":[]}',
+      runOpenCode: async (args) => {
+        ran.push(args);
+        return '';
+      },
+      mkdir: () => undefined,
+      writeFile: () => undefined,
+    });
+    expect(ran[0]).toEqual(['--pure', 'import', expect.any(String)]);
+    expect(path).toBe('ses_1');
+  });
+
+  it('returns undefined when no trusted opencode binary is available', async () => {
+    // Never fall back to PATH: that is the existing capture-side boundary.
+    // No runOpenCode/opencodeExecutable override -- the default resolves
+    // only the real trusted root-owned path, which this test environment
+    // never has.
+    const path = await resumeTranscript({
+      agent: 'opencode',
+      sessionId: 'ses_1',
+      transcriptGcsUri: 'gs://b/runs/r1/opencode/ses_1.export.json',
+      cwd: '/home/runner/_work/checkout',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download: async () => '{"info":{"id":"ses_1"},"messages":[]}',
+      mkdir: () => undefined,
+      writeFile: () => undefined,
+    });
+    expect(path).toBeUndefined();
+  });
+
+  it('rejects an unsafe opencode session id before running anything', async () => {
+    const download = vi.fn().mockResolvedValue('{}');
+    const writeFile = vi.fn();
+    const runOpenCode = vi.fn();
+    const path = await resumeTranscript({
+      agent: 'opencode',
+      sessionId: '../../etc/passwd',
+      transcriptGcsUri: 'gs://b/runs/r1/opencode/x.export.json',
+      cwd: '/home/runner/_work/checkout',
+      claudeProjectsDir: '/home/runner/.claude/projects',
+      download,
+      runOpenCode,
+      mkdir: () => undefined,
+      writeFile,
+    });
+
+    expect(path).toBeUndefined();
+    expect(download).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(runOpenCode).not.toHaveBeenCalled();
+  });
+
   it('returns undefined for codex when no codex home was given', async () => {
     const download = vi.fn().mockResolvedValue('{"line":1}\n');
     const mkdir = vi.fn();

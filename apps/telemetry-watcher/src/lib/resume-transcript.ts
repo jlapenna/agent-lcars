@@ -1,13 +1,24 @@
 import { logger } from '@agent-lcars/logging';
 import { claudeProjectSlugFor, isSafeIdentifier } from '@agent-lcars/telemetry';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
+import {
+  defaultRunOpenCode,
+  OPENCODE_CAPTURE_LIMITS,
+  resolveTrustedOpenCodeExecutable,
+  RunOpenCode,
+} from './opencode-export-capture';
 import { downloadTranscript } from './transcript-upload';
+
+/** OpenCode's `import` prints little more than "Imported session: <id>" --
+ *  a small, fixed bound rather than reusing the much larger export caps. */
+const IMPORT_MAX_BYTES = 64 * 1024;
 
 export interface ResumeTranscriptOptions {
   /** Defaults to 'claude-code' so existing callers are unchanged. */
-  agent?: 'claude-code' | 'codex';
+  agent?: 'claude-code' | 'codex' | 'opencode';
   sessionId: string;
   transcriptGcsUri: string;
   cwd: string;
@@ -21,6 +32,15 @@ export interface ResumeTranscriptOptions {
   ) => Promise<string>;
   mkdir?: (dir: string) => void;
   writeFile?: (filePath: string, contents: string) => void;
+  /** 'opencode' only: pre-resolved executable test seam, mirroring
+   *  `opencode-export-capture.ts`'s own contract -- production resolves
+   *  only the trusted root-owned runner-image binary and never PATH. */
+  opencodeExecutable?: string;
+  /** 'opencode' only: runs the trusted OpenCode binary. Defaults to the
+   *  same trusted-path-resolving spawn `captureOpenCodeExports` uses. */
+  runOpenCode?: RunOpenCode;
+  /** 'opencode' only: removes the temporary file used for `import`. */
+  unlink?: (filePath: string) => void;
 }
 
 /**
@@ -95,6 +115,10 @@ export async function resumeTranscript(
     ((filePath: string, contents: string) =>
       fs.writeFileSync(filePath, contents));
 
+  if (options.agent === 'opencode') {
+    return resumeOpenCodeSession(options, download, writeFile);
+  }
+
   const file = destinationFor(options);
   if (file === undefined) return undefined;
 
@@ -108,6 +132,75 @@ export async function resumeTranscript(
   } catch (error) {
     logger.warn(
       `agent-lcars-telemetry-watcher: resume-transcript failed for session ${options.sessionId}, continuing without --resume`,
+      error,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Import, not a file write: OpenCode's store is a SQLite database, and
+ * `import` is its own first-class way in. The binary is resolved through
+ * the same trusted-path guard `captureOpenCodeExports` uses -- never PATH
+ * -- and only lazily, inside the default `runOpenCode`, so a caller-
+ * supplied test double (as every test here uses) never needs a real
+ * trusted binary on disk. Returns the session id rather than a path: for
+ * Claude and Codex `runner resume` prints the file it wrote, but OpenCode's
+ * import has no such file -- the caller (`main.ts`) only needs a non-empty
+ * success signal, and the session id is preserved across export/import
+ * (measured), so the caller's `--session <id>` addresses the restored
+ * conversation.
+ */
+async function resumeOpenCodeSession(
+  options: ResumeTranscriptOptions,
+  download: NonNullable<ResumeTranscriptOptions['download']>,
+  writeFile: NonNullable<ResumeTranscriptOptions['writeFile']>,
+): Promise<string | undefined> {
+  let resolvedExecutable = options.opencodeExecutable;
+  const runOpenCode: RunOpenCode =
+    options.runOpenCode ??
+    ((args, commandOptions) => {
+      resolvedExecutable ??= resolveTrustedOpenCodeExecutable();
+      if (!resolvedExecutable) {
+        throw new Error(
+          'No trusted OpenCode executable was available; refusing PATH execution',
+        );
+      }
+      return defaultRunOpenCode(resolvedExecutable, args, commandOptions);
+    });
+  const unlink =
+    options.unlink ?? ((filePath: string) => fs.unlinkSync(filePath));
+  const temporary = path.join(
+    os.tmpdir(),
+    `opencode-resume-${options.sessionId}.json`,
+  );
+
+  try {
+    const contents = await download(options.transcriptGcsUri, {
+      projectId: options.projectId,
+    });
+    writeFile(temporary, contents);
+    try {
+      await runOpenCode(['--pure', 'import', temporary], {
+        timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
+        maxBytes: IMPORT_MAX_BYTES,
+      });
+      return options.sessionId;
+    } finally {
+      try {
+        unlink(temporary);
+      } catch (cleanupError) {
+        if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
+          logger.warn(
+            `agent-lcars-telemetry-watcher: failed to remove temporary OpenCode resume file ${temporary}`,
+            cleanupError,
+          );
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn(
+      `agent-lcars-telemetry-watcher: resume-transcript failed to import OpenCode session ${options.sessionId}, continuing without --resume`,
       error,
     );
     return undefined;
