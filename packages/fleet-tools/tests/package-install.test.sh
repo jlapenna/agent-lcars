@@ -6,6 +6,39 @@
 # sibling module travels with the package.
 set -euo pipefail
 pkg_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# resume-archive must compute the exact same Claude Code project-directory
+# slug as claudeProjectSlugFor() in libs/telemetry/src/lib/runner-capture.ts
+# for every absolute path. Source the real script (its main() is guarded by
+# a `[[ "${BASH_SOURCE[0]}" == "$0" ]]` check, so sourcing it here only
+# defines its functions, without downloading anything) and pin its
+# claude_project_slug_for() helper against a table copied verbatim from that
+# function's own spec (runner-capture.spec.ts), plus one extra case with the
+# `_`/`+` characters from #1758's actual bug report, so the two
+# implementations cannot drift silently again.
+# shellcheck source=../bin/claude-agent-session.sh
+source "$pkg_dir/bin/claude-agent-session.sh"
+slug_failures=0
+check_slug() {
+  local cwd="$1" expected="$2" actual
+  actual="$(claude_project_slug_for "$cwd")"
+  if [ "$actual" != "$expected" ]; then
+    echo "FAIL: claude_project_slug_for($cwd) = $actual, want $expected" >&2
+    slug_failures=$((slug_failures + 1))
+  fi
+}
+check_slug '/home/jlapenna/p/agent-lcars' '-home-jlapenna-p-agent-lcars'
+check_slug '/tmp/agent-lcars-direct/checkout' '-tmp-agent-lcars-direct-checkout'
+check_slug '/' '-'
+check_slug '/home/jlapenna/p/agent-lcars/' '-home-jlapenna-p-agent-lcars-'
+check_slug '/home/runner/work/agent-lcars.git/repo' '-home-runner-work-agent-lcars-git-repo'
+check_slug '/home/jlapenna/.openclaw' '-home-jlapenna--openclaw'
+check_slug '/home/jlapenna/p/agent-lcars_worktree+test' '-home-jlapenna-p-agent-lcars-worktree-test'
+if [ "$slug_failures" -ne 0 ]; then
+  echo "FAIL: $slug_failures claude_project_slug_for case(s) diverged from runner-capture.spec.ts" >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
