@@ -823,7 +823,7 @@ function runGeneration(runId: string): number | undefined {
   return Number.isSafeInteger(generation) ? generation : undefined;
 }
 
-function outcomeCommentBody(run: Run): string {
+export function outcomeCommentBody(run: Run): string {
   switch (run.state) {
     case 'finished': {
       const lines = run.result?.ok
@@ -833,12 +833,19 @@ function outcomeCommentBody(run: Run): string {
         lines.push(run.result.ref);
       }
       if (run.result?.summary === PARK_OUTCOME_SUMMARY) {
-        // The agent's own comment (carrying both markers) already states
-        // the actual blocker in the thread above this one -- don't echo
-        // the raw outcome token, point at it instead.
+        // Prefer the agent's own final message: on an implicitly-replied
+        // thread (an ordinary OWNER/MEMBER comment on a parked,
+        // allow-listed anchor -- see `implicit-reply.ts`) it is the
+        // question the maintainer is about to answer, and a plain reply
+        // on this thread now resumes the session. Fall back to pointing
+        // at the agent's own comment when no message was reported -- the
+        // legacy protocol's park comment already carries the question
+        // there either way.
         lines.push(
-          "Parked -- see this run's own comment above for the blocker " +
-            'and how to resume it.',
+          run.result.message === undefined
+            ? "Parked -- see this run's own comment above for the blocker " +
+                'and how to resume it.'
+            : `Parked. ${run.result.message}\n\nReply on this thread to continue.`,
         );
       } else if (run.result?.summary !== undefined) {
         lines.push(run.result.summary);

@@ -5,12 +5,13 @@ import {
   isRefusal,
   MemoryStore,
   Orchestrator,
+  type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { drainOutbox } from './orchestrator-dispatch';
+import { drainOutbox, outcomeCommentBody } from './orchestrator-dispatch';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const NOW = '2026-08-29T12:00:00.000Z';
@@ -97,5 +98,48 @@ describe('drainOutbox QueueExecutor dispatch', () => {
     expect((await store.readRun(run.runId))?.queue).toMatchObject({
       state: 'queued',
     });
+  });
+});
+
+/** A minimal, valid `Run`, none of `outcomeCommentBody`'s callers'
+ *  machinery -- it is a pure function of a `Run`, so this fixture skips
+ *  the orchestrator entirely. */
+function run(over: Partial<Run> = {}): Run {
+  return {
+    runId: `${TASK.repo}#${TASK.issue}/r1`,
+    task: TASK,
+    state: 'finished',
+    pipeline: 'claude',
+    requestId: 'r1',
+    requestSource: 'caller',
+    events: [],
+    leaseExpiresAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...over,
+  };
+}
+
+describe('outcomeCommentBody', () => {
+  it('includes the agent final message on a parked run', () => {
+    const body = outcomeCommentBody(
+      run({
+        state: 'finished',
+        result: {
+          ok: true,
+          summary: 'park',
+          message: 'Which database should I use?',
+        },
+      }),
+    );
+    expect(body).toContain('Which database should I use?');
+    expect(body).toContain('Parked');
+  });
+
+  it('is unchanged for a parked run that reported no message', () => {
+    const body = outcomeCommentBody(
+      run({ state: 'finished', result: { ok: true, summary: 'park' } }),
+    );
+    expect(body).toContain("see this run's own comment above");
   });
 });
