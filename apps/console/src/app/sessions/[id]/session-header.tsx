@@ -246,10 +246,32 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           </Stack>
         )}
 
+      {/* OpenCode sessions are archived raw too now (resumable-conversations
+          plan 4): a reply on the owning work item resumes this exact
+          session through `POST /items/{id}/reply` (`work-reply.ts`'s
+          `RESUMABLE_PIPELINES`), restoring the separate raw export
+          (`resumeGcsUri`) rather than this rendered, sanitized transcript.
+          No `fleet-tools` adapter exists for the operator's own workstation
+          command either -- same shape as the Codex note above, so this note
+          must not claim the conversation itself is stuck. */}
+      {doc.source === 'issue-agent' &&
+        doc.transcriptGcsUri &&
+        doc.agent === 'opencode' && (
+          <Stack gap={4}>
+            <Eyebrow>Archived transcript</Eyebrow>
+            <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
+              Archived at <code>{doc.transcriptGcsUri}</code>. No workstation
+              resume command yet for OpenCode sessions, but replying on this
+              item continues the same conversation automatically.
+            </Text>
+          </Stack>
+        )}
+
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
         doc.agent !== 'claude-code' &&
-        doc.agent !== 'codex' && (
+        doc.agent !== 'codex' &&
+        doc.agent !== 'opencode' && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
