@@ -533,6 +533,56 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     expect(task).toBeDefined();
     expect(deriveItemState(task!.task, runs)).toBe('done');
   });
+
+  it('settles a park outcome finished/ok and the item derives parked, not done (#1757)', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-park-outcome'),
+      now: NOW,
+    });
+
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claimed.status).toBe(200);
+    const { token, workId } = claimed.json as { token: string; workId: string };
+
+    const runCtx: RunsContext = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      bearerToken: token,
+    };
+
+    const complete = await call(runCtx, 'POST', runPath(runId, '/complete'), {
+      outcome: 'park',
+      outcomeReference: null,
+    });
+    expect(complete.status).toBe(200);
+    expect((complete.json as { state: string }).state).toBe('finished');
+
+    // #1608 put `park` in OK_OUTCOMES, so this settles `ok: true` -- but
+    // the item must still derive `parked`, not `done`.
+    const settled = await store.readRun(runId);
+    expect(settled?.state).toBe('finished');
+    expect(settled?.result?.ok).toBe(true);
+    expect(settled?.result?.summary).toBe('park');
+
+    const task = await store.readTask({ workId });
+    const runs = await store.listRuns({ workId });
+    expect(task).toBeDefined();
+    expect(deriveItemState(task!.task, runs)).toBe('parked');
+  });
 });
 
 describe('brief', () => {

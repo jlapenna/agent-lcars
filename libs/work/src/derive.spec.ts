@@ -74,6 +74,24 @@ describe('deriveItemState', () => {
       'parked',
     ],
     [
+      // #1608 put `park` in OK_OUTCOMES, so a parked run now settles with
+      // `ok: true`; item state must key off the summary, not just `ok`.
+      'finished ok, park summary',
+      task(),
+      [run(1, 'finished', { result: { ok: true, summary: 'park' } })],
+      'parked',
+    ],
+    [
+      'finished ok, pull-request summary',
+      task(),
+      [
+        run(1, 'finished', {
+          result: { ok: true, summary: 'pull-request' },
+        }),
+      ],
+      'done',
+    ],
+    [
       'lost, budget spent',
       task({ consecutiveLost: 3 }),
       [run(1, 'lost')],

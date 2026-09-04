@@ -32,7 +32,15 @@ export function deriveItemState(
     return 'canceled';
   if (latest === undefined) return 'running';
   if (isLive(latest.state)) return 'running';
-  if (latest.state === 'finished') return latest.result?.ok ? 'done' : 'parked';
+  if (latest.state === 'finished') {
+    // #1608 put `park` in OK_OUTCOMES (apps/console/src/lib/run-result.ts),
+    // so a run that parked with real evidence now settles `ok: true` too --
+    // `summary` is what still distinguishes it from an ordinary success.
+    // `ok: false` still reads `parked`: a failed run needs a human as well.
+    return latest.result?.ok && latest.result.summary !== 'park'
+      ? 'done'
+      : 'parked';
+  }
   // lost: the sweep retries until the budget is spent, then leaves it.
   return task.consecutiveLost > MAX_AUTO_RETRIES ? 'parked' : 'running';
 }
