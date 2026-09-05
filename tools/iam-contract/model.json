@@ -31,9 +31,10 @@
             "jlapenna/homegit",
             "jlapenna/homelab",
             "jlapenna/nx-cache-server",
+            "jlapenna/repo-tools",
             "jlapenna/sync-padd"
           ],
-          "_note": "jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. Listed here so its presence is documented rather than surprising."
+          "_note": "jlapenna/homegit is not a fleet agent repo; it is installed so the App can read/write the dotfiles repo. jlapenna/repo-tools is likewise not a fleet agent repo; it is the public source of the repo-* worktree/PR tooling the fleet's skills invoke, installed so the App can maintain it. Both are listed here so their presence is documented rather than surprising."
         },
         {
           "id": 150568991,
