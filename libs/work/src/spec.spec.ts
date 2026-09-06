@@ -69,6 +69,23 @@ describe('workOriginSchema', () => {
       }).channel,
     ).toBe('github');
   });
+
+  it('accepts a slack origin carrying a thread address', () => {
+    expect(
+      workOriginSchema.parse({
+        principal: 'svc:sprinkles-lcars-bot',
+        channel: 'slack',
+        thread: 'T0123/C0456/1788673935.123456',
+      }).thread,
+    ).toBe('T0123/C0456/1788673935.123456');
+  });
+
+  it('still accepts an origin with no thread', () => {
+    expect(
+      workOriginSchema.parse({ principal: 'user:jlapenna', channel: 'console' })
+        .thread,
+    ).toBeUndefined();
+  });
 });
 
 describe('workPayloadSchema', () => {
