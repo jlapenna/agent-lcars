@@ -155,24 +155,6 @@ env:
     availability:
       - RUNTIME
 
-  # AGENT_LCARS_IMPLICIT_REPLY_REPOS is deliberately NOT declared.
-  #
-  # Resumable-conversations plan 2 shipped a path where an ordinary
-  # OWNER/MEMBER comment on a PARKED anchor -- carrying no trigger word --
-  # resumed the agent's session. It was enabled for this repository (#1781),
-  # proven live (#1787), and then turned back off at the maintainer's
-  # direction: on GitHub, an explicit `@claude`/`@agent`/`/codex`/`/oc`
-  # trigger is required for a comment to dispatch anything.
-  #
-  # Session resume did NOT go away with it -- a *tagged* reply on a parked
-  # anchor now resumes the session instead. The trigger word is the gate;
-  # resuming is what happens once you pass it.
-  #
-  # Disabled is expressed by omitting the variable, never by `value: ''`:
-  # App Hosting's preparer rejects an empty string with "either 'value' or
-  # 'secret' field is required" and fails the whole build (#1776, five hours
-  # of blocked deploys). `splitEnvList` maps an unset variable to `[]`.
-
   # Separate, narrower repo list: only `push` webhook events mint a native
   # work item for these (`push-watch.ts`) — unlike
   # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES above, membership here does not

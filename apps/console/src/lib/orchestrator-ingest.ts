@@ -86,10 +86,11 @@ const pullRequestEventSchema = z.object({
   sender: senderSchema,
 });
 
-/** Exported for `implicit-reply.ts`'s stateful second pass over an
- *  `issue_comment` this pure interpreter already declined -- deciding "is
- *  this anchor parked" needs the store, which this module deliberately
- *  never touches, so that check happens in the route instead. */
+/** Exported for `tagged-reply-resume.ts`'s stateful second pass over a
+ *  `mode: 'reply'` decision this pure interpreter already accepted --
+ *  deciding "is this anchor parked or done, ready to resume" needs the
+ *  store, which this module deliberately never touches, so that check
+ *  happens in the route instead. */
 export const issueCommentEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
@@ -100,9 +101,9 @@ export const issueCommentEventSchema = z.object({
     user: z.object({ type: z.string() }).optional(),
     /** GitHub always sends this; optional here so a malformed or
      *  future-shaped payload still parses for the existing explicit-trigger
-     *  path, which never reads it. `implicit-reply.ts` uses it to derive an
-     *  idempotent request id -- absent, it falls back to a less precise
-     *  one. */
+     *  path, which never reads it. `tagged-reply-resume.ts` uses it to
+     *  derive an idempotent request id -- absent, it falls back to a less
+     *  precise one. */
     html_url: z.string().min(1).optional(),
   }),
   sender: senderSchema,

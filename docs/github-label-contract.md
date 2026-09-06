@@ -67,28 +67,28 @@ admitted; the console does not offer a parallel reassignment path.
 - Sprinkles post-deploy work is correlated by a structured PR marker and a
   native child issue, not title or free-prose parsing.
 
-## Implicit replies
+## Tagged replies resume a parked session
 
-In a repository named by `AGENT_LCARS_IMPLICIT_REPLY_REPOS` (a console
-runtime allowlist, empty by default -- see `apps/console/apphosting.yaml`
-and `apps/console/src/lib/implicit-reply.ts`), an ordinary comment on an
-issue or pull request whose latest run **parked** is a reply: it resumes
-that agent's session with the comment as its next turn, no trigger word
-needed. The outcome comment on a parked run carries the agent's own
-question when the runner reported one, so the thread shows what to answer
-before the maintainer replies.
+An explicit `@claude`/`@agent`/`/codex`/`/oc` trigger is required for any
+GitHub comment to dispatch anything -- an ordinary comment with no trigger
+word does nothing, on any repository, on any anchor, parked or not (#1788).
 
-This only fires for a comment from an `OWNER` or `MEMBER`, never a `Bot`
-comment -- the same author gate `agent:*`/`review:*`/reply-command triggers
-already use, and load-bearing here specifically: the agent's own park
-comment is posted by a bot, so it can never answer itself. A comment while
-a run is still live, on an anchor with no dispatched task, or in a
-repository not on the allowlist, does nothing differently than before.
+Session continuity did not go away with that gate: when a **tagged**
+comment lands on an issue or pull request whose latest run **parked** (or
+finished normally), it resumes that agent's session with the comment as
+its next turn instead of starting fresh -- see
+`apps/console/src/lib/tagged-reply-resume.ts`. The outcome comment on a
+parked run carries the agent's own question when the runner reported one,
+so the thread shows what to answer before the maintainer replies. A tagged
+comment while a run is still live is refused as busy, exactly like any
+other trigger; a tagged comment on an anchor with no task yet still starts
+work normally -- that is how work is started by comment in the first
+place, and this resume path never gets in front of it.
 
-The explicit `@claude`/`/codex`/`/oc`/`@agent` triggers are unchanged by
-this and still work on any repository and any anchor, parked or not --
-they are how work is started by comment in the first place, which an
-implicit reply (parked anchors only) cannot do.
+The author gate is unchanged: only an `OWNER` or `MEMBER` comment
+triggers anything, never a `Bot` comment -- load-bearing here specifically,
+since the agent's own park comment is posted by a bot, so it can never
+answer itself.
 
 ## Synchronization
 

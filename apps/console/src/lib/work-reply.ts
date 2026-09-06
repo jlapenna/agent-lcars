@@ -35,7 +35,7 @@ export interface ReplyRequest {
   /** The orchestrator's own anchor union: `{ workId }` for a native item,
    *  `{ repo, issue }` for a GitHub-anchored task. A GitHub-anchored reply
    *  routes through exactly the machinery a native item already does --
-   *  see `implicit-reply.ts`. */
+   *  see `tagged-reply-resume.ts`. */
   task: TaskId;
   text: string;
   channel: 'api' | 'console' | 'github' | 'slack';
