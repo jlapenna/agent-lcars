@@ -7,7 +7,7 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -24,6 +24,8 @@ from prometheus_client.core import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+HEALTH_PATH = "/healthz"
 
 QUEUE_BUCKETS = (1, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600)
 DURATION_BUCKETS = (
@@ -1510,6 +1512,45 @@ class Poller:
             time.sleep(max(1, self.config.poll_interval_seconds - elapsed))
 
 
+def with_health_endpoint(metrics_app: Callable) -> Callable:
+    """Wrap the metrics WSGI app with a constant-cost liveness endpoint.
+
+    prometheus_client serves the metrics payload on *every* GET path on
+    purpose -- exposition.make_wsgi_app carries an explicit "for backwards
+    compatibility, the URI path for GET is not constrained to the documented
+    /metrics" branch. So a container healthcheck aimed anywhere at this
+    server renders and discards the whole registry: 3.4 MB and 2.6-3.6s per
+    probe as of homelab#1204, growing with the number of tracked runs. That
+    is what made a probe on a 2s client timeout fail forever while Prometheus
+    itself was scraping the exporter fine (`up=1`).
+
+    Serving HEALTH_PATH ahead of the metrics app keeps the probe O(1) as the
+    registry grows, so the fix does not quietly expire the way raising the
+    timeout would. It deliberately proves only that the HTTP server thread is
+    accepting and answering requests -- the poller's own health is already
+    exported as metrics and alerted on there, and folding that in would make
+    a probe failure ambiguous between "process wedged" and "GitHub is down".
+    """
+
+    def app(environ: dict[str, Any], start_response: Callable) -> list[bytes]:
+        if (
+            environ.get("PATH_INFO") == HEALTH_PATH
+            and environ.get("REQUEST_METHOD") == "GET"
+        ):
+            body = b"ok\n"
+            start_response(
+                "200 OK",
+                [
+                    ("Content-Type", "text/plain; charset=utf-8"),
+                    ("Content-Length", str(len(body))),
+                ],
+            )
+            return [body]
+        return metrics_app(environ, start_response)
+
+    return app
+
+
 def main() -> None:
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -1527,6 +1568,11 @@ def main() -> None:
         poller = Poller(config, database, api, state)
 
         http_server, http_thread = start_http_server(config.port, registry=registry)
+        # set_app/get_app are wsgiref.simple_server.WSGIServer's own API, so
+        # the health endpoint composes onto whatever start_http_server built
+        # rather than reimplementing its address-family, threading, and
+        # request-handler choices against prometheus_client's private helpers.
+        http_server.set_app(with_health_endpoint(http_server.get_app()))
         resources.callback(http_server.server_close)
         resources.callback(http_thread.join)
         resources.callback(http_server.shutdown)
