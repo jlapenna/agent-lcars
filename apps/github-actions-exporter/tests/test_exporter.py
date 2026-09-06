@@ -1,8 +1,10 @@
 import importlib.util
 import os
+import socket
 import sys
 import tempfile
 import unittest
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -1313,6 +1315,122 @@ class MainTests(unittest.TestCase):
         http_server.server_close.assert_called_once_with()
         api.close.assert_called_once_with()
         database.close.assert_called_once_with()
+
+
+class HealthEndpointTests(unittest.TestCase):
+    """`/healthz` must answer without rendering the metrics registry."""
+
+    def wsgi_call(self, app, path, method="GET"):
+        captured = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+            captured["headers"] = dict(headers)
+
+        body = b"".join(
+            app({"PATH_INFO": path, "REQUEST_METHOD": method}, start_response)
+        )
+        return captured, body
+
+    def test_health_path_answers_without_calling_the_metrics_app(self):
+        metrics_app = Mock(return_value=[b"# metrics"])
+        app = exporter.with_health_endpoint(metrics_app)
+
+        captured, body = self.wsgi_call(app, exporter.HEALTH_PATH)
+
+        self.assertEqual(captured["status"], "200 OK")
+        self.assertEqual(body, b"ok\n")
+        self.assertEqual(captured["headers"]["Content-Length"], str(len(body)))
+        metrics_app.assert_not_called()
+
+    def test_other_paths_still_reach_the_metrics_app(self):
+        metrics_app = Mock(return_value=[b"# metrics"])
+        app = exporter.with_health_endpoint(metrics_app)
+
+        _, body = self.wsgi_call(app, "/metrics")
+
+        self.assertEqual(body, b"# metrics")
+        metrics_app.assert_called_once()
+
+    def test_non_get_health_requests_are_left_to_the_metrics_app(self):
+        """prometheus_client owns the 405; the probe only ever issues GET."""
+        metrics_app = Mock(return_value=[b"405"])
+        app = exporter.with_health_endpoint(metrics_app)
+
+        _, body = self.wsgi_call(app, exporter.HEALTH_PATH, method="POST")
+
+        self.assertEqual(body, b"405")
+        metrics_app.assert_called_once()
+
+
+class HealthEndpointServingTests(unittest.TestCase):
+    """End-to-end: main() must actually install the wrapper on the live server.
+
+    The unit tests above pass even if main() never calls set_app, which is the
+    exact hand-off homelab#1204's healthcheck depends on -- so this drives a
+    real HTTP request through the server main() builds.
+    """
+
+    def free_port(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            return probe.getsockname()[1]
+
+    def test_main_serves_health_and_metrics_on_the_real_server(self):
+        port = self.free_port()
+        config = exporter.Config(
+            token="test", repositories=("jlapenna/homelab",), port=port
+        )
+        # main() registers DatabaseMetrics, which the /metrics request below
+        # actually collects -- so this needs a real (empty) database, not a
+        # Mock standing in for one.
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        database = exporter.Database(str(Path(temporary_directory.name) / "actions.db"))
+        self.addCleanup(database.close)
+        collected = []
+
+        class CountingCollector:
+            def collect(self):
+                collected.append(1)
+                return iter(())
+
+        registry = CollectorRegistry()
+        registry.register(CountingCollector())
+
+        seen = {}
+
+        def probe_then_stop():
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}{exporter.HEALTH_PATH}", timeout=5
+            ) as response:
+                seen["health"] = (response.status, response.read())
+            seen["collected_after_health"] = len(collected)
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/metrics", timeout=5
+            ) as response:
+                seen["metrics_status"] = response.status
+            seen["collected_after_metrics"] = len(collected)
+            raise RuntimeError("polling stopped")
+
+        poller = Mock()
+        poller.run_forever.side_effect = probe_then_stop
+
+        with (
+            patch.object(exporter.Config, "from_environment", return_value=config),
+            patch.object(exporter, "CollectorRegistry", return_value=registry),
+            patch.object(exporter, "Database", return_value=database),
+            patch.object(exporter, "GitHubAPI", return_value=Mock()),
+            patch.object(exporter, "Poller", return_value=poller),
+            self.assertRaisesRegex(RuntimeError, "polling stopped"),
+        ):
+            exporter.main()
+
+        self.assertEqual(seen["health"], (200, b"ok\n"))
+        self.assertEqual(seen["metrics_status"], 200)
+        # The whole point: the probe must not render the registry.
+        self.assertEqual(seen["collected_after_health"], 0)
+        self.assertGreater(seen["collected_after_metrics"], 0)
 
 
 if __name__ == "__main__":

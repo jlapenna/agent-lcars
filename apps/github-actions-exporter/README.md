@@ -59,6 +59,22 @@ and dashboard.
 | `DATABASE_PATH`         | `/var/lib/github-actions-exporter/actions.db` | Durable SQLite database.                                            |
 | `PORT`                  | `9102`                                        | Prometheus HTTP port.                                               |
 
+## HTTP endpoints
+
+| Path       | Cost                 | Purpose                                     |
+| ---------- | -------------------- | ------------------------------------------- |
+| `/metrics` | Renders the registry | Prometheus scrape target.                   |
+| `/healthz` | Constant             | Container liveness probe; returns `200 ok`. |
+
+Point container healthchecks at `/healthz`, never at `/metrics`. prometheus_client
+serves the metrics payload on _every_ GET path for backwards compatibility, so a
+probe aimed anywhere else renders and discards the whole registry -- 3.4 MB and
+2.6-3.6s per probe when homelab#1204 was filed, and growing with the number of
+tracked runs. That is what made a 2s probe fail permanently while Prometheus was
+scraping the same exporter successfully. `/healthz` proves only that the HTTP
+server is answering; poller and API health are exported as metrics and alerted
+on there.
+
 The initial import is resumable: it is marked complete only after every run
 and job in the window has been stored. Each successful refresh timestamp is
 also persisted, so collection after an outage resumes from the last successful
