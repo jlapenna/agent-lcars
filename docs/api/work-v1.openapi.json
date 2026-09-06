@@ -272,6 +272,10 @@
                     },
                     "required": ["title", "description", "pipeline", "target"],
                     "additionalProperties": false
+                  },
+                  "thread": {
+                    "type": "string",
+                    "maxLength": 512
                   }
                 },
                 "required": ["spec"]

@@ -28,12 +28,25 @@ export const workSpecSchema = z.strictObject({
 });
 export type WorkSpec = z.infer<typeof workSpecSchema>;
 
+/** The closed set of delivery channels a work item's origin may name.
+ *  Exported so `work-grants.ts`'s optional per-grant `channel` is checked
+ *  against this exact set rather than a second, driftable copy of the
+ *  literals -- the same relationship `PIPELINES` already has with
+ *  `workSpecSchema.pipeline`. */
+export const WORK_CHANNELS = Object.freeze([
+  'api',
+  'cron',
+  'console',
+  'github',
+  'slack',
+] as const);
+
 export const workOriginSchema = z.strictObject({
   /** LCARS-native principal, e.g. `user:jlapenna`, `svc:lcars-admin`,
    *  `github:<login>` for a task derived from a GitHub webhook or console
    *  retrigger (sub-project 5). */
   principal: z.string().min(1).max(128),
-  channel: z.enum(['api', 'cron', 'console', 'github', 'slack']),
+  channel: z.enum(WORK_CHANNELS),
   /** Opaque channel address the originating adapter uses to deliver this
    *  item's outcomes back to where it came from -- for Slack, the root
    *  message's `team/channel/ts`. Only that adapter interprets it; the

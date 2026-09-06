@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { PIPELINES } from '@agent-lcars/work';
+import { PIPELINES, WORK_CHANNELS } from '@agent-lcars/work';
 import { z } from 'zod';
 
 const workScopeSchema = z.enum(['work.operator', 'work.executor', 'work.cron']);
@@ -11,12 +11,26 @@ const workScopeSchema = z.enum(['work.operator', 'work.executor', 'work.cron']);
  *  grant discovered later by a principal who mysteriously has no access. */
 const pipelineNameSchema = z.enum(PIPELINES);
 
+/** A channel checked against the same closed set `workOriginSchema.channel`
+ *  requires (`libs/work/src/spec.ts`'s `WORK_CHANNELS`) -- the same
+ *  drift-proofing `pipelineNameSchema` gives pipeline names. Declaring it
+ *  here (rather than accepting one from the request body -- see
+ *  `itemsContract.create`'s `thread` doc comment) is what keeps the
+ *  delivery channel a property of the authenticated identity instead of
+ *  something a caller can name for itself. */
+const channelSchema = z.enum(WORK_CHANNELS);
+
 const grantSchema = z.strictObject({
   principal: z.string().min(1).max(128),
   subjects: z.array(z.string().min(1).max(256)).min(1),
   pipelines: z.array(pipelineNameSchema).min(1),
   /** Every grant must name the non-empty authority it confers. */
   scopes: z.array(workScopeSchema).min(1),
+  /** Absent means "derive it the old way" (`session ? 'console' : 'api'`)
+   *  -- see `work-router.ts`'s `create` handler. Declared only for
+   *  principals whose outbound delivery target isn't one of those two,
+   *  e.g. a Slack-bound service grant. */
+  channel: channelSchema.optional(),
 });
 const grantsSchema = z.array(grantSchema);
 

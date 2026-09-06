@@ -229,6 +229,62 @@ describe('items routes', () => {
     expect(again.json.runs).toHaveLength(1);
   });
 
+  describe('origin thread and channel (#1804)', () => {
+    it('stores a caller-supplied thread on the created item origin', async () => {
+      const ctx = context();
+      const r = await call(ctx, 'PUT', `/items/${ID}`, {
+        spec,
+        thread: 'T0123/C0456/1788673935.123456',
+      });
+      expect(r.status).toBe(201);
+      expect(r.json.origin).toMatchObject({
+        thread: 'T0123/C0456/1788673935.123456',
+      });
+    });
+
+    it('writes no thread key at all when the caller supplies none', async () => {
+      const ctx = context();
+      const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      expect(r.status).toBe(201);
+      expect(r.json.origin).not.toHaveProperty('thread');
+    });
+
+    it("uses the grant's declared channel on the created item origin", async () => {
+      const ctx = context({
+        principal: { ...operator, channel: 'slack' as const },
+      });
+      const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      expect(r.status).toBe(201);
+      expect(r.json.origin).toMatchObject({ channel: 'slack' });
+    });
+
+    // Regression pin: a grant with NO declared channel must behave exactly
+    // as it did before this feature existed -- a session principal yields
+    // `console`, a service/OIDC principal yields `api`.
+    it('regression: a session principal with no declared channel still yields console', async () => {
+      const ctx = context({ principal: operator });
+      const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      expect(r.status).toBe(201);
+      expect(r.json.origin).toMatchObject({ channel: 'console' });
+    });
+
+    it('regression: a service principal with no declared channel still yields api', async () => {
+      const ctx = context({ principal: githubActionsOperator });
+      const r = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      expect(r.status).toBe(201);
+      expect(r.json.origin).toMatchObject({ channel: 'api' });
+    });
+
+    it('rejects a caller-supplied channel in the request body (strict input schema)', async () => {
+      const ctx = context();
+      const r = await call(ctx, 'PUT', `/items/${ID}`, {
+        spec,
+        channel: 'slack',
+      });
+      expect(r.status).toBe(400);
+    });
+  });
+
   it('refuses a replay whose spec differs from the stored one with 409', async () => {
     const ctx = context();
     await call(ctx, 'PUT', `/items/${ID}`, { spec });

@@ -16,6 +16,12 @@ export interface WorkPrincipal {
   /** Present only for a GitHub Actions OIDC identity. GitHub-anchor
    * dispatch keeps the anchor bound to this signed source repository. */
   sourceRepository?: string;
+  /** The grant's declared delivery channel (`work-grants.ts`'s
+   *  `WorkGrant.channel`), threaded through the same way `pipelines`/
+   *  `scopes` already are. Absent when the grant declares none -- the
+   *  `create` handler then falls back to deriving one from `via`, exactly
+   *  as it did before this field existed. */
+  channel?: WorkGrant['channel'];
 }
 
 export interface WorkAuthDeps {
@@ -74,6 +80,10 @@ function principalFor(
     scopes: new Set<WorkScope>(grant.scopes),
     pipelines: grant.pipelines,
     via,
+    // Omitted entirely (not written as `channel: undefined`) when the
+    // grant declares none, so a principal built from such a grant is
+    // byte-for-byte identical to one built before this field existed.
+    ...(grant.channel === undefined ? {} : { channel: grant.channel }),
   };
 }
 

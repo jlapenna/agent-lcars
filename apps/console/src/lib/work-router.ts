@@ -76,7 +76,15 @@ export const workRouter = os.router({
       spec: input.spec,
       origin: {
         principal: principal.principal,
-        channel: principal.via === 'session' ? 'console' : 'api',
+        // The grant's declared channel wins when present; otherwise fall
+        // back to the pre-existing derivation, unchanged. The channel is
+        // never taken from `input` -- it selects an outbound delivery
+        // target, so it must come from the authenticated identity, not the
+        // request body (issue #1804).
+        channel:
+          principal.channel ??
+          (principal.via === 'session' ? 'console' : 'api'),
+        ...(input.thread === undefined ? {} : { thread: input.thread }),
       },
       grantsPrincipal: principal,
     });
