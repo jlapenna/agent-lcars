@@ -559,3 +559,50 @@ the CLI, a brand-new session id, and a different codeword.
 
 The `--resume` half of sub-project 6 is proven, not degraded. #1502's
 sub-project 6 is complete.
+
+## Resumable conversations plan 2: implicit GitHub replies (2026-09-06)
+
+Live proof that an **ordinary maintainer comment carrying no trigger word**,
+on a GitHub anchor whose latest run parked, resumes that run's Claude session
+with the comment as its next turn. Plan 2 (#1773), enabled for this repository
+in #1781. Anchor: [#1786](https://github.com/jlapenna/agent-lcars/issues/1786).
+
+The bar was not "a second run dispatched" — it was the resumed run **recalling a
+value that exists only inside the first run's conversation**. The issue asked
+round 1 to invent a random six-character codeword and park, and round 2 to
+state that same codeword, or to say `NO PRIOR CONTEXT` if it had none.
+
+| Step                 | Observed                                                                                                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dispatch             | `agent:claude` label on #1786; claimed by `agent-lcars-bot` automatically                                                                                                  |
+| r1 container         | `direct-runner-claude-f6191738` on **homelab**, created 02:19:25Z, `Exited (0)`                                                                                            |
+| r1 outcome           | park comment 02:19:57Z carrying `attempt-claim:g1:jlapenna/agent-lcars#1786/r1` + `agent-result:v1:park`, stating **`CODEWORD: F3RT9K`**                                   |
+| r1 completion        | `{"runId":"jlapenna/agent-lcars#1786/r1","state":"finished"}`; session `ca94b9ca-81a0-46e2-8236-dd31afc98fa1` archived to `runs/jlapenna/agent-lcars#1786/r1/claude-code/` |
+| **The trigger**      | Comment `Use Firestore.` at 02:57:35Z from an OWNER — **no `@claude`, no `/codex`, no `/oc`**                                                                              |
+| Reply dispatched     | `direct-runner-claude-e7458049` on **pike**, created 02:58:02Z — **27 seconds** after the comment                                                                          |
+| r2 outcome           | park comment 02:58:19Z carrying `attempt-claim:g2:…/r2`, stating **`CODEWORD RECALLED: F3RT9K`** and "The human chose Firestore."                                          |
+| **Session identity** | r2 finalized session **`ca94b9ca-81a0-46e2-8236-dd31afc98fa1`** — **the same session id as r1**, under a different run id                                                  |
+
+**Result: PASS.** The codeword is six random characters that appear nowhere in
+the issue text, so recalling it cannot be inference — it required the round-1
+conversation. The same session id finalizing under both `…/r1` and `…/r2` is the
+independent confirmation: one Claude session continued across two dispatches, two
+containers, and two different hosts.
+
+Plan 2's outbound half is proven in the same run: the drain's outcome comment
+rendered `Run.result.message` ("Parked. Posted the round-1 park comment … with
+codeword `F3RT9K` …") rather than the generic pointer text.
+
+### Observation worth keeping: the outcome comment is webhook-driven
+
+r1 settled at ~02:20Z, but its outcome comment and `status:needs-human` label did
+not appear until **02:57:45Z — ten seconds after the human's reply**, ~37 minutes
+later. The outbox drain runs on webhook deliveries (and the scheduled reconcile);
+with no delivery in that window, nothing woke it. The run itself was never stuck:
+its container had already exited 0 with `state: finished`.
+
+Consequence for humans, not for agents: a parked anchor can sit without its
+`status:needs-human` label for as long as the repository is quiet, so that label
+is not a timely "needs attention" signal. The reply path is unaffected — item
+state derives from the run, not from the label — which is why the trigger worked
+even though the label was still missing when the comment landed.
