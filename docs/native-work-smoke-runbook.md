@@ -652,3 +652,72 @@ because r2's container was already gone by the time it was looked for.
    `laforge`/`homelab` print UTC; `picard`/`pike` print PDT. A `grep` for a UTC
    hour silently matches nothing on half the fleet. Enumerate and sort rather
    than grepping for a time window.
+
+## OpenCode session continuity (2026-09-06) — PASS
+
+First live exercise of plan 4 (#1780) and the final-message rewrite (#1785).
+Anchor: [#1797](https://github.com/jlapenna/agent-lcars/issues/1797).
+
+| Step                 | Observed                                                                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| r1                   | `direct-runner-opencode-e5f5bf9c` on **pike**, `Exited (0)`; parked with `CODEWORD: IUOF9M`                                                             |
+| Trigger              | a tagged comment on the parked anchor                                                                                                                   |
+| r2                   | `direct-runner-opencode-3a4c34d7` on **janeway**, 10 s later; parked with `CODEWORD RECALLED: IUOF9M`                                                   |
+| **Session identity** | both rounds archived **`ses_f8ab9b701ffeQe92wumRW83s16`** under `…/r1` and `…/r2` — the verdict (not the codeword; see the 2026-09-06 correction above) |
+
+**Both artifacts present in both rounds**, which is what plan 4 built:
+
+```
+runs/jlapenna/agent-lcars#1797/r1/opencode/ses_f8ab9b70….jsonl         (sanitized, 3,122 B)
+runs/jlapenna/agent-lcars#1797/r1/opencode/ses_f8ab9b70….export.json   (raw,      74,953 B)
+```
+
+Decision 3 validated end to end by inspecting the archived objects:
+
+- the **raw** export contains **zero** `[redacted:` markers and carries real
+  conversation text;
+- the **sanitized** sibling is metadata only — ids, roles, timestamps — exactly
+  its allowlist.
+
+So the raw export is what makes OpenCode resume possible, and the sanitized
+artifact the console renders is unchanged. That is the whole argument for
+decision 3, now measured on real archived objects rather than a local export.
+
+### Finding: the trigger word does not choose the pipeline on a resume
+
+Discovered by a mistake worth keeping. The tagged reply above was posted with
+the **`@claude`** trigger on an **opencode** item — and the run that dispatched
+was `direct-runner-opencode-…`, which resumed the OpenCode session correctly.
+
+`attemptTaggedReplyResume` builds its `ReplyRequest` without a `pipeline`, so
+`requestReply` defaults to the **latest run's** pipeline. The trigger word gates
+_whether_ a reply dispatches; it does not select the pipeline. Continuity wins.
+
+Defensible — switching CLI mid-conversation would forfeit the session, which is
+the opposite of what a reply is for — but surprising, and worth knowing before
+someone concludes `@claude` on a Codex item will move it to Claude. It will not;
+it continues Codex.
+
+## Codex session continuity (2026-09-06) — BLOCKED, not failed
+
+Anchor: [#1798](https://github.com/jlapenna/agent-lcars/issues/1798). The run
+exited **1** with no park comment. The cause is external, not a defect:
+
+```
+{"type":"error","message":"You've hit your usage limit. … try again at Sep 7th, 2026 2:25 AM."}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit. …"}}
+```
+
+The Codex account is out of credits until 2026-09-07 02:25. The agent never got
+a turn, so there is no codeword and no round 2 to resume.
+
+What the run _did_ prove, on the way to failing:
+
+- the thread started (`thread.started`, `01a07546-79e9-73d3-9170-5b5984078e02`);
+- its rollout archived to
+  `runs/jlapenna/agent-lcars#1798/r1/codex/01a07546-….jsonl` — so the Codex
+  capture half of the resume path works;
+- the run still reported cleanly: `{"runId":"…/r1","state":"finished"}`.
+
+**Codex resume remains unproven.** Re-run this proof after the quota resets; the
+restore-and-`codex exec resume` half is the part still untested live.
