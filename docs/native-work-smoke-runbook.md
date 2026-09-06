@@ -583,11 +583,20 @@ state that same codeword, or to say `NO PRIOR CONTEXT` if it had none.
 | r2 outcome           | park comment 02:58:19Z carrying `attempt-claim:g2:…/r2`, stating **`CODEWORD RECALLED: F3RT9K`** and "The human chose Firestore."                                          |
 | **Session identity** | r2 finalized session **`ca94b9ca-81a0-46e2-8236-dd31afc98fa1`** — **the same session id as r1**, under a different run id                                                  |
 
-**Result: PASS.** The codeword is six random characters that appear nowhere in
-the issue text, so recalling it cannot be inference — it required the round-1
-conversation. The same session id finalizing under both `…/r1` and `…/r2` is the
-independent confirmation: one Claude session continued across two dispatches, two
-containers, and two different hosts.
+**Result: PASS**, on the session-identity evidence.
+
+> **Correction (2026-09-06).** This entry originally claimed the codeword
+> "cannot be inference". That was wrong, and the claim is retracted. The
+> round-1 park comment lives on the anchor thread, and `prepare-dispatch.sh`
+> puts the anchor's comments into the brief — so a _fresh_, non-resumed
+> session can read the codeword and echo it. The codeword alone does not
+> distinguish resuming from reading.
+>
+> What actually proves this run is the **session id**: r1 and r2 finalized the
+> same session `ca94b9ca-81a0-46e2-8236-dd31afc98fa1` under two different run
+> ids, across two containers on two hosts. That is independent of anything
+> written in the thread, and the PASS stands on it. Judge every future resume
+> proof on session identity, not on a recalled value.
 
 Plan 2's outbound half is proven in the same run: the drain's outcome comment
 rendered `Run.result.message` ("Parked. Posted the round-1 park comment … with
@@ -606,3 +615,40 @@ Consequence for humans, not for agents: a parked anchor can sit without its
 is not a timely "needs attention" signal. The reply path is unaffected — item
 state derives from the run, not from the label — which is why the trigger worked
 even though the label was still missing when the comment landed.
+
+## Tagged-gate re-gating: three live proofs (2026-09-06)
+
+After #1788 and #1791 the GitHub contract changed: an explicit
+`@claude`/`@agent`/`/codex`/`/oc` trigger is **required** for a comment to
+dispatch anything, and a _tagged_ reply on a parked anchor resumes the session.
+The earlier proof above exercised the untagged path, which no longer exists, so
+the shipping behavior was re-proven from scratch.
+
+| #   | Case                                                      | Anchor                                                                              | Result                                                                                                                                                                                                                                                                                                   |
+| --- | --------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Untagged comment must dispatch nothing**                | [#1794](https://github.com/jlapenna/agent-lcars/issues/1794), parked                | **PASS** — comment `Use Firestore.` at 05:25:07Z produced no run over a 4-minute window, confirmed by enumerating `direct-runner` containers on every host: the only one was r1's, created 05:23.                                                                                                        |
+| 2   | **Tagged comment on an untasked issue still starts work** | [#1795](https://github.com/jlapenna/agent-lcars/issues/1795), **no label, no task** | **PASS** — `@claude please proceed…` dispatched a run that posted `FRESH DISPATCH OK`. This is the fall-through in `orchestrator-routes.ts` when `requestReply` returns `NOT_FOUND`; it is the highest-blast-radius path in the re-gating, since breaking it breaks starting work by comment fleet-wide. |
+| 3   | **Tagged reply on a parked anchor resumes**               | #1794                                                                               | **PASS** — `@claude Use Firestore.` at 05:29:33Z dispatched r2, which posted at 05:30:02Z carrying `attempt-claim:g2:…/r2`.                                                                                                                                                                              |
+
+**Proof of case 3 is session identity, not the codeword** (see the correction
+above). Both rounds archived the _same_ session:
+
+```
+runs/jlapenna/agent-lcars#1794/r1/claude-code/6c2030cb-cebc-4d3d-953c-13b8fd390cd1.jsonl
+runs/jlapenna/agent-lcars#1794/r2/claude-code/6c2030cb-cebc-4d3d-953c-13b8fd390cd1.jsonl
+```
+
+Listing the transcript bucket is the cheapest reliable way to take this
+measurement — it needs no live container and no host access, which matters
+because r2's container was already gone by the time it was looked for.
+
+### Two measurement traps this run hit
+
+1. **`agent-lcars` comments are not all agent turns.** The drain's outcome
+   comment is authored by the same login and renders `Run.result.message`,
+   which here repeated the codeword — briefly looking like a second agent turn.
+   Match on the `attempt-claim:g<n>:<runId>` marker to tell rounds apart.
+2. **Hosts report container timestamps in different zones.** `janeway`/
+   `laforge`/`homelab` print UTC; `picard`/`pike` print PDT. A `grep` for a UTC
+   hour silently matches nothing on half the fleet. Enumerate and sort rather
+   than grepping for a time window.
