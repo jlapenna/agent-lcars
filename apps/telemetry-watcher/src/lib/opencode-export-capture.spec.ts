@@ -194,6 +194,99 @@ describe('captureOpenCodeExports', () => {
     ).toBe(true);
   });
 
+  it('writes the most recently updated session raw export last-assistant text to lastMessageFile', async () => {
+    const lastMessageFile = path.join(root, 'opencode-last-message.txt');
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([
+        { id: 'ses_older', directory: workspace, updated: 100 },
+        { id: 'ses_newest', directory: workspace, updated: 200 },
+      ]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (args, output) => {
+      const sessionId = args[2] as string;
+      const isRaw = !args.includes('--sanitize');
+      fs.writeFileSync(
+        output,
+        JSON.stringify({
+          info: { id: sessionId },
+          messages: isRaw
+            ? [
+                {
+                  info: { role: 'assistant' },
+                  parts: [
+                    { type: 'text', text: `closing turn for ${sessionId}` },
+                  ],
+                },
+              ]
+            : [],
+        }),
+      );
+    };
+
+    await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+      runOpenCodeToFile,
+      lastMessageFile,
+    });
+
+    expect(fs.readFileSync(lastMessageFile, 'utf8')).toBe(
+      'closing turn for ses_newest',
+    );
+  });
+
+  it('leaves lastMessageFile untouched when the most recent session has no assistant text', async () => {
+    const lastMessageFile = path.join(root, 'opencode-last-message.txt');
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (_args, output) => {
+      fs.writeFileSync(
+        output,
+        JSON.stringify({ info: { id: 'ses_1' }, messages: [] }),
+      );
+    };
+
+    await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+      runOpenCodeToFile,
+      lastMessageFile,
+    });
+
+    expect(fs.existsSync(lastMessageFile)).toBe(false);
+  });
+
+  it('leaves lastMessageFile untouched when the option is not provided', async () => {
+    const runOpenCode: RunOpenCode = () =>
+      JSON.stringify([{ id: 'ses_1', directory: workspace, updated: 100 }]);
+    const runOpenCodeToFile: RunOpenCodeToFile = (_args, output) => {
+      fs.writeFileSync(
+        output,
+        JSON.stringify({
+          info: { id: 'ses_1' },
+          messages: [
+            {
+              info: { role: 'assistant' },
+              parts: [{ type: 'text', text: 'closing turn' }],
+            },
+          ],
+        }),
+      );
+    };
+
+    await captureOpenCodeExports({
+      workspaceDir: workspace,
+      exportsDir: root,
+      runOpenCode,
+      runOpenCodeToFile,
+    });
+
+    expect(fs.existsSync(path.join(root, 'opencode-last-message.txt'))).toBe(
+      false,
+    );
+  });
+
   it('prunes a stale raw export whose session is gone', async () => {
     const sessionsDir = path.join(root, 'sessions');
     fs.mkdirSync(sessionsDir, { recursive: true });

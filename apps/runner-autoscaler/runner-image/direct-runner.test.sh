@@ -331,7 +331,14 @@ printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN
 if [ -n "${FAKE_OPENCODE_SLEEP_SECONDS:-}" ]; then
   sleep "$FAKE_OPENCODE_SLEEP_SECONDS"
 fi
-exit 0
+# Opt-in: proves direct-runner.sh no longer scrapes OpenCode's own formatted
+# stdout for the final message (issue #1784) -- opencode-last-message sets
+# this to something distinct from FAKE_OPENCODE_LAST_MESSAGE and asserts the
+# completion payload carries the latter, never this text.
+if [ -n "${FAKE_OPENCODE_STDOUT:-}" ]; then
+  printf '%s' "$FAKE_OPENCODE_STDOUT"
+fi
+exit "${FAKE_OPENCODE_EXIT_CODE:-0}"
 FAKE
   chmod +x "$bindir/opencode"
 
@@ -344,6 +351,35 @@ FAKE
   cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
 echo "$@" >> "$NODE_ARGS_LOG"
+# Stands in for the real sidecar's `runner finalize` subcommand (issue
+# #1784): when direct-runner.sh's sidecar-lifecycle.sh threads
+# --opencode-last-message-file through, this simulates the sidecar writing
+# the extracted final message there -- and, before writing, records whether
+# the file already existed. A pre-existing file would mean something else
+# (a leftover `tee`) created it first, which the opencode-last-message
+# scenario asserts against. $1 is the invoked script path (real `node
+# <script> <args>` shape), so the subcommand pair is $2/$3, not $1/$2.
+if [ "${2:-}" = runner ] && [ "${3:-}" = finalize ]; then
+  prev=""
+  last_message_path=""
+  for arg in "$@"; do
+    if [ "$prev" = "--opencode-last-message-file" ]; then
+      last_message_path="$arg"
+    fi
+    prev="$arg"
+  done
+  if [ -n "$last_message_path" ]; then
+    if [ -e "$last_message_path" ]; then
+      echo present > "${OPENCODE_LAST_MESSAGE_PRECHECK_LOG:-/dev/null}"
+    else
+      echo absent > "${OPENCODE_LAST_MESSAGE_PRECHECK_LOG:-/dev/null}"
+    fi
+    if [ -n "${FAKE_OPENCODE_LAST_MESSAGE:-}" ]; then
+      printf '%s' "$FAKE_OPENCODE_LAST_MESSAGE" > "$last_message_path"
+    fi
+  fi
+  exit 0
+fi
 if [ "${FAKE_RESUME_FAIL:-}" = "1" ]; then
   exit 1
 fi
@@ -427,6 +463,7 @@ run_scenario() {
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
   export OPENCODE_ARGS_LOG="$dir/opencode-args.log"
   export OPENCODE_ENV_LOG="$dir/opencode-env.log"
+  export OPENCODE_LAST_MESSAGE_PRECHECK_LOG="$dir/opencode-last-message-precheck.log"
   export RUNTIME_HELPERS_DEFAULT_LOG="$dir/runtime-helpers-default.log"
 
   # Fixture for CLAUDE_TOKEN_FILE: the same shape launchDirectRunnerOnHost's
@@ -742,6 +779,47 @@ echo "scenario opencode-happy: OK"
 if grep -q -- 'github run' "$OPENCODE_ARGS_LOG"; then
   fail "opencode happy path: invoked the GitHub Actions-only entrypoint ($(cat "$OPENCODE_ARGS_LOG"))"
 fi
+
+# --- Scenario: the final message comes from the sidecar's structured export,
+# not scraped terminal output (issue #1784) ---------------------------------
+# `opencode run`'s own stdout is formatted progress, not a final message;
+# the sidecar's `finalize` pass now extracts the real closing turn from its
+# own structured export and writes it to the well-known file
+# direct-runner.sh points LAST_MESSAGE_FILE at. FAKE_OPENCODE_STDOUT and
+# FAKE_OPENCODE_LAST_MESSAGE are deliberately different strings so the
+# completion payload's message can only match one of them.
+#
+# The precheck log also proves the `tee` is actually gone: if it were still
+# piping opencode's stdout into that file, the file would already exist by
+# the time finalize's fake `node` writes to it.
+export FAKE_OPENCODE_STDOUT='some formatted progress line, not a final message'
+export FAKE_OPENCODE_LAST_MESSAGE='the real closing turn from the sidecar export'
+run_scenario opencode-last-message opencode
+unset FAKE_OPENCODE_STDOUT FAKE_OPENCODE_LAST_MESSAGE
+
+[ "$rc" -eq 0 ] || fail "opencode last-message: expected exit 0, got $rc"
+[ "$(cat "$OPENCODE_LAST_MESSAGE_PRECHECK_LOG" 2>/dev/null)" = "absent" ] ||
+  fail "opencode last-message: the well-known message file already existed before finalize wrote it (tee not removed?)"
+jq -e '.message == "the real closing turn from the sidecar export"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode last-message: complete payload did not carry the sidecar-extracted message ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-last-message: OK"
+
+# --- Scenario: exit code correctness once the pipe is gone (issue #1784) ---
+# `opencode run` no longer runs inside a pipe (`| tee ...`), so its exit
+# code must come straight from `$?`, not `${PIPESTATUS[0]}`. A distinctive
+# non-zero exit here must still classify the run as no-deliverable -- if a
+# stray pipe stage were reintroduced downstream of a naive `$?` switch, its
+# own (successful) exit status would silently mask this failure instead.
+export FAKE_OPENCODE_EXIT_CODE=5
+run_scenario opencode-exit-nonzero opencode
+unset FAKE_OPENCODE_EXIT_CODE
+
+[ "$rc" -eq 1 ] || fail "opencode exit-nonzero: expected exit 1, got $rc"
+grep -q '"outcome":"no-deliverable"' "$COMPLETE_LOG" ||
+  fail "opencode exit-nonzero: complete call did not report no-deliverable ($(cat "$COMPLETE_LOG"))"
+
+echo "scenario opencode-exit-nonzero: OK"
 
 # Regression pin: a brief with no `resume` field must leave OpenCode's
 # dispatch byte-identical to today -- no `runner resume` invocation, and

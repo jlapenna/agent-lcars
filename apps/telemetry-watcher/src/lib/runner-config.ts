@@ -38,6 +38,14 @@ export interface RunnerConfig extends Pick<
   opencodeExportsDir: string;
   /** Exact checkout directory OpenCode sessions must report to be captured. */
   opencodeWorkspaceDir: string;
+  /** Well-known file to write the OpenCode pipeline's final assistant
+   * message to (issue #1784) — `direct-runner.sh` owns this path (under its
+   * own `$RUNNER_TEMP`, mirroring Claude's and Codex's own last-message
+   * files) and passes it through `sidecar-lifecycle.sh` as
+   * `--opencode-last-message-file`. Unset for every other invocation
+   * (`runner sidecar`'s live ticks, and any pipeline other than OpenCode),
+   * which is exactly when `captureOpenCodeExports` must skip the write. */
+  opencodeLastMessageFile?: string;
   /** QueueExecutor run ID — tags every doc this run ships as `runId`. */
   runId?: string;
   /** Work intent ID — tags every doc this run ships as `intentId`, the join
@@ -76,12 +84,14 @@ interface RunnerFlags {
   projectsDir?: string;
   codexSessionsDir?: string;
   repo?: string;
+  opencodeLastMessageFile?: string;
 }
 
 /**
- * Minimal `--flag value` parser for the sidecar CLI's own 6 flags
+ * Minimal `--flag value` parser for the sidecar CLI's own 7 flags
  * (`--run-id`, `--intent-id`, `--issue-number`, `--projects-dir`,
- * `--codex-sessions-dir`, `--repo`). Deliberately hand-rolled
+ * `--codex-sessions-dir`, `--repo`, `--opencode-last-message-file`).
+ * Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in
  * project.json) for a command with a handful of flags. Unknown flags are
@@ -114,6 +124,9 @@ function parseRunnerFlags(argv: string[]): RunnerFlags {
       i++;
     } else if (arg === '--repo') {
       flags.repo = next;
+      i++;
+    } else if (arg === '--opencode-last-message-file') {
+      flags.opencodeLastMessageFile = next;
       i++;
     }
   }
@@ -168,6 +181,9 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
     opencodeExportsDir: path.join(os.tmpdir(), 'agent-lcars-opencode-exports'),
     opencodeWorkspaceDir: process.env['GITHUB_WORKSPACE'] ?? process.cwd(),
     sessionStateDir: defaultSessionStateDir(),
+    ...(flags.opencodeLastMessageFile !== undefined && {
+      opencodeLastMessageFile: flags.opencodeLastMessageFile,
+    }),
     host: base.host,
     heartbeatIntervalMs: base.heartbeatIntervalMs,
     stalenessWindowMs: base.stalenessWindowMs,

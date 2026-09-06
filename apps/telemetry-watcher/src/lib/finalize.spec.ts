@@ -394,6 +394,59 @@ describe('finalizeSidecar', () => {
     });
   });
 
+  it('threads config.opencodeLastMessageFile into captureOpenCodeExports (issue #1784)', async () => {
+    const { store } = createFakeStore();
+    const { uploadTranscript } = createFakeUploader();
+    const captureOpenCodeExports = vi.fn(async () => ({
+      status: 'ok' as const,
+      selected: 0,
+      exported: 0,
+      failed: 0,
+    }));
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: '42',
+        opencodeLastMessageFile: '/tmp/runner-temp/opencode-last-message.txt',
+      }),
+      store,
+      captureOpenCodeExports,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(captureOpenCodeExports).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lastMessageFile: '/tmp/runner-temp/opencode-last-message.txt',
+      }),
+    );
+  });
+
+  it('omits lastMessageFile from captureOpenCodeExports when config has none', async () => {
+    const { store } = createFakeStore();
+    const { uploadTranscript } = createFakeUploader();
+    const captureOpenCodeExports = vi.fn(async () => ({
+      status: 'ok' as const,
+      selected: 0,
+      exported: 0,
+      failed: 0,
+    }));
+
+    await finalizeSidecar({
+      config: baseConfig({ runId: '42' }),
+      store,
+      captureOpenCodeExports,
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(captureOpenCodeExports).toHaveBeenCalledWith(
+      expect.objectContaining({ lastMessageFile: undefined }),
+    );
+  });
+
   it('ships the doc without resumeGcsUri when there is no raw export', async () => {
     // Claude and Codex sessions have none, and must be unaffected.
     const { store, upserts } = createFakeStore();

@@ -183,6 +183,23 @@ describe('loadRunnerConfig', () => {
     expect(config.repo).toBeUndefined();
   });
 
+  it('parses --opencode-last-message-file', () => {
+    const config = loadRunnerConfig([
+      '--opencode-last-message-file',
+      '/tmp/runner-temp/opencode-last-message.txt',
+    ]);
+
+    expect(config.opencodeLastMessageFile).toBe(
+      '/tmp/runner-temp/opencode-last-message.txt',
+    );
+  });
+
+  it('omits opencodeLastMessageFile entirely when the flag is not passed', () => {
+    const config = loadRunnerConfig([]);
+
+    expect(config.opencodeLastMessageFile).toBeUndefined();
+  });
+
   it('threads the derived transcriptsBucket through from loadConfig (issue #24)', () => {
     process.env['AGENT_TELEMETRY_PROJECT_ID'] = 'agent-lcars';
 

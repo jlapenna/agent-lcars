@@ -168,6 +168,7 @@ export async function finalizeSidecar(
       await captureOpenCodeExports({
         workspaceDir: config.opencodeWorkspaceDir,
         exportsDir: config.opencodeExportsDir,
+        lastMessageFile: config.opencodeLastMessageFile,
       });
     } catch (error) {
       logger.warn(

@@ -95,6 +95,9 @@ fi
 if [ -n "${INTENT_ID:-}" ]; then
   ARGS+=(--intent-id "$INTENT_ID")
 fi
+if [ -n "${OPENCODE_LAST_MESSAGE_FILE:-}" ]; then
+  ARGS+=(--opencode-last-message-file "$OPENCODE_LAST_MESSAGE_FILE")
+fi
 
 if [ "$MODE" = start ]; then
   if [ ! -x "$JOB_DAEMON_BIN" ]; then

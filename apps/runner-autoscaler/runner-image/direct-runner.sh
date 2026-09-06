@@ -648,13 +648,14 @@ else
     exit 1
   fi
 
-  # Best-effort, unlike Claude's --print and Codex's --output-last-message:
-  # `opencode run`'s default output is formatted progress, not just the
-  # final message, so this tail may include more than the agent's last
-  # turn. Still strictly better than no message at all. If the live proof
-  # shows it too noisy to read, the documented follow-up is `--format
-  # json` with the last assistant text part extracted -- not switched to
-  # speculatively here, because it changes the whole run log.
+  # Unlike Claude's --print and Codex's --output-last-message, `opencode
+  # run` has no flag that writes exactly the final message: its default
+  # output is formatted progress. Issue #1784's fix is to not scrape it --
+  # this file is instead populated by the sidecar's own `finalize` pass
+  # below, which reads the last assistant text part straight out of the
+  # structured session export it already archives (opencode-last-message.ts).
+  # No `tee` here means the live log is just the log, and the exit code
+  # comes directly from `$?` rather than `${PIPESTATUS[0]}`.
   OPENCODE_LAST_MESSAGE_FILE="$RUNNER_TEMP/opencode-last-message.txt"
   set +e
   env -u OPENCODE_LLM_API_KEY \
@@ -662,11 +663,12 @@ else
     timeout --signal=TERM --kill-after=30s "${OPENCODE_TIMEOUT_SECONDS}s" \
     "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
       "${OPENCODE_SESSION_ARGS[@]}" \
-      --auto "$AGENT_PROMPT" | tee "$OPENCODE_LAST_MESSAGE_FILE"
-  AGENT_EXIT=${PIPESTATUS[0]}
+      --auto "$AGENT_PROMPT"
+  AGENT_EXIT=$?
   set -e
   # Same shared completion payload build plan 1 added for Claude
-  # (`$LAST_MESSAGE_FILE`, read near the end of this script).
+  # (`$LAST_MESSAGE_FILE`, read near the end of this script). Populated by
+  # `"$SIDECAR_LIFECYCLE" finalize` below, not by this branch.
   LAST_MESSAGE_FILE="$OPENCODE_LAST_MESSAGE_FILE"
 fi
 
@@ -676,6 +678,7 @@ WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
   RUN_ID="$LCARS_RUN_ID" \
   INTENT_ID="$INTENT_ID" \
   CODEX_SESSIONS_DIR="${CODEX_HOME:+$CODEX_HOME/sessions}" \
+  OPENCODE_LAST_MESSAGE_FILE="${OPENCODE_LAST_MESSAGE_FILE:-}" \
   "$SIDECAR_LIFECYCLE" finalize
 
 # Finalization has synchronously archived every Codex session it found. Only

@@ -4,6 +4,8 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { extractLastAssistantText } from './opencode-last-message';
+
 const LIST_LIMIT = 100;
 const SESSION_LIMIT = 20;
 const LIST_MAX_BYTES = 1024 * 1024;
@@ -42,6 +44,16 @@ export interface CaptureOpenCodeExportsOptions {
    * installation locations and fails closed when none passes validation. */
   opencodeExecutable?: string;
   limits?: CaptureLimitsOverride;
+  /** Well-known file `direct-runner.sh` points its shared `LAST_MESSAGE_FILE`
+   * at for the OpenCode pipeline (issue #1784). When set, this pass writes
+   * the last assistant text part of the most recently updated matching
+   * session's raw export here -- the same file Claude's `--print` and
+   * Codex's `--output-last-message` populate directly, now populated from
+   * the sidecar's own structured export instead of scraped terminal output.
+   * Unset (the live-tick `startSidecar` caller) means skip entirely: only
+   * the one-shot `finalize` pass, run once after the provider exits, knows
+   * the run is actually over. */
+  lastMessageFile?: string;
 }
 
 export interface CaptureOpenCodeExportsResult {
@@ -544,6 +556,11 @@ export async function captureOpenCodeExports(
   );
   let exported = 0;
   let failed = 0;
+  // `sessions` is sorted newest-`updated`-first (see parseSessionList
+  // above), so the head of the list is "the session that just ran" -- the
+  // only one direct-runner.sh's single `opencode run --auto` invocation for
+  // this job could have touched.
+  const mostRecentSession = sessions[0];
 
   for (const session of sessions) {
     const destination = path.join(sessionsDir, `${session.id}.jsonl`);
@@ -608,6 +625,29 @@ export async function captureOpenCodeExports(
             logger.warn(
               `agent-lcars-telemetry-watcher: failed to remove temporary OpenCode raw capture ${rawTemporary}`,
               cleanupError,
+            );
+          }
+        }
+      }
+
+      // The final-message capture (issue #1784). Reads back whatever the
+      // block above just produced (or didn't -- extractLastAssistantText
+      // fails soft on a missing/malformed/textless raw export), so a
+      // resumable-export failure just above costs this too, exactly like it
+      // costs resumability: never the run. destination is left untouched
+      // rather than written empty when there's no text to report --
+      // direct-runner.sh already renders an absent LAST_MESSAGE_FILE as "no
+      // message".
+      if (options.lastMessageFile && session === mostRecentSession) {
+        const lastMessageFile = options.lastMessageFile;
+        const text = extractLastAssistantText(rawDestination);
+        if (text !== undefined) {
+          try {
+            fs.writeFileSync(lastMessageFile, text, { mode: 0o600 });
+          } catch (error) {
+            logger.warn(
+              `agent-lcars-telemetry-watcher: failed to write the OpenCode final-message file ${lastMessageFile}`,
+              error,
             );
           }
         }
