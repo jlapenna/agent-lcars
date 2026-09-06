@@ -16,6 +16,8 @@ import { createOrchestratorRuntime } from './orchestrator-runtime';
 // Re-exported from github-client.ts, which owns the server-side watched-repo
 // boundary; the pure integration shape itself lives in watched-repo.ts.
 export type { AgentPipeline } from './github-client';
+import { logger } from '@agent-lcars/logging';
+
 import type { AgentPipeline } from './github-client';
 // Direct workers share the same 90-minute Run lease budget.
 export const RUN_TIMEOUT_MINUTES = 90;
@@ -329,14 +331,14 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       : { statuses: [], warnings: ['Runner autoscaler status unavailable.'] };
 
   if (liveRead.status === 'rejected') {
-    console.error(
+    logger.error(
       'agent-lcars: failed to list authoritative live runs:',
       liveRead.reason,
     );
     warnings.push('Authoritative live run activity unavailable.');
   }
   if (recentRead.status === 'rejected') {
-    console.error(
+    logger.error(
       'agent-lcars: failed to list authoritative recent runs:',
       recentRead.reason,
     );
@@ -379,7 +381,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
           taskByKey.set(key, task.task);
         }
       } catch (error) {
-        console.error(
+        logger.error(
           'agent-lcars: failed to read authoritative run task:',
           error,
         );

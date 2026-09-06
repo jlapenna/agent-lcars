@@ -6,6 +6,7 @@ import {
   quickTaskDigest as sharedQuickTaskDigest,
   quickTaskMarkerMatcher,
 } from '@agent-lcars/dispatch-contracts';
+import { logger } from '@agent-lcars/logging';
 import { workPayloadSchema } from '@agent-lcars/work';
 
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
@@ -99,7 +100,7 @@ export async function clearNeedsHumanLabel(
       // boundary, so treat it as untrusted input here (CodeQL
       // js/tainted-format-string) rather than interpolating it into the
       // format string itself.
-      console.error(
+      logger.error(
         'agent-lcars: failed to clear status:needs-human on #%s:',
         issueNumber,
         error,
@@ -478,14 +479,14 @@ async function notifyReconcile(anchor: number | string): Promise<void> {
   try {
     const result = await handleReconcile(createOrchestratorRuntime());
     if (result.status !== 200) {
-      console.error(
+      logger.error(
         'agent-lcars: orchestrator reconcile sweep failed after #%s:',
         anchor,
         result.body,
       );
     }
   } catch (error) {
-    console.error(
+    logger.error(
       'agent-lcars: failed to sweep the orchestrator after #%s:',
       anchor,
       error,

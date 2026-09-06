@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type {
   SessionAgent,
   SessionDoc,
@@ -250,7 +251,7 @@ export async function getSessionArchive(
       limit: ARCHIVE_LIST_LIMIT,
     });
   } catch (error) {
-    console.error('agent-lcars: failed to list session archive:', error);
+    logger.error('agent-lcars: failed to list session archive:', error);
     return {
       rows: [],
       ledger: { byIssue: [], byWeek: [] },

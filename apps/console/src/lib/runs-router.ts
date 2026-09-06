@@ -2,6 +2,7 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
+import { logger } from '@agent-lcars/logging';
 import {
   isLive,
   isRefusal,
@@ -382,7 +383,7 @@ export const runsRouter = os.router({
     // detail or raw stored value.
     const parsed = workPayloadSchema.safeParse(work);
     if (!parsed.success) {
-      console.error(
+      logger.error(
         'agent-lcars: claimed run has stored Work that no longer parses',
         { runId: run.runId, workId: run.task.workId, error: parsed.error },
       );
@@ -537,7 +538,7 @@ export const runsRouter = os.router({
         // operation failed, retain that operation's original response rather
         // than letting cleanup mask it.
         if (persisted || operationError !== undefined) {
-          console.error('agent-lcars: failed to release Codex auth lease', {
+          logger.error('agent-lcars: failed to release Codex auth lease', {
             runId: input.runId,
             error,
           });

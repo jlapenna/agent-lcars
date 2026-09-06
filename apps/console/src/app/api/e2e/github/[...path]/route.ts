@@ -1,4 +1,5 @@
 import { parseQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
+import { logger } from '@agent-lcars/logging';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -136,7 +137,7 @@ export async function GET(
     }
   }
 
-  console.error('agent-lcars: no e2e GitHub fixture for /%s', path.join('/'));
+  logger.error('agent-lcars: no e2e GitHub fixture for /%s', path.join('/'));
   return NextResponse.json({ message: 'Not Found' }, { status: 404 });
 }
 
@@ -372,7 +373,7 @@ export async function POST(
       object: { type: 'tag', sha: body.sha },
     });
   }
-  console.error(
+  logger.error(
     'agent-lcars: no e2e GitHub fixture for POST /%s',
     path.join('/'),
   );
@@ -403,7 +404,7 @@ export async function PATCH(
       ? NextResponse.json(updated)
       : NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
-  console.error(
+  logger.error(
     'agent-lcars: no e2e GitHub fixture for PATCH /%s',
     path.join('/'),
   );
@@ -454,7 +455,7 @@ export async function PUT(
     }
     return NextResponse.json((body.labels ?? []).map((name) => ({ name })));
   }
-  console.error(
+  logger.error(
     'agent-lcars: no e2e GitHub fixture for PUT /%s',
     path.join('/'),
   );
@@ -490,7 +491,7 @@ export async function DELETE(
       ? new NextResponse(null, { status: 204 })
       : NextResponse.json({ message: 'Not Found' }, { status: 404 });
   }
-  console.error(
+  logger.error(
     'agent-lcars: no e2e GitHub fixture for DELETE /%s',
     path.join('/'),
   );

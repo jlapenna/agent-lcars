@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   getAgentTelemetryReaderFirestore,
@@ -51,7 +52,7 @@ export async function getSessionDetail(
     const firestore = await getAgentTelemetryReaderFirestore();
     doc = await getSessionDoc(firestore, sessionId);
   } catch (error) {
-    console.error('agent-lcars: failed to load session detail:', error);
+    logger.error('agent-lcars: failed to load session detail:', error);
     return {
       status: 'error',
       warning: 'Session detail unavailable (agent-telemetry store failed).',

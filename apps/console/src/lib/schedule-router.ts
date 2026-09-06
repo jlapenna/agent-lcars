@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import type { Schedule } from '@agent-lcars/orchestrator';
 import {
   type CronSpec,
@@ -248,7 +249,7 @@ export const scheduleRouter = os.router({
         try {
           cron = parseCron(schedule.cron);
         } catch (error) {
-          console.error(
+          logger.error(
             'agent-lcars: schedule has a cron expression that no longer parses, disabling',
             { scheduleId: schedule.scheduleId, error },
           );
@@ -281,7 +282,7 @@ export const scheduleRouter = os.router({
         try {
           spec = workSpecSchema.parse(schedule.spec);
         } catch (error) {
-          console.error(
+          logger.error(
             'agent-lcars: schedule has a spec that no longer validates, disabling',
             { scheduleId: schedule.scheduleId, error },
           );
@@ -362,7 +363,7 @@ export const scheduleRouter = os.router({
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error('agent-lcars: schedule tick failed', {
+        logger.error('agent-lcars: schedule tick failed', {
           scheduleId: schedule.scheduleId,
           error,
         });
