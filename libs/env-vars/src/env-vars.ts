@@ -31,6 +31,13 @@ export interface EnvVars {
   AGENT_LCARS_CONTROL_PLANE_REPOSITORY?: string;
   AGENT_LCARS_CONTROL_PLANE_REPOSITORIES?: string;
   AGENT_LCARS_FLEET_GITHUB_LOGIN?: string;
+  /** JSON map from a native item's `origin.channel` to the outbound webhook
+   *  target its settled outcomes are delivered to --
+   *  `{"slack":{"url":"https://…","audience":"…"}}`. Absent, empty, or
+   *  malformed (bad JSON, wrong shape, a missing `url`/`audience`) all mean
+   *  the same thing: no channel has a target, so nothing is delivered --
+   *  see `apps/console/src/lib/outcome-webhook.ts`'s `outcomeWebhookFor`. */
+  AGENT_LCARS_OUTCOME_WEBHOOKS?: string;
   /** Comma-separated `owner/name` repos whose `push` webhook mints a native
    *  reconcile-the-fleet work item — see `push-watch.ts`. */
   AGENT_LCARS_PUSH_WATCHED_REPOS?: string;

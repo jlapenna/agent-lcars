@@ -9,10 +9,16 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
+import { workPayloadSchema } from '@agent-lcars/work';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
-import { agentFleetLogin } from './deployment';
+import { agentFleetLogin, consoleUrl } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
+import {
+  deliverOutcomeWebhook as deliverOutcomeWebhookDefault,
+  outcomeWebhookFor,
+  type OutcomeWebhookPayload,
+} from './outcome-webhook';
 
 /**
  * The outbox drain: turns `@agent-lcars/orchestrator` decisions into real
@@ -117,6 +123,9 @@ export interface DispatchDeps {
   githubApiBaseUrl?: string;
   /** Injectable for deterministic lease tests; defaults to wall-clock UTC. */
   now?: () => string;
+  /** Injectable for tests; defaults to the real signed webhook POST
+   *  (`./outcome-webhook`'s `deliverOutcomeWebhook`). */
+  deliverOutcomeWebhook?: typeof deliverOutcomeWebhookDefault;
 }
 
 export interface DrainOutboxResult {
@@ -433,9 +442,19 @@ async function handleReportOutcome(
     return;
   }
   if (target.issue === undefined) {
-    // A native anchor has no GitHub issue to comment on -- the item's
-    // outcome is derivable from the run/task documents themselves.
-    await settleClaim(deps, entry, 'done');
+    // A native anchor has no GitHub issue to comment on. Its own outbound
+    // surface, if any, is its origin's registered webhook (design spec's
+    // "Slack threads") -- resolved and delivered by `deliverNativeOutcome`,
+    // whose failure follows the exact same lease/retry/backoff path as a
+    // GitHub outcome-comment failure below.
+    if (task === undefined) {
+      // No task record to read an origin from (should not happen: this
+      // entry always accompanies the run's own settlement) -- nothing to
+      // deliver, same as before this delivery case existed.
+      await settleClaim(deps, entry, 'done');
+      return;
+    }
+    await deliverNativeOutcome(deps, entry, run, task, result);
     return;
   }
 
@@ -518,6 +537,82 @@ async function handleReportOutcome(
         githubApiBaseUrl(deps),
       );
     }
+  }
+
+  await settleClaim(deps, entry, 'done');
+  result.reported.push(run.runId);
+}
+
+/**
+ * A native item's own outbound surface (design spec's "Slack threads",
+ * decision 4): resolves the origin's registered webhook target and
+ * delivers the run's outcome to it. No thread on the origin, or no webhook
+ * configured for the origin's channel, both mean there is nothing to
+ * deliver -- the item's outcome remains derivable from the run/task
+ * documents themselves, exactly as before this delivery case existed. A
+ * delivery failure is treated exactly like a GitHub outcome-comment
+ * failure (`settleRetryableFailure`): released with backoff, retired after
+ * the same window, never settled `done` and never a lost run.
+ */
+async function deliverNativeOutcome(
+  deps: DispatchDeps,
+  entry: LeasedOutboxEntry,
+  run: Run,
+  task: Task,
+  result: DrainOutboxResult,
+): Promise<void> {
+  if (!isWorkAnchor(run.task)) {
+    // Unreachable: this helper is only called when `anchorTarget` resolved
+    // no GitHub issue, which only happens for a native anchor.
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+
+  const origin = workPayloadSchema.parse(task.work).origin;
+  if (origin.thread === undefined) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+  const webhookTarget = outcomeWebhookFor(origin.channel);
+  if (webhookTarget === undefined) {
+    await settleClaim(deps, entry, 'done');
+    return;
+  }
+
+  if (
+    run.state !== 'finished' &&
+    run.state !== 'canceled' &&
+    run.state !== 'lost'
+  ) {
+    // A report-outcome entry only ever accompanies a run settling into one
+    // of these states (see decide.ts) -- unreachable in practice, mirrors
+    // `outcomeCommentBody`'s own guard.
+    throw new Error(
+      `report-outcome for run ${run.runId} in non-terminal state ${run.state}`,
+    );
+  }
+
+  const payload: OutcomeWebhookPayload = {
+    itemId: run.task.workId,
+    runId: run.runId,
+    state: run.state,
+    ok: run.result?.ok ?? false,
+    parked:
+      run.state === 'finished' && run.result?.summary === PARK_OUTCOME_SUMMARY,
+    ...(run.result?.message === undefined
+      ? {}
+      : { message: run.result.message }),
+    ...(run.result?.ref === undefined ? {} : { ref: run.result.ref }),
+    thread: origin.thread,
+    consoleUrl: `${consoleUrl()}/work/${run.task.workId}`,
+  };
+
+  const deliver = deps.deliverOutcomeWebhook ?? deliverOutcomeWebhookDefault;
+  try {
+    await deliver(webhookTarget, payload);
+  } catch (error) {
+    await settleRetryableFailure(deps, entry, result, error);
+    return;
   }
 
   await settleClaim(deps, entry, 'done');
