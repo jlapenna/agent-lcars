@@ -96,6 +96,12 @@ async function handle(request: Request): Promise<Response> {
       ...(principal === undefined ? {} : { principal }),
       store: runtime.store,
       orchestrator: runtime.orchestrator,
+      // #1799: `complete` (the only run-token route that mutates the
+      // outbox) drains it after a settled report, same as every other
+      // mutating route -- reached through the same `runtime` this handler
+      // already builds for the items/schedules branch below, not a
+      // second one.
+      drain: runtime.drain,
       // Same clock the orchestrator's own `utcClock` (`orchestrator-
       // runtime.ts`) stamps `leaseExpiresAt` with, so `requireRunToken`'s
       // lease-expiry check is never independently skewed from it.
