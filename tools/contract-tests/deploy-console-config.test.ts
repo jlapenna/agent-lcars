@@ -337,17 +337,18 @@ describe('console deployment workflow', () => {
     }
   });
 
-  it('enables implicit replies only for this repository', async () => {
-    // Resumable-conversations plan 2, enabled on the maintainer's explicit
-    // instruction (2026-09-04, plan task 4 step 2). Pinned to exactly one
-    // repository rather than merely "non-empty": this flag changes what an
-    // ordinary maintainer comment DOES on a parked anchor, so widening it
-    // to another repository must be a deliberate edit that fails this test
-    // first, not a quiet addition to a list.
+  it('requires a trigger tag: the implicit-reply allowlist is not deployed', async () => {
+    // Maintainer direction (2026-09-06): on GitHub an explicit
+    // `@claude`/`@agent`/`/codex`/`/oc` trigger is required for a comment to
+    // dispatch anything. The no-trigger-word path (plan 2, #1773) was enabled
+    // (#1781), proven live (#1787), and then turned back off.
     //
-    // If it is ever disabled, DELETE the entry -- never set `value: ''`,
-    // which App Hosting rejects and which blocked deploys for five hours
-    // (#1776). The "non-empty value or secret" test below is the guard.
+    // Session resume is NOT gated by this variable -- a *tagged* reply on a
+    // parked anchor resumes the session. This flag only ever controlled
+    // whether an UNtagged comment could dispatch.
+    //
+    // Off is expressed by omitting the variable, never by `value: ''`, which
+    // App Hosting rejects and which blocked deploys for five hours (#1776).
     const config = parseYaml(
       await readFile('apps/console/apphosting.yaml', 'utf8'),
     ) as {
@@ -357,7 +358,7 @@ describe('console deployment workflow', () => {
       ({ variable }) => variable === 'AGENT_LCARS_IMPLICIT_REPLY_REPOS',
     );
 
-    expect(entry?.value).toBe('jlapenna/agent-lcars');
+    expect(entry).toBeUndefined();
   });
 
   it('declares a non-empty value or a secret for every deployed env entry', async () => {
