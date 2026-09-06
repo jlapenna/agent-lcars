@@ -19,6 +19,7 @@ import { anchorTarget } from './anchor-target';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import { consoleUrl } from './deployment';
 import type { DispatchTokenProvider } from './github-app-tokens';
+import type { DrainOutboxResult } from './orchestrator-dispatch';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import type { WorkPrincipal } from './work-auth';
@@ -38,6 +39,16 @@ export interface RunsContext {
   tokens: DispatchTokenProvider;
   checkoutTokens: DispatchTokenProvider;
   codexAuth: CodexAuthStore;
+  /** Same outbox drain every other mutating route reaches through
+   *  `WorkContext.runtime.drain` (`work-router.ts`, `work-mint.ts`,
+   *  `work-reply.ts`) -- `RunsContext` has no `runtime` object of its own
+   *  (it is built from the pieces of `OrchestratorRouteDeps` this
+   *  router's other routes already needed, not the whole thing), so
+   *  `complete` reaches it through this flat field instead. Wired in
+   *  production from the same `createOrchestratorRuntime()` the route
+   *  file already constructs for `work-router.ts` (see
+   *  `app/api/work/v1/[[...rest]]/route.ts`). */
+  drain: () => Promise<DrainOutboxResult>;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
    *  `expiresAt`) must be deterministic under test, not tied to wall-clock
@@ -255,6 +266,37 @@ async function renewCodexLease(
   );
 }
 
+/**
+ * `complete`'s drain, guarded -- unlike every other mutating route's own
+ * unguarded `await ...drain()` (`work-router.ts`'s cancel/redispatch,
+ * `work-mint.ts`, `work-reply.ts`, `push-watch.ts`,
+ * `github-work-admission.ts`). Those routes are fine letting a drain
+ * failure fail the whole request: their caller is a human, a webhook
+ * delivery, or a cron tick, any of which can simply be retried (GitHub
+ * redelivers, an operator resubmits). This route's caller is a
+ * QueueExecutor runner blocked on this exact HTTP response, and it has
+ * already finished its work -- there is no "retry the completion" for it
+ * to fall back to, only a runner left hanging on a request that should
+ * have already succeeded. A drain problem here must not turn a genuinely
+ * successful completion into an error the runner sees; the next drain
+ * (another route's, or the 30-minute reconcile) picks up whatever this
+ * one missed, same as any other transiently-failed outbox entry.
+ */
+async function drainAfterCompletion(
+  context: Pick<RunsContext, 'drain'>,
+  runId: string,
+): Promise<void> {
+  try {
+    await context.drain();
+  } catch (error) {
+    logger.error(
+      'agent-lcars: outbox drain after completing %s failed: %s',
+      runId,
+      error,
+    );
+  }
+}
+
 export const runsRouter = os.router({
   claim: executor.claim.handler(async ({ input, context }) => {
     // The executor's authenticated grant is the only claim capability
@@ -444,6 +486,20 @@ export const runsRouter = os.router({
     );
     try {
       const settled = await context.orchestrator.report(run.runId, result);
+      // #1799: this is the route that CREATES the `report-outcome` outbox
+      // entry (`orchestrator.report`'s `settle`), but it used to be the
+      // one mutating route that never drained it -- every other one
+      // (`work-router.ts`'s cancel/redispatch, `work-reply.ts`,
+      // `work-mint.ts`, `push-watch.ts`, `github-work-admission.ts`,
+      // `orchestrator-routes.ts`'s reconcile) does. The outcome comment
+      // and `status:needs-human` label then waited on an unrelated
+      // webhook delivery or the 30-minute reconcile tick instead of
+      // landing right away. Only on a settled report: a refusal (stale
+      // lease, already-settled run) created no new entry, so there is
+      // nothing fresh for this drain to deliver.
+      if (!isRefusal(settled)) {
+        await drainAfterCompletion(context, run.runId);
+      }
       return {
         runId: run.runId,
         state: isRefusal(settled) ? settled.reason : 'finished',

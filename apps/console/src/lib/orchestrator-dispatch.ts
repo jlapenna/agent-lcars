@@ -30,9 +30,11 @@ import type { DispatchTokenProvider } from './github-app-tokens';
  * been failing for `OUTBOX_RETIRE_AFTER_MS` -- past that it is retired
  * (`failed`) rather than retried forever (#1548, and its own follow-up: a
  * bound keyed on claim *count* rather than failure *time* let normal fleet
- * traffic -- dispatches and completions each trigger a drain, on top of the
- * 30-minute reconcile -- burn through it in minutes during a transient
- * GitHub outage, which is a worse failure than the one being fixed).
+ * traffic -- dispatches and completions each trigger a drain (#1799: true
+ * of every mutating route including this one's own completion handler,
+ * `runs-router.ts`'s `complete`), on top of the 30-minute reconcile --
+ * burn through it in minutes during a transient GitHub outage, which is a
+ * worse failure than the one being fixed).
  *
  * Every GitHub call resolves its bearer token per-repo through `tokens`
  * (see `github-app-tokens.ts`) rather than a single ambient token, so a
@@ -58,13 +60,17 @@ const GITHUB_API = 'https://api.github.com';
  * before it is retired (`failed`) instead of released back to `pending`
  * (#1548 follow-up). Deliberately a *time* budget, not a claim-count one:
  * drains fire on every dispatch and completion in addition to the
- * 30-minute reconcile heartbeat, so a count-based budget (the original
- * version of this fix used `attempts >= 20`) can be exhausted by ordinary
- * fleet traffic within minutes of a transient GitHub outage or a bout of
- * rate-limiting -- turning something that should just clear on its own
- * into a permanently lost dispatch or outcome report, which is worse than
- * the unbounded-retry bug this PR fixes (#1548's own backlog: one entry
- * reached 485 attempts over six days with no bound at all).
+ * 30-minute reconcile heartbeat (#1799 closed the one gap in that: the
+ * direct-runner completion route used to settle a run's outcome without
+ * ever draining it, so its own outcome comment wasn't actually covered by
+ * this "completions drain too" reasoning until then), so a count-based
+ * budget (the original version of this fix used `attempts >= 20`) can be
+ * exhausted by ordinary fleet traffic within minutes of a transient
+ * GitHub outage or a bout of rate-limiting -- turning something that
+ * should just clear on its own into a permanently lost dispatch or
+ * outcome report, which is worse than the unbounded-retry bug this PR
+ * fixes (#1548's own backlog: one entry reached 485 attempts over six
+ * days with no bound at all).
  *
  * 72 hours (three days) is comfortably longer than any plausible GitHub
  * outage or rate-limit episode (these clear in minutes to low hours, not

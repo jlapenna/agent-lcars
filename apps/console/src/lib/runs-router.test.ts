@@ -5,6 +5,7 @@ import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CodexAuthStoreError } from './codex-auth-store';
+import { drainOutbox } from './orchestrator-dispatch';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import { truncatedDescription } from './work-from-github';
@@ -128,6 +129,34 @@ async function forceLeaseExpired(
   });
 }
 
+/** Forces `task.activeRunId` to name a different run while `runId`'s own
+ *  run document stays `running` (live) with a valid, unexpired lease --
+ *  simulating the race `decide.ts`'s `reportResult` calls `stale-lease`
+ *  (a report from a run that already lost the lock). `requireRunToken`
+ *  never looks at `task.activeRunId`, only the run's own state/lease, so
+ *  this is the one piece of state that has to be forced directly on the
+ *  store rather than through a route -- #1799's "does not drain on
+ *  refusal" test needs a `complete` call that reaches
+ *  `orchestrator.report` and gets refused there, not one blocked earlier
+ *  by the token gate. */
+async function forceStaleLease(
+  store: MemoryStore,
+  runId: string,
+): Promise<void> {
+  const run = await store.readRun(runId);
+  if (run === undefined) throw new Error(`missing run ${runId}`);
+  const versioned = await store.readTask(run.task);
+  if (versioned === undefined) throw new Error(`missing task for ${runId}`);
+  await store.apply({
+    decision: {
+      task: { ...versioned.task, activeRunId: 'some-other-run' },
+      run,
+      outbox: [],
+    },
+    expectedRevision: versioned.revision,
+  });
+}
+
 function executorPrincipal(pipelines: readonly string[] = ['claude']) {
   return {
     principal: 'svc:autoscaler',
@@ -202,6 +231,9 @@ async function call(
 const context = {
   tokens: { tokenFor: async () => 'ambient-token' },
   checkoutTokens: { tokenFor: async () => 'checkout-token' },
+  // #1799: every test below that does not care about draining gets a
+  // no-op stub -- only the `complete` drain tests override it.
+  drain: async () => ({ dispatched: [], reported: [], failed: [] }),
   codexAuth: {
     read: async () => ({
       authBase64: Buffer.from('{"tokens":{}}').toString('base64'),
@@ -1306,6 +1338,158 @@ describe('complete', () => {
     );
     expect(response?.status).toBe(400);
     expect((await store.readRun(runId))?.state).toBe('running');
+  });
+
+  // #1799: `complete` is the route that creates the `report-outcome`
+  // outbox entry (via `orchestrator.report`'s `settle`), but it never
+  // drained it -- so a run's outcome comment and `status:needs-human`
+  // label waited on an unrelated webhook delivery or the 30-minute
+  // reconcile tick instead of landing immediately. These three tests pin
+  // the fix: drain on a settled report, never on a refused one, and never
+  // let a drain failure turn a successful completion into an error the
+  // waiting runner sees.
+  it('drains the outbox after a report settles the run, delivering the outcome comment', async () => {
+    const { store, orchestrator, now } = fixture();
+    const outcome = await orchestrator.request({
+      taskId: { repo: 'octo/example', issue: 99 },
+      requestId: 'github-complete-drain',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: {
+          title: 'Drain on completion',
+          description: 'd',
+          pipeline: 'claude',
+          target: { repo: 'octo/example' },
+        },
+      },
+      params: { mode: 'implement' },
+    });
+    if ('refused' in outcome || outcome.run === undefined) {
+      throw new Error('expected a queued GitHub run');
+    }
+    const runId = outcome.run.runId;
+    await store.enqueueRun({ runId, now: NOW });
+    await orchestrator.confirmDispatch(runId);
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    // A real `drainOutbox`, not a spy -- proves the outcome comment was
+    // actually delivered, not merely that some `drain` function was
+    // invoked. Fixture mirrors `backend-actions.test.ts`'s own.
+    const calls: { url: string }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      calls.push({ url: String(input) });
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    const drain = () =>
+      drainOutbox({
+        store,
+        orchestrator,
+        tokens: { tokenFor: async () => 'gh-test-token' },
+        fetchImpl,
+        now: () => now().toISOString(),
+      });
+
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token, drain },
+      'POST',
+      runPath(runId, '/complete'),
+      {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 7 },
+      },
+    );
+
+    expect(r.status).toBe(200);
+    expect((r.json as { state: string }).state).toBe('finished');
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        url: 'https://api.github.com/repos/octo/example/issues/99/comments',
+      }),
+    );
+  });
+
+  it('does not drain when the report is refused', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-complete-refusal'),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    // `requireRunToken` only checks the run's own state/lease, not
+    // `task.activeRunId` -- so a run that already lost the lock still
+    // passes the token gate and reaches `orchestrator.report`, which then
+    // refuses it (`stale-lease`). That is the refusal path this test
+    // needs; see `forceStaleLease`'s own comment.
+    await forceStaleLease(store, runId);
+
+    const drain = vi.fn(async () => ({
+      dispatched: [],
+      reported: [],
+      failed: [],
+    }));
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token, drain },
+      'POST',
+      runPath(runId, '/complete'),
+      {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 1 },
+      },
+    );
+
+    expect(r.status).toBe(200);
+    expect((r.json as { state: string }).state).toBe('stale-lease');
+    expect(drain).not.toHaveBeenCalled();
+  });
+
+  it('still returns its normal success body when the drain itself throws', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-complete-drain-throws'),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+
+    const drain = vi.fn(async () => {
+      throw new Error('outbox store unavailable');
+    });
+    const r = await call(
+      { store, orchestrator, now, ...context, bearerToken: token, drain },
+      'POST',
+      runPath(runId, '/complete'),
+      {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 2 },
+      },
+    );
+
+    // The runner is waiting on this HTTP call and has already done its
+    // work -- a drain problem must not turn a successful completion into
+    // an error it sees.
+    expect(r.status).toBe(200);
+    expect((r.json as { state: string }).state).toBe('finished');
+    expect(drain).toHaveBeenCalledOnce();
+    const settled = await store.readRun(runId);
+    expect(settled?.state).toBe('finished');
   });
 });
 
